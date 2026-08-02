@@ -86,6 +86,258 @@ pub enum ProgressStyle {
     Danger,
 }
 
+fn range_length_semantic_key(length: &Option<LengthValue>) -> String {
+    match length {
+        None => "none".into(),
+        Some(LengthValue::Fill) => "fill".into(),
+        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
+        Some(LengthValue::Shrink) => "shrink".into(),
+        Some(LengthValue::Fixed(_)) => "fixed".into(),
+    }
+}
+
+fn range_background_semantic_key(background: &Option<BackgroundValue>) -> String {
+    match background {
+        None => "none".into(),
+        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+        Some(BackgroundValue::Linear { stops, .. }) => format!(
+            "linear:{}",
+            stops
+                .iter()
+                .map(|stop| stop.color.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
+fn range_route_semantic_key(route: Option<&Route>) -> String {
+    route.map_or_else(
+        || "none".into(),
+        |route| {
+            let arguments = route
+                .args
+                .iter()
+                .map(|argument| match argument {
+                    RouteArg::Expr(_) => 'e',
+                    RouteArg::Payload => 'p',
+                })
+                .collect::<String>();
+            format!("{}:{arguments}", route.handler)
+        },
+    )
+}
+
+fn push_range_length_root<'a>(
+    roots: &mut Vec<(&'a Expr, &'a Span)>,
+    length: &'a Option<LengthValue>,
+    span: &'a Span,
+) {
+    if let Some(LengthValue::Fixed(expression)) = length {
+        roots.push((expression, span));
+    }
+}
+
+fn push_range_background_roots<'a>(
+    roots: &mut Vec<(&'a Expr, &'a Span)>,
+    background: &'a Option<BackgroundValue>,
+    span: &'a Span,
+) {
+    if let Some(BackgroundValue::Linear { angle, stops }) = background {
+        roots.push((angle, span));
+        roots.extend(stops.iter().map(|stop| (&stop.offset, span)));
+    }
+}
+
+fn slider_status_semantic_key(style: &SliderStyle) -> String {
+    let handle = match &style.handle_shape {
+        None => "none".into(),
+        Some(SliderHandleShape::Circle(_)) => "circle".into(),
+        Some(SliderHandleShape::Rectangle { width }) => format!("rect:{width}"),
+    };
+    format!(
+        "rail={}:{}|colors={:?}|fields={:?}|handle={handle}",
+        range_background_semantic_key(&style.rail_start),
+        range_background_semantic_key(&style.rail_end),
+        [
+            style.rail_border_color.as_deref(),
+            style.handle_border_color.as_deref(),
+        ],
+        [
+            style.rail_width.is_some(),
+            style.rail_border_width.is_some(),
+            style.rail_radius.is_some(),
+            style.rail_radius_top_left.is_some(),
+            style.rail_radius_top_right.is_some(),
+            style.rail_radius_bottom_right.is_some(),
+            style.rail_radius_bottom_left.is_some(),
+            style.handle_border_width.is_some(),
+            style.handle_radius.is_some(),
+            style.handle_radius_top_left.is_some(),
+            style.handle_radius_top_right.is_some(),
+            style.handle_radius_bottom_right.is_some(),
+            style.handle_radius_bottom_left.is_some(),
+        ],
+    ) + &format!(
+        "|handle-color={}",
+        range_background_semantic_key(&style.handle_color)
+    )
+}
+
+pub(crate) fn slider_expression_roots<'a>(
+    value: &'a Expr,
+    min: &'a Expr,
+    max: &'a Expr,
+    step: &'a Expr,
+    options: &'a SliderOptions,
+    span: &'a Span,
+) -> Vec<(&'a Expr, &'a Span)> {
+    let mut roots = vec![(value, span), (min, span), (max, span), (step, span)];
+    roots.extend(
+        [&options.default, &options.shift_step]
+            .into_iter()
+            .flatten()
+            .map(|expression| (expression, span)),
+    );
+    push_range_length_root(&mut roots, &options.width, span);
+    push_range_length_root(&mut roots, &options.height, span);
+    if let Some(custom) = &options.style.custom {
+        roots.extend(custom.args.iter().map(|expression| (expression, span)));
+    }
+    for status in [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.dragged,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let status_span = status.span.as_ref().unwrap_or(span);
+        push_range_background_roots(&mut roots, &status.rail_start, status_span);
+        push_range_background_roots(&mut roots, &status.rail_end, status_span);
+        push_range_background_roots(&mut roots, &status.handle_color, status_span);
+        roots.extend(
+            [
+                &status.rail_width,
+                &status.rail_border_width,
+                &status.rail_radius,
+                &status.rail_radius_top_left,
+                &status.rail_radius_top_right,
+                &status.rail_radius_bottom_right,
+                &status.rail_radius_bottom_left,
+                &status.handle_border_width,
+                &status.handle_radius,
+                &status.handle_radius_top_left,
+                &status.handle_radius_top_right,
+                &status.handle_radius_bottom_right,
+                &status.handle_radius_bottom_left,
+            ]
+            .into_iter()
+            .flatten()
+            .map(|expression| (expression, status_span)),
+        );
+        if let Some(SliderHandleShape::Circle(radius)) = &status.handle_shape {
+            roots.push((radius, status_span));
+        }
+    }
+    roots
+}
+
+pub(crate) fn slider_semantic_key(
+    options: &SliderOptions,
+    vertical: bool,
+    styles: &[String],
+    route: &Route,
+    release: &Option<Route>,
+) -> String {
+    let custom = options.style.custom.as_ref().map_or_else(
+        || "none".into(),
+        |call| format!("{}:{}", call.function, call.args.len()),
+    );
+    let statuses = [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.dragged,
+    ]
+    .into_iter()
+    .map(|status| {
+        status
+            .as_ref()
+            .map(slider_status_semantic_key)
+            .unwrap_or_else(|| "none".into())
+    })
+    .collect::<Vec<_>>()
+    .join(";");
+    format!(
+        "slider|axis={vertical}|default={}|shift={}|w={}|h={}|custom={custom}|statuses={statuses}|styles={styles:?}|change={}|release={}",
+        options.default.is_some(),
+        options.shift_step.is_some(),
+        range_length_semantic_key(&options.width),
+        range_length_semantic_key(&options.height),
+        range_route_semantic_key(Some(route)),
+        range_route_semantic_key(release.as_ref()),
+    )
+}
+
+pub(crate) fn progress_expression_roots<'a>(
+    value: &'a Expr,
+    min: &'a Expr,
+    max: &'a Expr,
+    options: &'a ProgressOptions,
+    span: &'a Span,
+) -> Vec<(&'a Expr, &'a Span)> {
+    let mut roots = vec![(value, span), (min, span), (max, span)];
+    push_range_length_root(&mut roots, &options.length, span);
+    push_range_length_root(&mut roots, &options.girth, span);
+    if let Some(custom) = &options.custom_style {
+        roots.extend(custom.args.iter().map(|expression| (expression, span)));
+    }
+    push_range_background_roots(&mut roots, &options.background, span);
+    push_range_background_roots(&mut roots, &options.bar, span);
+    roots.extend(
+        [
+            &options.border_width,
+            &options.radius,
+            &options.radius_top_left,
+            &options.radius_top_right,
+            &options.radius_bottom_right,
+            &options.radius_bottom_left,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|expression| (expression, span)),
+    );
+    roots
+}
+
+pub(crate) fn progress_semantic_key(
+    options: &ProgressOptions,
+    vertical: bool,
+    styles: &[String],
+) -> String {
+    let custom = options.custom_style.as_ref().map_or_else(
+        || "none".into(),
+        |call| format!("{}:{}", call.function, call.args.len()),
+    );
+    format!(
+        "progress|axis={vertical}|length={}|girth={}|preset={:?}|custom={custom}|bg={}|bar={}|border={:?}|fields={:?}|styles={styles:?}",
+        range_length_semantic_key(&options.length),
+        range_length_semantic_key(&options.girth),
+        options.style,
+        range_background_semantic_key(&options.background),
+        range_background_semantic_key(&options.bar),
+        options.border_color,
+        [
+            options.border_width.is_some(),
+            options.radius.is_some(),
+            options.radius_top_left.is_some(),
+            options.radius_top_right.is_some(),
+            options.radius_bottom_right.is_some(),
+            options.radius_bottom_left.is_some(),
+        ],
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuleStyle {
     Default,
@@ -98,6 +350,121 @@ pub enum RuleFill {
     Percent(Expr),
     Padded(u16),
     AsymmetricPadding(u16, u16),
+}
+
+pub(crate) fn rule_expression_roots<'a>(
+    thickness: &'a Expr,
+    options: &'a RuleOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![thickness];
+    if let Some(RuleFill::Percent(percent)) = &options.fill {
+        roots.push(percent);
+    }
+    roots.extend(
+        [
+            &options.radius,
+            &options.radius_top_left,
+            &options.radius_top_right,
+            &options.radius_bottom_right,
+            &options.radius_bottom_left,
+            &options.snap,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn rule_semantic_key(axis: Axis, options: &RuleOptions, styles: &[String]) -> String {
+    let axis = match axis {
+        Axis::Horizontal => "horizontal",
+        Axis::Vertical => "vertical",
+    };
+    let fill = match &options.fill {
+        None => "none".into(),
+        Some(RuleFill::Full) => "full".into(),
+        Some(RuleFill::Percent(_)) => "percent".into(),
+        Some(RuleFill::Padded(value)) => format!("pad:{value}"),
+        Some(RuleFill::AsymmetricPadding(first, second)) => {
+            format!("pad:{first}:{second}")
+        }
+    };
+    format!(
+        "rule|axis={axis}|preset={:?}|fill={fill}|color={:?}|radius={:?}|snap={}|styles={styles:?}",
+        options.style,
+        options.color,
+        [
+            options.radius.is_some(),
+            options.radius_top_left.is_some(),
+            options.radius_top_right.is_some(),
+            options.radius_bottom_right.is_some(),
+            options.radius_bottom_left.is_some(),
+        ],
+        options.snap.is_some(),
+    )
+}
+
+pub(crate) fn qr_code_expression_roots<'a>(
+    payload: &'a Expr,
+    cell_size: &'a Option<Expr>,
+    total_size: &'a Option<Expr>,
+) -> Vec<&'a Expr> {
+    std::iter::once(payload)
+        .chain(cell_size.iter())
+        .chain(total_size.iter())
+        .collect()
+}
+
+pub(crate) fn qr_code_semantic_key(
+    correction: Option<QrCorrection>,
+    version: Option<QrVersion>,
+    cell_size: &Option<Expr>,
+    total_size: &Option<Expr>,
+    cell: &Option<String>,
+    background: &Option<String>,
+) -> String {
+    let correction = match correction {
+        None => "none",
+        Some(QrCorrection::Low) => "low",
+        Some(QrCorrection::Medium) => "medium",
+        Some(QrCorrection::Quartile) => "quartile",
+        Some(QrCorrection::High) => "high",
+    };
+    let version = match version {
+        None => "none".into(),
+        Some(QrVersion::Normal(value)) => format!("normal:{value}"),
+        Some(QrVersion::Micro(value)) => format!("micro:{value}"),
+    };
+    format!(
+        "qr|correction={correction}|version={version}|cell-size={}|total-size={}|cell={cell:?}|background={background:?}",
+        cell_size.is_some(),
+        total_size.is_some(),
+    )
+}
+
+pub(crate) fn space_expression_roots<'a>(
+    width: &'a Option<LengthValue>,
+    height: &'a Option<LengthValue>,
+) -> Vec<&'a Expr> {
+    [width, height]
+        .into_iter()
+        .filter_map(|length| match length {
+            Some(LengthValue::Fixed(expression)) => Some(expression),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn space_semantic_key(
+    width: &Option<LengthValue>,
+    height: &Option<LengthValue>,
+    styles: &[String],
+) -> String {
+    format!(
+        "space|width={}|height={}|styles={styles:?}",
+        range_length_semantic_key(width),
+        range_length_semantic_key(height),
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,6 +559,396 @@ pub struct ComboBoxOptions {
     pub menu_style: Option<Box<MenuStyleOptions>>,
 }
 
+fn push_selection_length_root<'a>(roots: &mut Vec<&'a Expr>, length: &'a Option<LengthValue>) {
+    if let Some(LengthValue::Fixed(value)) = length {
+        roots.push(value);
+    }
+}
+
+fn push_selection_background_roots<'a>(
+    roots: &mut Vec<&'a Expr>,
+    background: &'a Option<BackgroundValue>,
+) {
+    if let Some(BackgroundValue::Linear { angle, stops }) = background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+}
+
+fn push_selection_surface_roots<'a>(roots: &mut Vec<&'a Expr>, surface: &'a ContainerStyleOptions) {
+    push_selection_background_roots(roots, &surface.background);
+    roots.extend(
+        [
+            &surface.border_width,
+            &surface.radius,
+            &surface.radius_top_left,
+            &surface.radius_top_right,
+            &surface.radius_bottom_right,
+            &surface.radius_bottom_left,
+            &surface.shadow_x,
+            &surface.shadow_y,
+            &surface.shadow_blur,
+            &surface.pixel_snap,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+}
+
+fn push_menu_roots<'a>(roots: &mut Vec<&'a Expr>, menu: &'a Option<Box<MenuStyleOptions>>) {
+    let Some(menu) = menu else { return };
+    push_selection_surface_roots(roots, &menu.options);
+    push_selection_background_roots(roots, &menu.selected_background);
+}
+
+fn push_pick_icon_roots<'a>(roots: &mut Vec<&'a Expr>, icon: &'a PickListIcon) {
+    roots.extend([&icon.size, &icon.line_height].into_iter().flatten());
+}
+
+fn push_pick_handle_roots<'a>(roots: &mut Vec<&'a Expr>, handle: &'a Option<PickListHandle>) {
+    match handle {
+        Some(PickListHandle::Arrow { size }) => roots.extend(size),
+        Some(PickListHandle::Static(icon)) => push_pick_icon_roots(roots, icon),
+        Some(PickListHandle::Dynamic { closed, open }) => {
+            push_pick_icon_roots(roots, closed);
+            push_pick_icon_roots(roots, open);
+        }
+        Some(PickListHandle::None) | None => {}
+    }
+}
+
+pub(crate) fn pick_list_expression_roots<'a>(
+    options: &'a Expr,
+    selected: &'a Expr,
+    config: &'a PickListOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![options, selected];
+    roots.extend(&config.placeholder);
+    push_selection_length_root(&mut roots, &config.width);
+    push_selection_length_root(&mut roots, &config.menu_height);
+    roots.extend(
+        [&config.padding, &config.text_size, &config.line_height]
+            .into_iter()
+            .flatten(),
+    );
+    push_pick_handle_roots(&mut roots, &config.handle);
+    if let Some(style) = &config.custom_style {
+        roots.extend(&style.args);
+    }
+    if let Some(style) = &config.custom_menu_style {
+        roots.extend(&style.args);
+    }
+    for status in [
+        &config.style.active,
+        &config.style.hovered,
+        &config.style.opened,
+        &config.style.opened_hovered,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_selection_surface_roots(&mut roots, &status.options);
+    }
+    push_menu_roots(&mut roots, &config.menu_style);
+    roots
+}
+
+pub(crate) fn pick_list_routes<'a>(
+    config: &'a PickListOptions,
+    selection: &'a Route,
+) -> Vec<&'a Route> {
+    [Some(selection), config.open.as_ref(), config.close.as_ref()]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+pub(crate) fn combo_box_expression_roots<'a>(
+    selected: &'a Expr,
+    options: &'a ComboBoxOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![selected];
+    push_selection_length_root(&mut roots, &options.width);
+    push_selection_length_root(&mut roots, &options.menu_height);
+    roots.extend(
+        [&options.padding, &options.text_size, &options.line_height]
+            .into_iter()
+            .flatten(),
+    );
+    if let Some(icon) = &options.icon {
+        roots.extend([&icon.size, &icon.spacing].into_iter().flatten());
+    }
+    if let Some(style) = &options.custom_style {
+        roots.extend(&style.args);
+    }
+    if let Some(style) = &options.custom_menu_style {
+        roots.extend(&style.args);
+    }
+    for status in [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.focused,
+        &options.style.focused_hovered,
+        &options.style.disabled,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_selection_surface_roots(&mut roots, &status.options);
+    }
+    push_menu_roots(&mut roots, &options.menu_style);
+    roots
+}
+
+pub(crate) fn combo_box_routes<'a>(
+    options: &'a ComboBoxOptions,
+    selection: &'a Route,
+) -> Vec<&'a Route> {
+    [
+        Some(selection),
+        options.input.as_ref(),
+        options.hover.as_ref(),
+        options.open.as_ref(),
+        options.close.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn selection_length_key(length: &Option<LengthValue>) -> &'static str {
+    match length {
+        None => "none",
+        Some(LengthValue::Fill) => "fill",
+        Some(LengthValue::FillPortion(_)) => "fill-portion",
+        Some(LengthValue::Shrink) => "shrink",
+        Some(LengthValue::Fixed(_)) => "fixed",
+    }
+}
+
+fn selection_route_key(route: Option<&Route>) -> String {
+    route.map_or_else(
+        || "none".into(),
+        |route| {
+            let arguments = route
+                .args
+                .iter()
+                .map(|argument| match argument {
+                    RouteArg::Expr(_) => 'e',
+                    RouteArg::Payload => 'p',
+                })
+                .collect::<String>();
+            format!("{}:{arguments}", route.handler)
+        },
+    )
+}
+
+fn selection_background_key(background: &Option<BackgroundValue>) -> String {
+    match background {
+        None => "none".into(),
+        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+        Some(BackgroundValue::Linear { stops, .. }) => format!(
+            "linear:{}",
+            stops
+                .iter()
+                .map(|stop| stop.color.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
+fn selection_surface_key(surface: &ContainerStyleOptions) -> String {
+    format!(
+        "bg={}|colors={:?}|fields={:?}",
+        selection_background_key(&surface.background),
+        [
+            surface.text_color.as_deref(),
+            surface.border_color.as_deref(),
+            surface.shadow_color.as_deref(),
+        ],
+        [
+            surface.border_width.is_some(),
+            surface.radius.is_some(),
+            surface.radius_top_left.is_some(),
+            surface.radius_top_right.is_some(),
+            surface.radius_bottom_right.is_some(),
+            surface.radius_bottom_left.is_some(),
+            surface.shadow_x.is_some(),
+            surface.shadow_y.is_some(),
+            surface.shadow_blur.is_some(),
+            surface.pixel_snap.is_some(),
+        ],
+    )
+}
+
+fn menu_semantic_key(menu: &Option<Box<MenuStyleOptions>>) -> String {
+    menu.as_ref().map_or_else(
+        || "none".into(),
+        |menu| {
+            format!(
+                "{}|selected={:?}:{}",
+                selection_surface_key(&menu.options),
+                menu.selected_text_color,
+                selection_background_key(&menu.selected_background),
+            )
+        },
+    )
+}
+
+fn pick_handle_semantic_key(handle: &Option<PickListHandle>) -> String {
+    let icon = |icon: &PickListIcon| {
+        format!(
+            "{}:{:?}:{:?}:{}:{}",
+            icon.code_point,
+            icon.font,
+            icon.shaping,
+            icon.size.is_some(),
+            icon.line_height.is_some(),
+        )
+    };
+    match handle {
+        None => "default".into(),
+        Some(PickListHandle::Arrow { size }) => format!("arrow:{}", size.is_some()),
+        Some(PickListHandle::Static(value)) => format!("static:{}", icon(value)),
+        Some(PickListHandle::Dynamic { closed, open }) => {
+            format!("dynamic:{}:{}", icon(closed), icon(open))
+        }
+        Some(PickListHandle::None) => "none".into(),
+    }
+}
+
+pub(crate) fn pick_list_semantic_key(config: &PickListOptions, route: &Route) -> String {
+    let custom = |style: Option<&ExternCall>| {
+        style.map_or_else(
+            || "none".into(),
+            |style| format!("{}:{}", style.function, style.args.len()),
+        )
+    };
+    let statuses = [
+        &config.style.active,
+        &config.style.hovered,
+        &config.style.opened,
+        &config.style.opened_hovered,
+    ]
+    .into_iter()
+    .map(|status| {
+        status.as_ref().map_or_else(
+            || "none".into(),
+            |status| {
+                format!(
+                    "{}|colors={:?}",
+                    selection_surface_key(&status.options),
+                    [
+                        status.placeholder_color.as_deref(),
+                        status.handle_color.as_deref(),
+                    ],
+                )
+            },
+        )
+    })
+    .collect::<Vec<_>>()
+    .join(";");
+    format!(
+        "pick|placeholder={}|width={}|menu-height={}|metrics={:?}|shaping={:?}|font={:?}|handle={}|routes={:?}|custom={}:{}|statuses={statuses}|menu={}",
+        config.placeholder.is_some(),
+        selection_length_key(&config.width),
+        selection_length_key(&config.menu_height),
+        [
+            config.padding.is_some(),
+            config.text_size.is_some(),
+            config.line_height.is_some(),
+        ],
+        config.shaping,
+        config.font,
+        pick_handle_semantic_key(&config.handle),
+        [
+            selection_route_key(Some(route)),
+            selection_route_key(config.open.as_ref()),
+            selection_route_key(config.close.as_ref()),
+        ],
+        custom(config.custom_style.as_ref()),
+        custom(config.custom_menu_style.as_ref()),
+        menu_semantic_key(&config.menu_style),
+    )
+}
+
+pub(crate) fn combo_box_semantic_key(
+    state: &str,
+    placeholder: &str,
+    options: &ComboBoxOptions,
+    route: &Route,
+) -> String {
+    let custom = |style: Option<&ExternCall>| {
+        style.map_or_else(
+            || "none".into(),
+            |style| format!("{}:{}", style.function, style.args.len()),
+        )
+    };
+    let icon = options.icon.as_ref().map_or_else(
+        || "none".into(),
+        |icon| {
+            format!(
+                "{}:{:?}:{:?}:{}:{}",
+                icon.code_point,
+                icon.font,
+                icon.side,
+                icon.size.is_some(),
+                icon.spacing.is_some(),
+            )
+        },
+    );
+    let statuses = [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.focused,
+        &options.style.focused_hovered,
+        &options.style.disabled,
+    ]
+    .into_iter()
+    .map(|status| {
+        status.as_ref().map_or_else(
+            || "none".into(),
+            |status| {
+                format!(
+                    "{}|colors={:?}",
+                    selection_surface_key(&status.options),
+                    [
+                        status.icon_color.as_deref(),
+                        status.placeholder_color.as_deref(),
+                        status.value_color.as_deref(),
+                        status.selection_color.as_deref(),
+                    ],
+                )
+            },
+        )
+    })
+    .collect::<Vec<_>>()
+    .join(";");
+    format!(
+        "combo|state={state}|placeholder={placeholder:?}|width={}|menu-height={}|metrics={:?}|shaping={:?}|font={:?}|icon={icon}|routes={:?}|custom={}:{}|statuses={statuses}|menu={}",
+        selection_length_key(&options.width),
+        selection_length_key(&options.menu_height),
+        [
+            options.padding.is_some(),
+            options.text_size.is_some(),
+            options.line_height.is_some(),
+        ],
+        options.shaping,
+        options.font,
+        [
+            selection_route_key(Some(route)),
+            selection_route_key(options.input.as_ref()),
+            selection_route_key(options.hover.as_ref()),
+            selection_route_key(options.open.as_ref()),
+            selection_route_key(options.close.as_ref()),
+        ],
+        custom(options.custom_style.as_ref()),
+        custom(options.custom_menu_style.as_ref()),
+        menu_semantic_key(&options.menu_style),
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TextInputStyleSet {
     pub active: Option<TextInputStatusStyle>,
@@ -261,12 +1018,6 @@ pub enum LengthValue {
     FillPortion(u16),
     Shrink,
     Fixed(Expr),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImageFilter {
-    Linear,
-    Nearest,
 }
 
 #[derive(Clone, Debug)]

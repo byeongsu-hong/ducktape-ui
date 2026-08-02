@@ -1,7 +1,7 @@
 use super::*;
 use crate::codegen::{
-    BindingEnvMetrics, ValueMode, binding_env_metrics, checked_expr_use_code, checked_state_env,
-    reset_binding_env_metrics,
+    BindingEnvMetrics, ValueMode, binding_env_metrics, checked_state_env,
+    reset_binding_env_metrics, resolved_expr_use_code,
 };
 
 #[test]
@@ -895,11 +895,13 @@ view
     let (large, large_elapsed, large_output) = measure(4_000);
     assert_eq!(small.view_analysis_passes, 500);
     assert_eq!(large.view_analysis_passes, 4_000);
-    assert_eq!(large.expression_uses - 1, (small.expression_uses - 1) * 8);
-    assert_eq!(large.expressions - 1, (small.expressions - 1) * 8);
+    // The state initializer and component-body Text value are fixed checked
+    // expressions; remove both before comparing per-call work.
+    assert_eq!(large.expression_uses - 2, (small.expression_uses - 2) * 8);
+    assert_eq!(large.expressions - 2, (small.expressions - 2) * 8);
     assert_eq!(
-        large.type_analysis_nodes - 1,
-        (small.type_analysis_nodes - 1) * 8
+        large.type_analysis_nodes - 2,
+        (small.type_analysis_nodes - 2) * 8
     );
     assert_eq!(large.type_scope_env_full_clones, 0);
     assert_eq!(large.scope_env_full_clones, 0);
@@ -936,14 +938,19 @@ view
   Label value=count
 "#;
     let program = crate::lower::lower(crate::analyze(source).unwrap()).unwrap();
-    let call = program
-        .component_call(program.document().view.span())
-        .unwrap();
+    let crate::lower::ResolvedViewKind::Component { call } = program
+        .resolved_view(program.app_view())
+        .map(|view| &view.kind)
+        .unwrap()
+    else {
+        panic!("application root is not a component call")
+    };
+    let call = program.component_call_by_id(*call).unwrap();
     let expression = call.arguments[0].expression;
     let mut env = checked_state_env(&program, "self");
     env.get_mut("count").unwrap().owner = None;
 
-    let error = checked_expr_use_code(&program, expression, &env, ValueMode::Owned).unwrap_err();
+    let error = resolved_expr_use_code(&program, expression, &env, ValueMode::Owned).unwrap_err();
     assert_eq!(error.code, "E196");
     assert!(error.message.contains("mismatched emission owner"));
 }

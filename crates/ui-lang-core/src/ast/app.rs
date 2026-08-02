@@ -350,20 +350,6 @@ pub struct WindowIcon {
     pub span: Span,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum WindowPosition {
-    Default,
-    Centered,
-    Specific(f64, f64),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WindowLevel {
-    Normal,
-    AlwaysOnBottom,
-    AlwaysOnTop,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct FontDecl {
     pub name: String,
@@ -373,49 +359,6 @@ pub struct FontDecl {
     pub style: FontStyle,
     pub default: bool,
     pub span: Span,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FontFamily {
-    Named(String),
-    Serif,
-    SansSerif,
-    Cursive,
-    Fantasy,
-    Monospace,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FontWeight {
-    Thin,
-    ExtraLight,
-    Light,
-    Normal,
-    Medium,
-    Semibold,
-    Bold,
-    ExtraBold,
-    Black,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FontStretch {
-    UltraCondensed,
-    ExtraCondensed,
-    Condensed,
-    SemiCondensed,
-    Normal,
-    SemiExpanded,
-    Expanded,
-    ExtraExpanded,
-    UltraExpanded,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FontStyle {
-    Normal,
-    Italic,
-    Oblique,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -453,43 +396,6 @@ pub struct ExternFn {
     pub span: Span,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExternKind {
-    Future,
-    Component,
-    Shader,
-    Task,
-    Stream,
-    Sip,
-    Recipe,
-    Selector,
-    EventFilter,
-    Sync,
-    Subscription,
-    Theme,
-    Themer,
-    Window,
-    MarkdownViewer,
-    EditorBinding,
-    EditorAction,
-    EditorHighlighter,
-    EditorStyle,
-    TextStyle,
-    SliderStyle,
-    ProgressStyle,
-    ButtonStyle,
-    CheckboxStyle,
-    TogglerStyle,
-    RadioStyle,
-    ContainerStyle,
-    SvgStyle,
-    InputStyle,
-    ScrollStyle,
-    PickListStyle,
-    MenuStyle,
-    PaneGridStyle,
-}
-
 #[derive(Clone, Debug)]
 pub struct Subscription {
     pub source: SubscriptionSource,
@@ -500,13 +406,6 @@ pub struct Subscription {
     pub status: Option<EventStatus>,
     pub route: Route,
     pub span: Span,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EventStatus {
-    Any,
-    Captured,
-    Ignored,
 }
 
 #[derive(Clone, Debug)]
@@ -524,53 +423,4 @@ pub enum SubscriptionSource {
     SystemTheme,
     Touch(TouchEvent),
     Window(WindowEvent),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InputMethodEvent {
-    Opened,
-    Preedit,
-    Commit,
-    Closed,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyboardEvent {
-    Press,
-    Release,
-    Modifiers,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MouseEvent {
-    Entered,
-    Left,
-    Moved,
-    Pressed,
-    Released,
-    Wheel,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TouchEvent {
-    Pressed,
-    Moved,
-    Lifted,
-    Lost,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WindowEvent {
-    Frame,
-    Opened,
-    Closed,
-    Moved,
-    Resized,
-    Rescaled,
-    CloseRequested,
-    Focused,
-    Unfocused,
-    FileHovered,
-    FileDropped,
-    FilesHoveredLeft,
 }

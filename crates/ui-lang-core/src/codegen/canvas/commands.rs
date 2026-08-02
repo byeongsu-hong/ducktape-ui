@@ -94,7 +94,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                 value_type,
                 ..
             } => {
-                let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
                 let content = if *value_type == Type::Str {
                     value
                 } else {
@@ -160,7 +160,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                 source_type,
                 ..
             } => {
-                let source = checked_expr_use_code(program, *source, env, ValueMode::Owned)?;
+                let source = resolved_expr_use_code(program, *source, env, ValueMode::Owned)?;
                 let handle = if *source_type == Type::Str {
                     format!("::iced::widget::image::Handle::from_path({source})")
                 } else {
@@ -195,7 +195,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                 source_type,
                 ..
             } => {
-                let source = checked_expr_use_code(program, *source, env, ValueMode::Owned)?;
+                let source = resolved_expr_use_code(program, *source, env, ValueMode::Owned)?;
                 let handle = if *memory && *source_type == Type::Bytes {
                     format!("::iced::advanced::svg::Handle::from_memory({source})")
                 } else if *memory {
@@ -328,7 +328,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                 commands,
                 ..
             } => {
-                let condition = checked_expr_use_code(program, *condition, env, ValueMode::Owned)?;
+                let condition = resolved_expr_use_code(program, *condition, env, ValueMode::Owned)?;
                 write!(
                     code,
                     " if {condition} {{ {} }}",
@@ -342,7 +342,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                 commands,
                 ..
             } => {
-                let items = checked_expr_use_code(program, *items, env, ValueMode::Borrowed)?;
+                let items = resolved_expr_use_code(program, *items, env, ValueMode::Borrowed)?;
                 let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
                     item.name.clone(),

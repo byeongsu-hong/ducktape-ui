@@ -1,16 +1,22 @@
 use crate::ast::*;
 use crate::check::{
-    BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
-    CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
-    CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
-    CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner, CheckedMedia,
-    CheckedPathRoot, CheckedProjectionKind, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
-    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    BuiltinArgumentContext, CheckedBinaryOperator, CheckedBooleanControl, CheckedCallArgument,
+    CheckedCallTarget, CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget,
+    CheckedComboBox, CheckedComponentArgumentSource, CheckedComponentEventDelivery, CheckedExprId,
+    CheckedExprKind, CheckedExprOwner, CheckedExprUse, CheckedExternViewAdapter, CheckedFacts,
+    CheckedInitializerCoercion, CheckedInput, CheckedInteraction, CheckedInteractionKind,
+    CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown, CheckedMatchArm,
+    CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
+    CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
+    CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
+    CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
+    CheckedProjectionKind, CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator,
+    CheckedValueRef, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
     ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
-    CheckedExprUseId, CheckedResponsiveLength, CheckedSubscription, CheckedSubscriptionExprRole,
-    CheckedSubscriptionSource,
+    CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
+    CheckedSubscriptionExprRole, CheckedSubscriptionSource,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
@@ -22,33 +28,76 @@ pub(crate) use crate::hir::{
     PaletteId, PinExpressionId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
     TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
-use crate::{CheckedDocument, Error};
+use crate::semantic::*;
+use crate::{CheckedControlledEditor, CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+mod boolean;
+mod button;
 mod canvas;
+mod conditional;
+mod container;
+mod content_primitives;
+mod editor;
+mod expression;
+mod extern_component;
+mod extern_view_adapter;
 mod float;
+mod input;
 mod interaction;
+mod iteration;
+mod keyed_column;
+mod layout;
 mod lazy;
+mod markdown;
+mod match_view;
 mod media;
+mod overlay;
+mod pane_grid;
 mod pin;
+mod range_controls;
 mod responsive;
+mod selection;
 mod style;
+mod table;
 mod testing;
+mod text;
 mod tooltip;
+mod view_topology;
 
+pub(crate) use boolean::*;
+pub(crate) use button::*;
 pub(crate) use canvas::*;
+pub(crate) use conditional::*;
+pub(crate) use container::*;
+pub(crate) use content_primitives::*;
+pub(crate) use editor::*;
+pub(crate) use expression::*;
+pub(crate) use extern_component::*;
+pub(crate) use extern_view_adapter::*;
 pub(crate) use float::*;
+pub(crate) use input::*;
 pub(crate) use interaction::*;
+pub(crate) use iteration::*;
+pub(crate) use keyed_column::*;
+pub(crate) use layout::*;
 pub(crate) use lazy::*;
+pub(crate) use markdown::*;
+pub(crate) use match_view::*;
 pub(crate) use media::*;
+pub(crate) use overlay::*;
+pub(crate) use pane_grid::*;
 pub(crate) use pin::*;
+pub(crate) use range_controls::*;
 pub(crate) use responsive::*;
+pub(crate) use selection::*;
+pub(crate) use table::*;
+pub(crate) use text::*;
 
 pub(crate) use style::*;
 pub(crate) use tooltip::*;
-
-pub(crate) type ResolvedExpressionId = CheckedExprUseId;
+pub(crate) use view_topology::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResolvedTestTheme {
@@ -408,6 +457,19 @@ pub(crate) struct AppStateContract {
     pub(crate) initializer: ResolvedInitializer,
     pub(crate) span: Span,
     pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedControlledInputBinding {
+    state: AppStateId,
+    name: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedControlledEditorBinding {
+    pub(crate) state: AppStateId,
+    pub(crate) name: String,
+    pub(crate) action: Option<ExternFnId>,
 }
 
 #[allow(dead_code)]
@@ -1290,7 +1352,7 @@ pub(crate) struct ComponentContract {
     slots: Vec<ComponentSlotContract>,
     pub(crate) states: Vec<ComponentStateContract>,
     pub(crate) handlers: Vec<HandlerId>,
-    pub(crate) root: ViewNode,
+    pub(crate) root: ViewId,
     pub(crate) storage: ComponentStorage,
     pub(crate) origin: OriginId,
 }
@@ -1324,6 +1386,18 @@ impl WritableStateRef {
             | Self::ComponentState { name, .. } => name,
         }
     }
+
+    pub(crate) fn checked_ref(&self) -> CheckedValueRef {
+        match self {
+            Self::App { id, .. } => CheckedValueRef::AppState(*id),
+            Self::ComponentParam { id, .. } => CheckedValueRef::ComponentParam(*id),
+            Self::ComponentState { id, .. } => CheckedValueRef::ComponentState(*id),
+        }
+    }
+
+    pub(crate) fn accepts_type(&self, ty: &Type) -> bool {
+        *ty == Type::Str
+    }
 }
 
 #[allow(dead_code)]
@@ -1348,18 +1422,23 @@ impl ResolvedArgument {
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedEventRoute {
     Direct {
+        route_index: u32,
         event: ComponentEventId,
         name: String,
         payloads: Vec<Type>,
-        route: Route,
+        route: ResolvedInteractionRoute,
         origin: OriginId,
     },
     Forward {
+        route_index: u32,
         event: ComponentEventId,
         name: String,
         payloads: Vec<Type>,
         outer_component: ComponentId,
+        outer_component_name: String,
         outer_event: ComponentEventId,
+        outer_event_name: String,
+        outer_payloads: Vec<Type>,
         origin: OriginId,
     },
 }
@@ -1381,10 +1460,10 @@ impl ResolvedEventRoute {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedSlot {
-    slot: ComponentSlotId,
+    pub(crate) slot: ComponentSlotId,
     pub(crate) name: String,
     pub(crate) optional: bool,
-    pub(crate) content: Option<ViewNode>,
+    pub(crate) content: Option<ViewId>,
     pub(crate) origin: OriginId,
 }
 
@@ -1392,7 +1471,6 @@ pub(crate) struct ResolvedSlot {
 #[derive(Clone, Debug)]
 pub(crate) enum ComponentScope {
     Explicit {
-        id: Id,
         origin: OriginId,
     },
     Implicit {
@@ -1408,7 +1486,7 @@ pub(crate) enum ComponentOutputRoute {
     None,
     Direct {
         output: Type,
-        route: Route,
+        route: ResolvedInteractionRoute,
         origin: OriginId,
     },
 }
@@ -1416,7 +1494,7 @@ pub(crate) enum ComponentOutputRoute {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ComponentCall {
-    id: ComponentCallId,
+    pub(crate) id: ComponentCallId,
     pub(crate) component: ComponentId,
     pub(crate) origin: OriginId,
     pub(crate) arguments: Vec<ResolvedArgument>,
@@ -1437,21 +1515,61 @@ struct CallSite {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
+    // Adversarial tests retain a poisonable source sidecar to prove that
+    // production code generation never observes the source AST. Release
+    // builds do not store it.
+    #[cfg(test)]
     document: Document,
+    app_view: ViewId,
+    expressions: ResolvedExpressionProgram,
+    // Adversarial tests retain checker facts only to verify lowering
+    // invariants after deliberate HIR corruption. Release programs do not
+    // carry checker state into the backend boundary.
+    #[cfg(test)]
     facts: CheckedFacts,
     declarations: DeclarationIndex,
     settings: ResolvedAppSettings,
     subscriptions: Vec<ResolvedSubscription>,
     tests: Vec<ResolvedTest>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
+    containers: HashMap<ViewId, ResolvedContainer>,
+    layouts: HashMap<ViewId, ResolvedLayout>,
+    texts: HashMap<ViewId, ResolvedText>,
+    buttons: HashMap<ViewId, ResolvedButton>,
+    inputs: HashMap<ViewId, ResolvedInput>,
+    text_editors: HashMap<ViewId, ResolvedTextEditor>,
+    markdowns: HashMap<ViewId, ResolvedMarkdown>,
+    extern_component_declarations: Vec<ResolvedExternComponentDeclaration>,
+    extern_components: HashMap<ViewId, ResolvedExternComponent>,
+    themers: HashMap<ViewId, ResolvedThemer>,
+    shaders: HashMap<ViewId, ResolvedShader>,
+    boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
+    pick_lists: HashMap<ViewId, ResolvedPickList>,
+    combo_boxes: HashMap<ViewId, ResolvedComboBox>,
+    sliders: HashMap<ViewId, ResolvedSlider>,
+    progresses: HashMap<ViewId, ResolvedProgress>,
+    rules: HashMap<ViewId, ResolvedRule>,
+    qr_codes: HashMap<ViewId, ResolvedQrCode>,
+    spaces: HashMap<ViewId, ResolvedSpace>,
+    controlled_inputs: Vec<ResolvedControlledInputBinding>,
+    controlled_editors: Vec<ResolvedControlledEditorBinding>,
+    controlled_editors_by_name: HashMap<String, usize>,
     media: HashMap<ViewId, ResolvedMedia>,
+    overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
     responsives: HashMap<ViewId, ResolvedResponsive>,
+    keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
+    conditionals: HashMap<ViewId, ResolvedConditional>,
+    iterations: HashMap<ViewId, ResolvedIteration>,
+    match_views: HashMap<ViewId, ResolvedMatch>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
+    tables: HashMap<ViewId, ResolvedTable>,
+    pane_grids: HashMap<ViewId, ResolvedPaneGrid>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
-    test_mounts: HashMap<TestId, ViewNode>,
+    views: Vec<ResolvedView>,
+    test_mounts: HashMap<TestId, ViewId>,
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
     app_states: Vec<AppStateContract>,
@@ -1515,6 +1633,7 @@ fn validate_expression_declaration_references(
     Ok(())
 }
 
+#[cfg(test)]
 fn resolved_statement_semantic_key(
     program: &LoweredProgram,
     statement: &ResolvedStatement,
@@ -1692,6 +1811,7 @@ fn resolved_statement_semantic_key(
     })
 }
 
+#[cfg(test)]
 fn resolved_handler_operation_contract(
     program: &LoweredProgram,
     statement: &ResolvedStatement,
@@ -1848,9 +1968,8 @@ fn resolved_handler_operation_contract(
                     index
                         .map(|index| {
                             program
-                                .document
                                 .settings
-                                .windows
+                                .named_windows
                                 .get(index as usize)
                                 .map(|window| window.name.clone())
                                 .ok_or_else(|| {
@@ -1927,6 +2046,7 @@ fn resolved_handler_operation_contract(
 }
 
 impl LoweredProgram {
+    #[cfg(test)]
     pub(crate) fn validate_handler_hir(&self) -> Result<(), Error> {
         fn validate_expression_use(
             program: &LoweredProgram,
@@ -2958,21 +3078,59 @@ impl LoweredProgram {
         Ok(())
     }
 
-    pub(crate) fn document(&self) -> &Document {
-        &self.document
+    pub(crate) fn program(&self) -> &Self {
+        self
+    }
+
+    pub(crate) fn hir(&self) -> &Self {
+        self
+    }
+
+    pub(crate) fn app_view(&self) -> ViewId {
+        self.app_view
+    }
+
+    pub(crate) fn resolved_view(&self, id: ViewId) -> Result<&ResolvedView, Error> {
+        self.views
+            .get(id.0 as usize)
+            .filter(|view| view.id == id)
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    OriginId(u32::MAX),
+                    "resolved view ID is outside its canonical arena",
+                )
+            })
     }
 
     pub(crate) fn app_name(&self) -> &str {
         &self.settings.app_name
     }
 
-    pub(crate) fn extern_structs(&self) -> &[ExternStruct] {
-        &self.document.structs
+    pub(crate) fn struct_declarations(&self) -> &[crate::hir::StructDeclaration] {
+        self.declarations.struct_declarations()
     }
 
-    #[allow(dead_code)]
+    pub(crate) fn enum_declarations(&self) -> &[crate::hir::EnumDeclaration] {
+        self.declarations.enum_declarations()
+    }
+
+    pub(crate) fn extern_functions(&self) -> impl Iterator<Item = &crate::hir::ExternDeclaration> {
+        self.declarations.extern_declarations()
+    }
+
+    pub(crate) fn struct_rust_path_by_name(&self, name: &str) -> Option<&str> {
+        self.declarations
+            .struct_decl_by_name(name)
+            .map(|declaration| declaration.rust_path.as_str())
+    }
+
+    #[cfg(test)]
     pub(crate) fn checked_facts(&self) -> &CheckedFacts {
         &self.facts
+    }
+
+    pub(crate) fn expressions(&self) -> &ResolvedExpressionProgram {
+        &self.expressions
     }
 
     pub(crate) fn subscriptions(&self) -> &[ResolvedSubscription] {
@@ -2989,8 +3147,162 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn container(&self, id: ViewId) -> Option<&ResolvedContainer> {
+        self.containers.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn layout(&self, id: ViewId) -> Option<&ResolvedLayout> {
+        self.layouts.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn text(&self, id: ViewId) -> Option<&ResolvedText> {
+        self.texts.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn input(&self, id: ViewId) -> Option<&ResolvedInput> {
+        self.inputs.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn button(&self, id: ViewId) -> Option<&ResolvedButton> {
+        self.buttons.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn text_editor(&self, id: ViewId) -> Option<&ResolvedTextEditor> {
+        self.text_editors.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn markdown(&self, id: ViewId) -> Option<&ResolvedMarkdown> {
+        self.markdowns.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn extern_component(&self, id: ViewId) -> Option<&ResolvedExternComponent> {
+        self.extern_components.get(&id)
+    }
+
+    pub(crate) fn extern_components(&self) -> impl Iterator<Item = &ResolvedExternComponent> {
+        self.extern_components.values()
+    }
+
+    pub(crate) fn extern_component_declarations(
+        &self,
+    ) -> Result<&[ResolvedExternComponentDeclaration], Error> {
+        let expected = self
+            .declarations
+            .extern_declarations()
+            .filter(|declaration| declaration.kind == ExternKind::Component)
+            .collect::<Vec<_>>();
+        if self.extern_component_declarations.len() != expected.len() {
+            let origin = expected
+                .first()
+                .map_or(OriginId(u32::MAX), |item| item.declaration.origin);
+            return Err(self.invariant_at_origin(
+                origin,
+                "extern component declaration HIR cardinality diverged",
+            ));
+        }
+        for (resolved, declaration) in self.extern_component_declarations.iter().zip(expected) {
+            let parameters_match = declaration.params.len() == declaration.borrowed.len()
+                && resolved.parameters.len() == declaration.params.len()
+                && resolved
+                    .parameters
+                    .iter()
+                    .zip(&declaration.params)
+                    .zip(&declaration.borrowed)
+                    .all(|((resolved, (_, ty)), borrowed)| {
+                        resolved.ty == *ty
+                            && resolved.mode == extern_component_argument_mode(*borrowed, ty)
+                    });
+            if resolved.id != declaration.declaration.id
+                || resolved.origin != declaration.declaration.origin
+                || resolved.name != declaration.name
+                || resolved.rust_path != declaration.rust_path
+                || resolved.output != declaration.output
+                || declaration.progress.is_some()
+                || declaration.error.is_some()
+                || !parameters_match
+            {
+                return Err(self.invariant_at_origin(
+                    declaration.declaration.origin,
+                    "extern component declaration HIR diverged",
+                ));
+            }
+        }
+        Ok(&self.extern_component_declarations)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn themer(&self, id: ViewId) -> Option<&ResolvedThemer> {
+        self.themers.get(&id)
+    }
+
+    pub(crate) fn themers(&self) -> impl Iterator<Item = &ResolvedThemer> {
+        self.themers.values()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shader(&self, id: ViewId) -> Option<&ResolvedShader> {
+        self.shaders.get(&id)
+    }
+
+    pub(crate) fn shaders(&self) -> impl Iterator<Item = &ResolvedShader> {
+        self.shaders.values()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&ResolvedBooleanControl> {
+        self.boolean_controls.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pick_list(&self, id: ViewId) -> Option<&ResolvedPickList> {
+        self.pick_lists.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn combo_box(&self, id: ViewId) -> Option<&ResolvedComboBox> {
+        self.combo_boxes.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn slider(&self, id: ViewId) -> Option<&ResolvedSlider> {
+        self.sliders.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn progress(&self, id: ViewId) -> Option<&ResolvedProgress> {
+        self.progresses.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rule(&self, id: ViewId) -> Option<&ResolvedRule> {
+        self.rules.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn qr_code(&self, id: ViewId) -> Option<&ResolvedQrCode> {
+        self.qr_codes.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn space(&self, id: ViewId) -> Option<&ResolvedSpace> {
+        self.spaces.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
         self.media.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn overlay(&self, id: ViewId) -> Option<&ResolvedOverlay> {
+        self.overlays.get(&id)
     }
 
     #[cfg(test)]
@@ -3014,8 +3326,44 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn keyed_column(&self, id: ViewId) -> Option<&ResolvedKeyedColumn> {
+        self.keyed_columns.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn conditional(&self, id: ViewId) -> Option<&ResolvedConditional> {
+        self.conditionals.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn iteration(&self, id: ViewId) -> Option<&ResolvedIteration> {
+        self.iterations.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn match_view(&self, id: ViewId) -> Option<&ResolvedMatch> {
+        self.match_views.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn lazy_view(&self, id: ViewId) -> Option<&ResolvedLazy> {
         self.lazy_views.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn table(&self, id: ViewId) -> Option<&ResolvedTable> {
+        self.tables.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pane_grid(&self, id: ViewId) -> Option<&ResolvedPaneGrid> {
+        self.pane_grids.get(&id)
+    }
+
+    pub(crate) fn pane_grids(&self) -> Vec<&ResolvedPaneGrid> {
+        let mut panes = self.pane_grids.values().collect::<Vec<_>>();
+        panes.sort_by_key(|pane| pane.id.0);
+        panes
     }
 
     #[cfg(test)]
@@ -3023,259 +3371,8 @@ impl LoweredProgram {
         self.interaction_widgets.get(&id)
     }
 
-    pub(crate) fn resolved_canvas_for(&self, node: &ViewNode) -> Result<&ResolvedCanvas, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "canvas reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "canvas reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.canvases.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "canvas reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_media_for(&self, node: &ViewNode) -> Result<&ResolvedMedia, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "media reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "media reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.media.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "media reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_tooltip_for(&self, node: &ViewNode) -> Result<&ResolvedTooltip, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "tooltip reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "tooltip reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.tooltips.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "tooltip reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_mouse_area_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedMouseArea, Error> {
-        let interaction = self.resolved_interaction_for(node, "mouse area")?;
-        let ResolvedInteractionWidget::MouseArea(mouse) = interaction else {
-            return Err(Error::new(
-                "E196",
-                node.span(),
-                "mouse area reached code generation with the wrong normalized kind",
-            ));
-        };
-        Ok(mouse)
-    }
-
-    pub(crate) fn resolved_resize_handle_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedResizeHandle, Error> {
-        let interaction = self.resolved_interaction_for(node, "resize handle")?;
-        let ResolvedInteractionWidget::ResizeHandle(handle) = interaction else {
-            return Err(Error::new(
-                "E196",
-                node.span(),
-                "resize handle reached code generation with the wrong normalized kind",
-            ));
-        };
-        Ok(handle)
-    }
-
-    pub(crate) fn resolved_sensor_for(&self, node: &ViewNode) -> Result<&ResolvedSensor, Error> {
-        let interaction = self.resolved_interaction_for(node, "sensor")?;
-        let ResolvedInteractionWidget::Sensor(sensor) = interaction else {
-            return Err(Error::new(
-                "E196",
-                node.span(),
-                "sensor reached code generation with the wrong normalized kind",
-            ));
-        };
-        Ok(sensor)
-    }
-
-    pub(crate) fn resolved_float_for(&self, node: &ViewNode) -> Result<&ResolvedFloat, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "float reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "float reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.floats.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "float reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_pin_for(&self, node: &ViewNode) -> Result<&ResolvedPin, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "pin reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "pin reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.pins.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "pin reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_responsive_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedResponsive, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "responsive reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "responsive reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.responsives.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "responsive reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_lazy_for(&self, node: &ViewNode) -> Result<&ResolvedLazy, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "lazy reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "lazy reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.lazy_views.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "lazy reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    fn resolved_interaction_for(
-        &self,
-        node: &ViewNode,
-        family: &str,
-    ) -> Result<&ResolvedInteractionWidget, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                format!("{family} reached code generation without a shared view ID"),
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                format!("{family} reached code generation with a mismatched checked view ID"),
-            ));
-        }
-        self.interaction_widgets.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                format!("{family} reached code generation without normalized HIR"),
-            )
-        })
-    }
-
-    pub(crate) fn test_mount(&self, id: TestId) -> Option<&ViewNode> {
-        self.test_mounts.get(&id)
+    pub(crate) fn test_mount(&self, id: TestId) -> Option<ViewId> {
+        self.test_mounts.get(&id).copied()
     }
 
     pub(crate) fn preset_names(&self) -> &[String] {
@@ -3286,6 +3383,7 @@ impl LoweredProgram {
         self.named_type_rust_paths.get(&id).map(String::as_str)
     }
 
+    #[cfg(test)]
     pub(crate) fn declarations(&self) -> &DeclarationIndex {
         &self.declarations
     }
@@ -3296,6 +3394,100 @@ impl LoweredProgram {
 
     pub(crate) fn app_states(&self) -> &[AppStateContract] {
         &self.app_states
+    }
+
+    pub(crate) fn controlled_input_bindings(&self) -> Result<Vec<&str>, Error> {
+        let mut seen = HashSet::with_capacity(self.controlled_inputs.len());
+        let mut names = Vec::with_capacity(self.controlled_inputs.len());
+        for binding in &self.controlled_inputs {
+            let state = self
+                .app_states
+                .get(binding.state.0 as usize)
+                .filter(|state| {
+                    state.id == binding.state && state.name == binding.name && state.ty == Type::Str
+                })
+                .ok_or_else(|| {
+                    self.invariant_at_origin(
+                        self.settings.origin,
+                        "controlled input binding does not match its normalized app state",
+                    )
+                })?;
+            if !seen.insert(state.id) {
+                return Err(self.invariant_at_origin(
+                    self.settings.origin,
+                    "controlled input binding is duplicated in normalized HIR",
+                ));
+            }
+            names.push(state.name.as_str());
+        }
+        Ok(names)
+    }
+
+    pub(crate) fn controlled_editor_bindings(
+        &self,
+    ) -> Result<Vec<&ResolvedControlledEditorBinding>, Error> {
+        let mut seen = HashSet::with_capacity(self.controlled_editors.len());
+        let mut bindings = Vec::with_capacity(self.controlled_editors.len());
+        for binding in &self.controlled_editors {
+            let state = self.validate_controlled_editor_binding(binding)?;
+            if !seen.insert(state.id) {
+                return Err(self.invariant_at_origin(
+                    self.settings.origin,
+                    "controlled editor binding is duplicated in normalized HIR",
+                ));
+            }
+            bindings.push(binding);
+        }
+        Ok(bindings)
+    }
+
+    pub(crate) fn controlled_editor_binding(
+        &self,
+        name: &str,
+    ) -> Result<&ResolvedControlledEditorBinding, Error> {
+        let binding = self
+            .controlled_editors_by_name
+            .get(name)
+            .and_then(|index| self.controlled_editors.get(*index))
+            .filter(|binding| binding.name == name)
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    self.settings.origin,
+                    "normalized editor is absent from the controlled binding index",
+                )
+            })?;
+        self.validate_controlled_editor_binding(binding)?;
+        Ok(binding)
+    }
+
+    fn validate_controlled_editor_binding(
+        &self,
+        binding: &ResolvedControlledEditorBinding,
+    ) -> Result<&AppStateContract, Error> {
+        let state = self
+            .app_states
+            .get(binding.state.0 as usize)
+            .filter(|state| {
+                state.id == binding.state && state.name == binding.name && state.ty == Type::Editor
+            })
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    self.settings.origin,
+                    "controlled editor binding does not match its normalized app state",
+                )
+            })?;
+        if let Some(action) = binding.action {
+            self.declarations
+                .try_extern_decl(action)
+                .filter(|function| function.kind == ExternKind::EditorAction)
+                .ok_or_else(|| {
+                    self.invariant_at_origin(
+                        self.settings.origin,
+                        "controlled editor action does not match its normalized extern",
+                    )
+                })?;
+        }
+        Ok(state)
     }
 
     pub(crate) fn derived(&self) -> &[DerivedContract] {
@@ -3312,6 +3504,118 @@ impl LoweredProgram {
 
     pub(crate) fn try_component(&self, id: ComponentId) -> Option<&ComponentContract> {
         self.components.get(id.0 as usize)
+    }
+
+    pub(crate) fn component_event_matches(
+        &self,
+        id: ComponentEventId,
+        name: &str,
+        payloads: &[Type],
+    ) -> bool {
+        self.components
+            .get(id.component.0 as usize)
+            .and_then(|component| component.events.get(id.index as usize))
+            .is_some_and(|event| event.id == id && event.name == name && event.payloads == payloads)
+    }
+
+    pub(crate) fn validate_component_call_event_contract(
+        &self,
+        call: &ComponentCall,
+        index: usize,
+    ) -> Result<(), Error> {
+        let resolved = call.events.get(index).ok_or_else(|| {
+            self.invariant_at_origin(
+                call.origin,
+                "lowered component call has an unmatched event route",
+            )
+        })?;
+        let (route_index, event, name, payloads, origin) = match resolved {
+            ResolvedEventRoute::Direct {
+                route_index,
+                event,
+                name,
+                payloads,
+                origin,
+                ..
+            }
+            | ResolvedEventRoute::Forward {
+                route_index,
+                event,
+                name,
+                payloads,
+                origin,
+                ..
+            } => (*route_index, *event, name, payloads, *origin),
+        };
+        let origin_is_valid = self
+            .origins
+            .try_get(origin)
+            .is_some_and(|resolved| resolved.parent == Some(call.origin));
+        let forward_is_valid = match resolved {
+            ResolvedEventRoute::Direct { .. } => true,
+            ResolvedEventRoute::Forward {
+                outer_component,
+                outer_component_name,
+                outer_event,
+                outer_event_name,
+                outer_payloads,
+                ..
+            } => self
+                .try_component(*outer_component)
+                .is_some_and(|component| {
+                    component.id == *outer_component
+                        && component.name == *outer_component_name
+                        && outer_event.component == *outer_component
+                        && outer_event_name == name
+                        && outer_payloads == payloads
+                        && self.component_event_matches(
+                            *outer_event,
+                            outer_event_name,
+                            outer_payloads,
+                        )
+                }),
+        };
+        if route_index as usize != index
+            || event.component != call.component
+            || !origin_is_valid
+            || !forward_is_valid
+            || !self.component_event_matches(event, name, payloads)
+        {
+            let diagnostic_origin = if route_index as usize != index {
+                call.events
+                    .iter()
+                    .find_map(|candidate| match candidate {
+                        ResolvedEventRoute::Direct {
+                            route_index,
+                            origin,
+                            ..
+                        }
+                        | ResolvedEventRoute::Forward {
+                            route_index,
+                            origin,
+                            ..
+                        } if *route_index as usize == index => Some(*origin),
+                        ResolvedEventRoute::Direct { .. } | ResolvedEventRoute::Forward { .. } => {
+                            None
+                        }
+                    })
+                    .filter(|origin| {
+                        self.origins
+                            .try_get(*origin)
+                            .is_some_and(|resolved| resolved.parent == Some(call.origin))
+                    })
+                    .unwrap_or(if origin_is_valid { origin } else { call.origin })
+            } else if origin_is_valid {
+                origin
+            } else {
+                call.origin
+            };
+            return Err(self.invariant_at_origin(
+                diagnostic_origin,
+                format!("lowered component event `{name}` has an invalid callee contract"),
+            ));
+        }
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -3372,88 +3676,22 @@ impl LoweredProgram {
             })
     }
 
-    pub(crate) fn component_call(&self, span: &Span) -> Result<&ComponentCall, Error> {
-        let site = CallSite {
-            line: span.line,
-            column: span.column,
-        };
-        let id = self.calls_by_site.get(&site).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "component call reached code generation without a lowered call",
-            )
-        })?;
-        self.calls.get(id.0 as usize).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "component call references an invalid lowered call ID",
-            )
-        })
-    }
-
-    pub(crate) fn checked_view(&self, span: &Span) -> Result<&crate::check::CheckedView, Error> {
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "view reached code generation without a shared view ID",
-            )
-        })?;
-        let view = self.facts.view(id);
-        if view.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "view reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(view)
-    }
-
-    pub(crate) fn validate_checked_view(&self, node: &ViewNode) -> Result<(), Error> {
-        let span = node.span();
-        let view = self.checked_view(span)?;
-        let id = view.id;
-        if view.kind != crate::hir::view_kind(node) {
-            return Err(Error::new(
-                "E196",
-                span,
-                "raw view kind diverged from its checked topology",
-            ));
-        }
-        let children = crate::hir::view_children(node)
-            .into_iter()
-            .map(|child| {
-                self.declarations.view_id(child.span()).ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        child.span(),
-                        "raw view child has no shared checked ID",
-                    )
-                })
+    pub(crate) fn component_call_by_id(
+        &self,
+        id: ComponentCallId,
+    ) -> Result<&ComponentCall, Error> {
+        self.calls
+            .get(id.0 as usize)
+            .filter(|call| call.id == id)
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    OriginId(u32::MAX),
+                    "component call ID is outside its canonical arena",
+                )
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        if children != view.children {
-            return Err(Error::new(
-                "E196",
-                span,
-                "raw view children diverged from its checked topology",
-            ));
-        }
-        for child in &children {
-            if self.facts.view(*child).parent != Some(id) {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked view child has a mismatched parent",
-                ));
-            }
-        }
-        Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn style_use(&self, span: &Span) -> Result<&ResolvedStyleUse, Error> {
         self.styles.style_use(span)
     }
@@ -3462,12 +3700,20 @@ impl LoweredProgram {
         &self.styles.theme
     }
 
-    pub(crate) fn nested_theme(&self, span: &Span) -> Result<&ResolvedNestedTheme, Error> {
-        self.styles.nested_theme(span)
+    #[cfg(test)]
+    pub(crate) fn nested_theme(&self, id: ViewId) -> Option<&ResolvedNestedTheme> {
+        self.styles.nested_theme(id)
     }
 
     pub(crate) fn extern_function(&self, id: ExternFnId) -> &crate::hir::ExternDeclaration {
         self.declarations.extern_decl(id)
+    }
+
+    pub(crate) fn try_extern_function(
+        &self,
+        id: ExternFnId,
+    ) -> Option<&crate::hir::ExternDeclaration> {
+        self.declarations.try_extern_decl(id)
     }
 
     #[allow(dead_code)]
@@ -3499,13 +3745,41 @@ pub(crate) struct Lowerer {
     app_handlers: Vec<HandlerId>,
     preset_handlers: Vec<HandlerId>,
     canvases: HashMap<ViewId, ResolvedCanvas>,
+    containers: HashMap<ViewId, ResolvedContainer>,
+    layouts: HashMap<ViewId, ResolvedLayout>,
+    texts: HashMap<ViewId, ResolvedText>,
+    buttons: HashMap<ViewId, ResolvedButton>,
+    inputs: HashMap<ViewId, ResolvedInput>,
+    text_editors: HashMap<ViewId, ResolvedTextEditor>,
+    markdowns: HashMap<ViewId, ResolvedMarkdown>,
+    extern_components: HashMap<ViewId, ResolvedExternComponent>,
+    themers: HashMap<ViewId, ResolvedThemer>,
+    shaders: HashMap<ViewId, ResolvedShader>,
+    boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
+    pick_lists: HashMap<ViewId, ResolvedPickList>,
+    combo_boxes: HashMap<ViewId, ResolvedComboBox>,
+    sliders: HashMap<ViewId, ResolvedSlider>,
+    progresses: HashMap<ViewId, ResolvedProgress>,
+    rules: HashMap<ViewId, ResolvedRule>,
+    qr_codes: HashMap<ViewId, ResolvedQrCode>,
+    spaces: HashMap<ViewId, ResolvedSpace>,
+    controlled_inputs: Vec<AppStateId>,
+    controlled_editors: Vec<CheckedControlledEditor>,
     media: HashMap<ViewId, ResolvedMedia>,
+    overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
     floats: HashMap<ViewId, ResolvedFloat>,
     pins: HashMap<ViewId, ResolvedPin>,
     responsives: HashMap<ViewId, ResolvedResponsive>,
+    keyed_columns: HashMap<ViewId, ResolvedKeyedColumn>,
+    conditionals: HashMap<ViewId, ResolvedConditional>,
+    iterations: HashMap<ViewId, ResolvedIteration>,
+    match_views: HashMap<ViewId, ResolvedMatch>,
     lazy_views: HashMap<ViewId, ResolvedLazy>,
+    tables: HashMap<ViewId, ResolvedTable>,
+    pane_grids: HashMap<ViewId, ResolvedPaneGrid>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
+    views: Vec<ResolvedView>,
 }
 
 #[derive(Default)]
@@ -3574,6 +3848,7 @@ struct ViewWidgetExpressionPolicy<'a> {
     span: &'a Span,
     canvas_locals: bool,
     own_view_locals: bool,
+    allowed_own_view_locals: Option<&'a HashSet<CheckedLocalId>>,
     family: &'static str,
 }
 
@@ -3633,12 +3908,25 @@ impl CheckedExpressionOwnerPolicy for ViewWidgetExpressionPolicy<'_> {
             };
         let allowed = match checked.owner {
             CheckedLocalOwner::ExpressionBinding { expression, .. } => expression == self.use_id,
-            CheckedLocalOwner::View { view, .. } => {
+            CheckedLocalOwner::View { view, role } => {
+                if view == self.view
+                    && role == CheckedViewLocalRole::DaemonWindow
+                    && self.lowerer.document.daemon
+                    && self.lowerer.facts.daemon_window_local() == Some(local)
+                    && checked.name == "window"
+                    && checked.ty == Type::WindowId
+                {
+                    return Ok(checked.ty.clone());
+                }
                 let mut current = Some(self.view);
                 let mut found = false;
                 while let Some(id) = current {
                     if id == view {
-                        found = id != self.view || self.own_view_locals;
+                        found = id != self.view
+                            || (self.own_view_locals
+                                && self
+                                    .allowed_own_view_locals
+                                    .is_none_or(|allowed| allowed.contains(&local)));
                         break;
                     }
                     current = self.lowerer.facts.view(id).parent;
@@ -4198,6 +4486,8 @@ impl Lowerer {
             facts,
             declarations,
             origins,
+            controlled_inputs,
+            controlled_editors,
             ..
         } = checked;
         let component_ids = declarations.component_ids();
@@ -4216,17 +4506,46 @@ impl Lowerer {
             app_handlers: Vec::new(),
             preset_handlers: Vec::new(),
             canvases: HashMap::new(),
+            containers: HashMap::new(),
+            layouts: HashMap::new(),
+            texts: HashMap::new(),
+            buttons: HashMap::new(),
+            inputs: HashMap::new(),
+            text_editors: HashMap::new(),
+            markdowns: HashMap::new(),
+            extern_components: HashMap::new(),
+            themers: HashMap::new(),
+            shaders: HashMap::new(),
+            boolean_controls: HashMap::new(),
+            pick_lists: HashMap::new(),
+            combo_boxes: HashMap::new(),
+            sliders: HashMap::new(),
+            progresses: HashMap::new(),
+            rules: HashMap::new(),
+            qr_codes: HashMap::new(),
+            spaces: HashMap::new(),
+            controlled_inputs,
+            controlled_editors,
             media: HashMap::new(),
+            overlays: HashMap::new(),
             tooltips: HashMap::new(),
             floats: HashMap::new(),
             pins: HashMap::new(),
             responsives: HashMap::new(),
+            keyed_columns: HashMap::new(),
+            conditionals: HashMap::new(),
+            iterations: HashMap::new(),
+            match_views: HashMap::new(),
             lazy_views: HashMap::new(),
+            tables: HashMap::new(),
+            pane_grids: HashMap::new(),
             interaction_widgets: HashMap::new(),
+            views: Vec::new(),
         }
     }
 
     fn lower(mut self) -> Result<LoweredProgram, Error> {
+        self.validate_checked_view_topology()?;
         if let Err((origin, message)) = self.facts.validate_expression_arena() {
             return Err(self.invariant_at_origin(origin, message));
         }
@@ -4236,6 +4555,7 @@ impl Lowerer {
             return Err(self.invariant_at_origin(origin, message));
         }
         let settings = self.lower_app_settings()?;
+        let extern_component_declarations = self.lower_extern_component_declarations()?;
         self.validate_test_expression_contracts()?;
         self.lower_style_program()?;
         let subscriptions = self.lower_subscriptions()?;
@@ -4246,15 +4566,20 @@ impl Lowerer {
         self.lower_handlers()?;
         let tests = self.lower_tests()?;
         let component_roots = self
+            .document
             .components
             .iter()
-            .map(|component| (component.id, component.root.clone()))
+            .enumerate()
+            .map(|(index, component)| (ComponentId(index as u32), component.root.clone()))
             .collect::<Vec<_>>();
         for (component, root) in component_roots {
             self.lower_view(&root, Some(component))?;
         }
         let app_view = self.document.view.clone();
         self.lower_view(&app_view, None)?;
+        let app_view_id = self.declarations.view_id(app_view.span()).ok_or_else(|| {
+            self.invariant(app_view.span(), "application root has no shared view ID")
+        })?;
         let mounts = self
             .document
             .tests
@@ -4263,6 +4588,68 @@ impl Lowerer {
             .collect::<Vec<_>>();
         for mount in mounts {
             self.lower_view(&mount, None)?;
+        }
+        let controlled_inputs = self
+            .controlled_inputs
+            .iter()
+            .map(|id| {
+                app_states
+                    .get(id.0 as usize)
+                    .filter(|state| state.id == *id && state.ty == Type::Str)
+                    .map(|state| ResolvedControlledInputBinding {
+                        state: *id,
+                        name: state.name.clone(),
+                    })
+                    .ok_or_else(|| {
+                        self.invariant(
+                            self.document.view.span(),
+                            "controlled input binding is outside the app-state arena",
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let controlled_editors = self
+            .controlled_editors
+            .iter()
+            .map(|binding| {
+                let state = app_states
+                    .get(binding.state.0 as usize)
+                    .filter(|state| state.id == binding.state && state.ty == Type::Editor)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            self.document.view.span(),
+                            "controlled editor binding is outside the app-state arena",
+                        )
+                    })?;
+                if let Some(action) = binding.action {
+                    self.declarations
+                        .try_extern_decl(action)
+                        .filter(|function| function.kind == ExternKind::EditorAction)
+                        .ok_or_else(|| {
+                            self.invariant(
+                                self.document.view.span(),
+                                "controlled editor action extern is invalid",
+                            )
+                        })?;
+                }
+                Ok(ResolvedControlledEditorBinding {
+                    state: binding.state,
+                    name: state.name.clone(),
+                    action: binding.action,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let mut controlled_editors_by_name = HashMap::with_capacity(controlled_editors.len());
+        for (index, binding) in controlled_editors.iter().enumerate() {
+            if controlled_editors_by_name
+                .insert(binding.name.clone(), index)
+                .is_some()
+            {
+                return Err(self.invariant(
+                    self.document.view.span(),
+                    "controlled editor binding is duplicated in normalized HIR",
+                ));
+            }
         }
         let styles = self.styles.finish().ok_or_else(|| {
             Error::new(
@@ -4277,9 +4664,11 @@ impl Lowerer {
             .iter()
             .enumerate()
             .filter_map(|(index, test)| {
-                test.mount
-                    .clone()
-                    .map(|mount| (TestId(index as u32), mount))
+                test.mount.as_ref().and_then(|mount| {
+                    self.declarations
+                        .view_id(mount.span())
+                        .map(|view| (TestId(index as u32), view))
+                })
             })
             .collect();
         let preset_names = self
@@ -4288,21 +4677,56 @@ impl Lowerer {
             .iter()
             .map(|preset| preset.name.clone())
             .collect();
+        let expressions = ResolvedExpressionProgram::from_checked(&self.facts, &self.declarations);
         Ok(LoweredProgram {
+            #[cfg(test)]
             document: self.document,
+            app_view: app_view_id,
+            expressions,
+            #[cfg(test)]
             facts: self.facts,
             declarations: self.declarations,
             settings,
             subscriptions,
             tests,
             canvases: self.canvases,
+            containers: self.containers,
+            layouts: self.layouts,
+            texts: self.texts,
+            buttons: self.buttons,
+            inputs: self.inputs,
+            text_editors: self.text_editors,
+            markdowns: self.markdowns,
+            extern_component_declarations,
+            extern_components: self.extern_components,
+            themers: self.themers,
+            shaders: self.shaders,
+            boolean_controls: self.boolean_controls,
+            pick_lists: self.pick_lists,
+            combo_boxes: self.combo_boxes,
+            sliders: self.sliders,
+            progresses: self.progresses,
+            rules: self.rules,
+            qr_codes: self.qr_codes,
+            spaces: self.spaces,
+            controlled_inputs,
+            controlled_editors,
+            controlled_editors_by_name,
             media: self.media,
+            overlays: self.overlays,
             tooltips: self.tooltips,
             floats: self.floats,
             pins: self.pins,
             responsives: self.responsives,
+            keyed_columns: self.keyed_columns,
+            conditionals: self.conditionals,
+            iterations: self.iterations,
+            match_views: self.match_views,
             lazy_views: self.lazy_views,
+            tables: self.tables,
+            pane_grids: self.pane_grids,
             interaction_widgets: self.interaction_widgets,
+            views: self.views,
             test_mounts,
             preset_names,
             named_type_rust_paths,
@@ -6391,16 +6815,79 @@ impl Lowerer {
                     }
                 })
                 .collect();
-            let slots: Vec<ComponentSlotContract> = declared_slots(&component.root)
-                .into_iter()
-                .enumerate()
-                .map(|(index, (name, optional, _span))| ComponentSlotContract {
-                    id: self.declarations.component_slot(id, index).id,
-                    name,
-                    optional,
-                    origin: self.declarations.component_slot(id, index).origin,
-                })
-                .collect();
+            let checked_slots = self.facts.component_slots(id).ok_or_else(|| {
+                self.invariant(&component.span, "component has no checked slot partition")
+            })?;
+            let declared_slot_count =
+                self.declarations.component_slot_count(id).ok_or_else(|| {
+                    self.invariant(
+                        &component.span,
+                        "component slot declaration arena is missing",
+                    )
+                })?;
+            if checked_slots.len() != declared_slot_count {
+                return Err(self.invariant_at_origin(
+                    origin,
+                    "checked component slot cardinality diverged from declarations",
+                ));
+            }
+            let mut slots = Vec::with_capacity(checked_slots.len());
+            for (index, checked) in checked_slots.iter().enumerate() {
+                let expected_id = ComponentSlotId {
+                    component: id,
+                    index: index as u32,
+                };
+                let declaration = self
+                    .declarations
+                    .try_component_slot(expected_id)
+                    .ok_or_else(|| {
+                        self.invariant_at_origin(origin, "component slot declaration is missing")
+                    })?;
+                let authoritative_origin = declaration.origin;
+                let expected_view = self
+                    .declarations
+                    .component_slot_view(expected_id)
+                    .ok_or_else(|| {
+                        self.invariant_at_origin(
+                            authoritative_origin,
+                            "component slot has no stable view declaration",
+                        )
+                    })?;
+                let retained_origin =
+                    self.origins.try_get(authoritative_origin).ok_or_else(|| {
+                        self.invariant_at_origin(origin, "component slot origin is invalid")
+                    })?;
+                let checked_view = self.facts.try_view(expected_view).ok_or_else(|| {
+                    self.invariant_at_origin(
+                        authoritative_origin,
+                        "checked component slot has no checked view",
+                    )
+                })?;
+                if checked.id != expected_id
+                    || declaration.id != checked.id
+                    || checked.origin != authoritative_origin
+                    || checked.view != expected_view
+                    || retained_origin.parent != Some(origin)
+                    || checked_view.scope != CheckedViewScope::Component(id)
+                    || checked_view.kind != "slot"
+                    || checked_view.origin != self.declarations.view(expected_view).origin
+                    || self
+                        .facts
+                        .component_slot_for_view(expected_view)
+                        .is_none_or(|slot| slot.id != expected_id || slot.view != expected_view)
+                {
+                    return Err(self.invariant_at_origin(
+                        authoritative_origin,
+                        "checked component slot association is inconsistent",
+                    ));
+                }
+                slots.push(ComponentSlotContract {
+                    id: checked.id,
+                    name: checked.name.clone(),
+                    optional: checked.optional,
+                    origin: checked.origin,
+                });
+            }
             let states = component
                 .states
                 .iter()
@@ -6436,11 +6923,24 @@ impl Lowerer {
                 .enumerate()
                 .map(|(index, event)| (event.name.clone(), index))
                 .collect();
-            let slots_by_name = slots
-                .iter()
-                .enumerate()
-                .map(|(index, slot)| (slot.name.clone(), index))
-                .collect();
+            let mut slots_by_name = HashMap::with_capacity(slots.len());
+            for (index, slot) in slots.iter().enumerate() {
+                if slots_by_name.insert(slot.name.clone(), index).is_some() {
+                    return Err(self.invariant_at_origin(
+                        slot.origin,
+                        "checked component slot name is duplicated",
+                    ));
+                }
+            }
+            let root = self
+                .declarations
+                .view_id(component.root.span())
+                .ok_or_else(|| {
+                    self.invariant(
+                        component.root.span(),
+                        "component root has no shared view ID",
+                    )
+                })?;
             self.components.push(ComponentContract {
                 id,
                 name: component.name,
@@ -6450,7 +6950,7 @@ impl Lowerer {
                 slots,
                 states,
                 handlers: Vec::new(),
-                root: component.root,
+                root,
                 storage,
                 origin,
             });
@@ -8026,6 +8526,7 @@ impl Lowerer {
         node: &ViewNode,
         outer_component: Option<ComponentId>,
     ) -> Result<(), Error> {
+        self.lower_view_topology(node, outer_component)?;
         self.lower_view_style(node)?;
         match node {
             ViewNode::Media {
@@ -8127,6 +8628,18 @@ impl Lowerer {
                 self.lower_lazy(dependency, binding, span, outer_component)?;
                 self.lower_view(child, outer_component)?;
             }
+            ViewNode::KeyedColumn {
+                item,
+                items,
+                key,
+                options,
+                child,
+                span,
+                ..
+            } => {
+                self.lower_keyed_column(item, items, key, options, span, outer_component)?;
+                self.lower_view(child, outer_component)?;
+            }
             ViewNode::Canvas {
                 options,
                 locals,
@@ -8160,34 +8673,382 @@ impl Lowerer {
                     self.lower_view(&slot.content, outer_component)?;
                 }
             }
-            ViewNode::Layout { children, .. }
-            | ViewNode::If { children, .. }
-            | ViewNode::For { children, .. } => {
+            ViewNode::Slot {
+                name,
+                optional,
+                span,
+            } => {
+                self.lower_component_slot(name, *optional, span, outer_component)?;
+            }
+            ViewNode::If {
+                condition,
+                children,
+                span,
+            } => {
+                self.lower_conditional(condition, span, outer_component)?;
                 for child in children {
                     self.lower_view(child, outer_component)?;
                 }
             }
-            ViewNode::Match { arms, .. } => {
+            ViewNode::For {
+                item,
+                items,
+                children,
+                span,
+            } => {
+                self.lower_iteration(item, items, span, outer_component)?;
+                for child in children {
+                    self.lower_view(child, outer_component)?;
+                }
+            }
+            ViewNode::Text { span, .. } | ViewNode::RichText { span, .. } => {
+                self.lower_text(node, span, outer_component)?;
+            }
+            ViewNode::Input {
+                label,
+                binding,
+                hint,
+                disabled,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_input(
+                    label,
+                    binding,
+                    hint,
+                    disabled,
+                    options,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::TextEditor {
+                binding,
+                disabled,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_text_editor(binding, disabled, options, span, outer_component)?;
+            }
+            ViewNode::Markdown {
+                content,
+                options,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_markdown(content, options, route, span, outer_component)?;
+            }
+            ViewNode::ExternComponent {
+                function,
+                args,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_extern_component(function, args, route, span, outer_component)?;
+            }
+            ViewNode::Themer {
+                function,
+                args,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_themer(function, args, route, span, outer_component)?;
+            }
+            ViewNode::Shader {
+                function,
+                args,
+                width,
+                height,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_shader(function, args, width, height, route, span, outer_component)?;
+            }
+            ViewNode::Checkbox {
+                id,
+                label,
+                checked,
+                disabled,
+                options,
+                style,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_checkbox(
+                    CheckboxSource {
+                        id,
+                        label,
+                        checked,
+                        disabled,
+                        options,
+                        style,
+                        route,
+                        span,
+                    },
+                    outer_component,
+                )?;
+            }
+            ViewNode::Toggler {
+                id,
+                label,
+                checked,
+                disabled,
+                options,
+                style,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_toggler(
+                    TogglerSource {
+                        id,
+                        label,
+                        checked,
+                        disabled,
+                        options,
+                        style,
+                        route,
+                        span,
+                    },
+                    outer_component,
+                )?;
+            }
+            ViewNode::Radio {
+                id,
+                label,
+                value,
+                selected,
+                options,
+                style,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_radio(
+                    RadioSource {
+                        id,
+                        label,
+                        value,
+                        selected,
+                        options,
+                        style,
+                        route,
+                        span,
+                    },
+                    outer_component,
+                )?;
+            }
+            ViewNode::Button {
+                label,
+                content,
+                disabled,
+                options,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_button(
+                    label,
+                    content,
+                    disabled,
+                    options,
+                    route,
+                    span,
+                    outer_component,
+                )?;
+                if let Some(content) = content {
+                    self.lower_view(content, outer_component)?;
+                }
+            }
+            ViewNode::PickList {
+                options,
+                selected,
+                options_config,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_pick_list(
+                    options,
+                    selected,
+                    options_config,
+                    route,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::ComboBox {
+                state,
+                selected,
+                placeholder,
+                options,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_combo_box(
+                    state,
+                    selected,
+                    placeholder,
+                    options,
+                    route,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::Slider {
+                value,
+                min,
+                max,
+                step,
+                options,
+                vertical,
+                styles,
+                route,
+                release,
+                span,
+                ..
+            } => {
+                self.lower_slider(
+                    value,
+                    min,
+                    max,
+                    step,
+                    options,
+                    *vertical,
+                    styles,
+                    route,
+                    release,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::Progress {
+                value,
+                min,
+                max,
+                options,
+                vertical,
+                styles,
+                span,
+                ..
+            } => {
+                self.lower_progress(
+                    value,
+                    min,
+                    max,
+                    options,
+                    *vertical,
+                    styles,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::Rule {
+                axis,
+                thickness,
+                options,
+                styles,
+                span,
+                ..
+            } => {
+                self.lower_rule(*axis, thickness, options, styles, span, outer_component)?;
+            }
+            ViewNode::QrCode {
+                payload,
+                correction,
+                version,
+                cell_size,
+                total_size,
+                cell,
+                background,
+                span,
+                ..
+            } => {
+                self.lower_qr_code(
+                    payload,
+                    *correction,
+                    *version,
+                    cell_size,
+                    total_size,
+                    cell,
+                    background,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::Space {
+                width,
+                height,
+                styles,
+                span,
+                ..
+            } => {
+                self.lower_space(width, height, styles, span, outer_component)?;
+            }
+            ViewNode::Layout {
+                kind,
+                options,
+                children,
+                span,
+                ..
+            } => {
+                self.lower_layout(*kind, options, span, outer_component)?;
+                for child in children {
+                    self.lower_view(child, outer_component)?;
+                }
+            }
+            ViewNode::Match { value, arms, span } => {
+                self.lower_match_view(value, arms, span, outer_component)?;
                 for child in arms.iter().flat_map(|arm| &arm.children) {
                     self.lower_view(child, outer_component)?;
                 }
             }
-            ViewNode::Button {
-                content: Some(content),
+            ViewNode::Theme {
+                preset,
+                text,
+                background,
+                content,
+                span,
                 ..
-            }
-            | ViewNode::Container { content, .. }
-            | ViewNode::Theme { content, .. }
-            | ViewNode::KeyedColumn { child: content, .. } => {
+            } => {
+                self.lower_nested_theme(preset, text, background, span, outer_component)?;
                 self.lower_view(content, outer_component)?;
             }
-            ViewNode::Overlay { content, layer, .. } => {
+            ViewNode::Container {
+                options,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_container(options, span, outer_component)?;
+                self.lower_view(content, outer_component)?;
+            }
+            ViewNode::Overlay {
+                options,
+                content,
+                layer,
+                span,
+                ..
+            } => {
+                self.lower_overlay(options, span, outer_component)?;
                 self.lower_view(content, outer_component)?;
                 self.lower_view(layer, outer_component)?;
             }
             ViewNode::PaneGrid {
-                panes, templates, ..
+                panes,
+                templates,
+                span,
+                ..
             } => {
+                self.lower_pane_grid(span, outer_component)?;
                 for child in panes
                     .iter()
                     .flat_map(PaneView::nodes)
@@ -8196,13 +9057,56 @@ impl Lowerer {
                     self.lower_view(child, outer_component)?;
                 }
             }
-            ViewNode::Table { columns, .. } => {
+            ViewNode::Table {
+                item,
+                rows,
+                options,
+                columns,
+                span,
+                ..
+            } => {
+                self.lower_table(item, rows, options, columns, span, outer_component)?;
                 for column in columns {
                     self.lower_view(&column.header, outer_component)?;
                     self.lower_view(&column.cell, outer_component)?;
                 }
             }
-            _ => {}
+        }
+        Ok(())
+    }
+
+    fn lower_component_slot(
+        &self,
+        name: &str,
+        optional: bool,
+        span: &Span,
+        outer_component: Option<ComponentId>,
+    ) -> Result<(), Error> {
+        let component = outer_component
+            .ok_or_else(|| self.invariant(span, "component slot is outside a component"))?;
+        let view = self
+            .declarations
+            .view_id(span)
+            .ok_or_else(|| self.invariant(span, "component slot has no shared view ID"))?;
+        let checked = self.facts.component_slot_for_view(view).ok_or_else(|| {
+            self.invariant(span, "component slot view has no checked slot association")
+        })?;
+        let declaration = self
+            .declarations
+            .try_component_slot(checked.id)
+            .ok_or_else(|| {
+                self.invariant_at_origin(checked.origin, "component slot declaration is missing")
+            })?;
+        if checked.id.component != component
+            || checked.view != view
+            || checked.name != name
+            || checked.optional != optional
+            || declaration.origin != checked.origin
+        {
+            return Err(self.invariant_at_origin(
+                checked.origin,
+                "component slot source diverged from its checked contract",
+            ));
         }
         Ok(())
     }
@@ -8302,6 +9206,103 @@ impl Lowerer {
             )
         };
         let origin = self.declarations.view(view_id).origin;
+        let semantic_key = crate::ast::component_call_route_semantic_key(
+            name,
+            route.is_some(),
+            events
+                .iter()
+                .zip(&supplied_events)
+                .map(|(event, supplied)| {
+                    (
+                        event.name.as_str(),
+                        supplied
+                            .as_ref()
+                            .is_some_and(|supplied| supplied.route.is_some()),
+                    )
+                }),
+        );
+        let (route_view, interaction, route_scope, route_origin) = self.interaction_contract(
+            CheckedInteractionKind::ComponentCallRoutes,
+            semantic_key,
+            span,
+            outer_component,
+        )?;
+        let checked_routes = self
+            .facts
+            .component_call_routes(call_id)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "component call has no checked route contract"))?;
+        if route_view != view_id
+            || route_origin != origin
+            || checked_routes.call != call_id
+            || checked_routes.view != view_id
+            || checked_routes.component != component_id
+            || !interaction.option_expressions.is_empty()
+            || checked_routes.events.len() != events.len()
+        {
+            return Err(self.invariant(span, "component call route identity diverged"));
+        }
+        let route_expression_count = interaction
+            .routes
+            .iter()
+            .flat_map(|route| &route.args)
+            .filter(|argument| matches!(argument, CheckedCanvasRouteArg::Expression(_)))
+            .count();
+        if interaction.expression_count as usize != route_expression_count {
+            return Err(self.invariant_at_origin(
+                origin,
+                "component call route expression cardinality diverged",
+            ));
+        }
+        self.validate_interaction_expression_graphs(
+            view_id,
+            route_scope,
+            interaction.expression_count,
+            span,
+        )?;
+        let route_sources = route
+            .iter()
+            .chain(
+                supplied_events
+                    .iter()
+                    .filter_map(|event| event.as_ref().and_then(|event| event.route.as_ref())),
+            )
+            .collect::<Vec<_>>();
+        let mut route_index = 0usize;
+        let output = match (&output_ty, route, &checked_routes.output) {
+            (Type::Unit, None, None) => ComponentOutputRoute::None,
+            (output, Some(source), Some(checked)) if checked.output == *output => {
+                self.validate_component_call_route_origin(
+                    checked.origin,
+                    &source.span,
+                    origin,
+                    "component output route",
+                )?;
+                let resolved = self.lower_required_interaction_route(
+                    source,
+                    &interaction,
+                    &route_sources,
+                    &mut route_index,
+                    view_id,
+                    route_scope,
+                )?;
+                if resolved.id != checked.route || resolved.origin != checked.origin {
+                    return Err(self.invariant(span, "component output route ID diverged"));
+                }
+                self.validate_component_call_route_hir(
+                    &resolved,
+                    std::slice::from_ref(output),
+                    false,
+                    span,
+                )?;
+                ComponentOutputRoute::Direct {
+                    output: output.clone(),
+                    origin: checked.origin,
+                    route: resolved,
+                }
+            }
+            _ => return Err(self.invariant(span, "component output route contract diverged")),
+        };
         let mut arguments = Vec::with_capacity(params.len());
         for (param, supplied) in params.iter().zip(supplied_args) {
             let source = self
@@ -8346,44 +9347,145 @@ impl Lowerer {
         }
 
         let mut resolved_events = Vec::with_capacity(events.len());
-        for (event, supplied) in events.iter().zip(supplied_events) {
+        for (event_route_index, ((event, supplied), checked)) in events
+            .iter()
+            .zip(supplied_events)
+            .zip(&checked_routes.events)
+            .enumerate()
+        {
             let supplied = supplied.ok_or_else(|| {
                 self.invariant(span, format!("event `{}` has no checked route", event.name))
             })?;
-            let event_origin = self.push_origin(&supplied.span, Some(origin));
-            if let Some(route) = &supplied.route {
-                resolved_events.push(ResolvedEventRoute::Direct {
-                    event: event.id,
-                    name: event.name.clone(),
-                    payloads: event.payloads.clone(),
-                    route: route.clone(),
-                    origin: event_origin,
-                });
-            } else {
-                let outer = outer_component.ok_or_else(|| {
-                    self.invariant(&supplied.span, "forwarded event has no outer component")
-                })?;
-                let outer_index = outer.0 as usize;
-                let outer_event = self.component_indexes[outer_index]
-                    .events_by_name
-                    .get(&event.name)
-                    .and_then(|position| self.components[outer_index].events.get(*position))
-                    .ok_or_else(|| {
-                        self.invariant(
-                            &supplied.span,
-                            format!("forwarded event `{}` has no outer declaration", event.name),
-                        )
-                    })?
-                    .id;
-                resolved_events.push(ResolvedEventRoute::Forward {
-                    event: event.id,
-                    name: event.name.clone(),
-                    payloads: event.payloads.clone(),
-                    outer_component: outer,
-                    outer_event,
-                    origin: event_origin,
-                });
+            self.validate_component_call_route_origin(
+                checked.origin,
+                &supplied.span,
+                origin,
+                "component event route",
+            )?;
+            if checked.event != event.id
+                || checked.name != event.name
+                || checked.payloads != event.payloads
+                || supplied.name != event.name
+            {
+                return Err(
+                    self.invariant(&supplied.span, "component event route contract diverged")
+                );
             }
+            match (&supplied.route, &checked.delivery) {
+                (
+                    Some(source),
+                    CheckedComponentEventDelivery::Direct {
+                        route: checked_route,
+                        origin: checked_route_origin,
+                    },
+                ) => {
+                    self.validate_component_call_route_origin(
+                        *checked_route_origin,
+                        &source.span,
+                        origin,
+                        "component event direct route",
+                    )?;
+                    let resolved = self.lower_required_interaction_route(
+                        source,
+                        &interaction,
+                        &route_sources,
+                        &mut route_index,
+                        view_id,
+                        route_scope,
+                    )?;
+                    if resolved.id != *checked_route || resolved.origin != *checked_route_origin {
+                        return Err(self
+                            .invariant(&supplied.span, "component event route identity diverged"));
+                    }
+                    self.validate_component_call_route_hir(
+                        &resolved,
+                        &event.payloads,
+                        true,
+                        &supplied.span,
+                    )?;
+                    resolved_events.push(ResolvedEventRoute::Direct {
+                        route_index: event_route_index as u32,
+                        event: event.id,
+                        name: event.name.clone(),
+                        payloads: event.payloads.clone(),
+                        route: resolved,
+                        origin: checked.origin,
+                    });
+                }
+                (
+                    None,
+                    CheckedComponentEventDelivery::Forward {
+                        outer_component: checked_outer,
+                        outer_component_name,
+                        outer_event,
+                        outer_event_name,
+                        outer_payloads,
+                    },
+                ) => {
+                    let outer = outer_component.ok_or_else(|| {
+                        self.invariant_at_origin(
+                            checked.origin,
+                            "forwarded event has no outer component",
+                        )
+                    })?;
+                    let outer_contract = self
+                        .components
+                        .get(checked_outer.0 as usize)
+                        .filter(|component| {
+                            component.id == *checked_outer
+                                && component.name == *outer_component_name
+                        })
+                        .ok_or_else(|| {
+                            self.invariant_at_origin(
+                                checked.origin,
+                                "forwarded event has an invalid outer component",
+                            )
+                        })?;
+                    let declaration =
+                        self.declarations
+                            .component_event(*outer_event)
+                            .ok_or_else(|| {
+                                self.invariant_at_origin(
+                                    checked.origin,
+                                    "forwarded event has an invalid outer declaration",
+                                )
+                            })?;
+                    if *checked_outer != outer
+                        || outer_event.component != outer
+                        || outer_contract.name != *outer_component_name
+                        || declaration.name != *outer_event_name
+                        || declaration.payloads != *outer_payloads
+                        || *outer_event_name != event.name
+                        || *outer_payloads != event.payloads
+                    {
+                        return Err(self.invariant_at_origin(
+                            checked.origin,
+                            "forwarded event declaration contract diverged",
+                        ));
+                    }
+                    resolved_events.push(ResolvedEventRoute::Forward {
+                        route_index: event_route_index as u32,
+                        event: event.id,
+                        name: event.name.clone(),
+                        payloads: event.payloads.clone(),
+                        outer_component: outer,
+                        outer_component_name: outer_component_name.clone(),
+                        outer_event: *outer_event,
+                        outer_event_name: outer_event_name.clone(),
+                        outer_payloads: outer_payloads.clone(),
+                        origin: checked.origin,
+                    });
+                }
+                _ => {
+                    return Err(self.invariant(
+                        &supplied.span,
+                        "component event direct/forward topology diverged",
+                    ));
+                }
+            }
+        }
+        if route_index != interaction.routes.len() || route_index != route_sources.len() {
+            return Err(self.invariant(span, "component call left checked routes unconsumed"));
         }
 
         let mut resolved_slots = Vec::with_capacity(slots.len());
@@ -8398,36 +9500,31 @@ impl Lowerer {
                 slot: declared.id,
                 name: declared.name.clone(),
                 optional: declared.optional,
-                content: supplied.map(|slot| (*slot.content).clone()),
+                content: supplied
+                    .map(|slot| {
+                        self.declarations
+                            .view_id(slot.content.span())
+                            .ok_or_else(|| {
+                                self.invariant(
+                                    &slot.span,
+                                    "component slot content has no shared view ID",
+                                )
+                            })
+                    })
+                    .transpose()?,
                 origin: supplied.map_or(declared.origin, |slot| {
                     self.push_origin(&slot.span, Some(origin))
                 }),
             });
         }
 
-        let output = match (&output_ty, route) {
-            (Type::Unit, None) => ComponentOutputRoute::None,
-            (output, Some(route)) => ComponentOutputRoute::Direct {
-                output: output.clone(),
-                route: route.clone(),
-                origin,
-            },
-            _ => {
-                return Err(
-                    self.invariant(span, "component output route was not resolved by checking")
-                );
-            }
-        };
         let scope = id.as_ref().map_or_else(
             || ComponentScope::Implicit {
                 component: component_id,
                 call_site: span.line,
                 origin,
             },
-            |id| ComponentScope::Explicit {
-                id: id.clone(),
-                origin,
-            },
+            |_| ComponentScope::Explicit { origin },
         );
         if call_id.0 as usize != self.calls.len() {
             return Err(self.invariant(span, "component call arena order diverged"));
@@ -8452,6 +9549,97 @@ impl Lowerer {
             binding_site: span.line,
         });
         Ok(())
+    }
+
+    fn validate_component_call_route_hir(
+        &self,
+        route: &ResolvedInteractionRoute,
+        source_payloads: &[Type],
+        ordered_payloads: bool,
+        span: &Span,
+    ) -> Result<(), Error> {
+        if route.source_payloads != source_payloads || route.ordered_payloads != ordered_payloads {
+            return Err(self.invariant(span, "component route source payload contract diverged"));
+        }
+        let destinations = match &route.target {
+            ResolvedInteractionRouteTarget::TargetHandler(handler) => self
+                .declarations
+                .try_handler(*handler)
+                .ok_or_else(|| self.invariant(span, "component route handler is invalid"))?
+                .payloads
+                .clone(),
+            ResolvedInteractionRouteTarget::OutputCallback { output, .. } => vec![output.clone()],
+            ResolvedInteractionRouteTarget::NamedEvent { payloads, .. } => payloads.clone(),
+        };
+        if route.args.len() != destinations.len() {
+            return Err(self.invariant(span, "component route target cardinality diverged"));
+        }
+        for (argument, destination) in route.args.iter().zip(&destinations) {
+            match argument {
+                ResolvedInteractionRouteArg::Expression(expression) => {
+                    let retained = self.facts.try_expression_use(*expression).ok_or_else(|| {
+                        self.invariant(span, "component route expression is invalid")
+                    })?;
+                    if retained.source != *destination || retained.destination != *destination {
+                        return Err(
+                            self.invariant(span, "component route expression type diverged")
+                        );
+                    }
+                }
+                ResolvedInteractionRouteArg::Payload { index, ty } => {
+                    let source = route.source_payloads.get(*index as usize).ok_or_else(|| {
+                        self.invariant(span, "component route payload index is invalid")
+                    })?;
+                    if ty != source || ty != destination {
+                        return Err(self.invariant(span, "component route payload type diverged"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_component_call_route_origin(
+        &self,
+        origin: OriginId,
+        source: &Span,
+        parent: OriginId,
+        label: &str,
+    ) -> Result<(), Error> {
+        let retained = self.origins.try_get(origin).ok_or_else(|| {
+            self.component_call_invariant_at_span(source, format!("{label} origin is invalid"))
+        })?;
+        let (expected_path, expected_line) = self
+            .origins
+            .source_origin(source.line)
+            .map_or((None, source.line), |(path, line)| (Some(path), line));
+        if retained.path.as_deref() != expected_path
+            || retained.line != expected_line
+            || retained.column != source.column
+            || retained.parent != Some(parent)
+        {
+            return Err(self.component_call_invariant_at_span(
+                source,
+                format!("{label} physical origin diverged"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn component_call_invariant_at_span(&self, source: &Span, message: impl Into<String>) -> Error {
+        let message = format!("lowering invariant failed: {}", message.into());
+        let Some((path, line)) = self.origins.source_origin(source.line) else {
+            return Error::new("E196", source, message);
+        };
+        Error::new(
+            "E196",
+            &Span {
+                line,
+                column: source.column,
+            },
+            message,
+        )
+        .at_path(path.display().to_string())
     }
 
     fn resolve_writable(
@@ -8529,84 +9717,6 @@ impl Lowerer {
         }
         error
     }
-}
-
-fn declared_slots(node: &ViewNode) -> Vec<(String, bool, Span)> {
-    fn collect(node: &ViewNode, output: &mut Vec<(String, bool, Span)>) {
-        match node {
-            ViewNode::Slot {
-                name,
-                optional,
-                span,
-            } => output.push((name.clone(), *optional, span.clone())),
-            ViewNode::Layout { children, .. }
-            | ViewNode::If { children, .. }
-            | ViewNode::For { children, .. } => {
-                for child in children {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Match { arms, .. } => {
-                for child in arms.iter().flat_map(|arm| &arm.children) {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Button {
-                content: Some(content),
-                ..
-            }
-            | ViewNode::MouseArea { content, .. }
-            | ViewNode::ResizeHandle { content, .. }
-            | ViewNode::Container { content, .. }
-            | ViewNode::Theme { content, .. }
-            | ViewNode::Float { content, .. }
-            | ViewNode::Pin { content, .. }
-            | ViewNode::Sensor { content, .. }
-            | ViewNode::KeyedColumn { child: content, .. }
-            | ViewNode::Lazy { child: content, .. } => collect(content, output),
-            ViewNode::Tooltip { content, tip, .. } => {
-                collect(content, output);
-                collect(tip, output);
-            }
-            ViewNode::Overlay { content, layer, .. } => {
-                collect(content, output);
-                collect(layer, output);
-            }
-            ViewNode::PaneGrid {
-                panes, templates, ..
-            } => {
-                for child in panes
-                    .iter()
-                    .flat_map(PaneView::nodes)
-                    .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-                {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Table { columns, .. } => {
-                for column in columns {
-                    collect(&column.header, output);
-                    collect(&column.cell, output);
-                }
-            }
-            ViewNode::Component { slots, .. } => {
-                for slot in slots {
-                    collect(&slot.content, output);
-                }
-            }
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    collect(narrow, output);
-                    collect(wide, output);
-                }
-                ResponsiveContent::Size { content, .. } => collect(content, output),
-            },
-            _ => {}
-        }
-    }
-    let mut output = Vec::new();
-    collect(node, &mut output);
-    output
 }
 
 fn valid_f32(value: f64) -> bool {
@@ -8843,7 +9953,7 @@ mod tests {
     use crate::{analyze, analyze_file};
     use std::fmt::Write as _;
     use std::fs;
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     const THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
@@ -9133,16 +10243,16 @@ view
         assert_eq!(
             handler_snapshot(&program),
             r#"h0 App mount params=[] @19:1
-  s0 task=None final=false let request CheckedLocalId(0) = CheckedExprUseId(2) @20:1
+  s0 task=None final=false let request LocalId(0) = ExpressionId(2) @20:1
   s1 task=Some(TaskId(0)) final=true run Every site=None r0 -> app h1 loaded (payload 0:i64) @21:1 error=none @21:1
-h1 App loaded params=["next:i64:CheckedLocalId(1)"] @22:1
-  s2 task=None final=true assign value:i64, value=CheckedExprUseId(4), at=None, move=false @23:1
+h1 App loaded params=["next:i64:LocalId(1)"] @22:1
+  s2 task=None final=true assign value:i64, value=ExpressionId(4), at=None, move=false @23:1
 h2 Component(ComponentId(0)) start params=[] @27:1
   s3 task=Some(TaskId(1)) final=true run Replace site=Some(RunSiteId(0)) r1 -> component c0 h3 done (payload 0:i64) @28:1 error=none @28:1
-h3 Component(ComponentId(0)) done params=["next:i64:CheckedLocalId(2)"] @29:1
-  s4 task=None final=true assign local:i64, value=CheckedExprUseId(6), at=None, move=false @30:1
+h3 Component(ComponentId(0)) done params=["next:i64:LocalId(2)"] @29:1
+  s4 task=None final=true assign local:i64, value=ExpressionId(6), at=None, move=false @30:1
 h4 Preset(0) preset seeded params=[] @16:1
-  s5 task=None final=true assign value:i64, value=CheckedExprUseId(7), at=None, move=false @18:1
+  s5 task=None final=true assign value:i64, value=ExpressionId(7), at=None, move=false @18:1
 "#
         );
     }
@@ -9189,8 +10299,8 @@ view
             "s1 task=Some(TaskId(1)) final=true sip r0 -> app h1 progressed (payload 0:f64)",
             "r1 -> app h2 downloaded (payload 0:bytes)",
             "s2 task=Some(TaskId(2)) final=true flow source=[t3 Stream Extern(ExternFnId(1))",
-            "t4 map value:i64/local=CheckedLocalId(0)",
-            "t5 then value:i64/local=CheckedLocalId(1) -> t5 Task Extern(ExternFnId(2))",
+            "t4 map value:i64/local=LocalId(0)",
+            "t5 then value:i64/local=LocalId(1) -> t5 Task Extern(ExternFnId(2))",
             "t6 collect",
             "r2 -> app h3 collected (payload 0:[i64])",
             "r3 -> app h4 planned (payload 0:i64)",
@@ -9719,7 +10829,7 @@ view
         invalid_component.components[0].id = ComponentId(u32::MAX);
         let error = crate::codegen::generate(&invalid_component, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("component identity"));
+        assert!(error.message.contains("component root view"));
     }
 
     #[test]
@@ -10229,6 +11339,72 @@ view
     }
 
     #[test]
+    fn malformed_checked_responsive_fixed_dimension_cannot_become_static() {
+        let source = format!(
+            "app InvalidResponsiveTopology\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        for replacement in [CheckedResponsiveLength::Fill, CheckedResponsiveLength::None] {
+            let mut checked = analyze(&source).unwrap();
+            checked
+                .facts
+                .corrupt_responsive_dimension(ViewId(0), 0, replacement);
+
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("topology diverged"));
+        }
+    }
+
+    #[test]
+    fn malformed_checked_responsive_fill_portion_value_drift_is_rejected() {
+        let source = format!(
+            "app InvalidResponsivePortion\n{THEME}view\n  responsive at=600.0 w=fill(2) h=fill\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_responsive_dimension(
+            ViewId(0),
+            0,
+            CheckedResponsiveLength::FillPortion(3),
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_responsive_expression_cannot_be_left_unconsumed() {
+        let source = format!(
+            "app InvalidResponsiveCardinality\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_responsive_expression_count(ViewId(0), 2);
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression cardinality diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_responsive_cross_role_expression_is_rejected() {
+        let source = format!(
+            "app InvalidResponsiveOwner\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_responsive_dimension_expression_role(
+            ViewId(0),
+            0,
+            CheckedViewExprRole::ResponsiveHeightDimension,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("owner cardinality diverged"));
+    }
+
+    #[test]
     fn media_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedMedia\n{THEME}state\n  path = \"photo.png\"\n  alpha = 0.8\nview\n  image path opacity=alpha filter=nearest\n"
@@ -10558,6 +11734,3636 @@ view
         }
         let origin = program.origin(sensor.origin);
         assert_eq!(origin.line, 18);
+    }
+
+    #[test]
+    fn normalizes_overlay_expressions_route_color_alignment_and_origin() {
+        let source = format!(
+            "app OverlayHir\n{THEME}state\n  shown = true\non close(flag)\nview\n  overlay when=shown dismiss=close(shown) backdrop=black/60 p=24.0 align-x=center align-y=end\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let overlay = program.overlay(ViewId(0)).unwrap();
+
+        assert_eq!(overlay.id, ViewId(0));
+        assert_eq!(overlay.align_x, ResolvedOverlayAlignment::Center);
+        assert_eq!(overlay.align_y, ResolvedOverlayAlignment::End);
+        assert!(matches!(
+            overlay.backdrop,
+            ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Black,
+                opacity: Some(60),
+            }
+        ));
+        for (index, expression, expected) in [
+            (0, overlay.visible, Type::Bool),
+            (1, overlay.padding, Type::F64),
+        ] {
+            let expression = program.checked_facts().expression_use(expression);
+            assert_eq!(expression.source, expected);
+            assert_eq!(expression.destination, expected);
+            assert_eq!(
+                expression.owner,
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: ViewId(0),
+                    index,
+                })
+            );
+        }
+        let dismiss = overlay.dismiss.as_ref().unwrap();
+        assert_eq!(
+            dismiss.id,
+            InteractionRouteId {
+                widget: ViewId(0),
+                index: 0,
+            }
+        );
+        assert!(dismiss.source_payloads.is_empty());
+        assert!(!dismiss.ordered_payloads);
+        assert!(matches!(
+            dismiss.args.as_slice(),
+            [ResolvedInteractionRouteArg::Expression(_)]
+        ));
+        let ResolvedInteractionRouteTarget::TargetHandler(handler) = dismiss.target else {
+            panic!("overlay dismiss must target an app handler");
+        };
+        assert_eq!(program.try_handler(handler).unwrap().name, "close");
+        assert_eq!(program.origin(dismiss.origin).parent, Some(overlay.origin));
+    }
+
+    #[test]
+    fn overlay_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedOverlay\n{THEME}state\n  shown = true\non close(flag)\nview\n  overlay when=shown dismiss=close(shown) backdrop=black/60 p=24.0 align-x=center align-y=end\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-overlay.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Overlay { options, .. } = &mut checked.document.view else {
+            panic!("fixture root must be an overlay");
+        };
+        options.visible = Expr::Bool(false);
+        options.padding = Expr::F64(999.0);
+        let RouteArg::Expr(argument) = &mut options.dismiss.as_mut().unwrap().args[0] else {
+            panic!("dismiss route must contain an expression");
+        };
+        *argument = Expr::Bool(false);
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-overlay.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Overlay { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be an overlay");
+        };
+        options.backdrop = "danger".into();
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn overlay_codegen_ignores_raw_options_and_route_after_lowering() {
+        let source = format!(
+            "app LoweredOverlay\n{THEME}state\n  shown = true\non close(flag)\nview\n  overlay when=shown dismiss=close(shown) backdrop=black/60 p=24.0 align-x=center align-y=end\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-overlay.ice").unwrap();
+
+        let ViewNode::Overlay { options, .. } = &mut program.document.view else {
+            panic!("fixture root must be an overlay");
+        };
+        options.visible = Expr::Bool(false);
+        options.padding = Expr::F64(999.0);
+        options.backdrop = "danger".into();
+        options.align_x = FlexAlignment::Start;
+        options.align_y = FlexAlignment::Start;
+        let dismiss = options.dismiss.as_mut().unwrap();
+        dismiss.handler = "poisoned".into();
+        dismiss.args.clear();
+
+        let actual = crate::codegen::generate(&program, "lowered-overlay.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("Poisoned"));
+        assert!(!actual.contains("999.0"));
+    }
+
+    #[test]
+    fn malformed_checked_overlay_expression_route_id_and_origin_do_not_panic() {
+        let source = format!(
+            "app InvalidOverlayFacts\n{THEME}state\n  shown = true\non close\nview\n  overlay when=shown dismiss=close backdrop=black/60 p=24.0\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_interaction_route_id(ViewId(0), 0, u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_interaction_route_origin(ViewId(0), 0, u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin is outside its arena"));
+    }
+
+    #[test]
+    fn imported_overlay_keeps_physical_origins_and_generated_source_markers() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-overlay-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("overlay.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedOverlayApp\nuse \"overlay.ice\"\n{THEME}view\n  ImportedOverlay\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedOverlay()\n  state\n    shown = true\n  on close\n    shown = false\n  overlay when=shown dismiss=close backdrop=black/60 p=12.0\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let overlay = program.overlays.values().next().unwrap();
+        let origin = program.origin(overlay.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 6);
+        let route_origin = program.origin(overlay.dismiss.as_ref().unwrap().origin);
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.parent, Some(overlay.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 6 1 {encoded_import}")));
+
+        program.overlays.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 6);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_complete_container_surface_layout_flex_and_expression_owners() {
+        let source = format!(
+            "app ContainerHir\nextern crate::backend\n  box-style dynamic_container(active:bool)\n{THEME}state\n  active = true\nview\n  flex\n    box style=dynamic_container(active) w=fill h=80.0 max-w=640.0 max-h=120.0 align-x=center align-y=end clip=true p=8.0 pl=12.0 bg=linear(1.57, bg@0.0, primary/25@1.0) text=fg border=primary border-w=2.0 border-dash=(4.0, 3.0) r=4.0 r-tl=1.0 r-tr=2.0 r-br=3.0 r-bl=4.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=6.0 px-snap=true order=2 grow=1.0 shrink=0.5 basis=percent(40.0) self=flex-end m=auto mx=percent(5.0) mt=-2.0\n      text \"Card\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let container = program.container(ViewId(1)).unwrap();
+
+        assert_eq!(container.id, ViewId(1));
+        assert!(matches!(
+            container.width,
+            Some(ResolvedContainerLength::Fill)
+        ));
+        assert!(matches!(
+            container.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert_eq!(container.align_x, Some(ResolvedContainerAlignment::Center));
+        assert_eq!(container.align_y, Some(ResolvedContainerAlignment::End));
+        assert!(container.clip.is_some());
+        assert_eq!(container.border_dash.len(), 2);
+        assert!(matches!(
+            container.surface.background,
+            Some(ResolvedContainerBackground::Linear { ref stops, .. }) if stops.len() == 2
+        ));
+        assert!(matches!(
+            container.surface.border_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 2, .. }),
+                ..
+            })
+        ));
+        let custom = container.custom_style.as_ref().unwrap();
+        assert_eq!(
+            program.extern_function(custom.function).name,
+            "dynamic_container"
+        );
+        assert_eq!(custom.arguments.len(), 1);
+        assert_eq!(
+            container.flex_item.align_self,
+            Some(ResolvedContainerFlexAlignment::FlexEnd)
+        );
+        assert!(matches!(
+            container.flex_item.basis,
+            Some(ResolvedContainerFlexBasis::Percent(_))
+        ));
+        let margins = container.flex_item.margins.as_ref().unwrap();
+        assert!(matches!(margins.top, ResolvedContainerFlexMargin::Fixed(_)));
+        assert!(matches!(
+            margins.right,
+            ResolvedContainerFlexMargin::Percent(_)
+        ));
+        assert!(matches!(margins.bottom, ResolvedContainerFlexMargin::Auto));
+        assert!(matches!(
+            margins.left,
+            ResolvedContainerFlexMargin::Percent(_)
+        ));
+
+        let checked = program.checked_facts().container(ViewId(1)).unwrap();
+        assert_eq!(checked.expression_count, 28);
+        for index in 0..checked.expression_count {
+            let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(1),
+                index,
+            });
+            let expression = program
+                .checked_facts()
+                .expression_use_by_owner(owner)
+                .unwrap();
+            assert_eq!(
+                program.checked_facts().expression_use(expression).owner,
+                owner
+            );
+        }
+    }
+
+    #[test]
+    fn container_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedContainer\n{THEME}state\n  size = 80.0\nview\n  flex\n    box h=size p=8.0 bg=primary border=fg border-w=1.0 grow=1.0 mx=percent(5.0)\n      text \"Card\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-container.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        poison_raw_container_expressions(&mut checked.document.view);
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-container.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let options = raw_container_options(&mut changed_static.document.view);
+        options.align_x = Some(FlexAlignment::End);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn container_codegen_ignores_raw_box_and_flex_options_after_lowering() {
+        let source = format!(
+            "app LoweredContainer\n{THEME}state\n  size = 80.0\nview\n  flex\n    box h=size p=8.0 bg=primary border=fg border-w=1.0 grow=1.0 mx=percent(5.0)\n      text \"Card\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-container.ice").unwrap();
+
+        poison_raw_container_expressions(&mut program.document.view);
+        let options = raw_container_options(&mut program.document.view);
+        options.align_x = Some(FlexAlignment::End);
+        options.style.background = Some(BackgroundValue::Color("danger".into()));
+        options.style.border_color = Some("danger".into());
+        options.flex_item.align_self = Some(FlexItemAlignment::Stretch);
+
+        let actual = crate::codegen::generate(&program, "lowered-container.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("999.0"));
+    }
+
+    fn raw_container_options(node: &mut ViewNode) -> &mut ContainerOptions {
+        let ViewNode::Layout { children, .. } = node else {
+            panic!("fixture root must be a flex layout");
+        };
+        let ViewNode::Container { options, .. } = &mut children[0] else {
+            panic!("fixture child must be a container");
+        };
+        options
+    }
+
+    fn poison_raw_container_expressions(node: &mut ViewNode) {
+        let options = raw_container_options(node);
+        options.height = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.padding.all = Some(Expr::F64(999.0));
+        options.style.border_width = Some(Expr::F64(999.0));
+        options.flex_item.grow = Some(Expr::F64(999.0));
+        options.flex_item.margin.x = Some(FlexMarginValue::Percent(Expr::F64(999.0)));
+    }
+
+    #[test]
+    fn malformed_checked_container_expression_id_does_not_panic() {
+        let source =
+            format!("app InvalidContainerFacts\n{THEME}view\n  box p=8.0\n    text \"Card\"\n");
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_container_keeps_physical_origin_and_generated_source_marker() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-container-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("container.ice");
+        fs::write(
+            &root,
+            format!("app ImportedContainerApp\nuse \"container.ice\"\n{THEME}view\n  ImportedContainer\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedContainer()\n  state\n    active = true\n  box p=12.0 bg=primary border=fg border-w=1.0\n    text \"Imported\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let container = program.containers.values().next().unwrap();
+        let origin = program.origin(container.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.containers.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_linear_grid_stack_flex_and_scroll_layouts() {
+        let source = format!(
+            "app LayoutHir\nextern crate::backend\n  scroll-style dynamic_scroll(active:bool)\n{THEME}state\n  active = true\non scrolled(ax, ay, rx, ry)\nview\n  col gap=4.0 p=8.0 w=fill max-w=800.0 align=center clip=true\n    row gap=2.0 wrap wrap-gap=3.0 wrap-align=end\n      text \"Linear\"\n    grid cols=2 w=640.0 gap=12.0 h=aspect(16.0,9.0)\n      text \"Grid\"\n    grid min-cell=240.0 gap=12.0\n      text \"Fluid\"\n    stack under=1 w=fill h=80.0 clip=true\n      text \"Under\"\n      text \"Over\"\n    flex direction=row-reverse wrap=wrap-reverse justify=space-between items=flex-end content=space-around row-gap=6.0 col-gap=7.0 p=9.0 w=fill h=100.0 max-w=900.0 max-h=200.0 clip=true\n      text \"Flex\"\n    scroll dir=both w=fill h=200.0 bar=hidden bar-w=8.0 bar-m=2.0 scroller-w=6.0 bar-gap=4.0 anchor-x=end anchor-y=start auto=true scroll=scrolled style=dynamic_scroll(active)\n      text \"Scroll\"\n      active x-disabled=false y-disabled=false\n        box bg=bg text=fg border=primary border-w=1.0 r=4.0 shadow=danger shadow-x=1.0 shadow-y=2.0 shadow-blur=3.0 px-snap=true\n        x-rail bg=bg\n        x-scroller bg=primary\n        y-rail bg=bg\n        y-scroller bg=primary\n        gap bg=bg\n        auto bg=bg icon=fg\n"
+        );
+        let source = source.replace(
+            "direction=row-reverse wrap=wrap-reverse justify=space-between items=flex-end content=space-around row-gap=6.0 col-gap=7.0",
+            "dir=row-reverse wrap=wrap-reverse justify=space-between items=flex-end content=space-around gap-y=6.0 gap-x=7.0",
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        let root = program.layout(ViewId(0)).unwrap();
+        assert!(matches!(
+            root.mode,
+            ResolvedLayoutMode::Linear(ResolvedLinearLayout {
+                axis: ResolvedLinearAxis::Column,
+                align: Some(ResolvedContainerAlignment::Center),
+                ..
+            })
+        ));
+        assert!(program.layouts.values().any(|layout| matches!(
+            layout.mode,
+            ResolvedLayoutMode::Grid(ResolvedGridLayout {
+                height: Some(ResolvedGridHeight::AspectRatio { .. }),
+                ..
+            })
+        )));
+        assert!(program.layouts.values().any(|layout| matches!(
+            layout.mode,
+            ResolvedLayoutMode::Stack(ResolvedStackLayout { under: 1, .. })
+        )));
+        assert!(program.layouts.values().any(|layout| matches!(
+            layout.mode,
+            ResolvedLayoutMode::Flex(ResolvedFlexLayout {
+                direction: ResolvedFlexDirection::Row,
+                wrap: ResolvedFlexWrap::Wrap,
+                min_cell: Some(_),
+                ..
+            })
+        )));
+        assert!(program.layouts.values().any(|layout| matches!(
+            layout.mode,
+            ResolvedLayoutMode::Flex(ResolvedFlexLayout {
+                direction: ResolvedFlexDirection::RowReverse,
+                wrap: ResolvedFlexWrap::WrapReverse,
+                justify_content: Some(ResolvedFlexContentAlignment::SpaceBetween),
+                align_items: Some(ResolvedContainerFlexAlignment::FlexEnd),
+                align_content: Some(ResolvedFlexContentAlignment::SpaceAround),
+                ..
+            })
+        )));
+        let scroll = program
+            .layouts
+            .values()
+            .find_map(|layout| match &layout.mode {
+                ResolvedLayoutMode::Scroll(scroll) => Some(scroll.as_ref()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(scroll.direction, ResolvedScrollDirection::Both);
+        assert!(scroll.hidden_bar);
+        assert_eq!(scroll.anchor_x, ResolvedScrollAnchor::End);
+        assert_eq!(scroll.anchor_y, ResolvedScrollAnchor::Start);
+        assert!(scroll.route.is_some());
+        assert_eq!(scroll.styles.len(), 1);
+        assert!(scroll.custom_style.is_some());
+        assert!(scroll.styles[0].container.background.is_some());
+        assert!(scroll.styles[0].auto_scroll_icon.is_some());
+
+        for layout in program.layouts.values() {
+            let checked = program.checked_facts().interaction(layout.id).unwrap();
+            for index in 0..checked.expression_count {
+                let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: layout.id,
+                    index,
+                });
+                let expression = program
+                    .checked_facts()
+                    .expression_use_by_owner(owner)
+                    .unwrap();
+                assert_eq!(
+                    program.checked_facts().expression_use(expression).owner,
+                    owner
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn layout_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedLayout\n{THEME}state\n  size = 8.0\nview\n  row gap=size p=4.0 w=fill align=center clip=true\n    text \"Checked\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-layout.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        poison_raw_layout_expressions(&mut checked.document.view);
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-layout.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let options = raw_layout_options(&mut changed_static.document.view);
+        options.align = Some(FlexAlignment::End);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn layout_codegen_ignores_raw_options_after_lowering() {
+        let source = format!(
+            "app LoweredLayout\n{THEME}state\n  size = 8.0\nview\n  row gap=size p=4.0 w=fill align=center clip=true\n    text \"Lowered\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-layout.ice").unwrap();
+
+        poison_raw_layout_expressions(&mut program.document.view);
+        let options = raw_layout_options(&mut program.document.view);
+        options.align = Some(FlexAlignment::End);
+        options.wrap = true;
+        options.under = u16::MAX;
+
+        let actual = crate::codegen::generate(&program, "lowered-layout.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("999.0"));
+    }
+
+    fn raw_layout_options(node: &mut ViewNode) -> &mut LayoutOptions {
+        let ViewNode::Layout { options, .. } = node else {
+            panic!("fixture root must be a layout");
+        };
+        options
+    }
+
+    fn poison_raw_layout_expressions(node: &mut ViewNode) {
+        let options = raw_layout_options(node);
+        options.spacing = Some(Expr::F64(999.0));
+        options.padding.all = Some(Expr::F64(999.0));
+        options.clip = Some(Expr::Bool(false));
+    }
+
+    #[test]
+    fn malformed_checked_layout_expression_id_does_not_panic() {
+        let source =
+            format!("app InvalidLayoutFacts\n{THEME}view\n  row p=8.0\n    text \"Invalid\"\n");
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_layout_keeps_physical_origins_and_generated_source_marker() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-layout-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("layout.ice");
+        fs::write(
+            &root,
+            format!("app ImportedLayoutApp\nuse \"layout.ice\"\n{THEME}view\n  ImportedLayout\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedLayout()\n  scroll h=120.0\n    text \"Imported\"\n    active\n      box bg=bg border=primary border-w=1.0\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let layout = program.layouts.values().next().unwrap();
+        let origin = program.origin(layout.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+        let ResolvedLayoutMode::Scroll(scroll) = &layout.mode else {
+            panic!("imported layout must be scroll HIR");
+        };
+        let style_origin = program.origin(scroll.styles[0].origin);
+        assert_eq!(style_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(style_origin.parent, Some(layout.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.layouts.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_complete_plain_and_rich_text_contracts() {
+        let source = format!(
+            r#"app TextHir
+extern crate::backend
+  text-style dynamic_text(active:bool)
+font ui family=sans weight=medium stretch=normal style=normal
+{THEME}state
+  active = true
+  label = "SECTION"
+on link(url)
+view
+  col
+    text label w=fill h=40.0 size=16.0 line-h-px=20.0 font=ui align-x=center align-y=bottom shape=advanced style=dynamic_text(active) @font-bold text-primary
+    rich-text #story w=fill h=48.0 size=16.0 line-h=1.2 font=ui align-x=justified align-y=center wrap=word color=fg style=dynamic_text(active) @font-bold -> link _
+      span "Ice " size=18.0 line-h-px=22.0 font=ui color=primary bg=linear(1.57, bg@0.0, primary@1.0) border=fg border-w=1.0 r=4.0 r-tl=2.0 r-tr=3.0 r-br=5.0 r-bl=6.0 p=2.0 pl=4.0 underline strike=false
+      span "language" link="https://example.com" bg=bg size=18.0 @font-bold text-primary
+    text "TRACKED" size=12.0 tracking=1.2
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        let plain = program.text(ViewId(1)).unwrap();
+        assert!(matches!(plain.content, ResolvedTextContent::Plain { .. }));
+        assert!(matches!(
+            plain.options.width,
+            Some(ResolvedContainerLength::Fill)
+        ));
+        assert!(matches!(
+            plain.options.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(matches!(
+            plain.options.font,
+            Some(ResolvedTextFont::Named(_))
+        ));
+        assert_eq!(plain.options.align_x, Some(ResolvedTextAlignment::Center));
+        assert_eq!(
+            plain.options.align_y,
+            Some(ResolvedTextVerticalAlignment::Bottom)
+        );
+        assert_eq!(plain.options.shaping, Some(ResolvedTextShaping::Advanced));
+        assert_eq!(plain.options.wrapping, None);
+        assert_eq!(plain.options.tracking, None);
+        let plain_style = plain.options.custom_style.as_ref().unwrap();
+        assert_eq!(
+            program.extern_function(plain_style.function).name,
+            "dynamic_text"
+        );
+        assert_eq!(plain_style.arguments.len(), 1);
+
+        let rich = program.text(ViewId(2)).unwrap();
+        assert_eq!(rich.options.align_x, Some(ResolvedTextAlignment::Justified));
+        let ResolvedTextContent::Rich {
+            color,
+            spans,
+            route,
+        } = &rich.content
+        else {
+            panic!("fixture rich-text must lower to structured content");
+        };
+        assert!(color.is_some());
+        assert!(route.is_some());
+        assert_eq!(spans.len(), 2);
+        assert!(matches!(
+            spans[0].background,
+            Some(ResolvedContainerBackground::Linear { ref stops, .. }) if stops.len() == 2
+        ));
+        assert!(spans[0].border_color.is_some());
+        assert!(spans[0].radius.all.is_some());
+        assert!(spans[0].radius.bottom_left.is_some());
+        assert!(spans[0].padding.all.is_some());
+        assert!(spans[0].padding.left.is_some());
+        assert!(spans[0].underline.is_some());
+        assert!(spans[0].strikethrough.is_some());
+        assert!(matches!(spans[0].font, Some(ResolvedTextFont::Named(_))));
+        assert!(spans[1].link.is_some());
+        assert!(matches!(
+            spans[1].background,
+            Some(ResolvedContainerBackground::Color(_))
+        ));
+
+        for text in program.texts.values() {
+            let checked = program.checked_facts().interaction(text.id).unwrap();
+            for index in 0..checked.expression_count {
+                let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: text.id,
+                    index,
+                });
+                let expression = program
+                    .checked_facts()
+                    .expression_use_by_owner(owner)
+                    .unwrap();
+                assert_eq!(
+                    program.checked_facts().expression_use(expression).owner,
+                    owner
+                );
+            }
+        }
+        for span in spans {
+            assert_eq!(program.origin(span.origin).parent, Some(rich.origin));
+        }
+        assert_eq!(program.text(ViewId(3)).unwrap().options.tracking, Some(1.2));
+    }
+
+    #[test]
+    fn text_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedText\nextern crate::backend\n  text-style dynamic_text(active:bool)\n{THEME}state\n  active = true\n  label = \"Checked\"\nview\n  text label w=80.0 size=14.0 line-h=1.2 style=dynamic_text(active) align-x=center\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-text.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Text { value, options, .. } = &mut checked.document.view else {
+            panic!("fixture root must be text");
+        };
+        *value = Expr::Str("POISONED".into());
+        options.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.size = Some(Expr::F64(999.0));
+        options.line_height = Some(TextLineHeight::Relative(Expr::F64(999.0)));
+        options.custom_style.as_mut().unwrap().args[0] = Expr::Bool(false);
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-text.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Text { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be text");
+        };
+        options.align_x = Some(TextAlignment::Right);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn text_codegen_ignores_raw_plain_and_rich_content_after_lowering() {
+        let source = format!(
+            "app LoweredText\n{THEME}on link(url)\nview\n  col\n    text \"Plain\" size=14.0 align-x=center\n    rich-text color=fg -> link _\n      span \"Docs\" link=\"https://example.com\" bg=primary underline\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-text.ice").unwrap();
+
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Text {
+            value,
+            options,
+            styles,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be text");
+        };
+        *value = Expr::Str("POISONED".into());
+        *options = TextOptions::default();
+        styles.clear();
+        let ViewNode::RichText {
+            options,
+            color,
+            spans,
+            styles,
+            route,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be rich-text");
+        };
+        *options = TextOptions::default();
+        *color = Some("danger".into());
+        spans.clear();
+        styles.clear();
+        *route = None;
+
+        let actual = crate::codegen::generate(&program, "lowered-text.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+    }
+
+    #[test]
+    fn malformed_checked_text_expression_id_does_not_panic() {
+        let source = format!("app InvalidTextFacts\n{THEME}view\n  text \"Invalid\" size=14.0\n");
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_rich_text_keeps_root_span_and_route_physical_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-text-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("text.ice");
+        fs::write(
+            &root,
+            format!("app ImportedTextApp\nuse \"text.ice\"\n{THEME}view\n  ImportedText\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedText()\n  on open(url)\n  rich-text color=fg -> open _\n    span \"Docs\" link=\"https://example.com\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let text = program.texts.values().next().unwrap();
+        let root_origin = program.origin(text.origin);
+        assert_eq!(root_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(root_origin.line, 3);
+        let ResolvedTextContent::Rich { spans, route, .. } = &text.content else {
+            panic!("imported content must be rich-text");
+        };
+        let span_origin = program.origin(spans[0].origin);
+        assert_eq!(span_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(span_origin.line, 4);
+        assert_eq!(span_origin.parent, Some(text.origin));
+        let route_origin = program.origin(route.as_ref().unwrap().origin);
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.parent, Some(text.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.texts.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_the_complete_input_contract() {
+        let source = r#"app InputHir
+extern crate::backend
+  input-style dynamic_input(disabled:bool)
+font ui family=sans
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  value = ""
+  disabled = false
+  secure = true
+on changed(next)
+  value = next
+on submitted
+on pasted(next)
+  value = next
+view
+  input "Secret" #secret label="Secure input" description="Private value" <-> value hint="Paste token" disabled=disabled secure=secure change=changed submit=submitted paste=pasted w=240.0 p=8.0 text-size=14.0 line-h=1.2 align=center font=mono style=dynamic_input(disabled)
+    active bg=bg border=fg border-w=1.0 r=4.0 icon=primary placeholder=danger value=fg selection=primary
+    hovered bg=bg border=primary border-w=1.0 r=10.0 icon=fg placeholder=danger value=fg selection=primary
+    focused bg=bg border=primary border-w=1.0 r=10.0
+    focused-hovered bg=bg border=fg border-w=1.0 r=10.0
+    disabled bg=bg border=primary border-w=1.0 r=10.0 value=danger
+    icon code="•" font=ui size=12.0 gap=4.0 side=right
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let input = program.input(ViewId(0)).unwrap();
+
+        assert_eq!(input.label, "Secret");
+        assert_eq!(input.hint, "Paste token");
+        assert!(matches!(
+            input.binding,
+            WritableStateRef::App { ref name, .. } if name == "value"
+        ));
+        assert!(input.disabled.is_some());
+        assert!(input.accessibility_label.is_some());
+        assert!(input.accessibility_description.is_some());
+        assert!(input.secure.is_some());
+        assert!(input.change.is_some());
+        assert!(input.submit.is_some());
+        assert!(input.paste.is_some());
+        assert!(matches!(
+            input.width,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert_eq!(input.align, Some(ResolvedInputAlignment::Center));
+        assert!(matches!(input.font, Some(ResolvedTextFont::Monospace)));
+        let icon = input.icon.as_ref().unwrap();
+        assert_eq!(icon.code_point, '•');
+        assert_eq!(icon.side, ResolvedInputIconSide::Right);
+        assert!(matches!(icon.font, Some(ResolvedTextFont::Named(_))));
+        assert!(icon.size.is_some());
+        assert!(icon.spacing.is_some());
+        assert!(input.custom_style.is_some());
+        assert!(input.styles.active.is_some());
+        assert!(input.styles.hovered.is_some());
+        assert!(input.styles.focused.is_some());
+        assert!(input.styles.focused_hovered.is_some());
+        assert!(input.styles.disabled.is_some());
+
+        let checked = program.checked_facts().interaction(input.id).unwrap();
+        for index in 0..checked.expression_count {
+            let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: input.id,
+                index,
+            });
+            let expression = program
+                .checked_facts()
+                .expression_use_by_owner(owner)
+                .unwrap();
+            assert_eq!(
+                program.checked_facts().expression_use(expression).owner,
+                owner
+            );
+        }
+        for route in [&input.change, &input.submit, &input.paste]
+            .into_iter()
+            .flatten()
+        {
+            assert_eq!(program.origin(route.origin).parent, Some(input.origin));
+        }
+        assert_eq!(program.origin(icon.origin).parent, Some(input.origin));
+        for status in [
+            &input.styles.active,
+            &input.styles.hovered,
+            &input.styles.focused,
+            &input.styles.focused_hovered,
+            &input.styles.disabled,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert_eq!(program.origin(status.origin).parent, Some(input.origin));
+        }
+    }
+
+    #[test]
+    fn input_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedInput\nextern crate::backend\n  input-style dynamic_input(disabled:bool)\n{THEME}state\n  value = \"\"\n  disabled = false\non changed(next)\n  value = next\nview\n  input \"Field\" <-> value hint=\"Type\" disabled=disabled secure=false change=changed w=80.0 p=4.0 text-size=14.0 line-h=1.2 align=center style=dynamic_input(disabled)\n    active bg=bg border=fg border-w=1.0 r=4.0\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-input.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Input {
+            disabled, options, ..
+        } = &mut checked.document.view
+        else {
+            panic!("fixture root must be input");
+        };
+        *disabled = Some(Expr::Bool(true));
+        options.secure = Some(Expr::Bool(true));
+        options.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.padding = Some(Expr::F64(999.0));
+        options.text_size = Some(Expr::F64(999.0));
+        options.line_height = Some(Expr::F64(999.0));
+        options.custom_style.as_mut().unwrap().args[0] = Expr::Bool(true);
+        let active = options.style.active.as_mut().unwrap();
+        active.options.border_width = Some(Expr::F64(999.0));
+        active.options.radius = Some(Expr::F64(999.0));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-input.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Input { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be input");
+        };
+        options.align = Some(InputAlignment::Right);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+
+        let mut changed_route = analyze(&source).unwrap();
+        let ViewNode::Input { options, .. } = &mut changed_route.document.view else {
+            panic!("fixture root must be input");
+        };
+        options.change.as_mut().unwrap().handler = "missing".into();
+        let error = lower(changed_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn input_lowering_rejects_same_arena_binding_identity_swaps() {
+        let app_source = format!(
+            "app AppBindingIdentity\n{THEME}state\n  first = \"\"\n  second = \"\"\nview\n  input \"Field\" <-> first\n"
+        );
+        let mut checked = analyze(&app_source).unwrap();
+        checked
+            .facts
+            .corrupt_input_binding(ViewId(0), CheckedValueRef::AppState(AppStateId(1)));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding identity diverged"));
+
+        let param_source = format!(
+            "app ParamBindingIdentity\n{THEME}state\n  first = \"\"\n  second = \"\"\ncomponent Field(bind first:str, bind second:str)\n  input \"Field\" <-> first\nview\n  Field first<->first second<->second\n"
+        );
+        let mut checked = analyze(&param_source).unwrap();
+        let input = checked
+            .declarations
+            .view_id(checked.document.components[0].root.span())
+            .unwrap();
+        checked.facts.corrupt_input_binding(
+            input,
+            CheckedValueRef::ComponentParam(ComponentParamId {
+                component: ComponentId(0),
+                index: 1,
+            }),
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding identity diverged"));
+
+        let state_source = format!(
+            "app ComponentStateBindingIdentity\n{THEME}component Field()\n  state\n    first = \"\"\n    second = \"\"\n  input \"Field\" <-> first\nview\n  Field\n"
+        );
+        let mut checked = analyze(&state_source).unwrap();
+        let input = checked
+            .declarations
+            .view_id(checked.document.components[0].root.span())
+            .unwrap();
+        checked.facts.corrupt_input_binding(
+            input,
+            CheckedValueRef::ComponentState(ComponentStateId {
+                component: ComponentId(0),
+                index: 1,
+            }),
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding identity diverged"));
+    }
+
+    #[test]
+    fn input_lowering_rejects_same_widget_route_expression_transplants() {
+        let source = format!(
+            "app InputRouteIdentity\n{THEME}state\n  value = \"\"\non changed(next)\n  value = next\non pasted(next)\n  value = next\nview\n  input \"Field\" <-> value change=changed(\"change\") paste=pasted(\"paste\")\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .transplant_interaction_route_expression(ViewId(0), 0, 0, 1, 0);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error
+                .message
+                .contains("route expression slot identity diverged")
+        );
+    }
+
+    #[test]
+    fn input_codegen_ignores_raw_widget_contract_after_lowering() {
+        let source = format!(
+            "app LoweredInput\n{THEME}state\n  value = \"\"\n  spare = \"\"\n  disabled = false\non changed(next)\n  value = next\nview\n  input \"Field\" #field <-> value hint=\"Type\" disabled=disabled change=changed w=80.0\n    active bg=bg border=fg border-w=1.0 r=4.0\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-input.ice").unwrap();
+
+        let ViewNode::Input {
+            label,
+            binding,
+            hint,
+            disabled,
+            options,
+            styles,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be input");
+        };
+        *label = "POISONED LABEL".into();
+        *binding = "missing".into();
+        *hint = "POISONED HINT".into();
+        *disabled = Some(Expr::Bool(true));
+        *options = InputOptions::default();
+        styles.clear();
+
+        let actual = crate::codegen::generate(&program, "lowered-input.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+
+        program.controlled_inputs[0].state = AppStateId(1);
+        let error = crate::codegen::generate(&program, "lowered-input.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("controlled input binding"));
+
+        program.controlled_inputs[0].state = AppStateId(u32::MAX);
+        let error = crate::codegen::generate(&program, "lowered-input.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("controlled input binding"));
+    }
+
+    #[test]
+    fn malformed_checked_input_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidInputFacts\n{THEME}state\n  value = \"\"\n  disabled = false\nview\n  input \"Invalid\" <-> value disabled=disabled\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_input_keeps_widget_icon_status_and_route_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-input-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("field.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedInputApp\nuse \"field.ice\"\n{THEME}state\n  value = \"\"\nview\n  ImportedField value<->value\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedField(bind value:str)\n  on changed(next)\n  input \"Imported\" <-> value change=changed\n    active bg=bg border=fg border-w=1.0\n    icon code=\"•\" size=12.0\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let input = program.inputs.values().next().unwrap();
+        let input_origin = program.origin(input.origin);
+        assert_eq!(input_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(input_origin.line, 3);
+        for (child, line) in [
+            (input.change.as_ref().unwrap().origin, 3),
+            (input.styles.active.as_ref().unwrap().origin, 4),
+            (input.icon.as_ref().unwrap().origin, 5),
+        ] {
+            let child = program.origin(child);
+            assert_eq!(child.parent, Some(input.origin));
+            assert_eq!(child.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(child.line, line);
+        }
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.inputs.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_complete_pick_list_and_combo_box_contracts() {
+        let source = r#"app SelectionHir
+extern crate::backend
+  pick-list-style dynamic_pick(busy:bool)
+  input-style dynamic_input(busy:bool)
+  menu-style dynamic_menu(busy:bool)
+font ui family=sans
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  busy = false
+  choices = ["List", "Board"]
+  modes:combo[str] = ["List", "Board"]
+  selected:str? = none
+on selected(next)
+  selected = some(next)
+on searched(next)
+on hovered(next)
+on opened
+on closed
+view
+  col
+    pick choices selected hint="Choose" w=fill menu-h=120.0 p=8.0 text-size=14.0 line-h=1.2 shape=advanced font=ui open=opened close=closed style=dynamic_pick(busy) menu-style=dynamic_menu(busy) -> selected _
+      active text=fg placeholder=danger handle=primary bg=bg border=fg border-w=1.0 r=4.0
+      hovered text=fg
+      opened text=fg
+      opened-hovered text=fg
+      menu text=fg selected-text=bg selected-bg=primary bg=bg border=fg border-w=1.0 r=6.0 shadow=danger shadow-x=1.0 shadow-y=2.0 shadow-blur=4.0
+      handle dynamic
+        closed code="⌄" font=ui size=12.0 line-h=1.0 shape=basic
+        open code="⌃" font=ui size=13.0 line-h=1.1 shape=advanced
+    combo modes selected "Search modes" w=fill menu-h=120.0 p=8.0 text-size=14.0 line-h=1.2 shape=advanced font=ui input=searched hover=hovered open=opened close=closed style=dynamic_input(busy) menu-style=dynamic_menu(busy) -> selected _
+      active bg=bg border=fg border-w=1.0 r=4.0 icon=primary placeholder=danger value=fg selection=primary
+      hovered bg=bg icon=fg
+      focused bg=bg border=primary
+      focused-hovered bg=bg border=fg
+      disabled bg=bg value=danger
+      menu text=fg selected-text=bg selected-bg=primary bg=bg border=fg border-w=1.0 r=6.0 shadow=danger shadow-x=1.0 shadow-y=2.0 shadow-blur=4.0
+      icon code="⌕" font=ui size=12.0 gap=6.0 side=right
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let pick = program.pick_list(ViewId(1)).unwrap();
+        assert_eq!(pick.option_type, Type::Str);
+        assert!(matches!(pick.width, Some(ResolvedContainerLength::Fill)));
+        assert!(matches!(
+            pick.menu_height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(matches!(pick.font, Some(ResolvedTextFont::Named(_))));
+        assert!(matches!(
+            pick.handle,
+            Some(ResolvedPickListHandle::Dynamic { .. })
+        ));
+        assert!(pick.open.is_some());
+        assert!(pick.close.is_some());
+        assert!(pick.custom_style.is_some());
+        assert!(pick.styles.active.is_some());
+        assert!(pick.styles.hovered.is_some());
+        assert!(pick.styles.opened.is_some());
+        assert!(pick.styles.opened_hovered.is_some());
+        assert!(pick.menu.custom.is_some());
+        assert!(pick.menu.surface.is_some());
+        assert_eq!(
+            program.origin(pick.selection.origin).parent,
+            Some(pick.origin)
+        );
+
+        let combo = program.combo_box(ViewId(2)).unwrap();
+        assert_eq!(combo.state.name, "modes");
+        assert_eq!(combo.state.option_type, Type::Str);
+        assert!(matches!(combo.font, Some(ResolvedTextFont::Named(_))));
+        assert!(combo.icon.is_some());
+        assert!(combo.input.is_some());
+        assert!(combo.hover.is_some());
+        assert!(combo.open.is_some());
+        assert!(combo.close.is_some());
+        assert!(combo.custom_style.is_some());
+        assert!(combo.styles.active.is_some());
+        assert!(combo.styles.hovered.is_some());
+        assert!(combo.styles.focused.is_some());
+        assert!(combo.styles.focused_hovered.is_some());
+        assert!(combo.styles.disabled.is_some());
+        assert!(combo.menu.custom.is_some());
+        assert!(combo.menu.surface.is_some());
+        assert_eq!(
+            program.origin(combo.selection.origin).parent,
+            Some(combo.origin)
+        );
+        for origin in [
+            pick.styles.active.as_ref().unwrap().origin,
+            pick.menu.origin.unwrap(),
+            combo.styles.active.as_ref().unwrap().origin,
+            combo.menu.origin.unwrap(),
+            combo.icon.as_ref().unwrap().origin,
+        ] {
+            assert!(program.origin(origin).parent.is_some());
+        }
+    }
+
+    #[test]
+    fn selection_lowering_uses_checked_semantics_and_codegen_ignores_raw_contracts() {
+        let source = format!(
+            "app CheckedSelection\n{THEME}state\n  choices = [\"One\", \"Two\"]\n  modes:combo[str] = [\"One\", \"Two\"]\n  selected:str? = none\non selected(next)\n  selected = some(next)\non opened\nview\n  col\n    pick choices selected hint=\"Choose\" w=80.0 open=opened -> selected _\n      active bg=bg border=fg border-w=1.0\n    combo modes selected \"Search\" w=80.0 open=opened -> selected _\n      active bg=bg border=fg border-w=1.0\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-selection.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::PickList {
+            options,
+            selected,
+            options_config,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a pick list");
+        };
+        *options = Expr::List(vec![]);
+        *selected = Expr::None;
+        options_config.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options_config.placeholder = Some(Expr::Str("POISONED".into()));
+        let ViewNode::ComboBox {
+            selected, options, ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a combo box");
+        };
+        *selected = Expr::None;
+        options.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-selection.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-selection.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::PickList {
+            options,
+            selected,
+            options_config,
+            route,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a pick list");
+        };
+        *options = Expr::List(vec![]);
+        *selected = Expr::None;
+        *options_config = PickListOptions::default();
+        route.handler = "missing".into();
+        let ViewNode::ComboBox {
+            state,
+            selected,
+            placeholder,
+            options,
+            route,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a combo box");
+        };
+        *state = "missing".into();
+        *selected = Expr::None;
+        *placeholder = "POISONED".into();
+        *options = ComboBoxOptions::default();
+        route.handler = "missing".into();
+        let actual = crate::codegen::generate(&program, "lowered-selection.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::PickList { options_config, .. } = &mut children[0] else {
+            panic!("first child must be a pick list");
+        };
+        options_config.shaping = Some(TextShaping::Advanced);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn combo_lowering_rejects_same_arena_state_identity_swaps() {
+        let source = format!(
+            "app ComboIdentity\n{THEME}state\n  first:combo[str] = [\"One\"]\n  second:combo[str] = [\"Two\"]\n  selected:str? = none\non selected(next)\nview\n  combo first selected \"Search\" -> selected _\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_combo_box_binding(ViewId(0), CheckedValueRef::AppState(AppStateId(1)));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding identity diverged"));
+    }
+
+    #[test]
+    fn pick_lowering_rejects_same_kind_extern_route_and_status_identity_swaps() {
+        let source = format!(
+            "app PickIdentity\nextern crate::backend\n  pick-list-style first(flag:bool)\n  pick-list-style second(flag:bool)\n{THEME}state\n  choices = [\"One\"]\n  selected:str? = none\n  flag = false\non selected(next)\nview\n  pick choices selected style=first(flag) -> selected _\n    active bg=bg\n    hovered bg=primary\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_pick_list_style(ViewId(0), ExternFnId(1));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("extern contract diverged"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.swap_pick_list_status_origins(ViewId(0));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin diverged"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_interaction_route_id(ViewId(0), 0, 9);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_selection_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidSelectionFacts\n{THEME}state\n  choices = [\"One\"]\n  selected:str? = none\non selected(next)\nview\n  pick choices selected -> selected _\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_pick_list_keeps_exact_widget_handle_status_menu_and_route_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-selection-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("selection.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedSelectionApp\nuse \"selection.ice\"\n{THEME}state\n  choices = [\"One\"]\n  selected:str? = none\nview\n  ImportedPick choices=choices selected=selected\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedPick(choices:[str], selected:str?)\n  on picked(next)\n  pick choices selected hint=\"Imported\" -> picked _\n    active bg=bg border=fg border-w=1.0\n    menu text=fg selected-bg=primary\n    handle static code=\"⌄\" size=12.0\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pick = program.pick_lists.values().next().unwrap();
+        let root_origin = program.origin(pick.origin);
+        assert_eq!(root_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(root_origin.line, 3);
+        let ResolvedPickListHandle::Static(icon) = pick.handle.as_ref().unwrap() else {
+            panic!("imported pick must retain its static icon");
+        };
+        for (origin, line) in [
+            (pick.selection.origin, 3),
+            (pick.styles.active.as_ref().unwrap().origin, 4),
+            (pick.menu.origin.unwrap(), 5),
+            (icon.origin, 6),
+        ] {
+            let child = program.origin(origin);
+            assert_eq!(child.parent, Some(pick.origin));
+            assert_eq!(child.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(child.line, line);
+        }
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.pick_lists.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_the_complete_button_contract() {
+        let source = r#"app ButtonHir
+extern crate::backend
+  button-style first_style(disabled:bool)
+  button-style second_style(disabled:bool)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+recipe action for button
+  @px-3 bg-primary hover:bg-fg pressed:bg-danger disabled:bg-bg text-fg disabled:text-danger border border-fg rounded-lg disabled:opacity-50
+state
+  disabled = false
+on pressed
+view
+  button "Save" #save label="Save action" description="Writes changes" disabled=disabled w=240.0 h=48.0 p=8.0 clip=false style=first_style(disabled) @action -> pressed
+    active bg=linear(1.57, primary@0.0, bg@1.0) text=fg border=primary border-w=1.0 r=4.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=4.0 px-snap=true
+    hovered bg=fg text=bg r=6.0
+    pressed bg=primary text=white r=8.0
+    disabled bg=bg text=danger r=10.0
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let button = program.button(ViewId(0)).unwrap();
+
+        assert_eq!(button.id, ViewId(0));
+        assert_eq!(button.content, ResolvedButtonContent::Label("Save".into()));
+        assert!(button.disabled.is_some());
+        assert!(button.accessibility_label.is_some());
+        assert!(button.accessibility_description.is_some());
+        assert!(matches!(
+            button.width,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(matches!(
+            button.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(button.padding.is_some());
+        assert!(button.clip.is_some());
+        assert_eq!(button.preset, ResolvedButtonPreset::Primary);
+        assert_eq!(
+            button.custom_style.as_ref().unwrap().function,
+            ExternFnId(0)
+        );
+        assert!(button.styles.active.is_some());
+        assert!(button.styles.hovered.is_some());
+        assert!(button.styles.pressed.is_some());
+        assert!(button.styles.disabled.is_some());
+        assert!(button.utility_style.background.is_some());
+        assert!(button.utility_style.hover_background.is_some());
+        assert!(button.utility_style.pressed_background.is_some());
+        assert!(button.utility_style.disabled_background.is_some());
+        assert_eq!(
+            program.origin(button.route.origin).parent,
+            Some(button.origin)
+        );
+        for status in [
+            &button.styles.active,
+            &button.styles.hovered,
+            &button.styles.pressed,
+            &button.styles.disabled,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert_eq!(program.origin(status.origin).parent, Some(button.origin));
+        }
+        let active = button.styles.active.as_ref().unwrap();
+        assert!(matches!(
+            active.surface.background,
+            Some(ResolvedContainerBackground::Linear { .. })
+        ));
+        assert!(active.surface.shadow_color.is_some());
+        assert!(active.surface.pixel_snap.is_some());
+    }
+
+    #[test]
+    fn button_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedButton\nextern crate::backend\n  button-style dynamic_button(disabled:bool)\n{THEME}state\n  disabled = false\non pressed\nview\n  button \"Save\" disabled=disabled w=80.0 h=32.0 p=4.0 clip=false style=dynamic_button(disabled) -> pressed\n    active bg=bg border=fg border-w=1.0 r=4.0 shadow-x=1.0 px-snap=true\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-button.ice",
+        )
+        .unwrap();
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Button {
+            disabled, options, ..
+        } = &mut checked.document.view
+        else {
+            panic!("fixture root must be a button");
+        };
+        *disabled = Some(Expr::Bool(true));
+        options.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.height = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.padding = Some(Expr::F64(999.0));
+        options.clip = Some(Expr::Bool(true));
+        options.style.custom.as_mut().unwrap().args[0] = Expr::Bool(true);
+        let active = options.style.active.as_mut().unwrap();
+        active.options.border_width = Some(Expr::F64(999.0));
+        active.options.radius = Some(Expr::F64(999.0));
+        active.options.shadow_x = Some(Expr::F64(999.0));
+        active.options.pixel_snap = Some(Expr::Bool(false));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-button.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed = analyze(&source).unwrap();
+        let ViewNode::Button { label, .. } = &mut changed.document.view else {
+            panic!("fixture root must be a button");
+        };
+        *label = Some("Changed".into());
+        let error = lower(changed).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn button_codegen_ignores_raw_contract_after_lowering() {
+        let source = format!(
+            "app LoweredButton\n{THEME}state\n  disabled = false\non pressed\nview\n  button \"Save\" #save disabled=disabled w=80.0 @bg-primary -> pressed\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-button.ice").unwrap();
+        let ViewNode::Button {
+            label,
+            disabled,
+            options,
+            styles,
+            route,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a button");
+        };
+        *label = Some("POISONED".into());
+        *disabled = Some(Expr::Bool(true));
+        *options = ButtonOptions::default();
+        styles.clear();
+        route.handler = "poisoned".into();
+        let actual = crate::codegen::generate(&program, "lowered-button.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+    }
+
+    #[test]
+    fn button_lowering_rejects_same_arena_expression_and_extern_swaps() {
+        let source = format!(
+            "app ButtonIdentity\nextern crate::backend\n  button-style first_style(disabled:bool)\n  button-style second_style(disabled:bool)\n{THEME}state\n  disabled = false\non pressed\nview\n  button \"Save\" disabled=disabled clip=false style=first_style(disabled) -> pressed\n"
+        );
+        let mut swapped_expression = analyze(&source).unwrap();
+        swapped_expression
+            .facts
+            .swap_interaction_option_expressions(ViewId(0), 0, 1);
+        let error = lower(swapped_expression).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_extern = analyze(&source).unwrap();
+        swapped_extern
+            .facts
+            .corrupt_button_style(ViewId(0), ExternFnId(1));
+        let error = lower(swapped_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("extern contract diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_button_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidButtonFacts\n{THEME}state\n  disabled = false\non pressed\nview\n  button \"Invalid\" disabled=disabled -> pressed\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_button_keeps_widget_status_and_route_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-button-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("button.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedButtonApp\nuse \"button.ice\"\n{THEME}on pressed\nview\n  ImportedButton\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedButton()\n  on pressed\n  button \"Imported\" -> pressed\n    active bg=bg border=fg border-w=1.0\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let button = program.buttons.values().next().unwrap();
+        let button_origin = program.origin(button.origin);
+        assert_eq!(button_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(button_origin.line, 3);
+        for (child, line) in [
+            (button.route.origin, 3),
+            (button.styles.active.as_ref().unwrap().origin, 4),
+        ] {
+            let child = program.origin(child);
+            assert_eq!(child.parent, Some(button.origin));
+            assert_eq!(child.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(child.line, line);
+        }
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.buttons.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized button lowering and emission performance contract"]
+    fn performance_contract_four_thousand_buttons_lower_and_emit_under_two_seconds() {
+        const BUTTONS: usize = 4_000;
+        let mut source =
+            format!("app ButtonScale\n{THEME}state\n  disabled = false\non pressed\nview\n  col\n");
+        for index in 0..BUTTONS {
+            writeln!(
+                source,
+                "    button \"Button {index}\" #button_{index} disabled=disabled w=120.0 h=32.0 p=4.0 clip=false -> pressed"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "button-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.buttons.len(), BUTTONS);
+        assert_eq!(
+            generated.matches("::iced::widget::button(").count(),
+            BUTTONS
+        );
+        eprintln!("4k normalized buttons lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized buttons lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_complete_boolean_control_contracts_and_radio_value_routing() {
+        let source = r#"app BooleanHir
+extern crate::backend
+  checkbox-style checkbox_surface(active:bool)
+  toggler-style toggler_surface(active:bool)
+  radio-style radio_surface(active:bool)
+font ui family=sans
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  enabled = false
+  choice = "first"
+on enabled_changed(next)
+  enabled = next
+on choice_changed(next)
+  choice = next
+view
+  col
+    checkbox "Checkbox" checked=enabled disabled=false label="Accessible checkbox" description="Checked state" style=checkbox_surface(enabled) size=20.0 w=fill gap=8.0 text-size=14.0 line-h=1.2 shape=advanced wrap=word-or-glyph font=ui icon="✓" icon-size=12.0 icon-line-h=1.0 icon-shape=basic -> enabled_changed _
+      active checked bg=linear(1.57, primary@0.0, bg@1.0) icon=fg text=fg border=primary border-w=1.0 r=4.0
+    toggler "Toggler" checked=enabled style=toggler_surface(enabled) size=20.0 gap=8.0 align=right -> enabled_changed _
+      active checked bg=bg bg-border=primary bg-border-w=1.0 fg=fg fg-border=primary fg-border-w=2.0 text=fg r=7.0 p-ratio=0.125
+    radio "First" value="first" selected=(choice == "first") style=radio_surface(enabled) size=20.0 gap=8.0 -> choice_changed _
+      active selected bg=bg dot=fg border=primary border-w=2.0 text=fg
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let checkbox = program.boolean_control(ViewId(1)).unwrap();
+        assert_eq!(checkbox.kind, ResolvedBooleanKind::Checkbox);
+        assert!(checkbox.disabled.is_some());
+        assert!(checkbox.options.accessibility_label.is_some());
+        assert!(checkbox.options.accessibility_description.is_some());
+        assert!(matches!(
+            checkbox.options.width,
+            Some(ResolvedContainerLength::Fill)
+        ));
+        assert!(matches!(
+            checkbox.options.font,
+            Some(ResolvedTextFont::Named(_))
+        ));
+        assert!(checkbox.options.font_origin.is_some());
+        assert!(checkbox.options.icon.is_some());
+        let ResolvedBooleanStyle::Checkbox(styles) = &checkbox.style else {
+            panic!("checkbox style must be normalized");
+        };
+        assert!(styles.custom.is_some());
+        let active = styles.active_checked.as_ref().unwrap();
+        assert!(active.background.is_some());
+        assert!(active.icon_color.is_some());
+        assert!(active.text_color.is_some());
+        assert!(active.border_color.is_some());
+        assert!(active.border_width.is_some());
+        assert!(active.radius.all.is_some());
+
+        let toggler = program.boolean_control(ViewId(2)).unwrap();
+        assert_eq!(toggler.kind, ResolvedBooleanKind::Toggler);
+        assert_eq!(
+            toggler.options.alignment,
+            Some(ResolvedTextAlignment::Right)
+        );
+        let ResolvedBooleanStyle::Toggler(styles) = &toggler.style else {
+            panic!("toggler style must be normalized");
+        };
+        assert!(styles.active_checked.as_ref().unwrap().foreground.is_some());
+
+        let radio = program.boolean_control(ViewId(3)).unwrap();
+        assert_eq!(radio.kind, ResolvedBooleanKind::Radio);
+        assert!(radio.value.is_some());
+        assert!(radio.disabled.is_none());
+        let ResolvedBooleanStyle::Radio(styles) = &radio.style else {
+            panic!("radio style must be normalized");
+        };
+        assert!(styles.active_selected.is_some());
+
+        let generated = crate::codegen::generate(&program, "boolean-hir.ice").unwrap();
+        assert!(
+            generated.contains("move |_| __BooleanHirMessage::ChoiceChanged(\"first\".to_owned())")
+        );
+        assert!(!generated.contains("move |__value| __BooleanHirMessage::ChoiceChanged(__value)"));
+    }
+
+    #[test]
+    fn boolean_codegen_ignores_raw_semantics_after_lowering() {
+        let source = format!(
+            "app LoweredBoolean\n{THEME}state\n  enabled = false\n  choice = \"first\"\non changed(next)\n  enabled = next\non selected(next)\n  choice = next\nview\n  col\n    checkbox \"Checkbox\" #check checked=enabled size=20.0 gap=8.0 -> changed _\n    toggler \"Toggler\" #toggle(choice) checked=enabled size=20.0 gap=8.0 -> changed _\n    radio \"First\" #radio value=\"first\" selected=(choice == \"first\") size=20.0 gap=8.0 -> selected _\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-boolean.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Checkbox {
+            id,
+            label,
+            checked,
+            options,
+            style,
+            route,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a checkbox");
+        };
+        *label = Expr::Str("POISONED CHECKBOX".into());
+        *checked = Expr::Bool(true);
+        *options = BoolControlOptions::default();
+        **style = CheckboxStyleSet::default();
+        id.as_mut().unwrap().name = "poisoned-check".into();
+        route.handler = "poisoned".into();
+        let ViewNode::Toggler {
+            id, options, route, ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a toggler");
+        };
+        *options = BoolControlOptions::default();
+        id.as_mut().unwrap().name = "poisoned-toggle".into();
+        id.as_mut().unwrap().key = Some(Expr::Str("POISONED KEY".into()));
+        route.handler = "poisoned".into();
+        let ViewNode::Radio {
+            id,
+            value,
+            selected,
+            options,
+            route,
+            ..
+        } = &mut children[2]
+        else {
+            panic!("third child must be a radio");
+        };
+        *value = Expr::Str("POISONED RADIO".into());
+        *selected = Expr::Bool(true);
+        *options = BoolControlOptions::default();
+        id.as_mut().unwrap().name = "poisoned-radio".into();
+        route.handler = "poisoned".into();
+
+        let actual = crate::codegen::generate(&program, "lowered-boolean.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+        assert!(!actual.contains("poisoned"));
+    }
+
+    #[test]
+    fn view_family_hir_rejects_an_extra_cross_family_entry() {
+        let source = format!(
+            "app ExtraViewFamily\n{THEME}view\n  col\n    text \"first\"\n    text \"second\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let root = program.app_view;
+        let root_origin = program.views[root.0 as usize].origin;
+        let mut extra = program.texts.values().next().unwrap().clone();
+        extra.id = root;
+        extra.origin = root_origin;
+        assert!(program.texts.insert(root, extra).is_none());
+
+        let error = crate::codegen::generate(&program, "extra-view-family.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("text normalized HIR cardinality"));
+    }
+
+    #[test]
+    fn boolean_lowering_rejects_same_type_slot_route_extern_and_id_swaps() {
+        let source = format!(
+            "app BooleanIdentity\nextern crate::backend\n  checkbox-style first(active:bool)\n  checkbox-style second(active:bool)\n{THEME}state\n  enabled = false\non changed(next)\n  enabled = next\nview\n  checkbox \"Checkbox\" checked=enabled style=first(enabled) size=20.0 gap=8.0 -> changed _\n"
+        );
+        let mut swapped_slots = analyze(&source).unwrap();
+        swapped_slots
+            .facts
+            .swap_interaction_option_expressions(ViewId(0), 2, 3);
+        let error = lower(swapped_slots).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_extern = analyze(&source).unwrap();
+        swapped_extern
+            .facts
+            .corrupt_boolean_style(ViewId(0), ExternFnId(1));
+        let error = lower(swapped_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("extern contract diverged"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id
+            .facts
+            .corrupt_boolean_control_id(ViewId(0), u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let routes = format!(
+            "app BooleanRouteIdentity\n{THEME}state\n  enabled = false\non first(next)\n  enabled = next\non second(next)\n  enabled = next\nview\n  col\n    checkbox \"First\" checked=enabled -> first _\n    checkbox \"Second\" checked=enabled -> second _\n"
+        );
+        let mut swapped_routes = analyze(&routes).unwrap();
+        swapped_routes
+            .facts
+            .swap_interaction_routes(ViewId(1), ViewId(2));
+        let error = lower(swapped_routes).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut corrupt_route = analyze(&source).unwrap();
+        corrupt_route
+            .facts
+            .corrupt_interaction_route_id(ViewId(0), 0, u32::MAX);
+        let error = lower(corrupt_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+    }
+
+    #[test]
+    fn imported_boolean_control_keeps_exact_expression_route_extern_font_theme_and_status_origins()
+    {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-boolean-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("toggle.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedBooleanApp\nuse \"toggle.ice\"\nextern crate::backend\n  checkbox-style imported_style(active:bool)\nfont ui family=sans\n{THEME}state\n  enabled = false\nview\n  ImportedToggle value<->enabled\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedToggle(bind value:bool)\n  on changed(next)\n  checkbox \"Imported\" checked=value font=ui style=imported_style(value) size=20.0 -> changed _\n    active checked bg=bg icon=fg text=fg border=primary border-w=1.0\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let control = program.boolean_controls.values().next().unwrap();
+        let control_origin = program.origin(control.origin);
+        assert_eq!(control_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(control_origin.line, 3);
+        let expression_origin =
+            program.origin(program.checked_facts().expression_use(control.label).origin);
+        assert_eq!(expression_origin.parent, Some(control.origin));
+        assert_eq!(expression_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(expression_origin.line, 3);
+        let route_origin = program.origin(control.route.origin);
+        assert_eq!(route_origin.parent, Some(control.origin));
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.line, 3);
+        let ResolvedBooleanStyle::Checkbox(styles) = &control.style else {
+            panic!("imported control must be a checkbox");
+        };
+        let custom_origin = program.origin(styles.custom.as_ref().unwrap().origin);
+        assert_eq!(custom_origin.parent, Some(control.origin));
+        assert_eq!(custom_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(custom_origin.line, 3);
+        let font_origin = program.origin(control.options.font_origin.unwrap());
+        assert_eq!(font_origin.parent, Some(control.origin));
+        assert_eq!(font_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(font_origin.line, 3);
+        let status = styles.active_checked.as_ref().unwrap();
+        let status_origin = program.origin(status.origin);
+        assert_eq!(status_origin.parent, Some(control.origin));
+        assert_eq!(status_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(status_origin.line, 4);
+        for color in [
+            status.icon_color.as_ref(),
+            status.text_color.as_ref(),
+            status.border_color.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert_eq!(color.origin, status.origin);
+        }
+        assert_eq!(status.background.as_ref().unwrap().origin, status.origin);
+        let metric_origin = program.origin(
+            program
+                .checked_facts()
+                .expression_use(status.border_width.unwrap())
+                .origin,
+        );
+        assert_eq!(metric_origin.parent, Some(status.origin));
+        assert_eq!(metric_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(metric_origin.line, 4);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.boolean_controls.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized boolean-control lowering and emission performance contract"]
+    fn performance_contract_four_thousand_boolean_controls_lower_and_emit_under_two_seconds() {
+        const CONTROLS: usize = 4_000;
+        let mut source = format!(
+            "app BooleanScale\n{THEME}state\n  enabled = false\non changed(next)\n  enabled = next\nview\n  col\n"
+        );
+        for index in 0..CONTROLS {
+            writeln!(
+                source,
+                "    checkbox \"Control {index}\" checked=enabled size=20.0 gap=8.0 -> changed _"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "boolean-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.boolean_controls.len(), CONTROLS);
+        assert_eq!(
+            generated.matches("::iced::widget::checkbox(").count(),
+            CONTROLS
+        );
+        eprintln!("4k normalized boolean controls lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized boolean controls lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_the_complete_extern_component_contract() {
+        let source = format!(
+            "app ExternComponentHir\nextern crate::backend\n  component borrowed_surface(label:&str, active:&bool, choice:bool?) -> bool\n{THEME}state\n  label = \"Native\"\n  active = false\non changed(next)\nview\n  extern borrowed_surface(label, active, none) -> changed _\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let component = program.extern_component(ViewId(0)).unwrap();
+        let declarations = program.extern_component_declarations().unwrap();
+
+        assert_eq!(component.id, ViewId(0));
+        assert_eq!(component.function.id, ExternFnId(0));
+        assert_eq!(component.function.name, "borrowed_surface");
+        assert_eq!(
+            component.function.rust_path,
+            "crate::backend::borrowed_surface"
+        );
+        assert_eq!(component.arguments.len(), 3);
+        assert_eq!(component.arguments[0].ty, Type::Str);
+        assert_eq!(
+            component.arguments[0].mode,
+            ResolvedExternComponentArgumentMode::BorrowedAsRef
+        );
+        assert_eq!(component.arguments[1].ty, Type::Bool);
+        assert_eq!(
+            component.arguments[1].mode,
+            ResolvedExternComponentArgumentMode::Borrowed
+        );
+        assert_eq!(
+            component.arguments[2].ty,
+            Type::Option(Box::new(Type::Bool))
+        );
+        assert_eq!(
+            component.arguments[2].mode,
+            ResolvedExternComponentArgumentMode::Owned
+        );
+        assert_eq!(component.output, Type::Bool);
+        assert!(matches!(
+            component.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+        assert_eq!(
+            component.route.as_ref().unwrap().source_payloads,
+            vec![Type::Bool]
+        );
+        assert_eq!(declarations.len(), 1);
+        assert_eq!(declarations[0].id, ExternFnId(0));
+        assert_eq!(declarations[0].name, "borrowed_surface");
+        assert_eq!(declarations[0].parameters.len(), 3);
+        assert_eq!(
+            declarations[0].parameters[0].mode,
+            ResolvedExternComponentArgumentMode::BorrowedAsRef
+        );
+        assert_eq!(
+            declarations[0].parameters[1].mode,
+            ResolvedExternComponentArgumentMode::Borrowed
+        );
+        assert_eq!(declarations[0].output, Type::Bool);
+
+        let generated = crate::codegen::generate(&program, "extern-component-hir.ice").unwrap();
+        assert!(generated.contains("crate::backend::borrowed_surface("));
+        assert!(generated.contains("::std::convert::AsRef::as_ref"));
+        assert!(generated.contains("::std::borrow::Borrow::borrow"));
+        assert!(generated.contains("__ExternComponentHirMessage::Changed(__value)"));
+    }
+
+    #[test]
+    fn extern_component_routes_direct_component_handlers_and_component_outputs() {
+        let direct = format!(
+            "app ExternDirect\nextern crate::backend\n  component native_surface(active:bool) -> bool\n{THEME}state\n  active = false\non changed(next)\nview\n  extern native_surface(active) -> changed _\n"
+        );
+        let program = lower(analyze(&direct).unwrap()).unwrap();
+        assert!(matches!(
+            program
+                .extern_component(ViewId(0))
+                .unwrap()
+                .route
+                .as_ref()
+                .unwrap()
+                .target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+
+        let local = format!(
+            "app ExternLocal\nextern crate::backend\n  component native_surface(active:bool) -> bool\n{THEME}state\n  active = false\ncomponent Wrapper(active:bool)\n  on changed(next)\n  extern native_surface(active) -> changed _\nview\n  Wrapper active=active\n"
+        );
+        let program = lower(analyze(&local).unwrap()).unwrap();
+        let component = program.extern_components.values().next().unwrap();
+        assert!(matches!(
+            component.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+
+        let output = format!(
+            "app ExternOutput\nextern crate::backend\n  component native_surface(active:bool) -> bool\n{THEME}state\n  active = false\ncomponent Wrapper(active:bool) -> bool\n  extern native_surface(active) -> emit(_)\non changed(next)\nview\n  Wrapper active=active -> changed _\n"
+        );
+        let program = lower(analyze(&output).unwrap()).unwrap();
+        let component = program.extern_components.values().next().unwrap();
+        assert!(matches!(
+            component.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::OutputCallback {
+                output: Type::Bool,
+                ..
+            }
+        ));
+        let generated = crate::codegen::generate(&program, "extern-output.ice").unwrap();
+        assert!(generated.contains("crate::backend::native_surface("));
+        assert!(generated.contains("__ExternOutputMessage::Changed(__value)"));
+
+        let no_output = format!(
+            "app ExternUnit\nextern crate::backend\n  component native_surface(active:bool) -> unit\n{THEME}state\n  active = false\nview\n  extern native_surface(active)\n"
+        );
+        let program = lower(analyze(&no_output).unwrap()).unwrap();
+        let component = program.extern_component(ViewId(0)).unwrap();
+        assert_eq!(component.output, Type::Unit);
+        assert!(component.route.is_none());
+        let generated = crate::codegen::generate(&program, "extern-unit.ice").unwrap();
+        assert!(generated.contains("__ExternNoop"));
+    }
+
+    #[test]
+    fn extern_component_codegen_ignores_every_raw_semantic_field_after_lowering() {
+        let source = format!(
+            "app ExternPoison\nextern crate::backend\n  component primary_surface(active:bool) -> bool\n  component unused_surface(label:&str, active:&bool, values:&[i64]) -> unit\n{THEME}state\n  active = false\non changed(next)\nview\n  extern primary_surface(active) -> changed _\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "extern-poison.ice").unwrap();
+        assert!(expected.contains("fn __ui_lang_check_component_unused_surface<'a>"));
+        assert!(expected.contains("arg0: &'a str, arg1: &'a bool, arg2: &'a [i64]"));
+        let ViewNode::ExternComponent {
+            function,
+            args,
+            route,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be an extern component");
+        };
+        *function = "POISONED_VIEW_FUNCTION".into();
+        *args = vec![Expr::Str("POISONED".into())];
+        *route = None;
+        for (index, declaration) in program.document.functions.iter_mut().enumerate() {
+            declaration.kind = ExternKind::Future;
+            declaration.name = format!("POISONED_DECLARATION_{index}");
+            declaration.rust_path = format!("crate::poisoned::declaration_{index}");
+            declaration.params = vec![("poisoned".into(), Type::Bytes)];
+            declaration.borrowed = vec![false];
+            declaration.progress = Some(Type::I64);
+            declaration.output = Type::Bytes;
+            declaration.error = Some(Type::Str);
+            declaration.span = Span::line(900 + index);
+        }
+
+        let actual = crate::codegen::generate(&program, "extern-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+    }
+
+    #[test]
+    fn extern_component_raw_declarations_cannot_enable_codegen_helpers() {
+        let source = format!(
+            "app ExternHelperPoison\nextern crate::backend\n  component native_surface(active:bool) -> unit\n{THEME}state\n  active = false\nview\n  extern native_surface(active)\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
+        assert!(!expected.contains("type __IceEventStream"));
+        assert!(!expected.contains("fn __ice_map_editor_binding"));
+        assert_eq!(expected.matches("struct __IceWidgetTarget").count(), 1);
+
+        program.document.functions[0].kind = ExternKind::EventFilter;
+        let actual = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        program.document.functions[0].kind = ExternKind::EditorBinding;
+        let actual = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let declaration = &mut program.document.functions[0];
+        declaration.kind = ExternKind::Component;
+        declaration.params[0].1 = Type::WidgetTarget;
+        declaration.output = Type::WidgetTarget;
+        declaration.progress = Some(Type::WidgetTarget);
+        declaration.error = Some(Type::WidgetTarget);
+        let actual = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn normalized_unused_extern_component_widget_targets_enable_codegen_helpers() {
+        let source = format!(
+            "app ExternWidgetTargetHelpers\nextern crate::backend\n  component target_input(target:widget-target?) -> unit\n  component target_output() -> [widget-target]\n{THEME}view\n  text \"ready\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let generated = crate::codegen::generate(&program, "extern-widget-target.ice").unwrap();
+
+        assert_eq!(generated.matches("struct __IceWidgetTarget").count(), 1);
+        assert!(generated.contains(
+            "fn __ui_lang_check_component_target_input(arg0: ::std::option::Option<__IceWidgetTarget>)"
+        ));
+        assert!(generated.contains(
+            "fn __ui_lang_check_component_target_output() { let _: __IceElement<'static, ::std::vec::Vec<__IceWidgetTarget>>"
+        ));
+    }
+
+    #[test]
+    fn extern_component_lowering_rejects_cross_owner_identity_route_origin_and_id_corruption() {
+        let source = format!(
+            "app ExternIdentity\nextern crate::backend\n  component first_surface(active:bool) -> bool\n  component second_surface(active:bool) -> bool\n{THEME}state\n  active = false\non first_changed(next)\non second_changed(next)\nview\n  col\n    extern first_surface(active) -> first_changed _\n    extern second_surface(active) -> second_changed _\n"
+        );
+        let first = ViewId(1);
+        let second = ViewId(2);
+
+        let mut swapped_expressions = analyze(&source).unwrap();
+        swapped_expressions
+            .facts
+            .transplant_interaction_option_expression(first, 0, second, 0);
+        let error = lower(swapped_expressions).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut corrupt_function = analyze(&source).unwrap();
+        corrupt_function
+            .facts
+            .corrupt_extern_component_function(first, ExternFnId(1));
+        let error = lower(corrupt_function).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut corrupt_output = analyze(&source).unwrap();
+        corrupt_output
+            .facts
+            .corrupt_extern_component_output(first, Type::Unit);
+        let error = lower(corrupt_output).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut swapped_routes = analyze(&source).unwrap();
+        swapped_routes.facts.swap_interaction_routes(first, second);
+        let error = lower(swapped_routes).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut corrupt_origin = analyze(&source).unwrap();
+        corrupt_origin
+            .facts
+            .corrupt_interaction_expression_origin(first, 0, u32::MAX);
+        let error = lower(corrupt_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument origin is invalid"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id
+            .facts
+            .corrupt_extern_component_id(first, u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn imported_extern_component_keeps_origins_source_marker_and_hir_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-extern-component-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("native.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedExternApp\nuse \"native.ice\"\n{THEME}state\n  label = \"Imported\"\non opened(next)\nview\n  ImportedSurface label=label -> opened _\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  component imported_surface(label:&str) -> bool\ncomponent ImportedSurface(label:str) -> bool\n  extern imported_surface(label) -> emit(_)\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let component = program.extern_components.values().next().unwrap();
+        let declaration = &program.extern_component_declarations().unwrap()[0];
+        let widget_origin = program.origin(component.origin);
+        assert_eq!(widget_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(widget_origin.line, 4);
+        let declaration_origin = program.origin(component.function.declaration_origin);
+        assert_eq!(declaration_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(declaration_origin.line, 2);
+        assert_eq!(declaration.id, ExternFnId(0));
+        assert_eq!(declaration.name, "imported_surface");
+        assert_eq!(declaration.origin, component.function.declaration_origin);
+        let argument_origin = program.origin(component.arguments[0].origin);
+        assert_eq!(argument_origin.parent, Some(component.origin));
+        assert_eq!(argument_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(argument_origin.line, 4);
+        let route_origin = program.origin(component.route.as_ref().unwrap().origin);
+        assert_eq!(route_origin.parent, Some(component.origin));
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.line, 4);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.extern_component_declarations[0].id = ExternFnId(u32::MAX);
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
+        program.extern_component_declarations[0].id = ExternFnId(0);
+
+        program.extern_components.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn extern_component_declaration_invariants_use_checked_origins() {
+        let source = format!(
+            "app ExternDeclarationOrigins\nextern crate::backend\n  component first_surface() -> unit\n  component second_surface() -> unit\n{THEME}view\n  text \"ready\"\n"
+        );
+
+        let mut swapped = lower(analyze(&source).unwrap()).unwrap();
+        let first_origin = swapped.extern_component_declarations[0].origin;
+        let second_origin = swapped.extern_component_declarations[1].origin;
+        let expected_line = swapped.origin(first_origin).line;
+        swapped.extern_component_declarations[0].origin = second_origin;
+        swapped.extern_component_declarations[1].origin = first_origin;
+        let error = crate::codegen::generate(&swapped, "extern-origin-swap.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("declaration HIR diverged"));
+
+        let mut invalid_first = lower(analyze(&source).unwrap()).unwrap();
+        let expected_origin = invalid_first.extern_component_declarations[0].origin;
+        let expected_line = invalid_first.origin(expected_origin).line;
+        invalid_first.extern_component_declarations[0].origin = OriginId(u32::MAX);
+        invalid_first.extern_component_declarations.pop();
+        let error = crate::codegen::generate(&invalid_first, "extern-invalid-first-origin.ice")
+            .unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("HIR cardinality diverged"));
+    }
+
+    #[test]
+    #[ignore = "large normalized extern-component lowering and emission performance contract"]
+    fn performance_contract_four_thousand_extern_components_lower_and_emit_under_two_seconds() {
+        const EXTERN_COMPONENTS: usize = 4_000;
+        let mut source = format!(
+            "app ExternScale\nextern crate::backend\n  component native_surface(index:i64) -> unit\n{THEME}state\n  index = 7\nview\n  col\n"
+        );
+        for _ in 0..EXTERN_COMPONENTS {
+            writeln!(source, "    extern native_surface(index)").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "extern-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.extern_components.len(), EXTERN_COMPONENTS);
+        assert_eq!(
+            generated
+                .matches(".map(move |__value| __ExternScaleMessage::__ExternNoop)")
+                .count(),
+            EXTERN_COMPONENTS
+        );
+        eprintln!("4k normalized extern components lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized extern components lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_complete_themer_and_shader_contracts() {
+        let source = format!(
+            "app ExternViewsHir\nextern crate::backend\n  themer alternate_surface(label:str, active:bool, choice:bool?) -> bool\n  shader shader_surface(label:str, active:bool, choice:bool?) -> bool\n  themer passive_theme() -> unit\n  shader passive_shader() -> unit\n{THEME}state\n  label = \"Native\"\n  active = false\n  fixed_length:length = length.fixed(48.0)\non themed(next)\non shaded(next)\nview\n  col\n    themer alternate_surface(label, active, none) -> themed _\n    shader shader_surface(label, active, none) w=fill(3) h=64.0 -> shaded _\n    themer passive_theme()\n    shader passive_shader() w=shrink h=fixed_length\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let themer = program.themer(ViewId(1)).unwrap();
+        let shader = program.shader(ViewId(2)).unwrap();
+
+        assert_eq!(themer.id, ViewId(1));
+        assert_eq!(themer.adapter.function.id, ExternFnId(0));
+        assert_eq!(themer.adapter.function.name, "alternate_surface");
+        assert_eq!(
+            themer.adapter.function.rust_path,
+            "crate::backend::alternate_surface"
+        );
+        assert_eq!(themer.adapter.arguments.len(), 3);
+        assert_eq!(
+            themer.adapter.arguments[0].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(
+            themer.adapter.arguments[1].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(
+            themer.adapter.arguments[2].ty,
+            Type::Option(Box::new(Type::Bool))
+        );
+        assert_eq!(
+            themer.adapter.arguments[2].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(themer.adapter.output, Type::Bool);
+        assert_eq!(
+            themer.adapter.route.as_ref().unwrap().source_payloads,
+            vec![Type::Bool]
+        );
+
+        assert_eq!(shader.id, ViewId(2));
+        assert_eq!(shader.adapter.function.id, ExternFnId(1));
+        assert_eq!(shader.adapter.function.name, "shader_surface");
+        assert_eq!(shader.adapter.arguments.len(), 3);
+        assert_eq!(
+            shader.adapter.arguments[0].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(
+            shader.adapter.arguments[1].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(
+            shader.adapter.arguments[2].ty,
+            Type::Option(Box::new(Type::Bool))
+        );
+        assert!(matches!(
+            shader.width,
+            Some(ResolvedContainerLength::FillPortion(3))
+        ));
+        assert!(matches!(
+            shader.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert_eq!(
+            shader.adapter.route.as_ref().unwrap().source_payloads,
+            vec![Type::Bool]
+        );
+
+        let passive_themer = program.themer(ViewId(3)).unwrap();
+        let passive_shader = program.shader(ViewId(4)).unwrap();
+        assert!(passive_themer.adapter.route.is_none());
+        assert_eq!(passive_themer.adapter.output, Type::Unit);
+        assert!(passive_shader.adapter.route.is_none());
+        assert!(matches!(
+            passive_shader.width,
+            Some(ResolvedContainerLength::Shrink)
+        ));
+        assert!(matches!(
+            passive_shader.height,
+            Some(ResolvedContainerLength::FixedLength(_))
+        ));
+
+        let generated = crate::codegen::generate(&program, "extern-views-hir.ice").unwrap();
+        assert!(generated.contains("crate::backend::alternate_surface("));
+        assert!(generated.contains("crate::backend::shader_surface("));
+        assert!(!generated.contains("::std::convert::AsRef::as_ref"));
+        assert!(!generated.contains("::std::borrow::Borrow::borrow"));
+        assert!(generated.contains(".width(::iced::Length::FillPortion(3)).height(64.0 as f32)"));
+        assert!(generated.contains(".width(::iced::Shrink).height(self.fixed_length)"));
+        assert!(generated.contains("__ExternViewsHirMessage::Themed(__value)"));
+        assert!(generated.contains("__ExternViewsHirMessage::Shaded(__value)"));
+        assert!(generated.contains("__ExternNoop"));
+    }
+
+    #[test]
+    fn themer_and_shader_route_component_handlers_and_outputs() {
+        let source = format!(
+            "app ExternViewRoutes\nextern crate::backend\n  themer alternate_surface(active:bool) -> bool\n  shader shader_surface(active:bool) -> bool\n{THEME}state\n  active = false\ncomponent Adapter(active:bool) -> bool\n  col\n    themer alternate_surface(active) -> emit(_)\n    shader shader_surface(active) -> emit(_)\non changed(next)\nview\n  Adapter active=active -> changed _\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let themer = program.themers().next().unwrap();
+        let shader = program.shaders().next().unwrap();
+        assert!(matches!(
+            themer.adapter.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::OutputCallback {
+                output: Type::Bool,
+                ..
+            }
+        ));
+        assert!(matches!(
+            shader.adapter.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::OutputCallback {
+                output: Type::Bool,
+                ..
+            }
+        ));
+        let generated = crate::codegen::generate(&program, "extern-view-routes.ice").unwrap();
+        assert!(generated.contains("crate::backend::alternate_surface("));
+        assert!(generated.contains("crate::backend::shader_surface("));
+        assert!(generated.contains("__ExternViewRoutesMessage::Changed(__value)"));
+    }
+
+    #[test]
+    fn themer_and_shader_post_check_and_post_lowering_raw_poison_is_contained() {
+        let source = format!(
+            "app ExternViewPoison\nextern crate::backend\n  themer primary_theme(label:str) -> bool\n  themer poisoned_theme(label:str) -> bool\n  shader primary_shader(label:str) -> bool\n  shader poisoned_shader(label:str) -> bool\n{THEME}state\n  label = \"Original\"\non themed(next)\non shaded(next)\nview\n  col\n    themer primary_theme(label) -> themed _\n    shader primary_shader(label) w=32.0 -> shaded _\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Themer { args, .. } = &mut children[0] else {
+            panic!("first child must be a themer");
+        };
+        args[0] = Expr::Str("POISONED_THEMER_ARG".into());
+        let ViewNode::Shader { args, width, .. } = &mut children[1] else {
+            panic!("second child must be a shader");
+        };
+        args[0] = Expr::Str("POISONED_SHADER_ARG".into());
+        *width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        let mut program = lower(checked).unwrap();
+        let expected = crate::codegen::generate(&program, "extern-view-poison.ice").unwrap();
+        assert!(expected.contains("self.label"));
+        assert!(expected.contains(".width(32.0 as f32)"));
+        assert!(!expected.contains("POISONED"));
+        assert!(!expected.contains("999.0"));
+
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Themer {
+            function,
+            args,
+            route,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a themer");
+        };
+        *function = "poisoned_theme".into();
+        *args = vec![Expr::Str("POST_LOWER_THEMER".into())];
+        *route = None;
+        let ViewNode::Shader {
+            function,
+            args,
+            width,
+            route,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a shader");
+        };
+        *function = "poisoned_shader".into();
+        *args = vec![Expr::Str("POST_LOWER_SHADER".into())];
+        *width = Some(LengthValue::Fill);
+        *route = None;
+
+        let actual = crate::codegen::generate(&program, "extern-view-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut static_poison = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut static_poison.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Shader { width, .. } = &mut children[1] else {
+            panic!("second child must be a shader");
+        };
+        *width = Some(LengthValue::Fill);
+        let error = lower(static_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn themer_and_shader_reject_cross_owner_and_invalid_identity_corruption() {
+        let source = format!(
+            "app ExternViewIdentity\nextern crate::backend\n  themer first_theme(active:bool) -> bool\n  themer second_theme(active:bool) -> bool\n  shader first_shader(active:bool) -> bool\n  shader second_shader(active:bool) -> bool\n{THEME}state\n  active = false\non first(next)\non second(next)\nview\n  col\n    themer first_theme(active) -> first _\n    themer second_theme(active) -> second _\n    shader first_shader(active) -> first _\n    shader second_shader(active) -> second _\n"
+        );
+        let first_themer = ViewId(1);
+        let second_themer = ViewId(2);
+        let first_shader = ViewId(3);
+        let second_shader = ViewId(4);
+
+        let mut swapped_themer = analyze(&source).unwrap();
+        swapped_themer
+            .facts
+            .transplant_interaction_option_expression(first_themer, 0, second_themer, 0);
+        let error = lower(swapped_themer).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut swapped_shader = analyze(&source).unwrap();
+        swapped_shader
+            .facts
+            .transplant_interaction_option_expression(first_shader, 0, second_shader, 0);
+        let error = lower(swapped_shader).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut corrupt_themer_function = analyze(&source).unwrap();
+        corrupt_themer_function
+            .facts
+            .corrupt_themer_function(first_themer, ExternFnId(1));
+        let error = lower(corrupt_themer_function).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut corrupt_shader_function = analyze(&source).unwrap();
+        corrupt_shader_function
+            .facts
+            .corrupt_shader_function(first_shader, ExternFnId(3));
+        let error = lower(corrupt_shader_function).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut corrupt_themer_output = analyze(&source).unwrap();
+        corrupt_themer_output
+            .facts
+            .corrupt_themer_output(first_themer, Type::Unit);
+        let error = lower(corrupt_themer_output).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut corrupt_shader_output = analyze(&source).unwrap();
+        corrupt_shader_output
+            .facts
+            .corrupt_shader_output(first_shader, Type::Unit);
+        let error = lower(corrupt_shader_output).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut swapped_routes = analyze(&source).unwrap();
+        swapped_routes
+            .facts
+            .swap_interaction_routes(first_themer, second_themer);
+        let error = lower(swapped_routes).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut corrupt_themer_id = analyze(&source).unwrap();
+        corrupt_themer_id
+            .facts
+            .corrupt_themer_id(first_themer, u32::MAX);
+        let error = lower(corrupt_themer_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_shader_id = analyze(&source).unwrap();
+        corrupt_shader_id
+            .facts
+            .corrupt_shader_id(first_shader, u32::MAX);
+        let error = lower(corrupt_shader_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn themer_and_shader_reject_expression_count_and_last_graph_corruption() {
+        let source = format!(
+            "app ExternViewExpressionCardinality\nextern crate::backend\n  themer first_theme(active:bool) -> bool\n  shader first_shader(active:bool) -> bool\n{THEME}state\n  active = false\non first(next)\non second(next)\nview\n  col\n    themer first_theme(active) -> first !active\n    shader first_shader(active) -> second !active\n"
+        );
+
+        for view in [ViewId(1), ViewId(2)] {
+            let mut decreased = analyze(&source).unwrap();
+            decreased
+                .facts
+                .corrupt_interaction_expression_count(view, 1);
+            let error = lower(decreased).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("cardinality diverged"));
+
+            let mut increased = analyze(&source).unwrap();
+            increased
+                .facts
+                .corrupt_interaction_expression_count(view, 3);
+            let error = lower(increased).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("cardinality diverged"));
+
+            let mut invalid_last_graph = analyze(&source).unwrap();
+            invalid_last_graph.facts.corrupt_expression_first_child(
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: view,
+                    index: 1,
+                }),
+                u32::MAX,
+            );
+            let error = lower(invalid_last_graph).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("descendant ID"));
+        }
+    }
+
+    #[test]
+    fn imported_themer_and_shader_keep_origins_markers_and_e196_paths() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-extern-view-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("native.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedExternViews\nuse \"native.ice\"\n{THEME}state\n  label = \"Imported\"\non changed(next)\nview\n  ImportedAdapters label=label -> changed _\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  themer imported_theme(label:str) -> bool\n  shader imported_shader(label:str) -> bool\ncomponent ImportedAdapters(label:str) -> bool\n  col\n    themer imported_theme(label) -> emit(_)\n    shader imported_shader(label) w=fill h=32.0 -> emit(_)\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let themer = program.themers().next().unwrap();
+        let shader = program.shaders().next().unwrap();
+        let themer_id = themer.id;
+        for (origin, line) in [(themer.origin, 6), (shader.origin, 7)] {
+            let origin = program.origin(origin);
+            assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(origin.line, line);
+        }
+        assert_eq!(
+            program
+                .origin(themer.adapter.function.declaration_origin)
+                .path
+                .as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(
+            program
+                .origin(themer.adapter.function.declaration_origin)
+                .line,
+            2
+        );
+        assert_eq!(
+            program
+                .origin(shader.adapter.function.declaration_origin)
+                .path
+                .as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(
+            program
+                .origin(shader.adapter.function.declaration_origin)
+                .line,
+            3
+        );
+        assert_eq!(
+            program.origin(themer.adapter.arguments[0].origin).parent,
+            Some(themer.origin)
+        );
+        assert_eq!(
+            program
+                .origin(themer.adapter.route.as_ref().unwrap().origin)
+                .parent,
+            Some(themer.origin)
+        );
+        assert_eq!(
+            program.origin(shader.adapter.arguments[0].origin).parent,
+            Some(shader.origin)
+        );
+        assert_eq!(
+            program
+                .origin(shader.adapter.route.as_ref().unwrap().origin)
+                .parent,
+            Some(shader.origin)
+        );
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+        assert!(generated.contains(&format!("// __ICE_SOURCE 6 1 {encoded_import}")));
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        program.themers.get_mut(&themer_id).unwrap().id = ViewId(u32::MAX);
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 6);
+
+        let mut corrupt_checked = analyze_file(&root).unwrap();
+        let ViewNode::Layout { children, .. } = &corrupt_checked.document.components[0].root else {
+            panic!("imported component root must be a layout");
+        };
+        let themer_id = corrupt_checked
+            .declarations
+            .view_id(children[0].span())
+            .unwrap();
+        corrupt_checked
+            .facts
+            .corrupt_themer_function(themer_id, ExternFnId(u32::MAX));
+        let error = lower(corrupt_checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 6);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized Themer and Shader lowering and emission performance contract"]
+    fn performance_contract_four_thousand_themers_and_shaders_lower_and_emit_under_two_seconds() {
+        const EACH: usize = 2_000;
+        let mut source = format!(
+            "app ExternViewScale\nextern crate::backend\n  themer native_theme(index:i64) -> unit\n  shader native_shader(index:i64) -> unit\n{THEME}state\n  index = 7\nview\n  col\n"
+        );
+        for _ in 0..EACH {
+            writeln!(source, "    themer native_theme(index)").unwrap();
+            writeln!(source, "    shader native_shader(index) w=fill h=32.0").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "extern-view-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.themers.len(), EACH);
+        assert_eq!(program.shaders.len(), EACH);
+        assert_eq!(generated.matches("::iced::widget::themer(").count(), EACH);
+        assert_eq!(
+            generated.matches("::iced::widget::Shader::new(").count(),
+            EACH + 1
+        );
+        eprintln!("4k normalized Themer/Shader nodes lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized Themer/Shader nodes lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized extern-component declaration probe performance contract"]
+    fn performance_contract_four_thousand_unused_extern_component_probes_under_two_seconds() {
+        const DECLARATIONS: usize = 4_000;
+        let mut source = "app ExternProbeScale\nextern crate::backend\n".to_owned();
+        for index in 0..DECLARATIONS {
+            writeln!(
+                source,
+                "  component native_surface_{index}(label:&str, index:i64) -> unit"
+            )
+            .unwrap();
+        }
+        source.push_str(&format!("{THEME}view\n  text \"ready\"\n"));
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "extern-probe-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.extern_component_declarations.len(), DECLARATIONS);
+        assert_eq!(
+            generated
+                .matches("fn __ui_lang_check_component_native_surface_")
+                .count(),
+            DECLARATIONS
+        );
+        eprintln!("4k normalized unused extern component probes emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized unused extern component probes emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_the_complete_markdown_contract() {
+        let source = format!(
+            "app MarkdownHir\nextern crate::backend\n  markdown-viewer docs_viewer(prefix:str, generation:i64) -> str\nfont ui family=sans\n{THEME}state\n  docs:markdown = \"# Docs\"\n  prefix = \"guide\"\n  generation = 7\non opened(url)\nview\n  markdown docs text-size=16.0 h1-size=32.0 h2-size=28.0 h3-size=24.0 h4-size=20.0 h5-size=18.0 h6-size=16.0 code-size=13.0 gap=12.0 viewer=docs_viewer(prefix, generation) -> opened _\n    style font=ui inline-code-bg=linear(1.57, bg@0.0, primary/25@1.0) inline-code-fg=fg inline-code-font=mono code-block-font=mono link=primary inline-code-p=2.0 inline-code-px=3.0 inline-code-py=4.0 inline-code-pt=5.0 inline-code-pr=6.0 inline-code-pb=7.0 inline-code-pl=8.0 inline-code-border=danger inline-code-border-w=1.0 inline-code-r=4.0 inline-code-r-tl=1.0 inline-code-r-tr=2.0 inline-code-r-br=3.0 inline-code-r-bl=4.0\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let markdown = program.markdown(ViewId(0)).unwrap();
+
+        assert_eq!(markdown.id, ViewId(0));
+        assert_eq!(
+            markdown.content.id,
+            CheckedValueRef::AppState(AppStateId(0))
+        );
+        assert_eq!(markdown.content.name, "docs");
+        assert!(markdown.text_size.is_some());
+        assert!(markdown.h1_size.is_some());
+        assert!(markdown.h2_size.is_some());
+        assert!(markdown.h3_size.is_some());
+        assert!(markdown.h4_size.is_some());
+        assert!(markdown.h5_size.is_some());
+        assert!(markdown.h6_size.is_some());
+        assert!(markdown.code_size.is_some());
+        assert!(markdown.spacing.is_some());
+        let viewer = markdown.viewer.as_ref().unwrap();
+        assert_eq!(program.extern_function(viewer.function).name, "docs_viewer");
+        assert_eq!(viewer.arguments.len(), 2);
+        assert_eq!(viewer.borrowed, vec![false, false]);
+        assert_eq!(viewer.output, Type::Str);
+        assert!(matches!(
+            markdown.style.font,
+            Some(ResolvedTextFont::Named(_))
+        ));
+        assert!(matches!(
+            markdown.style.inline_code_background,
+            Some(ResolvedContainerBackground::Linear { ref stops, .. }) if stops.len() == 2
+        ));
+        assert!(markdown.style.inline_code_color.is_some());
+        assert!(markdown.style.inline_code_font.is_some());
+        assert!(markdown.style.code_block_font.is_some());
+        assert!(markdown.style.link_color.is_some());
+        assert!(markdown.style.inline_code_padding.all.is_some());
+        assert!(markdown.style.inline_code_padding.left.is_some());
+        assert!(markdown.style.inline_code_border_color.is_some());
+        assert!(markdown.style.inline_code_border_width.is_some());
+        assert!(markdown.style.inline_code_radius.all.is_some());
+        assert!(markdown.style.inline_code_radius.bottom_left.is_some());
+        assert!(matches!(
+            markdown.link.target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+        assert_eq!(markdown.link.source_payloads, vec![Type::Str]);
+    }
+
+    #[test]
+    fn markdown_routes_direct_component_handlers_and_component_outputs() {
+        let direct = format!(
+            "app MarkdownDirect\n{THEME}state\n  docs:markdown = \"# Docs\"\non opened(url)\nview\n  markdown docs -> opened _\n"
+        );
+        let program = lower(analyze(&direct).unwrap()).unwrap();
+        assert!(matches!(
+            program.markdown(ViewId(0)).unwrap().link.target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+
+        let component = format!(
+            "app MarkdownComponent\n{THEME}state\n  docs:markdown = \"# Docs\"\ncomponent Viewer(bind docs:markdown)\n  on opened(url)\n  markdown docs -> opened _\nview\n  Viewer docs<->docs\n"
+        );
+        let program = lower(analyze(&component).unwrap()).unwrap();
+        let markdown = program.markdowns.values().next().unwrap();
+        assert!(matches!(
+            markdown.content.id,
+            CheckedValueRef::ComponentParam(_)
+        ));
+        assert!(matches!(
+            markdown.link.target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+
+        let output = format!(
+            "app MarkdownOutput\n{THEME}state\n  docs:markdown = \"# Docs\"\ncomponent Viewer(bind docs:markdown) -> str\n  markdown docs -> emit(_)\non opened(url)\nview\n  Viewer docs<->docs -> opened _\n"
+        );
+        let program = lower(analyze(&output).unwrap()).unwrap();
+        let markdown = program.markdowns.values().next().unwrap();
+        assert!(matches!(
+            markdown.link.target,
+            ResolvedInteractionRouteTarget::OutputCallback {
+                output: Type::Str,
+                ..
+            }
+        ));
+        let generated = crate::codegen::generate(&program, "markdown-output.ice").unwrap();
+        assert!(generated.contains("::iced::widget::markdown::view("));
+        assert!(generated.contains("__MarkdownOutputMessage::Opened(__value)"));
+    }
+
+    #[test]
+    fn markdown_codegen_ignores_every_raw_semantic_field_after_lowering() {
+        let source = format!(
+            "app MarkdownPoison\nextern crate::backend\n  markdown-viewer primary_viewer(prefix:str) -> str\n  markdown-viewer poisoned_viewer(prefix:str) -> str\nfont ui family=sans\n{THEME}state\n  docs:markdown = \"# Docs\"\n  other:markdown = \"# Other\"\n  prefix = \"guide\"\non opened(url)\nview\n  markdown docs text-size=16.0 viewer=primary_viewer(prefix) -> opened _\n    style font=ui inline-code-bg=primary inline-code-fg=fg link=primary inline-code-p=2.0 inline-code-border=danger inline-code-border-w=1.0 inline-code-r=4.0\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "markdown-poison.ice").unwrap();
+        let ViewNode::Markdown {
+            content,
+            options,
+            route,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be markdown");
+        };
+        *content = "other".into();
+        options.text_size = Some(Expr::F64(999.0));
+        options.viewer.as_mut().unwrap().function = "poisoned_viewer".into();
+        options.viewer.as_mut().unwrap().args = vec![Expr::Str("POISONED".into())];
+        options.style.font = Some(FontPreset::Monospace);
+        options.style.inline_code_background = Some(BackgroundValue::Color("danger".into()));
+        options.style.inline_code_color = Some("danger".into());
+        options.style.link_color = Some("danger".into());
+        options.style.inline_code_padding = PaddingOptions::default();
+        options.style.inline_code_border_color = Some("fg".into());
+        options.style.inline_code_border_width = Some(Expr::F64(99.0));
+        options.style.inline_code_radius = Some(Expr::F64(99.0));
+        route.handler = "poisoned".into();
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(1, 3);
+
+        let actual = crate::codegen::generate(&program, "markdown-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+    }
+
+    #[test]
+    fn markdown_lowering_rejects_cross_owner_state_viewer_route_origin_and_id_corruption() {
+        let source = format!(
+            "app MarkdownIdentity\nextern crate::backend\n  markdown-viewer first_viewer(prefix:str) -> str\n  markdown-viewer second_viewer(prefix:str) -> str\n{THEME}state\n  first:markdown = \"# First\"\n  second:markdown = \"# Second\"\n  prefix = \"docs\"\non first_opened(url)\non second_opened(url)\nview\n  col\n    markdown first text-size=16.0 viewer=first_viewer(prefix) -> first_opened _\n      style inline-code-p=2.0\n    markdown second text-size=16.0 viewer=second_viewer(prefix) -> second_opened _\n      style inline-code-p=2.0\n"
+        );
+        let first = ViewId(1);
+        let second = ViewId(2);
+
+        let mut swapped_expressions = analyze(&source).unwrap();
+        swapped_expressions
+            .facts
+            .transplant_interaction_option_expression(first, 0, second, 0);
+        let error = lower(swapped_expressions).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut corrupt_content = analyze(&source).unwrap();
+        corrupt_content
+            .facts
+            .corrupt_markdown_content(first, CheckedValueRef::AppState(AppStateId(1)));
+        let error = lower(corrupt_content).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("content identity"));
+
+        let mut corrupt_viewer = analyze(&source).unwrap();
+        corrupt_viewer
+            .facts
+            .corrupt_markdown_viewer(first, ExternFnId(1));
+        let error = lower(corrupt_viewer).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("viewer contract diverged"));
+
+        let mut corrupt_output = analyze(&source).unwrap();
+        corrupt_output
+            .facts
+            .corrupt_markdown_viewer_output(first, Type::Bool);
+        let error = lower(corrupt_output).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("viewer contract diverged"));
+
+        let mut swapped_routes = analyze(&source).unwrap();
+        swapped_routes.facts.swap_interaction_routes(first, second);
+        let error = lower(swapped_routes).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut corrupt_origin = analyze(&source).unwrap();
+        corrupt_origin
+            .facts
+            .corrupt_markdown_style_origin(first, u32::MAX);
+        let error = lower(corrupt_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("style origin"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id.facts.corrupt_markdown_id(first, u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn imported_markdown_keeps_content_expression_style_route_and_source_map_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-markdown-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("docs.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedMarkdownApp\nuse \"docs.ice\"\nfont ui family=sans\n{THEME}state\n  docs:markdown = \"# Imported\"\nview\n  ImportedDocs docs<->docs\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedDocs(bind docs:markdown)\n  on open(url)\n  markdown docs text-size=16.0 -> open _\n    style font=ui inline-code-bg=linear(1.0, bg@0.0, primary@1.0) inline-code-p=2.0 link=primary\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let markdown = program.markdowns.values().next().unwrap();
+        let widget_origin = program.origin(markdown.origin);
+        assert_eq!(widget_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(widget_origin.line, 3);
+        assert!(matches!(
+            markdown.content.id,
+            CheckedValueRef::ComponentParam(_)
+        ));
+        let style_origin = program.origin(markdown.style.origin.unwrap());
+        assert_eq!(style_origin.parent, Some(markdown.origin));
+        assert_eq!(style_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(style_origin.line, 4);
+        let interaction = program.checked_facts().interaction(markdown.id).unwrap();
+        let metric_origin = program.origin(
+            program
+                .checked_facts()
+                .expression_use(interaction.option_expressions[0])
+                .origin,
+        );
+        assert_eq!(metric_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(metric_origin.line, 3);
+        let style_metric_origin = program.origin(
+            program
+                .checked_facts()
+                .expression_use(interaction.option_expressions[1])
+                .origin,
+        );
+        assert_eq!(
+            style_metric_origin.path.as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(style_metric_origin.line, 4);
+        let route_origin = program.origin(markdown.link.origin);
+        assert_eq!(route_origin.parent, Some(markdown.origin));
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.line, 3);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.markdowns.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized markdown lowering and emission performance contract"]
+    fn performance_contract_four_thousand_markdown_views_lower_and_emit_under_two_seconds() {
+        const MARKDOWN_VIEWS: usize = 4_000;
+        let mut source = format!(
+            "app MarkdownScale\n{THEME}state\n  docs:markdown = \"# Docs\"\non opened(url)\nview\n  col\n"
+        );
+        for _ in 0..MARKDOWN_VIEWS {
+            writeln!(
+                source,
+                "    markdown docs text-size=16.0 gap=8.0 -> opened _"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "markdown-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.markdowns.len(), MARKDOWN_VIEWS);
+        assert_eq!(
+            generated.matches("::iced::widget::markdown::view(").count(),
+            MARKDOWN_VIEWS
+        );
+        eprintln!("4k normalized markdown views lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized markdown views lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_the_complete_text_editor_contract() {
+        let source = r#"app EditorHir
+extern crate::backend
+  EditorCommand(save:bool)
+  editor-binding editor_keys(readonly:bool) -> EditorCommand
+  editor-highlighter editor_highlight(language:str)
+  editor-action track_edits()
+  editor-style editor_surface(readonly:bool)
+font ui family=sans
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  body:editor = ""
+  spare:editor = ""
+  locked = false
+  language = "rs"
+on command(value)
+view
+  editor #body <-> body hint="Write" w=640.0 h=fill min-h=80.0 max-h=240.0 size=14.0 line-h-px=18.0 p=8.0 wrap=word-or-glyph font=ui disabled=locked highlighter=editor_highlight(language) key-binding=editor_keys(locked) action=track_edits() style=editor_surface(locked) -> command _
+    active bg=bg border=fg border-w=1.0 r=4.0 placeholder=danger value=fg selection=primary
+    hovered bg=bg border=primary border-w=1.0 r=6.0 placeholder=danger value=fg selection=primary
+    focused bg=bg border=primary border-w=1.0 r=8.0
+    focused-hovered bg=bg border=fg border-w=1.0 r=10.0
+    disabled bg=bg border=danger border-w=1.0 r=12.0 value=danger
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let editor = program.text_editor(ViewId(0)).unwrap();
+
+        assert!(matches!(
+            editor.binding,
+            WritableStateRef::App { ref name, .. } if name == "body"
+        ));
+        assert_eq!(editor.placeholder.as_deref(), Some("Write"));
+        assert!(editor.disabled.is_some());
+        assert!(editor.width.is_some());
+        assert!(matches!(editor.height, Some(ResolvedContainerLength::Fill)));
+        assert!(editor.min_height.is_some());
+        assert!(editor.max_height.is_some());
+        assert!(editor.size.is_some());
+        assert!(matches!(
+            editor.line_height,
+            Some(ResolvedTextLineHeight::Absolute(_))
+        ));
+        assert!(editor.padding.is_some());
+        assert_eq!(editor.wrapping, Some(ResolvedEditorWrapping::WordOrGlyph));
+        assert!(matches!(editor.font, Some(ResolvedTextFont::Named(_))));
+        assert!(editor.highlight.is_none());
+        assert!(editor.highlight_theme.is_none());
+        assert!(editor.highlighter.is_some());
+        assert!(editor.key_binding.is_some());
+        assert!(editor.action.is_some());
+        assert!(editor.custom_style.is_some());
+        assert!(editor.styles.active.is_some());
+        assert!(editor.styles.hovered.is_some());
+        assert!(editor.styles.focused.is_some());
+        assert!(editor.styles.focused_hovered.is_some());
+        assert!(editor.styles.disabled.is_some());
+        assert_eq!(program.controlled_editor_bindings().unwrap().len(), 1);
+        assert_eq!(
+            program.controlled_editor_bindings().unwrap()[0].action,
+            editor.action.as_ref().map(|action| action.function)
+        );
+        let route = &editor.key_binding.as_ref().unwrap().route;
+        assert_eq!(program.origin(route.origin).parent, Some(editor.origin));
+        for status in [
+            &editor.styles.active,
+            &editor.styles.hovered,
+            &editor.styles.focused,
+            &editor.styles.focused_hovered,
+            &editor.styles.disabled,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert_eq!(program.origin(status.origin).parent, Some(editor.origin));
+        }
+    }
+
+    #[test]
+    fn normalizes_builtin_text_editor_highlighting() {
+        let source = format!(
+            "app BuiltinEditorHighlight\n{THEME}state\n  body:editor = \"\"\nview\n  editor <-> body highlight=\"rs\" highlight-theme=inspired-github\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let editor = program.text_editor(ViewId(0)).unwrap();
+        assert_eq!(editor.highlight.as_deref(), Some("rs"));
+        assert_eq!(
+            editor.highlight_theme,
+            Some(ResolvedHighlightTheme::InspiredGithub)
+        );
+        assert!(editor.highlighter.is_none());
+    }
+
+    #[test]
+    fn imported_text_editor_keeps_widget_and_status_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-text-editor-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("editor.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedEditorApp\nuse \"editor.ice\"\n{THEME}state\n  body:editor = \"\"\nview\n  ImportedEditor value<->body\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedEditor(bind value:editor)\n  editor <-> value hint=\"Imported\" highlight=\"rs\"\n    active bg=bg border=fg border-w=1.0\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let editor = program.text_editors.values().next().unwrap();
+        let editor_origin = program.origin(editor.origin);
+        assert_eq!(editor_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(editor_origin.line, 2);
+        let status = editor.styles.active.as_ref().unwrap();
+        let status_origin = program.origin(status.origin);
+        assert_eq!(status_origin.parent, Some(editor.origin));
+        assert_eq!(status_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(status_origin.line, 3);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.text_editors.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn text_editor_lowering_rejects_same_arena_binding_identity_swaps() {
+        let source = format!(
+            "app EditorBindingIdentity\n{THEME}state\n  first:editor = \"\"\n  second:editor = \"\"\nview\n  editor <-> first\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_text_editor_binding(ViewId(0), CheckedValueRef::AppState(AppStateId(1)));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("editor binding identity diverged"));
+    }
+
+    #[test]
+    fn text_editor_codegen_ignores_raw_contract_and_validates_controlled_identity() {
+        let source = format!(
+            "app LoweredEditor\n{THEME}state\n  body:editor = \"\"\n  spare:editor = \"\"\n  locked = false\nview\n  editor #body <-> body hint=\"Write\" w=640.0 h=fill p=8.0 disabled=locked\n    active bg=bg border=fg border-w=1.0 r=4.0\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-editor.ice").unwrap();
+
+        let ViewNode::TextEditor {
+            binding,
+            disabled,
+            options,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a text editor");
+        };
+        *binding = "spare".into();
+        *disabled = Some(Expr::Bool(true));
+        *options = TextEditorOptions::default();
+        let actual = crate::codegen::generate(&program, "lowered-editor.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        program.controlled_editors[0].state = AppStateId(1);
+        let error = crate::codegen::generate(&program, "lowered-editor.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("controlled editor binding"));
+
+        program.controlled_editors[0].state = AppStateId(u32::MAX);
+        let error = crate::codegen::generate(&program, "lowered-editor.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("controlled editor binding"));
+    }
+
+    #[test]
+    fn text_editor_codegen_rejects_same_kind_action_identity_swaps() {
+        let source = format!(
+            "app EditorActionIdentity\nextern crate::backend\n  editor-action first()\n  editor-action second()\n{THEME}state\n  body:editor = \"\"\nview\n  editor <-> body action=first()\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        program.controlled_editors[0].action = Some(ExternFnId(1));
+
+        let error = crate::codegen::generate(&program, "editor-action-identity.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("editor action diverges"));
+    }
+
+    #[test]
+    fn text_editor_rejects_non_cloneable_component_local_state() {
+        let source = format!(
+            "app ComponentEditorState\n{THEME}component EditorPanel()\n  state\n    body:editor = \"\"\n  editor <-> body\nview\n  EditorPanel #panel\n"
+        );
+
+        let error = analyze(&source).unwrap_err();
+        assert_eq!(error.code, "E103");
+        assert!(
+            error
+                .message
+                .contains("component state supports ordinary cloneable values only")
+        );
+    }
+
+    #[test]
+    fn malformed_checked_text_editor_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidEditorFacts\n{THEME}state\n  body:editor = \"\"\n  locked = false\nview\n  editor <-> body disabled=locked\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    #[ignore = "large normalized text editor lowering and emission performance contract"]
+    fn performance_contract_four_thousand_text_editors_lower_and_emit_under_two_seconds() {
+        const EDITORS: usize = 4_000;
+        let mut source = format!(
+            "app EditorScale\n{THEME}state\n  body:editor = \"\"\n  locked = false\nview\n  col\n"
+        );
+        for index in 0..EDITORS {
+            writeln!(
+                source,
+                "    editor #editor_{index} <-> body hint=\"Write\" w=640.0 h=fill p=8.0 disabled=locked"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "editor-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.text_editors.len(), EDITORS);
+        // A disabled editor emits its enabled and disabled widget branches.
+        assert_eq!(
+            generated
+                .matches("::iced::widget::text_editor(&self.body)")
+                .count(),
+            EDITORS * 2
+        );
+        eprintln!("4k normalized text editors lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized text editors lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "distinct controlled editor lookup must remain linear"]
+    fn performance_contract_four_thousand_distinct_text_editors_emit_under_two_seconds() {
+        const EDITORS: usize = 4_000;
+        let mut source = format!("app DistinctEditorScale\n{THEME}state\n");
+        for index in 0..EDITORS {
+            writeln!(source, "  body_{index}:editor = \"\"").unwrap();
+        }
+        source.push_str("view\n  col\n");
+        for index in 0..EDITORS {
+            writeln!(source, "    editor #editor_{index} <-> body_{index}").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "distinct-editor-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.text_editors.len(), EDITORS);
+        assert_eq!(program.controlled_editors.len(), EDITORS);
+        assert_eq!(program.controlled_editors_by_name.len(), EDITORS);
+        assert_eq!(
+            generated
+                .matches("::iced::widget::text_editor(&self.body_")
+                .count(),
+            EDITORS
+        );
+        eprintln!("4k distinct normalized text editors lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k distinct normalized text editors lowered and emitted in {elapsed:?}"
+        );
     }
 
     #[test]
@@ -10995,6 +15801,1278 @@ view
     }
 
     #[test]
+    fn normalizes_keyed_flow_binding_and_layout_options() {
+        let source = format!(
+            "app KeyedHir\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  keyed item in items by=item.id w=fill(2) h=120.0 gap=8.0 p=4.0 pl=12.0 max-w=640.0 align=end\n    text item.name\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let keyed = program.keyed_column(ViewId(0)).unwrap();
+        assert_eq!(keyed.id, ViewId(0));
+        assert_eq!(keyed.item.name, "item");
+        assert!(matches!(
+            keyed.width,
+            Some(ResolvedKeyedLength::FillPortion(2))
+        ));
+        assert!(matches!(
+            keyed.height,
+            Some(ResolvedKeyedLength::FixedF64(_))
+        ));
+        assert!(keyed.spacing.is_some());
+        assert!(keyed.padding.all.is_some());
+        assert!(keyed.padding.left.is_some());
+        assert!(keyed.max_width.is_some());
+        assert_eq!(keyed.align, Some(FlexAlignment::End));
+    }
+
+    #[test]
+    fn malformed_checked_keyed_expression_and_local_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidKeyedFacts\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  keyed item in items by=item.id gap=8.0\n    text item.name\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::KeyedItems,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_keyed_item_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
+    fn keyed_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedKeyed\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  keyed item in items by=item.id gap=8.0 align=end\n    text item.name\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-keyed.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::KeyedColumn {
+            items,
+            key,
+            options,
+            ..
+        } = &mut changed_expressions.document.view
+        else {
+            panic!("fixture root must be keyed");
+        };
+        *items = Expr::Str("Poisoned".into());
+        *key = Expr::Str("Poisoned".into());
+        options.spacing = Some(Expr::F64(999.0));
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-keyed.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::KeyedColumn { options, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be keyed");
+        };
+        options.align = Some(FlexAlignment::Start);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn keyed_codegen_ignores_raw_flow_and_layout_after_lowering() {
+        let source = format!(
+            "app LoweredKeyed\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  keyed item in items by=item.id w=fill(2) gap=8.0 p=4.0 align=end\n    text item.name\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-keyed.ice").unwrap();
+        let ViewNode::KeyedColumn {
+            item,
+            items,
+            key,
+            options,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be keyed");
+        };
+        *item = "poisoned".into();
+        *items = Expr::Str("Poisoned".into());
+        *key = Expr::Str("Poisoned".into());
+        options.width = Some(LengthValue::Shrink);
+        options.spacing = Some(Expr::F64(999.0));
+        options.padding = PaddingOptions::default();
+        options.align = Some(FlexAlignment::Start);
+        let actual = crate::codegen::generate(&program, "lowered-keyed.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn normalizes_table_rows_binding_metrics_columns_and_origins() {
+        let source = format!(
+            "app TableHir\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  table row in rows w=fill p=4.0 sep-x=2.0\n    col w=fill(2) align-x=right align-y=bottom\n      header\n        text \"Name\"\n      cell\n        text row.name\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let table = program.table(ViewId(0)).unwrap();
+        assert_eq!(table.id, ViewId(0));
+        assert_eq!(table.row.name, "row");
+        assert_eq!(table.row.ty, Type::Named("Item".into()));
+        assert!(matches!(table.width, Some(ResolvedTableLength::Fill)));
+        assert!(table.padding.is_some());
+        assert!(table.separator_x.is_some());
+        assert_eq!(table.columns.len(), 1);
+        assert!(matches!(
+            table.columns[0].width,
+            Some(ResolvedTableLength::FillPortion(2))
+        ));
+        assert_eq!(table.columns[0].align_x, Some(InputAlignment::Right));
+        assert_eq!(
+            program.origin(table.columns[0].origin).parent,
+            Some(table.origin)
+        );
+        assert_eq!(
+            program.checked_facts().expression_use(table.rows).owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::TableRows,
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_checked_table_expression_and_local_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidTableFacts\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  table row in rows p=4.0\n    col\n      header\n        text \"Name\"\n      cell\n        text row.name\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::TableRows,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_table_row_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
+    fn table_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedTable\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  table row in rows p=4.0\n    col align-x=right\n      header\n        text \"Name\"\n      cell\n        text row.name\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-table.ice",
+        )
+        .unwrap();
+
+        let mut changed_expressions = analyze(&source).unwrap();
+        let ViewNode::Table { rows, options, .. } = &mut changed_expressions.document.view else {
+            panic!("fixture root must be table");
+        };
+        *rows = Expr::List(vec![]);
+        options.padding = Some(Expr::F64(999.0));
+        let actual =
+            crate::codegen::generate(&lower(changed_expressions).unwrap(), "checked-table.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Table { columns, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be table");
+        };
+        columns[0].align_x = Some(InputAlignment::Left);
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn table_codegen_ignores_raw_flow_options_and_column_metadata_after_lowering() {
+        let source = format!(
+            "app LoweredTable\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  table row in rows w=fill p=4.0\n    col w=fill(2) align-x=right\n      header\n        text \"Name\"\n      cell\n        text row.name\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-table.ice").unwrap();
+        let ViewNode::Table {
+            item,
+            rows,
+            options,
+            columns,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be table");
+        };
+        *item = "poisoned".into();
+        *rows = Expr::List(vec![]);
+        options.width = Some(LengthValue::Shrink);
+        options.padding = Some(Expr::F64(999.0));
+        columns[0].width = Some(LengthValue::Shrink);
+        columns[0].align_x = Some(InputAlignment::Left);
+        let actual = crate::codegen::generate(&program, "lowered-table.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn normalizes_complete_pane_grid_state_templates_routes_styles_and_origins() {
+        let source = format!(
+            "app PaneHir\nextern crate::backend\n  Task(id:i64, title:str)\n  panes-style dynamic_panes(active:bool)\n{THEME}state\n  tasks:[Task] = []\n  active = true\non clicked(name)\nview\n  panes #work w=fill h=64.0 gap=8.0 min-size=120.0 resize=6.0 drag click=clicked(_) style=dynamic_panes(active)\n    style\n      hovered-region bg=primary/25 border=fg border-w=2.0 r=4.0\n      hovered-split color=primary w=3.0\n      picked-split color=danger w=4.0\n    split workspace_root vertical ratio=0.7\n      pane files maximized=files_maximized bg=bg text=fg border=primary border-w=1.0 r=2.0 shadow=black/50 shadow-x=1.0 shadow-y=2.0 shadow-blur=3.0 px-snap=true\n        title p=4.0 always-controls bg=primary/50 text=fg\n          text \"Files\"\n        controls\n          text \"Controls\"\n        text \"Files body\"\n      pane editor\n        text \"Editor\"\n    pane task in tasks by=task.id maximized=task_maximized\n      col\n        if task_maximized\n          text task.title\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let pane = program.pane_grid(ViewId(0)).unwrap();
+        assert_eq!(pane.id, ViewId(0));
+        assert_eq!(pane.name, "work");
+        assert!(matches!(pane.width, Some(ResolvedPaneLength::Fill)));
+        assert!(matches!(pane.height, Some(ResolvedPaneLength::FixedF64(_))));
+        assert!(pane.spacing.is_some());
+        assert!(pane.min_size.is_some());
+        assert!(pane.resize_leeway.is_some());
+        assert!(pane.draggable);
+        assert!(matches!(
+            pane.configuration,
+            ResolvedPaneConfiguration::Split {
+                ref name,
+                axis: ResolvedPaneAxis::Vertical,
+                ratio,
+                ..
+            } if name.as_deref() == Some("workspace_root") && ratio == 0.7
+        ));
+        let route = pane.click.as_ref().unwrap();
+        assert!(matches!(
+            route.args.as_slice(),
+            [ResolvedInteractionRouteArg::Payload {
+                index: 0,
+                ty: Type::Str
+            }]
+        ));
+        let custom = pane.custom_style.as_ref().unwrap();
+        assert_eq!(
+            program.extern_function(custom.function).name,
+            "dynamic_panes"
+        );
+        assert_eq!(custom.arguments.len(), 1);
+        assert!(matches!(
+            pane.style.hovered_split,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 2, .. }),
+                ..
+            })
+        ));
+        assert_eq!(pane.panes.len(), 2);
+        assert_eq!(pane.panes[0].name, "files");
+        assert_eq!(pane.panes[0].maximized.as_ref().unwrap().ty, Type::Bool);
+        assert!(pane.panes[0].surface.pixel_snap.is_some());
+        let title = pane.panes[0].title.as_ref().unwrap();
+        assert!(title.padding.all.is_some());
+        assert!(title.always_show_controls);
+        assert!(title.has_controls);
+        assert!(!title.has_compact_controls);
+        assert_eq!(pane.templates.len(), 1);
+        let template = &pane.templates[0];
+        assert_eq!(template.item.name, "task");
+        assert_eq!(template.item.ty, Type::Named("Task".into()));
+        assert_eq!(template.key_type, Type::I64);
+        assert_eq!(template.pane.maximized.as_ref().unwrap().ty, Type::Bool);
+        assert_eq!(program.origin(template.origin).parent, Some(pane.origin));
+        assert_eq!(
+            program.origin(template.pane.origin).parent,
+            Some(template.origin)
+        );
+        assert_eq!(
+            program.checked_facts().local(template.item.local).owner,
+            CheckedLocalOwner::View {
+                view: ViewId(0),
+                role: CheckedViewLocalRole::PaneTemplateItem(0),
+            }
+        );
+        assert!(matches!(template.items, ResolvedPaneItems::Value(_)));
+    }
+
+    #[test]
+    fn source_merged_pane_styles_are_owned_before_origins_remap_to_physical_lines() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-pane-style-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("pane.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedPane\nuse \"pane.ice\"\n{THEME}view\n  panes #work\n    pane files bg=bg\n      title text=fg\n        text \"Files\"\n      text \"Body\"\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedContent()\n  text \"Imported\"\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pane = program.pane_grids().into_iter().next().unwrap();
+        assert_eq!(
+            program.origin(pane.panes[0].origin).path.as_deref(),
+            Some(root.as_path())
+        );
+        assert!(pane.panes[0].utility_style.background.is_none());
+        assert!(
+            pane.panes[0]
+                .title
+                .as_ref()
+                .unwrap()
+                .utility_style
+                .text_color
+                .is_none()
+        );
+        crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn pane_grid_keeps_hir_origins_source_marker_and_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-pane-grid-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let source = format!(
+            "app PaneGridOrigins\n{THEME}view\n  panes #work\n    pane files\n      text \"Files\"\n"
+        );
+        let pane_line = source
+            .lines()
+            .position(|line| line.trim_start().starts_with("panes #work"))
+            .unwrap()
+            + 1;
+        fs::write(&root, source).unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pane_grid = program
+            .pane_grids
+            .values()
+            .next()
+            .expect("imported pane grid must be normalized");
+        let origin = program.origin(pane_grid.origin);
+        assert_eq!(origin.path.as_deref(), Some(root.as_path()));
+        assert_eq!(origin.line, pane_line);
+        let pane_origin = program.origin(pane_grid.panes[0].origin);
+        assert_eq!(pane_origin.path.as_deref(), Some(root.as_path()));
+        assert_eq!(pane_origin.line, pane_line + 1);
+        assert_eq!(pane_origin.parent, Some(pane_grid.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_root = crate::codegen::encode_source_path(&root.display().to_string());
+        assert!(generated.contains(&format!(
+            "// __ICE_SOURCE {} 1 {encoded_root}",
+            pane_line + 2
+        )));
+
+        program.pane_grids.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(root.to_str().unwrap()));
+        assert_eq!(error.line, pane_line);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        program.pane_grids.values_mut().next().unwrap().panes.pop();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(root.to_str().unwrap()));
+        assert_eq!(error.line, pane_line);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn malformed_checked_pane_expression_local_and_origin_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidPaneFacts\nextern crate::backend\n  Task(id:i64, title:str)\n{THEME}state\n  tasks:[Task] = []\nview\n  panes #work gap=8.0\n    pane files\n      text \"Files\"\n    pane task in tasks by=task.id\n      text task.title\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_pane_expression_id(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_pane_template_item_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_pane_template_origin(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.leak_pane_template_key_into_spacing(ViewId(0));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("another scope"), "{}", error.message);
+    }
+
+    #[test]
+    fn pane_grid_lowering_and_codegen_ignore_raw_semantics_before_and_after_lowering() {
+        let source = format!(
+            "app CheckedPane\nextern crate::backend\n  Task(id:i64, title:str)\n{THEME}state\n  tasks:[Task] = []\nview\n  panes #work w=fill gap=8.0 resize=6.0 drag\n    split root vertical ratio=0.7\n      pane files maximized=files_maximized bg=bg\n        title p=4.0 always-controls\n          text \"Files\"\n        controls\n          text \"Controls\"\n        text \"Files body\"\n      pane editor\n        text \"Editor\"\n    pane task in tasks by=task.id maximized=task_maximized\n      text task.title\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-pane.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        poison_raw_pane_semantics(&mut checked.document.view);
+        let mut program = lower(checked).unwrap();
+        let actual = crate::codegen::generate(&program, "checked-pane.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        poison_raw_pane_semantics(&mut program.document.view);
+        let actual = crate::codegen::generate(&program, "checked-pane.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    fn poison_raw_pane_semantics(node: &mut ViewNode) {
+        let ViewNode::PaneGrid {
+            name,
+            configuration,
+            options,
+            panes,
+            templates,
+            ..
+        } = node
+        else {
+            panic!("fixture root must be a pane grid");
+        };
+        *name = "poisoned".into();
+        *configuration = PaneConfiguration::Pane("poisoned".into());
+        options.width = Some(LengthValue::Shrink);
+        options.spacing = Some(Expr::F64(999.0));
+        options.resize_leeway = None;
+        options.draggable = false;
+        options.style.hovered_split = Some("danger".into());
+        panes[0].name = "poisoned_static".into();
+        panes[0].maximized = Some("poisoned_maximized".into());
+        panes[0].style.background = Some(BackgroundValue::Color("danger".into()));
+        let title = panes[0].title.as_mut().unwrap();
+        title.padding.all = Some(Expr::F64(999.0));
+        title.always_show_controls = false;
+        templates[0].items = "poisoned_items".into();
+        templates[0].item = "poisoned_item".into();
+        templates[0].key = Expr::Bool(false);
+        templates[0].pane.name = "poisoned_template".into();
+        templates[0].pane.maximized = Some("poisoned_template_maximized".into());
+    }
+
+    #[test]
+    fn imported_table_keeps_hir_origins_source_marker_and_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-table-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("table-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedTable\nuse \"table-card.ice\"\n{THEME}view\n  TableCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component TableCard()\n  state\n    rows:[str] = [\"A\"]\n  table row in rows\n    col\n      header\n        text \"Name\"\n      cell\n        text row\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let table = program
+            .tables
+            .values()
+            .next()
+            .expect("imported table must be normalized");
+        let origin = program.origin(table.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+        let column_origin = program.origin(table.columns[0].origin);
+        assert_eq!(column_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(column_origin.line, 5);
+        assert_eq!(column_origin.parent, Some(table.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        program.tables.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        program.tables.values_mut().next().unwrap().columns.pop();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_if_condition_type_owner_and_scope() {
+        let source = format!(
+            "app IfHir\n{THEME}state\n  enabled = true\nview\n  if enabled\n    text \"Visible\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let conditional = program.conditional(ViewId(0)).unwrap();
+        assert_eq!(conditional.id, ViewId(0));
+        let expression = program
+            .checked_facts()
+            .expression_use(conditional.condition);
+        assert_eq!(expression.source, Type::Bool);
+        assert_eq!(expression.destination, Type::Bool);
+        assert_eq!(
+            expression.owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::IfCondition,
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_checked_if_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidIfFacts\n{THEME}state\n  enabled = true\nview\n  if enabled\n    text \"Visible\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::IfCondition,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn if_lowering_and_codegen_ignore_raw_condition_mutation() {
+        let source = format!(
+            "app CheckedIf\n{THEME}state\n  enabled = true\nview\n  col\n    if enabled\n      text \"Visible\"\n"
+        );
+        let expected =
+            crate::codegen::generate(&lower(analyze(&source).unwrap()).unwrap(), "checked-if.ice")
+                .unwrap();
+
+        let mut changed = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::If { condition, .. } = &mut children[0] else {
+            panic!("fixture child must be if");
+        };
+        *condition = Expr::Bool(false);
+        let mut program = lower(changed).unwrap();
+        let actual = crate::codegen::generate(&program, "checked-if.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::If { condition, .. } = &mut children[0] else {
+            panic!("fixture child must be if");
+        };
+        *condition = Expr::Bool(false);
+        let actual = crate::codegen::generate(&program, "checked-if.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn normalizes_for_items_binding_and_reconciliation_identity() {
+        let source = format!(
+            "app ForHir\n{THEME}state\n  items:[str] = []\nview\n  for item in items\n    text item\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let iteration = program.iteration(ViewId(0)).unwrap();
+        assert_eq!(iteration.id, ViewId(0));
+        assert_eq!(iteration.item.name, "item");
+        assert_eq!(iteration.item.ty, Type::Str);
+        assert_eq!(iteration.reconciliation_line, 15);
+        assert_eq!(
+            program.checked_facts().local(iteration.item.local).owner,
+            CheckedLocalOwner::View {
+                view: ViewId(0),
+                role: CheckedViewLocalRole::ForItem,
+            }
+        );
+        assert_eq!(
+            program
+                .checked_facts()
+                .expression_use(iteration.items)
+                .owner,
+            CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::ForItems,
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_checked_for_expression_and_local_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidForFacts\n{THEME}state\n  items:[str] = []\nview\n  for item in items\n    text item\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::ForItems,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_for_item_local(ViewId(0), u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
+    fn for_lowering_uses_checked_items_and_binding() {
+        let source = format!(
+            "app CheckedFor\n{THEME}state\n  items:[str] = []\nview\n  col\n    for item in items\n      text item\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-for.ice",
+        )
+        .unwrap();
+
+        let mut changed_items = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_items.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::For { items, .. } = &mut children[0] else {
+            panic!("fixture child must be for");
+        };
+        *items = Expr::Str("Poisoned".into());
+        let actual =
+            crate::codegen::generate(&lower(changed_items).unwrap(), "checked-for.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed_binding = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_binding.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::For { item, .. } = &mut children[0] else {
+            panic!("fixture child must be for");
+        };
+        *item = "poisoned".into();
+        let actual =
+            crate::codegen::generate(&lower(changed_binding).unwrap(), "checked-for.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn for_codegen_ignores_raw_flow_after_lowering() {
+        let source = format!(
+            "app LoweredFor\n{THEME}state\n  items:[str] = []\nview\n  col\n    for item in items\n      text item\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-for.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::For { item, items, .. } = &mut children[0] else {
+            panic!("fixture child must be for");
+        };
+        *item = "poisoned".into();
+        *items = Expr::Str("Poisoned".into());
+        let actual = crate::codegen::generate(&program, "lowered-for.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn normalizes_match_value_patterns_bindings_and_origins() {
+        let source = format!(
+            "app MatchHir\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  match choice\n    some(label)\n      text label\n    none\n      text \"none\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let resolved = program.match_view(ViewId(0)).unwrap();
+        assert_eq!(resolved.id, ViewId(0));
+        assert_eq!(resolved.value_ty, Type::Option(Box::new(Type::Str)));
+        assert_eq!(resolved.arms.len(), 2);
+        assert!(matches!(
+            resolved.arms[0].pattern,
+            ResolvedMatchPattern::Some
+        ));
+        let binding = resolved.arms[0].binding.as_ref().unwrap();
+        assert_eq!(binding.name, "label");
+        assert_eq!(binding.ty, Type::Str);
+        assert_eq!(
+            program.checked_facts().local(binding.local).owner,
+            CheckedLocalOwner::View {
+                view: ViewId(0),
+                role: CheckedViewLocalRole::MatchPayload(0),
+            }
+        );
+        assert!(matches!(
+            resolved.arms[1].pattern,
+            ResolvedMatchPattern::None
+        ));
+        assert!(resolved.arms[1].binding.is_none());
+        assert_eq!(resolved.arms[0].children, vec![ViewId(1)]);
+        assert_eq!(resolved.arms[1].children, vec![ViewId(2)]);
+        assert_ne!(resolved.arms[0].origin, resolved.arms[1].origin);
+    }
+
+    #[test]
+    fn match_lowering_rejects_checked_pattern_coverage_drift() {
+        let enum_source = format!(
+            "app MatchCoverage\n{THEME}enum Status\n  ready\n  done\nstate\n  status:Status = Status.ready\nview\n  match status\n    Status.ready\n      text \"ready\"\n    Status.done\n      text \"done\"\n"
+        );
+        let mut checked = analyze(&enum_source).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        let ready = checked
+            .declarations
+            .enum_decl_by_name("Status")
+            .unwrap()
+            .variants[0]
+            .declaration
+            .id;
+        checked
+            .facts
+            .corrupt_match_pattern(view, 1, CheckedMatchPattern::Enum(ready));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("duplicate case"));
+
+        let option_source = format!(
+            "app MatchWildcard\n{THEME}state\n  choice:str? = none\nview\n  match choice\n    some(label)\n      text label\n    none\n      text \"none\"\n"
+        );
+        let mut checked = analyze(&option_source).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        checked
+            .facts
+            .corrupt_match_pattern(view, 0, CheckedMatchPattern::Wildcard);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("wildcard topology"));
+
+        let mut checked = analyze(&option_source).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        checked.facts.remove_match_arm(view, 1);
+        let ViewNode::Match { arms, .. } = &mut checked.document.view else {
+            panic!("fixture root must be match");
+        };
+        arms.remove(1);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error
+                .message
+                .contains("children diverged from checked topology")
+        );
+    }
+
+    #[test]
+    fn match_lowering_rejects_raw_arm_child_reassignment() {
+        let source = format!(
+            "app MatchTopology\n{THEME}state\n  choice:str? = none\nview\n  col\n    match choice\n      some(label)\n        text \"first\"\n        text \"second\"\n      none\n        text \"none\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Match { arms, .. } = &mut children[0] else {
+            panic!("fixture child must be match");
+        };
+        let moved = arms[0].children.pop().unwrap();
+        arms[1].children.insert(0, moved);
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("checked arm topology"));
+    }
+
+    #[test]
+    fn normal_and_flex_match_codegen_ignore_raw_arm_child_reassignment() {
+        for layout in ["col", "flex dir=column"] {
+            let source = format!(
+                "app MatchTopology\n{THEME}state\n  choice:str? = none\nview\n  {layout}\n    match choice\n      some(label)\n        text \"first\"\n        text \"second\"\n      none\n        text \"none\"\n"
+            );
+            let mut program = lower(analyze(&source).unwrap()).unwrap();
+            let expected = crate::codegen::generate(&program, "match-topology.ice").unwrap();
+            let ViewNode::Layout { children, .. } = &mut program.document.view else {
+                panic!("fixture root must be a layout");
+            };
+            let ViewNode::Match { arms, .. } = &mut children[0] else {
+                panic!("fixture child must be match");
+            };
+            let moved = arms[0].children.pop().unwrap();
+            arms[1].children.insert(0, moved);
+
+            let actual = crate::codegen::generate(&program, "match-topology.ice").unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn malformed_checked_match_expression_and_local_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidMatchFacts\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  match choice\n    some(label)\n      text label\n    none\n      text \"none\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            crate::check::CheckedExprOwner::View {
+                view: ViewId(0),
+                role: CheckedViewExprRole::MatchValue,
+            },
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_match_binding_local(ViewId(0), 0, u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
+    fn match_lowering_and_codegen_ignore_raw_value_pattern_and_binding() {
+        let source = format!(
+            "app CheckedMatch\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  col\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-match.ice",
+        )
+        .unwrap();
+
+        let mut changed = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Match { value, arms, .. } = &mut children[0] else {
+            panic!("fixture child must be match");
+        };
+        *value = Expr::Bool(false);
+        arms[0].pattern = MatchPattern::Wildcard;
+        let mut program = lower(changed).unwrap();
+        let actual = crate::codegen::generate(&program, "checked-match.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Match { value, arms, .. } = &mut children[0] else {
+            panic!("fixture child must be match");
+        };
+        *value = Expr::Bool(false);
+        arms[0].pattern = MatchPattern::Wildcard;
+        let actual = crate::codegen::generate(&program, "checked-match.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn imported_remaining_controls_keep_origins_and_source_map_hir_failures() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-remaining-control-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("controls.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedRemainingControlsApp\nuse \"controls.ice\"\n{THEME}state\n  modes:combo[str] = [\"One\"]\n  selected:str? = none\nview\n  ImportedRemainingControls modes<->modes selected=selected\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedRemainingControls(bind modes:combo[str], selected:str?)\n  on chosen(next)\n  on moved(x, y)\n  on resized(dx, dy)\n  on shown(width, height)\n  col\n    combo modes selected \"Search\" -> chosen _\n    image \"photo.png\"\n    tooltip position=cursor\n      text \"Hover\"\n      text \"Tip\"\n    mouse move=moved cursor=pointer\n      text \"Pointer\"\n    resize-handle drag=resized cursor=resize-horizontal\n      text \"Resize\"\n    sensor show=shown key=true anticipate=0.0 delay=0\n      text \"Observed\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let combo_id = program.combo_boxes.values().next().unwrap().id;
+        let media_id = program.media.values().next().unwrap().id;
+        let tooltip_id = program.tooltips.values().next().unwrap().id;
+        for (id, line) in [(combo_id, 7usize), (media_id, 8), (tooltip_id, 9)] {
+            let origin = program.origin(program.checked_facts().view(id).origin);
+            assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(origin.line, line);
+        }
+        let interaction_ids = program
+            .interaction_widgets
+            .values()
+            .map(|interaction| match interaction {
+                ResolvedInteractionWidget::MouseArea(widget) => (widget.id, 12usize),
+                ResolvedInteractionWidget::ResizeHandle(widget) => (widget.id, 14usize),
+                ResolvedInteractionWidget::Sensor(widget) => (widget.id, 16usize),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(interaction_ids.len(), 3);
+        for (id, line) in &interaction_ids {
+            let origin = program.origin(program.checked_facts().view(*id).origin);
+            assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(origin.line, *line);
+        }
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        let combo = program.combo_boxes.remove(&combo_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 7);
+        program.combo_boxes.insert(combo_id, combo);
+
+        let media = program.media.remove(&media_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        program.media.insert(media_id, media);
+
+        let tooltip = program.tooltips.remove(&tooltip_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 9);
+        program.tooltips.insert(tooltip_id, tooltip);
+
+        for (id, line) in interaction_ids {
+            let interaction = program.interaction_widgets.remove(&id).unwrap();
+            let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+            assert_eq!(error.line, line);
+            program.interaction_widgets.insert(id, interaction);
+        }
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn match_codegen_consumes_the_resolved_binding_type() {
+        let source = format!(
+            "app ResolvedMatchBinding\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  col\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "resolved-match-binding.ice").unwrap();
+        let local = program.match_views.values().next().unwrap().arms[0]
+            .binding
+            .as_ref()
+            .unwrap()
+            .local;
+        program.facts.corrupt_local_type(local, Type::Bool);
+
+        let actual = crate::codegen::generate(&program, "resolved-match-binding.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn imported_match_keeps_hir_origins_source_marker_and_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-match-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("choice-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedMatch\nuse \"choice-card.ice\"\n{THEME}view\n  ChoiceCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ChoiceCard()\n  state\n    choice:str? = some(\"ready\")\n  col\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n",
+        )
+        .unwrap();
+
+        let mut checked = analyze_file(&root).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        let match_origin = checked.facts.view(view).origin;
+        checked
+            .facts
+            .corrupt_match_arm_origin(view, 1, match_origin);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        assert!(error.message.contains("checked parent or source"));
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let resolved = program
+            .match_views
+            .values()
+            .next()
+            .expect("imported match must be normalized");
+        let origin = program.origin(resolved.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 5);
+        let arm_origin = program.origin(resolved.arms[0].origin);
+        assert_eq!(arm_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(arm_origin.line, 6);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        program.match_views.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 5);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        program.match_views.values_mut().next().unwrap().arms[0].binding = None;
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 6);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_for_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-for-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("iteration-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedFor\nuse \"iteration-card.ice\"\n{THEME}view\n  IterationCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component IterationCard()\n  state\n    items:[str] = [\"A\", \"B\"]\n  col\n    for item in items\n      text item\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let iteration = program
+            .iterations
+            .values()
+            .next()
+            .expect("imported for must be normalized");
+        let origin = program.origin(iteration.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 5);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        // Flow nodes emit their children inline, so the generated marker belongs to the
+        // imported body while the normalized iteration retains the flow's own origin.
+        assert!(generated.contains(&format!("// __ICE_SOURCE 6 1 {encoded_import}")));
+
+        program.iterations.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 5);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_if_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-if-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("conditional-card.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedConditional\nuse \"conditional-card.ice\"\n{THEME}view\n  ConditionalCard\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ConditionalCard()\n  col\n    if true\n      text \"Visible\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let conditional = program
+            .conditionals
+            .values()
+            .next()
+            .expect("imported if must be normalized");
+        let origin = program.origin(conditional.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 3);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.conditionals.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_keyed_column_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-keyed-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("keyed-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedKeyed\nuse \"keyed-card.ice\"\n{THEME}view\n  KeyedCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component KeyedCard()\n  state\n    items:[i64] = [1, 2]\n  keyed item in items by=item\n    text item\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let keyed = program
+            .keyed_columns
+            .values()
+            .next()
+            .expect("imported keyed column must be normalized");
+        let origin = program.origin(keyed.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.keyed_columns.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_lazy_keeps_hir_origin_source_marker_and_diagnostic() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -11287,6 +17365,216 @@ view
     }
 
     #[test]
+    #[ignore = "large normalized overlay lowering and emission performance contract"]
+    fn performance_contract_four_thousand_overlays_lower_and_emit_under_two_seconds() {
+        const OVERLAYS: usize = 4_000;
+        let mut source = format!("app OverlayScale\n{THEME}on close\nview\n  col\n");
+        for index in 0..OVERLAYS {
+            writeln!(
+                source,
+                "    overlay when=true dismiss=close backdrop=black/60 p=8.0\n      content\n        text \"Page {index}\"\n      layer\n        text \"Dialog {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "overlay-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.overlays.len(), OVERLAYS);
+        assert_eq!(generated.matches("let __overlay_stack").count(), OVERLAYS);
+        eprintln!("4k normalized overlays lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized overlays lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized container lowering and emission performance contract"]
+    fn performance_contract_four_thousand_containers_lower_and_emit_under_two_seconds() {
+        const CONTAINERS: usize = 4_000;
+        let mut source = format!("app ContainerScale\n{THEME}view\n  flex wrap=wrap\n");
+        for index in 0..CONTAINERS {
+            writeln!(
+                source,
+                "    box h=48.0 p=8.0 bg=bg border=primary border-w=1.0 r=4.0 grow=1.0 basis=percent(25.0)\n      text \"Card {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "container-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.containers.len(), CONTAINERS);
+        assert_eq!(
+            generated
+                .matches("::iced::widget::container(__container_content)")
+                .count(),
+            CONTAINERS
+        );
+        eprintln!("4k normalized containers lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized containers lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized layout lowering and emission performance contract"]
+    fn performance_contract_four_thousand_layouts_lower_and_emit_under_two_seconds() {
+        const LAYOUTS: usize = 4_000;
+        let mut source = format!("app LayoutScale\n{THEME}view\n  col\n");
+        for index in 0..LAYOUTS {
+            writeln!(
+                source,
+                "    row gap=4.0 p=2.0 w=fill align=center clip=false\n      text \"Item {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "layout-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.layouts.len(), LAYOUTS + 1);
+        assert_eq!(
+            generated.matches("::iced::widget::row(__children)").count(),
+            LAYOUTS
+        );
+        eprintln!("4k normalized layouts lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized layouts lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized text lowering and emission performance contract"]
+    fn performance_contract_four_thousand_text_nodes_lower_and_emit_under_two_seconds() {
+        const TEXTS: usize = 4_000;
+        let mut source = format!("app TextScale\n{THEME}view\n  col\n");
+        for index in 0..TEXTS {
+            writeln!(source, "    text \"Item {index}\" size=14.0 w=fill").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "text-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.texts.len(), TEXTS);
+        assert_eq!(
+            generated
+                .matches("::iced::widget::text(__text_value.clone())")
+                .count(),
+            TEXTS
+        );
+        eprintln!("4k normalized text nodes lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized text nodes lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized input lowering and emission performance contract"]
+    fn performance_contract_four_thousand_inputs_lower_and_emit_under_two_seconds() {
+        const INPUTS: usize = 4_000;
+        let mut source = format!("app InputScale\n{THEME}state\n  value = \"\"\nview\n  col\n");
+        for index in 0..INPUTS {
+            writeln!(
+                source,
+                "    input \"Field {index}\" <-> value hint=\"Type\" w=240.0 p=8.0 text-size=14.0"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "input-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.inputs.len(), INPUTS);
+        assert_eq!(
+            generated.matches("::iced::widget::text_input(").count(),
+            INPUTS
+        );
+        eprintln!("4k normalized inputs lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized inputs lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized pick-list lowering and emission performance contract"]
+    fn performance_contract_four_thousand_pick_lists_lower_and_emit_under_two_seconds() {
+        const PICKS: usize = 4_000;
+        let mut source = format!(
+            "app PickScale\n{THEME}state\n  choices = [\"One\", \"Two\"]\n  selected:str? = none\non selected(next)\nview\n  col\n"
+        );
+        for _ in 0..PICKS {
+            writeln!(
+                source,
+                "    pick choices selected hint=\"Choose\" w=240.0 p=8.0 text-size=14.0 -> selected _"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "pick-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.pick_lists.len(), PICKS);
+        assert_eq!(
+            generated.matches("::iced::widget::pick_list(").count(),
+            PICKS
+        );
+        eprintln!("4k normalized pick lists lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized pick lists lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "distinct combo-state lookup and normalized emission must remain linear"]
+    fn performance_contract_four_thousand_distinct_combo_boxes_emit_under_two_seconds() {
+        const COMBOS: usize = 4_000;
+        let mut source = format!("app ComboScale\n{THEME}state\n  selected:str? = none\n");
+        for index in 0..COMBOS {
+            writeln!(source, "  choices_{index}:combo[str] = [\"Item {index}\"]").unwrap();
+        }
+        source.push_str("on selected(next)\nview\n  col\n");
+        for index in 0..COMBOS {
+            writeln!(
+                source,
+                "    combo choices_{index} selected \"Search {index}\" w=240.0 p=8.0 -> selected _"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let lowered = started.elapsed();
+        let generated = crate::codegen::generate(&program, "combo-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.combo_boxes.len(), COMBOS);
+        assert_eq!(
+            generated.matches("::iced::widget::combo_box(").count(),
+            COMBOS
+        );
+        eprintln!(
+            "4k distinct normalized combo boxes lowered in {lowered:?} and emitted in {:?} ({elapsed:?} total)",
+            elapsed - lowered,
+        );
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k distinct normalized combo boxes lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
     #[ignore = "large normalized sensor lowering and emission performance contract"]
     fn performance_contract_four_thousand_sensors_lower_and_emit_under_two_seconds() {
         const SENSORS: usize = 4_000;
@@ -11423,6 +17711,178 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized lazy views lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized keyed-column lowering and emission performance contract"]
+    fn performance_contract_four_thousand_keyed_columns_lower_and_emit_under_two_seconds() {
+        const KEYED_COLUMNS: usize = 4_000;
+        let mut source = format!(
+            "app KeyedScale\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  col\n"
+        );
+        for index in 0..KEYED_COLUMNS {
+            writeln!(
+                source,
+                "    keyed item_{index} in items by=item_{index}.id gap=8.0 p=4.0\n      text item_{index}.name"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "keyed-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.keyed_columns.len(), KEYED_COLUMNS);
+        assert_eq!(
+            generated.matches("::iced::widget::keyed_column(").count(),
+            KEYED_COLUMNS
+        );
+        eprintln!("4k normalized keyed columns lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized keyed columns lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized table lowering and emission performance contract"]
+    fn performance_contract_four_thousand_tables_lower_and_emit_under_two_seconds() {
+        const TABLES: usize = 4_000;
+        let mut source = format!(
+            "app TableScale\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  col\n"
+        );
+        for index in 0..TABLES {
+            writeln!(
+                source,
+                "    table row_{index} in rows p=4.0\n      col w=fill align-x=left\n        header\n          text \"Name {index}\"\n        cell\n          text row_{index}.name"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "table-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.tables.len(), TABLES);
+        assert_eq!(
+            generated.matches("::iced::widget::table::table(").count(),
+            TABLES
+        );
+        eprintln!("4k normalized tables lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized tables lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized pane-grid lowering and emission performance contract"]
+    fn performance_contract_four_thousand_pane_grids_lower_and_emit_under_two_seconds() {
+        const PANE_GRIDS: usize = 4_000;
+        let mut source = format!("app PaneScale\n{THEME}view\n  col\n");
+        for index in 0..PANE_GRIDS {
+            writeln!(
+                source,
+                "    panes #work_{index} w=fill gap=8.0\n      pane main\n        text \"Pane {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "pane-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.pane_grids.len(), PANE_GRIDS);
+        let pane_render_count = generated
+            .matches("::iced::widget::pane_grid(&self.")
+            .count();
+        assert_eq!(pane_render_count, PANE_GRIDS);
+        eprintln!("4k normalized pane grids lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized pane grids lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized if-view lowering and emission performance contract"]
+    fn performance_contract_four_thousand_if_views_lower_and_emit_under_two_seconds() {
+        const IF_VIEWS: usize = 4_000;
+        let mut source = format!("app IfScale\n{THEME}state\n  enabled = true\nview\n  col\n");
+        for index in 0..IF_VIEWS {
+            writeln!(source, "    if enabled\n      text \"Visible {index}\"").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "if-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.conditionals.len(), IF_VIEWS);
+        assert_eq!(generated.matches("if self.enabled").count(), IF_VIEWS);
+        eprintln!("4k normalized if views lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized if views lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized for-view lowering and emission performance contract"]
+    fn performance_contract_four_thousand_for_views_lower_and_emit_under_two_seconds() {
+        const FOR_VIEWS: usize = 4_000;
+        let mut source = format!("app ForScale\n{THEME}state\n  items:[str] = []\nview\n  col\n");
+        for index in 0..FOR_VIEWS {
+            writeln!(
+                source,
+                "    for item_{index} in items\n      text item_{index}"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "for-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.iterations.len(), FOR_VIEWS);
+        assert_eq!(
+            generated.matches("for (__ice_index, item_").count(),
+            FOR_VIEWS
+        );
+        eprintln!("4k normalized for views lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized for views lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized match-view lowering and emission performance contract"]
+    fn performance_contract_four_thousand_match_views_lower_and_emit_under_two_seconds() {
+        const MATCH_VIEWS: usize = 4_000;
+        let mut source =
+            format!("app MatchScale\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  col\n");
+        for index in 0..MATCH_VIEWS {
+            writeln!(
+                source,
+                "    match choice\n      some(label_{index})\n        text label_{index}\n      none\n        text \"none\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "match-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.match_views.len(), MATCH_VIEWS);
+        assert_eq!(
+            generated.matches("match &(self.choice)").count(),
+            MATCH_VIEWS
+        );
+        eprintln!("4k normalized match views lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized match views lowered and emitted in {elapsed:?}"
         );
     }
 
@@ -11579,6 +18039,936 @@ view
     }
 
     #[test]
+    fn component_slot_contracts_reject_post_check_source_name_and_optional_swaps() {
+        let source = format!(
+            "app ComponentSlotSourcePoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+
+        let checked = analyze(&source).unwrap();
+        let slots = checked.facts.component_slots(ComponentId(0)).unwrap();
+        assert_eq!(checked.facts.metrics().component_slots, 3);
+        assert_eq!(
+            slots
+                .iter()
+                .map(|slot| (slot.id.index, slot.name.as_str(), slot.optional))
+                .collect::<Vec<_>>(),
+            vec![(0, "First", false), (1, "Middle", true), (2, "Last", true)]
+        );
+        for slot in slots {
+            assert_eq!(checked.facts.component_slot_for_view(slot.view), Some(slot));
+        }
+        assert!(
+            checked
+                .facts
+                .structural_snapshot()
+                .contains("component-slot ComponentSlotId { component: ComponentId(0), index: 2 }")
+        );
+
+        let mut swapped_names = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut swapped_names.document.components[0].root
+        else {
+            panic!("fixture component root must be a layout");
+        };
+        let [
+            ViewNode::Slot {
+                name: first_name, ..
+            },
+            _,
+            ViewNode::Slot {
+                name: last_name, ..
+            },
+        ] = children.as_mut_slice()
+        else {
+            panic!("fixture component must contain three slots");
+        };
+        std::mem::swap(first_name, last_name);
+        let error = lower(swapped_names).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("source diverged"));
+
+        let mut flipped_last_optional = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } =
+            &mut flipped_last_optional.document.components[0].root
+        else {
+            panic!("fixture component root must be a layout");
+        };
+        let ViewNode::Slot { optional, .. } = children.last_mut().unwrap() else {
+            panic!("fixture last child must be a slot");
+        };
+        *optional = false;
+        let error = lower(flipped_last_optional).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("source diverged"));
+    }
+
+    #[test]
+    fn component_slot_contracts_reject_n_minus_one_n_plus_one_order_and_last_corruption() {
+        let source = format!(
+            "app ComponentSlotContractPoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+        let component = ComponentId(0);
+
+        let mut n_minus_one = analyze(&source).unwrap();
+        n_minus_one.facts.remove_component_slot(component, 2);
+        let error = lower(n_minus_one).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cardinality diverged"));
+
+        let mut n_plus_one = analyze(&source).unwrap();
+        n_plus_one.facts.duplicate_component_slot(component, 2);
+        let error = lower(n_plus_one).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cardinality diverged"));
+
+        let mut wrong_order = analyze(&source).unwrap();
+        wrong_order.facts.swap_component_slots(component, 0, 2);
+        let error = lower(wrong_order).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut corrupt_last = analyze(&source).unwrap();
+        corrupt_last
+            .facts
+            .corrupt_component_slot_id(component, 2, u32::MAX);
+        let error = lower(corrupt_last).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_last_origin = analyze(&source).unwrap();
+        let authoritative_last = invalid_last_origin
+            .declarations
+            .try_component_slot(ComponentSlotId {
+                component,
+                index: 2,
+            })
+            .unwrap()
+            .origin;
+        let authoritative_last_line = invalid_last_origin.origins.get(authoritative_last).line;
+        invalid_last_origin
+            .facts
+            .corrupt_component_slot_origin(component, 2, u32::MAX);
+        let error = lower(invalid_last_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+        assert_eq!(error.line, authoritative_last_line);
+    }
+
+    #[test]
+    fn component_slot_contracts_reject_stable_view_and_reverse_association_corruption() {
+        let source = format!(
+            "app ComponentSlotViewPoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+        let component = ComponentId(0);
+
+        let mut valid_view_swap = analyze(&source).unwrap();
+        valid_view_swap
+            .facts
+            .swap_component_slot_views(component, 0, 2);
+        valid_view_swap
+            .facts
+            .swap_component_slot_reverse_associations(component, 0, 2);
+        let error = lower(valid_view_swap).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_view = analyze(&source).unwrap();
+        invalid_view
+            .facts
+            .corrupt_component_slot_view(component, 2, u32::MAX);
+        let error = lower(invalid_view).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut valid_reverse_swap = analyze(&source).unwrap();
+        valid_reverse_swap
+            .facts
+            .swap_component_slot_reverse_associations(component, 0, 2);
+        let error = lower(valid_reverse_swap).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_reverse = analyze(&source).unwrap();
+        invalid_reverse
+            .facts
+            .corrupt_component_slot_reverse_association(
+                component,
+                2,
+                ComponentSlotId {
+                    component,
+                    index: u32::MAX,
+                },
+            );
+        let error = lower(invalid_reverse).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+    }
+
+    #[test]
+    fn imported_component_slot_contract_diagnostics_keep_last_slot_source_origin() {
+        let directory = tempfile::Builder::new()
+            .prefix("ui-lang-component-slot-hir-origins-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let root = directory.path().join("app.ice");
+        let imported = directory.path().join("slots.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedComponentSlots\nuse \"slots.ice\"\n{THEME}view\n  Imported\n    First:\n      text \"body\"\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component Imported()\n  col\n    slot First\n    slot Last?\n",
+        )
+        .unwrap();
+
+        let checked = analyze_file(&root).unwrap();
+        let program = lower(checked).unwrap();
+        let contract = &program.components[0];
+        assert_eq!(contract.slots.len(), 2);
+        assert_eq!(contract.slots[0].id.index, 0);
+        assert_eq!(contract.slots[1].id.index, 1);
+        assert_eq!(contract.slots[1].name, "Last");
+        assert!(contract.slots[1].optional);
+        let last_origin = program.origin(contract.slots[1].origin);
+        assert_eq!(last_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(last_origin.line, 4);
+        assert_eq!(last_origin.parent, Some(contract.origin));
+
+        let mut sibling_origin = analyze_file(&root).unwrap();
+        sibling_origin
+            .facts
+            .swap_component_slot_origins(ComponentId(0), 0, 1);
+        let error = lower(sibling_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_origin = analyze_file(&root).unwrap();
+        invalid_origin
+            .facts
+            .corrupt_component_slot_origin(ComponentId(0), 1, u32::MAX);
+        let error = lower(invalid_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+        assert_eq!(error.column, 1);
+
+        let mut poisoned = analyze_file(&root).unwrap();
+        let ViewNode::Layout { children, .. } = &mut poisoned.document.components[0].root else {
+            panic!("fixture component root must be a layout");
+        };
+        let ViewNode::Slot { optional, .. } = children.last_mut().unwrap() else {
+            panic!("fixture last child must be a slot");
+        };
+        *optional = false;
+        let error = lower(poisoned).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+        assert_eq!(error.column, 1);
+    }
+
+    #[test]
+    #[ignore = "large checked component-slot association and lowering performance contract"]
+    fn performance_contract_four_thousand_component_slots_stay_linear() {
+        const SLOTS: usize = 4_000;
+        let mut source = format!("app ComponentSlotScale\n{THEME}component Wide()\n  col\n");
+        for index in 0..SLOTS {
+            writeln!(source, "    slot Slot{index}?").unwrap();
+        }
+        source.push_str("view\n  Wide\n");
+
+        let checker_started = Instant::now();
+        let checked = analyze(&source).unwrap();
+        let checker_elapsed = checker_started.elapsed();
+        let slot_index_elapsed = checked.facts.component_slot_index_elapsed();
+        assert_eq!(checked.facts.metrics().component_slots, SLOTS);
+        assert_eq!(checked.facts.metrics().component_slot_index_visits, SLOTS);
+        assert!(
+            slot_index_elapsed < Duration::from_millis(250),
+            "4k component slots indexed into checked HIR in {slot_index_elapsed:?}"
+        );
+        assert!(
+            checker_elapsed < Duration::from_secs(2),
+            "4k component slots checked in {checker_elapsed:?}"
+        );
+        checked.facts.reset_lookup_count();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.components[0].slots.len(), SLOTS);
+        assert_eq!(program.calls[0].slots.len(), SLOTS);
+        let lookups = program.checked_facts().lookup_count();
+        assert!(
+            lookups <= SLOTS * 8 + 100,
+            "4k component slots required {lookups} checked-HIR lookups"
+        );
+        eprintln!(
+            "4k component slots indexed in {slot_index_elapsed:?}, checked in {checker_elapsed:?}, and lowered with {lookups} lookups in {elapsed:?}"
+        );
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k checked component slots lowered in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn component_call_routes_ignore_dynamic_and_post_lowering_raw_poison() {
+        let source = format!(
+            "app ComponentRoutePoison\n{THEME}state\n  suffix = \"checked\"\non accepted(value)\n  suffix = value\non observed(label, count)\n  suffix = label\ncomponent Routed() -> str\n  emits\n    changed(str, i64)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\", 1)\nview\n  Routed -> accepted suffix\n    events\n      changed -> observed suffix _\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "component-route-poison.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Component { route, events, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        let output = route.as_mut().unwrap();
+        output.args[0] = RouteArg::Expr(Expr::Str("poison-output".into()));
+        let event = events[0].route.as_mut().unwrap();
+        event.args[0] = RouteArg::Expr(Expr::Str("poison-event".into()));
+        let mut program = lower(checked).unwrap();
+        let checked_poison =
+            crate::codegen::generate(&program, "component-route-poison.ice").unwrap();
+        assert_eq!(checked_poison, expected);
+        assert!(!checked_poison.contains("poison-output"));
+        assert!(!checked_poison.contains("poison-event"));
+
+        let ViewNode::Component {
+            name,
+            route,
+            events,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a component call");
+        };
+        *name = "RawPoison".into();
+        let output = route.as_mut().unwrap();
+        output.handler = "raw_poison".into();
+        output.args[0] = RouteArg::Payload;
+        events[0].name = "raw_event".into();
+        let event = events[0].route.as_mut().unwrap();
+        event.handler = "raw_poison".into();
+        event.args.clear();
+        let lowered_poison =
+            crate::codegen::generate(&program, "component-route-poison.ice").unwrap();
+        assert_eq!(lowered_poison, expected);
+
+        let mut handler_poison = analyze(&source).unwrap();
+        let ViewNode::Component { route, .. } = &mut handler_poison.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        route.as_mut().unwrap().handler = "observed".into();
+        let error = lower(handler_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("handler contract diverged"));
+
+        let mut argument_poison = analyze(&source).unwrap();
+        let ViewNode::Component { route, .. } = &mut argument_poison.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        route.as_mut().unwrap().args[0] = RouteArg::Payload;
+        let error = lower(argument_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument kind diverged"));
+
+        let mut cardinality_poison = analyze(&source).unwrap();
+        let ViewNode::Component { route, .. } = &mut cardinality_poison.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        route
+            .as_mut()
+            .unwrap()
+            .args
+            .push(RouteArg::Expr(Expr::Str("extra".into())));
+        let error = lower(cardinality_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("arity diverged"));
+
+        let mut topology_poison = analyze(&source).unwrap();
+        let ViewNode::Component { events, .. } = &mut topology_poison.document.view else {
+            panic!("fixture root must be a component call");
+        };
+        events[0].route = None;
+        let error = lower(topology_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn component_call_routes_follow_slotted_interaction_analysis_order() {
+        let source = format!(
+            "app ComponentRouteSlots\n{THEME}state\n  label = \"ready\"\non accepted(value)\n  label = value\ncomponent Routed() -> str\n  emits\n    changed(str)\n  col\n    slot Body\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\nview\n  Routed -> accepted _\n    events\n      changed -> accepted _\n    Body:\n      button \"Nested\" -> accepted \"nested\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let generated = crate::codegen::generate(&program, "component-route-slots.ice").unwrap();
+        assert!(generated.contains("Nested"));
+        assert!(generated.contains("ComponentRouteSlots"));
+    }
+
+    #[test]
+    fn component_call_routes_reject_expression_count_and_last_graph_corruption() {
+        let source = format!(
+            "app ComponentRouteExpressionCardinality\n{THEME}state\n  active = false\non output(next)\n  active = next\non event(next)\n  active = next\ncomponent Routed() -> bool\n  emits\n    changed(bool)\n  col\n    button \"Output\" -> emit(true)\n    button \"Event\" -> emit(changed, true)\nview\n  Routed -> output !active\n    events\n      changed -> event !active\n"
+        );
+        for count in [1, 3] {
+            let mut checked = analyze(&source).unwrap();
+            let view = checked
+                .declarations
+                .view_id(checked.document.view.span())
+                .unwrap();
+            checked
+                .facts
+                .corrupt_interaction_expression_count(view, count);
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(
+                error.message.contains("expression cardinality diverged"),
+                "unexpected expression-count diagnostic: {}",
+                error.message
+            );
+        }
+
+        let mut invalid_last_graph = analyze(&source).unwrap();
+        let view = invalid_last_graph
+            .declarations
+            .view_id(invalid_last_graph.document.view.span())
+            .unwrap();
+        invalid_last_graph.facts.corrupt_expression_first_child(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: view,
+                index: 1,
+            }),
+            u32::MAX,
+        );
+        let error = lower(invalid_last_graph).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("descendant ID"));
+    }
+
+    #[test]
+    fn component_call_routes_reject_sibling_route_origin_swaps() {
+        let source = format!(
+            "app ComponentRouteOriginSwap\n{THEME}state\n  label = \"ready\"\non accepted(value)\n  label = value\ncomponent Routed() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\nview\n  Routed -> accepted \"output\"\n    events\n      changed -> accepted \"event\"\n"
+        );
+        let call_id = |checked: &crate::CheckedDocument| {
+            let view = checked
+                .declarations
+                .view_id(checked.document.view.span())
+                .unwrap();
+            (view, checked.declarations.component_call_id(view).unwrap())
+        };
+
+        let mut interaction_only = analyze(&source).unwrap();
+        let (view, _) = call_id(&interaction_only);
+        interaction_only
+            .facts
+            .swap_interaction_route_origins(view, 0, 1);
+        let error = lower(interaction_only).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut fully_swapped = analyze(&source).unwrap();
+        let (view, call) = call_id(&fully_swapped);
+        fully_swapped
+            .facts
+            .swap_interaction_route_origins(view, 0, 1);
+        fully_swapped
+            .facts
+            .swap_component_call_direct_route_origins(call, 0);
+        let error = lower(fully_swapped).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("physical origin diverged"));
+    }
+
+    #[test]
+    fn component_call_routes_reject_cross_owner_id_type_cardinality_and_origin_corruption() {
+        let source = format!(
+            "app ComponentRouteIdentity\n{THEME}state\n  label = \"label\"\non first(value)\n  label = value\non second(value)\n  label = value\ncomponent Routed() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\ncomponent Alternate() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\")\nview\n  col\n    Routed -> first label\n      events\n        changed -> first label\n    Routed -> second label\n      events\n        changed -> second label\n"
+        );
+        let ids = |checked: &crate::CheckedDocument| {
+            let ViewNode::Layout { children, .. } = &checked.document.view else {
+                panic!("fixture root must be a layout");
+            };
+            let views = children
+                .iter()
+                .map(|child| checked.declarations.view_id(child.span()).unwrap())
+                .collect::<Vec<_>>();
+            let calls = views
+                .iter()
+                .map(|view| checked.declarations.component_call_id(*view).unwrap())
+                .collect::<Vec<_>>();
+            (views, calls)
+        };
+
+        let mut cross_owner = analyze(&source).unwrap();
+        let (views, _) = ids(&cross_owner);
+        cross_owner
+            .facts
+            .transplant_interaction_route_expression_across_views(views[0], 0, 0, views[1], 0, 0);
+        let error = lower(cross_owner).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("slot identity diverged"));
+
+        let mut route_id = analyze(&source).unwrap();
+        let (views, _) = ids(&route_id);
+        route_id.facts.swap_interaction_routes(views[0], views[1]);
+        let error = lower(route_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut handler_id = analyze(&source).unwrap();
+        let (views, _) = ids(&handler_id);
+        handler_id
+            .facts
+            .corrupt_interaction_route_handler(views[0], 0, HandlerId(1));
+        let error = lower(handler_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("handler contract diverged"));
+
+        let mut component_id = analyze(&source).unwrap();
+        let (_, calls) = ids(&component_id);
+        component_id
+            .facts
+            .corrupt_component_call_route_component(calls[0], ComponentId(1));
+        let error = lower(component_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route identity diverged"));
+
+        let mut event_id = analyze(&source).unwrap();
+        let (_, calls) = ids(&event_id);
+        event_id.facts.corrupt_component_call_event_id(
+            calls[0],
+            0,
+            ComponentEventId {
+                component: ComponentId(1),
+                index: 0,
+            },
+        );
+        let error = lower(event_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("event route contract diverged"));
+
+        let mut payload_type = analyze(&source).unwrap();
+        let (views, _) = ids(&payload_type);
+        payload_type
+            .facts
+            .corrupt_interaction_route_source_payload(views[0], 0, 0, Type::Bool);
+        let error = lower(payload_type).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("source payload contract diverged"));
+
+        let mut view_id = analyze(&source).unwrap();
+        let (_, calls) = ids(&view_id);
+        view_id
+            .facts
+            .corrupt_component_call_route_view(calls[0], u32::MAX);
+        let error = lower(view_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route identity diverged"));
+
+        let mut origin = analyze(&source).unwrap();
+        let (_, calls) = ids(&origin);
+        origin
+            .facts
+            .corrupt_component_call_event_origin(calls[0], 0, u32::MAX);
+        let error = lower(origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin is invalid"));
+    }
+
+    #[test]
+    fn imported_forward_routes_validate_stable_outer_contracts_and_callback_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-component-forward-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("forward.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedComponentForward\nuse \"forward.ice\"\n{THEME}state\n  label = \"app\"\non accepted(value)\n  label = value\nview\n  Outer\n    events\n      changed -> accepted _\n      renamed -> accepted _\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component Leaf()\n  emits\n    changed(str)\n    renamed(str)\n  button \"Emit\" -> emit(changed, \"leaf\")\ncomponent Outer()\n  emits\n    changed(str)\n    renamed(str)\n  Leaf\n    forward\n      changed\n      renamed\ncomponent Mirror()\n  emits\n    changed(str)\n  space\n",
+        )
+        .unwrap();
+
+        let forward_call = |checked: &crate::CheckedDocument| {
+            let view = checked
+                .declarations
+                .view_id(checked.document.components[1].root.span())
+                .unwrap();
+            checked.declarations.component_call_id(view).unwrap()
+        };
+        fn forwarded_event(program: &mut LoweredProgram) -> &mut ResolvedEventRoute {
+            program
+                .calls
+                .iter_mut()
+                .flat_map(|call| &mut call.events)
+                .find(|event| matches!(event, ResolvedEventRoute::Forward { .. }))
+                .unwrap()
+        }
+        fn forwarded_events(program: &mut LoweredProgram) -> &mut Vec<ResolvedEventRoute> {
+            &mut program
+                .calls
+                .iter_mut()
+                .find(|call| {
+                    call.events.len() >= 2
+                        && call
+                            .events
+                            .iter()
+                            .all(|event| matches!(event, ResolvedEventRoute::Forward { .. }))
+                })
+                .unwrap()
+                .events
+        }
+
+        let mut invalid_component = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_component);
+        invalid_component
+            .facts
+            .corrupt_component_call_forward_outer_component(call, 0, ComponentId(u32::MAX));
+        let error = lower(invalid_component).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_event = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_event);
+        invalid_event
+            .facts
+            .corrupt_component_call_forward_outer_event(
+                call,
+                0,
+                ComponentEventId {
+                    component: ComponentId(1),
+                    index: u32::MAX,
+                },
+            );
+        let error = lower(invalid_event).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_component_name = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_component_name);
+        invalid_component_name
+            .facts
+            .corrupt_component_call_forward_outer_component_name(call, 0, "poisoned");
+        let error = lower(invalid_component_name).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_event_name = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_event_name);
+        invalid_event_name
+            .facts
+            .corrupt_component_call_forward_outer_event_name(call, 0, "poisoned");
+        let error = lower(invalid_event_name).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_payload = analyze_file(&root).unwrap();
+        let call = forward_call(&invalid_payload);
+        invalid_payload
+            .facts
+            .corrupt_component_call_forward_outer_payload(call, 0, Type::Bool);
+        let error = lower(invalid_payload).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_lowered_id = lower(analyze_file(&root).unwrap()).unwrap();
+        let forward = invalid_lowered_id
+            .calls
+            .iter_mut()
+            .find_map(|call| match call.events.first_mut() {
+                Some(ResolvedEventRoute::Forward {
+                    outer_component, ..
+                }) => Some(outer_component),
+                Some(ResolvedEventRoute::Direct { .. }) | None => None,
+            })
+            .unwrap();
+        *forward = ComponentId(u32::MAX);
+        let error =
+            crate::codegen::generate(&invalid_lowered_id, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        let mut invalid_callee_event = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { event, .. } = forwarded_event(&mut invalid_callee_event)
+        else {
+            unreachable!();
+        };
+        *event = ComponentEventId {
+            component: ComponentId(0),
+            index: u32::MAX,
+        };
+        let error =
+            crate::codegen::generate(&invalid_callee_event, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_forward_origin = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { origin, .. } =
+            forwarded_event(&mut invalid_forward_origin)
+        else {
+            unreachable!();
+        };
+        *origin = OriginId(u32::MAX);
+        let error =
+            crate::codegen::generate(&invalid_forward_origin, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        // A corrupted event-origin ID cannot map itself, so the normalized
+        // call origin is the stable source-mapped fallback.
+        assert_eq!(error.line, 10);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_callee_name = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { name, .. } = forwarded_event(&mut invalid_callee_name)
+        else {
+            unreachable!();
+        };
+        *name = "poisoned".into();
+        let error =
+            crate::codegen::generate(&invalid_callee_name, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_callee_payloads = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { payloads, .. } =
+            forwarded_event(&mut invalid_callee_payloads)
+        else {
+            unreachable!();
+        };
+        *payloads = vec![Type::Bool];
+        let error =
+            crate::codegen::generate(&invalid_callee_payloads, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_event_order = lower(analyze_file(&root).unwrap()).unwrap();
+        forwarded_events(&mut invalid_event_order).swap(0, 1);
+        let error =
+            crate::codegen::generate(&invalid_event_order, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut missing_callback = lower(analyze_file(&root).unwrap()).unwrap();
+        let forward = missing_callback
+            .calls
+            .iter_mut()
+            .find_map(|call| match call.events.first_mut() {
+                Some(ResolvedEventRoute::Forward {
+                    outer_component,
+                    outer_component_name,
+                    outer_event,
+                    outer_event_name,
+                    outer_payloads,
+                    ..
+                }) => Some((
+                    outer_component,
+                    outer_component_name,
+                    outer_event,
+                    outer_event_name,
+                    outer_payloads,
+                )),
+                Some(ResolvedEventRoute::Direct { .. }) | None => None,
+            })
+            .unwrap();
+        let (outer_component, outer_component_name, outer_event, outer_event_name, outer_payloads) =
+            forward;
+        *outer_component = ComponentId(2);
+        *outer_component_name = "Mirror".into();
+        *outer_event = ComponentEventId {
+            component: ComponentId(2),
+            index: 0,
+        };
+        *outer_event_name = "changed".into();
+        *outer_payloads = vec![Type::Str];
+        let error =
+            crate::codegen::generate(&missing_callback, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("absent from component context"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_component_call_routes_keep_origins_markers_and_hir_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-component-route-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("routes.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedComponentRoutes\nuse \"routes.ice\"\n{THEME}state\n  label = \"app\"\non accepted(value)\n  label = value\nview\n  Imported value=label -> accepted _\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component Leaf() -> str\n  emits\n    changed(str)\n  col\n    button \"Output\" -> emit(\"leaf\")\n    button \"Event\" -> emit(changed, \"leaf\")\ncomponent Imported(value:str) -> str\n  Leaf -> emit(value)\n    events\n      changed -> emit(value)\n",
+        )
+        .unwrap();
+
+        let mut swapped_origins = analyze_file(&root).unwrap();
+        let imported_call_view = swapped_origins
+            .declarations
+            .view_id(swapped_origins.document.components[1].root.span())
+            .unwrap();
+        let imported_call = swapped_origins
+            .declarations
+            .component_call_id(imported_call_view)
+            .unwrap();
+        swapped_origins
+            .facts
+            .swap_interaction_route_origins(imported_call_view, 0, 1);
+        swapped_origins
+            .facts
+            .swap_component_call_direct_route_origins(imported_call, 0);
+        let error = lower(swapped_origins).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("physical origin diverged"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        assert_eq!(error.column, 1);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let call_index = program
+            .calls
+            .iter()
+            .position(|call| call.component == ComponentId(0))
+            .unwrap();
+        let call = &program.calls[call_index];
+        let origin = program.origin(call.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 8);
+        let ComponentOutputRoute::Direct {
+            route,
+            origin: output_origin_id,
+            ..
+        } = &call.output
+        else {
+            panic!("imported call must have a direct output route");
+        };
+        let output_origin = program.origin(*output_origin_id);
+        assert_eq!(output_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(output_origin.line, 8);
+        assert_eq!(output_origin.column, 1);
+        assert_eq!(output_origin.parent, Some(call.origin));
+        assert_eq!(route.origin, *output_origin_id);
+        let ResolvedEventRoute::Direct { route, origin, .. } = &call.events[0] else {
+            panic!("imported call must have a direct event route");
+        };
+        let event_origin = program.origin(*origin);
+        assert_eq!(event_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(event_origin.line, 10);
+        assert_eq!(event_origin.column, 1);
+        assert_eq!(event_origin.parent, Some(call.origin));
+        let event_route_origin = program.origin(route.origin);
+        assert_eq!(event_route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(event_route_origin.line, 10);
+        assert_eq!(event_route_origin.column, 1);
+        assert_eq!(event_route_origin.parent, Some(call.origin));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 8 1 {encoded_import}")));
+
+        let ResolvedEventRoute::Direct { route, .. } = &mut program.calls[call_index].events[0]
+        else {
+            panic!("imported call must have a direct event route");
+        };
+        route.target = ResolvedInteractionRouteTarget::TargetHandler(HandlerId(u32::MAX));
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized component-call route lowering and emission performance contract"]
+    fn performance_contract_four_thousand_component_call_routes_lower_and_emit_under_two_seconds() {
+        const CALLS: usize = 4_000;
+        let mut source = format!(
+            "app ComponentRouteScale\n{THEME}state\n  count = 0\non accepted(value)\n  count = count + 1\ncomponent Emitter() -> str\n  button \"Emit\" -> emit(\"value\")\nview\n  col\n"
+        );
+        for _ in 0..CALLS {
+            source.push_str("    Emitter -> accepted _\n");
+        }
+        let checked = analyze(&source).unwrap();
+        assert_eq!(checked.facts.metrics().type_scope_env_full_clones, 0);
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "component-route-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.calls.len(), CALLS);
+        assert_eq!(
+            program
+                .calls
+                .iter()
+                .filter(|call| matches!(call.output, ComponentOutputRoute::Direct { .. }))
+                .count(),
+            CALLS
+        );
+        assert_eq!(generated.matches("let __component_content").count(), CALLS);
+        eprintln!("4k normalized component-call routes lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized component-call routes lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
     fn bind_writability_comes_from_the_checked_expression_root() {
         let source = format!(
             "app BindFacts\n{THEME}state\n  draft = \"Draft\"\ncomponent Field(bind value:str)\n  text value\nview\n  Field value<->draft\n"
@@ -11682,10 +19072,10 @@ view
         );
         assert_eq!(
             snapshot,
-            "app AppStateId(0) progress Animation(F64) use=CheckedExprUseId(0) ValueToAnimation { value: F64 } line=15 animation=Some(ResolvedAnimation { easing: Some(Custom(ExternFnId(0))), duration: Some(Milliseconds(120)), delay_ms: Some(5), repeat: Some(2), repeat_forever: false, auto_reverse: true })\n\
-             derived DerivedId(0) total F64 use=CheckedExprUseId(1) None line=22\n\
-             default ComponentParamId { component: ComponentId(0), index: 0 } label Str use=CheckedExprUseId(2) None line=23\n\
-             component-state ComponentStateId { component: ComponentId(0), index: 0 } open Bool use=CheckedExprUseId(3) None line=25 animation=None\n"
+            "app AppStateId(0) progress Animation(F64) use=ExpressionId(0) ValueToAnimation { value: F64 } line=15 animation=Some(ResolvedAnimation { easing: Some(Custom(ExternFnId(0))), duration: Some(Milliseconds(120)), delay_ms: Some(5), repeat: Some(2), repeat_forever: false, auto_reverse: true })\n\
+             derived DerivedId(0) total F64 use=ExpressionId(1) None line=22\n\
+             default ComponentParamId { component: ComponentId(0), index: 0 } label Str use=ExpressionId(2) None line=23\n\
+             component-state ComponentStateId { component: ComponentId(0), index: 0 } open Bool use=ExpressionId(3) None line=25 animation=None\n"
         );
 
         let generated = crate::codegen::generate(&program, "initializers.ice").unwrap();
@@ -12265,7 +19655,11 @@ view
                 .sum::<usize>(),
             CALLS * (1 + DEFAULT_PARAMS + EVENTS + SLOTS)
         );
-        let ViewNode::Layout { children, .. } = &program.components[0].root else {
+        let ResolvedViewKind::Layout { children } = &program
+            .resolved_view(program.components[0].root)
+            .unwrap()
+            .kind
+        else {
             panic!("wide component root must remain a layout");
         };
         assert_eq!(children.len(), BODY_NODES + SLOTS + 1);
@@ -12513,15 +19907,23 @@ view
             program.extern_function(factory.function).name,
             "native_theme"
         );
-        let nested = program
-            .nested_theme(&program.document.view.span().clone())
-            .unwrap();
+        let nested = program.nested_theme(ViewId(0)).unwrap();
         let ResolvedThemePreset::Factory(factory) = &nested.preset else {
             panic!("nested theme factory must be resolved");
         };
+        assert_eq!(factory.function.name, "native_theme");
+        assert_eq!(factory.function.rust_path, "crate::backend::native_theme");
+        assert_eq!(factory.arguments.len(), 1);
+        assert_eq!(program.origin(factory.origin).parent, Some(nested.origin));
         assert_eq!(
-            program.extern_function(factory.function).name,
-            "native_theme"
+            program
+                .checked_facts()
+                .expression_use(factory.arguments[0].expression)
+                .owner,
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            })
         );
         assert!(matches!(
             nested.text,
@@ -12530,10 +19932,26 @@ view
                 ..
             })
         ));
-        let ResolvedBackground::Linear { stops, .. } = &nested.background.as_ref().unwrap() else {
+        let ResolvedBackground::Linear { angle, stops } = &nested.background.as_ref().unwrap()
+        else {
             panic!("nested gradient must be normalized");
         };
         assert_eq!(stops.len(), 2);
+        for (index, expression) in std::iter::once(*angle)
+            .chain(stops.iter().map(|stop| stop.offset))
+            .enumerate()
+        {
+            let expression = program.checked_facts().expression_use(expression);
+            assert_eq!(expression.source, Type::F64);
+            assert_eq!(expression.destination, Type::F64);
+            assert_eq!(
+                expression.owner,
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: ViewId(0),
+                    index: index as u32 + 1,
+                })
+            );
+        }
         let ViewNode::Theme { content, .. } = &program.document.view else {
             panic!("fixture root must be a theme");
         };
@@ -12545,6 +19963,323 @@ view
                 opacity: Some(60),
             })
         ));
+    }
+
+    #[test]
+    fn nested_theme_post_check_and_post_lowering_raw_poison_is_contained() {
+        let source = format!(
+            "app NestedThemePoison\nextern crate::backend\n  theme primary_theme(value:f64)\n  theme poisoned_theme(value:f64)\n{THEME}state\n  value = 0.5\nview\n  theme primary_theme(value) fg=fg bg=linear(value, bg@value, primary@value)\n    text \"Content\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "nested-theme-poison.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Theme {
+            preset, background, ..
+        } = &mut checked.document.view
+        else {
+            panic!("fixture root must be a nested theme");
+        };
+        let ThemePreset::Factory(factory) = preset else {
+            panic!("fixture must use a nested theme factory");
+        };
+        factory.args[0] = Expr::F64(91.0);
+        let Some(BackgroundValue::Linear { angle, stops }) = background else {
+            panic!("fixture must use a linear background");
+        };
+        *angle = Expr::F64(92.0);
+        stops[0].offset = Expr::F64(93.0);
+        stops[1].offset = Expr::F64(94.0);
+        let mut program = lower(checked).unwrap();
+        let checked_poison = crate::codegen::generate(&program, "nested-theme-poison.ice").unwrap();
+        assert_eq!(checked_poison, expected);
+        assert!(!checked_poison.contains("91.0"));
+        assert!(!checked_poison.contains("92.0"));
+        assert!(!checked_poison.contains("93.0"));
+        assert!(!checked_poison.contains("94.0"));
+
+        let ViewNode::Theme {
+            preset,
+            text,
+            background,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a nested theme");
+        };
+        *preset = ThemePreset::Factory(ExternCall {
+            function: "poisoned_theme".into(),
+            args: vec![Expr::F64(99.0)],
+        });
+        *text = Some("danger".into());
+        *background = Some(BackgroundValue::Color("danger".into()));
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(1, 3);
+        let lowered_poison = crate::codegen::generate(&program, "nested-theme-poison.ice").unwrap();
+        assert_eq!(lowered_poison, expected);
+        assert!(!lowered_poison.contains("99.0"));
+
+        let mut static_poison = analyze(&source).unwrap();
+        let ViewNode::Theme { text, .. } = &mut static_poison.document.view else {
+            panic!("fixture root must be a nested theme");
+        };
+        *text = Some("danger".into());
+        let error = lower(static_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+
+        let mut factory_poison = analyze(&source).unwrap();
+        let ViewNode::Theme { preset, .. } = &mut factory_poison.document.view else {
+            panic!("fixture root must be a nested theme");
+        };
+        let ThemePreset::Factory(factory) = preset else {
+            panic!("fixture must use a nested theme factory");
+        };
+        factory.function = "poisoned_theme".into();
+        let error = lower(factory_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+
+        let mut background_poison = analyze(&source).unwrap();
+        let ViewNode::Theme { background, .. } = &mut background_poison.document.view else {
+            panic!("fixture root must be a nested theme");
+        };
+        *background = Some(BackgroundValue::Color("bg".into()));
+        let error = lower(background_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn nested_theme_rejects_cross_owner_factory_identity_and_origin_corruption() {
+        let source = format!(
+            "app NestedThemeIdentity\nextern crate::backend\n  theme first_theme(value:f64)\n  theme second_theme(value:f64)\n{THEME}state\n  value = 0.5\nview\n  col\n    theme first_theme(value) bg=linear(value, bg@value, primary@value)\n      text \"First\"\n    theme second_theme(value) bg=linear(value, bg@value, primary@value)\n      text \"Second\"\n"
+        );
+        let first = ViewId(1);
+        let second = ViewId(3);
+
+        let mut transplanted = analyze(&source).unwrap();
+        transplanted
+            .facts
+            .transplant_interaction_option_expression(first, 0, second, 0);
+        let error = lower(transplanted).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut reordered = analyze(&source).unwrap();
+        reordered
+            .facts
+            .swap_interaction_option_expressions(first, 0, 1);
+        let error = lower(reordered).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut corrupt_factory = analyze(&source).unwrap();
+        corrupt_factory
+            .facts
+            .corrupt_nested_theme_factory(first, ExternFnId(1));
+        let error = lower(corrupt_factory).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error
+                .message
+                .contains("factory declaration contract diverged")
+        );
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id.facts.corrupt_nested_theme_id(first, u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_origin = analyze(&source).unwrap();
+        corrupt_origin
+            .facts
+            .corrupt_interaction_expression_origin(first, 0, u32::MAX);
+        let error = lower(corrupt_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin is invalid"));
+    }
+
+    #[test]
+    fn nested_theme_rejects_expression_count_and_last_graph_corruption() {
+        let source = format!(
+            "app NestedThemeExpressionCardinality\nextern crate::backend\n  theme first_theme(value:f64)\n{THEME}state\n  value = 0.5\nview\n  theme first_theme(value) bg=linear(value, bg@value, primary@(value + 0.0))\n    text \"Content\"\n"
+        );
+        let theme = ViewId(0);
+
+        let mut decreased = analyze(&source).unwrap();
+        decreased
+            .facts
+            .corrupt_interaction_expression_count(theme, 3);
+        let error = lower(decreased).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cardinality diverged"));
+
+        let mut invalid_last_graph = analyze(&source).unwrap();
+        invalid_last_graph.facts.corrupt_expression_first_child(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: theme,
+                index: 3,
+            }),
+            u32::MAX,
+        );
+        let error = lower(invalid_last_graph).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("descendant ID"));
+    }
+
+    #[test]
+    fn imported_nested_theme_keeps_origins_markers_and_e196_paths() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-nested-theme-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("nested.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedNestedTheme\nuse \"nested.ice\"\n{THEME}state\n  value = 0.5\nview\n  ImportedTheme value=value\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  theme imported_theme(value:f64)\ncomponent ImportedTheme(value:f64)\n  theme imported_theme(value) fg=fg bg=linear(value, bg@value, primary@value)\n    text \"Imported\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let theme_id = program
+            .declarations
+            .view_id(program.document.components[0].root.span())
+            .unwrap();
+        let theme = program.nested_theme(theme_id).unwrap();
+        let theme_origin = theme.origin;
+        let origin = program.origin(theme_origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+        let ResolvedThemePreset::Factory(factory) = &theme.preset else {
+            panic!("imported nested theme must use a factory");
+        };
+        assert_eq!(factory.function.rust_path, "crate::backend::imported_theme");
+        assert_eq!(
+            program
+                .origin(factory.function.declaration_origin)
+                .path
+                .as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(program.origin(factory.function.declaration_origin).line, 2);
+        assert_eq!(program.origin(factory.origin).parent, Some(theme_origin));
+        for expression in factory
+            .arguments
+            .iter()
+            .map(|argument| argument.expression)
+            .chain(match &theme.background {
+                Some(ResolvedBackground::Linear { angle, stops }) => std::iter::once(*angle)
+                    .chain(stops.iter().map(|stop| stop.offset))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+                _ => panic!("imported nested theme must use a gradient"),
+            })
+        {
+            let expression = program.checked_facts().expression_use(expression);
+            assert_eq!(program.origin(expression.origin).parent, Some(theme_origin));
+            assert_eq!(
+                program.origin(expression.origin).path.as_deref(),
+                Some(imported.as_path())
+            );
+        }
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.styles.corrupt_nested_theme_id(theme_id, u32::MAX);
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        let mut corrupt_checked = analyze_file(&root).unwrap();
+        let theme_id = corrupt_checked
+            .declarations
+            .view_id(corrupt_checked.document.components[0].root.span())
+            .unwrap();
+        corrupt_checked
+            .facts
+            .corrupt_nested_theme_factory(theme_id, ExternFnId(u32::MAX));
+        let error = lower(corrupt_checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized nested Theme lowering and emission performance contract"]
+    fn performance_contract_four_thousand_nested_themes_lower_and_emit_under_two_seconds() {
+        const THEMES: usize = 4_000;
+        let mut source = format!(
+            "app NestedThemeScale\nextern crate::backend\n  theme native_theme(value:f64)\n{THEME}state\n  value = 0.5\nview\n  col\n"
+        );
+        for _ in 0..THEMES {
+            writeln!(
+                source,
+                "    theme native_theme(value) fg=fg bg=linear(value, bg@value, primary@value)\n      space"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        assert_eq!(checked.facts.metrics().type_scope_env_full_clones, 0);
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "nested-theme-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.styles.nested_theme_count(), THEMES);
+        let expression_count = program
+            .styles
+            .nested_themes()
+            .map(|theme| {
+                let arguments = match &theme.preset {
+                    ResolvedThemePreset::Factory(factory) => factory.arguments.len(),
+                    _ => 0,
+                };
+                let background = match &theme.background {
+                    Some(ResolvedBackground::Linear { stops, .. }) => 1 + stops.len(),
+                    _ => 0,
+                };
+                arguments + background
+            })
+            .sum::<usize>();
+        assert_eq!(expression_count, THEMES * 4);
+        assert_eq!(
+            generated
+                .matches("::ui_lang_runtime::dynamic_themer(")
+                .count(),
+            THEMES
+        );
+        eprintln!("4k normalized nested Theme nodes lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized nested Theme nodes lowered and emitted in {elapsed:?}"
+        );
     }
 
     #[test]
@@ -12627,7 +20362,11 @@ view
             &program.theme().app_theme,
             ResolvedAppThemeSelection::BuiltIn(name) if name == "dark"
         ));
-        let nested = program.nested_theme(program.document.view.span()).unwrap();
+        let theme_id = program
+            .declarations
+            .view_id(program.document.view.span())
+            .unwrap();
+        let nested = program.nested_theme(theme_id).unwrap();
         assert!(matches!(
             &nested.preset,
             ResolvedThemePreset::BuiltIn(name) if name == "light"
@@ -12686,17 +20425,18 @@ view
         );
         let contract_origin = program.origin(program.theme().contract.origin);
         assert_eq!(contract_origin.path.as_deref(), Some(root.as_path()));
-        let ViewNode::Theme { content, span, .. } = &program.document.view else {
+        let ViewNode::Theme { content, .. } = &program.document.view else {
             panic!("fixture root must be a nested theme");
         };
-        let nested = program.nested_theme(span).unwrap();
+        let theme_id = program
+            .declarations
+            .view_id(program.document.view.span())
+            .unwrap();
+        let nested = program.nested_theme(theme_id).unwrap();
         let ResolvedThemePreset::Factory(factory) = &nested.preset else {
             panic!("namespaced nested theme factory must be resolved");
         };
-        assert_eq!(
-            program.extern_function(factory.function).name,
-            "ui::native_theme"
-        );
+        assert_eq!(factory.function.name, "ui::native_theme");
         assert_eq!(
             program.origin(nested.origin).path.as_deref(),
             Some(root.as_path())
@@ -12994,6 +20734,857 @@ test stable_flow
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "{COMMANDS} checked Canvas commands lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_slider_and_progress_contracts() {
+        let source = format!(
+            "app RangeHir\nextern crate::backend\n  RangeNumber()\n  sync range_number(value:f64) -> RangeNumber\n  slider-style slider_style(active:bool)\n  progress-style progress_style(active:bool)\n{THEME}state\n  amount = 25.0\n  precise:RangeNumber = range_number(25.0)\n  active = true\non changed(next)\n  precise = next\non released\nview\n  col\n    slider precise min=range_number(0.0) max=range_number(100.0) step=range_number(1.0) default=range_number(25.0) shift-step=range_number(5.0) vertical w=20.0 h=fill(2) style=slider_style(active) release=released -> changed _\n      active rail-start=linear(0.0, primary@0.0, danger@1.0) rail-end=bg rail-w=4.0 rail-border=fg rail-border-w=1.0 rail-r=2.0 handle=rect(12) handle-color=primary handle-border=fg handle-border-w=1.0 handle-r=3.0\n    progress amount vertical length=fill(2) girth=20.0 style=progress_style(active) bg=bg bar=primary border=fg border-w=1.0 r=4.0\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let slider = program.slider(ViewId(1)).unwrap();
+        assert_eq!(slider.value_type, Type::Named("RangeNumber".into()));
+        assert_eq!(slider.axis, ResolvedRangeAxis::Vertical);
+        assert!(slider.default.is_some());
+        assert!(slider.shift_step.is_some());
+        assert!(matches!(
+            slider.height,
+            Some(ResolvedContainerLength::FillPortion(2))
+        ));
+        assert!(slider.change.source_payloads == [Type::Named("RangeNumber".into())]);
+        assert!(slider.release.is_some());
+        assert!(slider.custom_style.is_some());
+        let active = slider.styles.active.as_ref().unwrap();
+        assert!(matches!(
+            active.rail_start,
+            Some(ResolvedContainerBackground::Linear { .. })
+        ));
+        assert!(matches!(
+            active.handle_shape,
+            Some(ResolvedSliderHandleShape::Rectangle { width: 12, .. })
+        ));
+
+        let progress = program.progress(ViewId(2)).unwrap();
+        assert_eq!(progress.axis, ResolvedRangeAxis::Vertical);
+        assert!(matches!(
+            progress.length,
+            Some(ResolvedContainerLength::FillPortion(2))
+        ));
+        assert!(progress.custom_style.is_some());
+        assert!(matches!(
+            progress.background,
+            Some(ResolvedContainerBackground::Color(_))
+        ));
+        assert!(matches!(
+            progress.bar,
+            Some(ResolvedContainerBackground::Color(_))
+        ));
+
+        for range in [slider.id, progress.id] {
+            let checked = program.checked_facts().interaction(range).unwrap();
+            for index in 0..checked.expression_count {
+                let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: range,
+                    index,
+                });
+                let expression = program
+                    .checked_facts()
+                    .expression_use_by_owner(owner)
+                    .unwrap();
+                assert_eq!(
+                    program.checked_facts().expression_use(expression).owner,
+                    owner
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn range_lowering_uses_checked_expressions_and_codegen_ignores_raw_contracts() {
+        let source = format!(
+            "app CheckedRanges\nextern crate::backend\n  slider-style slider_style(active:bool)\n  progress-style progress_style(active:bool)\n{THEME}state\n  amount = 25.0\n  active = true\non changed(next)\n  amount = next\non released\nview\n  col\n    slider amount min=0.0 max=100.0 step=1.0 default=25.0 shift-step=5.0 vertical w=20.0 h=fill style=slider_style(active) release=released -> changed _\n      active rail-start=primary rail-end=bg rail-w=4.0 rail-border=fg rail-border-w=1.0 handle=circle(7.0) handle-color=primary handle-border=fg handle-border-w=1.0\n    progress amount vertical length=fill girth=20.0 style=progress_style(active) bg=bg bar=primary border=fg border-w=1.0 r=4.0\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-ranges.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Slider {
+            value,
+            min,
+            max,
+            step,
+            options,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a slider");
+        };
+        *value = Expr::F64(999.0);
+        *min = Expr::F64(999.0);
+        *max = Expr::F64(999.0);
+        *step = Expr::F64(999.0);
+        options.default = Some(Expr::F64(999.0));
+        options.shift_step = Some(Expr::F64(999.0));
+        options.style.custom.as_mut().unwrap().args[0] = Expr::Bool(false);
+        options.style.active.as_mut().unwrap().rail_width = Some(Expr::F64(999.0));
+        let ViewNode::Progress { value, options, .. } = &mut children[1] else {
+            panic!("second child must be progress");
+        };
+        *value = Expr::F64(999.0);
+        options.custom_style.as_mut().unwrap().args[0] = Expr::Bool(false);
+        options.border_width = Some(Expr::F64(999.0));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-ranges.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-ranges.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Slider {
+            value,
+            min,
+            max,
+            step,
+            options,
+            vertical,
+            styles,
+            route,
+            release,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a slider");
+        };
+        *value = Expr::F64(777.0);
+        *min = Expr::F64(777.0);
+        *max = Expr::F64(777.0);
+        *step = Expr::F64(777.0);
+        **options = SliderOptions::default();
+        *vertical = false;
+        styles.clear();
+        route.handler = "poisoned".into();
+        *release = None;
+        let ViewNode::Progress {
+            value,
+            min,
+            max,
+            options,
+            vertical,
+            styles,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be progress");
+        };
+        *value = Expr::F64(777.0);
+        *min = Expr::F64(777.0);
+        *max = Expr::F64(777.0);
+        *options = ProgressOptions::default();
+        *vertical = false;
+        styles.clear();
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(0, 1);
+        let actual = crate::codegen::generate(&program, "lowered-ranges.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("poisoned"));
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Slider { vertical, .. } = &mut children[0] else {
+            panic!("first child must be a slider");
+        };
+        *vertical = false;
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn range_lowering_rejects_same_type_slot_route_and_extern_swaps() {
+        let source = format!(
+            "app RangeIdentity\nextern crate::backend\n  slider-style slider_first(active:bool)\n  slider-style slider_second(active:bool)\n  progress-style progress_first(active:bool)\n  progress-style progress_second(active:bool)\n{THEME}state\n  amount = 25.0\n  active = true\non first(next)\n  amount = next\non second(next)\n  amount = next\nview\n  col\n    slider amount min=0.0 max=100.0 step=1.0 style=slider_first(active) -> first _\n    progress amount min=0.0 max=100.0 style=progress_first(active) border-w=1.0 r=4.0\n    slider amount min=0.0 max=100.0 step=1.0 -> second _\n"
+        );
+
+        let mut swapped_slider_slots = analyze(&source).unwrap();
+        swapped_slider_slots
+            .facts
+            .swap_interaction_option_expressions(ViewId(1), 1, 2);
+        let error = lower(swapped_slider_slots).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_progress_slots = analyze(&source).unwrap();
+        swapped_progress_slots
+            .facts
+            .swap_interaction_option_expressions(ViewId(2), 0, 1);
+        let error = lower(swapped_progress_slots).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_route = analyze(&source).unwrap();
+        swapped_route
+            .facts
+            .corrupt_interaction_route_handler(ViewId(1), 0, HandlerId(1));
+        let error = lower(swapped_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("handler contract diverged"));
+
+        let mut swapped_slider_extern = analyze(&source).unwrap();
+        swapped_slider_extern
+            .facts
+            .corrupt_slider_style(ViewId(1), ExternFnId(1));
+        let error = lower(swapped_slider_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("style extern contract diverged"));
+
+        let mut swapped_progress_extern = analyze(&source).unwrap();
+        swapped_progress_extern
+            .facts
+            .corrupt_progress_style(ViewId(2), ExternFnId(3));
+        let error = lower(swapped_progress_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("style extern contract diverged"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id.facts.corrupt_slider_id(ViewId(1), u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id.facts.corrupt_progress_id(ViewId(2), u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn imported_ranges_keep_expression_route_extern_theme_and_status_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-range-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("ranges.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedRangesApp\nuse \"ranges.ice\"\n{THEME}state\n  amount = 25.0\nview\n  ImportedRanges value=amount\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  slider-style imported_slider()\n  progress-style imported_progress()\ncomponent ImportedRanges(value:f64)\n  on changed(next)\n  on released\n  col\n    slider value min=0.0 max=100.0 step=1.0 style=imported_slider() release=released -> changed _\n      active rail-start=primary rail-border=fg rail-w=4.0 handle=circle(7.0) handle-color=primary\n    progress value min=0.0 max=100.0 style=imported_progress() bg=bg bar=primary border=fg border-w=1.0\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let slider = program.sliders.values().next().unwrap();
+        let slider_id = slider.id;
+        let slider_origin = program.origin(slider.origin);
+        assert_eq!(slider_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(slider_origin.line, 8);
+        let value = program.checked_facts().expression_use(slider.value);
+        let value_origin = program.origin(value.origin);
+        assert_eq!(value_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(value_origin.line, 8);
+        assert_eq!(value_origin.parent, Some(slider.origin));
+        let route_origin = program.origin(slider.change.origin);
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.line, 8);
+        assert_eq!(route_origin.parent, Some(slider.origin));
+        let style = slider.custom_style.as_ref().unwrap();
+        let style_origin = program.origin(style.origin);
+        assert_eq!(style_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(style_origin.line, 8);
+        assert_eq!(style_origin.parent, Some(slider.origin));
+        let extern_origin =
+            program.origin(program.extern_function(style.function).declaration.origin);
+        assert_eq!(extern_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(extern_origin.line, 2);
+        let active = slider.styles.active.as_ref().unwrap();
+        let status_origin = program.origin(active.origin);
+        assert_eq!(status_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(status_origin.line, 9);
+        assert_eq!(status_origin.parent, Some(slider.origin));
+        assert!(matches!(
+            active.rail_border_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.text
+        ));
+
+        let progress = program.progresses.values().next().unwrap();
+        let progress_id = progress.id;
+        let progress_origin = program.origin(progress.origin);
+        assert_eq!(progress_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(progress_origin.line, 10);
+        let value_origin = program.origin(
+            program
+                .checked_facts()
+                .expression_use(progress.value)
+                .origin,
+        );
+        assert_eq!(value_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(value_origin.line, 10);
+        assert_eq!(value_origin.parent, Some(progress.origin));
+        let style = progress.custom_style.as_ref().unwrap();
+        let style_origin = program.origin(style.origin);
+        assert_eq!(style_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(style_origin.line, 10);
+        assert_eq!(style_origin.parent, Some(progress.origin));
+        let extern_origin =
+            program.origin(program.extern_function(style.function).declaration.origin);
+        assert_eq!(extern_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(extern_origin.line, 3);
+        assert!(matches!(
+            progress.bar,
+            Some(ResolvedContainerBackground::Color(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            })) if token == program.theme().native_tokens.primary
+        ));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 8 1 {encoded_import}")));
+
+        let slider = program.sliders.remove(&slider_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        program.sliders.insert(slider_id, slider);
+
+        program.progresses.remove(&progress_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn malformed_checked_range_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidRanges\n{THEME}state\n  amount = 25.0\non changed(next)\n  amount = next\nview\n  col\n    slider amount min=0.0 max=100.0 step=1.0 -> changed _\n    progress amount\n"
+        );
+        for (view, index) in [(ViewId(1), 0), (ViewId(2), 0)] {
+            let mut checked = analyze(&source).unwrap();
+            checked.facts.corrupt_expression_use_root(
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: view,
+                    index,
+                }),
+                u32::MAX,
+            );
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("invalid checked expression ID"));
+        }
+    }
+
+    #[test]
+    fn normalizes_rule_qr_code_and_space_contracts() {
+        let source = format!(
+            "app ContentPrimitiveHir\n{THEME}state\n  thickness = 2.0\n  percent = 75.0\n  radius = 4.0\n  snap = false\n  payload = \"https://example.com/invite\"\n  cell_size = 4.0\n  width = 20.0\nview\n  col\n    rule horizontal thickness=thickness style=weak fill=percent(percent) color=primary/50 r=radius r-tl=radius snap=snap\n    qr payload correction=high version=normal(4) cell-size=cell_size cell=primary bg=bg\n    qr bytes(00 ff a4) version=micro(4) size=128.0 cell=danger/25\n    space w=width h=fill(2)\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        let rule = program.rule(ViewId(1)).unwrap();
+        assert_eq!(rule.id, ViewId(1));
+        assert_eq!(rule.axis, ResolvedRuleAxis::Horizontal);
+        assert_eq!(rule.preset, ResolvedRulePreset::Weak);
+        assert!(matches!(rule.fill, Some(ResolvedRuleFill::Percent(_))));
+        assert!(rule.radius.all.is_some());
+        assert!(rule.radius.top_left.is_some());
+        assert!(rule.snap.is_some());
+        assert!(matches!(
+            rule.color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                opacity: Some(50),
+            }) if token == program.theme().native_tokens.primary
+        ));
+
+        let text_qr = program.qr_code(ViewId(2)).unwrap();
+        assert_eq!(text_qr.id, ViewId(2));
+        assert_eq!(text_qr.payload_kind, ResolvedQrPayloadKind::Text);
+        assert_eq!(
+            text_qr.encoding,
+            ResolvedQrEncoding::Versioned {
+                version: ResolvedQrVersion::Normal(4),
+                correction: ResolvedQrCorrection::High,
+            }
+        );
+        assert!(matches!(text_qr.size, ResolvedQrSize::Cell(_)));
+        assert!(matches!(
+            text_qr.background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.background
+        ));
+
+        let bytes_qr = program.qr_code(ViewId(3)).unwrap();
+        assert_eq!(bytes_qr.payload_kind, ResolvedQrPayloadKind::Bytes);
+        assert_eq!(
+            bytes_qr.encoding,
+            ResolvedQrEncoding::Versioned {
+                version: ResolvedQrVersion::Micro(4),
+                correction: ResolvedQrCorrection::Medium,
+            }
+        );
+        assert!(matches!(bytes_qr.size, ResolvedQrSize::Total(_)));
+
+        let space = program.space(ViewId(4)).unwrap();
+        assert_eq!(space.id, ViewId(4));
+        assert!(matches!(
+            space.width,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(matches!(
+            space.height,
+            Some(ResolvedContainerLength::FillPortion(2))
+        ));
+
+        for (view, types) in [
+            (
+                ViewId(1),
+                vec![Type::F64, Type::F64, Type::F64, Type::F64, Type::Bool],
+            ),
+            (ViewId(2), vec![Type::Str, Type::F64]),
+            (ViewId(3), vec![Type::Bytes, Type::F64]),
+            (ViewId(4), vec![Type::F64]),
+        ] {
+            let checked = program.checked_facts().interaction(view).unwrap();
+            assert_eq!(checked.expression_count as usize, types.len());
+            for (index, ty) in types.into_iter().enumerate() {
+                let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: view,
+                    index: index as u32,
+                });
+                let expression = program
+                    .checked_facts()
+                    .expression_use_by_owner(owner)
+                    .unwrap();
+                let retained = program.checked_facts().expression_use(expression);
+                assert_eq!(retained.owner, owner);
+                assert_eq!(retained.source, ty);
+                assert_eq!(retained.destination, ty);
+                assert_eq!(
+                    program.origin(retained.origin).parent,
+                    Some(program.checked_facts().view(view).origin)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn content_primitive_lowering_uses_checked_expressions_and_codegen_ignores_raw_contracts() {
+        let source = format!(
+            "app CheckedContentPrimitives\n{THEME}state\n  thickness = 2.0\n  percent = 75.0\n  radius = 4.0\n  snap = false\n  payload = \"https://example.com/invite\"\n  cell_size = 4.0\n  width = 20.0\n  height = 10.0\nview\n  col\n    rule horizontal thickness=thickness style=weak fill=percent(percent) color=primary/50 r=radius snap=snap\n    qr payload correction=high version=normal(4) cell-size=cell_size cell=primary bg=bg\n    space w=width h=height\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-content-primitives.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Rule {
+            thickness, options, ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a rule");
+        };
+        *thickness = Expr::F64(999.0);
+        options.fill = Some(RuleFill::Percent(Expr::F64(999.0)));
+        options.radius = Some(Expr::F64(999.0));
+        options.snap = Some(Expr::Bool(true));
+        let ViewNode::QrCode {
+            payload, cell_size, ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a qr code");
+        };
+        *payload = Expr::Str("raw-checked-poison".into());
+        *cell_size = Some(Expr::F64(999.0));
+        let ViewNode::Space { width, height, .. } = &mut children[2] else {
+            panic!("third child must be a space");
+        };
+        *width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        *height = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-content-primitives.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("raw-checked-poison"));
+
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected =
+            crate::codegen::generate(&program, "lowered-content-primitives.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Rule {
+            axis,
+            thickness,
+            options,
+            styles,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a rule");
+        };
+        *axis = Axis::Vertical;
+        *thickness = Expr::F64(777.0);
+        *options = RuleOptions::default();
+        styles.push("raw-rule-poison".into());
+        let ViewNode::QrCode {
+            payload,
+            correction,
+            version,
+            cell_size,
+            total_size,
+            cell,
+            background,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a qr code");
+        };
+        *payload = Expr::Str("raw-qr-poison".into());
+        *correction = Some(QrCorrection::Low);
+        *version = Some(QrVersion::Micro(1));
+        *cell_size = None;
+        *total_size = Some(Expr::F64(777.0));
+        *cell = Some("danger".into());
+        *background = Some("fg".into());
+        let ViewNode::Space {
+            width,
+            height,
+            styles,
+            ..
+        } = &mut children[2]
+        else {
+            panic!("third child must be a space");
+        };
+        *width = Some(LengthValue::Shrink);
+        *height = Some(LengthValue::Fill);
+        styles.push("raw-space-poison".into());
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(0, 1);
+        let actual = crate::codegen::generate(&program, "lowered-content-primitives.ice").unwrap();
+        assert_eq!(actual, expected);
+        for poison in ["raw-rule-poison", "raw-qr-poison", "raw-space-poison"] {
+            assert!(!actual.contains(poison));
+        }
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Rule { axis, .. } = &mut children[0] else {
+            panic!("first child must be a rule");
+        };
+        *axis = Axis::Vertical;
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn content_primitive_lowering_rejects_same_type_identity_and_corrupt_facts() {
+        let source = format!(
+            "app ContentPrimitiveIdentity\n{THEME}state\n  first = 2.0\n  second = 75.0\n  first_payload = \"first\"\n  second_payload = \"second\"\nview\n  col\n    rule horizontal thickness=first fill=percent(second)\n    space w=first h=second\n    qr first_payload cell-size=first\n    qr second_payload cell-size=second\n"
+        );
+
+        let mut swapped_rule = analyze(&source).unwrap();
+        swapped_rule
+            .facts
+            .swap_interaction_option_expressions(ViewId(1), 0, 1);
+        let error = lower(swapped_rule).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_space = analyze(&source).unwrap();
+        swapped_space
+            .facts
+            .swap_interaction_option_expressions(ViewId(2), 0, 1);
+        let error = lower(swapped_space).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut transplanted_qr = analyze(&source).unwrap();
+        transplanted_qr
+            .facts
+            .transplant_interaction_option_expression(ViewId(3), 0, ViewId(4), 0);
+        let error = lower(transplanted_qr).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut corrupt_payload_type = analyze(&source).unwrap();
+        corrupt_payload_type
+            .facts
+            .corrupt_qr_payload_type(ViewId(3), Type::Bytes);
+        let error = lower(corrupt_payload_type).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut corrupt_rule = analyze(&source).unwrap();
+        corrupt_rule.facts.corrupt_rule_id(ViewId(1), u32::MAX);
+        let error = lower(corrupt_rule).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_qr = analyze(&source).unwrap();
+        corrupt_qr.facts.corrupt_qr_code_id(ViewId(3), u32::MAX);
+        let error = lower(corrupt_qr).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_space = analyze(&source).unwrap();
+        corrupt_space.facts.corrupt_space_id(ViewId(2), u32::MAX);
+        let error = lower(corrupt_space).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn imported_content_primitives_keep_exact_expression_and_theme_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-content-primitive-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("content.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedContentPrimitiveApp\nuse \"content.ice\"\n{THEME}state\n  payload = \"https://example.com\"\nview\n  ImportedContent payload=payload\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedContent(payload:str)\n  col\n    rule horizontal thickness=2.0 fill=percent(75.0) color=primary r=4.0 snap=false\n    qr payload version=normal(4) cell-size=4.0 cell=fg bg=bg\n    space w=10.0 h=fill(2)\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let rule_id = program.rules.values().next().unwrap().id;
+        let qr_id = program.qr_codes.values().next().unwrap().id;
+        let space_id = program.spaces.values().next().unwrap().id;
+        let entries = [(rule_id, 3usize), (qr_id, 4usize), (space_id, 5usize)];
+        for (view, line) in entries {
+            let checked = program.checked_facts().interaction(view).unwrap();
+            let view_origin = program.checked_facts().view(view).origin;
+            let origin = program.origin(view_origin);
+            assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(origin.line, line);
+            assert_eq!(origin.column, 1);
+            for expression in &checked.option_expressions {
+                let expression_origin =
+                    program.origin(program.checked_facts().expression_use(*expression).origin);
+                assert_eq!(expression_origin.path.as_deref(), Some(imported.as_path()));
+                assert_eq!(expression_origin.line, line);
+                assert_eq!(expression_origin.column, 1);
+                assert_eq!(expression_origin.parent, Some(view_origin));
+            }
+        }
+        let rule = program.rules.values().next().unwrap();
+        assert!(matches!(
+            rule.color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.primary
+        ));
+        let qr = program.qr_codes.values().next().unwrap();
+        assert!(matches!(
+            qr.cell,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.text
+        ));
+        assert!(matches!(
+            qr.background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.background
+        ));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        let rule = program.rules.remove(&rule_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+        program.rules.insert(rule_id, rule);
+
+        let qr = program.qr_codes.remove(&qr_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+        program.qr_codes.insert(qr_id, qr);
+
+        program.spaces.remove(&space_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 5);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn malformed_checked_content_primitive_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidContentPrimitives\n{THEME}view\n  col\n    rule horizontal thickness=2.0\n    qr \"payload\"\n    space w=10.0\n"
+        );
+        for view in [ViewId(1), ViewId(2), ViewId(3)] {
+            let mut checked = analyze(&source).unwrap();
+            checked.facts.corrupt_expression_use_root(
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: view,
+                    index: 0,
+                }),
+                u32::MAX,
+            );
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("invalid checked expression ID"));
+        }
+    }
+
+    #[test]
+    #[ignore = "large normalized content-primitive lowering and emission performance contract"]
+    fn performance_contract_four_thousand_content_primitives_lower_and_emit_under_two_seconds() {
+        const PRIMITIVES: usize = 4_000;
+        let mut source = format!(
+            "app ContentPrimitiveScale\n{THEME}state\n  amount = 25.0\n  payload = \"https://example.com\"\nview\n  col\n"
+        );
+        for index in 0..PRIMITIVES {
+            match index % 3 {
+                0 => writeln!(
+                    source,
+                    "    rule horizontal #rule_{index} thickness=amount fill=percent(amount)"
+                )
+                .unwrap(),
+                1 => writeln!(
+                    source,
+                    "    qr payload #qr_{index} correction=high cell-size=amount"
+                )
+                .unwrap(),
+                _ => writeln!(source, "    space #space_{index} w=amount h=fill").unwrap(),
+            }
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "content-primitive-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(
+            program.rules.len() + program.qr_codes.len() + program.spaces.len(),
+            PRIMITIVES
+        );
+        assert_eq!(
+            generated
+                .matches("::iced::widget::rule::horizontal(")
+                .count(),
+            1_334
+        );
+        assert_eq!(
+            generated.matches("::ui_lang_runtime::qr_code(").count(),
+            1_333
+        );
+        assert_eq!(generated.matches("::iced::widget::space()").count(), 1_333);
+        eprintln!("4k normalized content primitives lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized content primitives lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "large normalized range-control lowering and emission performance contract"]
+    fn performance_contract_four_thousand_range_controls_lower_and_emit_under_two_seconds() {
+        const EACH: usize = 2_000;
+        let mut source = format!(
+            "app RangeScale\n{THEME}state\n  amount = 25.0\non changed(next)\n  amount = next\nview\n  col\n"
+        );
+        for index in 0..EACH {
+            writeln!(
+                source,
+                "    slider amount #slider_{index} min=0.0 max=100.0 step=1.0 w=fill -> changed _"
+            )
+            .unwrap();
+            writeln!(
+                source,
+                "    progress amount #progress_{index} min=0.0 max=100.0 length=fill"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "range-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.sliders.len(), EACH);
+        assert_eq!(program.progresses.len(), EACH);
+        assert_eq!(generated.matches("::iced::widget::slider(").count(), EACH);
+        assert_eq!(
+            generated.matches("::iced::widget::progress_bar(").count(),
+            EACH
+        );
+        eprintln!("4k normalized range controls lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized range controls lowered and emitted in {elapsed:?}"
         );
     }
 
