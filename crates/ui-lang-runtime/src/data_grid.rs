@@ -538,17 +538,24 @@ where
         if columns.is_empty() {
             return Err(DataGridReconcileError::EmptyColumns);
         }
-        let mut seen_columns = HashSet::with_capacity(columns.len());
-        for column in columns {
-            if !column.width.is_finite() || column.width <= 0.0 {
-                return Err(DataGridReconcileError::InvalidColumnWidth(
-                    column.key.clone(),
-                ));
-            }
-            if !seen_columns.insert(column.key.clone()) {
-                return Err(DataGridReconcileError::DuplicateColumnKey(
-                    column.key.clone(),
-                ));
+        let columns_unchanged = columns.len() == self.columns.len()
+            && columns
+                .iter()
+                .zip(self.columns.iter())
+                .all(|(column, record)| column == &record.column);
+        if !columns_unchanged {
+            let mut seen_columns = HashSet::with_capacity(columns.len());
+            for column in columns {
+                if !column.width.is_finite() || column.width <= 0.0 {
+                    return Err(DataGridReconcileError::InvalidColumnWidth(
+                        column.key.clone(),
+                    ));
+                }
+                if !seen_columns.insert(column.key.clone()) {
+                    return Err(DataGridReconcileError::DuplicateColumnKey(
+                        column.key.clone(),
+                    ));
+                }
             }
         }
 
@@ -562,25 +569,41 @@ where
                 }
             })?;
 
-        let mut width = 0.0_f32;
-        let mut column_indexes = HashMap::with_capacity(columns.len());
-        let mut column_namespaces = HashMap::with_capacity(columns.len());
-        let mut records = Vec::with_capacity(columns.len());
-        for (index, column) in columns.iter().enumerate() {
-            let namespace = self
-                .column_namespaces
-                .get(&column.key)
-                .copied()
-                .unwrap_or_else(allocate_virtual_namespace);
-            column_indexes.insert(column.key.clone(), index);
-            column_namespaces.insert(column.key.clone(), namespace);
-            records.push(ColumnRecord {
-                column: column.clone(),
-                start: width,
-                namespace,
-            });
-            width = (f64::from(width) + f64::from(column.width)).min(f64::from(f32::MAX)) as f32;
-        }
+        let (records, column_indexes, column_namespaces, width) = if columns_unchanged {
+            (
+                Arc::clone(&self.columns),
+                Arc::clone(&self.column_indexes),
+                Arc::clone(&self.column_namespaces),
+                self.horizontal.content_width,
+            )
+        } else {
+            let mut width = 0.0_f32;
+            let mut column_indexes = HashMap::with_capacity(columns.len());
+            let mut column_namespaces = HashMap::with_capacity(columns.len());
+            let mut records = Vec::with_capacity(columns.len());
+            for (index, column) in columns.iter().enumerate() {
+                let namespace = self
+                    .column_namespaces
+                    .get(&column.key)
+                    .copied()
+                    .unwrap_or_else(allocate_virtual_namespace);
+                column_indexes.insert(column.key.clone(), index);
+                column_namespaces.insert(column.key.clone(), namespace);
+                records.push(ColumnRecord {
+                    column: column.clone(),
+                    start: width,
+                    namespace,
+                });
+                width =
+                    (f64::from(width) + f64::from(column.width)).min(f64::from(f32::MAX)) as f32;
+            }
+            (
+                records.into(),
+                Arc::new(column_indexes),
+                Arc::new(column_namespaces),
+                width,
+            )
+        };
 
         let active_column = self
             .active_column
@@ -596,9 +619,9 @@ where
 
         self.rows = staged_rows;
         self.row_keys = row_keys.into();
-        self.columns = records.into();
-        self.column_indexes = Arc::new(column_indexes);
-        self.column_namespaces = Arc::new(column_namespaces);
+        self.columns = records;
+        self.column_indexes = column_indexes;
+        self.column_namespaces = column_namespaces;
         self.active_column = active_column;
         self.editing = editing.cloned();
         if self.horizontal.set_content_width(width) {
