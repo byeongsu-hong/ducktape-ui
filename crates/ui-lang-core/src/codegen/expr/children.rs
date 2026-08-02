@@ -52,11 +52,12 @@ pub(in crate::codegen) fn render_children(
                 render_children(out, children, document, message, &child_env, scope, slot)?;
                 out.push_str(" }");
             }
-            ViewNode::Match { arms, span, .. } => {
+            ViewNode::Match { arms, .. } => {
                 let program = document.hir();
                 let resolved = program.resolved_match_for(child)?;
                 if arms.len() != resolved.arms.len() {
-                    return Err(Error::new("E196", span, "match HIR arm length diverged"));
+                    return Err(program
+                        .invariant_at_origin(resolved.origin, "match HIR arm length diverged"));
                 }
                 let value =
                     checked_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
@@ -65,7 +66,7 @@ pub(in crate::codegen) fn render_children(
                     write!(
                         out,
                         " {} => {{",
-                        resolved_match_pattern_code(resolved_arm, &arm.span)?
+                        resolved_match_pattern_code(program, resolved_arm)?
                     )
                     .unwrap();
                     let mut child_env = ScopedBindingEnv::new(env);

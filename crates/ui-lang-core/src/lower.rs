@@ -3381,16 +3381,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "match view reached code generation with a mismatched checked view ID",
             ));
         }
         self.match_views.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "match view reached code generation without normalized HIR",
             )
         })
@@ -11577,6 +11575,63 @@ view
         arms[0].pattern = MatchPattern::Wildcard;
         let actual = crate::codegen::generate(&program, "checked-match.ice").unwrap();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn imported_match_keeps_hir_origins_source_marker_and_diagnostics() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-match-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("choice-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedMatch\nuse \"choice-card.ice\"\n{THEME}view\n  ChoiceCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ChoiceCard()\n  state\n    choice:str? = some(\"ready\")\n  col\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let resolved = program
+            .match_views
+            .values()
+            .next()
+            .expect("imported match must be normalized");
+        let origin = program.origin(resolved.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 5);
+        let arm_origin = program.origin(resolved.arms[0].origin);
+        assert_eq!(arm_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(arm_origin.line, 6);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        program.match_views.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 5);
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        program.match_views.values_mut().next().unwrap().arms[0].binding = None;
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 6);
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
