@@ -76,13 +76,13 @@ pub(in crate::codegen) fn generate_theme(
             writeln!(out, "{}", palette_code(&theme.palettes[id.0 as usize])).unwrap();
         }
         ResolvedPaletteSelection::Dynamic(expression) => {
-            let value = checked_expr_use_code(
+            let value = resolved_expr_use_code(
                 program,
                 expression.expression,
                 &callback_env,
                 ValueMode::Owned,
             )?;
-            let contract = generated_named_rust(&theme.contract.name);
+            let contract = canonical_rust_type_name(&theme.contract.name);
             writeln!(out, "match {value} {{").unwrap();
             for palette in &theme.palettes {
                 writeln!(
@@ -178,7 +178,7 @@ pub(in crate::codegen) fn generate_theme(
             .unwrap();
         }
         ResolvedAppThemeSelection::Dynamic(expression) => {
-            let value = checked_expr_use_code(
+            let value = resolved_expr_use_code(
                 program,
                 expression.expression,
                 &callback_env,
@@ -204,7 +204,7 @@ pub(in crate::codegen) fn generate_theme(
     writeln!(out, "}}\n{SOURCE_MARKER_END}").unwrap();
     if let Some(setting) = &settings.title {
         let value =
-            checked_expr_use_code(program, setting.expression, &callback_env, ValueMode::Owned)?;
+            resolved_expr_use_code(program, setting.expression, &callback_env, ValueMode::Owned)?;
         writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
         writeln!(
             out,
@@ -219,7 +219,7 @@ pub(in crate::codegen) fn generate_theme(
             (&settings.text_color, "text_color"),
         ] {
             if let Some(setting) = setting {
-                let value = checked_expr_use_code(
+                let value = resolved_expr_use_code(
                     program,
                     setting.expression,
                     &state_env,
@@ -233,7 +233,7 @@ pub(in crate::codegen) fn generate_theme(
     }
     if let Some(setting) = &settings.scale_factor {
         let value =
-            checked_expr_use_code(program, setting.expression, &callback_env, ValueMode::Owned)?;
+            resolved_expr_use_code(program, setting.expression, &callback_env, ValueMode::Owned)?;
         writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
         writeln!(
             out,
@@ -440,8 +440,7 @@ pub(in crate::codegen) fn generate_update(
     program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
-    let document = program.document();
-    let accessibility_root = rust_string(&document.app);
+    let accessibility_root = rust_string(program.app_name());
     let has_fallthrough_arm = program
         .app_handlers()
         .any(|handler| handler.name != "mount")
@@ -453,8 +452,8 @@ pub(in crate::codegen) fn generate_update(
             .into_iter()
             .any(|(pane, _)| pane.resize_leeway.is_some() || pane.draggable)
         || !program.controlled_input_bindings()?.is_empty()
-        || !controlled_editor_bindings(document)?.is_empty()
-        || needs_extern_noop(document);
+        || !program.controlled_editor_bindings()?.is_empty()
+        || needs_extern_noop(program);
     let task_binding = if has_fallthrough_arm {
         "let __task = "
     } else {
@@ -590,7 +589,7 @@ pub(in crate::codegen) fn generate_update(
                         ty: state.ty.clone(),
                         local: false,
                         state: None,
-                        owner: Some(BindingOwner::Value(CheckedValueRef::ComponentState(
+                        owner: Some(BindingOwner::Value(ResolvedValueRef::ComponentState(
                             state.id,
                         ))),
                     },
@@ -725,13 +724,10 @@ pub(in crate::codegen) fn generate_update(
         )
         .unwrap();
     }
-    for binding in
-        controlled_editor_bindings(document).expect("checker validates controlled editor bindings")
-    {
+    for binding in program.controlled_editor_bindings()? {
         let variant = editor_variant(&binding.name);
         if let Some(action) = binding.action {
-            let function = find_extern_function(document, &action, ExternKind::EditorAction)
-                .expect("checker validates editor action adapters");
+            let function = program.extern_function(action);
             writeln!(
                 out,
                 "{message}::{variant}(action) => {{ {}(&mut self.{}, action); ::iced::Task::none() }}",
@@ -747,7 +743,7 @@ pub(in crate::codegen) fn generate_update(
             .unwrap();
         }
     }
-    if needs_extern_noop(document) {
+    if needs_extern_noop(program) {
         writeln!(out, "{message}::__ExternNoop => ::iced::Task::none(),").unwrap();
     }
     if has_animations(program) {

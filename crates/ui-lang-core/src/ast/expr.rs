@@ -1,3 +1,5 @@
+use crate::semantic::{BinaryOp, UnaryOp};
+
 #[derive(Clone, Debug)]
 pub enum Expr {
     Bool(bool),
@@ -22,27 +24,4 @@ pub enum Expr {
         op: BinaryOp,
         right: Box<Expr>,
     },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnaryOp {
-    Not,
-    Neg,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BinaryOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Rem,
-    Eq,
-    NotEq,
-    Lt,
-    LtEq,
-    Gt,
-    GtEq,
-    And,
-    Or,
 }

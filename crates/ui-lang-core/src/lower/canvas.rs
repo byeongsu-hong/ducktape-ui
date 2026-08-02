@@ -99,13 +99,22 @@ pub(crate) enum ResolvedCanvasRouteArg {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedCanvasEvent {
     pub(crate) id: CanvasEventId,
-    pub(crate) source: SubscriptionSource,
+    pub(crate) source: ResolvedCanvasEventSource,
     pub(crate) bindings: Vec<ResolvedCanvasEventBinding>,
     pub(crate) updates: Vec<ResolvedCanvasStateUpdate>,
     pub(crate) action: Option<ResolvedCanvasEventAction>,
     pub(crate) capture: bool,
     pub(crate) route_payload: bool,
     pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedCanvasEventSource {
+    InputMethod(InputMethodEvent),
+    Keyboard(KeyboardEvent),
+    Mouse(MouseEvent),
+    Touch(TouchEvent),
+    Window(WindowEvent),
 }
 
 #[derive(Clone, Debug)]
@@ -922,6 +931,16 @@ impl Lowerer {
         }
         let payloads = crate::check::native_subscription_payloads(&event.source, false)
             .ok_or_else(|| self.invariant(&event.span, "canvas event source is not native"))?;
+        let source = match &event.source {
+            SubscriptionSource::InputMethod(event) => {
+                ResolvedCanvasEventSource::InputMethod(*event)
+            }
+            SubscriptionSource::Keyboard(event) => ResolvedCanvasEventSource::Keyboard(*event),
+            SubscriptionSource::Mouse(event) => ResolvedCanvasEventSource::Mouse(*event),
+            SubscriptionSource::Touch(event) => ResolvedCanvasEventSource::Touch(*event),
+            SubscriptionSource::Window(event) => ResolvedCanvasEventSource::Window(*event),
+            _ => return Err(self.invariant(&event.span, "canvas event source is not native")),
+        };
         if event.bindings.len() > payloads.len() {
             return Err(self.invariant(&event.span, "canvas event binding arity diverged"));
         }
@@ -984,7 +1003,7 @@ impl Lowerer {
         };
         Ok(ResolvedCanvasEvent {
             id,
-            source: event.source.clone(),
+            source,
             bindings,
             updates,
             action,

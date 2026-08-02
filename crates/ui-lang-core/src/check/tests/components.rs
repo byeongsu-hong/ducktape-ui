@@ -37,12 +37,21 @@ view
 "#;
     let document = analyze(source).unwrap();
     assert_eq!(
-        document.components[0].events[0].payloads,
+        document.source_document().components[0].events[0].payloads,
         Vec::<Type>::new()
     );
-    assert_eq!(document.handlers[1].params[0].ty, Type::Str);
-    assert_eq!(document.handlers[2].params[0].ty, Type::Str);
-    assert_eq!(document.handlers[2].params[1].ty, Type::Bool);
+    assert_eq!(
+        document.source_document().handlers[1].params[0].ty,
+        Type::Str
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0].ty,
+        Type::Str
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[1].ty,
+        Type::Bool
+    );
 
     for (replacement, expected) in [
         ("", "requires a route for event `favorite`"),
@@ -99,7 +108,7 @@ view
 
     let document = analyze(source).unwrap();
     assert_eq!(
-        document.components[0].events[0].payloads,
+        document.source_document().components[0].events[0].payloads,
         vec![Type::Named("Selection".into())]
     );
 }
@@ -186,8 +195,14 @@ view
       changed -> changed(page, _)
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[0].params[0].ty, Type::Str);
-    assert_eq!(document.handlers[0].params[1].ty, Type::Bool);
+    assert_eq!(
+        document.source_document().handlers[0].params[0].ty,
+        Type::Str
+    );
+    assert_eq!(
+        document.source_document().handlers[0].params[1].ty,
+        Type::Bool
+    );
 
     let closed = source.replace("-> emit(changed, _)", "-> changed _");
     let error = analyze(&closed).unwrap_err();
@@ -223,7 +238,7 @@ view
       resized -> resized _ _
 "#;
     let document = analyze(source).unwrap();
-    for handler in &document.handlers {
+    for handler in &document.source_document().handlers {
         assert_eq!(handler.params[0].ty, Type::F64);
         assert_eq!(handler.params[1].ty, Type::F64);
     }
@@ -337,7 +352,10 @@ view
 "#,
     )
     .unwrap();
-    assert_eq!(document.handlers[0].params[0].ty, Type::MouseButton);
+    assert_eq!(
+        document.source_document().handlers[0].params[0].ty,
+        Type::MouseButton
+    );
 }
 
 #[test]
@@ -376,9 +394,14 @@ view
       open code="⌃" font=ui size=12.0 line-h=1.0 shape=advanced
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.states[1].ty.display(), "[str]");
-    assert_eq!(document.states[2].ty.display(), "str?");
-    assert_eq!(document.handlers[0].params[0].ty.display(), "str");
+    assert_eq!(document.source_document().states[1].ty.display(), "[str]");
+    assert_eq!(document.source_document().states[2].ty.display(), "str?");
+    assert_eq!(
+        document.source_document().handlers[0].params[0]
+            .ty
+            .display(),
+        "str"
+    );
 
     let error = analyze(&source.replace("size=12.0", "size=-1.0")).unwrap_err();
     assert_eq!(error.code, "E128");
@@ -943,8 +966,16 @@ view
     style font=ui inline-code-bg=linear(1.57, bg@0.0, primary@1.0) inline-code-fg=fg inline-code-font=mono code-block-font=mono link=primary inline-code-p=2.0 inline-code-px=3.0 inline-code-py=4.0 inline-code-pt=5.0 inline-code-pr=6.0 inline-code-pb=7.0 inline-code-pl=8.0 inline-code-border=primary inline-code-border-w=1.0 inline-code-r=4.0 inline-code-r-tl=1.0 inline-code-r-tr=2.0 inline-code-r-br=3.0 inline-code-r-bl=4.0
 "##;
     let document = analyze(source).unwrap();
-    assert_eq!(document.states[0].ty.display(), "markdown");
-    assert_eq!(document.handlers[0].params[0].ty.display(), "str");
+    assert_eq!(
+        document.source_document().states[0].ty.display(),
+        "markdown"
+    );
+    assert_eq!(
+        document.source_document().handlers[0].params[0]
+            .ty
+            .display(),
+        "str"
+    );
 
     let error = analyze(&source.replace("gap=12.0", "gap=-1.0")).unwrap_err();
     assert!(error.message.contains("outside its valid range"));
@@ -1038,7 +1069,7 @@ view
     disabled bg=bg value=danger
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.states[0].ty.display(), "editor");
+    assert_eq!(document.source_document().states[0].ty.display(), "editor");
 
     let error = analyze(&source.replace("min-h=80.0", "min-h=300.0")).unwrap_err();
     assert_eq!(error.code, "E139");
@@ -1085,7 +1116,12 @@ view
       command -> command _
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[0].params[0].ty.display(), "EditorCommand");
+    assert_eq!(
+        document.source_document().handlers[0].params[0]
+            .ty
+            .display(),
+        "EditorCommand"
+    );
 
     let error =
         analyze(&source.replace("content<->body", "content<->editor(\"scratch\")")).unwrap_err();
@@ -1213,8 +1249,14 @@ view
   Toggle #first
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.components[0].states[0].ty, Type::Bool);
-    assert_eq!(document.components[0].handlers[0].params[0].ty, Type::Bool);
+    assert_eq!(
+        document.source_document().components[0].states[0].ty,
+        Type::Bool
+    );
+    assert_eq!(
+        document.source_document().components[0].handlers[0].params[0].ty,
+        Type::Bool
+    );
 
     let error = analyze(&source.replace("enabled = false", "enabled = missing")).unwrap_err();
     assert_eq!(error.code, "E031");
@@ -1311,21 +1353,24 @@ view
 "#;
     let document = analyze(source).unwrap();
     assert!(matches!(
-        document.components[0].handlers[0].statements[1],
+        document.source_document().components[0].handlers[0].statements[1],
         Statement::Run {
             kind: EffectKind::Future,
             mode: FutureMode::Latest,
             ..
         }
     ));
-    assert_eq!(document.components[0].handlers[1].params[0].ty, Type::Str);
     assert_eq!(
-        document.components[0].handlers[2].params[0].ty,
+        document.source_document().components[0].handlers[1].params[0].ty,
+        Type::Str
+    );
+    assert_eq!(
+        document.source_document().components[0].handlers[2].params[0].ty,
         Type::Named("AppError".into())
     );
     let replaced = analyze(&source.replace("run latest", "run replace")).unwrap();
     assert!(matches!(
-        replaced.components[0].handlers[0].statements[1],
+        replaced.source_document().components[0].handlers[0].statements[1],
         Statement::Run {
             mode: FutureMode::Replace,
             ..
@@ -1450,10 +1495,28 @@ view
     icon code="⌕" font=ui size=12.0 gap=6.0 side=right
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.states[1].ty.display(), "combo[str]");
-    assert_eq!(document.handlers[0].params[0].ty.display(), "str");
-    assert_eq!(document.handlers[1].params[0].ty.display(), "str");
-    assert_eq!(document.handlers[2].params[0].ty.display(), "str");
+    assert_eq!(
+        document.source_document().states[1].ty.display(),
+        "combo[str]"
+    );
+    assert_eq!(
+        document.source_document().handlers[0].params[0]
+            .ty
+            .display(),
+        "str"
+    );
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "str"
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0]
+            .ty
+            .display(),
+        "str"
+    );
 
     let error = analyze(&source.replace("gap=6.0", "gap=-1.0")).unwrap_err();
     assert_eq!(error.code, "E128");
@@ -1549,9 +1612,24 @@ view
     space w=fill(2) h=shrink
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[0].params[0].ty.display(), "f64");
-    assert_eq!(document.handlers[0].params[1].ty.display(), "f64");
-    assert_eq!(document.handlers[1].params[0].ty.display(), "f64");
+    assert_eq!(
+        document.source_document().handlers[0].params[0]
+            .ty
+            .display(),
+        "f64"
+    );
+    assert_eq!(
+        document.source_document().handlers[0].params[1]
+            .ty
+            .display(),
+        "f64"
+    );
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "f64"
+    );
 
     let bad_float_translation = source.replace(
         "x=(viewport_x + viewport_width - original_x - original_width)",
