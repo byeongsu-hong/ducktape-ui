@@ -12,17 +12,17 @@ surface. Product needs can usually be delivered through a native runtime
 widget, a reusable `ducktape-ui` component, or an application-local typed Rust
 boundary without adding syntax.
 
-The fully normalized HIR migration is still in progress. Adding syntax during
-that migration would multiply mixed AST/HIR paths and make the boundary harder
-to finish.
+The compiler now has one fully normalized HIR boundary: release code generation
+receives no source AST or checker facts. Completing that boundary removes a
+mechanical reason to defer language design, but it does not make additional
+syntax cheaper to own across every compiler and tooling layer.
 
 ## Decision
 
-New Ice Core syntax is frozen until the HIR completion criteria in decision
-0001 are met. Its `Accepted` status records the target architecture, not HIR
-completion; decision 0001's completion criteria remain authoritative. Every
-proposed feature must name exactly one primary semantic owner before
-implementation:
+New Ice Core syntax remains frozen throughout 2.0 preview stabilization. HIR
+completion satisfies decision 0001's backend-boundary criteria; it does not
+waive this admission policy. Every proposed feature must name exactly one
+primary semantic owner before implementation:
 
 | Owner | Admitted work |
 | --- | --- |
@@ -70,11 +70,11 @@ precedents. The owning layer and required evidence are review inputs.
 
 Product features continue through typed runtime and component boundaries while
 Core remains stable. Some convenient sugar is deferred, but the implementation
-surface, diagnostics, and canonical syntax stay reviewable. The HIR migration
-can delete old backend paths instead of supporting newly introduced branches.
+surface, diagnostics, and canonical syntax stay reviewable. The release backend
+keeps one normalized path without AST or checker side channels.
 
 ## Revisit trigger
 
-Revisit the freeze only after decision 0001's HIR completion criteria are met.
+Lifting the global freeze requires an explicit follow-up language decision.
 Revisit an individual layer assignment when three independent uses provide
 evidence that its current typed boundary loses essential meaning or safety.

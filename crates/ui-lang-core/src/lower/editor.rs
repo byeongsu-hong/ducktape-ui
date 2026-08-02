@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,7 +21,6 @@ pub(crate) enum ResolvedHighlightTheme {
 pub(crate) struct ResolvedEditorExternCall {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -33,7 +28,6 @@ pub(crate) struct ResolvedEditorKeyBinding {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
     pub(crate) route: ResolvedInteractionRoute,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -188,7 +182,6 @@ impl Lowerer {
             options.highlighter.as_ref(),
             checked_editor.highlighter,
             ExternKind::EditorHighlighter,
-            origin,
             span,
         )?;
         let key_call = self.resolve_editor_call(
@@ -196,7 +189,6 @@ impl Lowerer {
             options.key_binding.as_ref(),
             checked_editor.key_binding,
             ExternKind::EditorBinding,
-            origin,
             span,
         )?;
         let action = self.resolve_editor_call(
@@ -204,7 +196,6 @@ impl Lowerer {
             options.action.as_ref(),
             checked_editor.action,
             ExternKind::EditorAction,
-            origin,
             span,
         )?;
         let custom_style = self.resolve_editor_call(
@@ -212,7 +203,6 @@ impl Lowerer {
             options.custom_style.as_ref(),
             checked_editor.style,
             ExternKind::EditorStyle,
-            origin,
             span,
         )?;
         let styles = self.resolve_editor_styles(
@@ -242,7 +232,6 @@ impl Lowerer {
                 function: call.function,
                 arguments: call.arguments,
                 route,
-                origin: call.origin,
             }),
             (None, None) => None,
             _ => return Err(self.invariant(span, "editor key binding and route diverged")),
@@ -331,7 +320,6 @@ impl Lowerer {
         source: Option<&ExternCall>,
         function: Option<ExternFnId>,
         kind: ExternKind,
-        origin: OriginId,
         span: &Span,
     ) -> Result<Option<ResolvedEditorExternCall>, Error> {
         match (source, function) {
@@ -354,7 +342,6 @@ impl Lowerer {
                 Ok(Some(ResolvedEditorExternCall {
                     function,
                     arguments,
-                    origin,
                 }))
             }
             _ => Err(self.invariant(span, "editor extern presence diverged")),
@@ -420,7 +407,7 @@ impl Lowerer {
         &self,
         values: &mut EditorOperands<'_>,
         status: &TextInputStatusStyle,
-        origin: OriginId,
+        _origin: OriginId,
         span: &Span,
     ) -> Result<ResolvedInputStatusStyle, Error> {
         Ok(ResolvedInputStatusStyle {
@@ -445,7 +432,8 @@ impl Lowerer {
                 .as_deref()
                 .map(|color| self.resolve_theme_color(color, span))
                 .transpose()?,
-            origin,
+            #[cfg(test)]
+            origin: _origin,
         })
     }
 

@@ -987,11 +987,8 @@ mod tests {
             .expect("open menubar overlay");
         let overlay_node = overlay.as_overlay_mut().layout(&renderer, viewport.size());
         let overlay_layout = Layout::new(&overlay_node);
-        let mut focus_child = widget::operation::focusable::focus::<()>(menu_item_id(
-            "menubar:app:file",
-            "nested",
-            &[0, 0],
-        ));
+        let mut focus_child =
+            widget::operation::focusable::focus::<()>(menu_item_id("menubar:app:file", "nested"));
         overlay
             .as_overlay_mut()
             .operate(overlay_layout, &renderer, &mut focus_child);

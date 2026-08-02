@@ -1,4 +1,4 @@
-use "extern/task_groups.ice"
+use "extern/component_state.ice"
 
 app TaskGroups
 
@@ -11,20 +11,20 @@ on start
       task clipboard read -> clipboard_read _
       task system info -> info_read _
 
-on theme_read(next)
+on theme_read(_next)
 
-on clipboard_read(next)
+on clipboard_read(_next)
 
-on info_read(info)
+on info_read(_info)
 
 on create_twice(title)
   parallel
     run create_task(title) -> tasks_read _ | create_failed _
     run create_task(title) -> tasks_read _ | create_failed _
 
-on tasks_read(tasks)
+on tasks_read(_tasks)
 
-on create_failed(error)
+on create_failed(_error)
 
 view
   col

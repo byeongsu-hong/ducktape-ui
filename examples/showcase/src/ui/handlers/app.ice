@@ -213,12 +213,6 @@ on continue_dialog
 on close_dialog
   dialog_open = false
 
-on dismiss_toast
-  toast_visible = false
-
-on show_toast
-  toast_visible = true
-
 on mount
   task message_scroller_bootstrap(message_scroller) -> message_scroller_bootstrapped _
 

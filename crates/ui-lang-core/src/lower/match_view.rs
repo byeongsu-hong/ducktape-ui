@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug)]
@@ -26,6 +22,7 @@ pub(crate) enum ResolvedMatchPattern {
 pub(crate) struct ResolvedMatchArm {
     pub(crate) pattern: ResolvedMatchPattern,
     pub(crate) binding: Option<ResolvedMatchBinding>,
+    #[cfg(test)]
     pub(crate) children: Vec<ViewId>,
     pub(crate) origin: OriginId,
 }
@@ -34,6 +31,7 @@ pub(crate) struct ResolvedMatchArm {
 pub(crate) struct ResolvedMatch {
     pub(crate) id: ViewId,
     pub(crate) value: CheckedExprUseId,
+    #[cfg(test)]
     pub(crate) value_ty: Type,
     pub(crate) arms: Vec<ResolvedMatchArm>,
     pub(crate) origin: OriginId,
@@ -214,6 +212,7 @@ impl Lowerer {
             resolved_arms.push(ResolvedMatchArm {
                 pattern,
                 binding,
+                #[cfg(test)]
                 children: arm.children,
                 origin: arm.origin,
             });
@@ -222,6 +221,7 @@ impl Lowerer {
         let resolved = ResolvedMatch {
             id,
             value,
+            #[cfg(test)]
             value_ty,
             arms: resolved_arms,
             origin: checked_view.origin,
@@ -382,33 +382,5 @@ impl Lowerer {
                 );
             }
         })
-    }
-}
-
-impl LoweredProgram {
-    pub(crate) fn validate_match_arm_children(
-        &self,
-        raw: &MatchArm,
-        resolved: &ResolvedMatchArm,
-    ) -> Result<(), Error> {
-        let children = raw
-            .children
-            .iter()
-            .map(|child| {
-                self.declarations.view_id(child.span()).ok_or_else(|| {
-                    self.invariant_at_origin(
-                        resolved.origin,
-                        "match raw arm child has no shared view ID",
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if children != resolved.children {
-            return Err(self.invariant_at_origin(
-                resolved.origin,
-                "match raw arm children diverged from normalized HIR topology",
-            ));
-        }
-        Ok(())
     }
 }

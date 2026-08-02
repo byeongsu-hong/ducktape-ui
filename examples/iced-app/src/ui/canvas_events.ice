@@ -3,30 +3,30 @@ app CanvasEvents
 use "themes/monochrome.ice"
 
 on ime_opened
-on ime_preedit(value, start, end)
-on ime_commit(value)
-on key_press(value)
-on key_release(value)
-on modifiers(value)
+on ime_preedit(_value, _start, _end)
+on ime_commit(_value)
+on key_press(_value)
+on key_release(_value)
+on modifiers(_value)
 on mouse_entered
 on mouse_left
-on mouse_moved(x, y)
-on mouse_pressed(button)
-on mouse_released(button)
-on mouse_wheel(x, y, pixels)
-on touch_pressed(id, x, y)
-on touch_moved(id, x, y)
-on touch_lifted(id, x, y)
-on touch_lost(id, x, y)
-on window_opened(x, y, width, height)
+on mouse_moved(_x, _y)
+on mouse_pressed(_button)
+on mouse_released(_button)
+on mouse_wheel(_x, _y, _pixels)
+on touch_pressed(_id, _x, _y)
+on touch_moved(_id, _x, _y)
+on touch_lifted(_id, _x, _y)
+on touch_lost(_id, _x, _y)
+on window_opened(_x, _y, _width, _height)
 on window_closed
-on window_moved(x, y)
-on window_resized(width, height)
-on window_rescaled(scale)
+on window_moved(_x, _y)
+on window_resized(_width, _height)
+on window_rescaled(_scale)
 on window_focused
 on window_unfocused
-on file_hovered(path)
-on file_dropped(path)
+on file_hovered(_path)
+on file_dropped(_path)
 on files_left
 
 view

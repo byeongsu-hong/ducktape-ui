@@ -45,7 +45,7 @@ fn render_resolved_regular_layout(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let style = &layout.utility_style;
     let accessibility_key =
         resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
@@ -359,7 +359,7 @@ fn render_resolved_flexbox(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let style = &layout.utility_style;
     let accessibility_key =
         resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
@@ -515,7 +515,7 @@ fn render_resolved_scroll(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let accessibility_key =
         resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
     let child_scope = rendered_child_scope(identity, scope, env, document)?;
@@ -756,7 +756,7 @@ fn render_flex_children(
                             min_cell,
                             "f32::EPSILON",
                             "f32::MAX",
-                            document.hir(),
+                            document,
                             env,
                         )?
                     )
@@ -767,7 +767,7 @@ fn render_flex_children(
                         }
                         _ => None,
                     };
-                    resolved_flex_item_code("__flex_child", options, document.hir(), env)?
+                    resolved_flex_item_code("__flex_child", options, document, env)?
                 };
                 write!(
                     out,

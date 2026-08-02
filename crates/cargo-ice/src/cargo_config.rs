@@ -108,7 +108,6 @@ fn normalize_path(path: &Path) -> PathBuf {
 mod tests {
     use super::{explicit_files, files_with_home};
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn collects_both_explicit_config_path_forms_relative_to_the_invocation_cwd() {
@@ -140,23 +139,15 @@ mod tests {
 
     #[test]
     fn an_existing_config_path_with_an_equals_sign_matches_cargo_file_detection() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let cwd = std::env::temp_dir().join(format!(
-            "cargo-ice-equals-config-{}-{nonce}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&cwd).unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        let cwd = fixture.path();
         let config = cwd.join("extra=config.toml");
         std::fs::write(&config, "[net]\noffline = true\n").unwrap();
 
         assert_eq!(
-            explicit_files(&cwd, &["--config=extra=config.toml".to_owned()]),
+            explicit_files(cwd, &["--config=extra=config.toml".to_owned()]),
             [config]
         );
-        std::fs::remove_dir_all(cwd).unwrap();
     }
 
     #[test]

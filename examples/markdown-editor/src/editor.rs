@@ -3,11 +3,12 @@ use iced::font::{Family, Style as FontStyle, Weight};
 use iced::widget::text_editor::{Action, Content, Cursor, Edit, Motion, Position};
 use iced::{Border, Color, Element, Font, Padding, Pixels, Theme, mouse};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use ui_lang_runtime::rich_text_editor::{ContentVersion, EditorChange, Format, RichTextEditor};
 use unicode_segmentation::UnicodeSegmentation;
@@ -1086,19 +1087,34 @@ fn logical_line_span(text: &str) -> usize {
         .saturating_add(1)
 }
 
-// ponytail: one process-wide history matches this single-document example.
-static HISTORY: LazyLock<Mutex<History>> = LazyLock::new(|| Mutex::new(History::default()));
+thread_local! {
+    static HISTORY: RefCell<History> = RefCell::new(History::default());
+}
 
-fn history() -> MutexGuard<'static, History> {
-    HISTORY
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn with_history<T>(f: impl FnOnce(&History) -> T) -> T {
+    HISTORY.with(|history| f(&history.borrow()))
+}
+
+fn with_history_mut<T>(f: impl FnOnce(&mut History) -> T) -> T {
+    HISTORY.with(|history| f(&mut history.borrow_mut()))
+}
+
+fn record_change(change: Change) {
+    with_history_mut(|history| history.record(change));
+}
+
+#[cfg(not(test))]
+fn change_time() -> Instant {
+    Instant::now()
 }
 
 #[cfg(test)]
-pub fn test_history_lock() -> MutexGuard<'static, ()> {
-    static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+fn change_time() -> Instant {
+    with_history(|history| {
+        history.undo.last().map_or_else(Instant::now, |change| {
+            change.changed_at + Duration::from_millis(1)
+        })
+    })
 }
 
 pub fn track_action(content: &mut Content, action: Action) {
@@ -1139,9 +1155,9 @@ pub fn track_action(content: &mut Content, action: Action) {
             before_id: 0,
             after_id: 0,
             kind: EditKind::Other,
-            changed_at: Instant::now(),
+            changed_at: change_time(),
         };
-        history().record(change);
+        record_change(change);
         return;
     }
 
@@ -1161,9 +1177,9 @@ pub fn track_action(content: &mut Content, action: Action) {
         before_id: 0,
         after_id: 0,
         kind,
-        changed_at: Instant::now(),
+        changed_at: change_time(),
     };
-    history().record(change);
+    record_change(change);
 }
 
 pub fn apply_rich_action(mut content: Content, action: RichEditorAction) -> Content {
@@ -1230,7 +1246,7 @@ fn continue_list(content: &mut Content) -> bool {
             selection: None,
         };
         content.move_to(after);
-        history().record(Change {
+        record_change(Change {
             data: ChangeData::Replace {
                 start,
                 removed: text,
@@ -1241,7 +1257,7 @@ fn continue_list(content: &mut Content) -> bool {
             before_id: 0,
             after_id: 0,
             kind: EditKind::Other,
-            changed_at: Instant::now(),
+            changed_at: change_time(),
         });
         return true;
     }
@@ -1273,7 +1289,7 @@ fn continue_list(content: &mut Content) -> bool {
     }];
     renumber_ordered_tail(content, before.position.line + 2, item, &mut replacements);
     content.move_to(after);
-    history().record(Change {
+    record_change(Change {
         data: if replacements.len() == 1 {
             let replacement = replacements.pop().expect("one list replacement");
             ChangeData::Replace {
@@ -1289,7 +1305,7 @@ fn continue_list(content: &mut Content) -> bool {
         before_id: 0,
         after_id: 0,
         kind: EditKind::Other,
-        changed_at: Instant::now(),
+        changed_at: change_time(),
     });
     true
 }
@@ -1405,7 +1421,7 @@ fn remove_list_marker(content: &mut Content) -> bool {
         selection: None,
     };
     content.move_to(after);
-    history().record(Change {
+    record_change(Change {
         data: ChangeData::Replace {
             start,
             removed,
@@ -1416,7 +1432,7 @@ fn remove_list_marker(content: &mut Content) -> bool {
         before_id: 0,
         after_id: 0,
         kind: EditKind::Other,
-        changed_at: Instant::now(),
+        changed_at: change_time(),
     });
     true
 }
@@ -1471,7 +1487,7 @@ fn edit_list_indent(content: &mut Content, edit: &Edit) -> bool {
         selection: None,
     };
     content.move_to(after);
-    history().record(Change {
+    record_change(Change {
         data: ChangeData::Replace {
             start,
             removed,
@@ -1482,7 +1498,7 @@ fn edit_list_indent(content: &mut Content, edit: &Edit) -> bool {
         before_id: 0,
         after_id: 0,
         kind: EditKind::Other,
-        changed_at: Instant::now(),
+        changed_at: change_time(),
     });
     true
 }
@@ -1673,7 +1689,7 @@ fn complete_fence(content: &mut Content) -> bool {
         selection: None,
     };
     content.move_to(after);
-    history().record(Change {
+    record_change(Change {
         data: ChangeData::Replace {
             start: before.position,
             removed: String::new(),
@@ -1684,7 +1700,7 @@ fn complete_fence(content: &mut Content) -> bool {
         before_id: 0,
         after_id: 0,
         kind: EditKind::Other,
-        changed_at: Instant::now(),
+        changed_at: change_time(),
     });
     true
 }
@@ -1895,15 +1911,14 @@ fn coalesce(previous: &mut Change, next: &Change) -> bool {
 }
 
 pub fn reset_document(source: String) -> Content {
-    *history() = History::default();
+    with_history_mut(|history| *history = History::default());
     Content::with_text(&source)
 }
 
 pub fn undo_document(mut content: Content) -> Content {
-    {
-        let mut history = history();
+    let changed = with_history_mut(|history| {
         let Some(change) = history.undo.pop() else {
-            return content;
+            return false;
         };
         let from = history.content_version();
         let to = ContentVersion::new(history.document_id, change.before_id);
@@ -1912,15 +1927,18 @@ pub fn undo_document(mut content: Content) -> Content {
         history.current_id = change.before_id;
         history.pending_change = pending_change;
         history.redo.push(change);
+        true
+    });
+    if !changed {
+        return content;
     }
     content
 }
 
 pub fn redo_document(mut content: Content) -> Content {
-    {
-        let mut history = history();
+    let changed = with_history_mut(|history| {
         let Some(change) = history.redo.pop() else {
-            return content;
+            return false;
         };
         let from = history.content_version();
         let to = ContentVersion::new(history.document_id, change.after_id);
@@ -1929,6 +1947,10 @@ pub fn redo_document(mut content: Content) -> Content {
         history.current_id = change.after_id;
         history.pending_change = pending_change;
         history.undo.push(change);
+        true
+    });
+    if !changed {
+        return content;
     }
     content
 }
@@ -2037,7 +2059,7 @@ pub fn format_document(mut content: Content, command: String) -> Content {
             selection: before.selection.map(map_position),
         };
         content.move_to(after);
-        history().record(Change {
+        record_change(Change {
             data: ChangeData::Replace {
                 start,
                 removed,
@@ -2048,7 +2070,7 @@ pub fn format_document(mut content: Content, command: String) -> Content {
             before_id: 0,
             after_id: 0,
             kind: EditKind::Other,
-            changed_at: Instant::now(),
+            changed_at: change_time(),
         });
         return content;
     }
@@ -2089,7 +2111,7 @@ pub fn format_document(mut content: Content, command: String) -> Content {
         }
     };
     content.move_to(after);
-    history().record(Change {
+    record_change(Change {
         data: ChangeData::Replace {
             start,
             removed,
@@ -2100,7 +2122,7 @@ pub fn format_document(mut content: Content, command: String) -> Content {
         before_id: 0,
         after_id: 0,
         kind: EditKind::Other,
-        changed_at: Instant::now(),
+        changed_at: change_time(),
     });
     content
 }
@@ -2160,20 +2182,19 @@ pub fn find_document(mut content: Content, query: String, reverse: bool) -> Cont
 }
 
 pub fn can_undo() -> bool {
-    !history().undo.is_empty()
+    with_history(|history| !history.undo.is_empty())
 }
 
 pub fn can_redo() -> bool {
-    !history().redo.is_empty()
+    with_history(|history| !history.redo.is_empty())
 }
 
 pub fn is_dirty() -> bool {
-    let history = history();
-    history.current_id != history.saved_id
+    with_history(|history| history.current_id != history.saved_id)
 }
 
 pub fn revision() -> i64 {
-    i64::try_from(history().current_id).unwrap_or(i64::MAX)
+    with_history(|history| i64::try_from(history.current_id).unwrap_or(i64::MAX))
 }
 
 #[cfg(test)]
@@ -2182,18 +2203,18 @@ fn current_content_version() -> ContentVersion {
 }
 
 fn current_editor_state() -> (ContentVersion, Option<EditorChange>) {
-    let history = history();
-    (history.content_version(), history.pending_change)
+    with_history(|history| (history.content_version(), history.pending_change))
 }
 
 pub fn mark_saved(revision: i64) {
     let Ok(revision) = u64::try_from(revision) else {
         return;
     };
-    let mut history = history();
-    if history.current_id == revision {
-        history.saved_id = revision;
-    }
+    with_history_mut(|history| {
+        if history.current_id == revision {
+            history.saved_id = revision;
+        }
+    });
 }
 
 fn min_position(left: Position, right: Position) -> Position {
@@ -2645,7 +2666,6 @@ mod tests {
 
     #[test]
     fn undo_redo_tracks_deltas_and_saved_state() {
-        let _lock = super::test_history_lock();
         let mut document = reset_document("hello".into());
         mark_saved(revision());
         track_action(&mut document, Action::Edit(Edit::Insert('!')));
@@ -2670,7 +2690,6 @@ mod tests {
 
     #[test]
     fn content_version_tracks_text_states_and_document_replacement() {
-        let _lock = super::test_history_lock();
         let mut document = reset_document("hello".into());
         let initial = current_content_version();
 
@@ -2695,8 +2714,6 @@ mod tests {
 
     #[test]
     fn production_history_emits_exact_editor_change_transitions() {
-        let _lock = super::test_history_lock();
-
         let mut document = reset_document("hello".into());
         let initial = current_content_version();
         track_action(&mut document, Action::Edit(Edit::Insert('!')));
@@ -2765,7 +2782,6 @@ mod tests {
 
     #[test]
     fn batched_frames_expose_only_the_latest_exact_transition() {
-        let _lock = super::test_history_lock();
         let mut document = reset_document("first\nsecond".into());
         let rendered = current_content_version();
 
@@ -2787,7 +2803,6 @@ mod tests {
 
     #[test]
     fn a_new_edit_after_undo_discards_redo() {
-        let _lock = super::test_history_lock();
         let mut document = reset_document("hello".into());
         track_action(&mut document, Action::Edit(Edit::Insert('!')));
         document = undo_document(document);
@@ -2803,7 +2818,6 @@ mod tests {
     fn history_records_native_delete_units() {
         use iced::widget::text_editor::{Cursor, Position};
 
-        let _lock = super::test_history_lock();
         let original = ")\u{301}🙂";
         let cases = [
             (Position { line: 0, column: 0 }, Edit::Delete, "🙂"),
@@ -2882,7 +2896,6 @@ mod tests {
             }
         }
 
-        let _lock = super::test_history_lock();
         let mut document = reset_document("초기🙂\nsecond e\u{301}\n- list\n```\n코드\n```".into());
         let original = document.text();
         let mut state = 0x4d59_5df4_usize;
@@ -2957,7 +2970,6 @@ mod tests {
 
     #[test]
     fn formatting_preserves_a_selected_edit_target() {
-        let _lock = super::test_history_lock();
         let mut document = reset_document("text".into());
         document.move_to(iced::widget::text_editor::Cursor {
             position: iced::widget::text_editor::Position { line: 0, column: 4 },
@@ -3008,7 +3020,6 @@ mod tests {
 
     #[test]
     fn bold_command_toggles_existing_strong_markup() {
-        let _lock = super::test_history_lock();
         let mut document = reset_document("**word**".into());
         document.move_to(iced::widget::text_editor::Cursor {
             position: iced::widget::text_editor::Position { line: 0, column: 4 },
@@ -3022,7 +3033,6 @@ mod tests {
 
     #[test]
     fn enter_after_an_opening_fence_inserts_an_atomic_code_block() {
-        let _lock = super::test_history_lock();
         let mut document = reset_document("```rust".into());
         document.move_to(iced::widget::text_editor::Cursor {
             position: iced::widget::text_editor::Position { line: 0, column: 7 },
@@ -3042,7 +3052,6 @@ mod tests {
 
     #[test]
     fn enter_after_a_closing_fence_stays_a_plain_newline() {
-        let _lock = super::test_history_lock();
         let mut document = reset_document("```\ncode\n```".into());
         document.move_to(iced::widget::text_editor::Cursor {
             position: iced::widget::text_editor::Position { line: 2, column: 3 },
@@ -3056,7 +3065,6 @@ mod tests {
 
     #[test]
     fn enter_reuses_an_existing_closing_fence() {
-        let _lock = super::test_history_lock();
         let mut document = reset_document("```rust\n```".into());
         document.move_to(iced::widget::text_editor::Cursor {
             position: iced::widget::text_editor::Position { line: 0, column: 7 },
@@ -3073,7 +3081,6 @@ mod tests {
     fn list_editing_continues_exits_renumbers_and_nests() {
         use iced::widget::text_editor::{Cursor, Position};
 
-        let _lock = super::test_history_lock();
         let caret = |line, column| Cursor {
             position: Position { line, column },
             selection: None,
@@ -3117,7 +3124,6 @@ mod tests {
     fn tab_in_a_code_block_inserts_four_spaces() {
         use iced::widget::text_editor::{Cursor, Position};
 
-        let _lock = super::test_history_lock();
         let mut document = reset_document("```\ncode\n```".into());
         document.move_to(Cursor {
             position: Position { line: 1, column: 4 },
@@ -3132,7 +3138,6 @@ mod tests {
     fn tab_indents_every_selected_plain_line_and_preserves_the_selection() {
         use iced::widget::text_editor::{Cursor, Position};
 
-        let _lock = super::test_history_lock();
         let mut document = reset_document("one\ntwo\nthree".into());
         document.move_to(Cursor {
             position: Position { line: 2, column: 5 },

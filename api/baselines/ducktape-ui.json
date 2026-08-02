@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fingerprint": "sha256:fe21a6d04044004effcfb36f86074dd14199d63f90e664124a1aeee3aced6948",
+  "fingerprint": "sha256:26a0b6d7f216381d15826fbb6cea927293ad116b61746b0f7242a965245d0486",
   "language_revision": "2.0",
   "package": {
     "name": "ducktape-ui",
@@ -769,34 +769,6 @@
         "lifetime": "retained"
       },
       {
-        "name": "Toast",
-        "props": [
-          {
-            "name": "description",
-            "ty": "str",
-            "access": "read",
-            "required": true,
-            "default": null
-          },
-          {
-            "name": "title",
-            "ty": "str",
-            "access": "read",
-            "required": true,
-            "default": null
-          }
-        ],
-        "events": [],
-        "default_output": "unit",
-        "slots": [
-          {
-            "name": "children",
-            "required": true
-          }
-        ],
-        "lifetime": "retained"
-      },
-      {
         "name": "Tooltip",
         "props": [
           {
@@ -1333,7 +1305,6 @@
         "secondary_fg",
         "shadow_modal",
         "shadow_popover",
-        "shadow_toast",
         "shadow_window",
         "shadow_window_secondary",
         "success",
@@ -1342,8 +1313,6 @@
         "success_fg",
         "success_line",
         "surface",
-        "toast_bg",
-        "toast_fg",
         "warning",
         "warning_bg",
         "warning_dot",

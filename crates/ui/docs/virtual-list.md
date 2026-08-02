@@ -112,7 +112,7 @@ measure variable-height content, retain controls after their key leaves the
 mounted overscan window, support multiple selection, reorder items by drag, or
 add Ice syntax or support an ancestor that scrolls the list vertically.
 Interactive state for keys shared by consecutive mounted windows is retained
-exactly. TreeView and DataGrid can build on this runtime contract;
+exactly. TreeView and DataGrid build on this runtime contract;
 variable-height virtualization and nested vertical scrolling need separate
 measurement, anchoring, and coordinate-context evidence before admission.
 

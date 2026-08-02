@@ -846,6 +846,43 @@ view
 }
 
 #[test]
+fn lowers_pick_list_handle_variants() {
+    let generated = compile(
+        r#"app SelectionHandles
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  choices = ["List", "Board"]
+  selected:str? = none
+on selected(next)
+  selected = some(next)
+view
+  col
+    pick choices selected -> selected _
+      handle arrow size=12.0
+    pick choices selected -> selected _
+      handle static code="◆" size=12.0
+    pick choices selected -> selected _
+      handle none
+"#,
+        "selection-handles.ice",
+    )
+    .unwrap();
+
+    assert!(generated.contains("::iced::widget::pick_list::Handle::Arrow"));
+    assert!(generated.contains("::iced::widget::pick_list::Handle::Static"));
+    assert!(generated.contains("::iced::widget::pick_list::Handle::None"));
+}
+
+#[test]
 fn lowers_searchable_combo_boxes() {
     let source = r#"app Search
 extern crate::backend

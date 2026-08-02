@@ -123,24 +123,25 @@ pub(crate) enum ResolvedUtilityValue {
     Opacity(f32),
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedUtility {
     pub(crate) variant: StyleVariantId,
     pub(crate) property: ResolvedStyleProperty,
     pub(crate) value: ResolvedUtilityValue,
-    pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedRecipe {
+    #[cfg(test)]
     pub(crate) id: RecipeId,
+    #[cfg(test)]
     pub(crate) name: String,
     pub(crate) target: StyleTargetId,
+    #[cfg(test)]
     pub(crate) base: Option<RecipeId>,
+    #[cfg(test)]
     pub(crate) declared_utilities: Vec<ResolvedUtility>,
     pub(crate) style: ResolvedStyle,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -345,51 +346,40 @@ fn utility_property_mask(utility: &ResolvedUtility) -> u64 {
     };
     1 << bit
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedStyleUse {
-    pub(crate) id: StyleUseId,
-    pub(crate) target: StyleTargetId,
+    #[cfg(test)]
     pub(crate) recipes: Vec<RecipeId>,
+    #[cfg(test)]
     pub(crate) utilities: Vec<ResolvedUtility>,
     pub(crate) style: ResolvedStyle,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedThemeToken {
-    pub(crate) id: ThemeTokenId,
     pub(crate) name: String,
-    pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedThemeContract {
-    pub(crate) id: ThemeContractId,
     pub(crate) name: String,
     pub(crate) tokens: Vec<ResolvedThemeToken>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedPaletteColor {
-    pub(crate) token: ThemeTokenId,
     pub(crate) rgba: [u8; 4],
-    pub(crate) origin: OriginId,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedPalette {
     pub(crate) id: PaletteId,
     pub(crate) name: String,
     pub(crate) contract: ThemeContractId,
     pub(crate) colors: Vec<ResolvedPaletteColor>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -398,20 +388,18 @@ pub(crate) enum ResolvedPaletteSelection {
     Dynamic(ResolvedAppExpression),
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedThemeFactory {
     pub(crate) function: ResolvedExternViewFunction,
     pub(crate) arguments: Vec<ResolvedExternViewArgument>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedAppThemeFactory {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<ResolvedAppExpression>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -445,8 +433,6 @@ pub(crate) struct ResolvedGradientStop {
     pub(crate) color: ResolvedThemeColor,
     pub(crate) offset: CheckedExprUseId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedNestedTheme {
     pub(crate) id: ViewId,
@@ -455,8 +441,6 @@ pub(crate) struct ResolvedNestedTheme {
     pub(crate) background: Option<ResolvedBackground>,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedThemeProgram {
     pub(crate) contract: ResolvedThemeContract,
@@ -479,7 +463,7 @@ pub(crate) struct ResolvedNativeThemeTokens {
 #[derive(Debug)]
 pub(super) struct StyleProgram {
     pub(super) theme: ResolvedThemeProgram,
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(super) recipes: Vec<ResolvedRecipe>,
     #[cfg(test)]
     pub(super) style_uses: Vec<ResolvedStyleUse>,
@@ -525,6 +509,7 @@ impl StyleProgramBuilder {
     pub(super) fn finish(self) -> Option<StyleProgram> {
         Some(StyleProgram {
             theme: self.theme?,
+            #[cfg(test)]
             recipes: self.recipes,
             #[cfg(test)]
             style_uses: self.style_uses,
@@ -589,6 +574,7 @@ impl Lowerer {
         let source = self.document.theme_contract.clone().ok_or_else(|| {
             self.invariant(&Span::line(1), "checked document has no theme contract")
         })?;
+        #[cfg(test)]
         let contract_origin = self.push_origin(&source.span, None);
         let contract_id = ThemeContractId(0);
         let tokens = source
@@ -601,17 +587,13 @@ impl Lowerer {
                     index: index as u32,
                 };
                 self.styles.token_ids.insert(name.clone(), id);
-                ResolvedThemeToken {
-                    id,
-                    name: name.clone(),
-                    origin: self.push_origin(&source.span, Some(contract_origin)),
-                }
+                ResolvedThemeToken { name: name.clone() }
             })
             .collect();
         let contract = ResolvedThemeContract {
-            id: contract_id,
             name: source.name.clone(),
             tokens,
+            #[cfg(test)]
             origin: contract_origin,
         };
         let source_palettes = self.document.palettes.clone();
@@ -621,9 +603,7 @@ impl Lowerer {
         }
         let mut palettes = Vec::with_capacity(source_palettes.len());
         for (index, palette) in source_palettes.iter().enumerate() {
-            let declaration = self.declarations.palette(index);
-            let id = declaration.id;
-            let origin = declaration.origin;
+            let id = self.declarations.palette(index).id;
             if palette.contract != source.name {
                 return Err(self.invariant(
                     &palette.span,
@@ -647,7 +627,6 @@ impl Lowerer {
                         )
                     })?;
                     Ok(ResolvedPaletteColor {
-                        token: token.id,
                         rgba: parse_palette_color(value).ok_or_else(|| {
                             self.invariant(
                                 &palette.span,
@@ -657,7 +636,6 @@ impl Lowerer {
                                 ),
                             )
                         })?,
-                        origin: self.push_origin(&palette.span, Some(origin)),
                     })
                 })
                 .collect::<Result<Vec<_>, Error>>()?;
@@ -666,7 +644,6 @@ impl Lowerer {
                 name: palette.name.clone(),
                 contract: contract_id,
                 colors,
-                origin,
             });
         }
         let default_palette = palettes
@@ -777,11 +754,6 @@ impl Lowerer {
         if let Some(factory) = self.facts.app_theme_factory() {
             let function = factory.function;
             let argument_count = factory.arguments;
-            let origin = self
-                .declarations
-                .app_setting_expression(AppSettingExprId::Theme)
-                .ok_or_else(|| self.invariant(&span, "app theme factory has no origin"))?
-                .origin;
             let arguments = (0..argument_count)
                 .map(|index| {
                     self.checked_app_setting_expression(
@@ -794,7 +766,6 @@ impl Lowerer {
                 ResolvedAppThemeFactory {
                     function,
                     arguments,
-                    origin,
                 },
             ));
         }
@@ -833,19 +804,21 @@ impl Lowerer {
                 ));
             }
         }
+        #[cfg(test)]
         let recipe_origins = source
             .iter()
             .map(|recipe| self.push_origin(&recipe.span, None))
             .collect::<Vec<_>>();
         let mut flattened = vec![None; source.len()];
+        #[cfg(test)]
         let mut declared = vec![None; source.len()];
         let mut visiting = HashSet::new();
         for index in 0..source.len() {
             self.flatten_recipe(
                 index,
                 &source,
-                &recipe_origins,
                 &mut flattened,
+                #[cfg(test)]
                 &mut declared,
                 &mut visiting,
             )?;
@@ -855,9 +828,12 @@ impl Lowerer {
             .enumerate()
             .map(|(index, recipe)| {
                 Ok(ResolvedRecipe {
+                    #[cfg(test)]
                     id: RecipeId(index as u32),
+                    #[cfg(test)]
                     name: recipe.name.clone(),
                     target: ResolvedStyleTargetKind::from(recipe.target).id(),
+                    #[cfg(test)]
                     base: recipe
                         .base
                         .as_ref()
@@ -870,12 +846,14 @@ impl Lowerer {
                             })
                         })
                         .transpose()?,
+                    #[cfg(test)]
                     declared_utilities: declared[index].clone().ok_or_else(|| {
                         self.invariant(&recipe.span, "checked recipe body was not normalized")
                     })?,
                     style: flattened[index].clone().ok_or_else(|| {
                         self.invariant(&recipe.span, "checked recipe was not flattened")
                     })?,
+                    #[cfg(test)]
                     origin: recipe_origins[index],
                 })
             })
@@ -887,9 +865,8 @@ impl Lowerer {
         &mut self,
         index: usize,
         source: &[StyleRecipe],
-        origins: &[OriginId],
         flattened: &mut [Option<ResolvedStyle>],
-        declared: &mut [Option<Vec<ResolvedUtility>>],
+        #[cfg(test)] declared: &mut [Option<Vec<ResolvedUtility>>],
         visiting: &mut HashSet<usize>,
     ) -> Result<ResolvedStyle, Error> {
         if let Some(style) = &flattened[index] {
@@ -902,7 +879,6 @@ impl Lowerer {
             ));
         }
         let recipe = &source[index];
-        let origin = origins[index];
         let mut style = if let Some(base) = &recipe.base {
             let id = self.styles.recipe_ids.get(base).copied().ok_or_else(|| {
                 self.invariant(
@@ -924,32 +900,34 @@ impl Lowerer {
             self.flatten_recipe(
                 id.0 as usize,
                 source,
-                origins,
                 flattened,
+                #[cfg(test)]
                 declared,
                 visiting,
             )?
         } else {
             ResolvedStyle::default()
         };
+        #[cfg(test)]
         let mut own = Vec::with_capacity(recipe.utilities.len());
         for utility in &recipe.utilities {
-            let utility = self.resolve_utility(utility, origin, &recipe.span)?;
+            let utility = self.resolve_utility(utility, &recipe.span)?;
             style.apply(&utility);
-            own.push(utility);
+            #[cfg(test)]
+            {
+                own.push(utility);
+            }
         }
         visiting.remove(&index);
-        declared[index] = Some(own);
+        #[cfg(test)]
+        {
+            declared[index] = Some(own);
+        }
         flattened[index] = Some(style.clone());
         Ok(style)
     }
 
-    fn resolve_utility(
-        &self,
-        source: &str,
-        origin: OriginId,
-        span: &Span,
-    ) -> Result<ResolvedUtility, Error> {
+    fn resolve_utility(&self, source: &str, span: &Span) -> Result<ResolvedUtility, Error> {
         let (variant, utility) = match source.split_once(':') {
             Some(("hover", utility)) => (ResolvedStyleVariantKind::Hovered, utility),
             Some(("pressed", utility)) => (ResolvedStyleVariantKind::Pressed, utility),
@@ -1154,7 +1132,6 @@ impl Lowerer {
             variant: variant.id(),
             property: pair.0,
             value: pair.1,
-            origin,
         })
     }
 
@@ -1196,8 +1173,11 @@ impl Lowerer {
         target: ResolvedStyleTargetKind,
         span: &Span,
     ) -> Result<(), Error> {
+        #[cfg(test)]
         let origin = self.push_origin(span, None);
+        #[cfg(test)]
         let mut recipes = Vec::new();
+        #[cfg(test)]
         let mut utilities = Vec::new();
         let mut style = ResolvedStyle::default();
         for source in styles {
@@ -1209,13 +1189,18 @@ impl Lowerer {
                         format!("checked recipe `{source}` has an incompatible target"),
                     ));
                 }
-                recipes.push(id);
+                #[cfg(test)]
+                {
+                    recipes.push(id);
+                }
                 style.overlay(&recipe.style);
             } else {
-                let utility =
-                    self.resolve_utility(crate::unqualified_name(source), origin, span)?;
+                let utility = self.resolve_utility(crate::unqualified_name(source), span)?;
                 style.apply(&utility);
-                utilities.push(utility);
+                #[cfg(test)]
+                {
+                    utilities.push(utility);
+                }
             }
         }
         let id = StyleUseId(self.styles.style_uses.len() as u32);
@@ -1227,11 +1212,12 @@ impl Lowerer {
             return Err(self.invariant(span, "style use source identity is not unique"));
         }
         self.styles.style_uses.push(ResolvedStyleUse {
-            id,
-            target: target.id(),
+            #[cfg(test)]
             recipes,
+            #[cfg(test)]
             utilities,
             style,
+            #[cfg(test)]
             origin,
         });
         Ok(())
@@ -1380,10 +1366,12 @@ impl Lowerer {
                     &declaration,
                     &mut expression_index,
                 )?;
+                #[cfg(test)]
                 let factory_origin = self.push_origin(span, Some(origin));
                 ResolvedThemePreset::Factory(ResolvedThemeFactory {
                     function: self.resolved_extern_view_function(&declaration),
                     arguments,
+                    #[cfg(test)]
                     origin: factory_origin,
                 })
             }

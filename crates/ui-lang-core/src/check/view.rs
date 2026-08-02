@@ -10,7 +10,9 @@ struct ActiveViewAnalyses {
     calls: HashMap<(usize, usize), ComponentCallId>,
     params: HashMap<(String, String), ComponentParamId>,
     analyses: CheckedAnalyses,
+    #[cfg(test)]
     scope_env_overlays: usize,
+    #[cfg(test)]
     scope_env_full_clones: usize,
 }
 
@@ -66,7 +68,9 @@ impl ViewAnalysisGuard {
                 calls,
                 params,
                 analyses: CheckedAnalyses::default(),
+                #[cfg(test)]
                 scope_env_overlays: 0,
+                #[cfg(test)]
                 scope_env_full_clones: 0,
             }));
             assert!(
@@ -80,18 +84,24 @@ impl ViewAnalysisGuard {
     pub(super) fn finish(mut self) -> CheckedAnalyses {
         self.active = false;
         ACTIVE_VIEW_ANALYSES.with(|active| {
-            let mut active = active
+            let active = active
                 .borrow_mut()
                 .take()
                 .expect("view analysis session must be active");
-            active.analyses.view_scope_env_overlays = active.scope_env_overlays;
-            active.analyses.view_scope_env_full_clones = active.scope_env_full_clones;
+            #[cfg(test)]
+            let mut active = active;
+            #[cfg(test)]
+            {
+                active.analyses.view_scope_env_overlays = active.scope_env_overlays;
+                active.analyses.view_scope_env_full_clones = active.scope_env_full_clones;
+            }
             active.analyses
         })
     }
 }
 
 pub(super) fn scoped_view_env(env: &dyn ExprTypeEnv) -> ScopedTypeEnv<'_> {
+    #[cfg(test)]
     ACTIVE_VIEW_ANALYSES.with(|active| {
         if let Some(active) = active.borrow_mut().as_mut() {
             active.scope_env_overlays += 1;
@@ -100,6 +110,7 @@ pub(super) fn scoped_view_env(env: &dyn ExprTypeEnv) -> ScopedTypeEnv<'_> {
     ScopedTypeEnv::new(env)
 }
 
+#[cfg(test)]
 pub(super) fn record_view_env_full_clone() {
     ACTIVE_VIEW_ANALYSES.with(|active| {
         if let Some(active) = active.borrow_mut().as_mut() {

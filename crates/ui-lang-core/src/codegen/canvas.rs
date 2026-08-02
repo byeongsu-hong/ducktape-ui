@@ -153,7 +153,6 @@ pub(in crate::codegen) fn render_canvas(
     };
     let mut code = format!(
         "{{
-#[allow(dead_code)]
 struct __IceCanvasState {{ cache: ::std::cell::OnceCell<::iced::widget::canvas::Cache>, cache_key: ::std::cell::Cell<::std::option::Option<u64>>, inside: bool, {state_fields} }}
 impl ::std::default::Default for __IceCanvasState {{
 fn default() -> Self {{ Self {{ cache: ::std::cell::OnceCell::new(), cache_key: ::std::cell::Cell::new(::std::option::Option::None), inside: false, {state_initials} }} }}

@@ -1,7 +1,3 @@
-// Stable view IDs, route contracts, and origins remain part of the normalized
-// contract even when the current backend does not inspect every field.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

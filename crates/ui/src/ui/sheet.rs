@@ -5,13 +5,14 @@
 //! dismissal without claiming semantics the runtime cannot publish.
 
 use super::direction::{Direction, directed_row};
-use super::modal::{DismissReason, DismissRules, FocusScope, ModalEvent, modal};
+use super::modal::{
+    DismissReason, DismissRules, FocusScope, ModalEvent, event_position, is_escape, modal,
+};
 use super::theme::{Theme, alpha};
 use iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, overlay, renderer, widget,
 };
 use iced::alignment::{Horizontal, Vertical};
-use iced::keyboard::{self, key::Named};
 use iced::widget::text::IntoFragment;
 use iced::widget::{Column, Container, Stack, container, text};
 use iced::{
@@ -199,7 +200,7 @@ const fn default_max_size(side: SheetSide) -> f32 {
     }
 }
 
-fn positive_or(value: f32, fallback: f32) -> f32 {
+pub(super) fn positive_or(value: f32, fallback: f32) -> f32 {
     if value.is_finite() && value > 0.0 {
         value
     } else {
@@ -207,7 +208,7 @@ fn positive_or(value: f32, fallback: f32) -> f32 {
     }
 }
 
-fn finite_nonnegative(value: f32) -> f32 {
+pub(super) fn finite_nonnegative(value: f32) -> f32 {
     if value.is_finite() {
         value.max(0.0)
     } else {
@@ -905,29 +906,6 @@ fn resolve_geometry(viewport: Rectangle, side: SheetSide, config: GeometryConfig
         config.max_viewport_fraction,
         config.offset,
     )
-}
-
-fn is_escape(event: &Event) -> bool {
-    matches!(
-        event,
-        Event::Keyboard(keyboard::Event::KeyPressed {
-            key: keyboard::Key::Named(Named::Escape),
-            repeat: false,
-            ..
-        })
-    )
-}
-
-fn event_position(event: &Event, cursor: mouse::Cursor) -> Option<Point> {
-    match event {
-        Event::Touch(
-            touch::Event::FingerPressed { position, .. }
-            | touch::Event::FingerMoved { position, .. }
-            | touch::Event::FingerLifted { position, .. }
-            | touch::Event::FingerLost { position, .. },
-        ) => Some(*position),
-        _ => cursor.position(),
-    }
 }
 
 fn handle_outside<Message>(

@@ -1,18 +1,127 @@
 use super::focus_control::{self, focus_control};
 use super::theme::{Theme, mix};
-use super::toast::{DEFAULT_DURATION, TOAST_WIDTH, ToastData, ToastDuration, ToastVariant, toast};
 use iced::advanced::widget::Operation as _;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer, widget};
 use iced::alignment::{Horizontal, Vertical};
 use iced::font::Weight;
-use iced::widget::{Container, Id, MouseArea, container, mouse_area, text};
-use iced::{Background, Border, Color, Element, Event, Font, Length, Rectangle, Shadow, Size};
+use iced::widget::{Column, Container, Id, MouseArea, Row, container, mouse_area, text};
+use iced::{
+    Alignment, Background, Border, Color, Element, Event, Font, Length, Rectangle, Shadow, Size,
+};
 use std::collections::VecDeque;
 use std::time::Duration;
 
 const DEFAULT_VISIBLE: usize = 3;
+const DEFAULT_DURATION: Duration = Duration::from_secs(5);
 const DEFAULT_OFFSET: f32 = 24.0;
 const DEFAULT_SWIPE_THRESHOLD: f32 = 80.0;
+const TOAST_WIDTH: f32 = 356.0;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToastVariant {
+    #[default]
+    Default,
+    Success,
+    Info,
+    Warning,
+    Destructive,
+    Loading,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToastDuration {
+    #[default]
+    Default,
+    Auto(Duration),
+    Persistent,
+}
+
+/// Text and timing owned by the application and rendered by [`sonner`].
+///
+/// The title must contain visible text. iced does not currently expose live
+/// region roles, so a notification must not rely on an invisible announcement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToastData {
+    title: String,
+    description: Option<String>,
+    action: Option<String>,
+    variant: ToastVariant,
+    duration: ToastDuration,
+}
+
+impl ToastData {
+    pub fn new(title: impl Into<String>) -> Self {
+        let title = title.into();
+        assert!(
+            !title.trim().is_empty(),
+            "a toast needs a visible status title"
+        );
+
+        Self {
+            title,
+            description: None,
+            action: None,
+            variant: ToastVariant::Default,
+            duration: ToastDuration::Default,
+        }
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn description_text(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    pub fn action_label(&self) -> Option<&str> {
+        self.action.as_deref()
+    }
+
+    pub const fn toast_variant(&self) -> ToastVariant {
+        self.variant
+    }
+
+    pub const fn toast_duration(&self) -> ToastDuration {
+        self.duration
+    }
+
+    #[must_use]
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        let description = description.into();
+        self.description = (!description.trim().is_empty()).then_some(description);
+        self
+    }
+
+    #[must_use]
+    pub fn action(mut self, label: impl Into<String>) -> Self {
+        let label = label.into();
+        assert!(
+            !label.trim().is_empty(),
+            "a toast action needs a visible label"
+        );
+        self.action = Some(label);
+        self
+    }
+
+    #[must_use]
+    pub const fn variant(mut self, variant: ToastVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    #[must_use]
+    pub const fn duration(mut self, duration: Duration) -> Self {
+        self.duration = ToastDuration::Auto(duration);
+        self
+    }
+
+    #[must_use]
+    pub const fn persistent(mut self) -> Self {
+        self.duration = ToastDuration::Persistent;
+        self
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ToastId(u64);
@@ -761,18 +870,24 @@ where
             weight: Weight::Medium,
             ..theme.typography.font
         });
-    let mut surface = toast(title, theme).variant(entry.data.toast_variant());
+    let mut copy = Column::new()
+        .push(title)
+        .spacing(4)
+        .align_x(Horizontal::Left)
+        .width(Length::Fill);
 
     if let Some(description) = entry.data.description_text() {
-        surface = surface.description(
+        copy = copy.push(
             text(description)
                 .size(theme.typography.caption)
                 .line_height(1.4)
                 .color(secondary_text_color(theme, entry.data.toast_variant())),
         );
     }
+
+    let mut actions = Row::new().spacing(8).align_y(Alignment::Center);
     if let (Some(action), Some(label)) = (controls.action, entry.data.action_label()) {
-        surface = surface.action(
+        actions = actions.push(
             action.content(
                 text(label)
                     .size(theme.typography.meta_compact)
@@ -780,15 +895,27 @@ where
             ),
         );
     }
-    surface
-        .dismiss(
-            controls.dismiss.content(
-                text("Dismiss")
-                    .size(theme.typography.meta_compact)
-                    .line_height(1.0),
-            ),
-        )
-        .into()
+    actions = actions.push(
+        controls.dismiss.content(
+            text("Dismiss")
+                .size(theme.typography.meta_compact)
+                .line_height(1.0),
+        ),
+    );
+
+    let variant = entry.data.toast_variant();
+    let theme = *theme;
+    container(
+        Row::new()
+            .push(copy)
+            .push(actions)
+            .spacing(12)
+            .align_y(Alignment::Center),
+    )
+    .width(TOAST_WIDTH)
+    .padding([10, 14])
+    .style(move |_iced_theme| toast_style(&theme, variant))
+    .into()
 }
 
 fn control<Message>(
@@ -976,7 +1103,7 @@ fn control_style(
 }
 
 fn secondary_text_color(theme: &Theme, variant: ToastVariant) -> Color {
-    let appearance = super::toast::style(theme, variant);
+    let appearance = toast_style(theme, variant);
     let background = match appearance.background {
         Some(Background::Color(color)) => color,
         _ => theme.palette.background,
@@ -985,6 +1112,42 @@ fn secondary_text_color(theme: &Theme, variant: ToastVariant) -> Color {
         appearance.text_color.unwrap_or(theme.palette.foreground),
         background,
         0.24,
+    )
+}
+
+fn toast_style(theme: &Theme, variant: ToastVariant) -> iced::widget::container::Style {
+    let palette = theme.palette;
+    let (background, foreground, border) = match variant {
+        ToastVariant::Default => (
+            palette.toast_background,
+            palette.toast_foreground,
+            Color::TRANSPARENT,
+        ),
+        ToastVariant::Success => semantic_tint(theme, palette.success),
+        ToastVariant::Info => semantic_tint(theme, palette.ring),
+        ToastVariant::Warning => semantic_tint(theme, palette.warning),
+        ToastVariant::Destructive => semantic_tint(theme, palette.destructive),
+        ToastVariant::Loading => (palette.muted, palette.foreground, palette.border),
+    };
+
+    iced::widget::container::Style {
+        background: Some(Background::Color(background)),
+        text_color: Some(foreground),
+        border: Border {
+            color: border,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        shadow: theme.elevation.toast,
+        ..Default::default()
+    }
+}
+
+fn semantic_tint(theme: &Theme, tone: Color) -> (Color, Color, Color) {
+    (
+        mix(theme.palette.background, tone, 0.10),
+        theme.palette.foreground,
+        mix(theme.palette.background, tone, 0.32),
     )
 }
 
@@ -998,6 +1161,16 @@ mod tests {
 
     fn seconds(value: u64) -> Duration {
         Duration::from_secs(value)
+    }
+
+    #[test]
+    fn data_requires_visible_status_and_normalizes_empty_description() {
+        let data = ToastData::new("Saved").description("   ");
+        assert_eq!(data.title(), "Saved");
+        assert_eq!(data.description_text(), None);
+
+        assert!(std::panic::catch_unwind(|| ToastData::new(" \n ")).is_err());
+        assert!(std::panic::catch_unwind(|| ToastData::new("Saved").action("")).is_err());
     }
 
     #[test]
@@ -1279,10 +1452,20 @@ mod tests {
                 ToastVariant::Destructive,
                 ToastVariant::Loading,
             ] {
-                let background = match super::super::toast::style(&theme, variant).background {
+                let appearance = toast_style(&theme, variant);
+                let background = match appearance.background {
                     Some(Background::Color(color)) => color,
                     _ => panic!("toast needs a surface"),
                 };
+                assert_eq!(background.a, 1.0);
+                assert!(
+                    contrast(
+                        appearance.text_color.expect("toast needs text color"),
+                        background
+                    ) >= 4.5,
+                    "{} {variant:?}",
+                    theme.name
+                );
                 assert!(
                     contrast(secondary_text_color(&theme, variant), background) >= 4.5,
                     "{} {variant:?}",

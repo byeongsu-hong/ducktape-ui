@@ -523,7 +523,7 @@ fn tab_direction(event: &Event) -> Option<bool> {
     }
 }
 
-fn is_escape(event: &Event) -> bool {
+pub(super) fn is_escape(event: &Event) -> bool {
     matches!(
         event,
         Event::Keyboard(keyboard::Event::KeyPressed {
@@ -534,7 +534,7 @@ fn is_escape(event: &Event) -> bool {
     )
 }
 
-fn event_position(event: &Event, cursor: mouse::Cursor) -> Option<Point> {
+pub(super) fn event_position(event: &Event, cursor: mouse::Cursor) -> Option<Point> {
     match event {
         Event::Touch(
             touch::Event::FingerPressed { position, .. }

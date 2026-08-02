@@ -45,9 +45,10 @@ The lowering boundary has these invariants:
    or `CheckedDocument`.
 3. Code generation does not import checker helpers or repeat semantic
    validation.
-4. Every HIR node carries an `OriginId`. A shared origin table retains the root
-   or imported source location and its origin stack without copying paths into
-   every node.
+4. HIR contracts that emit source markers or backend diagnostics carry an
+   `OriginId`; nodes with no source-mapping role do not retain one. A shared
+   origin table stores root and imported locations without copying paths into
+   each referencing node.
 5. Invalid or unresolved states are not representable in HIR. Lowering either
    produces a complete program or returns a source-mapped diagnostic.
 
@@ -237,7 +238,7 @@ facts fail with `E196`; post-check expression mutation cannot change output. A
 shared visited-set graph validator checks retained expression IDs, ownership,
 topology, and types exactly once per reachable node. Settings contribute only
 their owner policy (app state, derived state, expression bindings, and the
-daemon-window local), so later HIR slices can reuse the same graph contract
+daemon-window local), so every expression owner uses the same graph contract
 without copying a settings-specific semantic checker.
 Structured snapshots, imported extern/origin and direct source-marker tests,
 the existing complete application/window compile surface, and a 5,000 named

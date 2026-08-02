@@ -211,8 +211,6 @@ pub(crate) struct Declaration<T> {
     pub(crate) id: T,
     pub(crate) origin: OriginId,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct StructDeclaration {
     pub(crate) declaration: Declaration<StructId>,
@@ -242,8 +240,6 @@ pub(crate) struct EnumVariantDeclaration {
     pub(crate) name: String,
     pub(crate) payload: Option<Type>,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ExternDeclaration {
     pub(crate) declaration: Declaration<ExternFnId>,

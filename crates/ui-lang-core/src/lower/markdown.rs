@@ -1,7 +1,3 @@
-// Markdown emission consumes only this normalized contract. Raw source names,
-// settings, viewer calls, and routes are retained solely for topology checks.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug)]
@@ -30,6 +26,7 @@ pub(crate) struct ResolvedMarkdownStyle {
     pub(crate) inline_code_border_color: Option<ResolvedThemeColor>,
     pub(crate) inline_code_border_width: Option<CheckedExprUseId>,
     pub(crate) inline_code_radius: ResolvedContainerRadius,
+    #[cfg(test)]
     pub(crate) origin: Option<OriginId>,
 }
 
@@ -416,6 +413,7 @@ impl Lowerer {
                     true,
                 )?,
             },
+            #[cfg(test)]
             origin: style_origin,
         })
     }

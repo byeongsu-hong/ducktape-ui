@@ -1,8 +1,3 @@
-// Themer and Shader emission consume only these normalized contracts. Raw
-// extern names, argument syntax, borrow choices, dimensions, and routes remain
-// available solely for topology validation while lowering.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,16 +10,21 @@ pub(crate) enum ResolvedExternViewArgumentMode {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedExternViewArgument {
     pub(crate) expression: CheckedExprUseId,
+    #[cfg(test)]
     pub(crate) ty: Type,
     pub(crate) mode: ResolvedExternViewArgumentMode,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedExternViewFunction {
+    #[cfg(test)]
     pub(crate) id: ExternFnId,
+    #[cfg(test)]
     pub(crate) name: String,
     pub(crate) rust_path: String,
+    #[cfg(test)]
     pub(crate) declaration_origin: OriginId,
 }
 
@@ -238,9 +238,12 @@ impl Lowerer {
         declaration: &crate::hir::ExternDeclaration,
     ) -> ResolvedExternViewFunction {
         ResolvedExternViewFunction {
+            #[cfg(test)]
             id: declaration.declaration.id,
+            #[cfg(test)]
             name: declaration.name.clone(),
             rust_path: declaration.rust_path.clone(),
+            #[cfg(test)]
             declaration_origin: declaration.declaration.origin,
         }
     }
@@ -260,7 +263,7 @@ impl Lowerer {
             .zip(&declaration.borrowed)
             .enumerate()
         {
-            let retained = self.extern_view_expression(
+            let _retained = self.extern_view_expression(
                 id,
                 origin,
                 interaction,
@@ -278,9 +281,11 @@ impl Lowerer {
             };
             arguments.push(ResolvedExternViewArgument {
                 expression: interaction.option_expressions[index],
+                #[cfg(test)]
                 ty: expected.clone(),
                 mode,
-                origin: retained.origin,
+                #[cfg(test)]
+                origin: _retained.origin,
             });
         }
         Ok(arguments)

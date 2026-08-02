@@ -28,7 +28,7 @@ component Search()
   on loaded(next)
     tasks = next
     loading = false
-  on failed(error)
+  on failed(_error)
     loading = false
   col
     input "Task" <-> query

@@ -2,13 +2,9 @@
 
 ducktape-ui targets the complete [official shadcn/ui component catalog](https://ui.shadcn.com/docs/components), adapted to iced's retained-mode architecture. Parity means the same user-facing job and state model, not a literal port of React or DOM APIs.
 
-Status on 2026-07-17:
-
-**64 / 64 official components are Shipped.**
+**63 / 63 non-deprecated official components are Shipped.**
 
 - **Shipped**: a feature-gated public module exists, is compiled by this repository, and satisfies the current behavior contract.
-- **Planned**: implementation is still required.
-- **Foundation**: a compiled iced module is useful, but it does not yet satisfy the named shadcn behavior contract.
 
 | shadcn/ui component | Status | iced implementation |
 | --- | --- | --- |
@@ -71,7 +67,6 @@ Status on 2026-07-17:
 | Table | Shipped | Native generic table plus header, cell, caption, and frame helpers. |
 | Tabs | Shipped | Controlled panels with one roving trigger focus stop, disabled-aware arrows/Home/End, automatic/manual activation, and horizontal/vertical default/line variants. |
 | Textarea | Shipped | Styled, focusable native text editor with default/invalid states. |
-| Toast | Shipped | Composable semantic legacy toast surface with aligned title/description, action, dismissal, six variants, and caller-owned lifetime. |
 | Toggle | Shipped | Controlled two-state control with centered size geometry, default/outline styles, and complete activation behavior. |
 | Toggle Group | Shipped | Single/multiple controlled toggles with configurable spacing/orientation and disabled-aware roving focus helpers. |
 | Tooltip | Shipped | Noninteractive passive-content tooltip with keyboard focus plus hover, Escape dismissal, exact open/close delays, fixed text metrics/max width, collision placement, and unclipped shadow bounds. |

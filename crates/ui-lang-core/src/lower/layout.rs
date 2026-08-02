@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,7 +112,6 @@ pub(crate) enum ResolvedScrollAnchor {
 pub(crate) struct ResolvedScrollCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +141,7 @@ pub(crate) struct ResolvedScrollStatusStyle {
     pub(crate) gap: Option<ResolvedContainerBackground>,
     pub(crate) auto_scroll: ResolvedContainerSurface,
     pub(crate) auto_scroll_icon: Option<ResolvedThemeColor>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -182,7 +178,6 @@ pub(crate) struct ResolvedLayout {
     pub(crate) id: ViewId,
     pub(crate) mode: ResolvedLayoutMode,
     pub(crate) utility_style: ResolvedStyle,
-    pub(crate) source_line: usize,
     pub(crate) origin: OriginId,
 }
 
@@ -454,7 +449,6 @@ impl Lowerer {
             id,
             mode,
             utility_style,
-            source_line: span.line,
             origin,
         };
         if self.layouts.insert(id, resolved).is_some() {
@@ -561,7 +555,6 @@ impl Lowerer {
                 Ok(ResolvedScrollCustomStyle {
                     function,
                     arguments,
-                    origin,
                 })
             })
             .transpose()?;
@@ -617,7 +610,7 @@ impl Lowerer {
         &self,
         values: &mut LayoutOperands<'_>,
         style: &ScrollStatusStyle,
-        origin: OriginId,
+        _origin: OriginId,
     ) -> Result<ResolvedScrollStatusStyle, Error> {
         let status = match style.status {
             ScrollStatus::Active => ResolvedScrollStatus::Active,
@@ -659,7 +652,8 @@ impl Lowerer {
                 .as_deref()
                 .map(|color| self.resolve_theme_color(color, &style.span))
                 .transpose()?,
-            origin,
+            #[cfg(test)]
+            origin: _origin,
         })
     }
 

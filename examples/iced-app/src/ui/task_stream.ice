@@ -23,7 +23,7 @@ on counted(value)
 on failed(reason)
   error = reason.message
 
-on observed(result)
+on observed(_result)
 
 on runtime_event_received(event)
   runtime_event = event

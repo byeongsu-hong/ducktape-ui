@@ -44,7 +44,6 @@ state
   hover_card_open = false
   card_action = ""
   navigation_route = "Components"
-  toast_visible = true
 
 derived
   catalog_at_start = catalog_page <= 0
@@ -70,4 +69,3 @@ preset test
     hover_card_open = false
     card_action = ""
     navigation_route = "Components"
-    toast_visible = false

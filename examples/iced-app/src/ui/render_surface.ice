@@ -185,7 +185,7 @@ view
     panes #panes w=fill h=80.0
       pane first
         text "Pane child"
-    if true
+    if overlay_open
       text "If child" #if-child
     match choice
       some(value)

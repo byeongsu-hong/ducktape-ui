@@ -11,7 +11,7 @@ pub(in crate::codegen) fn render_container(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.program();
+    let program = document;
     let accessibility_key = resolved_accessibility_key_code(
         identity,
         "container",
@@ -436,7 +436,7 @@ pub(in crate::codegen) fn render_overlay(
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let program = document.program();
+    let program = document;
     let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
     let layer = render_node(layer, document, message, env, &child_scope, slot)?;

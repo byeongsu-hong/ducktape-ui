@@ -4,14 +4,9 @@ pub(crate) use crate::hir::{
     ExpressionId as ResolvedExpressionId, ExpressionNodeId as ResolvedExpressionNodeId,
     LocalId as ResolvedLocalId, ValueRef as ResolvedValueRef,
 };
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedValue {
     pub(crate) name: String,
-    pub(crate) ty: Type,
-    pub(crate) id: ResolvedValueRef,
-    pub(crate) initializer: Option<ResolvedExpressionId>,
     pub(crate) origin: OriginId,
 }
 
@@ -30,15 +25,10 @@ pub(crate) enum ResolvedInitializerCoercion {
     StrToMarkdown,
     StrToEditor,
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedExpressionUse {
     pub(crate) root: ResolvedExpressionNodeId,
-    pub(crate) source: Type,
-    pub(crate) destination: Type,
     pub(crate) coercion: ResolvedInitializerCoercion,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,14 +107,11 @@ pub(crate) enum ResolvedExpressionKind {
         right: ResolvedExpressionNodeId,
     },
 }
-
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedExpressionNode {
     pub(crate) owner: ResolvedExpressionId,
     pub(crate) ty: Type,
     pub(crate) kind: ResolvedExpressionKind,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -146,9 +133,6 @@ impl ResolvedExpressionProgram {
                     value.id,
                     ResolvedValue {
                         name: value.name.clone(),
-                        ty: value.ty.clone(),
-                        id: value.id,
-                        initializer: value.initializer,
                         origin: value.origin,
                     },
                 )
@@ -168,8 +152,6 @@ impl ResolvedExpressionProgram {
             .iter()
             .map(|expression| ResolvedExpressionUse {
                 root: expression.root,
-                source: expression.source.clone(),
-                destination: expression.destination.clone(),
                 coercion: match &expression.coercion {
                     CheckedInitializerCoercion::None => ResolvedInitializerCoercion::None,
                     CheckedInitializerCoercion::ListToCombo { element } => {
@@ -189,7 +171,6 @@ impl ResolvedExpressionProgram {
                         ResolvedInitializerCoercion::StrToEditor
                     }
                 },
-                origin: expression.origin,
             })
             .collect();
         let nodes = facts
@@ -296,7 +277,6 @@ impl ResolvedExpressionProgram {
                         right: *right,
                     },
                 },
-                origin: expression.origin,
             })
             .collect();
         Self {

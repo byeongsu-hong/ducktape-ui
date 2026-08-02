@@ -1,7 +1,3 @@
-// Stable IDs, exact checked types, and physical origins remain part of the
-// normalized contract even when the emitter does not inspect every field.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +75,7 @@ pub(crate) enum ResolvedQrSize {
 pub(crate) struct ResolvedQrCode {
     pub(crate) id: ViewId,
     pub(crate) payload: CheckedExprUseId,
+    #[cfg(test)]
     pub(crate) payload_kind: ResolvedQrPayloadKind,
     pub(crate) encoding: ResolvedQrEncoding,
     pub(crate) size: ResolvedQrSize,
@@ -315,7 +312,7 @@ impl Lowerer {
             span,
             family: "qr",
         };
-        let payload_kind = match &facts.payload_type {
+        let _payload_kind = match &facts.payload_type {
             Type::Str => ResolvedQrPayloadKind::Text,
             Type::Bytes => ResolvedQrPayloadKind::Bytes,
             _ => return Err(self.invariant(span, "qr retained an invalid payload type")),
@@ -343,7 +340,8 @@ impl Lowerer {
         let qr = ResolvedQrCode {
             id,
             payload,
-            payload_kind,
+            #[cfg(test)]
+            payload_kind: _payload_kind,
             encoding,
             size,
             cell: cell

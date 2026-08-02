@@ -132,8 +132,6 @@ pub mod tabs;
 pub mod textarea;
 #[cfg(feature = "theme")]
 pub mod theme;
-#[cfg(feature = "toast")]
-pub mod toast;
 #[cfg(feature = "toggle")]
 pub mod toggle;
 #[cfg(feature = "toggle-group")]

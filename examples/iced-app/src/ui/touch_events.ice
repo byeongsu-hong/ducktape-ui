@@ -2,13 +2,13 @@ app TouchEvents
 
 use "themes/monochrome.ice"
 
-on pressed(finger, x, y)
+on pressed(_finger, _x, _y)
 
-on moved(finger, x, y)
+on moved(_finger, _x, _y)
 
-on lifted(finger, x, y)
+on lifted(_finger, _x, _y)
 
-on lost(finger, x, y)
+on lost(_finger, _x, _y)
 
 subscribe
   touch pressed status=ignored -> pressed _ _ _

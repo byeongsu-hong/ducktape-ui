@@ -1,7 +1,3 @@
-// Stable IDs and origin links are part of the normalized contract even when
-// today's backend does not inspect every retained field.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +26,6 @@ pub(crate) enum ResolvedTooltipPreset {
 pub(crate) struct ResolvedTooltipCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -213,7 +208,6 @@ impl Lowerer {
                 ResolvedTooltipCustomStyle {
                     function,
                     arguments,
-                    origin: checked_view.origin,
                 },
             ))
         } else {

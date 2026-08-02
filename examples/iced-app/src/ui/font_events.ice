@@ -8,7 +8,7 @@ state
 on load
   task font load font_bytes -> loaded _
 
-on loaded(result)
+on loaded(_result)
 
 view
   button "Load font bytes" -> load

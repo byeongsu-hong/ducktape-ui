@@ -8,7 +8,7 @@ pub(in crate::codegen) fn render_text_editor(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let state = resolved_editor_state(editor, env, program)?;
     let Some(StateBinding::App(name)) = &state.state else {
         return Err(program.invariant_at_origin(

@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,7 +11,6 @@ pub(crate) enum ResolvedSelectionShaping {
 pub(crate) struct ResolvedSelectionCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -24,6 +19,7 @@ pub(crate) struct ResolvedMenuStyle {
     pub(crate) surface: Option<ResolvedContainerSurface>,
     pub(crate) selected_text_color: Option<ResolvedThemeColor>,
     pub(crate) selected_background: Option<ResolvedContainerBackground>,
+    #[cfg(test)]
     pub(crate) origin: Option<OriginId>,
 }
 
@@ -32,6 +28,7 @@ pub(crate) struct ResolvedPickListStatusStyle {
     pub(crate) surface: ResolvedContainerSurface,
     pub(crate) placeholder_color: Option<ResolvedThemeColor>,
     pub(crate) handle_color: Option<ResolvedThemeColor>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -50,6 +47,7 @@ pub(crate) struct ResolvedPickListIcon {
     pub(crate) size: Option<CheckedExprUseId>,
     pub(crate) line_height: Option<CheckedExprUseId>,
     pub(crate) shaping: Option<ResolvedSelectionShaping>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -71,6 +69,7 @@ pub(crate) struct ResolvedPickList {
     pub(crate) id: ViewId,
     pub(crate) options: CheckedExprUseId,
     pub(crate) selected: CheckedExprUseId,
+    #[cfg(test)]
     pub(crate) option_type: Type,
     pub(crate) placeholder: Option<CheckedExprUseId>,
     pub(crate) width: Option<ResolvedContainerLength>,
@@ -251,7 +250,6 @@ impl Lowerer {
             config.custom_style.as_ref(),
             facts.style,
             ExternKind::PickListStyle,
-            origin,
             "pick style",
             span,
         )?;
@@ -260,7 +258,6 @@ impl Lowerer {
             config.custom_menu_style.as_ref(),
             facts.menu_style,
             ExternKind::MenuStyle,
-            origin,
             "pick menu style",
             span,
         )?;
@@ -313,6 +310,7 @@ impl Lowerer {
             id,
             options,
             selected,
+            #[cfg(test)]
             option_type: *option_type,
             placeholder,
             width,
@@ -397,7 +395,6 @@ impl Lowerer {
             options.custom_style.as_ref(),
             facts.style,
             ExternKind::InputStyle,
-            origin,
             "combo style",
             span,
         )?;
@@ -406,7 +403,6 @@ impl Lowerer {
             options.custom_menu_style.as_ref(),
             facts.menu_style,
             ExternKind::MenuStyle,
-            origin,
             "combo menu style",
             span,
         )?;
@@ -553,6 +549,7 @@ impl Lowerer {
                 IconSide::Left => ResolvedInputIconSide::Left,
                 IconSide::Right => ResolvedInputIconSide::Right,
             },
+            #[cfg(test)]
             origin,
         })
     }
@@ -581,6 +578,7 @@ impl Lowerer {
                     "handle icon line height",
                 )?,
                 shaping: source.shaping.map(Self::resolve_selection_shaping),
+                #[cfg(test)]
                 origin,
             })
         };
@@ -613,7 +611,6 @@ impl Lowerer {
         source: Option<&ExternCall>,
         checked: Option<ExternFnId>,
         kind: ExternKind,
-        origin: OriginId,
         label: &str,
         span: &Span,
     ) -> Result<Option<ResolvedSelectionCustomStyle>, Error> {
@@ -640,7 +637,6 @@ impl Lowerer {
                 Ok(ResolvedSelectionCustomStyle {
                     function,
                     arguments,
-                    origin,
                 })
             })
             .transpose()?;
@@ -680,6 +676,7 @@ impl Lowerer {
                             .as_deref()
                             .map(|color| self.resolve_theme_color(color, source_span))
                             .transpose()?,
+                        #[cfg(test)]
                         origin,
                     })
                 })
@@ -737,6 +734,7 @@ impl Lowerer {
                             .as_deref()
                             .map(|color| self.resolve_theme_color(color, source_span))
                             .transpose()?,
+                        #[cfg(test)]
                         origin,
                     })
                 })
@@ -796,6 +794,7 @@ impl Lowerer {
             surface,
             selected_text_color,
             selected_background,
+            #[cfg(test)]
             origin,
         })
     }

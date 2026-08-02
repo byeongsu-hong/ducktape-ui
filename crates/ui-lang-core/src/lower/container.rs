@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug)]
@@ -66,7 +62,6 @@ pub(crate) struct ResolvedContainerSurface {
 pub(crate) struct ResolvedContainerCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,7 +132,6 @@ pub(crate) struct ResolvedContainer {
     pub(crate) border_dash: Vec<CheckedExprUseId>,
     pub(crate) flex_item: ResolvedContainerFlexItem,
     pub(crate) utility_style: ResolvedStyle,
-    pub(crate) source_line: usize,
     pub(crate) origin: OriginId,
 }
 
@@ -302,7 +296,6 @@ impl Lowerer {
                 Ok(ResolvedContainerCustomStyle {
                     function,
                     arguments,
-                    origin,
                 })
             })
             .transpose()?;
@@ -343,7 +336,6 @@ impl Lowerer {
             border_dash,
             flex_item,
             utility_style,
-            source_line: span.line,
             origin,
         };
         if self.containers.insert(id, resolved).is_some() {

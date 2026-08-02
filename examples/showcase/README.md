@@ -27,6 +27,6 @@ catalog `MessageScroller`.
 
 ![Embedded component scrollbar reserves shortcut space](screenshots/catalog-command-scroll.png)
 
-![Navigation shell and toast](screenshots/catalog-navigation.png)
+![Navigation shell](screenshots/catalog-navigation.png)
 
 ![Single-column navigation shell](screenshots/catalog-narrow.png)

@@ -1,6 +1,5 @@
 use super::*;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn valid_app() -> &'static str {
     concat!(
@@ -817,15 +816,8 @@ fn replace_symlink(alias: &Path, target: &Path) {
 fn same_content_import_symlink_retarget_invalidates_the_checked_snapshot() {
     use std::os::unix::fs::symlink;
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-import-retarget-{}-{nonce}",
-        std::process::id()
-    ));
-    std::fs::create_dir(&root).unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     let source = root.join("app.ice");
     let alias = root.join("current.ice");
     std::fs::write(
@@ -854,7 +846,6 @@ fn same_content_import_symlink_retarget_invalidates_the_checked_snapshot() {
     let second = compile_dev(&source).unwrap();
     assert!(second.dependencies.contains(&alias));
     assert!(second.dependencies.contains(&root.join("two.ice")));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(unix)]
@@ -863,15 +854,8 @@ fn same_content_import_symlink_retarget_invalidates_the_checked_snapshot() {
 fn same_content_root_symlink_retarget_invalidates_the_checked_snapshot() {
     use std::os::unix::fs::symlink;
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-root-retarget-{}-{nonce}",
-        std::process::id()
-    ));
-    std::fs::create_dir(&root).unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     let alias = root.join("current.ice");
     for target in ["one.ice", "two.ice"] {
         std::fs::write(
@@ -891,22 +875,14 @@ fn same_content_root_symlink_retarget_invalidates_the_checked_snapshot() {
         !stamp_contains_snapshot(&retargeted, &before),
         "the original root path must retain its resolved identity"
     );
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(unix)]
 #[test]
 
 fn watches_only_the_selected_ice_import_graph() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-selected-graph-{}-{nonce}",
-        std::process::id()
-    ));
-    std::fs::create_dir(&root).unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     let selected = root.join("selected.ice");
     let unrelated = root.join("unrelated.ice");
     std::fs::write(&selected, "app Selected\nview\n  text \"selected\"\n").unwrap();
@@ -921,20 +897,13 @@ fn watches_only_the_selected_ice_import_graph() {
         after, before,
         "an unrelated app must not trigger a revision"
     );
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 
 fn watches_regular_host_build_inputs_without_extension_guesses() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-regular-build-input-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     std::fs::create_dir_all(root.join("assets")).unwrap();
     let font = root.join("assets/font.ttf");
     let shader = root.join("assets/effect.wgsl");
@@ -956,20 +925,13 @@ fn watches_regular_host_build_inputs_without_extension_guesses() {
         stamp_at(&after.1, &shader),
         Some(FileStamp::Content(_))
     ));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 
 fn discovered_build_script_directories_track_new_files() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "cargo-ice-build-script-directory-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let base = fixture.path();
     let root = base.join("app");
     let generated_inputs = base.join("external-inputs");
     std::fs::create_dir_all(&root).unwrap();
@@ -987,20 +949,13 @@ fn discovered_build_script_directories_track_new_files() {
         stamp_at(&after.1, &created),
         Some(FileStamp::Content(_))
     ));
-    std::fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
 
 fn embedded_asset_content_and_creation_change_the_build_stamp() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-dev-asset-stamp-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     std::fs::create_dir_all(root.join("assets")).unwrap();
     let source = root.join("app.ice");
     let asset = root.join("assets/icon.rgba");
@@ -1050,20 +1005,13 @@ fn embedded_asset_content_and_creation_change_the_build_stamp() {
         created.1, missing.1,
         "creating a missing asset must rebuild"
     );
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 
 fn unreadable_asset_stamp_is_stable_and_recovers() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-dev-unreadable-asset-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     std::fs::create_dir_all(root.join("assets")).unwrap();
     let source = root.join("app.ice");
     let asset = root.join("assets/icon.rgba");
@@ -1110,20 +1058,13 @@ fn unreadable_asset_stamp_is_stable_and_recovers() {
     ));
     assert_ne!(recovered.1, unreadable.1);
     assert!(first_unreadable_input(&recovered).is_none());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 
 fn unreadable_ice_and_rust_input_stamps_recover() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-dev-unreadable-source-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     std::fs::create_dir_all(root.join("src")).unwrap();
     let source = root.join("app.ice");
     let rust = root.join("src/main.rs");
@@ -1160,7 +1101,6 @@ fn unreadable_ice_and_rust_input_stamps_recover() {
         Some(FileStamp::Content(_))
     ));
     assert!(first_unreadable_input(&recovered_rust).is_none());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1205,14 +1145,8 @@ fn cargo_input_graph_excludes_pinned_workspace_vendor_packages() {
 
 #[test]
 fn watches_transitive_external_cargo_path_dependencies() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "cargo-ice-external-path-deps-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let base = fixture.path();
     let root = base.join("app");
     let backend = base.join("backend");
     let leaf = base.join("leaf");
@@ -1266,20 +1200,13 @@ fn watches_transitive_external_cargo_path_dependencies() {
         stamp_at(&after.1, &leaf_source),
         Some(FileStamp::Content(_))
     ));
-    std::fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
 
 fn build_observation_drops_unrelated_workspace_packages() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-participating-packages-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     let app = root.join("app");
     let used = root.join("used");
     let unrelated = root.join("unrelated");
@@ -1366,20 +1293,13 @@ fn build_observation_drops_unrelated_workspace_packages() {
         narrowed.1,
         "a no-directive build script retains Cargo's broad package semantics"
     );
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 
 fn watches_explicit_external_cargo_config_content_for_both_argument_forms() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "cargo-ice-explicit-config-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let base = fixture.path();
     let root = base.join("app");
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(
@@ -1411,20 +1331,13 @@ fn watches_explicit_external_cargo_config_content_for_both_argument_forms() {
         stamp_at(&after.1, &config),
         Some(FileStamp::Content(_))
     ));
-    std::fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
 
 fn watches_cargo_config_discovered_from_a_nested_invocation_directory() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-nested-config-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     let invocation = root.join("tools/nested");
     let config = root.join("tools/.cargo/config");
     std::fs::create_dir_all(root.join("src")).unwrap();
@@ -1444,20 +1357,13 @@ fn watches_cargo_config_discovered_from_a_nested_invocation_directory() {
     std::fs::write(&config, "[env]\nICE_NESTED_PROBE = \"BBBB\"\n").unwrap();
     let after = dev_stamps_with_cargo_inputs(&invocation, &[], &[], &graph);
     assert_ne!(before.1, after.1);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 
 fn watches_missing_discovered_cargo_config_until_it_is_created() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-created-config-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(
         root.join("Cargo.toml"),
@@ -1480,7 +1386,6 @@ fn watches_missing_discovered_cargo_config_until_it_is_created() {
         Some(FileStamp::Content(_))
     ));
     assert_ne!(missing.1, created.1);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1506,14 +1411,8 @@ fn stable_snapshot_comparison_allows_dependency_set_changes_only() {
 #[test]
 
 fn cargo_fingerprint_forces_generated_bytes_to_rebuild() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-fingerprint-build-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(
         root.join("Cargo.toml"),
@@ -1559,20 +1458,13 @@ fn cargo_fingerprint_forces_generated_bytes_to_rebuild() {
         String::from_utf8_lossy(&second.stderr)
     );
     assert_eq!(second.stdout, b"BBBB");
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 
 fn cargo_build_discovers_rustc_and_build_script_inputs() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "cargo-ice-discovered-inputs-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let base = fixture.path();
     let root = base.join("app");
     let external = base.join("native/input.bin");
     let embedded = root.join("schema.ice");
@@ -1646,20 +1538,13 @@ fn cargo_build_discovers_rustc_and_build_script_inputs() {
         installed,
         "the second pass must converge on the exact discovered-input snapshot"
     );
-    std::fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
 
 fn refuses_to_treat_cargo_aggregate_dep_info_as_rustc_input() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-aggregate-dep-info-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     std::fs::create_dir_all(root.join("deps")).unwrap();
     let executable = root.join("app");
     std::fs::write(&executable, b"final artifact").unwrap();
@@ -1670,20 +1555,13 @@ fn refuses_to_treat_cargo_aggregate_dep_info_as_rustc_input() {
     let error = rustc_dep_info_path(&executable).unwrap_err();
 
     assert!(error.contains("refusing Cargo's aggregate dep-info"));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 
 fn rejects_ambiguous_rustc_artifact_identity() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-ambiguous-artifact-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     std::fs::create_dir_all(root.join("deps")).unwrap();
     let executable = root.join("app");
     std::fs::write(&executable, b"artifact").unwrap();
@@ -1696,20 +1574,13 @@ fn rejects_ambiguous_rustc_artifact_identity() {
     let error = rustc_dep_info_path(&executable).unwrap_err();
 
     assert!(error.contains("multiple rustc artifacts"));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 
 fn failed_analysis_watches_an_existing_external_import_until_it_is_fixed() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "cargo-ice-external-invalid-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let base = fixture.path();
     let root = base.join("workspace");
     let external = base.join("outside/part.ice");
     std::fs::create_dir_all(&root).unwrap();
@@ -1737,20 +1608,13 @@ fn failed_analysis_watches_an_existing_external_import_until_it_is_fixed() {
     assert_ne!(fixed.0, invalid.0);
     let compiled = compile_dev(&source).expect("the fixed external import must compile");
     assert!(compiled.dependencies.contains(&external));
-    std::fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
 
 fn failed_analysis_watches_a_missing_external_import_until_it_is_created() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "cargo-ice-external-missing-{}-{nonce}",
-        std::process::id()
-    ));
+    let fixture = tempfile::tempdir().unwrap();
+    let base = fixture.path();
     let root = base.join("workspace");
     std::fs::create_dir_all(&root).unwrap();
     let source = root.join("app.ice");
@@ -1780,7 +1644,6 @@ fn failed_analysis_watches_a_missing_external_import_until_it_is_created() {
             .dependencies
             .contains(&missing.canonicalize().unwrap())
     );
-    std::fs::remove_dir_all(base).unwrap();
 }
 
 #[cfg(unix)]
@@ -1803,15 +1666,8 @@ fn sigint_shutdown_cleans_child_and_shadow_executable() {
         return;
     }
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "cargo-ice-sigint-cleanup-{}-{nonce}",
-        std::process::id()
-    ));
-    std::fs::create_dir(&root).unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().to_owned();
     std::fs::copy("/bin/sh", root.join("app-sh")).unwrap();
     let test_module = module_path!()
         .split_once("::")
@@ -1875,5 +1731,4 @@ fn sigint_shutdown_cleans_child_and_shadow_executable() {
         .status()
         .unwrap();
     assert!(!app_alive.success(), "SIGINT left the app child alive");
-    std::fs::remove_dir_all(root).unwrap();
 }

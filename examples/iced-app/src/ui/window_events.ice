@@ -8,28 +8,28 @@ state
 
 on frame
 
-on opened(id, x, y, width, height)
+on opened(_id, _x, _y, _width, _height)
 
-on closed(id)
+on closed(_id)
 
-on moved(id, x, y)
+on moved(_id, _x, _y)
 
-on resized(id, width, height)
+on resized(_id, _width, _height)
 
-on rescaled(id, scale)
+on rescaled(_id, _scale)
 
-on close_requested(id)
+on close_requested(_id)
 
 on focused(id)
   last_window = some(id)
 
-on unfocused(id)
+on unfocused(_id)
 
-on file_hovered(id, path)
+on file_hovered(_id, _path)
 
-on file_dropped(id, path)
+on file_dropped(_id, _path)
 
-on files_hovered_left(id)
+on files_hovered_left(_id)
 
 subscribe
   window frame when listen_frames -> frame

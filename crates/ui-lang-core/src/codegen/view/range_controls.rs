@@ -8,7 +8,7 @@ pub(in crate::codegen) fn render_slider(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let value = resolved_expr_use_code(program, slider.value, env, ValueMode::Borrowed)?;
     let min = resolved_expr_use_code(program, slider.min, env, ValueMode::Borrowed)?;
     let max = resolved_expr_use_code(program, slider.max, env, ValueMode::Borrowed)?;
@@ -80,7 +80,7 @@ pub(in crate::codegen) fn render_progress(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let value = resolved_expr_use_code(program, progress.value, env, ValueMode::Owned)?;
     let min = resolved_expr_use_code(program, progress.min, env, ValueMode::Owned)?;
     let max = resolved_expr_use_code(program, progress.max, env, ValueMode::Owned)?;

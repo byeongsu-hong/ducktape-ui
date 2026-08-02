@@ -1,7 +1,3 @@
-// Stable IDs, lexical bindings, and origin links are retained even when one
-// backend does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,7 +136,6 @@ pub(crate) struct ResolvedPaneGridStyle {
 pub(crate) struct ResolvedPaneCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -210,7 +205,7 @@ impl Lowerer {
         let custom_style = checked
             .custom_style
             .as_ref()
-            .map(|style| self.resolve_pane_custom_style(style, checked.origin, span))
+            .map(|style| self.resolve_pane_custom_style(style, span))
             .transpose()?;
         let style = self.resolve_pane_grid_style(&checked.style, checked.origin, span)?;
         let click = checked
@@ -323,7 +318,6 @@ impl Lowerer {
     fn resolve_pane_custom_style(
         &self,
         style: &crate::check::CheckedPaneCustomStyle,
-        origin: OriginId,
         span: &Span,
     ) -> Result<ResolvedPaneCustomStyle, Error> {
         let function = self
@@ -341,7 +335,6 @@ impl Lowerer {
         Ok(ResolvedPaneCustomStyle {
             function: style.function,
             arguments: style.arguments.clone(),
-            origin,
         })
     }
 

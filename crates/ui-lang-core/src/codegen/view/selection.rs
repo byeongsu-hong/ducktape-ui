@@ -8,7 +8,7 @@ pub(in crate::codegen) fn render_pick_list(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let options = resolved_expr_use_code(program, pick.options, env, ValueMode::Owned)?;
     let selected = resolved_expr_use_code(program, pick.selected, env, ValueMode::Owned)?;
     let callback = resolved_interaction_route_callback_code(
@@ -117,7 +117,7 @@ pub(in crate::codegen) fn render_combo_box(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let program = document.hir();
+    let program = document;
     let state = resolved_combo_state(combo, env, program)?;
     let selected = resolved_expr_use_code(program, combo.selected, env, ValueMode::Owned)?;
     let callback = resolved_interaction_route_callback_code(

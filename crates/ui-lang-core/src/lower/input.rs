@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +20,7 @@ pub(crate) struct ResolvedInputIcon {
     pub(crate) size: Option<CheckedExprUseId>,
     pub(crate) spacing: Option<CheckedExprUseId>,
     pub(crate) side: ResolvedInputIconSide,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -31,7 +28,6 @@ pub(crate) struct ResolvedInputIcon {
 pub(crate) struct ResolvedInputCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +37,7 @@ pub(crate) struct ResolvedInputStatusStyle {
     pub(crate) placeholder_color: Option<ResolvedThemeColor>,
     pub(crate) value_color: Option<ResolvedThemeColor>,
     pub(crate) selection_color: Option<ResolvedThemeColor>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -235,7 +232,6 @@ impl Lowerer {
                 Ok(ResolvedInputCustomStyle {
                     function,
                     arguments,
-                    origin,
                 })
             })
             .transpose()?;
@@ -381,6 +377,7 @@ impl Lowerer {
                 IconSide::Left => ResolvedInputIconSide::Left,
                 IconSide::Right => ResolvedInputIconSide::Right,
             },
+            #[cfg(test)]
             origin,
         })
     }
@@ -444,7 +441,7 @@ impl Lowerer {
         &self,
         values: &mut InputOperands<'_>,
         status: &TextInputStatusStyle,
-        origin: OriginId,
+        _origin: OriginId,
         span: &Span,
     ) -> Result<ResolvedInputStatusStyle, Error> {
         Ok(ResolvedInputStatusStyle {
@@ -469,7 +466,8 @@ impl Lowerer {
                 .as_deref()
                 .map(|color| self.resolve_theme_color(color, span))
                 .transpose()?,
-            origin,
+            #[cfg(test)]
+            origin: _origin,
         })
     }
 

@@ -1,8 +1,3 @@
-// Extern component emission consumes only this normalized contract. Raw
-// function names, argument syntax, borrow decisions, and routes are retained
-// solely for topology validation while lowering.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,16 +10,21 @@ pub(crate) enum ResolvedExternComponentArgumentMode {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedExternComponentArgument {
     pub(crate) expression: CheckedExprUseId,
+    #[cfg(test)]
     pub(crate) ty: Type,
     pub(crate) mode: ResolvedExternComponentArgumentMode,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedExternComponentFunction {
+    #[cfg(test)]
     pub(crate) id: ExternFnId,
+    #[cfg(test)]
     pub(crate) name: String,
     pub(crate) rust_path: String,
+    #[cfg(test)]
     pub(crate) declaration_origin: OriginId,
 }
 
@@ -49,6 +49,7 @@ pub(crate) struct ResolvedExternComponent {
     pub(crate) id: ViewId,
     pub(crate) function: ResolvedExternComponentFunction,
     pub(crate) arguments: Vec<ResolvedExternComponentArgument>,
+    #[cfg(test)]
     pub(crate) output: Type,
     pub(crate) route: Option<ResolvedInteractionRoute>,
     pub(crate) origin: OriginId,
@@ -205,8 +206,10 @@ impl Lowerer {
             let mode = extern_component_argument_mode(*borrowed, expected);
             arguments.push(ResolvedExternComponentArgument {
                 expression: *expression,
+                #[cfg(test)]
                 ty: expected.clone(),
                 mode,
+                #[cfg(test)]
                 origin: retained.origin,
             });
         }
@@ -233,12 +236,16 @@ impl Lowerer {
         let resolved = ResolvedExternComponent {
             id,
             function: ResolvedExternComponentFunction {
+                #[cfg(test)]
                 id: checked.function,
+                #[cfg(test)]
                 name: declaration.name.clone(),
                 rust_path: declaration.rust_path.clone(),
+                #[cfg(test)]
                 declaration_origin: declaration.declaration.origin,
             },
             arguments,
+            #[cfg(test)]
             output: checked.output,
             route: resolved_route,
             origin,

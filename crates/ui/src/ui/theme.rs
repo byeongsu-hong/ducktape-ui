@@ -738,8 +738,6 @@ mod tests {
             ("warning_dot", palette.warning_dot),
             ("avatar_bg", palette.avatar),
             ("avatar_fg", palette.avatar_foreground),
-            ("toast_bg", palette.toast_background),
-            ("toast_fg", palette.toast_foreground),
             ("border", palette.border),
             ("control_line", palette.control_line),
             ("input", palette.input),
@@ -792,7 +790,6 @@ mod tests {
 
         for (name, shadow) in [
             ("shadow_popover", elevation.popover),
-            ("shadow_toast", elevation.toast),
             ("shadow_modal", elevation.modal),
             ("shadow_window", elevation.app_window[0]),
             ("shadow_window_secondary", elevation.app_window[1]),
@@ -840,17 +837,13 @@ mod tests {
         assert!(components.contains(
             "      w=30.0\n      h=30.0\n      align-x=center\n      align-y=center\n      bg=avatar_bg"
         ));
-        assert!(
-            components
-                .contains("      shadow=shadow_toast\n      shadow-y=6.0\n      shadow-blur=18.0")
-        );
         assert_eq!(
             components
                 .matches(
                     "          w=6.0\n          h=6.0\n          bg=success_dot\n          r=3.0"
                 )
                 .count(),
-            2
+            1
         );
         assert!(
             components

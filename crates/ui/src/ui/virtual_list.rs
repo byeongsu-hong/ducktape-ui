@@ -52,7 +52,7 @@ where
     )
 }
 
-fn row_style(theme: &Theme, selected: bool) -> container::Style {
+pub(crate) fn row_style(theme: &Theme, selected: bool) -> container::Style {
     container::Style {
         background: selected.then_some(Background::Color(theme.palette.accent)),
         text_color: Some(if selected {

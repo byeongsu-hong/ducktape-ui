@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,12 +22,12 @@ pub(crate) enum ResolvedButtonPreset {
 pub(crate) struct ResolvedButtonCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedButtonStatusStyle {
     pub(crate) surface: ResolvedContainerSurface,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -227,7 +223,6 @@ impl Lowerer {
                 Ok(ResolvedButtonCustomStyle {
                     function,
                     arguments,
-                    origin,
                 })
             })
             .transpose()?;
@@ -353,6 +348,7 @@ impl Lowerer {
                     }
                     Ok(ResolvedButtonStatusStyle {
                         surface: self.resolve_button_surface(values, &source.options, span)?,
+                        #[cfg(test)]
                         origin,
                     })
                 })

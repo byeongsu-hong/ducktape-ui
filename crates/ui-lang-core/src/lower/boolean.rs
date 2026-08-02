@@ -1,7 +1,3 @@
-// Stable IDs and origins are retained for validation even when the emitter
-// does not inspect every field directly.
-#![allow(dead_code)]
-
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,12 +18,14 @@ pub(crate) enum ResolvedCheckboxPreset {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedBooleanColor {
     pub(crate) value: ResolvedThemeColor,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedBooleanBackground {
     pub(crate) value: ResolvedContainerBackground,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -35,6 +33,7 @@ pub(crate) struct ResolvedBooleanBackground {
 pub(crate) struct ResolvedBooleanCustomStyle {
     pub(crate) function: ExternFnId,
     pub(crate) arguments: Vec<CheckedExprUseId>,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -44,7 +43,6 @@ pub(crate) struct ResolvedBooleanIcon {
     pub(crate) size: Option<CheckedExprUseId>,
     pub(crate) line_height: Option<CheckedExprUseId>,
     pub(crate) shaping: Option<ResolvedTextShaping>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +57,7 @@ pub(crate) struct ResolvedBooleanOptions {
     pub(crate) shaping: Option<ResolvedTextShaping>,
     pub(crate) wrapping: Option<ResolvedTextWrapping>,
     pub(crate) font: Option<ResolvedTextFont>,
+    #[cfg(test)]
     pub(crate) font_origin: Option<OriginId>,
     pub(crate) alignment: Option<ResolvedTextAlignment>,
     pub(crate) icon: Option<ResolvedBooleanIcon>,
@@ -72,6 +71,7 @@ pub(crate) struct ResolvedCheckboxStatusStyle {
     pub(crate) border_color: Option<ResolvedBooleanColor>,
     pub(crate) border_width: Option<CheckedExprUseId>,
     pub(crate) radius: ResolvedContainerRadius,
+    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -98,7 +98,6 @@ pub(crate) struct ResolvedTogglerStatusStyle {
     pub(crate) text_color: Option<ResolvedBooleanColor>,
     pub(crate) radius: ResolvedContainerRadius,
     pub(crate) padding_ratio: Option<CheckedExprUseId>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -119,7 +118,6 @@ pub(crate) struct ResolvedRadioStatusStyle {
     pub(crate) border_color: Option<ResolvedBooleanColor>,
     pub(crate) border_width: Option<CheckedExprUseId>,
     pub(crate) text_color: Option<ResolvedBooleanColor>,
-    pub(crate) origin: OriginId,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -729,7 +727,6 @@ impl Lowerer {
             size: icon_size,
             line_height: icon_line_height,
             shaping: options.icon_shaping.map(Self::resolve_boolean_shaping),
-            origin,
         });
         if icon.is_none() && (icon_size.is_some() || icon_line_height.is_some()) {
             return Err(self.invariant(span, "boolean icon operands survived without an icon"));
@@ -745,6 +742,7 @@ impl Lowerer {
             shaping: options.shaping.map(Self::resolve_boolean_shaping),
             wrapping: options.wrapping.map(Self::resolve_boolean_wrapping),
             font,
+            #[cfg(test)]
             font_origin,
             alignment: options.alignment.map(Self::resolve_boolean_alignment),
             icon,
@@ -811,6 +809,7 @@ impl Lowerer {
                 Ok(Some(ResolvedBooleanCustomStyle {
                     function,
                     arguments,
+                    #[cfg(test)]
                     origin: style_origin,
                 }))
             }
@@ -856,6 +855,7 @@ impl Lowerer {
                 ],
                 origin,
             )?,
+            #[cfg(test)]
             origin,
         })
     }
@@ -920,7 +920,6 @@ impl Lowerer {
                 "toggler padding ratio",
                 origin,
             )?,
-            origin,
         })
     }
 
@@ -951,7 +950,6 @@ impl Lowerer {
                 origin,
             )?,
             text_color: self.resolve_boolean_color(source.text_color.as_deref(), origin, span)?,
-            origin,
         })
     }
 
@@ -983,7 +981,11 @@ impl Lowerer {
                         ResolvedContainerBackground::Linear { angle, stops }
                     }
                 };
-                Ok(ResolvedBooleanBackground { value, origin })
+                Ok(ResolvedBooleanBackground {
+                    value,
+                    #[cfg(test)]
+                    origin,
+                })
             })
             .transpose()
     }
@@ -991,14 +993,15 @@ impl Lowerer {
     fn resolve_boolean_color(
         &self,
         source: Option<&str>,
-        origin: OriginId,
+        _origin: OriginId,
         span: &Span,
     ) -> Result<Option<ResolvedBooleanColor>, Error> {
         source
             .map(|source| {
                 Ok(ResolvedBooleanColor {
                     value: self.resolve_theme_color(source, span)?,
-                    origin,
+                    #[cfg(test)]
+                    origin: _origin,
                 })
             })
             .transpose()

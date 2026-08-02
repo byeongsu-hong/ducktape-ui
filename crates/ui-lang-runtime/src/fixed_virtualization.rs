@@ -1,8 +1,9 @@
 //! Private fixed-height virtualization machinery shared by product widgets.
 //!
 //! This module deliberately owns no widget roles, input bindings, messages, or
-//! public API. A list and a future tree may share row windows, stable keyed
-//! identity, and scroll synchronization while defining different semantics.
+//! public API. Lists, trees, grids, and log timelines share row windows,
+//! stable keyed identity, and scroll synchronization while defining different
+//! semantics.
 
 use std::collections::HashMap;
 use std::hash::Hash;

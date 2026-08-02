@@ -48,15 +48,15 @@ on detail_mode_changed(next)
 on close_about
   about_open = false
 
-on about_link(url)
+on about_link(_url)
 
-on pane_clicked(name)
+on pane_clicked(_name)
 
-on canvas_button(button)
+on canvas_button(_button)
 
-on canvas_key(value)
+on canvas_key(_value)
 
-on shader_hovered(active)
+on shader_hovered(_active)
 
 on maximize_details
   pane #workspace maximize details
@@ -91,4 +91,4 @@ on inspect_workspace
 on inspect_adjacent
   pane #workspace adjacent tasks right -> pane_observed _
 
-on pane_observed(name)
+on pane_observed(_name)

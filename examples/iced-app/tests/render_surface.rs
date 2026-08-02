@@ -1,6 +1,7 @@
-#[allow(dead_code)]
 #[path = "../src/backend/shader.rs"]
 mod shader;
+
+const _: fn(&dyn iced::window::Window, String) -> String = shader::describe_window;
 
 mod backend {
     pub use super::shader::status_shader;

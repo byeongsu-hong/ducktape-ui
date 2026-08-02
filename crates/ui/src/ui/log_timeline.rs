@@ -4,8 +4,9 @@
 //! not the variable-height, measured transcript behavior of `MessageScroller`.
 
 use super::theme::Theme;
+use super::virtual_list::row_style;
 use iced::widget::container;
-use iced::{Background, Border, Element, Length};
+use iced::{Element, Length};
 use std::hash::Hash;
 
 pub use ui_lang_runtime::{
@@ -56,26 +57,9 @@ where
     )
 }
 
-fn row_style(theme: &Theme, selected: bool) -> container::Style {
-    container::Style {
-        background: selected.then_some(Background::Color(theme.palette.accent)),
-        text_color: Some(if selected {
-            theme.palette.accent_foreground
-        } else {
-            theme.palette.foreground
-        }),
-        border: Border {
-            color: theme.palette.border,
-            width: 0.0,
-            radius: theme.radius.row.into(),
-        },
-        ..container::Style::default()
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::theme::{DARK, LIGHT};
+    use super::super::theme::LIGHT;
     use super::*;
     use iced::widget::text;
 
@@ -105,20 +89,5 @@ mod tests {
 
         assert!(!element.as_widget().children().is_empty());
         assert_eq!(state.inspect(config).list.logical_items, 100_000);
-    }
-
-    #[test]
-    fn selected_rows_use_semantic_tokens_in_both_themes() {
-        for theme in [LIGHT, DARK] {
-            let selected = row_style(&theme, true);
-            assert_eq!(
-                selected.background,
-                Some(Background::Color(theme.palette.accent))
-            );
-            assert_eq!(selected.text_color, Some(theme.palette.accent_foreground));
-            let idle = row_style(&theme, false);
-            assert_eq!(idle.background, None);
-            assert_eq!(idle.text_color, Some(theme.palette.foreground));
-        }
     }
 }

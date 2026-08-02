@@ -131,23 +131,11 @@ struct GenerationTransaction {
 
 /// Compiles one manifest-relative Ice root into Cargo's `OUT_DIR`.
 pub fn compile(path: impl AsRef<Path>) -> Result<(), Error> {
-    compile_many([path])
-}
-
-/// Compiles manifest-relative Ice roots into Cargo's `OUT_DIR`.
-pub fn compile_many<I, P>(paths: I) -> Result<(), Error>
-where
-    I: IntoIterator<Item = P>,
-    P: AsRef<Path>,
-{
-    let paths = paths
-        .into_iter()
-        .map(|path| path.as_ref().to_owned())
-        .collect::<Vec<_>>();
+    let path = path.as_ref().to_owned();
     compiler_thread(move || {
         let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
         let out_dir = cargo_path("OUT_DIR")?;
-        compile_many_at(&manifest, &out_dir, &paths)
+        compile_many_at(&manifest, &out_dir, std::slice::from_ref(&path))
     })
 }
 

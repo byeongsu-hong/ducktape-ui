@@ -1835,7 +1835,6 @@ fn pie_path(center: Point, outer: f32, inner: f32, start: f32, end: f32) -> Path
 }
 
 fn reverse_arc_points(center: Point, radius: f32, start: f32, end: f32) -> Vec<Point> {
-    // ponytail: 64 segments per circle; use Bezier arcs if zoomable charts need subpixel curves.
     let segments = (((end - start).abs() / TAU * 64.0).ceil() as usize).max(2);
     (1..=segments)
         .map(|step| {

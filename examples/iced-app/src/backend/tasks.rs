@@ -1,8 +1,6 @@
 use super::*;
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
-// ponytail: a process-wide lock is enough for the sample; replace it when
-// persistence or concurrent write throughput becomes a real requirement.
 static TASKS: LazyLock<Mutex<Vec<Task>>> = LazyLock::new(|| {
     Mutex::new(vec![Task {
         id: 1,

@@ -1105,8 +1105,7 @@ fn align_item(align: AlignItems, free: f32, wrap_reverse: bool, row: bool) -> f3
             }
         }
         AlignItems::Center => free / 2.0,
-        // ponytail: Iced exposes no child baseline; bottom alignment is the closest
-        // measurable fallback until Widget exposes baseline metrics.
+        // Iced exposes no child baseline metric, so row baselines align to the bottom.
         AlignItems::Baseline if row => free,
         AlignItems::Baseline => 0.0,
     }

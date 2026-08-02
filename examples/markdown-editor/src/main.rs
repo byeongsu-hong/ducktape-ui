@@ -15,7 +15,6 @@ mod tests {
 
     #[test]
     fn large_document_edits_stay_in_the_native_buffer() {
-        let _lock = crate::editor::test_history_lock();
         let (mut app, _) = MarkdownEditor::__boot();
         let source = "A native editor line.\n".repeat(10_000);
         app.document = Content::with_text(&source);
@@ -40,7 +39,6 @@ mod tests {
 
     #[test]
     fn app_undo_and_redo_apply_grouped_typing() {
-        let _lock = crate::editor::test_history_lock();
         let (mut app, _) = MarkdownEditor::__boot();
         app.document = crate::editor::reset_document("hello".into());
         app.document.move_to(Cursor {
@@ -64,7 +62,6 @@ mod tests {
 
     #[test]
     fn clicking_a_shell_action_clears_editor_selection() {
-        let _lock = crate::editor::test_history_lock();
         let (mut app, _) = MarkdownEditor::__boot();
         app.document = crate::editor::reset_document("hello".into());
         app.document.move_to(Cursor {

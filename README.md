@@ -5,7 +5,7 @@ Ice is a small, statically checked frontend language that compiles to
 compact `.ice` files; Rust keeps domain rules, I/O, and custom platform code.
 
 ```text
-.ice source -> parser -> semantic checker -> checked AST -> generated Rust -> iced
+.ice source -> parser -> semantic checker -> normalized HIR -> generated Rust -> iced
 ```
 
 Normal builds have no source parser or general runtime interpreter.
@@ -15,7 +15,9 @@ restarts use the same ahead-of-time build path; applications never parse or
 interpret Ice source at runtime.
 
 Successful analysis produces a nominal `CheckedDocument`; only the checker can
-construct it, and the Iced backend has no unchecked `Document` entry point.
+construct it. Lowering consumes that boundary and the Iced backend accepts only
+the owned `LoweredProgram`. Release code generation carries neither the source
+AST nor checker facts.
 Generated applications also declare `iced = "=0.14.0"` and
 `ui-lang-runtime = "=0.1.0"` directly because generated Rust refers to their
 public crate paths, plus

@@ -127,7 +127,6 @@ fn run() -> Result<(), String> {
         "test" => {
             let roots = root_files(&files)?;
             analyze(&roots, &files)?;
-            cargo(&["check", "--workspace", "--tests"])?;
             let mut cargo_args = vec!["test", "--workspace"];
             cargo_args.extend(trailing.iter().map(String::as_str));
             cargo(&cargo_args)?;
@@ -141,7 +140,6 @@ fn run() -> Result<(), String> {
             let roots = root_files(&files)?;
             analyze(&roots, &files)?;
             compat::verify(&root)?;
-            cargo(&["check", "-p", "iced-app", "--tests"])?;
             cargo(&["test", "-p", "iced-app"])?;
         }
         _ => unreachable!("commands were validated before scanning the workspace"),
@@ -157,8 +155,7 @@ fn valid_command_args(command: &str, trailing: &[String]) -> bool {
             trailing.len() == 1
                 || trailing.len() >= 2 && trailing.get(1).is_some_and(|arg| arg == "--")
         }
-        "test" | "inspect" | "diff" | "review" => true,
-        "api" => api::valid_args(trailing),
+        "test" | "inspect" | "diff" | "api" | "review" => true,
         "schema" | "lsp" | "help" | "--help" | "-h" | "check" | "clippy" | "compat" => {
             trailing.is_empty()
         }
@@ -532,7 +529,6 @@ mod tests {
     };
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn ignores_build_and_fixture_directories() {
@@ -560,18 +556,6 @@ mod tests {
         ));
         assert!(valid_command_args("expand", &["app.ice".into()]));
         assert!(!valid_command_args("expand", &[]));
-        assert!(valid_command_args("api", &["public.ice".into()]));
-        assert!(valid_command_args(
-            "api",
-            &[
-                "diff".into(),
-                "baseline.json".into(),
-                "current.json".into(),
-                "--format".into(),
-                "json".into(),
-            ]
-        ));
-        assert!(!valid_command_args("api", &["diff".into()]));
     }
 
     #[test]
@@ -617,15 +601,8 @@ mod tests {
 
     #[test]
     fn renders_rustc_diagnostics_against_ice_syntax() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "cargo-ice-source-map-{}-{nonce}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&directory).unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        let directory = fixture.path();
         let source = directory.join("app.ice");
         let generated = directory.join("generated.rs");
         std::fs::write(&source, "app Demo\nview\n  text moved_value\n").unwrap();
@@ -661,24 +638,18 @@ mod tests {
         assert!(rendered.contains("3 |   text moved_value"));
         assert!(rendered.contains("error[E0382]"));
         assert!(rendered.contains("generated Rust location"));
-        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
     fn does_not_follow_symlinks() {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("cargo-ice-files-{nonce}"));
-        std::fs::create_dir(&root).unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
         let app = root.join("app.ice");
         std::fs::write(&app, "app Example").unwrap();
-        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+        std::os::unix::fs::symlink(root, root.join("loop")).unwrap();
         std::os::unix::fs::symlink(&app, root.join("linked.ice")).unwrap();
 
-        assert_eq!(ice_files(&root).unwrap(), [app]);
-        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(ice_files(root).unwrap(), [app]);
     }
 }
