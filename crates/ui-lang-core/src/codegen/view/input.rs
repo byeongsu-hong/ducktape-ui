@@ -217,7 +217,7 @@ fn resolved_input_state<'a>(
     Ok(state)
 }
 
-fn resolved_input_font_code(font: &ResolvedTextFont) -> String {
+pub(super) fn resolved_input_font_code(font: &ResolvedTextFont) -> String {
     match font {
         ResolvedTextFont::Default => "::iced::Font::DEFAULT".into(),
         ResolvedTextFont::Monospace => "::iced::Font::MONOSPACE".into(),
@@ -387,7 +387,7 @@ fn resolved_input_style_code(
     Ok(code)
 }
 
-fn append_resolved_input_status(
+pub(super) fn append_resolved_input_status(
     code: &mut String,
     status: &ResolvedInputStatusStyle,
     program: &LoweredProgram,

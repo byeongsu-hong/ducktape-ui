@@ -45,6 +45,13 @@ pub struct CheckedDocument {
     reachable_components: HashSet<String>,
     reachable_handlers: HashSet<String>,
     controlled_inputs: Vec<hir::AppStateId>,
+    controlled_editors: Vec<CheckedControlledEditor>,
+}
+
+#[derive(Clone, Debug)]
+struct CheckedControlledEditor {
+    state: hir::AppStateId,
+    action: Option<hir::ExternFnId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -150,6 +157,7 @@ impl CheckedDocument {
         reachable_components: HashSet<String>,
         reachable_handlers: HashSet<String>,
         controlled_inputs: Vec<hir::AppStateId>,
+        controlled_editors: Vec<CheckedControlledEditor>,
     ) -> Self {
         Self {
             document,
@@ -161,6 +169,7 @@ impl CheckedDocument {
             reachable_components,
             reachable_handlers,
             controlled_inputs,
+            controlled_editors,
         }
     }
 

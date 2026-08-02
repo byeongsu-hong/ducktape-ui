@@ -453,7 +453,7 @@ pub(in crate::codegen) fn generate_update(
             .into_iter()
             .any(|(pane, _)| pane.resize_leeway.is_some() || pane.draggable)
         || !program.controlled_input_bindings()?.is_empty()
-        || !controlled_editor_bindings(document)?.is_empty()
+        || !program.controlled_editor_bindings()?.is_empty()
         || needs_extern_noop(document);
     let task_binding = if has_fallthrough_arm {
         "let __task = "
@@ -725,13 +725,10 @@ pub(in crate::codegen) fn generate_update(
         )
         .unwrap();
     }
-    for binding in
-        controlled_editor_bindings(document).expect("checker validates controlled editor bindings")
-    {
+    for binding in program.controlled_editor_bindings()? {
         let variant = editor_variant(&binding.name);
         if let Some(action) = binding.action {
-            let function = find_extern_function(document, &action, ExternKind::EditorAction)
-                .expect("checker validates editor action adapters");
+            let function = program.extern_function(action);
             writeln!(
                 out,
                 "{message}::{variant}(action) => {{ {}(&mut self.{}, action); ::iced::Task::none() }}",

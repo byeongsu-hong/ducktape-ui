@@ -895,6 +895,17 @@ pub(crate) struct CheckedInput {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedTextEditor {
+    pub(crate) id: ViewId,
+    pub(crate) binding: CheckedValueRef,
+    pub(crate) highlighter: Option<ExternFnId>,
+    pub(crate) key_binding: Option<ExternFnId>,
+    pub(crate) action: Option<ExternFnId>,
+    pub(crate) style: Option<ExternFnId>,
+    pub(crate) status_origins: Vec<OriginId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTooltip {
     pub(crate) id: ViewId,
     pub(crate) expression_count: u32,
@@ -908,6 +919,7 @@ pub(crate) enum CheckedInteractionKind {
     Text,
     RichText,
     Input,
+    TextEditor,
     MouseArea,
     ResizeHandle,
     Sensor,
@@ -993,6 +1005,7 @@ pub(crate) struct CheckedFacts {
     layouts: HashMap<ViewId, CheckedLayout>,
     texts: HashMap<ViewId, CheckedText>,
     inputs: HashMap<ViewId, CheckedInput>,
+    text_editors: HashMap<ViewId, CheckedTextEditor>,
     tooltips: HashMap<ViewId, CheckedTooltip>,
     interactions: HashMap<ViewId, CheckedInteraction>,
     pane_grids: HashMap<ViewId, CheckedPaneGrid>,
@@ -1138,6 +1151,11 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_input_binding(&mut self, view: ViewId, binding: CheckedValueRef) {
         self.inputs.get_mut(&view).unwrap().binding = binding;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_text_editor_binding(&mut self, view: ViewId, binding: CheckedValueRef) {
+        self.text_editors.get_mut(&view).unwrap().binding = binding;
     }
 
     #[cfg(test)]
@@ -1305,6 +1323,10 @@ impl CheckedFacts {
 
     pub(crate) fn input(&self, id: ViewId) -> Option<&CheckedInput> {
         self.inputs.get(&id).filter(|input| input.id == id)
+    }
+
+    pub(crate) fn text_editor(&self, id: ViewId) -> Option<&CheckedTextEditor> {
+        self.text_editors.get(&id).filter(|editor| editor.id == id)
     }
 
     pub(crate) fn tooltip(&self, id: ViewId) -> Option<&CheckedTooltip> {
@@ -3366,6 +3388,101 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "input facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_text_editor_facts(
+        &mut self,
+        editor: ViewId,
+        binding: &str,
+        disabled: &Option<Expr>,
+        options: &TextEditorOptions,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.lower_interaction_facts(
+            editor,
+            CheckedInteractionKind::TextEditor,
+            crate::ast::text_editor_semantic_key(binding, disabled, options),
+            crate::ast::text_editor_expression_roots(disabled, options)
+                .into_iter()
+                .map(|expression| (expression, None))
+                .collect(),
+            options.key_binding_route.iter().collect(),
+            env,
+            span,
+        )?;
+        let checked_binding = env
+            .get(binding)
+            .and_then(|(root, ty)| {
+                (ty == &Type::Editor)
+                    .then_some(match root {
+                        CheckedPathRoot::Value(value) => Some(*value),
+                        _ => None,
+                    })
+                    .flatten()
+            })
+            .ok_or_else(|| self.invariant(span, "editor binding lost its checked editor state"))?;
+        let resolve = |call: &Option<ExternCall>, kind: ExternKind, label: &str| {
+            call.as_ref()
+                .map(|call| {
+                    self.declarations
+                        .extern_decl_by_name(&call.function)
+                        .filter(|function| function.kind == kind)
+                        .map(|function| function.declaration.id)
+                        .ok_or_else(|| {
+                            self.invariant(span, format!("editor {label} extern disappeared"))
+                        })
+                })
+                .transpose()
+        };
+        let highlighter = resolve(
+            &options.highlighter,
+            ExternKind::EditorHighlighter,
+            "highlighter",
+        )?;
+        let key_binding = resolve(
+            &options.key_binding,
+            ExternKind::EditorBinding,
+            "key binding",
+        )?;
+        let action = resolve(&options.action, ExternKind::EditorAction, "action")?;
+        let style = resolve(&options.custom_style, ExternKind::EditorStyle, "style")?;
+        let parent = self.declarations.view(editor).origin;
+        let status_origins = [
+            &options.style.active,
+            &options.style.hovered,
+            &options.style.focused,
+            &options.style.focused_hovered,
+            &options.style.disabled,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|status| {
+            self.origins
+                .push(status.span.as_ref().unwrap_or(span), Some(parent))
+        })
+        .collect();
+        if self
+            .facts
+            .text_editors
+            .insert(
+                editor,
+                CheckedTextEditor {
+                    id: editor,
+                    binding: checked_binding,
+                    highlighter,
+                    key_binding,
+                    action,
+                    style,
+                    status_origins,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "text editor facts were produced more than once"));
         }
         Ok(())
     }
@@ -7822,6 +7939,16 @@ impl<'a> FactsBuilder<'a> {
                 ..
             } => {
                 self.lower_input_facts(view, label, binding, hint, disabled, options, env, span)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::TextEditor {
+                binding,
+                disabled,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_text_editor_facts(view, binding, disabled, options, env, span)?;
                 CheckedViewFlow::None
             }
             ViewNode::Layout {

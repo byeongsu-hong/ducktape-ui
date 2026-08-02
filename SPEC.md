@@ -428,6 +428,21 @@ routes, options, styles, or extern name. Mutation, corrupt-ID, imported-origin,
 complete native generation, and 4,000-node lower+emit contracts provide the
 executable evidence.
 
+TextEditor is a completed controlled-document HIR slice. Its checked
+interaction contract owns the exact writable editor-state reference, every
+dynamic option, key-binding payload route, highlighter/action/style extern
+identity, and the parented origins of all five status surfaces. Lowering
+resolves exact App state IDs and bind-prop forwarding plus dimensions, line
+height, wrapping, fonts, built-in highlighting, theme colors, route
+payloads, and extern arguments into `ResolvedTextEditor`. The checked document
+also retains each App-level editor state and optional editor-action as stable
+IDs, so message and update generation never rediscover them from the source
+view tree. Generation consumes only that normalized contract and checked
+expression IDs; raw editor options, routes, styles, bindings, and extern names
+cannot affect output after lowering. Structural, corruption, same-kind identity
+swap, imported-origin, complete native generation, and 4,000-node lower+emit
+contracts provide the executable evidence.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

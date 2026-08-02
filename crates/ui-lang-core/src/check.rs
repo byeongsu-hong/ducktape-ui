@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 struct CheckOutput {
     analyses: facts::CheckedAnalyses,
     controlled_inputs: Vec<crate::hir::AppStateId>,
+    controlled_editors: Vec<crate::CheckedControlledEditor>,
 }
 
 pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
@@ -52,6 +53,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
         reachable,
         reachable_handlers.app,
         checked.controlled_inputs,
+        checked.controlled_editors,
     ))
 }
 
@@ -376,9 +378,14 @@ fn check(
             record_write(binding, &state.span);
         }
     }
-    for binding in controlled_state_bindings(document, true)? {
-        if let Some(state) = document.states.iter().find(|state| state.name == binding) {
-            record_write(&binding, &state.span);
+    let controlled_editor_contracts = controlled_editor_bindings(document)?;
+    for binding in &controlled_editor_contracts {
+        if let Some(state) = document
+            .states
+            .iter()
+            .find(|state| state.name == binding.name)
+        {
+            record_write(&binding.name, &state.span);
         }
     }
     infer_subscriptions(
@@ -575,9 +582,46 @@ fn check(
             Ok(declarations.app_state(index).id)
         })
         .collect::<Result<Vec<_>, Error>>()?;
+    let controlled_editors = controlled_editor_contracts
+        .into_iter()
+        .map(|binding| {
+            let index = document
+                .states
+                .iter()
+                .position(|state| state.name == binding.name)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        document.view.span(),
+                        "checked editor binding is not an app state",
+                    )
+                })?;
+            let action = binding
+                .action
+                .map(|name| {
+                    declarations
+                        .extern_decl_by_name(&name)
+                        .filter(|function| function.kind == ExternKind::EditorAction)
+                        .map(|function| function.declaration.id)
+                        .ok_or_else(|| {
+                            Error::new(
+                                "E196",
+                                document.view.span(),
+                                "checked editor action extern disappeared",
+                            )
+                        })
+                })
+                .transpose()?;
+            Ok(crate::CheckedControlledEditor {
+                state: declarations.app_state(index).id,
+                action,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
     Ok(CheckOutput {
         analyses: initializer_analyses,
         controlled_inputs,
+        controlled_editors,
     })
 }
 

@@ -176,6 +176,125 @@ pub enum HighlightTheme {
     InspiredGithub,
 }
 
+pub(crate) fn text_editor_expression_roots<'a>(
+    disabled: &'a Option<Expr>,
+    options: &'a TextEditorOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = Vec::new();
+    roots.extend(disabled);
+    roots.extend(options.width.as_ref());
+    push_input_length_root(&mut roots, &options.height);
+    roots.extend(
+        [&options.min_height, &options.max_height, &options.size]
+            .into_iter()
+            .flatten(),
+    );
+    if let Some(line_height) = &options.line_height {
+        roots.push(match line_height {
+            TextLineHeight::Relative(value) | TextLineHeight::Absolute(value) => value,
+        });
+    }
+    roots.extend(options.padding.as_ref());
+    for call in [
+        &options.highlighter,
+        &options.key_binding,
+        &options.action,
+        &options.custom_style,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.extend(&call.args);
+    }
+    for style in [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.focused,
+        &options.style.focused_hovered,
+        &options.style.disabled,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_input_surface_roots(&mut roots, &style.options);
+    }
+    roots
+}
+
+pub(crate) fn text_editor_semantic_key(
+    binding: &str,
+    disabled: &Option<Expr>,
+    options: &TextEditorOptions,
+) -> String {
+    fn call_key(call: &Option<ExternCall>) -> String {
+        call.as_ref().map_or_else(
+            || "none".into(),
+            |call| format!("{}:{}", call.function, call.args.len()),
+        )
+    }
+
+    fn route_key(route: &Option<Route>) -> String {
+        route.as_ref().map_or_else(
+            || "none".into(),
+            |route| {
+                let arguments = route
+                    .args
+                    .iter()
+                    .map(|argument| match argument {
+                        RouteArg::Expr(_) => 'e',
+                        RouteArg::Payload => 'p',
+                    })
+                    .collect::<String>();
+                format!("{}:{arguments}", route.handler)
+            },
+        )
+    }
+
+    let line_height = match &options.line_height {
+        None => "none",
+        Some(TextLineHeight::Relative(_)) => "relative",
+        Some(TextLineHeight::Absolute(_)) => "absolute",
+    };
+    let statuses = [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.focused,
+        &options.style.focused_hovered,
+        &options.style.disabled,
+    ]
+    .into_iter()
+    .map(|style| {
+        style
+            .as_ref()
+            .map(input_surface_semantic_key)
+            .unwrap_or_else(|| "none".into())
+    })
+    .collect::<Vec<_>>()
+    .join(";");
+    format!(
+        "editor|binding={binding}|disabled={}|placeholder={:?}|width={}|height={}|metrics={:?}|line-height={line_height}|wrapping={:?}|font={:?}|highlight={:?}:{:?}|highlighter={}|key-binding={}|route={}|action={}|style={}|statuses={statuses}",
+        disabled.is_some(),
+        options.placeholder,
+        options.width.is_some(),
+        input_length_semantic_key(&options.height),
+        [
+            options.min_height.is_some(),
+            options.max_height.is_some(),
+            options.size.is_some(),
+            options.padding.is_some(),
+        ],
+        options.wrapping,
+        options.font,
+        options.highlight,
+        options.highlight_theme,
+        call_key(&options.highlighter),
+        call_key(&options.key_binding),
+        route_key(&options.key_binding_route),
+        call_key(&options.action),
+        call_key(&options.custom_style),
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TableOptions {
     pub width: Option<LengthValue>,

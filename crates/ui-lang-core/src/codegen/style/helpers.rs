@@ -229,28 +229,6 @@ pub(in crate::codegen) fn editor_variant(binding: &str) -> String {
     }
 }
 
-pub(in crate::codegen) fn controlled_state_name(
-    code: &str,
-    widget: &str,
-    span: &Span,
-) -> Result<String, Error> {
-    let Some(name) = code.strip_prefix("self.") else {
-        return Err(Error::new(
-            "E139",
-            span,
-            format!("{widget} binding must resolve to an app state"),
-        ));
-    };
-    if name.contains('.') {
-        return Err(Error::new(
-            "E139",
-            span,
-            format!("{widget} binding must resolve to one app state"),
-        ));
-    }
-    Ok(name.to_owned())
-}
-
 pub(in crate::codegen) fn id_code(
     id: &Id,
     scope: &str,

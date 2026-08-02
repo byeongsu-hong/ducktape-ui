@@ -457,6 +457,20 @@ Structural assertions, malformed expression and controlled-state IDs,
 pre-/post-lowering mutation, imported origin chains, complete native codegen,
 and an ignored 4,000-input lower+emit budget provide the executable evidence.
 
+TextEditor is a completed controlled-document slice. The checked interaction
+arena freezes its writable editor state, expression and route partitions,
+highlighting and option topology, exact highlighter/key-binding/action/style
+extern identities, and parented status origins. Lowering resolves exact App
+state IDs and bind-prop forwarding, dimensions, typography, fonts, theme colors, status styles,
+key-binding delivery, and extern arguments into `ResolvedTextEditor`.
+Checked App-level editor state/action pairs are retained as exact
+`AppStateId`/`ExternFnId` identities, so application message and update
+generation cannot rediscover them through raw source traversal. Production
+emission consumes the HIR record while the source node provides only the shared
+widget ID. Structural, corrupt-ID, same-kind identity-swap, pre-/post-lowering
+mutation, imported-origin, native codegen, and 4,000-editor performance
+contracts provide the executable evidence.
+
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates expression ownership and DAG, scope and value type,

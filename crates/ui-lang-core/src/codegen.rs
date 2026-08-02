@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::check::{CheckedLocalId, CheckedValueRef, controlled_editor_bindings, expr_type};
+use crate::check::{CheckedLocalId, CheckedValueRef, expr_type};
 use crate::hir::{HandlerId, RunSiteId};
 use crate::lower::*;
 use crate::{Error, canonical_snake};
@@ -570,7 +570,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     for binding in program.controlled_input_bindings()? {
         writeln!(out, "{}(::std::string::String),", binding_variant(binding)).unwrap();
     }
-    for binding in controlled_editor_bindings(document)? {
+    for binding in program.controlled_editor_bindings()? {
         writeln!(
             out,
             "{}(::iced::widget::text_editor::Action),",

@@ -26,13 +26,14 @@ pub(crate) use crate::hir::{
     PaletteId, PinExpressionId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
     TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
-use crate::{CheckedDocument, Error};
+use crate::{CheckedControlledEditor, CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 mod canvas;
 mod conditional;
 mod container;
+mod editor;
 mod float;
 mod input;
 mod interaction;
@@ -55,6 +56,7 @@ mod tooltip;
 pub(crate) use canvas::*;
 pub(crate) use conditional::*;
 pub(crate) use container::*;
+pub(crate) use editor::*;
 pub(crate) use float::*;
 pub(crate) use input::*;
 pub(crate) use interaction::*;
@@ -440,6 +442,13 @@ pub(crate) struct AppStateContract {
 struct ResolvedControlledInputBinding {
     state: AppStateId,
     name: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedControlledEditorBinding {
+    pub(crate) state: AppStateId,
+    pub(crate) name: String,
+    pub(crate) action: Option<ExternFnId>,
 }
 
 #[allow(dead_code)]
@@ -1492,7 +1501,10 @@ pub(crate) struct LoweredProgram {
     layouts: HashMap<ViewId, ResolvedLayout>,
     texts: HashMap<ViewId, ResolvedText>,
     inputs: HashMap<ViewId, ResolvedInput>,
+    text_editors: HashMap<ViewId, ResolvedTextEditor>,
     controlled_inputs: Vec<ResolvedControlledInputBinding>,
+    controlled_editors: Vec<ResolvedControlledEditorBinding>,
+    controlled_editors_by_name: HashMap<String, usize>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -3065,6 +3077,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn text_editor(&self, id: ViewId) -> Option<&ResolvedTextEditor> {
+        self.text_editors.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
         self.media.get(&id)
     }
@@ -3269,6 +3286,35 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "input reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_text_editor_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedTextEditor, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "text editor reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "text editor reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.text_editors.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "text editor reached code generation without normalized HIR",
             )
         })
     }
@@ -3751,6 +3797,77 @@ impl LoweredProgram {
         Ok(names)
     }
 
+    pub(crate) fn controlled_editor_bindings(
+        &self,
+    ) -> Result<Vec<&ResolvedControlledEditorBinding>, Error> {
+        let mut seen = HashSet::with_capacity(self.controlled_editors.len());
+        let mut bindings = Vec::with_capacity(self.controlled_editors.len());
+        for binding in &self.controlled_editors {
+            let state = self.validate_controlled_editor_binding(binding)?;
+            if !seen.insert(state.id) {
+                return Err(Error::new(
+                    "E196",
+                    self.document.view.span(),
+                    "controlled editor binding is duplicated in normalized HIR",
+                ));
+            }
+            bindings.push(binding);
+        }
+        Ok(bindings)
+    }
+
+    pub(crate) fn controlled_editor_binding(
+        &self,
+        name: &str,
+    ) -> Result<&ResolvedControlledEditorBinding, Error> {
+        let binding = self
+            .controlled_editors_by_name
+            .get(name)
+            .and_then(|index| self.controlled_editors.get(*index))
+            .filter(|binding| binding.name == name)
+            .ok_or_else(|| {
+                Error::new(
+                    "E196",
+                    self.document.view.span(),
+                    "normalized editor is absent from the controlled binding index",
+                )
+            })?;
+        self.validate_controlled_editor_binding(binding)?;
+        Ok(binding)
+    }
+
+    fn validate_controlled_editor_binding(
+        &self,
+        binding: &ResolvedControlledEditorBinding,
+    ) -> Result<&AppStateContract, Error> {
+        let state = self
+            .app_states
+            .get(binding.state.0 as usize)
+            .filter(|state| {
+                state.id == binding.state && state.name == binding.name && state.ty == Type::Editor
+            })
+            .ok_or_else(|| {
+                Error::new(
+                    "E196",
+                    self.document.view.span(),
+                    "controlled editor binding does not match its normalized app state",
+                )
+            })?;
+        if let Some(action) = binding.action {
+            self.declarations
+                .try_extern_decl(action)
+                .filter(|function| function.kind == ExternKind::EditorAction)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        self.document.view.span(),
+                        "controlled editor action does not match its normalized extern",
+                    )
+                })?;
+        }
+        Ok(state)
+    }
+
     pub(crate) fn derived(&self) -> &[DerivedContract] {
         &self.derived
     }
@@ -3956,7 +4073,9 @@ pub(crate) struct Lowerer {
     layouts: HashMap<ViewId, ResolvedLayout>,
     texts: HashMap<ViewId, ResolvedText>,
     inputs: HashMap<ViewId, ResolvedInput>,
+    text_editors: HashMap<ViewId, ResolvedTextEditor>,
     controlled_inputs: Vec<AppStateId>,
+    controlled_editors: Vec<CheckedControlledEditor>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -4678,6 +4797,7 @@ impl Lowerer {
             declarations,
             origins,
             controlled_inputs,
+            controlled_editors,
             ..
         } = checked;
         let component_ids = declarations.component_ids();
@@ -4700,7 +4820,9 @@ impl Lowerer {
             layouts: HashMap::new(),
             texts: HashMap::new(),
             inputs: HashMap::new(),
+            text_editors: HashMap::new(),
             controlled_inputs,
+            controlled_editors,
             media: HashMap::new(),
             overlays: HashMap::new(),
             tooltips: HashMap::new(),
@@ -4775,6 +4897,49 @@ impl Lowerer {
                     })
             })
             .collect::<Result<Vec<_>, Error>>()?;
+        let controlled_editors = self
+            .controlled_editors
+            .iter()
+            .map(|binding| {
+                let state = app_states
+                    .get(binding.state.0 as usize)
+                    .filter(|state| state.id == binding.state && state.ty == Type::Editor)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            self.document.view.span(),
+                            "controlled editor binding is outside the app-state arena",
+                        )
+                    })?;
+                if let Some(action) = binding.action {
+                    self.declarations
+                        .try_extern_decl(action)
+                        .filter(|function| function.kind == ExternKind::EditorAction)
+                        .ok_or_else(|| {
+                            self.invariant(
+                                self.document.view.span(),
+                                "controlled editor action extern is invalid",
+                            )
+                        })?;
+                }
+                Ok(ResolvedControlledEditorBinding {
+                    state: binding.state,
+                    name: state.name.clone(),
+                    action: binding.action,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let mut controlled_editors_by_name = HashMap::with_capacity(controlled_editors.len());
+        for (index, binding) in controlled_editors.iter().enumerate() {
+            if controlled_editors_by_name
+                .insert(binding.name.clone(), index)
+                .is_some()
+            {
+                return Err(self.invariant(
+                    self.document.view.span(),
+                    "controlled editor binding is duplicated in normalized HIR",
+                ));
+            }
+        }
         let styles = self.styles.finish().ok_or_else(|| {
             Error::new(
                 "E196",
@@ -4811,7 +4976,10 @@ impl Lowerer {
             layouts: self.layouts,
             texts: self.texts,
             inputs: self.inputs,
+            text_editors: self.text_editors,
             controlled_inputs,
+            controlled_editors,
+            controlled_editors_by_name,
             media: self.media,
             overlays: self.overlays,
             tooltips: self.tooltips,
@@ -8738,6 +8906,15 @@ impl Lowerer {
                     outer_component,
                 )?;
             }
+            ViewNode::TextEditor {
+                binding,
+                disabled,
+                options,
+                span,
+                ..
+            } => {
+                self.lower_text_editor(binding, disabled, options, span, outer_component)?;
+            }
             ViewNode::Layout {
                 kind,
                 options,
@@ -12342,6 +12519,313 @@ view
         assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_the_complete_text_editor_contract() {
+        let source = r#"app EditorHir
+extern crate::backend
+  EditorCommand(save:bool)
+  editor-binding editor_keys(readonly:bool) -> EditorCommand
+  editor-highlighter editor_highlight(language:str)
+  editor-action track_edits()
+  editor-style editor_surface(readonly:bool)
+font ui family=sans
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  body:editor = ""
+  spare:editor = ""
+  locked = false
+  language = "rs"
+on command(value)
+view
+  editor #body <-> body hint="Write" w=640.0 h=fill min-h=80.0 max-h=240.0 size=14.0 line-h-px=18.0 p=8.0 wrap=word-or-glyph font=ui disabled=locked highlighter=editor_highlight(language) key-binding=editor_keys(locked) action=track_edits() style=editor_surface(locked) -> command _
+    active bg=bg border=fg border-w=1.0 r=4.0 placeholder=danger value=fg selection=primary
+    hovered bg=bg border=primary border-w=1.0 r=6.0 placeholder=danger value=fg selection=primary
+    focused bg=bg border=primary border-w=1.0 r=8.0
+    focused-hovered bg=bg border=fg border-w=1.0 r=10.0
+    disabled bg=bg border=danger border-w=1.0 r=12.0 value=danger
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let editor = program.text_editor(ViewId(0)).unwrap();
+
+        assert!(matches!(
+            editor.binding,
+            WritableStateRef::App { ref name, .. } if name == "body"
+        ));
+        assert_eq!(editor.placeholder.as_deref(), Some("Write"));
+        assert!(editor.disabled.is_some());
+        assert!(editor.width.is_some());
+        assert!(matches!(editor.height, Some(ResolvedContainerLength::Fill)));
+        assert!(editor.min_height.is_some());
+        assert!(editor.max_height.is_some());
+        assert!(editor.size.is_some());
+        assert!(matches!(
+            editor.line_height,
+            Some(ResolvedTextLineHeight::Absolute(_))
+        ));
+        assert!(editor.padding.is_some());
+        assert_eq!(editor.wrapping, Some(ResolvedEditorWrapping::WordOrGlyph));
+        assert!(matches!(editor.font, Some(ResolvedTextFont::Named(_))));
+        assert!(editor.highlight.is_none());
+        assert!(editor.highlight_theme.is_none());
+        assert!(editor.highlighter.is_some());
+        assert!(editor.key_binding.is_some());
+        assert!(editor.action.is_some());
+        assert!(editor.custom_style.is_some());
+        assert!(editor.styles.active.is_some());
+        assert!(editor.styles.hovered.is_some());
+        assert!(editor.styles.focused.is_some());
+        assert!(editor.styles.focused_hovered.is_some());
+        assert!(editor.styles.disabled.is_some());
+        assert_eq!(program.controlled_editor_bindings().unwrap().len(), 1);
+        assert_eq!(
+            program.controlled_editor_bindings().unwrap()[0].action,
+            editor.action.as_ref().map(|action| action.function)
+        );
+        let route = &editor.key_binding.as_ref().unwrap().route;
+        assert_eq!(program.origin(route.origin).parent, Some(editor.origin));
+        for status in [
+            &editor.styles.active,
+            &editor.styles.hovered,
+            &editor.styles.focused,
+            &editor.styles.focused_hovered,
+            &editor.styles.disabled,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert_eq!(program.origin(status.origin).parent, Some(editor.origin));
+        }
+    }
+
+    #[test]
+    fn normalizes_builtin_text_editor_highlighting() {
+        let source = format!(
+            "app BuiltinEditorHighlight\n{THEME}state\n  body:editor = \"\"\nview\n  editor <-> body highlight=\"rs\" highlight-theme=inspired-github\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let editor = program.text_editor(ViewId(0)).unwrap();
+        assert_eq!(editor.highlight.as_deref(), Some("rs"));
+        assert_eq!(
+            editor.highlight_theme,
+            Some(ResolvedHighlightTheme::InspiredGithub)
+        );
+        assert!(editor.highlighter.is_none());
+    }
+
+    #[test]
+    fn imported_text_editor_keeps_widget_and_status_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-text-editor-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("editor.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedEditorApp\nuse \"editor.ice\"\n{THEME}state\n  body:editor = \"\"\nview\n  ImportedEditor value<->body\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedEditor(bind value:editor)\n  editor <-> value hint=\"Imported\" highlight=\"rs\"\n    active bg=bg border=fg border-w=1.0\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let editor = program.text_editors.values().next().unwrap();
+        let editor_origin = program.origin(editor.origin);
+        assert_eq!(editor_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(editor_origin.line, 2);
+        let status = editor.styles.active.as_ref().unwrap();
+        let status_origin = program.origin(status.origin);
+        assert_eq!(status_origin.parent, Some(editor.origin));
+        assert_eq!(status_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(status_origin.line, 3);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn text_editor_lowering_rejects_same_arena_binding_identity_swaps() {
+        let source = format!(
+            "app EditorBindingIdentity\n{THEME}state\n  first:editor = \"\"\n  second:editor = \"\"\nview\n  editor <-> first\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_text_editor_binding(ViewId(0), CheckedValueRef::AppState(AppStateId(1)));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("editor binding identity diverged"));
+    }
+
+    #[test]
+    fn text_editor_codegen_ignores_raw_contract_and_validates_controlled_identity() {
+        let source = format!(
+            "app LoweredEditor\n{THEME}state\n  body:editor = \"\"\n  spare:editor = \"\"\n  locked = false\nview\n  editor #body <-> body hint=\"Write\" w=640.0 h=fill p=8.0 disabled=locked\n    active bg=bg border=fg border-w=1.0 r=4.0\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-editor.ice").unwrap();
+
+        let ViewNode::TextEditor {
+            binding,
+            disabled,
+            options,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a text editor");
+        };
+        *binding = "spare".into();
+        *disabled = Some(Expr::Bool(true));
+        *options = TextEditorOptions::default();
+        let actual = crate::codegen::generate(&program, "lowered-editor.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        program.controlled_editors[0].state = AppStateId(1);
+        let error = crate::codegen::generate(&program, "lowered-editor.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("controlled editor binding"));
+
+        program.controlled_editors[0].state = AppStateId(u32::MAX);
+        let error = crate::codegen::generate(&program, "lowered-editor.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("controlled editor binding"));
+    }
+
+    #[test]
+    fn text_editor_codegen_rejects_same_kind_action_identity_swaps() {
+        let source = format!(
+            "app EditorActionIdentity\nextern crate::backend\n  editor-action first()\n  editor-action second()\n{THEME}state\n  body:editor = \"\"\nview\n  editor <-> body action=first()\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        program.controlled_editors[0].action = Some(ExternFnId(1));
+
+        let error = crate::codegen::generate(&program, "editor-action-identity.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("editor action diverges"));
+    }
+
+    #[test]
+    fn text_editor_rejects_non_cloneable_component_local_state() {
+        let source = format!(
+            "app ComponentEditorState\n{THEME}component EditorPanel()\n  state\n    body:editor = \"\"\n  editor <-> body\nview\n  EditorPanel #panel\n"
+        );
+
+        let error = analyze(&source).unwrap_err();
+        assert_eq!(error.code, "E103");
+        assert!(
+            error
+                .message
+                .contains("component state supports ordinary cloneable values only")
+        );
+    }
+
+    #[test]
+    fn malformed_checked_text_editor_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidEditorFacts\n{THEME}state\n  body:editor = \"\"\n  locked = false\nview\n  editor <-> body disabled=locked\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    #[ignore = "large normalized text editor lowering and emission performance contract"]
+    fn performance_contract_four_thousand_text_editors_lower_and_emit_under_two_seconds() {
+        const EDITORS: usize = 4_000;
+        let mut source = format!(
+            "app EditorScale\n{THEME}state\n  body:editor = \"\"\n  locked = false\nview\n  col\n"
+        );
+        for index in 0..EDITORS {
+            writeln!(
+                source,
+                "    editor #editor_{index} <-> body hint=\"Write\" w=640.0 h=fill p=8.0 disabled=locked"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "editor-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.text_editors.len(), EDITORS);
+        // A disabled editor emits its enabled and disabled widget branches.
+        assert_eq!(
+            generated
+                .matches("::iced::widget::text_editor(&self.body)")
+                .count(),
+            EDITORS * 2
+        );
+        eprintln!("4k normalized text editors lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized text editors lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "distinct controlled editor lookup must remain linear"]
+    fn performance_contract_four_thousand_distinct_text_editors_emit_under_two_seconds() {
+        const EDITORS: usize = 4_000;
+        let mut source = format!("app DistinctEditorScale\n{THEME}state\n");
+        for index in 0..EDITORS {
+            writeln!(source, "  body_{index}:editor = \"\"").unwrap();
+        }
+        source.push_str("view\n  col\n");
+        for index in 0..EDITORS {
+            writeln!(source, "    editor #editor_{index} <-> body_{index}").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "distinct-editor-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.text_editors.len(), EDITORS);
+        assert_eq!(program.controlled_editors.len(), EDITORS);
+        assert_eq!(program.controlled_editors_by_name.len(), EDITORS);
+        assert_eq!(
+            generated
+                .matches("::iced::widget::text_editor(&self.body_")
+                .count(),
+            EDITORS
+        );
+        eprintln!("4k distinct normalized text editors lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k distinct normalized text editors lowered and emitted in {elapsed:?}"
+        );
     }
 
     #[test]

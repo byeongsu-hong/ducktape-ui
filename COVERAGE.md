@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Float, Pin, Responsive, Lazy, KeyedColumn,
+MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, TextEditor, Float, Pin, Responsive, Lazy, KeyedColumn,
 Table, PaneGrid, If, For, and Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
@@ -494,7 +494,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
+ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, TextEditor, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
 If, For, and Match remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
@@ -731,6 +731,21 @@ controlled-state IDs, pre-lowering expression/static mutation, post-lowering
 contract poisoning, imported widget/icon/status/route origins, complete native
 input generation, the lexical boundary ratchet, and an ignored 4,000-input
 lower+emit contract cover the boundary.
+
+TextEditor has a complete private HIR boundary. Its checked interaction record
+freezes the exact writable editor-state identity, deterministic option and
+extern-argument expression partition, key-binding route, built-in and custom
+highlighting topology, exact highlighter/key-binding/action/style extern IDs,
+and five parented status origins. Lowering resolves App, bind-prop, or
+App state IDs and bind-prop forwarding, dimensions, line height, wrapping,
+fonts, theme colors, status surfaces, and payload routes into
+`ResolvedTextEditor`. App-level controlled editor bindings retain exact
+`AppStateId` and optional `ExternFnId` pairs, so message/update generation does
+not traverse the raw view graph. Production emission reads the raw node only
+for its shared widget ID. Structural assertions, malformed expression and
+controlled-state IDs, same-kind identity swaps, pre-/post-lowering poisoning,
+imported origin chains, complete native generation, the lexical boundary
+ratchet, and an ignored 4,000-editor lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
