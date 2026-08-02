@@ -53,7 +53,7 @@ pub(in crate::codegen) fn resolved_route_code(
                     invariant("normalized route payload index is outside its payload contract")
                 }),
             crate::lower::ResolvedRouteArg::Expression(expression) => {
-                checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -88,7 +88,7 @@ pub(in crate::codegen) fn resolved_interaction_route_code(
         .iter()
         .map(|arg| match arg {
             ResolvedInteractionRouteArg::Expression(expression) => {
-                checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)
             }
             ResolvedInteractionRouteArg::Payload { index, .. } => payloads
                 .get(*index as usize)
@@ -165,20 +165,6 @@ pub(in crate::codegen) fn resolved_interaction_route_code(
             }
             Ok(format!("({})({})", callback.code, args.join(", ")))
         }
-    }
-}
-
-pub(in crate::codegen) fn widget_target_field_type(field: &str) -> Option<Type> {
-    match field {
-        "kind" => Some(Type::Str),
-        "id" => Some(Type::Option(Box::new(Type::WidgetId))),
-        "x" | "y" | "width" | "height" => Some(Type::F64),
-        "visible_x" | "visible_y" | "visible_width" | "visible_height" | "content_x"
-        | "content_y" | "content_width" | "content_height" | "translation_x" | "translation_y" => {
-            Some(Type::Option(Box::new(Type::F64)))
-        }
-        "content" => Some(Type::Option(Box::new(Type::Str))),
-        _ => None,
     }
 }
 

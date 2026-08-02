@@ -28,7 +28,12 @@ view
   text len(items) size=14.0
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty.display(), "[Item]");
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "[Item]"
+    );
 }
 
 #[test]
@@ -60,9 +65,24 @@ view
   text mode
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty.display(), "str");
-    assert_eq!(document.handlers[2].params[0].ty.display(), "str?");
-    assert_eq!(document.handlers[3].params[0].ty.display(), "system-info");
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "str"
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0]
+            .ty
+            .display(),
+        "str?"
+    );
+    assert_eq!(
+        document.source_document().handlers[3].params[0]
+            .ty
+            .display(),
+        "system-info"
+    );
 
     let error = analyze(&source.replace(
         "      task clipboard read -> clipboard_read _",
@@ -110,7 +130,10 @@ view
       text "Canceled"
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.states[0].ty.display(), "task-handle?");
+    assert_eq!(
+        document.source_document().states[0].ty.display(),
+        "task-handle?"
+    );
 
     let error = analyze(&source.replace("request:task-handle?", "request:str?")).unwrap_err();
     assert_eq!(error.code, "E101");
@@ -187,11 +210,28 @@ view
   text count
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty.display(), "i64");
-    assert_eq!(document.handlers[2].params[0].ty.display(), "str");
-    assert_eq!(document.handlers[3].params[0].ty.display(), "AppError");
     assert_eq!(
-        document.handlers[4].params[0].ty.display(),
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "i64"
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0]
+            .ty
+            .display(),
+        "str"
+    );
+    assert_eq!(
+        document.source_document().handlers[3].params[0]
+            .ty
+            .display(),
+        "AppError"
+    );
+    assert_eq!(
+        document.source_document().handlers[4].params[0]
+            .ty
+            .display(),
         "result[str,AppError]"
     );
 
@@ -283,12 +323,24 @@ view
   text "Sips"
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty, Type::F64);
-    assert_eq!(document.handlers[2].params[0].ty, Type::Bytes);
-    assert_eq!(document.handlers[3].params[0].ty, Type::I64);
-    assert_eq!(document.handlers[4].params[0].ty, Type::Str);
     assert_eq!(
-        document.handlers[5].params[0].ty,
+        document.source_document().handlers[1].params[0].ty,
+        Type::F64
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0].ty,
+        Type::Bytes
+    );
+    assert_eq!(
+        document.source_document().handlers[3].params[0].ty,
+        Type::I64
+    );
+    assert_eq!(
+        document.source_document().handlers[4].params[0].ty,
+        Type::Str
+    );
+    assert_eq!(
+        document.source_document().handlers[5].params[0].ty,
         Type::Named("AppError".into())
     );
 
@@ -362,13 +414,19 @@ view
 "#;
     let document = analyze(source).unwrap();
     assert_eq!(
-        document.handlers[1].params[0].ty,
+        document.source_document().handlers[1].params[0].ty,
         Type::List(Box::new(Type::I64))
     );
-    assert_eq!(document.handlers[2].params[0].ty, Type::I64);
-    assert_eq!(document.handlers[3].params[0].ty, Type::I64);
     assert_eq!(
-        document.handlers[4].params[0].ty,
+        document.source_document().handlers[2].params[0].ty,
+        Type::I64
+    );
+    assert_eq!(
+        document.source_document().handlers[3].params[0].ty,
+        Type::I64
+    );
+    assert_eq!(
+        document.source_document().handlers[4].params[0].ty,
         Type::Named("AppError".into())
     );
 
@@ -446,13 +504,16 @@ view
 "#;
     let document = analyze(source).unwrap();
     assert_eq!(
-        document.handlers[1].params[0].ty,
+        document.source_document().handlers[1].params[0].ty,
         Type::List(Box::new(Type::Result(
             Box::new(Type::I64),
             Box::new(Type::Named("AppError".into()))
         )))
     );
-    assert_eq!(document.handlers[2].params[0].ty, Type::I64);
+    assert_eq!(
+        document.source_document().handlers[2].params[0].ty,
+        Type::I64
+    );
 
     let error = analyze(&source.replace(
         "map-err reason -> normalize(reason)",

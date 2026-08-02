@@ -208,13 +208,13 @@ checker imports and uses, type or extern re-resolution, raw expression fallback,
 and exported source-AST identifiers. A dependency-free Rust lexer strips
 comments and literals before it records normalized containing-item and
 call-site fingerprints, so same-file delete/add swaps change the reviewed
-ledger while identifier prefixes do not become false AST matches. It also
-tracks the symbols behind the existing AST glob and grouped checker imports;
-exact aliases from grouped and nested AST imports are tracked per file, while
-checker glob imports are rejected. This is a conservative lexical migration
-ratchet, not a Rust semantic resolver or completion claim. The selected ledger
-must reach zero, and ordinary semantic review must confirm that no unrepresented
-boundary remains before HIR is complete.
+ledger while identifier prefixes do not become false AST matches. It discovers
+only top-level AST exports and follows import-reachable globs, names, module
+aliases, grouped and nested aliases, alias chains, qualified paths, and local
+uses without treating unrelated same-named backend items as AST references.
+Checker glob imports remain rejected. Every selected production count is now
+zero. The ratchet remains a lexical defense rather than a Rust semantic
+resolver, so ordinary semantic review continues to guard unrepresented paths.
 
 Application and daemon settings are now normalized as one complete vertical
 slice. `AppSettingExprId` and `NamedWindowId` identify the retained title,
@@ -633,6 +633,40 @@ full environment. The 500-to-4,000 repeated-projection and sibling-scope
 contracts verify exact overlay growth, linear binding allocations, and zero
 full-scope clones under wall-clock ceilings. The thread-local
 collection context is guarded across both ordinary errors and panic unwinding.
+
+The program-metadata boundary no longer retains a source `Document` in release
+`LoweredProgram` values. Application identity, app state, presets, generated
+enums, extern structs and functions, borrowed parameter shapes, named type Rust
+paths, and probe-helper discovery are emitted from normalized settings and
+declaration arenas. Production code generation has zero `Document` references,
+zero `CheckedDocument` escapes, and zero extern-name fallback resolution. A
+test-only source sidecar remains available exclusively to adversarial tests
+that poison the parsed AST after lowering and prove the backend cannot observe
+it; release HIR does not allocate or expose that sidecar.
+
+The release expression backend now consumes a normalized expression arena owned
+by `LoweredProgram`. HIR-owned expression, value, and local IDs carry its
+semantic references, while builtin and enum Rust targets are fixed during
+lowering. Release `LoweredProgram` no longer carries `CheckedFacts`; only a
+test-only sidecar retains checker facts for adversarial lowering tests.
+Production code generation has zero checker semantic references, checked-fact
+escapes, or declaration-index escapes.
+
+`CheckedDocument` also no longer implements `Deref<Target = Document>`.
+Syntax-oriented tooling must request `source_document()` explicitly, while
+semantic consumers use checked APIs or lower to HIR. This closes accidental
+AST access without preventing the formatter, LSP, review selector, API
+fingerprinter, and asset discovery from inspecting source syntax when that is
+their stated job.
+
+The Full HIR migration is now complete at the production backend boundary.
+Shared value types and operators are physically owned by the backend-neutral
+`semantic` module rather than the source AST. Canvas event sources normalize to
+an event-only HIR enum during lowering, and Rust type rendering is private to
+code generation. Production code generation has no source-AST import, raw
+source node, checker reference, checked-fact escape, or declaration-index
+escape. The empty boundary inventory and a semantic review of indirect module
+paths jointly enforce this claim.
 
 The migration is complete when:
 

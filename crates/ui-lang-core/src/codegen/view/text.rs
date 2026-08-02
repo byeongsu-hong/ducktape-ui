@@ -1,11 +1,9 @@
 use super::*;
 
-type TextRenderDocument<'a> = RenderDocument<'a>;
-
 pub(in crate::codegen) fn render_text(
     text: &ResolvedText,
-    id: &Option<Id>,
-    document: &TextRenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -13,10 +11,15 @@ pub(in crate::codegen) fn render_text(
     let program = document.hir();
     match &text.content {
         ResolvedTextContent::Plain { value } => {
-            let value = checked_expr_use_code(program, *value, env, ValueMode::Borrowed)?;
-            let source_span = Span::line(text.source_line);
-            let accessibility_key =
-                accessibility_key_code(id.as_ref(), "text", &source_span, scope, env, document)?;
+            let value = resolved_expr_use_code(program, *value, env, ValueMode::Borrowed)?;
+            let accessibility_key = resolved_accessibility_key_code(
+                identity,
+                "text",
+                text.origin,
+                scope,
+                env,
+                document,
+            )?;
             let code = resolved_plain_text_code(text, message, env, program)?;
             let selection = text
                 .options
@@ -36,7 +39,7 @@ pub(in crate::codegen) fn render_text(
             route,
         } => render_resolved_rich_text(
             text,
-            id,
+            identity,
             color.as_ref(),
             spans,
             route.as_ref(),
@@ -135,11 +138,11 @@ fn append_resolved_glyph_options(
 #[allow(clippy::too_many_arguments)]
 fn render_resolved_rich_text(
     text: &ResolvedText,
-    id: &Option<Id>,
+    identity: Option<&ResolvedViewIdentity>,
     color: Option<&ResolvedThemeColor>,
     spans: &[ResolvedRichSpan],
     route: Option<&ResolvedInteractionRoute>,
-    document: &TextRenderDocument<'_>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -171,10 +174,10 @@ fn render_resolved_rich_text(
     let rendered = format!(
         "{{ let __rich_spans: ::std::vec::Vec<::iced::widget::text::Span<'_, ::std::string::String>> = ::std::vec![{spans}]; {code}.into() }}"
     );
-    let Some(id) = id else {
+    let Some(identity) = identity else {
         return Ok(rendered);
     };
-    let id = id_code(id, scope, env, document)?;
+    let id = resolved_view_identity_code(identity, scope, env, document)?;
     Ok(format!(
         "{{ let __a11y_key = {id}; let __identified_text: __IceElement<'_, {message}> = {rendered}; ::ui_lang_runtime::accessible(__identified_text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).into() }}"
     ))
@@ -185,7 +188,7 @@ fn render_resolved_rich_span(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let value = checked_expr_use_code(program, rich_span.value, env, ValueMode::Owned)?;
+    let value = resolved_expr_use_code(program, rich_span.value, env, ValueMode::Owned)?;
     let mut code = format!("::iced::widget::span({value})");
     if let Some(size) = rich_span.size {
         write!(
@@ -225,7 +228,7 @@ fn render_resolved_rich_span(
         write!(
             code,
             ".link({})",
-            checked_expr_use_code(program, link, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, link, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -252,7 +255,7 @@ fn render_resolved_rich_span(
             .unwrap_or_else(|| "::iced::Color::TRANSPARENT".into());
         let width = rich_span.border_width.map_or_else(
             || Ok("0.0".to_owned()),
-            |width| checked_expr_use_code(program, width, env, ValueMode::Owned),
+            |width| resolved_expr_use_code(program, width, env, ValueMode::Owned),
         )?;
         let radius = resolved_text_radius_code(&rich_span.radius, program, env)?
             .unwrap_or_else(|| "::iced::border::Radius::default()".into());
@@ -269,7 +272,7 @@ fn render_resolved_rich_span(
         write!(
             code,
             ".underline({})",
-            checked_expr_use_code(program, underline, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, underline, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -277,7 +280,7 @@ fn render_resolved_rich_span(
         write!(
             code,
             ".strikethrough({})",
-            checked_expr_use_code(program, strikethrough, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, strikethrough, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -355,7 +358,7 @@ fn append_resolved_text_options(
         let arguments = custom
             .arguments
             .iter()
-            .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+            .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
             .collect::<Result<Vec<_>, _>>()?;
         let suffix = arguments
             .into_iter()
@@ -424,10 +427,10 @@ pub(super) fn resolved_text_length_code(
         ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
         ResolvedContainerLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedContainerLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -456,7 +459,7 @@ fn resolved_text_clamped_f32(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
     Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
@@ -472,13 +475,13 @@ pub(super) fn resolved_text_background_code(
         ResolvedContainerBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
             for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
                     resolved_theme_color(&stop.color)
                 )
                 .unwrap();
@@ -506,7 +509,7 @@ fn resolved_text_padding_code(
     }
     let value = |expression: Option<ResolvedExpressionId>| {
         expression
-            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
             .transpose()
     };
     let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());

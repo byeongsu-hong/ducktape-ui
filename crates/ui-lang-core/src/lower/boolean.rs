@@ -48,12 +48,6 @@ pub(crate) struct ResolvedBooleanIcon {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ResolvedBooleanIdentity {
-    pub(crate) name: String,
-    pub(crate) key: Option<CheckedExprUseId>,
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct ResolvedBooleanOptions {
     pub(crate) accessibility_label: Option<CheckedExprUseId>,
     pub(crate) accessibility_description: Option<CheckedExprUseId>,
@@ -148,7 +142,6 @@ pub(crate) enum ResolvedBooleanStyle {
 pub(crate) struct ResolvedBooleanControl {
     pub(crate) id: ViewId,
     pub(crate) kind: ResolvedBooleanKind,
-    pub(crate) identity: Option<ResolvedBooleanIdentity>,
     pub(crate) label: CheckedExprUseId,
     pub(crate) checked: CheckedExprUseId,
     pub(crate) value: Option<CheckedExprUseId>,
@@ -307,14 +300,8 @@ impl Lowerer {
             route,
             span,
         } = source;
-        let roots = crate::ast::checkbox_expression_roots(
-            raw_id,
-            label,
-            checked_value,
-            disabled,
-            options,
-            style,
-        );
+        let roots =
+            crate::ast::checkbox_expression_roots(label, checked_value, disabled, options, style);
         let (id, checked, scope, origin) = self.interaction_contract(
             CheckedInteractionKind::Checkbox,
             crate::ast::checkbox_semantic_key(
@@ -338,7 +325,6 @@ impl Lowerer {
             next: 0,
             span,
         };
-        let identity = self.resolve_boolean_identity(&mut values, raw_id, origin)?;
         let label = values.take(&Type::Str, "label", origin)?;
         let checked_value = values.take(&Type::Bool, "checked", origin)?;
         let disabled = values.optional(disabled.as_ref(), &Type::Bool, "disabled", origin)?;
@@ -397,7 +383,6 @@ impl Lowerer {
             ResolvedBooleanControl {
                 id,
                 kind: ResolvedBooleanKind::Checkbox,
-                identity,
                 label,
                 checked: checked_value,
                 value: None,
@@ -427,14 +412,8 @@ impl Lowerer {
             route,
             span,
         } = source;
-        let roots = crate::ast::toggler_expression_roots(
-            raw_id,
-            label,
-            checked_value,
-            disabled,
-            options,
-            style,
-        );
+        let roots =
+            crate::ast::toggler_expression_roots(label, checked_value, disabled, options, style);
         let (id, checked, scope, origin) = self.interaction_contract(
             CheckedInteractionKind::Toggler,
             crate::ast::toggler_semantic_key(
@@ -458,7 +437,6 @@ impl Lowerer {
             next: 0,
             span,
         };
-        let identity = self.resolve_boolean_identity(&mut values, raw_id, origin)?;
         let label = values.take(&Type::Str, "label", origin)?;
         let checked_value = values.take(&Type::Bool, "checked", origin)?;
         let disabled = values.optional(disabled.as_ref(), &Type::Bool, "disabled", origin)?;
@@ -511,7 +489,6 @@ impl Lowerer {
             ResolvedBooleanControl {
                 id,
                 kind: ResolvedBooleanKind::Toggler,
-                identity,
                 label,
                 checked: checked_value,
                 value: None,
@@ -541,8 +518,7 @@ impl Lowerer {
             route,
             span,
         } = source;
-        let roots =
-            crate::ast::radio_expression_roots(raw_id, label, value, selected, options, style);
+        let roots = crate::ast::radio_expression_roots(label, value, selected, options, style);
         let (id, checked, scope, origin) = self.interaction_contract(
             CheckedInteractionKind::Radio,
             crate::ast::radio_semantic_key(raw_id, label, value, selected, options, style, route),
@@ -558,7 +534,6 @@ impl Lowerer {
             next: 0,
             span,
         };
-        let identity = self.resolve_boolean_identity(&mut values, raw_id, origin)?;
         let label = values.take(&Type::Str, "label", origin)?;
         let (value, value_type) = values.take_where("radio value", origin, |actual| {
             matches!(
@@ -617,7 +592,6 @@ impl Lowerer {
             ResolvedBooleanControl {
                 id,
                 kind: ResolvedBooleanKind::Radio,
-                identity,
                 label,
                 checked: selected,
                 value: Some(value),
@@ -630,34 +604,6 @@ impl Lowerer {
             },
             span,
         )
-    }
-
-    fn resolve_boolean_identity(
-        &self,
-        values: &mut BooleanOperands<'_>,
-        source: &Option<Id>,
-        origin: OriginId,
-    ) -> Result<Option<ResolvedBooleanIdentity>, Error> {
-        source
-            .as_ref()
-            .map(|source| {
-                let key = source
-                    .key
-                    .as_ref()
-                    .map(|_| {
-                        values
-                            .take_where("identity key", origin, |actual| {
-                                matches!(actual, Type::I64 | Type::Str)
-                            })
-                            .map(|(expression, _)| expression)
-                    })
-                    .transpose()?;
-                Ok(ResolvedBooleanIdentity {
-                    name: source.name.clone(),
-                    key,
-                })
-            })
-            .transpose()
     }
 
     fn checked_boolean_facts(

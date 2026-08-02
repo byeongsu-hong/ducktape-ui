@@ -24,8 +24,8 @@ impl Clone for Binding {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::codegen) enum BindingOwner {
-    Value(CheckedValueRef),
-    Local(CheckedLocalId),
+    Value(ResolvedValueRef),
+    Local(ResolvedLocalId),
 }
 
 #[derive(Clone)]
@@ -46,8 +46,9 @@ pub(in crate::codegen) struct SlotContext {
 
 #[derive(Clone)]
 pub(in crate::codegen) struct SlotContent {
+    pub(in crate::codegen) slot: ComponentSlotId,
     pub(in crate::codegen) name: String,
-    pub(in crate::codegen) node: ViewNode,
+    pub(in crate::codegen) view: ViewId,
     pub(in crate::codegen) env: HashMap<String, Binding>,
 }
 
@@ -247,7 +248,7 @@ pub(in crate::codegen) fn checked_state_env(
                     ty: state.ty.clone(),
                     local: false,
                     state: Some(StateBinding::App(state.name.clone())),
-                    owner: Some(BindingOwner::Value(CheckedValueRef::AppState(state.id))),
+                    owner: Some(BindingOwner::Value(ResolvedValueRef::AppState(state.id))),
                 },
             )
         })
@@ -260,33 +261,11 @@ pub(in crate::codegen) fn checked_state_env(
                 ty: derived.ty.clone(),
                 local: true,
                 state: None,
-                owner: Some(BindingOwner::Value(CheckedValueRef::Derived(derived.id))),
+                owner: Some(BindingOwner::Value(ResolvedValueRef::Derived(derived.id))),
             },
         )
     }));
     env
-}
-
-pub(in crate::codegen) fn native_field_type(ty: &Type, field: &str) -> Option<Type> {
-    match ty {
-        Type::KeyPress => match field {
-            "key" | "modified_key" => Some(Type::Key),
-            "physical_key" => Some(Type::PhysicalKey),
-            "location" => Some(Type::KeyLocation),
-            "modifiers" => Some(Type::KeyModifiers),
-            "text" => Some(Type::Option(Box::new(Type::Str))),
-            "repeat" => Some(Type::Bool),
-            _ => None,
-        },
-        Type::KeyRelease => match field {
-            "key" | "modified_key" => Some(Type::Key),
-            "physical_key" => Some(Type::PhysicalKey),
-            "location" => Some(Type::KeyLocation),
-            "modifiers" => Some(Type::KeyModifiers),
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 pub(in crate::codegen) fn native_field_projection(

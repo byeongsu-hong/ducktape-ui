@@ -19,15 +19,6 @@ pub struct AnimationOptions {
     pub auto_reverse: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AnimationDuration {
-    VeryQuick,
-    Quick,
-    Slow,
-    VerySlow,
-    Milliseconds(u64),
-}
-
 #[derive(Clone, Debug)]
 pub struct Component {
     pub name: String,
@@ -246,14 +237,6 @@ pub(crate) enum ImmediateTask {
     PaneQuery,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum FutureMode {
-    #[default]
-    Every,
-    Latest,
-    Replace,
-}
-
 #[derive(Clone, Debug)]
 pub enum TaskSource {
     Effect {
@@ -345,14 +328,6 @@ pub enum PaneOperation {
 pub enum PaneReference {
     Static(String),
     Dynamic { template: String, key: Expr },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum PaneEdge {
-    Top,
-    Left,
-    Right,
-    Bottom,
 }
 
 #[derive(Clone, Debug)]
@@ -464,44 +439,6 @@ pub enum WindowOperation {
         function: String,
         args: Vec<Expr>,
     },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum WindowDirection {
-    North,
-    South,
-    East,
-    West,
-    NorthEast,
-    NorthWest,
-    SouthEast,
-    SouthWest,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum WindowMode {
-    Windowed,
-    Fullscreen,
-    Hidden,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum WindowAttention {
-    Critical,
-    Informational,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EffectKind {
-    Future,
-    Task,
-    Stream,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TaskGroupKind {
-    Parallel,
-    Sequential,
 }
 
 #[derive(Clone, Debug)]
