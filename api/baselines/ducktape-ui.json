@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fingerprint": "sha256:e0b4422241ff5af1baa6427dbb8a389afa153b98b1f7e8725a4bec82d89a8dfd",
+  "fingerprint": "sha256:fe21a6d04044004effcfb36f86074dd14199d63f90e664124a1aeee3aced6948",
   "language_revision": "2.0",
   "package": {
     "name": "ducktape-ui",
@@ -606,6 +606,34 @@
         "events": [],
         "default_output": "unit",
         "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "LogTimeline.Frame",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "title",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
         "lifetime": "retained"
       },
       {

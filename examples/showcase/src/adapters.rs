@@ -29,6 +29,10 @@ use ducktape_ui::ui::{
     focus_control::FocusControl,
     hover_card::{HoverCardId, hover_card as ui_hover_card},
     input_otp::{OtpPattern, input_otp as ui_input_otp},
+    log_timeline::{
+        LogTimelineEvent as UiLogTimelineEvent, LogTimelineState as UiLogTimelineState,
+        log_timeline as ui_log_timeline,
+    },
     menu::{MenuEntry, MenuEvent, MenuGroup, MenuItem, MenuState},
     menubar::{MenubarMenu, MenubarState as UiMenubarState, menubar as ui_menubar},
     message_scroller::{
@@ -97,6 +101,7 @@ pub use ducktape_ui::ui::{
 
 pub type CommandEvent = ducktape_ui::ui::command::CommandEvent<String>;
 pub type SelectEvent = ducktape_ui::ui::select::SelectEvent<String>;
+pub type LogTimelineEvent = UiLogTimelineEvent<u64>;
 pub type VirtualListEvent = UiVirtualListEvent<u64>;
 pub type TreeViewEvent = UiTreeViewEvent<u64>;
 
@@ -104,6 +109,21 @@ pub type TreeViewEvent = UiTreeViewEvent<u64>;
 pub enum DataGridEvent {
     Grid(UiDataGridEvent<u64, u8>),
     EditChanged(String),
+}
+
+#[derive(Debug)]
+pub struct LogTimelineState {
+    timeline: UiLogTimelineState<u64>,
+    rows: Arc<[u64]>,
+}
+
+impl Clone for LogTimelineState {
+    fn clone(&self) -> Self {
+        Self {
+            timeline: self.timeline.update_snapshot(),
+            rows: Arc::clone(&self.rows),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1747,6 +1767,106 @@ fn virtual_list_config() -> VirtualListConfig {
         .overscan(3)
 }
 
+fn log_timeline_config() -> VirtualListConfig {
+    VirtualListConfig::new(24.0)
+        .expect("showcase log-timeline geometry is valid")
+        .overscan(3)
+}
+
+pub fn log_timeline_state() -> LogTimelineState {
+    let rows: Arc<[u64]> = (0..100_000_u64).collect::<Vec<_>>().into();
+    let mut timeline = UiLogTimelineState::new(VirtualListId::new("showcase-log-timeline"));
+    timeline
+        .reconcile(&rows, |row| *row, log_timeline_config())
+        .expect("showcase log-timeline keys are unique and append-only");
+    LogTimelineState { timeline, rows }
+}
+
+pub fn log_timeline_apply(
+    mut state: LogTimelineState,
+    event: LogTimelineEvent,
+) -> LogTimelineState {
+    state.timeline.apply(event, log_timeline_config());
+    state
+}
+
+pub fn log_timeline_append(mut state: LogTimelineState) -> LogTimelineState {
+    let mut rows = Vec::from(state.rows.as_ref());
+    rows.push(
+        rows.last()
+            .copied()
+            .map_or(0, |last| last.saturating_add(1)),
+    );
+    state
+        .timeline
+        .reconcile(&rows, |row| *row, log_timeline_config())
+        .expect("showcase appends preserve log history");
+    state.rows = rows.into();
+    state
+}
+
+pub fn log_timeline_resume(mut state: LogTimelineState) -> LogTimelineState {
+    state
+        .timeline
+        .apply(UiLogTimelineEvent::ResumeTail, log_timeline_config());
+    state
+}
+
+pub fn log_timeline(state: &LogTimelineState) -> Element<'_, LogTimelineEvent> {
+    let theme = theme();
+    let inspection = state.timeline.inspect(log_timeline_config());
+    let status = if inspection.following_tail {
+        "following"
+    } else {
+        "paused"
+    };
+    let summary = row![
+        text(format!("{status} · {} unread", inspection.unread_count))
+            .size(11)
+            .font(ui_font(Weight::Semibold)),
+        iced::widget::Space::new().width(Length::Fill),
+        text(format!(
+            "mounted {}..{}",
+            inspection.list.mounted_range.start, inspection.list.mounted_range.end
+        ))
+        .size(10)
+        .color(theme.palette.muted_foreground),
+    ]
+    .align_y(iced::Alignment::Center);
+    let timeline = ui_log_timeline(
+        &state.timeline,
+        &state.rows,
+        log_timeline_config(),
+        "Build output",
+        |row| *row,
+        |row| format!("Build log line {row}"),
+        |_, row, selected| {
+            row![
+                text(format!("{row:06}"))
+                    .size(11)
+                    .font(ui_font(Weight::Semibold)),
+                text(format!("worker: completed build step {row}"))
+                    .size(11)
+                    .color(theme.palette.muted_foreground),
+                iced::widget::Space::new().width(Length::Fill),
+                text(if selected { "selected" } else { "" })
+                    .size(10)
+                    .color(theme.palette.primary),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center)
+            .into()
+        },
+        |event| event,
+        &theme,
+    );
+    column![summary, timeline]
+        .spacing(8)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
 pub fn virtual_list_state() -> VirtualListState {
     let items: Arc<[u64]> = (0..100_000_u64).collect::<Vec<_>>().into();
     let mut list = UiVirtualListState::new(VirtualListId::new("showcase-virtual-list"));
@@ -2596,6 +2716,8 @@ mod tests {
         let _: Element<'_, String> = radio_group("default");
         let scroller = message_scroller_state();
         let _: Element<'_, MessageScrollerEvent> = message_scroller(&scroller);
+        let timeline = log_timeline_state();
+        let _: Element<'_, LogTimelineEvent> = log_timeline(&timeline);
         let _: Element<'_, Vec<f64>> = resizable_demo(&[0.25, 0.5, 0.25]);
         let _: Element<'_, PopoverEvent> = popover_demo(false);
         let _: iced::Task<bool> = popover_apply(PopoverEvent::Open);
