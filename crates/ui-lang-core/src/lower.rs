@@ -10159,6 +10159,72 @@ view
     }
 
     #[test]
+    fn malformed_checked_responsive_fixed_dimension_cannot_become_static() {
+        let source = format!(
+            "app InvalidResponsiveTopology\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        for replacement in [CheckedResponsiveLength::Fill, CheckedResponsiveLength::None] {
+            let mut checked = analyze(&source).unwrap();
+            checked
+                .facts
+                .corrupt_responsive_dimension(ViewId(0), 0, replacement);
+
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("topology diverged"));
+        }
+    }
+
+    #[test]
+    fn malformed_checked_responsive_fill_portion_value_drift_is_rejected() {
+        let source = format!(
+            "app InvalidResponsivePortion\n{THEME}view\n  responsive at=600.0 w=fill(2) h=fill\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_responsive_dimension(
+            ViewId(0),
+            0,
+            CheckedResponsiveLength::FillPortion(3),
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_responsive_expression_cannot_be_left_unconsumed() {
+        let source = format!(
+            "app InvalidResponsiveCardinality\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_responsive_expression_count(ViewId(0), 2);
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression cardinality diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_responsive_cross_role_expression_is_rejected() {
+        let source = format!(
+            "app InvalidResponsiveOwner\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_responsive_dimension_expression_role(
+            ViewId(0),
+            0,
+            CheckedViewExprRole::ResponsiveHeightDimension,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("owner cardinality diverged"));
+    }
+
+    #[test]
     fn media_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
             "app CheckedMedia\n{THEME}state\n  path = \"photo.png\"\n  alpha = 0.8\nview\n  image path opacity=alpha filter=nearest\n"
