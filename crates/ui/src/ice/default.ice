@@ -1,5 +1,6 @@
 use "recipes.ice"
 use "components.ice"
+use "log-timeline.ice"
 use "tree-view.ice"
 use "virtual-list.ice"
 

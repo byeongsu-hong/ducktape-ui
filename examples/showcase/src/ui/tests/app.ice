@@ -311,6 +311,39 @@ test virtual_list_native_boundary
   expect text "#99999"
   capture virtual_list_end_selection
 
+test log_timeline_native_boundary
+  preset test
+  viewport 620 360
+  mount
+    LogTimeline.Frame #log-timeline-frame
+      with
+        title="Log timeline"
+        description="Append-only fixed-height logs reuse VirtualList selection, keyboard, inspection, and accessibility."
+      col w=fill gap=8.0
+        row gap=8.0
+          button "Append log" #append-log -> append_log
+          button "Resume tail" #resume-log-tail -> resume_log_tail
+        box #log-timeline-stage w=fill h=224.0
+          extern log_timeline(log_timeline) -> log_timeline_changed _
+  target log_stage = #log-timeline-frame/root/log-timeline-stage
+  target append_log_button = #log-timeline-frame/root/append-log
+  target resume_log_button = #log-timeline-frame/root/resume-log-tail
+  expect log_stage.height ~= 224.0
+  click log_stage
+  idle
+  key home
+  idle
+  expect text "paused · 0 unread"
+  expect text "000000"
+  click append_log_button
+  idle
+  expect text "paused · 1 unread"
+  click resume_log_button
+  idle
+  expect text "following · 0 unread"
+  expect text "100000"
+  capture log_timeline_tail_resume
+
 test tree_view_native_boundary
   preset test
   viewport 620 420

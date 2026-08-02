@@ -7,6 +7,8 @@ mod dynamic_themer;
 #[cfg(feature = "virtual-list")]
 mod fixed_virtualization;
 mod flex;
+#[cfg(feature = "virtual-list")]
+mod log_timeline;
 mod qr;
 mod resize_handle;
 #[cfg(feature = "full-runtime")]
@@ -27,6 +29,8 @@ mod zstack;
 pub use dashed_border::*;
 pub use dynamic_themer::*;
 pub use flex::*;
+#[cfg(feature = "virtual-list")]
+pub use log_timeline::*;
 pub use qr::*;
 pub use resize_handle::*;
 #[cfg(feature = "full-runtime")]

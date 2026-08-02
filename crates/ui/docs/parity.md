@@ -87,3 +87,10 @@ semantics with selected-item active-descendant tracking. Consecutive mounted
 windows retain state for their shared owned keys, and the renderer-only feature
 boundary compiles on native and wasm. Variable-height measurement is
 intentionally out of scope.
+
+`LogTimeline` is a second iced-specific product primitive composed directly
+from `VirtualListState`. It is restricted to caller-owned, append-only,
+fixed-height log rows and adds live-tail following, deliberate pause/resume,
+unread append accounting, and stable-key scrolling. It does not duplicate the
+variable-height measurement, conversational anchors, prepend restoration, or
+jump-control composition owned by `MessageScroller`.

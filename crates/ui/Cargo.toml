@@ -52,6 +52,7 @@ full = [
     "item",
     "kbd",
     "label",
+    "log-timeline",
     "marker",
     "menu",
     "menubar",
@@ -109,6 +110,7 @@ breadcrumb = ["theme"]
 item = ["theme"]
 kbd = ["theme"]
 label = ["theme"]
+log-timeline = ["virtual-list"]
 pagination = ["button"]
 skeleton = ["theme"]
 typography = ["theme"]

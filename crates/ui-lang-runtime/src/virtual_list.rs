@@ -474,6 +474,14 @@ where
         self.scroll.scroll_to_item(index, item_count, config.rows())
     }
 
+    /// Scrolls to the exact live edge of the collection.
+    ///
+    /// Unlike revealing the last item, this reaches the maximum native offset
+    /// even when the viewport is shorter than one fixed row.
+    pub fn scroll_to_end(&mut self, item_count: usize, config: VirtualListConfig) -> bool {
+        self.scroll.scroll_to_end(item_count, config.rows())
+    }
+
     /// Scrolls a stable key into view and returns whether the offset changed.
     pub fn scroll_to_key<T>(
         &mut self,
