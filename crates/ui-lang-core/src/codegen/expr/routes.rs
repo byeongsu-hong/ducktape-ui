@@ -53,7 +53,7 @@ pub(in crate::codegen) fn resolved_route_code(
                     invariant("normalized route payload index is outside its payload contract")
                 }),
             crate::lower::ResolvedRouteArg::Expression(expression) => {
-                checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -88,7 +88,7 @@ pub(in crate::codegen) fn resolved_interaction_route_code(
         .iter()
         .map(|arg| match arg {
             ResolvedInteractionRouteArg::Expression(expression) => {
-                checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)
             }
             ResolvedInteractionRouteArg::Payload { index, .. } => payloads
                 .get(*index as usize)

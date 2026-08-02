@@ -16,7 +16,7 @@ pub(in crate::codegen) fn render_children(
                 let program = document;
                 let conditional = program.resolved_conditional(*child)?;
                 let condition =
-                    checked_expr_use_code(program, conditional.condition, env, ValueMode::Owned)?;
+                    resolved_expr_use_code(program, conditional.condition, env, ValueMode::Owned)?;
                 if condition == "false" {
                     continue;
                 }
@@ -33,7 +33,7 @@ pub(in crate::codegen) fn render_children(
                 let iteration = program.resolved_iteration(*child)?;
                 let item_name = &iteration.item.name;
                 let items =
-                    checked_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
+                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
                 let reconciliation_scope = reconciliation_scope(scope, env);
                 write!(
                     out,
@@ -44,8 +44,8 @@ pub(in crate::codegen) fn render_children(
                 let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
                     item_name.clone(),
-                    checked_local_binding(
-                        LocalBindingTypeSource::Checked(program),
+                    resolved_local_binding(
+                        LocalBindingTypeSource::Resolved(program),
                         iteration.item.local,
                         item_name.clone(),
                         false,
@@ -67,7 +67,7 @@ pub(in crate::codegen) fn render_children(
                     );
                 }
                 let value =
-                    checked_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
+                    resolved_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
                 write!(out, " match &({value}) {{").unwrap();
                 for (arm_children, resolved_arm) in arms.iter().zip(&resolved.arms) {
                     write!(
@@ -81,7 +81,7 @@ pub(in crate::codegen) fn render_children(
                         let name = payload.name.clone();
                         child_env.insert(
                             name.clone(),
-                            checked_local_binding(
+                            resolved_local_binding(
                                 LocalBindingTypeSource::Hir(payload),
                                 payload.local,
                                 name,

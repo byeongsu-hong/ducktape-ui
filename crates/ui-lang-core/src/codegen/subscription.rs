@@ -74,7 +74,7 @@ pub(in crate::codegen) fn generate_subscription(
             .unwrap_or_default();
         let context = subscription
             .context
-            .map(|context| checked_expr_use_code(program, context, &env, ValueMode::Owned))
+            .map(|context| resolved_expr_use_code(program, context, &env, ValueMode::Owned))
             .transpose()?
             .map(|context| format!(".with({context})"))
             .unwrap_or_default();
@@ -113,7 +113,7 @@ pub(in crate::codegen) fn generate_subscription(
         let transforms = format!("{filter}{context}");
         let condition = subscription
             .condition
-            .map(|condition| checked_expr_use_code(program, condition, &env, ValueMode::Owned))
+            .map(|condition| resolved_expr_use_code(program, condition, &env, ValueMode::Owned))
             .transpose()?;
         if let Some(condition) = &condition {
             write!(out, "if {condition} {{ ::iced::Subscription::batch([").unwrap();
@@ -143,7 +143,7 @@ pub(in crate::codegen) fn generate_subscription(
                     let data = arguments
                         .iter()
                         .map(|argument| {
-                            checked_expr_use_code(program, *argument, &env, ValueMode::Owned)
+                            resolved_expr_use_code(program, *argument, &env, ValueMode::Owned)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     let types = function
@@ -174,7 +174,7 @@ pub(in crate::codegen) fn generate_subscription(
                 writeln!(out, "::iced::advanced::subscription::from_recipe({}({args})){transforms}.map(move |__value| {route}),", function.rust_path).unwrap();
             }
             ResolvedSubscriptionSource::Events { identity, filter } => {
-                let id = checked_expr_use_code(program, *identity, &env, ValueMode::Owned)?;
+                let id = resolved_expr_use_code(program, *identity, &env, ValueMode::Owned)?;
                 let recipe = event_filter_type(&filter.name);
                 writeln!(out, "::iced::advanced::subscription::from_recipe({recipe} {{ id: {id} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
@@ -427,7 +427,7 @@ fn checked_subscription_arguments(
 ) -> Result<String, Error> {
     arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()
         .map(|arguments| arguments.join(", "))
 }

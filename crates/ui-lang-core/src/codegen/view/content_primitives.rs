@@ -6,7 +6,7 @@ pub(in crate::codegen) fn render_rule(
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let thickness = checked_expr_use_code(program, rule.thickness, env, ValueMode::Owned)?;
+    let thickness = resolved_expr_use_code(program, rule.thickness, env, ValueMode::Owned)?;
     let axis = match rule.axis {
         ResolvedRuleAxis::Horizontal => "horizontal",
         ResolvedRuleAxis::Vertical => "vertical",
@@ -22,7 +22,7 @@ pub(in crate::codegen) fn render_qr_code(
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let payload = checked_expr_use_code(program, qr.payload, env, ValueMode::Borrowed)?;
+    let payload = resolved_expr_use_code(program, qr.payload, env, ValueMode::Borrowed)?;
     let data = resolved_qr_data_code(qr, &payload);
     let mut code = format!("::ui_lang_runtime::qr_code({data}.ok())");
     match qr.size {
@@ -32,13 +32,13 @@ pub(in crate::codegen) fn render_qr_code(
         ResolvedQrSize::Cell(value) => write!(
             code,
             ".cell_size(::ui_lang_runtime::bounded_spacing({}, 182))",
-            checked_expr_use_code(program, value, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, value, env, ValueMode::Owned)?
         )
         .unwrap(),
         ResolvedQrSize::Total(value) => write!(
             code,
             ".total_size(::ui_lang_runtime::bounded_spacing({}, 3))",
-            checked_expr_use_code(program, value, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, value, env, ValueMode::Owned)?
         )
         .unwrap(),
     }
@@ -112,7 +112,7 @@ fn resolved_rule_style_code(
         let fill = match fill {
             ResolvedRuleFill::Full => "::iced::widget::rule::FillMode::Full".into(),
             ResolvedRuleFill::Percent(value) => {
-                let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
                 format!(
                     "::iced::widget::rule::FillMode::Percent((({value}) as f32).max(0.0).min(100.0))"
                 )
@@ -136,7 +136,7 @@ fn resolved_rule_style_code(
         write!(
             code,
             " __style.snap = {};",
-            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, snap, env, ValueMode::Owned)?
         )
         .unwrap();
     }

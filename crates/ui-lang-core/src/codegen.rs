@@ -1,5 +1,4 @@
 use crate::ast::*;
-use crate::check::{CheckedLocalId, CheckedValueRef};
 use crate::hir::{ExternFnId, HandlerId, RunSiteId};
 use crate::lower::*;
 use crate::{Error, canonical_snake};
@@ -177,19 +176,19 @@ fn set_reconciliation_scope(env: &mut HashMap<String, Binding>, code: String) {
 }
 
 enum LocalBindingTypeSource<'a> {
-    Checked(&'a LoweredProgram),
+    Resolved(&'a LoweredProgram),
     Hir(&'a ResolvedMatchBinding),
 }
 
-fn checked_local_binding(
+fn resolved_local_binding(
     source: LocalBindingTypeSource<'_>,
-    local_id: CheckedLocalId,
+    local_id: ResolvedLocalId,
     code: String,
     is_local: bool,
 ) -> Binding {
     let ty = match source {
-        LocalBindingTypeSource::Checked(program) => {
-            program.checked_facts().local(local_id).ty.clone()
+        LocalBindingTypeSource::Resolved(program) => {
+            program.expressions().local(local_id).ty.clone()
         }
         LocalBindingTypeSource::Hir(payload) => payload.ty.clone(),
     };
@@ -276,7 +275,7 @@ pub(in crate::codegen) fn event_filter_type(name: &str) -> String {
 fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Error> {
     let env = checked_state_env(program, "self");
     for derived in program.derived() {
-        let value = checked_expr_use_code(program, derived.initializer, &env, ValueMode::Owned)?;
+        let value = resolved_expr_use_code(program, derived.initializer, &env, ValueMode::Owned)?;
         writeln!(out, "{}", source_marker(&derived.span)).unwrap();
         writeln!(
             out,
@@ -291,8 +290,11 @@ fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Er
 }
 
 pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, Error> {
-    program.validate_view_hir()?;
-    program.validate_handler_hir()?;
+    #[cfg(test)]
+    {
+        program.validate_view_hir()?;
+        program.validate_handler_hir()?;
+    }
     let extern_component_declarations = program.extern_component_declarations()?;
     let extern_component_ids = extern_component_declarations
         .iter()

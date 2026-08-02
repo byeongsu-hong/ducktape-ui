@@ -1,7 +1,7 @@
 use super::*;
 use crate::codegen::{
-    BindingEnvMetrics, ValueMode, binding_env_metrics, checked_expr_use_code, checked_state_env,
-    reset_binding_env_metrics,
+    BindingEnvMetrics, ValueMode, binding_env_metrics, checked_state_env,
+    reset_binding_env_metrics, resolved_expr_use_code,
 };
 
 #[test]
@@ -950,7 +950,7 @@ view
     let mut env = checked_state_env(&program, "self");
     env.get_mut("count").unwrap().owner = None;
 
-    let error = checked_expr_use_code(&program, expression, &env, ValueMode::Owned).unwrap_err();
+    let error = resolved_expr_use_code(&program, expression, &env, ValueMode::Owned).unwrap_err();
     assert_eq!(error.code, "E196");
     assert!(error.message.contains("mismatched emission owner"));
 }

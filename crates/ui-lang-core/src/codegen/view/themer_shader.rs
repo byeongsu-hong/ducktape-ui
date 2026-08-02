@@ -14,7 +14,7 @@ fn extern_view_arguments(
                 ResolvedExternViewArgumentMode::BorrowedAsRef
                 | ResolvedExternViewArgumentMode::Borrowed => ValueMode::Borrowed,
             };
-            let code = checked_expr_use_code(program, argument.expression, env, value_mode)?;
+            let code = resolved_expr_use_code(program, argument.expression, env, value_mode)?;
             Ok(match argument.mode {
                 ResolvedExternViewArgumentMode::Owned => code,
                 ResolvedExternViewArgumentMode::BorrowedAsRef => {
@@ -79,10 +79,10 @@ fn shader_length_code(
         ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
         ResolvedContainerLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedContainerLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }

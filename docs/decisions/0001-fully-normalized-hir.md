@@ -644,6 +644,14 @@ test-only source sidecar remains available exclusively to adversarial tests
 that poison the parsed AST after lowering and prove the backend cannot observe
 it; release HIR does not allocate or expose that sidecar.
 
+The release expression backend now consumes a normalized expression arena owned
+by `LoweredProgram`. HIR-owned expression, value, and local IDs carry its
+semantic references, while builtin and enum Rust targets are fixed during
+lowering. Release `LoweredProgram` no longer carries `CheckedFacts`; only a
+test-only sidecar retains checker facts for adversarial lowering tests.
+Production code generation has zero checker semantic references, checked-fact
+escapes, or declaration-index escapes.
+
 `CheckedDocument` also no longer implements `Deref<Target = Document>`.
 Syntax-oriented tooling must request `source_document()` explicitly, while
 semantic consumers use checked APIs or lower to HIR. This closes accidental
@@ -651,10 +659,10 @@ AST access without preventing the formatter, LSP, review selector, API
 fingerprinter, and asset discovery from inspecting source syntax when that is
 their stated job.
 
-This is not yet the migration-complete claim below. The boundary inventory
-still records shared AST value types and direct checked-expression arena types
-inside code generation; those dependencies must move behind backend-neutral
-HIR-owned interfaces before the final status can be declared complete.
+This is not yet the migration-complete claim below. The remaining Full HIR
+boundary is the shared source-AST semantic types still used inside code
+generation. Those dependencies must move behind backend-neutral HIR-owned
+interfaces before the final status can be declared complete.
 
 The migration is complete when:
 

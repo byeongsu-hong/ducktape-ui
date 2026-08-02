@@ -121,12 +121,12 @@ fn generate_test(
 
     let expr_code =
         |value: &ResolvedExpressionId, env: &HashMap<String, Binding>, mode: ValueMode| {
-            checked_expr_use_code(program, *value, env, mode)
+            resolved_expr_use_code(program, *value, env, mode)
         };
     let expr_list_code = |values: &[ResolvedExpressionId], env: &HashMap<String, Binding>| {
         values
             .iter()
-            .map(|value| checked_expr_use_code(program, *value, env, ValueMode::Owned))
+            .map(|value| resolved_expr_use_code(program, *value, env, ValueMode::Owned))
             .collect::<Result<Vec<_>, _>>()
             .map(|values| values.join(", "))
     };
@@ -625,9 +625,9 @@ fn generate_expectation(
             negated,
             expression,
         } => {
-            let left = checked_expr_node_code(program, *expression, *left, env, ValueMode::Owned)?;
+            let left = resolved_expr_node_code(program, *expression, *left, env, ValueMode::Owned)?;
             let right =
-                checked_expr_node_code(program, *expression, *right, env, ValueMode::Owned)?;
+                resolved_expr_node_code(program, *expression, *right, env, ValueMode::Owned)?;
             let method = if *negated { "check_ne" } else { "check_eq" };
             writeln!(
                 out,
@@ -639,7 +639,7 @@ fn generate_expectation(
             expression,
             unwrap_operator,
         } => {
-            let mut code = checked_expr_use_code(program, *expression, env, ValueMode::Owned)?;
+            let mut code = resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?;
             if *unwrap_operator {
                 code = code
                     .strip_prefix('(')
@@ -654,8 +654,8 @@ fn generate_expectation(
             .unwrap();
         }
         ResolvedTestExpectation::Approx { left, right } => {
-            let left = checked_expr_use_code(program, *left, env, ValueMode::Owned)?;
-            let right = checked_expr_use_code(program, *right, env, ValueMode::Owned)?;
+            let left = resolved_expr_use_code(program, *left, env, ValueMode::Owned)?;
+            let right = resolved_expr_use_code(program, *right, env, ValueMode::Owned)?;
             writeln!(
                 out,
                 "let __left = ({left}) as f64; let __right = ({right}) as f64; __test.check_approx(__left, __right, {location});"
@@ -676,7 +676,7 @@ fn generate_expectation(
             within,
             negated,
         } => {
-            let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+            let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
             if let Some(within) = within {
                 let path = target_ref_path_code(within, test, env, program)?;
                 writeln!(
@@ -704,7 +704,7 @@ fn generate_expectation(
                         ResolvedTestAccessibilityProperty::Value(_) => "Value",
                         _ => unreachable!(),
                     };
-                    let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                    let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
                     writeln!(out, "let __target = {path}; let __expected = {value}; __test.check_accessibility_str(&__target, ::ui_lang_runtime::testing::AccessibilityProperty::{property}, &__expected, {location});").unwrap();
                 }
                 ResolvedTestAccessibilityProperty::Checked(value)
@@ -716,13 +716,13 @@ fn generate_expectation(
                         ResolvedTestAccessibilityProperty::Focused(_) => "Focused",
                         _ => unreachable!(),
                     };
-                    let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                    let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
                     writeln!(out, "let __target = {path}; let __expected = {value}; __test.check_accessibility_bool(&__target, ::ui_lang_runtime::testing::AccessibilityProperty::{property}, __expected, {location});").unwrap();
                 }
                 ResolvedTestAccessibilityProperty::Action { name, expected } => {
                     let action = accessibility_action_variant(name);
                     let expected =
-                        checked_expr_use_code(program, *expected, env, ValueMode::Owned)?;
+                        resolved_expr_use_code(program, *expected, env, ValueMode::Owned)?;
                     writeln!(out, "let __target = {path}; let __expected = {expected}; __test.check_accessibility_action(&__target, ::ui_lang_runtime::testing::AccessibilityAction::{action}, __expected, {location});").unwrap();
                 }
             }
@@ -819,19 +819,19 @@ fn test_composition_code(
                 |(start, end)| {
                     Ok::<_, Error>(format!(
                         "::std::option::Option::Some(::std::ops::Range {{ start: ::std::primitive::usize::try_from({}).expect(\"composition selection start must fit usize\"), end: ::std::primitive::usize::try_from({}).expect(\"composition selection end must fit usize\") }})",
-                        checked_expr_use_code(program, *start, env, ValueMode::Owned)?,
-                        checked_expr_use_code(program, *end, env, ValueMode::Owned)?
+                        resolved_expr_use_code(program, *start, env, ValueMode::Owned)?,
+                        resolved_expr_use_code(program, *end, env, ValueMode::Owned)?
                     ))
                 },
             )?;
             format!(
                 "::ui_lang_runtime::testing::CompositionPhase::Update {{ text: {}, selection: {selection} }}",
-                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
             )
         }
         ResolvedTestComposition::Commit(value) => format!(
             "::ui_lang_runtime::testing::CompositionPhase::Commit({})",
-            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
         ResolvedTestComposition::Cancel => {
             "::ui_lang_runtime::testing::CompositionPhase::Cancel".into()
@@ -867,7 +867,7 @@ fn resolved_test_target_path_code(
     let mut scope = rust_string(program.app_name());
     for segment in &target.segments {
         scope = if let Some(key) = segment.key {
-            let key = checked_expr_use_code(program, key, env, ValueMode::Borrowed)?;
+            let key = resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?;
             format!("format!(\"{{}}/{}({{}})\", {scope}, {key})", segment.name)
         } else {
             format!("format!(\"{{}}/{}\", {scope})", segment.name)

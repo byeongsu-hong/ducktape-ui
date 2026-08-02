@@ -12,7 +12,7 @@ pub(in crate::codegen) fn canvas_update_code(
     let capture = options
         .capture
         .as_ref()
-        .map(|value| checked_expr_use_code(program, *value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, *value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "false".into());
     let action = |message: String, capture: &str| {
@@ -179,7 +179,7 @@ pub(in crate::codegen) fn canvas_update_code(
             .map(|(index, update)| {
                 Ok(format!(
                     "let __next_canvas_state_{index} = {}; __state.{} = __next_canvas_state_{index};",
-                    checked_expr_use_code(program, update.value, &event_env, ValueMode::Owned)?,
+                    resolved_expr_use_code(program, update.value, &event_env, ValueMode::Owned)?,
                     update.name,
                 ))
             })
@@ -374,7 +374,7 @@ fn resolved_canvas_route_code(
         .iter()
         .map(|arg| match arg {
             ResolvedCanvasRouteArg::Expression(expression) => {
-                checked_expr_use_code(program, *expression, env, ValueMode::Owned)
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)
             }
             ResolvedCanvasRouteArg::Payload { index, .. } => payloads
                 .get(*index as usize)

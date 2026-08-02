@@ -3,14 +3,19 @@ use super::expr::{
     unify_type_evidence,
 };
 use super::*;
+#[cfg(test)]
+use crate::hir::DerivedId;
 use crate::hir::{
-    AppSettingExprId, AppStateId, CanvasCommandId, CanvasEventId, CanvasExpressionId,
-    CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
-    ComponentSlotId, ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId,
-    ExternRef, FloatExpressionId, HandlerId, InteractionExpressionId, InteractionRouteId,
-    MediaExpressionId, OriginArena, OriginId, PaletteId, PinExpressionId, RouteId, StatementId,
-    StructFieldId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, TooltipExpressionId,
-    ViewId,
+    AppSettingExprId, CanvasCommandId, CanvasEventId, CanvasExpressionId, CanvasLocalId,
+    CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
+    ComponentSlotId, DeclarationIndex, EnumVariantId, ExternFnId, ExternRef, FloatExpressionId,
+    HandlerId, InteractionExpressionId, InteractionRouteId, MediaExpressionId, OriginArena,
+    OriginId, PaletteId, PinExpressionId, RouteId, StatementId, StructFieldId, SubscriptionId,
+    TaskId, TestId, TestStepId, TestTargetId, TooltipExpressionId, ViewId,
+};
+pub(crate) use crate::hir::{
+    ExpressionId as CheckedExprUseId, ExpressionNodeId as CheckedExprId, LocalId as CheckedLocalId,
+    ValueRef as CheckedValueRef,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -29,12 +34,6 @@ impl Clone for LookupCount {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedExprId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedExprUseId(u32);
-
 #[cfg(test)]
 impl CheckedExprUseId {
     pub(crate) fn invalid_for_test() -> Self {
@@ -44,9 +43,6 @@ impl CheckedExprUseId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedValueId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedLocalId(u32);
 
 #[cfg(test)]
 impl CheckedLocalId {
@@ -62,14 +58,6 @@ pub(crate) struct CheckedBuiltinId(u32);
 enum ValueScope {
     App,
     Component(ComponentId),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum CheckedValueRef {
-    AppState(AppStateId),
-    Derived(DerivedId),
-    ComponentParam(ComponentParamId),
-    ComponentState(ComponentStateId),
 }
 
 #[derive(Clone, Debug)]
@@ -11532,13 +11520,13 @@ view
 
         assert_eq!(
             facts.structural_snapshot(),
-            r#"value v0 AppState(AppStateId(0)) user:Named("User") init=Some(CheckedExprUseId(0)) origin=o0
-value v1 AppState(AppStateId(1)) color:Color init=Some(CheckedExprUseId(1)) origin=o1
-value v2 AppState(AppStateId(2)) mode:Named("Mode") init=Some(CheckedExprUseId(2)) origin=o2
-value v3 Derived(DerivedId(0)) name:Str init=Some(CheckedExprUseId(3)) origin=o3
-value v4 Derived(DerivedId(1)) visible:Bool init=Some(CheckedExprUseId(4)) origin=o4
-value v5 ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 }) label:Str init=Some(CheckedExprUseId(5)) origin=o6
-value v6 ComponentState(ComponentStateId { component: ComponentId(0), index: 0 }) open:Bool init=Some(CheckedExprUseId(6)) origin=o7
+            r#"value v0 AppState(AppStateId(0)) user:Named("User") init=Some(ExpressionId(0)) origin=o0
+value v1 AppState(AppStateId(1)) color:Color init=Some(ExpressionId(1)) origin=o1
+value v2 AppState(AppStateId(2)) mode:Named("Mode") init=Some(ExpressionId(2)) origin=o2
+value v3 Derived(DerivedId(0)) name:Str init=Some(ExpressionId(3)) origin=o3
+value v4 Derived(DerivedId(1)) visible:Bool init=Some(ExpressionId(4)) origin=o4
+value v5 ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 }) label:Str init=Some(ExpressionId(5)) origin=o6
+value v6 ComponentState(ComponentStateId { component: ComponentId(0), index: 0 }) open:Bool init=Some(ExpressionId(6)) origin=o7
 use u0 Value(AppState(AppStateId(0))) root=e1 source=Named("User") destination=Named("User") coercion=None origin=o0
 use u1 Value(AppState(AppStateId(1))) root=e5 source=Color destination=Color coercion=None origin=o1
 use u2 Value(AppState(AppStateId(2))) root=e6 source=Named("Mode") destination=Named("Mode") coercion=None origin=o2
@@ -11573,7 +11561,7 @@ expr e19 path Value(ComponentState(ComponentStateId { component: ComponentId(0),
 expr e20 str "Open" : Str origin=o26
 view w0 layout Component(ComponentId(0)) parent=None children=[ViewId(1), ViewId(2)] flow=None origin=o15
 view w1 text Component(ComponentId(0)) parent=Some(ViewId(0)) children=[] flow=None origin=o16
-view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: CheckedExprUseId(9) } origin=o17
+view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: ExpressionId(9) } origin=o17
 view w3 text Component(ComponentId(0)) parent=Some(ViewId(2)) children=[] flow=None origin=o18
 view w4 layout App parent=None children=[ViewId(5), ViewId(6)] flow=None origin=o19
 view w5 component App parent=Some(ViewId(4)) children=[] flow=None origin=o20

@@ -9,8 +9,8 @@ pub(in crate::codegen) fn render_pick_list(
     scope: &str,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let options = checked_expr_use_code(program, pick.options, env, ValueMode::Owned)?;
-    let selected = checked_expr_use_code(program, pick.selected, env, ValueMode::Owned)?;
+    let options = resolved_expr_use_code(program, pick.options, env, ValueMode::Owned)?;
+    let selected = resolved_expr_use_code(program, pick.selected, env, ValueMode::Owned)?;
     let callback = resolved_interaction_route_callback_code(
         &pick.selection,
         "__value",
@@ -25,7 +25,7 @@ pub(in crate::codegen) fn render_pick_list(
         write!(
             widget,
             ".placeholder({})",
-            checked_expr_use_code(program, placeholder, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, placeholder, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -41,7 +41,7 @@ pub(in crate::codegen) fn render_pick_list(
         write!(
             widget,
             ".padding(::ui_lang_runtime::bounded_table_metric({}, __pick_option_count))",
-            checked_expr_use_code(program, padding, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, padding, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -49,7 +49,7 @@ pub(in crate::codegen) fn render_pick_list(
         write!(
             widget,
             ".text_size((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-            checked_expr_use_code(program, size, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, size, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -57,7 +57,7 @@ pub(in crate::codegen) fn render_pick_list(
         write!(
             widget,
             ".text_line_height(::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX)))",
-            checked_expr_use_code(program, line_height, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, line_height, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -101,7 +101,7 @@ pub(in crate::codegen) fn render_pick_list(
         resolved_accessibility_key_code(identity, "pick-list", pick.origin, scope, env, document)?;
     let accessibility_label = pick
         .placeholder
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "\"Select\"".to_owned());
     Ok(format!(
@@ -119,7 +119,7 @@ pub(in crate::codegen) fn render_combo_box(
 ) -> Result<String, Error> {
     let program = document.hir();
     let state = resolved_combo_state(combo, env, program)?;
-    let selected = checked_expr_use_code(program, combo.selected, env, ValueMode::Owned)?;
+    let selected = resolved_expr_use_code(program, combo.selected, env, ValueMode::Owned)?;
     let callback = resolved_interaction_route_callback_code(
         &combo.selection,
         "__value",
@@ -145,7 +145,7 @@ pub(in crate::codegen) fn render_combo_box(
         write!(
             widget,
             ".padding(::ui_lang_runtime::bounded_table_metric({}, __combo_option_count))",
-            checked_expr_use_code(program, padding, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, padding, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -153,7 +153,7 @@ pub(in crate::codegen) fn render_combo_box(
         write!(
             widget,
             ".size((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-            checked_expr_use_code(program, size, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, size, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -161,7 +161,7 @@ pub(in crate::codegen) fn render_combo_box(
         write!(
             widget,
             ".line_height(::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX)))",
-            checked_expr_use_code(program, line_height, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, line_height, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -290,7 +290,7 @@ fn resolved_pick_handle_code(
                 |value| {
                     Ok::<_, Error>(format!(
                         "::std::option::Option::Some((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                        checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                        resolved_expr_use_code(program, value, env, ValueMode::Owned)?
                     ))
                 },
             )?;
@@ -324,7 +324,7 @@ fn resolved_pick_icon_code(
         |value| {
             Ok::<_, Error>(format!(
                 "::std::option::Option::Some((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             ))
         },
     )?;
@@ -333,7 +333,7 @@ fn resolved_pick_icon_code(
         |value| {
             Ok::<_, Error>(format!(
                 "::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             ))
         },
     )?;
@@ -492,7 +492,7 @@ fn resolved_status_custom_call(
             let arguments = custom
                 .arguments
                 .iter()
-                .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+                .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
                 .collect::<Result<Vec<_>, _>>()?;
             let suffix = arguments
                 .into_iter()
@@ -544,7 +544,7 @@ fn resolved_menu_style_code(
             let arguments = custom
                 .arguments
                 .iter()
-                .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+                .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
                 .collect::<Result<Vec<_>, _>>()?;
             let suffix = arguments
                 .into_iter()
@@ -619,7 +619,7 @@ fn append_resolved_selection_surface(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -644,7 +644,7 @@ fn append_resolved_selection_surface(
                 write!(
                     code,
                     " {field} = {} as f32;",
-                    checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                    resolved_expr_use_code(program, value, env, ValueMode::Owned)?
                 )
                 .unwrap();
             }

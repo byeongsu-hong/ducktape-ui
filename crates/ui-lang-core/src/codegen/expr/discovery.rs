@@ -5,7 +5,7 @@ pub(in crate::codegen) fn resolved_initializer_code(
     initializer: &ResolvedInitializer,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
-    let mut code = checked_expr_use_code(
+    let mut code = resolved_expr_use_code(
         program,
         initializer.expression,
         &HashMap::new(),

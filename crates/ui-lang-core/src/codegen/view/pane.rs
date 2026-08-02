@@ -1,5 +1,4 @@
 use super::*;
-use crate::check::CheckedExprUseId;
 use crate::hir::OriginId;
 
 #[allow(clippy::too_many_arguments)]
@@ -34,8 +33,8 @@ pub(in crate::codegen) fn render_pane_grid(
             if let Some(binding) = &resolved.maximized {
                 pane_env.insert(
                     binding.name.clone(),
-                    checked_local_binding(
-                        LocalBindingTypeSource::Checked(program),
+                    resolved_local_binding(
+                        LocalBindingTypeSource::Resolved(program),
                         binding.local,
                         "__pane_maximized".into(),
                         true,
@@ -67,8 +66,8 @@ pub(in crate::codegen) fn render_pane_grid(
         let mut template_env = ScopedBindingEnv::new(env);
         template_env.insert(
             item.clone(),
-            checked_local_binding(
-                LocalBindingTypeSource::Checked(program),
+            resolved_local_binding(
+                LocalBindingTypeSource::Resolved(program),
                 resolved.item.local,
                 format!("(*{item})"),
                 false,
@@ -77,15 +76,15 @@ pub(in crate::codegen) fn render_pane_grid(
         if let Some(binding) = &resolved.pane.maximized {
             template_env.insert(
                 binding.name.clone(),
-                checked_local_binding(
-                    LocalBindingTypeSource::Checked(program),
+                resolved_local_binding(
+                    LocalBindingTypeSource::Resolved(program),
                     binding.local,
                     "__pane_maximized".into(),
                     true,
                 ),
             );
         }
-        let key = checked_expr_use_code(program, resolved.key, &template_env, ValueMode::Owned)?;
+        let key = resolved_expr_use_code(program, resolved.key, &template_env, ValueMode::Owned)?;
         let pane_scope = format!(
             "format!(\"{{}}/{}({{}})\", {pane_grid_scope}, __pane_key)",
             item
@@ -137,7 +136,7 @@ pub(in crate::codegen) fn render_pane_grid(
             write!(
                 code,
                 ".{method}(::ui_lang_runtime::bounded_table_metric({}, self.{field}.len()))",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -146,7 +145,7 @@ pub(in crate::codegen) fn render_pane_grid(
         write!(
             code,
             ".on_resize(::ui_lang_runtime::bounded_table_metric({}, self.{field}.len()), {message}::{})",
-            checked_expr_use_code(program, leeway, env, ValueMode::Owned)?,
+            resolved_expr_use_code(program, leeway, env, ValueMode::Owned)?,
             pane_resize_variant(&pane_grid.name)
         )
         .unwrap();
@@ -254,7 +253,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
         write!(
             code,
             " __style.hovered_region.border.width = {} as f32;",
-            checked_expr_use_code(program, *width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -289,7 +288,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
             write!(
                 code,
                 " __style.{field}.width = {} as f32;",
-                checked_expr_use_code(program, *width, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *width, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -412,10 +411,10 @@ fn resolved_pane_length_code(
         ResolvedPaneLength::Shrink => "::iced::Shrink".into(),
         ResolvedPaneLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedPaneLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -428,7 +427,7 @@ fn resolved_pane_custom_style_code(
     let arguments = style
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?;
     let suffix = arguments
         .into_iter()
@@ -452,13 +451,13 @@ fn resolved_pane_background_code(
         ResolvedPaneBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
             for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
                     resolved_theme_color(&stop.color)
                 )
                 .unwrap();
@@ -485,10 +484,10 @@ fn resolved_pane_radius_code(
     if !resolved_pane_radius_present(radius) {
         return Ok(None);
     }
-    let value = |expression: Option<CheckedExprUseId>| {
+    let value = |expression: Option<ResolvedExpressionId>| {
         expression
             .map(|expression| {
-                checked_expr_use_code(program, expression, env, ValueMode::Owned)
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)
                     .map(|code| format!("(({code}) as f32).max(0.0).min(f32::MAX)"))
             })
             .transpose()
@@ -518,9 +517,9 @@ fn resolved_pane_padding_code(
     {
         return Ok(None);
     }
-    let value = |expression: Option<CheckedExprUseId>| {
+    let value = |expression: Option<ResolvedExpressionId>| {
         expression
-            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
             .transpose()
     };
     let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
@@ -585,7 +584,7 @@ fn resolved_pane_surface_style_value(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -609,7 +608,7 @@ fn resolved_pane_surface_style_value(
             write!(
                 code,
                 " __style.shadow.{field} = {} as f32;",
-                checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -618,7 +617,7 @@ fn resolved_pane_surface_style_value(
         write!(
             code,
             " __style.snap = {};",
-            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, snap, env, ValueMode::Owned)?
         )
         .unwrap();
     }

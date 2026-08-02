@@ -54,7 +54,7 @@ pub(in crate::codegen) fn render_content(
                 component_env.insert(
                     argument.name.clone(),
                     Binding {
-                        code: checked_expr_use_code(
+                        code: resolved_expr_use_code(
                             document.program(),
                             argument.expression,
                             value_env,
@@ -63,7 +63,7 @@ pub(in crate::codegen) fn render_content(
                         ty: argument.ty.clone(),
                         local: false,
                         state,
-                        owner: Some(BindingOwner::Value(CheckedValueRef::ComponentParam(
+                        owner: Some(BindingOwner::Value(ResolvedValueRef::ComponentParam(
                             argument.param,
                         ))),
                     },
@@ -89,6 +89,9 @@ pub(in crate::codegen) fn render_content(
                 );
             }
             for (event_index, event) in call.events.iter().enumerate() {
+                document
+                    .program()
+                    .validate_component_call_event_contract(call, event_index)?;
                 let payloads = (0..event.payloads().len())
                     .map(|index| format!("__event_{index}"))
                     .collect::<Vec<_>>();
@@ -105,7 +108,7 @@ pub(in crate::codegen) fn render_content(
                         )?
                     }
                     ResolvedEventRoute::Forward {
-                        event: callee_event,
+                        event: _,
                         name: callee_event_name,
                         payloads: callee_payloads,
                         outer_component,
@@ -117,14 +120,6 @@ pub(in crate::codegen) fn render_content(
                         ..
                     } => {
                         let program = document.program();
-                        program.validate_component_call_event_contract(
-                            call,
-                            event_index,
-                            *callee_event,
-                            callee_event_name,
-                            callee_payloads,
-                            *origin,
-                        )?;
                         let outer = program
                             .try_component(*outer_component)
                             .filter(|component| {
@@ -233,7 +228,7 @@ pub(in crate::codegen) fn render_content(
                                 name: state.name.clone(),
                                 scope: scope_binding.clone(),
                             }),
-                            owner: Some(BindingOwner::Value(CheckedValueRef::ComponentState(
+                            owner: Some(BindingOwner::Value(ResolvedValueRef::ComponentState(
                                 state.id,
                             ))),
                         },

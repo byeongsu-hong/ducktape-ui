@@ -22,7 +22,7 @@ pub(in crate::codegen) fn generate_view(
                 local: true,
                 state: None,
                 owner: program
-                    .checked_facts()
+                    .expressions()
                     .daemon_window_local()
                     .map(BindingOwner::Local),
             },

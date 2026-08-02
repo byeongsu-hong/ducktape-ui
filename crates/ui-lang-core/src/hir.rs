@@ -40,6 +40,17 @@ arena_id!(RouteId);
 arena_id!(RunSiteId);
 arena_id!(NamedWindowId);
 arena_id!(SubscriptionId);
+arena_id!(ExpressionNodeId);
+arena_id!(ExpressionId);
+arena_id!(LocalId);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ValueRef {
+    AppState(AppStateId),
+    Derived(DerivedId),
+    ComponentParam(ComponentParamId),
+    ComponentState(ComponentStateId),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct TestTargetId {
