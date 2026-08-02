@@ -17,6 +17,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let layout_analysis_guard = expr::HandlerAnalysisGuard::start();
             if let Some(columns) = &options.columns {
                 require_type(&expr_type(columns, env, document, span)?, &Type::I64, span)?;
                 if matches!(columns, Expr::I64(value) if *value <= 0) {
@@ -149,6 +150,7 @@ pub(in crate::check) fn infer_layout_group(
                 check_scroll_styles(&scroll.styles, env, document)?;
             }
             check_styles(styles, document, span, StyleTarget::Layout(*kind, options))?;
+            retain_layout_analyses(span, layout_analysis_guard.finish())?;
             for child in children {
                 infer_view(child, env, document, signatures, ids)?;
             }
@@ -161,6 +163,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let container_analysis_guard = expr::HandlerAnalysisGuard::start();
             for length in [&options.width, &options.height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "box size")?;
             }
@@ -231,6 +234,7 @@ pub(in crate::check) fn infer_layout_group(
             check_container_style_options(&options.style, env, document, span, "E184")?;
             check_border_dash(options, env, document, span)?;
             check_styles(styles, document, span, StyleTarget::Container(options))?;
+            retain_container_analyses(span, container_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Overlay {
@@ -241,6 +245,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(
                 &expr_type(&options.visible, env, document, span)?,
                 &Type::Bool,
@@ -257,6 +262,7 @@ pub(in crate::check) fn infer_layout_group(
             if let Some(dismiss) = &options.dismiss {
                 infer_route(dismiss, None, env, document, signatures)?;
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
             infer_view(layer, env, document, signatures, ids)?;
         }
@@ -268,6 +274,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
             ..
         } => {
+            let pane_analysis_guard = expr::HandlerAnalysisGuard::start();
             if !ids.insert(name.clone()) {
                 return Err(Error::new(
                     "E161",
@@ -331,9 +338,9 @@ pub(in crate::check) fn infer_layout_group(
                 infer_route(click, Some(Type::Str), env, document, signatures)?;
             }
             for pane in panes {
-                infer_pane_view(pane, env, document, signatures, ids)?;
+                check_pane_view_options(pane, env, document)?;
             }
-            for (template_index, template) in templates.iter().enumerate() {
+            for template in templates {
                 let Some(Type::List(item_type)) = env.get_type(&template.items) else {
                     return Err(Error::new(
                         "E187",
@@ -346,14 +353,7 @@ pub(in crate::check) fn infer_layout_group(
                 };
                 let mut template_env = scoped_view_env(env);
                 template_env.insert(template.item.clone(), (**item_type).clone());
-                let key_type = retained_view_expr_type_at(
-                    &template.key,
-                    &template_env,
-                    document,
-                    span,
-                    &template.span,
-                    CheckedViewExprRole::PaneTemplateKey(template_index as u32),
-                )?;
+                let key_type = expr_type(&template.key, &template_env, document, &template.span)?;
                 if !matches!(key_type, Type::Bool | Type::I64 | Type::F64 | Type::Str) {
                     return Err(Error::new(
                         "E187",
@@ -361,7 +361,26 @@ pub(in crate::check) fn infer_layout_group(
                         "dynamic pane keys must be bool, i64, f64, or str values",
                     ));
                 }
-                infer_pane_view(&template.pane, &template_env, document, signatures, ids)?;
+                check_pane_view_options(&template.pane, &template_env, document)?;
+            }
+            retain_pane_analyses(span, pane_analysis_guard.finish())?;
+            for pane in panes {
+                infer_pane_view_nodes(pane, env, document, signatures, ids)?;
+            }
+            for template in templates {
+                let Some(Type::List(item_type)) = env.get_type(&template.items) else {
+                    return Err(Error::new(
+                        "E187",
+                        &template.span,
+                        format!(
+                            "dynamic pane template `{}` requires list state `{}`",
+                            template.item, template.items
+                        ),
+                    ));
+                };
+                let mut template_env = scoped_view_env(env);
+                template_env.insert(template.item.clone(), (**item_type).clone());
+                infer_pane_view_nodes(&template.pane, &template_env, document, signatures, ids)?;
             }
         }
         _ => return Ok(false),

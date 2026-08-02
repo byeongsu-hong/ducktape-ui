@@ -196,6 +196,94 @@ pub(super) fn retain_interaction_analyses(
     })
 }
 
+pub(super) fn retain_pane_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "pane analysis session has no active view analysis",
+            )
+        })?;
+        let pane = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "pane grid has no shared view ID"))?;
+        active.analyses.retain_interaction(pane, analyses)
+    })
+}
+
+pub(super) fn retain_container_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "container analysis session has no active view analysis",
+            )
+        })?;
+        let container = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "container has no shared view ID"))?;
+        active.analyses.retain_interaction(container, analyses)
+    })
+}
+
+pub(super) fn retain_layout_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "layout analysis session has no active view analysis",
+            )
+        })?;
+        let layout = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "layout has no shared view ID"))?;
+        active.analyses.retain_interaction(layout, analyses)
+    })
+}
+
+pub(super) fn retain_text_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "text analysis session has no active view analysis",
+            )
+        })?;
+        let text = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "text has no shared view ID"))?;
+        active.analyses.retain_interaction(text, analyses)
+    })
+}
+
 pub(super) fn retain_float_analyses(
     span: &Span,
     analyses: super::expr::HandlerAnalyses,

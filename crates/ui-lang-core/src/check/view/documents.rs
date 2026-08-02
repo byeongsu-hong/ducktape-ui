@@ -177,6 +177,7 @@ pub(in crate::check) fn infer_documents_group(
         } => {
             record_read(content, span);
             check_id(id, env, document, ids, span)?;
+            let markdown_analysis_guard = expr::HandlerAnalysisGuard::start();
             let content_type = env.get_type(content).ok_or_else(|| {
                 Error::new("E139", span, format!("unknown markdown state `{content}`"))
             })?;
@@ -207,6 +208,7 @@ pub(in crate::check) fn infer_documents_group(
                 Type::Str
             };
             infer_route(route, Some(payload), env, document, signatures)?;
+            retain_interaction_analyses(span, markdown_analysis_guard.finish())?;
         }
         ViewNode::TextEditor {
             binding,
@@ -218,6 +220,7 @@ pub(in crate::check) fn infer_documents_group(
             record_read(binding, span);
             record_write(binding, span);
             check_id(id, env, document, ids, span)?;
+            let editor_analysis_guard = expr::HandlerAnalysisGuard::start();
             let binding_type = env.get_type(binding).ok_or_else(|| {
                 Error::new("E139", span, format!("unknown editor state `{binding}`"))
             })?;
@@ -297,6 +300,7 @@ pub(in crate::check) fn infer_documents_group(
                 check_call_args(function, &style.args, env, document, span)?;
             }
             check_text_input_styles(&options.style, env, document, span, "editor")?;
+            retain_interaction_analyses(span, editor_analysis_guard.finish())?;
         }
         ViewNode::Table {
             item,
@@ -312,26 +316,97 @@ pub(in crate::check) fn infer_documents_group(
             else {
                 return Err(Error::new("E139", span, "table expects a list of rows"));
             };
-            if let Some(length) = &options.width {
-                check_length_value(length, env, document, span, "table width")?;
+            if let Some(LengthValue::Fixed(value)) = &options.width {
+                let actual = retained_view_expr_type(
+                    value,
+                    env,
+                    document,
+                    span,
+                    CheckedViewExprRole::TableWidth,
+                )?;
+                if !matches!(actual, Type::F64 | Type::Length) {
+                    return Err(Error::new(
+                        "E101",
+                        span,
+                        format!(
+                            "expected `f64` or `length`, got `{}` for table width",
+                            actual.display()
+                        ),
+                    ));
+                }
+                if actual == Type::F64 {
+                    require_f32_literal_range(value, 0.0, None, "table width", span)?;
+                }
             }
-            for (value, label) in [
-                (&options.padding, "table padding"),
-                (&options.padding_x, "table horizontal padding"),
-                (&options.padding_y, "table vertical padding"),
-                (&options.separator, "table separator"),
-                (&options.separator_x, "table horizontal separator"),
-                (&options.separator_y, "table vertical separator"),
+            for (value, label, role) in [
+                (
+                    &options.padding,
+                    "table padding",
+                    CheckedViewExprRole::TablePadding,
+                ),
+                (
+                    &options.padding_x,
+                    "table horizontal padding",
+                    CheckedViewExprRole::TablePaddingX,
+                ),
+                (
+                    &options.padding_y,
+                    "table vertical padding",
+                    CheckedViewExprRole::TablePaddingY,
+                ),
+                (
+                    &options.separator,
+                    "table separator",
+                    CheckedViewExprRole::TableSeparator,
+                ),
+                (
+                    &options.separator_x,
+                    "table horizontal separator",
+                    CheckedViewExprRole::TableSeparatorX,
+                ),
+                (
+                    &options.separator_y,
+                    "table vertical separator",
+                    CheckedViewExprRole::TableSeparatorY,
+                ),
             ] {
                 if let Some(value) = value {
-                    require_nonnegative_f64(value, env, document, label, span)?;
+                    let actual = retained_view_expr_type(value, env, document, span, role)?;
+                    require_type(&actual, &Type::F64, span)?;
+                    require_f32_literal_range(value, 0.0, None, label, span)?;
                 }
             }
             let mut cell_env = scoped_view_env(env);
             cell_env.insert(item.clone(), *inner);
-            for column in columns {
-                if let Some(length) = &column.width {
-                    check_length_value(length, env, document, &column.span, "table column width")?;
+            for (index, column) in columns.iter().enumerate() {
+                if let Some(LengthValue::Fixed(value)) = &column.width {
+                    let actual = retained_view_expr_type_at(
+                        value,
+                        env,
+                        document,
+                        span,
+                        &column.span,
+                        CheckedViewExprRole::TableColumnWidth(index as u32),
+                    )?;
+                    if !matches!(actual, Type::F64 | Type::Length) {
+                        return Err(Error::new(
+                            "E101",
+                            &column.span,
+                            format!(
+                                "expected `f64` or `length`, got `{}` for table column width",
+                                actual.display()
+                            ),
+                        ));
+                    }
+                    if actual == Type::F64 {
+                        require_f32_literal_range(
+                            value,
+                            0.0,
+                            None,
+                            "table column width",
+                            &column.span,
+                        )?;
+                    }
                 }
                 let mut header_ids = HashSet::new();
                 infer_view(&column.header, env, document, signatures, &mut header_ids)?;
