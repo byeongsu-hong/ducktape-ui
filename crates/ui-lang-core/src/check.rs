@@ -830,14 +830,15 @@ pub(crate) use facts::{
     CheckedEffectTarget, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedExprUse,
     CheckedExprUseId, CheckedFacts, CheckedInitializerCoercion, CheckedInteraction,
     CheckedInteractionKind, CheckedInteractionRoute, CheckedKeyedLength, CheckedLocalId,
-    CheckedLocalOwner, CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
-    CheckedPaneConfiguration, CheckedPaneCustomStyle, CheckedPaneGrid, CheckedPaneGridStyle,
-    CheckedPaneLength, CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite,
-    CheckedPaneSurface, CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot,
-    CheckedProjection, CheckedProjectionKind, CheckedResponsiveLength, CheckedRouteArgKind,
-    CheckedStatement, CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource,
-    CheckedTableLength, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedView,
-    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    CheckedLocalOwner, CheckedMatchArm, CheckedMatchPattern, CheckedMedia, CheckedPaneAxis,
+    CheckedPaneBackground, CheckedPaneConfiguration, CheckedPaneCustomStyle, CheckedPaneGrid,
+    CheckedPaneGridStyle, CheckedPaneLength, CheckedPanePadding, CheckedPaneRadius,
+    CheckedPaneStyleSite, CheckedPaneSurface, CheckedPaneTemplate, CheckedPaneTitle,
+    CheckedPaneView, CheckedPathRoot, CheckedProjection, CheckedProjectionKind,
+    CheckedResponsiveLength, CheckedRouteArgKind, CheckedStatement, CheckedSubscription,
+    CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedTableLength, CheckedTooltip,
+    CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewExprRole, CheckedViewFlow,
+    CheckedViewLocalRole, CheckedViewScope,
 };
 pub(crate) use handler::task_flow_type;
 
