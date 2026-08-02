@@ -3366,16 +3366,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "button reached code generation with a mismatched checked view ID",
             ));
         }
         self.buttons.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "button reached code generation without normalized HIR",
             )
         })
@@ -3422,30 +3420,27 @@ impl LoweredProgram {
                 "boolean control reached code generation without a shared view ID",
             )
         })?;
+        let checked = self.facts.view(id);
         let expected_kind = match node {
             ViewNode::Checkbox { .. } => ResolvedBooleanKind::Checkbox,
             ViewNode::Toggler { .. } => ResolvedBooleanKind::Toggler,
             ViewNode::Radio { .. } => ResolvedBooleanKind::Radio,
             _ => {
-                return Err(Error::new(
-                    "E196",
-                    span,
+                return Err(self.invariant_at_origin(
+                    checked.origin,
                     "non-boolean node requested boolean HIR",
                 ));
             }
         };
-        let checked = self.facts.view(id);
         let control = self.boolean_controls.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "boolean control reached code generation without normalized HIR",
             )
         })?;
         if checked.id != id || control.id != id || control.kind != expected_kind {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "boolean control HIR identity or kind diverged",
             ));
         }
@@ -3464,17 +3459,16 @@ impl LoweredProgram {
                 "pick list reached code generation without a shared view ID",
             )
         })?;
-        if self.facts.view(id).id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "pick list reached code generation with a mismatched checked view ID",
             ));
         }
         self.pick_lists.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "pick list reached code generation without normalized HIR",
             )
         })
@@ -3491,16 +3485,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "slider reached code generation with a mismatched checked view ID",
             ));
         }
         self.sliders.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "slider reached code generation without normalized HIR",
             )
         })
@@ -3518,17 +3510,16 @@ impl LoweredProgram {
                 "combo box reached code generation without a shared view ID",
             )
         })?;
-        if self.facts.view(id).id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "combo box reached code generation with a mismatched checked view ID",
             ));
         }
         self.combo_boxes.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "combo box reached code generation without normalized HIR",
             )
         })
@@ -3548,16 +3539,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "progress reached code generation with a mismatched checked view ID",
             ));
         }
         self.progresses.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "progress reached code generation without normalized HIR",
             )
         })
@@ -3572,17 +3561,16 @@ impl LoweredProgram {
                 "rule reached code generation without a shared view ID",
             )
         })?;
-        if self.facts.view(id).id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "rule reached code generation with a mismatched checked view ID",
             ));
         }
         self.rules.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "rule reached code generation without normalized HIR",
             )
         })
@@ -3597,17 +3585,16 @@ impl LoweredProgram {
                 "qr reached code generation without a shared view ID",
             )
         })?;
-        if self.facts.view(id).id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "qr reached code generation with a mismatched checked view ID",
             ));
         }
         self.qr_codes.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "qr reached code generation without normalized HIR",
             )
         })
@@ -3622,17 +3609,16 @@ impl LoweredProgram {
                 "space reached code generation without a shared view ID",
             )
         })?;
-        if self.facts.view(id).id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "space reached code generation with a mismatched checked view ID",
             ));
         }
         self.spaces.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "space reached code generation without normalized HIR",
             )
         })
@@ -3649,16 +3635,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "media reached code generation with a mismatched checked view ID",
             ));
         }
         self.media.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "media reached code generation without normalized HIR",
             )
         })
@@ -3701,16 +3685,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "tooltip reached code generation with a mismatched checked view ID",
             ));
         }
         self.tooltips.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "tooltip reached code generation without normalized HIR",
             )
         })
@@ -3720,11 +3702,10 @@ impl LoweredProgram {
         &self,
         node: &ViewNode,
     ) -> Result<&ResolvedMouseArea, Error> {
-        let interaction = self.resolved_interaction_for(node, "mouse area")?;
+        let (origin, interaction) = self.resolved_interaction_for(node, "mouse area")?;
         let ResolvedInteractionWidget::MouseArea(mouse) = interaction else {
-            return Err(Error::new(
-                "E196",
-                node.span(),
+            return Err(self.invariant_at_origin(
+                origin,
                 "mouse area reached code generation with the wrong normalized kind",
             ));
         };
@@ -3735,11 +3716,10 @@ impl LoweredProgram {
         &self,
         node: &ViewNode,
     ) -> Result<&ResolvedResizeHandle, Error> {
-        let interaction = self.resolved_interaction_for(node, "resize handle")?;
+        let (origin, interaction) = self.resolved_interaction_for(node, "resize handle")?;
         let ResolvedInteractionWidget::ResizeHandle(handle) = interaction else {
-            return Err(Error::new(
-                "E196",
-                node.span(),
+            return Err(self.invariant_at_origin(
+                origin,
                 "resize handle reached code generation with the wrong normalized kind",
             ));
         };
@@ -3747,11 +3727,10 @@ impl LoweredProgram {
     }
 
     pub(crate) fn resolved_sensor_for(&self, node: &ViewNode) -> Result<&ResolvedSensor, Error> {
-        let interaction = self.resolved_interaction_for(node, "sensor")?;
+        let (origin, interaction) = self.resolved_interaction_for(node, "sensor")?;
         let ResolvedInteractionWidget::Sensor(sensor) = interaction else {
-            return Err(Error::new(
-                "E196",
-                node.span(),
+            return Err(self.invariant_at_origin(
+                origin,
                 "sensor reached code generation with the wrong normalized kind",
             ));
         };
@@ -4037,7 +4016,7 @@ impl LoweredProgram {
         &self,
         node: &ViewNode,
         family: &str,
-    ) -> Result<&ResolvedInteractionWidget, Error> {
+    ) -> Result<(OriginId, &ResolvedInteractionWidget), Error> {
         let span = node.span();
         let id = self.declarations.view_id(span).ok_or_else(|| {
             Error::new(
@@ -4048,19 +4027,18 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 format!("{family} reached code generation with a mismatched checked view ID"),
             ));
         }
-        self.interaction_widgets.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+        let interaction = self.interaction_widgets.get(&id).ok_or_else(|| {
+            self.invariant_at_origin(
+                checked.origin,
                 format!("{family} reached code generation without normalized HIR"),
             )
-        })
+        })?;
+        Ok((checked.origin, interaction))
     }
 
     pub(crate) fn test_mount(&self, id: TestId) -> Option<&ViewNode> {
@@ -13384,7 +13362,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let pick = program.pick_lists.values().next().unwrap();
         let root_origin = program.origin(pick.origin);
         assert_eq!(root_origin.path.as_deref(), Some(imported.as_path()));
@@ -13403,6 +13381,16 @@ view
             assert_eq!(child.path.as_deref(), Some(imported.as_path()));
             assert_eq!(child.line, line);
         }
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.pick_lists.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -13626,7 +13614,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let button = program.buttons.values().next().unwrap();
         let button_origin = program.origin(button.origin);
         assert_eq!(button_origin.path.as_deref(), Some(imported.as_path()));
@@ -13643,6 +13631,13 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.buttons.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -13902,7 +13897,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let control = program.boolean_controls.values().next().unwrap();
         let control_origin = program.origin(control.origin);
         assert_eq!(control_origin.path.as_deref(), Some(imported.as_path()));
@@ -13956,6 +13951,13 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        program.boolean_controls.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -15447,6 +15449,91 @@ view
         arms[0].pattern = MatchPattern::Wildcard;
         let actual = crate::codegen::generate(&program, "checked-match.ice").unwrap();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn imported_remaining_controls_keep_origins_and_source_map_hir_failures() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-remaining-control-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("controls.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedRemainingControlsApp\nuse \"controls.ice\"\n{THEME}state\n  modes:combo[str] = [\"One\"]\n  selected:str? = none\nview\n  ImportedRemainingControls modes<->modes selected=selected\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedRemainingControls(bind modes:combo[str], selected:str?)\n  on chosen(next)\n  on moved(x, y)\n  on resized(dx, dy)\n  on shown(width, height)\n  col\n    combo modes selected \"Search\" -> chosen _\n    image \"photo.png\"\n    tooltip position=cursor\n      text \"Hover\"\n      text \"Tip\"\n    mouse move=moved cursor=pointer\n      text \"Pointer\"\n    resize-handle drag=resized cursor=resize-horizontal\n      text \"Resize\"\n    sensor show=shown key=true anticipate=0.0 delay=0\n      text \"Observed\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let combo_id = program.combo_boxes.values().next().unwrap().id;
+        let media_id = program.media.values().next().unwrap().id;
+        let tooltip_id = program.tooltips.values().next().unwrap().id;
+        for (id, line) in [(combo_id, 7usize), (media_id, 8), (tooltip_id, 9)] {
+            let origin = program.origin(program.checked_facts().view(id).origin);
+            assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(origin.line, line);
+        }
+        let interaction_ids = program
+            .interaction_widgets
+            .values()
+            .map(|interaction| match interaction {
+                ResolvedInteractionWidget::MouseArea(widget) => (widget.id, 12usize),
+                ResolvedInteractionWidget::ResizeHandle(widget) => (widget.id, 14usize),
+                ResolvedInteractionWidget::Sensor(widget) => (widget.id, 16usize),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(interaction_ids.len(), 3);
+        for (id, line) in &interaction_ids {
+            let origin = program.origin(program.checked_facts().view(*id).origin);
+            assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(origin.line, *line);
+        }
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        let combo = program.combo_boxes.remove(&combo_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 7);
+        program.combo_boxes.insert(combo_id, combo);
+
+        let media = program.media.remove(&media_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        program.media.insert(media_id, media);
+
+        let tooltip = program.tooltips.remove(&tooltip_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 9);
+        program.tooltips.insert(tooltip_id, tooltip);
+
+        for (id, line) in interaction_ids {
+            let interaction = program.interaction_widgets.remove(&id).unwrap();
+            let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+            assert_eq!(error.line, line);
+            program.interaction_widgets.insert(id, interaction);
+        }
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -17954,8 +18041,9 @@ test stable_flow
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let slider = program.sliders.values().next().unwrap();
+        let slider_id = slider.id;
         let slider_origin = program.origin(slider.origin);
         assert_eq!(slider_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(slider_origin.line, 8);
@@ -17991,6 +18079,7 @@ test stable_flow
         ));
 
         let progress = program.progresses.values().next().unwrap();
+        let progress_id = progress.id;
         let progress_origin = program.origin(progress.origin);
         assert_eq!(progress_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(progress_origin.line, 10);
@@ -18019,6 +18108,23 @@ test stable_flow
                 ..
             })) if token == program.theme().native_tokens.primary
         ));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 8 1 {encoded_import}")));
+
+        let slider = program.sliders.remove(&slider_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        program.sliders.insert(slider_id, slider);
+
+        program.progresses.remove(&progress_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -18344,12 +18450,11 @@ test stable_flow
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
-        let entries = [
-            (program.rules.values().next().unwrap().id, 3usize),
-            (program.qr_codes.values().next().unwrap().id, 4usize),
-            (program.spaces.values().next().unwrap().id, 5usize),
-        ];
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let rule_id = program.rules.values().next().unwrap().id;
+        let qr_id = program.qr_codes.values().next().unwrap().id;
+        let space_id = program.spaces.values().next().unwrap().id;
+        let entries = [(rule_id, 3usize), (qr_id, 4usize), (space_id, 5usize)];
         for (view, line) in entries {
             let checked = program.checked_facts().interaction(view).unwrap();
             let view_origin = program.checked_facts().view(view).origin;
@@ -18389,6 +18494,30 @@ test stable_flow
                 ..
             }) if token == program.theme().native_tokens.background
         ));
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+
+        let rule = program.rules.remove(&rule_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+        program.rules.insert(rule_id, rule);
+
+        let qr = program.qr_codes.remove(&qr_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+        program.qr_codes.insert(qr_id, qr);
+
+        program.spaces.remove(&space_id).unwrap();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 5);
 
         fs::remove_dir_all(directory).unwrap();
     }
