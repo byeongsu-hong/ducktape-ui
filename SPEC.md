@@ -428,6 +428,19 @@ routes, options, styles, or extern name. Mutation, corrupt-ID, imported-origin,
 complete native generation, and 4,000-node lower+emit contracts provide the
 executable evidence.
 
+Button is a completed interaction HIR slice. Its checked contract owns the
+literal-label or checked-child topology, every dynamic option and custom-style
+argument, the required route, exact Button-style extern identity, and parented
+origins for all four status surfaces. Lowering resolves accessibility,
+dimensions, padding, clipping, preset/custom style, utility precedence, theme
+colors, status surfaces, and route delivery into `ResolvedButton`. Generation
+uses that normalized record and checked expression IDs; the source node remains
+only for its shared ID and child traversal. Raw labels, options, routes,
+utilities, typed styles, and extern names cannot affect output after lowering.
+Structural, corruption, same-arena identity-swap, imported-origin, complete
+native generation, and 4,000-node lower+emit contracts provide the executable
+evidence.
+
 TextEditor is a completed controlled-document HIR slice. Its checked
 interaction contract owns the exact writable editor-state reference, every
 dynamic option, key-binding payload route, highlighter/action/style extern

@@ -429,7 +429,7 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, TextEditor, Float, Pin, Responsive, Lazy, KeyedColumn,
+MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Button, TextEditor, Float, Pin, Responsive, Lazy, KeyedColumn,
 Table, PaneGrid, If, For, and Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
@@ -494,7 +494,7 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, TextEditor, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
+ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Button, TextEditor, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
 If, For, and Match remain open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
@@ -731,6 +731,19 @@ controlled-state IDs, pre-lowering expression/static mutation, post-lowering
 contract poisoning, imported widget/icon/status/route origins, complete native
 input generation, the lexical boundary ratchet, and an ignored 4,000-input
 lower+emit contract cover the boundary.
+
+Button has a complete private HIR boundary. Its checked interaction record
+freezes label-versus-child topology, every dynamic option and custom-style
+argument, the required route, the exact Button-style extern ID, and four
+parented status origins. Lowering resolves checked child identity, accessibility,
+dimensions, padding, clipping, preset/custom styles, utility precedence, theme
+colors, complete status surfaces, and route delivery into `ResolvedButton`.
+Production emission reads the raw node only for its shared ID and checked child
+traversal; raw labels, options, routes, utilities, and typed styles cannot affect
+output after lowering. Static and raw-contract poisoning, malformed and
+same-arena IDs, imported widget/status/route origins, complete native generation,
+the lexical boundary ratchet, and an ignored 4,000-button lower+emit contract
+cover the boundary.
 
 TextEditor has a complete private HIR boundary. Its checked interaction record
 freezes the exact writable editor-state identity, deterministic option and

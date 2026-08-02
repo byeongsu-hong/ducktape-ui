@@ -30,23 +30,6 @@ pub(in crate::codegen) fn text_wrapping_code(wrapping: TextWrapping) -> &'static
     }
 }
 
-pub(in crate::codegen) fn text_line_height_code(
-    line_height: &TextLineHeight,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    match line_height {
-        TextLineHeight::Relative(value) => Ok(format!(
-            "::iced::widget::text::LineHeight::Relative({})",
-            clamped_f32_code(value, "f32::EPSILON", "f32::MAX", env, document)?
-        )),
-        TextLineHeight::Absolute(value) => Ok(format!(
-            "::iced::widget::text::LineHeight::Absolute({}.into())",
-            clamped_f32_code(value, "f32::EPSILON", "f32::MAX", env, document)?
-        )),
-    }
-}
-
 pub(in crate::codegen) fn font_preset_code(
     font: &FontPreset,
     document: &Document,
@@ -115,26 +98,6 @@ fn font_value_code(
     format!(
         "::iced::Font {{ family: {family}, weight: ::iced::font::Weight::{weight}, stretch: ::iced::font::Stretch::{stretch}, style: ::iced::font::Style::{style} }}"
     )
-}
-
-pub(in crate::codegen) fn styled_font_code(
-    font: Option<&FontPreset>,
-    style: &ResolvedStyle,
-    document: &Document,
-) -> Result<Option<String>, Error> {
-    let base = match font {
-        Some(font) => Some(font_preset_code(font, document)?),
-        None if style.font_monospace => Some("::iced::Font::MONOSPACE".into()),
-        None if style.font_weight.is_some() => Some("Self::default_font()".into()),
-        None => None,
-    };
-    Ok(base.map(|font| match style.font_weight {
-        Some(weight) => format!(
-            "::iced::Font {{ weight: ::iced::font::Weight::{}, ..{font} }}",
-            weight.code()
-        ),
-        None => font,
-    }))
 }
 
 pub(in crate::codegen) fn text_alignment_code(alignment: TextAlignment) -> &'static str {

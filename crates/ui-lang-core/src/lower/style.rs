@@ -474,7 +474,9 @@ pub(super) struct StyleProgram {
     pub(super) theme: ResolvedThemeProgram,
     #[allow(dead_code)]
     pub(super) recipes: Vec<ResolvedRecipe>,
+    #[cfg(test)]
     pub(super) style_uses: Vec<ResolvedStyleUse>,
+    #[cfg(test)]
     style_uses_by_site: HashMap<CallSite, StyleUseId>,
     nested_themes: Vec<ResolvedNestedTheme>,
     nested_themes_by_site: HashMap<CallSite, usize>,
@@ -520,7 +522,9 @@ impl StyleProgramBuilder {
         Some(StyleProgram {
             theme: self.theme?,
             recipes: self.recipes,
+            #[cfg(test)]
             style_uses: self.style_uses,
+            #[cfg(test)]
             style_uses_by_site: self.style_uses_by_site,
             nested_themes: self.nested_themes,
             nested_themes_by_site: self.nested_themes_by_site,
@@ -529,6 +533,7 @@ impl StyleProgramBuilder {
 }
 
 impl StyleProgram {
+    #[cfg(test)]
     pub(super) fn style_use(&self, span: &Span) -> Result<&ResolvedStyleUse, Error> {
         let site = CallSite {
             line: span.line,

@@ -895,6 +895,13 @@ pub(crate) struct CheckedInput {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedButton {
+    pub(crate) id: ViewId,
+    pub(crate) style: Option<ExternFnId>,
+    pub(crate) status_origins: Vec<OriginId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTextEditor {
     pub(crate) id: ViewId,
     pub(crate) binding: CheckedValueRef,
@@ -956,6 +963,7 @@ pub(crate) enum CheckedInteractionKind {
     Text,
     RichText,
     Input,
+    Button,
     TextEditor,
     PickList,
     ComboBox,
@@ -1046,6 +1054,7 @@ pub(crate) struct CheckedFacts {
     layouts: HashMap<ViewId, CheckedLayout>,
     texts: HashMap<ViewId, CheckedText>,
     inputs: HashMap<ViewId, CheckedInput>,
+    buttons: HashMap<ViewId, CheckedButton>,
     text_editors: HashMap<ViewId, CheckedTextEditor>,
     pick_lists: HashMap<ViewId, CheckedPickList>,
     combo_boxes: HashMap<ViewId, CheckedComboBox>,
@@ -1199,6 +1208,25 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_button_style(&mut self, view: ViewId, style: ExternFnId) {
+        self.buttons.get_mut(&view).unwrap().style = Some(style);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_interaction_option_expressions(
+        &mut self,
+        view: ViewId,
+        first: usize,
+        second: usize,
+    ) {
+        self.interactions
+            .get_mut(&view)
+            .unwrap()
+            .option_expressions
+            .swap(first, second);
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_text_editor_binding(&mut self, view: ViewId, binding: CheckedValueRef) {
         self.text_editors.get_mut(&view).unwrap().binding = binding;
     }
@@ -1220,20 +1248,6 @@ impl CheckedFacts {
             .unwrap()
             .status_origins
             .swap(0, 1);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn swap_interaction_option_expressions(
-        &mut self,
-        view: ViewId,
-        left: usize,
-        right: usize,
-    ) {
-        self.interactions
-            .get_mut(&view)
-            .unwrap()
-            .option_expressions
-            .swap(left, right);
     }
 
     #[cfg(test)]
@@ -1432,6 +1446,10 @@ impl CheckedFacts {
 
     pub(crate) fn input(&self, id: ViewId) -> Option<&CheckedInput> {
         self.inputs.get(&id).filter(|input| input.id == id)
+    }
+
+    pub(crate) fn button(&self, id: ViewId) -> Option<&CheckedButton> {
+        self.buttons.get(&id).filter(|button| button.id == id)
     }
 
     pub(crate) fn text_editor(&self, id: ViewId) -> Option<&CheckedTextEditor> {
@@ -3515,6 +3533,71 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "input facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_button_facts(
+        &mut self,
+        button: ViewId,
+        label: &Option<String>,
+        content: &Option<Box<ViewNode>>,
+        disabled: &Option<Expr>,
+        options: &ButtonOptions,
+        route: &Route,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.lower_interaction_facts(
+            button,
+            CheckedInteractionKind::Button,
+            crate::ast::button_semantic_key(label, content, disabled, options, route),
+            crate::ast::button_expression_roots(disabled, options)
+                .into_iter()
+                .map(|expression| (expression, None))
+                .collect(),
+            vec![route],
+            env,
+            span,
+        )?;
+        let style = options
+            .style
+            .custom
+            .as_ref()
+            .map(|style| {
+                self.declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::ButtonStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "button style extern disappeared"))
+            })
+            .transpose()?;
+        let parent = self.declarations.view(button).origin;
+        let status_origins = [
+            &options.style.active,
+            &options.style.hovered,
+            &options.style.pressed,
+            &options.style.disabled,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|status| self.origins.push(&status.span, Some(parent)))
+        .collect();
+        if self
+            .facts
+            .buttons
+            .insert(
+                button,
+                CheckedButton {
+                    id: button,
+                    style,
+                    status_origins,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "button facts were produced more than once"));
         }
         Ok(())
     }
@@ -8428,6 +8511,21 @@ impl<'a> FactsBuilder<'a> {
                 ..
             } => {
                 self.lower_input_facts(view, label, binding, hint, disabled, options, env, span)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Button {
+                label,
+                content,
+                disabled,
+                options,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_button_facts(view, label, content, disabled, options, route, env, span)?;
+                if let Some(content) = content {
+                    self.lower_view_expression_tree(content, env)?;
+                }
                 CheckedViewFlow::None
             }
             ViewNode::TextEditor {

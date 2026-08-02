@@ -31,6 +31,7 @@ use crate::{CheckedControlledEditor, CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+mod button;
 mod canvas;
 mod conditional;
 mod container;
@@ -56,6 +57,7 @@ mod testing;
 mod text;
 mod tooltip;
 
+pub(crate) use button::*;
 pub(crate) use canvas::*;
 pub(crate) use conditional::*;
 pub(crate) use container::*;
@@ -1505,6 +1507,7 @@ pub(crate) struct LoweredProgram {
     containers: HashMap<ViewId, ResolvedContainer>,
     layouts: HashMap<ViewId, ResolvedLayout>,
     texts: HashMap<ViewId, ResolvedText>,
+    buttons: HashMap<ViewId, ResolvedButton>,
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
@@ -3086,6 +3089,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn button(&self, id: ViewId) -> Option<&ResolvedButton> {
+        self.buttons.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn text_editor(&self, id: ViewId) -> Option<&ResolvedTextEditor> {
         self.text_editors.get(&id)
     }
@@ -3315,6 +3323,32 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "input reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_button_for(&self, node: &ViewNode) -> Result<&ResolvedButton, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "button reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "button reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.buttons.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "button reached code generation without normalized HIR",
             )
         })
     }
@@ -4164,6 +4198,7 @@ impl LoweredProgram {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn style_use(&self, span: &Span) -> Result<&ResolvedStyleUse, Error> {
         self.styles.style_use(span)
     }
@@ -4212,6 +4247,7 @@ pub(crate) struct Lowerer {
     containers: HashMap<ViewId, ResolvedContainer>,
     layouts: HashMap<ViewId, ResolvedLayout>,
     texts: HashMap<ViewId, ResolvedText>,
+    buttons: HashMap<ViewId, ResolvedButton>,
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
@@ -4963,6 +4999,7 @@ impl Lowerer {
             containers: HashMap::new(),
             layouts: HashMap::new(),
             texts: HashMap::new(),
+            buttons: HashMap::new(),
             inputs: HashMap::new(),
             text_editors: HashMap::new(),
             pick_lists: HashMap::new(),
@@ -5123,6 +5160,7 @@ impl Lowerer {
             containers: self.containers,
             layouts: self.layouts,
             texts: self.texts,
+            buttons: self.buttons,
             inputs: self.inputs,
             text_editors: self.text_editors,
             pick_lists: self.pick_lists,
@@ -9067,6 +9105,28 @@ impl Lowerer {
             } => {
                 self.lower_text_editor(binding, disabled, options, span, outer_component)?;
             }
+            ViewNode::Button {
+                label,
+                content,
+                disabled,
+                options,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_button(
+                    label,
+                    content,
+                    disabled,
+                    options,
+                    route,
+                    span,
+                    outer_component,
+                )?;
+                if let Some(content) = content {
+                    self.lower_view(content, outer_component)?;
+                }
+            }
             ViewNode::PickList {
                 options,
                 selected,
@@ -9169,11 +9229,7 @@ impl Lowerer {
                     self.lower_view(child, outer_component)?;
                 }
             }
-            ViewNode::Button {
-                content: Some(content),
-                ..
-            }
-            | ViewNode::Theme { content, .. } => {
+            ViewNode::Theme { content, .. } => {
                 self.lower_view(content, outer_component)?;
             }
             ViewNode::Container {
@@ -13063,6 +13119,275 @@ view
         }
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn normalizes_the_complete_button_contract() {
+        let source = r#"app ButtonHir
+extern crate::backend
+  button-style first_style(disabled:bool)
+  button-style second_style(disabled:bool)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+recipe action for button
+  @px-3 bg-primary hover:bg-fg pressed:bg-danger disabled:bg-bg text-fg disabled:text-danger border border-fg rounded-lg disabled:opacity-50
+state
+  disabled = false
+on pressed
+view
+  button "Save" #save label="Save action" description="Writes changes" disabled=disabled w=240.0 h=48.0 p=8.0 clip=false style=first_style(disabled) @action -> pressed
+    active bg=linear(1.57, primary@0.0, bg@1.0) text=fg border=primary border-w=1.0 r=4.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=4.0 px-snap=true
+    hovered bg=fg text=bg r=6.0
+    pressed bg=primary text=white r=8.0
+    disabled bg=bg text=danger r=10.0
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let button = program.button(ViewId(0)).unwrap();
+
+        assert_eq!(button.id, ViewId(0));
+        assert_eq!(button.content, ResolvedButtonContent::Label("Save".into()));
+        assert!(button.disabled.is_some());
+        assert!(button.accessibility_label.is_some());
+        assert!(button.accessibility_description.is_some());
+        assert!(matches!(
+            button.width,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(matches!(
+            button.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(button.padding.is_some());
+        assert!(button.clip.is_some());
+        assert_eq!(button.preset, ResolvedButtonPreset::Primary);
+        assert_eq!(
+            button.custom_style.as_ref().unwrap().function,
+            ExternFnId(0)
+        );
+        assert!(button.styles.active.is_some());
+        assert!(button.styles.hovered.is_some());
+        assert!(button.styles.pressed.is_some());
+        assert!(button.styles.disabled.is_some());
+        assert!(button.utility_style.background.is_some());
+        assert!(button.utility_style.hover_background.is_some());
+        assert!(button.utility_style.pressed_background.is_some());
+        assert!(button.utility_style.disabled_background.is_some());
+        assert_eq!(
+            program.origin(button.route.origin).parent,
+            Some(button.origin)
+        );
+        for status in [
+            &button.styles.active,
+            &button.styles.hovered,
+            &button.styles.pressed,
+            &button.styles.disabled,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert_eq!(program.origin(status.origin).parent, Some(button.origin));
+        }
+        let active = button.styles.active.as_ref().unwrap();
+        assert!(matches!(
+            active.surface.background,
+            Some(ResolvedContainerBackground::Linear { .. })
+        ));
+        assert!(active.surface.shadow_color.is_some());
+        assert!(active.surface.pixel_snap.is_some());
+    }
+
+    #[test]
+    fn button_lowering_uses_checked_expressions_and_rejects_static_drift() {
+        let source = format!(
+            "app CheckedButton\nextern crate::backend\n  button-style dynamic_button(disabled:bool)\n{THEME}state\n  disabled = false\non pressed\nview\n  button \"Save\" disabled=disabled w=80.0 h=32.0 p=4.0 clip=false style=dynamic_button(disabled) -> pressed\n    active bg=bg border=fg border-w=1.0 r=4.0 shadow-x=1.0 px-snap=true\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-button.ice",
+        )
+        .unwrap();
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Button {
+            disabled, options, ..
+        } = &mut checked.document.view
+        else {
+            panic!("fixture root must be a button");
+        };
+        *disabled = Some(Expr::Bool(true));
+        options.width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.height = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        options.padding = Some(Expr::F64(999.0));
+        options.clip = Some(Expr::Bool(true));
+        options.style.custom.as_mut().unwrap().args[0] = Expr::Bool(true);
+        let active = options.style.active.as_mut().unwrap();
+        active.options.border_width = Some(Expr::F64(999.0));
+        active.options.radius = Some(Expr::F64(999.0));
+        active.options.shadow_x = Some(Expr::F64(999.0));
+        active.options.pixel_snap = Some(Expr::Bool(false));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-button.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut changed = analyze(&source).unwrap();
+        let ViewNode::Button { label, .. } = &mut changed.document.view else {
+            panic!("fixture root must be a button");
+        };
+        *label = Some("Changed".into());
+        let error = lower(changed).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn button_codegen_ignores_raw_contract_after_lowering() {
+        let source = format!(
+            "app LoweredButton\n{THEME}state\n  disabled = false\non pressed\nview\n  button \"Save\" #save disabled=disabled w=80.0 @bg-primary -> pressed\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-button.ice").unwrap();
+        let ViewNode::Button {
+            label,
+            disabled,
+            options,
+            styles,
+            route,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a button");
+        };
+        *label = Some("POISONED".into());
+        *disabled = Some(Expr::Bool(true));
+        *options = ButtonOptions::default();
+        styles.clear();
+        route.handler = "poisoned".into();
+        let actual = crate::codegen::generate(&program, "lowered-button.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+    }
+
+    #[test]
+    fn button_lowering_rejects_same_arena_expression_and_extern_swaps() {
+        let source = format!(
+            "app ButtonIdentity\nextern crate::backend\n  button-style first_style(disabled:bool)\n  button-style second_style(disabled:bool)\n{THEME}state\n  disabled = false\non pressed\nview\n  button \"Save\" disabled=disabled clip=false style=first_style(disabled) -> pressed\n"
+        );
+        let mut swapped_expression = analyze(&source).unwrap();
+        swapped_expression
+            .facts
+            .swap_interaction_option_expressions(ViewId(0), 0, 1);
+        let error = lower(swapped_expression).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_extern = analyze(&source).unwrap();
+        swapped_extern
+            .facts
+            .corrupt_button_style(ViewId(0), ExternFnId(1));
+        let error = lower(swapped_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("extern contract diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_button_expression_id_does_not_panic() {
+        let source = format!(
+            "app InvalidButtonFacts\n{THEME}state\n  disabled = false\non pressed\nview\n  button \"Invalid\" disabled=disabled -> pressed\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_expression_use_root(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            }),
+            u32::MAX,
+        );
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid checked expression ID"));
+    }
+
+    #[test]
+    fn imported_button_keeps_widget_status_and_route_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-button-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("button.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedButtonApp\nuse \"button.ice\"\n{THEME}on pressed\nview\n  ImportedButton\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedButton()\n  on pressed\n  button \"Imported\" -> pressed\n    active bg=bg border=fg border-w=1.0\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let button = program.buttons.values().next().unwrap();
+        let button_origin = program.origin(button.origin);
+        assert_eq!(button_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(button_origin.line, 3);
+        for (child, line) in [
+            (button.route.origin, 3),
+            (button.styles.active.as_ref().unwrap().origin, 4),
+        ] {
+            let child = program.origin(child);
+            assert_eq!(child.parent, Some(button.origin));
+            assert_eq!(child.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(child.line, line);
+        }
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized button lowering and emission performance contract"]
+    fn performance_contract_four_thousand_buttons_lower_and_emit_under_two_seconds() {
+        const BUTTONS: usize = 4_000;
+        let mut source =
+            format!("app ButtonScale\n{THEME}state\n  disabled = false\non pressed\nview\n  col\n");
+        for index in 0..BUTTONS {
+            writeln!(
+                source,
+                "    button \"Button {index}\" #button_{index} disabled=disabled w=120.0 h=32.0 p=4.0 clip=false -> pressed"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "button-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.buttons.len(), BUTTONS);
+        assert_eq!(
+            generated.matches("::iced::widget::button(").count(),
+            BUTTONS
+        );
+        eprintln!("4k normalized buttons lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized buttons lowered and emitted in {elapsed:?}"
+        );
     }
 
     #[test]

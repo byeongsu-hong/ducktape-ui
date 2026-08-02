@@ -20,6 +20,7 @@ pub(in crate::check) fn infer_controls_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let button_analysis_guard = expr::HandlerAnalysisGuard::start();
             if let Some(disabled) = disabled {
                 let ty = expr_type(disabled, env, document, span)?;
                 require_type(&ty, &Type::Bool, span)?;
@@ -65,6 +66,7 @@ pub(in crate::check) fn infer_controls_group(
             }
             infer_route(route, None, env, document, signatures)?;
             check_styles(styles, document, span, StyleTarget::Button(options))?;
+            retain_interaction_analyses(span, button_analysis_guard.finish())?;
             if let Some(content) = content {
                 infer_view(content, env, document, signatures, ids)?;
             }

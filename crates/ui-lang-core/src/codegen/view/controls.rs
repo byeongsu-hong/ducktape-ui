@@ -18,92 +18,16 @@ pub(in crate::codegen) fn render_controls(
         _ => None,
     };
     let rendered = match node {
-        ViewNode::Button {
-            label,
-            content,
+        ViewNode::Button { content, id, .. } => render_button(
+            document.program().resolved_button_for(node)?,
             id,
-            disabled,
-            options,
-            route,
-            span,
-            ..
-        } => {
-            let style = &document.program().style_use(span)?.style;
-            let message_code = route_code(route, "", env, document, message)?;
-            let accessibility_key =
-                accessibility_key_code(id.as_ref(), "button", span, scope, env, document)?;
-            let (accessibility_label, accessibility_description) = accessibility_code(
-                &options.accessibility,
-                || rust_string(label.as_ref().expect("checked button accessibility label")),
-                env,
-                document,
-            )?;
-            let disabled_value = disabled
-                .as_ref()
-                .map(|value| expr_code(value, env, document, ValueMode::Owned))
-                .transpose()?
-                .unwrap_or_else(|| "false".into());
-            let mut content = if let Some(content) = content {
-                let child_scope = id.as_ref().map_or_else(
-                    || Ok(scope.to_owned()),
-                    |id| id_code(id, scope, env, document),
-                )?;
-                render_node(content, document, message, env, &child_scope, slot)?
-            } else {
-                let label = rust_string(label.as_ref().expect("button label"));
-                let mut label = format!("::iced::widget::text({label})");
-                append_text_options(&mut label, &TextOptions::default(), style, env, document)?;
-                format!("{label}.into()")
-            };
-            let center_x = matches!(options.width.as_ref(), Some(LengthValue::Fixed(_)));
-            let center_y = matches!(options.height.as_ref(), Some(LengthValue::Fixed(_)));
-            if center_x || center_y {
-                let mut centered = format!(
-                    "{{ let __button_inner: __IceElement<'_, {message}> = {content}; ::iced::widget::container(__button_inner)"
-                );
-                if center_x {
-                    centered.push_str(
-                        ".width(::iced::Fill).align_x(::iced::alignment::Horizontal::Center)",
-                    );
-                }
-                if center_y {
-                    centered.push_str(
-                        ".height(::iced::Fill).align_y(::iced::alignment::Vertical::Center)",
-                    );
-                }
-                content = format!("{centered}.into() }}");
-            }
-            let mut code = format!(
-                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled_value}; let __activate = {message_code}; let __button_content: __IceElement<'_, {message}> = {content}; let __button = ::iced::widget::button(__button_content)"
-            );
-            if let Some(padding) = style.padding_code() {
-                write!(code, ".padding({padding})").unwrap();
-            }
-            append_dimensions(&mut code, [&options.width, &options.height], env, document)?;
-            if let Some(padding) = &options.padding {
-                write!(
-                    code,
-                    ".padding({} as f32)",
-                    expr_code(padding, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            if let Some(clip) = &options.clip {
-                write!(
-                    code,
-                    ".clip({})",
-                    expr_code(clip, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            code.push_str(
-                ".on_press_maybe(if __disabled { None } else { Some(__activate.clone()) })",
-            );
-            code.push_str(&button_style_code(style, &options.style, env, document)?);
-            Ok(format!(
-                "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
-            ))
-        }
+            content.as_deref(),
+            document,
+            message,
+            env,
+            scope,
+            slot,
+        ),
         ViewNode::Checkbox {
             label,
             id,

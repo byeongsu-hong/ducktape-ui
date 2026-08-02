@@ -457,6 +457,16 @@ Structural assertions, malformed expression and controlled-state IDs,
 pre-/post-lowering mutation, imported origin chains, complete native codegen,
 and an ignored 4,000-input lower+emit budget provide the executable evidence.
 
+Button is a completed interaction slice. The checked interaction arena freezes
+label-versus-child topology, option and custom-style expression partitions, the
+required route, exact Button-style extern identity, and parented status origins.
+Lowering resolves accessibility, child identity, dimensions, preset/custom and
+utility styles, theme colors, complete status surfaces, and route delivery into
+`ResolvedButton`. Production emission consumes that record while the raw node
+provides only its shared ID and checked child traversal. Structural, corrupt-ID,
+same-arena identity-swap, pre-/post-lowering mutation, imported-origin, native
+codegen, and 4,000-button performance contracts provide the executable evidence.
+
 TextEditor is a completed controlled-document slice. The checked interaction
 arena freezes its writable editor state, expression and route partitions,
 highlighting and option topology, exact highlighter/key-binding/action/style

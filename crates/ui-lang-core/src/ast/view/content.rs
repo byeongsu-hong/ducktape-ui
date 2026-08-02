@@ -919,6 +919,117 @@ pub struct ButtonStatusStyle {
     pub span: Span,
 }
 
+pub(crate) fn button_expression_roots<'a>(
+    disabled: &'a Option<Expr>,
+    options: &'a ButtonOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = Vec::new();
+    roots.extend(disabled);
+    roots.extend(options.accessibility.label.as_ref());
+    roots.extend(options.accessibility.description.as_ref());
+    push_input_length_root(&mut roots, &options.width);
+    push_input_length_root(&mut roots, &options.height);
+    roots.extend(options.padding.as_ref());
+    roots.extend(options.clip.as_ref());
+    if let Some(custom) = &options.style.custom {
+        roots.extend(&custom.args);
+    }
+    for status in [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.pressed,
+        &options.style.disabled,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_input_surface_roots(&mut roots, &status.options);
+    }
+    roots
+}
+
+pub(crate) fn button_semantic_key(
+    label: &Option<String>,
+    content: &Option<Box<ViewNode>>,
+    disabled: &Option<Expr>,
+    options: &ButtonOptions,
+    route: &Route,
+) -> String {
+    fn surface(options: &ContainerStyleOptions) -> String {
+        let background = options.background.as_ref().map_or_else(
+            || "none".into(),
+            |background| match background {
+                BackgroundValue::Color(color) => format!("color:{color}"),
+                BackgroundValue::Linear { stops, .. } => format!(
+                    "linear:{}",
+                    stops
+                        .iter()
+                        .map(|stop| stop.color.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            },
+        );
+        format!(
+            "bg={background}|text={:?}|border={:?}|shadow={:?}|fields={:?}",
+            options.text_color,
+            options.border_color,
+            options.shadow_color,
+            [
+                options.border_width.is_some(),
+                options.radius.is_some(),
+                options.radius_top_left.is_some(),
+                options.radius_top_right.is_some(),
+                options.radius_bottom_right.is_some(),
+                options.radius_bottom_left.is_some(),
+                options.shadow_color.is_some(),
+                options.shadow_x.is_some(),
+                options.shadow_y.is_some(),
+                options.shadow_blur.is_some(),
+                options.pixel_snap.is_some(),
+            ]
+        )
+    }
+    let custom = options.style.custom.as_ref().map_or_else(
+        || "none".into(),
+        |call| format!("{}:{}", call.function, call.args.len()),
+    );
+    let statuses = [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.pressed,
+        &options.style.disabled,
+    ]
+    .map(|status| {
+        status
+            .as_ref()
+            .map_or_else(|| "none".into(), |s| surface(&s.options))
+    })
+    .join(";");
+    let route_args = route
+        .args
+        .iter()
+        .map(|arg| match arg {
+            RouteArg::Expr(_) => 'e',
+            RouteArg::Payload => 'p',
+        })
+        .collect::<String>();
+    format!(
+        "button|label={label:?}|child={}|disabled={}|a11y={}:{}|bounds={}:{}|padding={}|clip={}|preset={:?}|custom={custom}|statuses={statuses}|route={}:{}",
+        content.is_some(),
+        disabled.is_some(),
+        options.accessibility.label.is_some(),
+        options.accessibility.description.is_some(),
+        text_length_semantic_key(&options.width),
+        text_length_semantic_key(&options.height),
+        options.padding.is_some(),
+        options.clip.is_some(),
+        options.style.preset,
+        route.handler,
+        route_args,
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputAlignment {
     Left,
