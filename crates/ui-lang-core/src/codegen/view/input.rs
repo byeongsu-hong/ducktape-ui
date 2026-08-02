@@ -2,8 +2,8 @@ use super::*;
 
 pub(in crate::codegen) fn render_input(
     input: &ResolvedInput,
-    id: &Option<Id>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -47,28 +47,27 @@ pub(in crate::codegen) fn render_input(
         })
         .transpose()?
         .unwrap_or(binding_constructor);
-    let source_span = Span::line(program.origin(input.origin).line);
     let accessibility_key =
-        accessibility_key_code(id.as_ref(), "input", &source_span, scope, env, document)?;
+        resolved_accessibility_key_code(identity, "input", input.origin, scope, env, document)?;
     let accessibility_label = input
         .accessibility_label
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| rust_string(&input.label));
     let accessibility_description = input
         .accessibility_description
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .map(|value| format!(".description({value})"))
         .unwrap_or_default();
     let disabled = input
         .disabled
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "false".into());
     let secure = input
         .secure
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "false".into());
 
@@ -97,7 +96,7 @@ pub(in crate::codegen) fn render_input(
         write!(
             widget,
             ".padding({} as f32)",
-            checked_expr_use_code(program, padding, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, padding, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -105,7 +104,7 @@ pub(in crate::codegen) fn render_input(
         write!(
             widget,
             ".size((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-            checked_expr_use_code(program, size, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, size, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -113,7 +112,7 @@ pub(in crate::codegen) fn render_input(
         write!(
             widget,
             ".line_height(::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX)))",
-            checked_expr_use_code(program, line_height, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, line_height, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -225,7 +224,7 @@ pub(super) fn resolved_input_font_code(font: &ResolvedTextFont) -> String {
     }
 }
 
-fn resolved_input_icon_code(
+pub(super) fn resolved_input_icon_code(
     icon: &ResolvedInputIcon,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
@@ -240,13 +239,13 @@ fn resolved_input_icon_code(
         |size| {
             Ok::<_, Error>(format!(
                 "::std::option::Option::Some((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                checked_expr_use_code(program, size, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, size, env, ValueMode::Owned)?
             ))
         },
     )?;
     let spacing = icon
         .spacing
-        .map(|spacing| checked_expr_use_code(program, spacing, env, ValueMode::Owned))
+        .map(|spacing| resolved_expr_use_code(program, spacing, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "0.0".into());
     let side = match icon.side {
@@ -271,7 +270,7 @@ fn resolved_input_style_code(
             let arguments = style
                 .arguments
                 .iter()
-                .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+                .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
                 .collect::<Result<Vec<_>, _>>()?;
             let suffix = arguments
                 .into_iter()
@@ -413,7 +412,7 @@ pub(super) fn append_resolved_input_status(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }

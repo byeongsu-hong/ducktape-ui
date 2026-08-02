@@ -1,8 +1,25 @@
 use crate::ast::*;
+use crate::semantic::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+pub(crate) fn canonical_rust_type_name(name: &str) -> String {
+    if name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        name.to_owned()
+    } else {
+        format!(
+            "__IceType0{}",
+            name.bytes()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        )
+    }
+}
 
 #[cfg(test)]
 #[derive(Debug, Default)]
@@ -40,6 +57,17 @@ arena_id!(RouteId);
 arena_id!(RunSiteId);
 arena_id!(NamedWindowId);
 arena_id!(SubscriptionId);
+arena_id!(ExpressionNodeId);
+arena_id!(ExpressionId);
+arena_id!(LocalId);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ValueRef {
+    AppState(AppStateId),
+    Derived(DerivedId),
+    ComponentParam(ComponentParamId),
+    ComponentState(ComponentStateId),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct TestTargetId {
@@ -308,6 +336,7 @@ struct ComponentDeclarations {
     params: Vec<Declaration<ComponentParamId>>,
     events: Vec<ComponentEventDeclaration>,
     slots: Vec<Declaration<ComponentSlotId>>,
+    slot_views: Vec<ViewId>,
     states: Vec<Declaration<ComponentStateId>>,
 }
 
@@ -484,7 +513,7 @@ impl DeclarationIndex {
                 origin: origins.push(&value.span, None),
             })
             .collect::<Vec<_>>();
-        let components = document
+        let mut components = document
             .components
             .iter()
             .enumerate()
@@ -548,6 +577,7 @@ impl DeclarationIndex {
                     params,
                     events,
                     slots,
+                    slot_views: Vec::new(),
                     states,
                 }
             })
@@ -633,7 +663,7 @@ impl DeclarationIndex {
                 EnumDeclaration {
                     declaration: Declaration { id, origin },
                     name: item.name.clone(),
-                    rust_name: generated_named_rust(&item.name),
+                    rust_name: canonical_rust_type_name(&item.name),
                     variants,
                 }
             })
@@ -797,6 +827,17 @@ impl DeclarationIndex {
                 &mut canvases,
                 &mut component_calls_by_view,
             );
+        }
+        for (component, declarations) in document.components.iter().zip(&mut components) {
+            declarations.slot_views = declared_slots(&component.root)
+                .into_iter()
+                .map(|span| {
+                    views_by_site[&SourceSite {
+                        line: span.line,
+                        column: span.column,
+                    }]
+                })
+                .collect();
         }
 
         let mut handlers = Vec::new();
@@ -1016,6 +1057,10 @@ impl DeclarationIndex {
             .collect()
     }
 
+    pub(crate) fn enum_declarations(&self) -> &[EnumDeclaration] {
+        &self.enums
+    }
+
     pub(crate) fn derived(&self, index: usize) -> Declaration<DerivedId> {
         self.derived[index]
     }
@@ -1106,14 +1151,6 @@ impl DeclarationIndex {
             .filter(|declaration| declaration.id == id)
     }
 
-    pub(crate) fn component_slot(
-        &self,
-        component: ComponentId,
-        index: usize,
-    ) -> Declaration<ComponentSlotId> {
-        self.components[component.0 as usize].slots[index]
-    }
-
     pub(crate) fn try_component_slot(
         &self,
         id: ComponentSlotId,
@@ -1124,6 +1161,22 @@ impl DeclarationIndex {
             .get(id.index as usize)
             .copied()
             .filter(|declaration| declaration.id == id)
+    }
+
+    pub(crate) fn component_slot_count(&self, component: ComponentId) -> Option<usize> {
+        self.components
+            .get(component.0 as usize)
+            .filter(|declarations| declarations.declaration.id == component)
+            .map(|declarations| declarations.slots.len())
+    }
+
+    pub(crate) fn component_slot_view(&self, id: ComponentSlotId) -> Option<ViewId> {
+        let declarations = self.components.get(id.component.0 as usize)?;
+        declarations
+            .slots
+            .get(id.index as usize)
+            .filter(|declaration| declaration.id == id)?;
+        declarations.slot_views.get(id.index as usize).copied()
     }
 
     pub(crate) fn view(&self, id: ViewId) -> Declaration<ViewId> {
@@ -1168,6 +1221,10 @@ impl DeclarationIndex {
     pub(crate) fn struct_decl_by_name(&self, name: &str) -> Option<&StructDeclaration> {
         let id = self.structs_by_name.get(name)?;
         self.structs.get(id.0 as usize)
+    }
+
+    pub(crate) fn struct_declarations(&self) -> &[StructDeclaration] {
+        &self.structs
     }
 
     pub(crate) fn try_struct_decl(&self, id: StructId) -> Option<&StructDeclaration> {
@@ -1260,10 +1317,6 @@ impl DeclarationIndex {
         self.palettes.len()
     }
 
-    pub(crate) fn extern_fn(&self, index: usize) -> Declaration<ExternFnId> {
-        self.externs[index].declaration
-    }
-
     pub(crate) fn extern_decl_by_name(&self, name: &str) -> Option<&ExternDeclaration> {
         #[cfg(test)]
         self.extern_name_lookups.0.fetch_add(1, Ordering::Relaxed);
@@ -1278,6 +1331,10 @@ impl DeclarationIndex {
 
     pub(crate) fn extern_decl(&self, id: ExternFnId) -> &ExternDeclaration {
         &self.externs[id.0 as usize]
+    }
+
+    pub(crate) fn extern_declarations(&self) -> impl Iterator<Item = &ExternDeclaration> {
+        self.externs.iter()
     }
 
     #[cfg(test)]

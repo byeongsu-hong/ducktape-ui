@@ -96,6 +96,19 @@ pub(crate) fn responsive_semantic_key(
     )
 }
 
+pub(crate) fn responsive_expression_count(
+    content: &ResponsiveContent,
+    width: &Option<LengthValue>,
+    height: &Option<LengthValue>,
+) -> u32 {
+    let breakpoint = u32::from(matches!(content, ResponsiveContent::Breakpoint { .. }));
+    let dimensions = [width, height]
+        .into_iter()
+        .filter(|length| matches!(length, Some(LengthValue::Fixed(_))))
+        .count() as u32;
+    breakpoint + dimensions
+}
+
 fn length_semantic_key(length: &Option<LengthValue>) -> String {
     match length {
         None => "none".into(),
@@ -143,6 +156,120 @@ pub struct MarkdownStyleOptions {
     pub inline_code_radius_top_right: Option<Expr>,
     pub inline_code_radius_bottom_right: Option<Expr>,
     pub inline_code_radius_bottom_left: Option<Expr>,
+    pub span: Option<Span>,
+}
+
+pub(crate) fn markdown_style_expression_roots(style: &MarkdownStyleOptions) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    if let Some(BackgroundValue::Linear { angle, stops }) = &style.inline_code_background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+    roots.extend(
+        [
+            &style.inline_code_padding.all,
+            &style.inline_code_padding.x,
+            &style.inline_code_padding.y,
+            &style.inline_code_padding.top,
+            &style.inline_code_padding.right,
+            &style.inline_code_padding.bottom,
+            &style.inline_code_padding.left,
+            &style.inline_code_border_width,
+            &style.inline_code_radius,
+            &style.inline_code_radius_top_left,
+            &style.inline_code_radius_top_right,
+            &style.inline_code_radius_bottom_right,
+            &style.inline_code_radius_bottom_left,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn markdown_expression_roots(options: &MarkdownOptions) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    roots.extend(
+        [
+            &options.text_size,
+            &options.h1_size,
+            &options.h2_size,
+            &options.h3_size,
+            &options.h4_size,
+            &options.h5_size,
+            &options.h6_size,
+            &options.code_size,
+            &options.spacing,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots.extend(markdown_style_expression_roots(&options.style));
+    if let Some(viewer) = &options.viewer {
+        roots.extend(&viewer.args);
+    }
+    roots
+}
+
+pub(crate) fn markdown_semantic_key(options: &MarkdownOptions) -> String {
+    let style = &options.style;
+    let background = style
+        .inline_code_background
+        .as_ref()
+        .map(|background| match background {
+            BackgroundValue::Color(color) => format!("color:{color}"),
+            BackgroundValue::Linear { stops, .. } => format!(
+                "linear:{}",
+                stops
+                    .iter()
+                    .map(|stop| stop.color.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        });
+    format!(
+        "markdown|metrics={:?}|viewer={:?}|fonts={:?}|background={background:?}|colors={:?}|style-metrics={:?}",
+        [
+            options.text_size.is_some(),
+            options.h1_size.is_some(),
+            options.h2_size.is_some(),
+            options.h3_size.is_some(),
+            options.h4_size.is_some(),
+            options.h5_size.is_some(),
+            options.h6_size.is_some(),
+            options.code_size.is_some(),
+            options.spacing.is_some(),
+        ],
+        options
+            .viewer
+            .as_ref()
+            .map(|viewer| viewer.function.as_str()),
+        [
+            style.font.as_ref(),
+            style.inline_code_font.as_ref(),
+            style.code_block_font.as_ref(),
+        ],
+        [
+            style.inline_code_color.as_deref(),
+            style.link_color.as_deref(),
+            style.inline_code_border_color.as_deref(),
+        ],
+        [
+            style.inline_code_padding.all.is_some(),
+            style.inline_code_padding.x.is_some(),
+            style.inline_code_padding.y.is_some(),
+            style.inline_code_padding.top.is_some(),
+            style.inline_code_padding.right.is_some(),
+            style.inline_code_padding.bottom.is_some(),
+            style.inline_code_padding.left.is_some(),
+            style.inline_code_border_width.is_some(),
+            style.inline_code_radius.is_some(),
+            style.inline_code_radius_top_left.is_some(),
+            style.inline_code_radius_top_right.is_some(),
+            style.inline_code_radius_bottom_right.is_some(),
+            style.inline_code_radius_bottom_left.is_some(),
+        ],
+    )
 }
 
 #[derive(Clone, Debug, Default)]
@@ -360,31 +487,6 @@ pub enum ThemePreset {
     BuiltIn(String),
     Factory(ExternCall),
 }
-
-pub(crate) const BUILT_IN_THEMES: &[&str] = &[
-    "light",
-    "dark",
-    "dracula",
-    "nord",
-    "solarized-light",
-    "solarized-dark",
-    "gruvbox-light",
-    "gruvbox-dark",
-    "catppuccin-latte",
-    "catppuccin-frappe",
-    "catppuccin-macchiato",
-    "catppuccin-mocha",
-    "tokyo-night",
-    "tokyo-night-storm",
-    "tokyo-night-light",
-    "kanagawa-wave",
-    "kanagawa-dragon",
-    "kanagawa-lotus",
-    "moonfly",
-    "nightfly",
-    "oxocarbon",
-    "ferra",
-];
 
 #[derive(Clone, Debug)]
 pub enum ResponsiveContent {
@@ -919,24 +1021,115 @@ pub struct ButtonStatusStyle {
     pub span: Span,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InputAlignment {
-    Left,
-    Center,
-    Right,
+pub(crate) fn button_expression_roots<'a>(
+    disabled: &'a Option<Expr>,
+    options: &'a ButtonOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = Vec::new();
+    roots.extend(disabled);
+    roots.extend(options.accessibility.label.as_ref());
+    roots.extend(options.accessibility.description.as_ref());
+    push_input_length_root(&mut roots, &options.width);
+    push_input_length_root(&mut roots, &options.height);
+    roots.extend(options.padding.as_ref());
+    roots.extend(options.clip.as_ref());
+    if let Some(custom) = &options.style.custom {
+        roots.extend(&custom.args);
+    }
+    for status in [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.pressed,
+        &options.style.disabled,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_input_surface_roots(&mut roots, &status.options);
+    }
+    roots
 }
 
-impl std::str::FromStr for InputAlignment {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "left" => Ok(Self::Left),
-            "center" => Ok(Self::Center),
-            "right" => Ok(Self::Right),
-            _ => Err(()),
-        }
+pub(crate) fn button_semantic_key(
+    label: &Option<String>,
+    content: &Option<Box<ViewNode>>,
+    disabled: &Option<Expr>,
+    options: &ButtonOptions,
+    route: &Route,
+) -> String {
+    fn surface(options: &ContainerStyleOptions) -> String {
+        let background = options.background.as_ref().map_or_else(
+            || "none".into(),
+            |background| match background {
+                BackgroundValue::Color(color) => format!("color:{color}"),
+                BackgroundValue::Linear { stops, .. } => format!(
+                    "linear:{}",
+                    stops
+                        .iter()
+                        .map(|stop| stop.color.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            },
+        );
+        format!(
+            "bg={background}|text={:?}|border={:?}|shadow={:?}|fields={:?}",
+            options.text_color,
+            options.border_color,
+            options.shadow_color,
+            [
+                options.border_width.is_some(),
+                options.radius.is_some(),
+                options.radius_top_left.is_some(),
+                options.radius_top_right.is_some(),
+                options.radius_bottom_right.is_some(),
+                options.radius_bottom_left.is_some(),
+                options.shadow_color.is_some(),
+                options.shadow_x.is_some(),
+                options.shadow_y.is_some(),
+                options.shadow_blur.is_some(),
+                options.pixel_snap.is_some(),
+            ]
+        )
     }
+    let custom = options.style.custom.as_ref().map_or_else(
+        || "none".into(),
+        |call| format!("{}:{}", call.function, call.args.len()),
+    );
+    let statuses = [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.pressed,
+        &options.style.disabled,
+    ]
+    .map(|status| {
+        status
+            .as_ref()
+            .map_or_else(|| "none".into(), |s| surface(&s.options))
+    })
+    .join(";");
+    let route_args = route
+        .args
+        .iter()
+        .map(|arg| match arg {
+            RouteArg::Expr(_) => 'e',
+            RouteArg::Payload => 'p',
+        })
+        .collect::<String>();
+    format!(
+        "button|label={label:?}|child={}|disabled={}|a11y={}:{}|bounds={}:{}|padding={}|clip={}|preset={:?}|custom={custom}|statuses={statuses}|route={}:{}",
+        content.is_some(),
+        disabled.is_some(),
+        options.accessibility.label.is_some(),
+        options.accessibility.description.is_some(),
+        text_length_semantic_key(&options.width),
+        text_length_semantic_key(&options.height),
+        options.padding.is_some(),
+        options.clip.is_some(),
+        options.style.preset,
+        route.handler,
+        route_args,
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -962,6 +1155,59 @@ pub struct BoolControlOptions {
     pub icon_size: Option<Expr>,
     pub icon_line_height: Option<Expr>,
     pub icon_shaping: Option<TextShaping>,
+}
+
+fn push_bool_control_background_roots<'a>(
+    roots: &mut Vec<&'a Expr>,
+    background: &'a Option<BackgroundValue>,
+) {
+    if let Some(BackgroundValue::Linear { angle, stops }) = background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+}
+
+fn push_bool_control_option_roots<'a>(
+    roots: &mut Vec<&'a Expr>,
+    options: &'a BoolControlOptions,
+    include_accessibility: bool,
+) {
+    if include_accessibility {
+        roots.extend(
+            [
+                &options.accessibility.label,
+                &options.accessibility.description,
+            ]
+            .into_iter()
+            .flatten(),
+        );
+    }
+    roots.extend(options.size.as_ref());
+    push_input_length_root(roots, &options.width);
+    roots.extend(
+        [
+            &options.spacing,
+            &options.text_size,
+            &options.line_height,
+            &options.icon_size,
+            &options.icon_line_height,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+}
+
+fn bool_control_semantic_key(
+    kind: &str,
+    leading: impl std::fmt::Debug,
+    disabled: &Option<Expr>,
+    options: &BoolControlOptions,
+    style: impl std::fmt::Debug,
+    route: &Route,
+) -> String {
+    format!(
+        "{kind}|leading={leading:?}|disabled={disabled:?}|options={options:?}|style={style:?}|route={route:?}"
+    )
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1000,6 +1246,72 @@ pub struct CheckboxStatusStyle {
     pub span: Option<Span>,
 }
 
+pub(crate) fn checkbox_expression_roots<'a>(
+    label: &'a Expr,
+    checked: &'a Expr,
+    disabled: &'a Option<Expr>,
+    options: &'a BoolControlOptions,
+    style: &'a CheckboxStyleSet,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![label, checked];
+    roots.extend(disabled);
+    push_bool_control_option_roots(&mut roots, options, true);
+    if let Some(custom) = &style.custom {
+        roots.extend(&custom.args);
+    }
+    for status in [
+        &style.active_checked,
+        &style.active_unchecked,
+        &style.hovered_checked,
+        &style.hovered_unchecked,
+        &style.disabled_checked,
+        &style.disabled_unchecked,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.extend(checkbox_status_expression_roots(status));
+    }
+    roots
+}
+
+pub(crate) fn checkbox_status_expression_roots(status: &CheckboxStatusStyle) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    push_bool_control_background_roots(&mut roots, &status.background);
+    roots.extend(
+        [
+            &status.border_width,
+            &status.radius,
+            &status.radius_top_left,
+            &status.radius_top_right,
+            &status.radius_bottom_right,
+            &status.radius_bottom_left,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn checkbox_semantic_key(
+    id: &Option<Id>,
+    label: &Expr,
+    checked: &Expr,
+    disabled: &Option<Expr>,
+    options: &BoolControlOptions,
+    style: &CheckboxStyleSet,
+    route: &Route,
+) -> String {
+    bool_control_semantic_key(
+        "checkbox",
+        (id, label, checked),
+        disabled,
+        options,
+        style,
+        route,
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TogglerStyleSet {
     pub custom: Option<ExternCall>,
@@ -1029,6 +1341,75 @@ pub struct TogglerStatusStyle {
     pub span: Option<Span>,
 }
 
+pub(crate) fn toggler_expression_roots<'a>(
+    label: &'a Expr,
+    checked: &'a Expr,
+    disabled: &'a Option<Expr>,
+    options: &'a BoolControlOptions,
+    style: &'a TogglerStyleSet,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![label, checked];
+    roots.extend(disabled);
+    push_bool_control_option_roots(&mut roots, options, true);
+    if let Some(custom) = &style.custom {
+        roots.extend(&custom.args);
+    }
+    for status in [
+        &style.active_checked,
+        &style.active_unchecked,
+        &style.hovered_checked,
+        &style.hovered_unchecked,
+        &style.disabled_checked,
+        &style.disabled_unchecked,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.extend(toggler_status_expression_roots(status));
+    }
+    roots
+}
+
+pub(crate) fn toggler_status_expression_roots(status: &TogglerStatusStyle) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    push_bool_control_background_roots(&mut roots, &status.background);
+    roots.extend(status.background_border_width.as_ref());
+    push_bool_control_background_roots(&mut roots, &status.foreground);
+    roots.extend(status.foreground_border_width.as_ref());
+    roots.extend(
+        [
+            &status.radius,
+            &status.radius_top_left,
+            &status.radius_top_right,
+            &status.radius_bottom_right,
+            &status.radius_bottom_left,
+            &status.padding_ratio,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn toggler_semantic_key(
+    id: &Option<Id>,
+    label: &Expr,
+    checked: &Expr,
+    disabled: &Option<Expr>,
+    options: &BoolControlOptions,
+    style: &TogglerStyleSet,
+    route: &Route,
+) -> String {
+    bool_control_semantic_key(
+        "toggler",
+        (id, label, checked),
+        disabled,
+        options,
+        style,
+        route,
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct RadioStyleSet {
     pub custom: Option<ExternCall>,
@@ -1048,61 +1429,54 @@ pub struct RadioStatusStyle {
     pub span: Option<Span>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextShaping {
-    Auto,
-    Basic,
-    Advanced,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextWrapping {
-    None,
-    Word,
-    Glyph,
-    WordOrGlyph,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextAlignment {
-    Default,
-    Left,
-    Center,
-    Right,
-    Justified,
-}
-
-impl std::str::FromStr for TextAlignment {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "default" => Ok(Self::Default),
-            "left" => Ok(Self::Left),
-            "center" => Ok(Self::Center),
-            "right" => Ok(Self::Right),
-            "justified" => Ok(Self::Justified),
-            _ => Err(()),
-        }
+pub(crate) fn radio_expression_roots<'a>(
+    label: &'a Expr,
+    value: &'a Expr,
+    selected: &'a Expr,
+    options: &'a BoolControlOptions,
+    style: &'a RadioStyleSet,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![label, value, selected];
+    push_bool_control_option_roots(&mut roots, options, false);
+    if let Some(custom) = &style.custom {
+        roots.extend(&custom.args);
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VerticalAlignment {
-    Top,
-    Center,
-    Bottom,
-}
-
-impl std::str::FromStr for VerticalAlignment {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "top" => Ok(Self::Top),
-            "center" => Ok(Self::Center),
-            "bottom" => Ok(Self::Bottom),
-            _ => Err(()),
-        }
+    for status in [
+        &style.active_selected,
+        &style.active_unselected,
+        &style.hovered_selected,
+        &style.hovered_unselected,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.extend(radio_status_expression_roots(status));
     }
+    roots
+}
+
+pub(crate) fn radio_status_expression_roots(status: &RadioStatusStyle) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    push_bool_control_background_roots(&mut roots, &status.background);
+    roots.extend(status.border_width.as_ref());
+    roots
+}
+
+pub(crate) fn radio_semantic_key(
+    id: &Option<Id>,
+    label: &Expr,
+    value: &Expr,
+    selected: &Expr,
+    options: &BoolControlOptions,
+    style: &RadioStyleSet,
+    route: &Route,
+) -> String {
+    bool_control_semantic_key(
+        "radio",
+        (id, label, value, selected),
+        &None,
+        options,
+        style,
+        route,
+    )
 }

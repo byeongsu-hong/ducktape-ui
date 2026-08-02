@@ -327,7 +327,27 @@ impl Lowerer {
             .transpose()
     }
 
-    fn lower_interaction_route(
+    pub(super) fn lower_required_interaction_route(
+        &self,
+        source: &Route,
+        checked: &CheckedInteraction,
+        routes: &[&Route],
+        route: &mut usize,
+        widget: ViewId,
+        scope: CheckedViewScope,
+    ) -> Result<ResolvedInteractionRoute, Error> {
+        let expected = routes.get(*route).copied().ok_or_else(|| {
+            self.invariant(&source.span, "interaction route order is out of range")
+        })?;
+        if !std::ptr::eq(source, expected) {
+            return Err(self.invariant(&source.span, "interaction route order diverged"));
+        }
+        let result = self.lower_interaction_route(source, checked, *route, widget, scope)?;
+        *route += 1;
+        Ok(result)
+    }
+
+    pub(super) fn lower_interaction_route(
         &self,
         source: &Route,
         interaction: &CheckedInteraction,

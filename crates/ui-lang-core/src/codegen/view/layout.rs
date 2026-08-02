@@ -1,13 +1,11 @@
 use super::*;
 
-type LayoutRenderDocument<'a> = RenderDocument<'a>;
-
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_layout(
     layout: &ResolvedLayout,
-    id: &Option<Id>,
-    children: &[ViewNode],
-    document: &LayoutRenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    children: &[ViewId],
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -17,8 +15,8 @@ pub(in crate::codegen) fn render_layout(
         ResolvedLayoutMode::Scroll(scroll) => render_resolved_scroll(
             layout,
             scroll,
-            id,
-            &children[0],
+            identity,
+            children[0],
             document,
             message,
             env,
@@ -26,12 +24,12 @@ pub(in crate::codegen) fn render_layout(
             slot,
         ),
         ResolvedLayoutMode::Flex(flex) => render_resolved_flexbox(
-            layout, flex, id, children, document, message, env, scope, slot,
+            layout, flex, identity, children, document, message, env, scope, slot,
         ),
         ResolvedLayoutMode::Linear(_)
         | ResolvedLayoutMode::Grid(_)
         | ResolvedLayoutMode::Stack(_) => render_resolved_regular_layout(
-            layout, id, children, document, message, env, scope, slot,
+            layout, identity, children, document, message, env, scope, slot,
         ),
     }
 }
@@ -39,9 +37,9 @@ pub(in crate::codegen) fn render_layout(
 #[allow(clippy::too_many_arguments)]
 fn render_resolved_regular_layout(
     layout: &ResolvedLayout,
-    id: &Option<Id>,
-    children: &[ViewNode],
-    document: &LayoutRenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    children: &[ViewId],
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -49,15 +47,11 @@ fn render_resolved_regular_layout(
 ) -> Result<String, Error> {
     let program = document.hir();
     let style = &layout.utility_style;
-    let span = Span::line(layout.source_line);
     let accessibility_key =
-        accessibility_key_code(id.as_ref(), "layout", &span, scope, env, document)?;
+        resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
     let mut body = String::from("{ let mut __children: ::std::vec::Vec<__IceElement<'_, ");
     write!(body, "{message}>> = ::std::vec::Vec::new();").unwrap();
-    let child_scope = id.as_ref().map_or_else(
-        || Ok(scope.to_owned()),
-        |id| id_code(id, scope, env, document),
-    )?;
+    let child_scope = rendered_child_scope(identity, scope, env, document)?;
     render_children(
         &mut body,
         children,
@@ -85,7 +79,7 @@ fn render_resolved_regular_layout(
         write!(
             body,
             " let __grid_columns = usize::try_from({}).unwrap_or(0).max(1);",
-            checked_expr_use_code(program, columns, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, columns, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -149,7 +143,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".spacing(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-                checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -166,7 +160,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".max_width({} as f32)",
-                checked_expr_use_code(program, max_width, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, max_width, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -197,7 +191,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".clip({})",
-                checked_expr_use_code(program, clip, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, clip, env, ValueMode::Owned)?
             )
             .unwrap();
         } else if style.clip {
@@ -214,7 +208,7 @@ fn render_resolved_regular_layout(
                 write!(
                     body,
                     ".{method}(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-                    checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
+                    resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
                 )
                 .unwrap();
             }
@@ -254,7 +248,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".spacing(::ui_lang_runtime::bounded_spacing({}, {entries}))",
-                checked_expr_use_code(program, spacing, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -269,8 +263,8 @@ fn render_resolved_regular_layout(
         if let Some(height) = &grid.height {
             match height {
                 ResolvedGridHeight::AspectRatio { width, height } => {
-                    let width = checked_expr_use_code(program, *width, env, ValueMode::Owned)?;
-                    let height = checked_expr_use_code(program, *height, env, ValueMode::Owned)?;
+                    let width = resolved_expr_use_code(program, *width, env, ValueMode::Owned)?;
+                    let height = resolved_expr_use_code(program, *height, env, ValueMode::Owned)?;
                     write!(
                         body,
                         ".height(::iced::widget::grid::Sizing::AspectRatio(((({width}) / ({height})) as f32).max(f32::EPSILON).min(f32::MAX)))"
@@ -304,7 +298,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".clip({})",
-                checked_expr_use_code(program, clip, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, clip, env, ValueMode::Owned)?
             )
             .unwrap();
         } else if style.clip {
@@ -357,9 +351,9 @@ fn render_resolved_regular_layout(
 fn render_resolved_flexbox(
     layout: &ResolvedLayout,
     flex: &ResolvedFlexLayout,
-    id: &Option<Id>,
-    children: &[ViewNode],
-    document: &LayoutRenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    children: &[ViewId],
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -367,13 +361,9 @@ fn render_resolved_flexbox(
 ) -> Result<String, Error> {
     let program = document.hir();
     let style = &layout.utility_style;
-    let span = Span::line(layout.source_line);
     let accessibility_key =
-        accessibility_key_code(id.as_ref(), "layout", &span, scope, env, document)?;
-    let child_scope = id.as_ref().map_or_else(
-        || Ok(scope.to_owned()),
-        |id| id_code(id, scope, env, document),
-    )?;
+        resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let mut body = String::from("{ let mut __items = ::std::vec::Vec::new();");
     render_flex_children(
         &mut body,
@@ -436,7 +426,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".gap({} as f32)",
-            checked_expr_use_code(program, gap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, gap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -448,7 +438,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".{method}({} as f32)",
-            checked_expr_use_code(program, gap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, gap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -457,7 +447,7 @@ fn render_resolved_flexbox(
             write!(
                 body,
                 ".{method}({} as f32)",
-                checked_expr_use_code(program, gap, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, gap, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -474,7 +464,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".max_width({} as f32)",
-            checked_expr_use_code(program, max_width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, max_width, env, ValueMode::Owned)?
         )
         .unwrap();
     } else if let Some(max_width) = style.max_width {
@@ -484,7 +474,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".max_height({} as f32)",
-            checked_expr_use_code(program, max_height, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, max_height, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -492,7 +482,7 @@ fn render_resolved_flexbox(
         write!(
             body,
             ".clip({})",
-            checked_expr_use_code(program, clip, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, clip, env, ValueMode::Owned)?
         )
         .unwrap();
     } else if style.clip {
@@ -517,22 +507,18 @@ fn render_resolved_flexbox(
 fn render_resolved_scroll(
     layout: &ResolvedLayout,
     scroll: &ResolvedScrollLayout,
-    id: &Option<Id>,
-    child: &ViewNode,
-    document: &LayoutRenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    child: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let span = Span::line(layout.source_line);
     let accessibility_key =
-        accessibility_key_code(id.as_ref(), "layout", &span, scope, env, document)?;
-    let child_scope = id.as_ref().map_or_else(
-        || Ok(scope.to_owned()),
-        |id| id_code(id, scope, env, document),
-    )?;
+        resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let child = render_node(child, document, message, env, &child_scope, slot)?;
     let mut code = String::from("::iced::widget::scrollable(__scroll_content)");
     let bar = resolved_scroll_bar_code(scroll, program, env)?;
@@ -548,11 +534,11 @@ fn render_resolved_scroll(
         ),
     };
     write!(code, ".direction({direction})").unwrap();
-    if let Some(id) = id {
+    if let Some(identity) = identity {
         write!(
             code,
             ".id(::iced::widget::Id::from({}))",
-            id_code(id, scope, env, document)?
+            resolved_view_identity_code(identity, scope, env, document)?
         )
         .unwrap();
     }
@@ -576,7 +562,7 @@ fn render_resolved_scroll(
         write!(
             code,
             ".auto_scroll({})",
-            checked_expr_use_code(program, auto_scroll, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, auto_scroll, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -652,8 +638,8 @@ fn render_resolved_scroll(
 #[allow(clippy::too_many_arguments)]
 fn render_flex_children(
     out: &mut String,
-    children: &[ViewNode],
-    document: &LayoutRenderDocument<'_>,
+    children: &[ViewId],
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -661,12 +647,13 @@ fn render_flex_children(
     min_cell: Option<ResolvedExpressionId>,
 ) -> Result<(), Error> {
     for child in children {
-        match child {
-            ViewNode::If { children, .. } => {
-                let program = document.hir();
-                let conditional = program.resolved_conditional_for(child)?;
+        let view = document.resolved_view(*child)?;
+        match &view.kind {
+            ResolvedViewKind::If { children } => {
+                let program = document;
+                let conditional = program.resolved_conditional(*child)?;
                 let condition =
-                    checked_expr_use_code(program, conditional.condition, env, ValueMode::Owned)?;
+                    resolved_expr_use_code(program, conditional.condition, env, ValueMode::Owned)?;
                 if condition == "false" {
                     continue;
                 }
@@ -680,12 +667,12 @@ fn render_flex_children(
                 render_flex_children(out, children, document, message, env, scope, slot, min_cell)?;
                 out.push_str(" }");
             }
-            ViewNode::For { children, .. } => {
-                let program = document.hir();
-                let iteration = program.resolved_iteration_for(child)?;
+            ResolvedViewKind::For { children } => {
+                let program = document;
+                let iteration = program.resolved_iteration(*child)?;
                 let item_name = &iteration.item.name;
                 let items =
-                    checked_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
+                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
                 let reconciliation_scope = reconciliation_scope(scope, env);
                 write!(
                     out,
@@ -696,8 +683,8 @@ fn render_flex_children(
                 let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
                     item_name.clone(),
-                    checked_local_binding(
-                        LocalBindingTypeSource::Checked(program),
+                    resolved_local_binding(
+                        LocalBindingTypeSource::Resolved(program),
                         iteration.item.local,
                         item_name.clone(),
                         false,
@@ -712,24 +699,21 @@ fn render_flex_children(
                 )?;
                 out.push_str(" }");
             }
-            ViewNode::Match { arms, .. } => {
-                let program = document.hir();
-                let resolved = program.resolved_match_for(child)?;
+            ResolvedViewKind::Match { arms } => {
+                let program = document;
+                let resolved = program.resolved_match(*child)?;
                 if arms.len() != resolved.arms.len() {
-                    return Err(program.invariant_at_origin(
-                        resolved.origin,
-                        "flex match HIR arm length diverged",
-                    ));
+                    return Err(program
+                        .invariant_at_origin(view.origin, "flex match HIR arm length diverged"));
                 }
                 let value =
-                    checked_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
+                    resolved_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
                 write!(out, " match &({value}) {{").unwrap();
-                for (arm, resolved_arm) in arms.iter().zip(&resolved.arms) {
-                    program.validate_match_arm_children(arm, resolved_arm)?;
+                for (arm_children, resolved_arm) in arms.iter().zip(&resolved.arms) {
                     write!(
                         out,
                         " {} => {{",
-                        resolved_match_pattern_code(program, resolved_arm)?
+                        resolved_match_pattern_code(resolved_arm, program)?
                     )
                     .unwrap();
                     let mut child_env = ScopedBindingEnv::new(env);
@@ -737,7 +721,7 @@ fn render_flex_children(
                         let name = payload.name.clone();
                         child_env.insert(
                             name.clone(),
-                            checked_local_binding(
+                            resolved_local_binding(
                                 LocalBindingTypeSource::Hir(payload),
                                 payload.local,
                                 name,
@@ -747,7 +731,7 @@ fn render_flex_children(
                     }
                     render_flex_children(
                         out,
-                        &arm.children,
+                        arm_children,
                         document,
                         message,
                         &child_env,
@@ -761,7 +745,7 @@ fn render_flex_children(
             }
             _ => {
                 let Some(rendered) =
-                    render_node_if_present(child, document, message, env, scope, slot)?
+                    render_node_if_present(*child, document, message, env, scope, slot)?
                 else {
                     continue;
                 };
@@ -777,9 +761,9 @@ fn render_flex_children(
                         )?
                     )
                 } else {
-                    let options = match child {
-                        ViewNode::Container { .. } => {
-                            Some(&document.hir().resolved_container_for(child)?.flex_item)
+                    let options = match view.kind {
+                        ResolvedViewKind::Container { .. } => {
+                            Some(&document.resolved_container(*child)?.flex_item)
                         }
                         _ => None,
                     };
@@ -810,7 +794,7 @@ fn resolved_flex_item_code(
         write!(
             code,
             ".order({} as i64)",
-            checked_expr_use_code(program, order, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, order, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -819,7 +803,7 @@ fn resolved_flex_item_code(
             write!(
                 code,
                 ".{method}({} as f32)",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -832,11 +816,11 @@ fn resolved_flex_item_code(
             }
             ResolvedContainerFlexBasis::Fixed(value) => format!(
                 "::ui_lang_runtime::FlexBasis::Fixed({} as f32)",
-                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
             ResolvedContainerFlexBasis::Percent(value) => format!(
                 "::ui_lang_runtime::FlexBasis::Percent(({} as f32) / 100.0)",
-                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
         };
         write!(code, ".basis({basis})").unwrap();
@@ -873,11 +857,11 @@ fn resolved_flex_margin_code(
         ResolvedContainerFlexMargin::Auto => "::ui_lang_runtime::FlexMargin::Auto".to_owned(),
         ResolvedContainerFlexMargin::Fixed(value) => format!(
             "::ui_lang_runtime::FlexMargin::Fixed({} as f32)",
-            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
         ResolvedContainerFlexMargin::Percent(value) => format!(
             "::ui_lang_runtime::FlexMargin::Percent(({} as f32) / 100.0)",
-            checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
     })
 }
@@ -934,7 +918,7 @@ fn resolved_layout_padding_code(
     }
     let value = |expression: Option<ResolvedExpressionId>| {
         expression
-            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
             .transpose()
     };
     let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
@@ -980,10 +964,10 @@ fn resolved_layout_length_code(
         ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
         ResolvedContainerLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedContainerLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -995,7 +979,7 @@ fn resolved_layout_clamped_f32(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let code = checked_expr_use_code(program, expression, env, ValueMode::Owned)?;
+    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
     Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
@@ -1016,7 +1000,7 @@ fn resolved_scroll_bar_code(
             write!(
                 code,
                 ".{method}(::ui_lang_runtime::bounded_table_metric({}, 2))",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -1090,7 +1074,7 @@ fn resolved_scroll_custom_style_code(
     let arguments = style
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?;
     let suffix = arguments
         .into_iter()
@@ -1226,7 +1210,7 @@ fn append_resolved_scroll_surface(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -1250,7 +1234,7 @@ fn append_resolved_scroll_surface(
             write!(
                 code,
                 " __style.shadow.{field} = {} as f32;",
-                checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -1259,7 +1243,7 @@ fn append_resolved_scroll_surface(
         write!(
             code,
             " __style.snap = {};",
-            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, snap, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -1287,13 +1271,13 @@ fn resolved_layout_background_code(
         ResolvedContainerBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
             for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
                     resolved_theme_color(&stop.color)
                 )
                 .unwrap();

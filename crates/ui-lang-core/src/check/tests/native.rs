@@ -309,7 +309,10 @@ fn checks_native_window_id_values_and_traits() {
 fn checks_native_window_screenshot_values_and_routes() {
     let source = example!("window_screenshot.ice");
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[2].params[0].ty, Type::WindowScreenshot);
+    assert_eq!(
+        document.source_document().handlers[2].params[0].ty,
+        Type::WindowScreenshot
+    );
 
     let error = analyze(&source.replace(
         "scale_factor = returned.scale_factor",
@@ -476,8 +479,14 @@ fn checks_owned_native_debug_timing_boundaries() {
 fn checks_native_image_allocation_results_and_errors() {
     let source = example!("image_allocation.ice");
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty, Type::ImageAllocation);
-    assert_eq!(document.handlers[2].params[0].ty, Type::ImageError);
+    assert_eq!(
+        document.source_document().handlers[1].params[0].ty,
+        Type::ImageAllocation
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0].ty,
+        Type::ImageError
+    );
 
     let error = analyze(&source.replace(" | failed _", "")).unwrap_err();
     assert_eq!(error.code, "E131");
@@ -603,12 +612,30 @@ view
 fn checks_native_timer_subscription() {
     let source = example!("timer.ice");
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty, Type::Instant);
-    assert_eq!(document.handlers[2].params[0].ty, Type::I64);
-    assert_eq!(document.handlers[2].params[1].ty, Type::I64);
-    assert_eq!(document.handlers[3].params[0].ty, Type::I64);
-    assert_eq!(document.handlers[3].params[1].ty, Type::Str);
-    assert_eq!(document.handlers[4].params[0].ty, Type::Bool);
+    assert_eq!(
+        document.source_document().handlers[1].params[0].ty,
+        Type::Instant
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0].ty,
+        Type::I64
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[1].ty,
+        Type::I64
+    );
+    assert_eq!(
+        document.source_document().handlers[3].params[0].ty,
+        Type::I64
+    );
+    assert_eq!(
+        document.source_document().handlers[3].params[1].ty,
+        Type::Str
+    );
+    assert_eq!(
+        document.source_document().handlers[4].params[0].ty,
+        Type::Bool
+    );
 
     let error = analyze(&source.replace(
         "every 250ms when auto_refresh -> tick _",

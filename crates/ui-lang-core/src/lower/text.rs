@@ -246,12 +246,7 @@ impl Lowerer {
             ViewNode::Text { .. } => ResolvedTextContent::Plain {
                 value: plain_value.expect("plain text value"),
             },
-            ViewNode::RichText {
-                color,
-                spans,
-                route: _,
-                ..
-            } => {
+            ViewNode::RichText { color, spans, .. } => {
                 if checked_text.span_origins.len() != spans.len() {
                     return Err(self.invariant(span, "rich-text span origin count diverged"));
                 }

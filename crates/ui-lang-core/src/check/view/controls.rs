@@ -20,6 +20,7 @@ pub(in crate::check) fn infer_controls_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let button_analysis_guard = expr::HandlerAnalysisGuard::start();
             if let Some(disabled) = disabled {
                 let ty = expr_type(disabled, env, document, span)?;
                 require_type(&ty, &Type::Bool, span)?;
@@ -65,6 +66,7 @@ pub(in crate::check) fn infer_controls_group(
             }
             infer_route(route, None, env, document, signatures)?;
             check_styles(styles, document, span, StyleTarget::Button(options))?;
+            retain_interaction_analyses(span, button_analysis_guard.finish())?;
             if let Some(content) = content {
                 infer_view(content, env, document, signatures, ids)?;
             }
@@ -81,6 +83,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             require_type(&expr_type(checked, env, document, span)?, &Type::Bool, span)?;
             if let Some(disabled) = disabled {
@@ -100,6 +103,7 @@ pub(in crate::check) fn infer_controls_group(
             check_checkbox_styles(style, env, document, span)?;
             infer_route(route, Some(Type::Bool), env, document, signatures)?;
             check_styles(styles, document, span, StyleTarget::Checkbox)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Toggler {
             label,
@@ -113,6 +117,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             require_type(&expr_type(checked, env, document, span)?, &Type::Bool, span)?;
             if let Some(disabled) = disabled {
@@ -132,6 +137,7 @@ pub(in crate::check) fn infer_controls_group(
             check_toggler_styles(style, env, document, span)?;
             infer_route(route, Some(Type::Bool), env, document, signatures)?;
             check_styles(styles, document, span, StyleTarget::Toggler)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Slider {
             value,
@@ -148,6 +154,7 @@ pub(in crate::check) fn infer_controls_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             let value_type = expr_type(value, env, document, span)?;
             if !matches!(&value_type, Type::F64 | Type::Named(_)) {
                 return Err(Error::new(
@@ -226,6 +233,7 @@ pub(in crate::check) fn infer_controls_group(
                 infer_route(release, None, env, document, signatures)?;
             }
             check_styles(styles, document, span, StyleTarget::Slider)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Progress {
             value,
@@ -238,6 +246,7 @@ pub(in crate::check) fn infer_controls_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             for expr in [value, min, max] {
                 require_f32_value(expr, env, document, "progress value", span)?;
             }
@@ -278,6 +287,7 @@ pub(in crate::check) fn infer_controls_group(
                 }
             }
             check_styles(styles, document, span, StyleTarget::Progress)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Radio {
             label,
@@ -291,6 +301,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             let value_type = expr_type(value, env, document, span)?;
             if !matches!(
@@ -317,6 +328,7 @@ pub(in crate::check) fn infer_controls_group(
             check_radio_styles(style, env, document, span)?;
             infer_route(route, Some(value_type), env, document, signatures)?;
             check_styles(styles, document, span, StyleTarget::Radio)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::PickList {
             options,
@@ -327,6 +339,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let selection_analysis_guard = expr::HandlerAnalysisGuard::start();
             let Type::List(option_type) = expr_type(options, env, document, span)? else {
                 return Err(Error::new("E129", span, "pick options must be a list"));
             };
@@ -390,6 +403,7 @@ pub(in crate::check) fn infer_controls_group(
             {
                 infer_route(route, None, env, document, signatures)?;
             }
+            retain_interaction_analyses(span, selection_analysis_guard.finish())?;
         }
         ViewNode::ComboBox {
             state,
@@ -402,6 +416,7 @@ pub(in crate::check) fn infer_controls_group(
         } => {
             record_read(state, span);
             check_id(id, env, document, ids, span)?;
+            let selection_analysis_guard = expr::HandlerAnalysisGuard::start();
             let Some(Type::Combo(option_type)) = env.get_type(state) else {
                 return Err(Error::new(
                     "E129",
@@ -480,6 +495,7 @@ pub(in crate::check) fn infer_controls_group(
             for route in [&options.open, &options.close].into_iter().flatten() {
                 infer_route(route, None, env, document, signatures)?;
             }
+            retain_interaction_analyses(span, selection_analysis_guard.finish())?;
         }
         ViewNode::Rule {
             thickness,
@@ -490,6 +506,7 @@ pub(in crate::check) fn infer_controls_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_nonnegative_f64(thickness, env, document, "rule thickness", span)?;
             if let Some(RuleFill::Percent(percent)) = &options.fill {
                 require_type(&expr_type(percent, env, document, span)?, &Type::F64, span)?;
@@ -514,6 +531,7 @@ pub(in crate::check) fn infer_controls_group(
                 require_type(&expr_type(snap, env, document, span)?, &Type::Bool, span)?;
             }
             check_styles(styles, document, span, StyleTarget::Rule)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::QrCode {
             payload,
@@ -527,6 +545,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             let ty = expr_type(payload, env, document, span)?;
             if !matches!(ty, Type::Str | Type::Bytes) {
                 return Err(type_error(span, &Type::Str, &ty).hint("qr accepts str or bytes"));
@@ -545,6 +564,7 @@ pub(in crate::check) fn infer_controls_group(
                     require_theme_color(color, document, span, "E136", &format!("qr {label}"))?;
                 }
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Space {
             id,
@@ -554,10 +574,12 @@ pub(in crate::check) fn infer_controls_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             for length in [width, height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "space length")?;
             }
             check_styles(styles, document, span, StyleTarget::Space)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         _ => return Ok(false),
     };

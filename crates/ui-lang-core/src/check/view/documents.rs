@@ -177,6 +177,7 @@ pub(in crate::check) fn infer_documents_group(
         } => {
             record_read(content, span);
             check_id(id, env, document, ids, span)?;
+            let markdown_analysis_guard = expr::HandlerAnalysisGuard::start();
             let content_type = env.get_type(content).ok_or_else(|| {
                 Error::new("E139", span, format!("unknown markdown state `{content}`"))
             })?;
@@ -207,6 +208,7 @@ pub(in crate::check) fn infer_documents_group(
                 Type::Str
             };
             infer_route(route, Some(payload), env, document, signatures)?;
+            retain_interaction_analyses(span, markdown_analysis_guard.finish())?;
         }
         ViewNode::TextEditor {
             binding,
