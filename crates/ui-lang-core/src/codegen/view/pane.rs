@@ -48,7 +48,7 @@ pub(in crate::codegen) fn render_pane_grid(
                 pane_env.insert(
                     binding,
                     checked_local_binding(
-                        document.program(),
+                        LocalBindingTypeSource::Checked(document.program()),
                         *local,
                         "__pane_maximized".into(),
                         true,
@@ -78,7 +78,7 @@ pub(in crate::codegen) fn render_pane_grid(
         template_env.insert(
             item.clone(),
             checked_local_binding(
-                document.program(),
+                LocalBindingTypeSource::Checked(document.program()),
                 checked.item,
                 format!("(*{item})"),
                 false,
@@ -88,7 +88,12 @@ pub(in crate::codegen) fn render_pane_grid(
             let binding = document.program().checked_facts().local(local).name.clone();
             template_env.insert(
                 binding,
-                checked_local_binding(document.program(), local, "__pane_maximized".into(), true),
+                checked_local_binding(
+                    LocalBindingTypeSource::Checked(document.program()),
+                    local,
+                    "__pane_maximized".into(),
+                    true,
+                ),
             );
         }
         let key = checked_expr_use_code(

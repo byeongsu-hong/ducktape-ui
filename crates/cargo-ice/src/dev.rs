@@ -7,12 +7,13 @@ use self::inputs::{
     BUILD_FINGERPRINT_ENV, CargoBuildOutput, CargoInputGraph, FileStamp, build_script_inputs,
     build_script_rerun_path, cargo_build_with_program, dev_stamps, file_stamp_attempts,
     parse_dep_info, reset_file_stamp_attempts, rustc_dep_info_path, settled_dev_stamps,
-    settled_dev_stamps_after, source_stamp_fingerprint, stamp_contains_snapshot,
+    settled_dev_stamps_after, settled_dev_stamps_for_paths_with_cargo_inputs,
+    source_stamp_fingerprint, stamp_contains_snapshot,
 };
 use self::inputs::{
     build_observation_reuses_snapshot, cargo_build, cargo_input_graph,
     dev_stamps_with_cargo_inputs, first_unreadable_input, normalize_watch_path,
-    settled_dev_stamps_for_paths_with_cargo_inputs, settled_dev_stamps_with_cargo_inputs,
+    settled_dev_snapshot_for_paths_with_cargo_inputs, settled_dev_stamps_with_cargo_inputs,
     stamps_match_on_common_paths,
 };
 use self::process::{
@@ -79,7 +80,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         }
         revision = revision.wrapping_add(1);
         let current =
-            compile_dev_with_db(&mut analysis_db, &source).map_err(|error| error.message)?;
+            compile_dev_with_db(&mut analysis_db, &source, None).map_err(|error| error.message)?;
         let initial_stamps = dev_stamps_with_cargo_inputs(
             root,
             &current.dependencies,
@@ -149,7 +150,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         let Some(change) = changes.wait_for_change(Duration::from_millis(100)) else {
             continue;
         };
-        let next_stamps = match change {
+        let next_snapshot = match change {
             DevChange::FullRescan => settled_dev_stamps_with_cargo_inputs(
                 root,
                 &watched_dependencies,
@@ -157,17 +158,19 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
                 &cargo_inputs,
                 &observed_stamps.0,
                 &observed_stamps.1,
-            ),
-            DevChange::Paths(paths) => settled_dev_stamps_for_paths_with_cargo_inputs(
+            )
+            .map(|stamps| (stamps, None)),
+            DevChange::Paths(paths) => settled_dev_snapshot_for_paths_with_cargo_inputs(
                 &watched_dependencies,
                 &watched_assets,
                 &cargo_inputs,
                 &observed_stamps.0,
                 &observed_stamps.1,
                 &paths,
-            ),
+            )
+            .map(|snapshot| (snapshot.stamps, Some(snapshot.validated_sources))),
         };
-        let Some(next_stamps) = next_stamps else {
+        let Some((next_stamps, validated_sources)) = next_snapshot else {
             continue;
         };
         if let Some(path) = first_unreadable_input(&next_stamps) {
@@ -199,7 +202,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         }
         let (next_ice_stamp, next_build_stamp) = next_stamps;
         revision = revision.wrapping_add(1);
-        let next = match compile_dev_with_db(&mut analysis_db, &source) {
+        let next = match compile_dev_with_db(&mut analysis_db, &source, validated_sources) {
             Ok(next) => next,
             Err(error) => {
                 let dependencies_changed =
@@ -342,14 +345,19 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
 
 #[cfg(test)]
 fn compile_dev(source: &Path) -> Result<DevCompilation, DevCompileError> {
-    compile_dev_with_db(&mut ui_lang_core::AnalysisDb::default(), source)
+    compile_dev_with_db(&mut ui_lang_core::AnalysisDb::default(), source, None)
 }
 
 fn compile_dev_with_db(
     analysis_db: &mut ui_lang_core::AnalysisDb,
     source: &Path,
+    validated_sources: Option<Vec<ui_lang_core::ValidatedSource>>,
 ) -> Result<DevCompilation, DevCompileError> {
-    match analysis_db.analyze_root(source) {
+    let result = match validated_sources {
+        Some(sources) => analysis_db.analyze_root_with_validated_sources(source, sources),
+        None => analysis_db.analyze_root(source),
+    };
+    match result {
         Ok(analysis) => Ok(DevCompilation {
             dependencies: analysis.dependencies,
             asset_dependencies: analysis.asset_dependencies,

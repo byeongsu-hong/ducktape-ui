@@ -166,49 +166,59 @@ fn set_reconciliation_scope(env: &mut HashMap<String, Binding>, code: String) {
     );
 }
 
+enum LocalBindingTypeSource<'a> {
+    Checked(&'a LoweredProgram),
+    Hir(&'a ResolvedMatchBinding),
+}
+
 fn checked_local_binding(
-    program: &LoweredProgram,
+    source: LocalBindingTypeSource<'_>,
     local_id: CheckedLocalId,
     code: String,
     is_local: bool,
 ) -> Binding {
-    let local = program.checked_facts().local(local_id);
+    let ty = match source {
+        LocalBindingTypeSource::Checked(program) => {
+            program.checked_facts().local(local_id).ty.clone()
+        }
+        LocalBindingTypeSource::Hir(payload) => payload.ty.clone(),
+    };
     Binding {
         code,
-        ty: local.ty.clone(),
+        ty,
         local: is_local,
         state: None,
         owner: Some(BindingOwner::Local(local_id)),
     }
 }
 
-fn resolved_match_pattern_code(arm: &ResolvedMatchArm, span: &Span) -> Result<String, Error> {
+fn resolved_match_pattern_code(
+    program: &LoweredProgram,
+    arm: &ResolvedMatchArm,
+) -> Result<String, Error> {
     let binding_name = arm.binding.as_ref().map(|binding| binding.name.as_str());
     Ok(match &arm.pattern {
         ResolvedMatchPattern::Some => format!(
             "::std::option::Option::Some({})",
-            binding_name.ok_or_else(|| Error::new(
-                "E196",
-                span,
-                "normalized some pattern has no payload local",
-            ))?
+            binding_name.ok_or_else(|| {
+                program
+                    .invariant_at_origin(arm.origin, "normalized some pattern has no payload local")
+            })?
         ),
         ResolvedMatchPattern::None => "::std::option::Option::None".into(),
         ResolvedMatchPattern::Ok => format!(
             "::std::result::Result::Ok({})",
-            binding_name.ok_or_else(|| Error::new(
-                "E196",
-                span,
-                "normalized ok pattern has no payload local",
-            ))?
+            binding_name.ok_or_else(|| {
+                program
+                    .invariant_at_origin(arm.origin, "normalized ok pattern has no payload local")
+            })?
         ),
         ResolvedMatchPattern::Err => format!(
             "::std::result::Result::Err({})",
-            binding_name.ok_or_else(|| Error::new(
-                "E196",
-                span,
-                "normalized err pattern has no payload local",
-            ))?
+            binding_name.ok_or_else(|| {
+                program
+                    .invariant_at_origin(arm.origin, "normalized err pattern has no payload local")
+            })?
         ),
         ResolvedMatchPattern::Enum { owner, variant } => binding_name.map_or_else(
             || format!("{}::{}", owner, pascal(variant)),

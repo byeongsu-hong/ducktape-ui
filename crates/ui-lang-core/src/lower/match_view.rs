@@ -26,6 +26,7 @@ pub(crate) enum ResolvedMatchPattern {
 pub(crate) struct ResolvedMatchArm {
     pub(crate) pattern: ResolvedMatchPattern,
     pub(crate) binding: Option<ResolvedMatchBinding>,
+    pub(crate) children: Vec<ViewId>,
     pub(crate) origin: OriginId,
 }
 
@@ -101,11 +102,72 @@ impl Lowerer {
             return Err(self.invariant(span, "match value expression root type diverged"));
         }
         let value_ty = expression.source.clone();
+        self.validate_checked_match_coverage(&value_ty, &arms, checked_view.origin)?;
+        let checked_children = arms
+            .iter()
+            .flat_map(|arm| arm.children.iter().copied())
+            .collect::<Vec<_>>();
+        if checked_children != checked_view.children {
+            return Err(self.invariant_at_origin(
+                checked_view.origin,
+                "match checked arm children diverged from the checked view topology",
+            ));
+        }
+        for (raw_arm, arm) in raw_arms.iter().zip(&arms) {
+            let Some(origin) = self.origins.try_get(arm.origin) else {
+                return Err(self.match_arm_invariant(
+                    &raw_arm.span,
+                    "match arm origin ID is outside its arena",
+                ));
+            };
+            let (expected_path, expected_line) = self
+                .origins
+                .source_origin(raw_arm.span.line)
+                .map_or((None, raw_arm.span.line), |(path, line)| (Some(path), line));
+            if origin.parent != Some(checked_view.origin)
+                || origin.path.as_deref() != expected_path
+                || origin.line != expected_line
+                || origin.column != raw_arm.span.column
+            {
+                return Err(self.match_arm_invariant(
+                    &raw_arm.span,
+                    "match arm origin diverged from its checked parent or source",
+                ));
+            }
+            let raw_children = raw_arm
+                .children
+                .iter()
+                .map(|child| {
+                    self.declarations.view_id(child.span()).ok_or_else(|| {
+                        self.invariant_at_origin(
+                            arm.origin,
+                            "match arm child has no shared view ID",
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if raw_children != arm.children {
+                return Err(self.invariant_at_origin(
+                    arm.origin,
+                    "match raw arm children diverged from checked arm topology",
+                ));
+            }
+            for child in &arm.children {
+                let valid_parent = self
+                    .facts
+                    .views()
+                    .get(child.0 as usize)
+                    .is_some_and(|checked| checked.id == *child && checked.parent == Some(id));
+                if !valid_parent {
+                    return Err(self.invariant_at_origin(
+                        arm.origin,
+                        "match checked arm child has an invalid parent or view ID",
+                    ));
+                }
+            }
+        }
         let mut resolved_arms = Vec::with_capacity(arms.len());
         for (index, arm) in arms.into_iter().enumerate() {
-            if self.origins.try_get(arm.origin).is_none() {
-                return Err(self.invariant(span, "match arm origin ID is outside its arena"));
-            }
             let (pattern, expected_binding) =
                 self.resolve_checked_match_pattern(&value_ty, &arm.pattern, arm.origin)?;
             let binding = match (arm.binding, expected_binding) {
@@ -151,6 +213,7 @@ impl Lowerer {
             resolved_arms.push(ResolvedMatchArm {
                 pattern,
                 binding,
+                children: arm.children,
                 origin: arm.origin,
             });
         }
@@ -166,6 +229,96 @@ impl Lowerer {
             return Err(self.invariant(span, "match view was lowered more than once"));
         }
         Ok(())
+    }
+
+    fn validate_checked_match_coverage(
+        &self,
+        value_ty: &Type,
+        arms: &[CheckedMatchArm],
+        match_origin: OriginId,
+    ) -> Result<(), Error> {
+        let mut wildcard = false;
+        let mut option_cases = HashSet::new();
+        let mut result_cases = HashSet::new();
+        let mut enum_variants = HashSet::new();
+        let mut palettes = HashSet::new();
+
+        for (index, arm) in arms.iter().enumerate() {
+            if matches!(arm.pattern, CheckedMatchPattern::Wildcard) {
+                if wildcard || index + 1 != arms.len() {
+                    return Err(self.invariant_at_origin(
+                        arm.origin,
+                        "match checked wildcard topology diverged",
+                    ));
+                }
+                wildcard = true;
+                continue;
+            }
+            let inserted = match (value_ty, &arm.pattern) {
+                (Type::Option(_), CheckedMatchPattern::Some) => option_cases.insert(0_u8),
+                (Type::Option(_), CheckedMatchPattern::None) => option_cases.insert(1_u8),
+                (Type::Result(_, _), CheckedMatchPattern::Ok) => result_cases.insert(0_u8),
+                (Type::Result(_, _), CheckedMatchPattern::Err) => result_cases.insert(1_u8),
+                (Type::Named(_), CheckedMatchPattern::Enum(id)) => {
+                    enum_variants.insert(id.to_owned())
+                }
+                (Type::Palette(_), CheckedMatchPattern::Palette(id)) => {
+                    palettes.insert(id.to_owned())
+                }
+                _ => {
+                    return Err(self.invariant_at_origin(
+                        arm.origin,
+                        "match checked pattern type contract diverged",
+                    ));
+                }
+            };
+            if !inserted {
+                return Err(self.invariant_at_origin(
+                    arm.origin,
+                    "match checked patterns contain a duplicate case",
+                ));
+            }
+        }
+
+        if wildcard {
+            return Ok(());
+        }
+        let exhaustive = match value_ty {
+            Type::Option(_) => option_cases.len() == 2,
+            Type::Result(_, _) => result_cases.len() == 2,
+            Type::Named(name) => self
+                .declarations
+                .enum_decl_by_name(name)
+                .is_some_and(|owner| enum_variants.len() == owner.variants.len()),
+            Type::Palette(_) => palettes.len() == self.declarations.palette_count(),
+            _ => false,
+        };
+        if !exhaustive {
+            return Err(
+                self.invariant_at_origin(match_origin, "match checked patterns are not exhaustive")
+            );
+        }
+        Ok(())
+    }
+
+    fn match_arm_invariant(&self, span: &Span, message: impl Into<String>) -> Error {
+        let message = format!("lowering invariant failed: {}", message.into());
+        let (path, line) = self
+            .origins
+            .source_origin(span.line)
+            .map_or((None, span.line), |(path, line)| (Some(path), line));
+        let mut error = Error::new(
+            "E196",
+            &Span {
+                line,
+                column: span.column,
+            },
+            message,
+        );
+        if let Some(path) = path {
+            error = error.at_path(path.display().to_string());
+        }
+        error
     }
 
     fn resolve_checked_match_pattern(
@@ -228,5 +381,33 @@ impl Lowerer {
                 );
             }
         })
+    }
+}
+
+impl LoweredProgram {
+    pub(crate) fn validate_match_arm_children(
+        &self,
+        raw: &MatchArm,
+        resolved: &ResolvedMatchArm,
+    ) -> Result<(), Error> {
+        let children = raw
+            .children
+            .iter()
+            .map(|child| {
+                self.declarations.view_id(child.span()).ok_or_else(|| {
+                    self.invariant_at_origin(
+                        resolved.origin,
+                        "match raw arm child has no shared view ID",
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if children != resolved.children {
+            return Err(self.invariant_at_origin(
+                resolved.origin,
+                "match raw arm children diverged from normalized HIR topology",
+            ));
+        }
+        Ok(())
     }
 }
