@@ -3171,16 +3171,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "layout reached code generation with a mismatched checked view ID",
             ));
         }
         self.layouts.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "layout reached code generation without normalized HIR",
             )
         })
@@ -11567,7 +11565,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let layout = program.layouts.values().next().unwrap();
         let origin = program.origin(layout.origin);
         assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
@@ -11582,6 +11580,12 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.layouts.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
 
         fs::remove_dir_all(directory).unwrap();
     }
