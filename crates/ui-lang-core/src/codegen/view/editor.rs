@@ -2,8 +2,8 @@ use super::*;
 
 pub(in crate::codegen) fn render_text_editor(
     editor: &ResolvedTextEditor,
-    id: Option<&Id>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -27,9 +27,8 @@ pub(in crate::codegen) fn render_text_editor(
             "normalized editor action diverges from its controlled binding",
         ));
     }
-    let source_span = Span::line(program.origin(editor.origin).line);
     let accessibility_key =
-        accessibility_key_code(id, "editor", &source_span, scope, env, document)?;
+        resolved_accessibility_key_code(identity, "editor", editor.origin, scope, env, document)?;
     let accessibility_label = editor
         .placeholder
         .as_deref()
@@ -37,14 +36,14 @@ pub(in crate::codegen) fn render_text_editor(
         .unwrap_or_else(|| "\"Editor\"".to_owned());
     let disabled = editor
         .disabled
-        .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?;
     let mut code = format!("::iced::widget::text_editor(&{})", state.code);
-    if let Some(id) = id {
+    if let Some(identity) = identity {
         write!(
             code,
             ".id(::iced::widget::Id::from({}))",
-            id_code(id, scope, env, document)?
+            resolved_view_identity_code(identity, scope, env, document)?
         )
         .unwrap();
     }
@@ -55,7 +54,7 @@ pub(in crate::codegen) fn render_text_editor(
         write!(
             code,
             ".width((({}) as f32).max(0.0).min(f32::MAX))",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -77,7 +76,7 @@ pub(in crate::codegen) fn render_text_editor(
             write!(
                 code,
                 ".{method}((({}) as f32).max({min}).min(f32::MAX))",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -86,11 +85,11 @@ pub(in crate::codegen) fn render_text_editor(
         let line_height = match line_height {
             ResolvedTextLineHeight::Relative(value) => format!(
                 "::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
             ResolvedTextLineHeight::Absolute(value) => format!(
                 "::iced::widget::text::LineHeight::Absolute((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
             ),
         };
         write!(code, ".line_height({line_height})").unwrap();
@@ -218,14 +217,14 @@ fn resolved_editor_state<'a>(
 }
 
 fn checked_editor_args_suffix(
-    arguments: &[CheckedExprUseId],
+    arguments: &[ResolvedExpressionId],
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     arguments
         .iter()
         .map(|argument| {
-            checked_expr_use_code(program, *argument, env, ValueMode::Owned)
+            resolved_expr_use_code(program, *argument, env, ValueMode::Owned)
                 .map(|argument| format!(", {argument}"))
         })
         .collect()

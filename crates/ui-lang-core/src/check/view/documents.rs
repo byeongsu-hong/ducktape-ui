@@ -175,9 +175,9 @@ pub(in crate::check) fn infer_documents_group(
             route,
             span,
         } => {
-            let markdown_analysis_guard = expr::HandlerAnalysisGuard::start();
             record_read(content, span);
             check_id(id, env, document, ids, span)?;
+            let markdown_analysis_guard = expr::HandlerAnalysisGuard::start();
             let content_type = env.get_type(content).ok_or_else(|| {
                 Error::new("E139", span, format!("unknown markdown state `{content}`"))
             })?;

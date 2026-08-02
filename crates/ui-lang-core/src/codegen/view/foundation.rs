@@ -1,17 +1,18 @@
 use super::*;
 
 pub(in crate::codegen) fn render_foundation(
-    node: &ViewNode,
-    document: &RenderDocument<'_>,
+    node: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
-    let rendered = match node {
-        ViewNode::Layout { id, children, .. } => render_layout(
-            document.hir().resolved_layout_for(node)?,
-            id,
+    let view = document.resolved_view(node)?;
+    let rendered = match &view.kind {
+        ResolvedViewKind::Layout { children } => render_layout(
+            document.resolved_layout(node)?,
+            view.identity.as_ref(),
             children,
             document,
             message,
@@ -19,28 +20,32 @@ pub(in crate::codegen) fn render_foundation(
             scope,
             slot,
         ),
-        ViewNode::Container { id, content, .. } => render_container(
-            document.program().resolved_container_for(node)?,
-            id,
-            content,
+        ResolvedViewKind::Container { content } => render_container(
+            document.resolved_container(node)?,
+            view.identity.as_ref(),
+            *content,
             document,
             message,
             env,
             scope,
             slot,
         ),
-        ViewNode::Overlay {
-            id, content, layer, ..
-        } => {
-            let overlay = document.program().resolved_overlay_for(node)?;
+        ResolvedViewKind::Overlay { content, layer } => {
+            let overlay = document.resolved_overlay(node)?;
             render_overlay(
-                id, overlay, content, layer, document, message, env, scope, slot,
+                view.identity.as_ref(),
+                overlay,
+                *content,
+                *layer,
+                document,
+                message,
+                env,
+                scope,
+                slot,
             )
         }
-        ViewNode::PaneGrid {
-            panes, templates, ..
-        } => render_pane_grid(
-            document.program().resolved_pane_grid_for(node)?,
+        ResolvedViewKind::PaneGrid { panes, templates } => render_pane_grid(
+            document.resolved_pane_grid(node)?,
             panes,
             templates,
             document,
@@ -49,17 +54,17 @@ pub(in crate::codegen) fn render_foundation(
             scope,
             slot,
         ),
-        ViewNode::Text { id, .. } | ViewNode::RichText { id, .. } => render_text(
-            document.hir().resolved_text_for(node)?,
-            id,
+        ResolvedViewKind::Text | ResolvedViewKind::RichText => render_text(
+            document.resolved_text(node)?,
+            view.identity.as_ref(),
             document,
             message,
             env,
             scope,
         ),
-        ViewNode::Input { id, .. } => render_input(
-            document.hir().resolved_input_for(node)?,
-            id,
+        ResolvedViewKind::Input => render_input(
+            document.resolved_input(node)?,
+            view.identity.as_ref(),
             document,
             message,
             env,

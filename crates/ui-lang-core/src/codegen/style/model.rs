@@ -107,9 +107,29 @@ pub(in crate::codegen) fn resolved_theme_factory_code(
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
-    let function = program.extern_function(factory.function);
-    let args = expr_list_code(&factory.arguments, env, program.document())?;
-    Ok(format!("{}({args})", function.rust_path))
+    let args = factory
+        .arguments
+        .iter()
+        .map(|argument| {
+            let mode = match argument.mode {
+                ResolvedExternViewArgumentMode::Owned => ValueMode::Owned,
+                ResolvedExternViewArgumentMode::BorrowedAsRef
+                | ResolvedExternViewArgumentMode::Borrowed => ValueMode::Borrowed,
+            };
+            let code = resolved_expr_use_code(program, argument.expression, env, mode)?;
+            Ok(match argument.mode {
+                ResolvedExternViewArgumentMode::Owned => code,
+                ResolvedExternViewArgumentMode::BorrowedAsRef => {
+                    format!("::std::convert::AsRef::as_ref(&({code}))")
+                }
+                ResolvedExternViewArgumentMode::Borrowed => {
+                    format!("::std::borrow::Borrow::borrow(&({code}))")
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?
+        .join(", ");
+    Ok(format!("{}({args})", factory.function.rust_path))
 }
 
 pub(in crate::codegen) fn resolved_app_theme_factory_code(
@@ -121,7 +141,7 @@ pub(in crate::codegen) fn resolved_app_theme_factory_code(
     let args = factory
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, argument.expression, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, argument.expression, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     Ok(format!("{}({args})", function.rust_path))
@@ -130,7 +150,7 @@ pub(in crate::codegen) fn resolved_app_theme_factory_code(
 pub(in crate::codegen) fn resolved_background_code(
     background: &ResolvedBackground,
     env: &dyn BindingEnvironment,
-    document: &RenderDocument<'_>,
+    program: &LoweredProgram,
 ) -> Result<String, Error> {
     Ok(match background {
         ResolvedBackground::Color(color) => {
@@ -139,14 +159,14 @@ pub(in crate::codegen) fn resolved_background_code(
         ResolvedBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                expr_code(angle, env, document, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
-            for (color, offset) in stops {
+            for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    expr_code(offset, env, document, ValueMode::Owned)?,
-                    resolved_theme_color(color)
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_theme_color(&stop.color)
                 )
                 .unwrap();
             }

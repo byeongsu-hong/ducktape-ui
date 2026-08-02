@@ -451,24 +451,37 @@ compile/diagnostic fixtures exercise production Rust plus lexical-scope
 rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
+
+Component-call direct output and named-event delivery have a complete private
+route HIR boundary. Checked call-route records own stable call/view/component,
+event, outer-event, and ordered route IDs; exact output and payload types;
+direct/forward topology; checked route expressions and payload indexes; and
+parented physical origins. Lowering publishes `ResolvedInteractionRoute`
+values inside the component call, and production callbacks consume those
+records without raw `Route`, `Expr`, or source component declarations. Dynamic
+and post-lowering raw poisoning, cross-owner expression and route attacks,
+valid-ID/type/cardinality/origin corruption, imported source mapping, the
+reduced lexical ratchet, native generation, and an ignored 4,000-call
+lower+emit budget cover the boundary. Component root/slot child topology and
+the general expression fallback remain separately tracked later slices.
+
 Expression-bearing widget options outside the completed Media, Tooltip,
 MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText,
 Input, Button, TextEditor, PickList, ComboBox, Slider, Progress, Rule, QrCode,
 Space, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and
 Match families remain outside this slice.
-The `hir_boundary` integration ratchet records selected lexical markers for the
-remaining code-generation AST/checker boundary: exported AST identifiers,
-explicit checker imports and uses, checked-document and `RenderDocument`
-escapes, re-analysis calls, and raw expression fallbacks. Its dependency-free
-Rust scanner removes comments and literals, handles lifetime, mutable,
-by-value, container, and qualified type references, tracks exact aliases from
-grouped and nested AST imports, and fingerprints each occurrence from its
-normalized containing item and call-site context. The
-reviewed occurrence counts may not grow as later HIR slices delete their old
-paths, and every fingerprint change requires explicit review; completion still
-requires every selected count to reach zero. Mutation probes guard the scanner's
-documented lexical coverage. This is not Rust name resolution, and full HIR also
-requires ordinary semantic review for unrepresented behavior.
+The `hir_boundary` integration ratchet now enforces an empty production
+code-generation AST/checker boundary: exported AST identifiers, explicit
+checker imports and uses, checked-document and `RenderDocument` escapes,
+re-analysis calls, and raw expression fallbacks all have zero occurrences. Its
+dependency-free Rust scanner removes comments and literals, discovers only
+top-level AST exports, follows import-reachable globs, names, module aliases,
+alias chains, qualified paths, and local uses, and fingerprints each occurrence
+from its normalized containing item and call-site context. Regression probes
+cover impl-method and same-name collisions as well as grouped, nested, module,
+and local aliases. The scanner is not Rust name resolution, so ordinary semantic
+review still guards unrepresented behavior; that review confirms production
+code generation consumes only normalized HIR and neutral semantic values.
 
 Application and daemon settings have a complete private HIR boundary. Stable
 setting-expression and named-window IDs retain title, active palette, theme,
@@ -843,6 +856,34 @@ and unit delivery; call-site and complete declaration raw-poisoning; cross-owner
 and corrupt-ID attacks; imported declaration/widget markers and source-mapped
 `E196`; native output; the lexical ratchet; and ignored 4,000-call plus
 4,000-unused-probe lower+emit contracts cover the boundary.
+
+Themer and Shader have complete private HIR boundaries. Shared checked
+interaction records retain exact `ExternFnId`s, deterministic argument and
+route partitions, declared output types, static dimension topology, and
+parented physical origins. Their accepted parameters are owned-only; lowering
+nevertheless records the exact argument mode rather than letting the backend
+infer a Rust calling convention. `ResolvedThemer` fixes the alternate-theme
+factory and mapped output, while `ResolvedShader` additionally distinguishes
+fill, fill-portion, shrink, checked `f64`, and checked native `length`
+dimensions. Production emission and noop discovery consume these records and
+never inspect raw extern names, arguments, dimensions, or routes. Structural
+HIR assertions, cross-owner and same-kind extern corruption, malformed IDs,
+post-check dynamic/static mutation, post-lowering full raw poisoning, imported
+origin/source-marker and source-mapped `E196` evidence, native output, the
+lexical boundary ratchet, and an ignored mixed 4,000-node lower+emit contract
+cover the boundary.
+
+Nested Theme has a complete private wrapper HIR boundary. Its checked record
+and interaction-expression partition freeze the shared view ID, preset or exact
+theme-factory ID, ordered argument types, text/background theme colors, linear
+gradient topology, and parented physical origins. `ResolvedNestedTheme` fixes
+the factory Rust path and owns checked IDs for factory arguments, gradient
+angle, and stop offsets. Production rendering reads none of those fields from
+the source AST; only child traversal and common widget identity remain in the
+general view topology. Dynamic/static and post-lowering raw poisoning,
+same-type cross-owner expression attacks, factory/view/origin corruption,
+imported marker and source-mapped E196 evidence, the reduced HIR ratchet, and an
+ignored 4,000-node lower+emit budget cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

@@ -1,9 +1,4 @@
 use super::*;
-use crate::check::{
-    CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget, CheckedExprId, CheckedExprKind,
-    CheckedExprUseId, CheckedInitializerCoercion, CheckedLocalId, CheckedPathRoot,
-    CheckedProjection, CheckedUnaryOperator, ExprTypeEnv,
-};
 use crate::lower::ExternFnId;
 use crate::unqualified_name;
 
@@ -157,25 +152,6 @@ impl BindingEnvironment for LayeredBindingEnv<'_> {
     }
 }
 
-struct BindingTypeEnv<'a>(&'a dyn BindingEnvironment);
-
-impl ExprTypeEnv for BindingTypeEnv<'_> {
-    fn get_type(&self, name: &str) -> Option<&Type> {
-        self.0.get(name).map(|binding| &binding.ty)
-    }
-
-    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
-        self.0
-            .visit(&mut |name, binding| visitor(name, &binding.ty));
-    }
-
-    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
-        self.0
-            .binding_with_prefix(prefix)
-            .map(|binding| &binding.ty)
-    }
-}
-
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::codegen) struct BindingEnvMetrics {
@@ -235,8 +211,7 @@ pub(in crate::codegen) fn binding_env_metrics() -> BindingEnvMetrics {
 
 #[derive(Clone, Copy)]
 enum ExprNode {
-    Ast(u32),
-    Checked(CheckedExprId),
+    Resolved(ResolvedExpressionNodeId),
 }
 
 enum ExprNodeKind<'a> {
@@ -265,25 +240,26 @@ enum ExprNodeKind<'a> {
 }
 
 enum ExprPath<'a> {
-    Ast(&'a [String]),
-    Checked {
-        root: &'a CheckedPathRoot,
-        projections: &'a [CheckedProjection],
+    Resolved {
+        root: &'a ResolvedPathRoot,
+        projections: &'a [ResolvedProjection],
     },
 }
 
 #[derive(Clone, Copy)]
 enum ExprCallTarget<'a> {
-    Ast(&'a str),
     Builtin(&'a str),
     Extern(ExternFnId),
-    EnumVariant(crate::hir::EnumVariantId),
+    EnumVariant {
+        enum_rust_name: &'a str,
+        variant_name: &'a str,
+    },
 }
 
 #[derive(Clone, Copy)]
 enum ExprArgument {
     Value(ExprNode),
-    Binding(CheckedLocalId),
+    Binding(ResolvedLocalId),
 }
 
 struct ExprArguments(Vec<ExprArgument>);
@@ -295,12 +271,12 @@ impl ExprArguments {
             Some(ExprArgument::Binding(_)) => Err(Error::new(
                 "E196",
                 &Span::line(1),
-                "checked expression binding used as a value",
+                "normalized expression binding used as a value",
             )),
             None => Err(Error::new(
                 "E196",
                 &Span::line(1),
-                "checked expression argument is missing",
+                "normalized expression argument is missing",
             )),
         }
     }
@@ -309,26 +285,10 @@ impl ExprArguments {
         &self,
         index: usize,
         context: &'a ExprEmission<'a>,
-    ) -> Result<(&'a str, Option<CheckedLocalId>), Error> {
+    ) -> Result<(&'a str, Option<ResolvedLocalId>), Error> {
         match self.0.get(index) {
-            Some(ExprArgument::Binding(id)) => Ok((
-                &context
-                    .program
-                    .expect("checked binding has a lowered program")
-                    .checked_facts()
-                    .local(*id)
-                    .name,
-                Some(*id),
-            )),
-            Some(ExprArgument::Value(node))
-                if context
-                    .ast_expr(*node)
-                    .is_some_and(|expr| matches!(expr, Expr::Path(path) if path.len() == 1)) =>
-            {
-                let Some(Expr::Path(path)) = context.ast_expr(*node) else {
-                    unreachable!("guard verified the AST path")
-                };
-                Ok((&path[0], None))
+            Some(ExprArgument::Binding(id)) => {
+                Ok((&context.program.expressions().local(*id).name, Some(*id)))
             }
             _ => Err(Error::new(
                 "E196",
@@ -350,7 +310,7 @@ impl ExprArguments {
                 ExprArgument::Binding(_) => Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "checked binding reached ordinary argument emission",
+                    "normalized binding reached ordinary argument emission",
                 )),
             })
             .collect()
@@ -358,187 +318,82 @@ impl ExprArguments {
 }
 
 struct ExprEmission<'a> {
-    document: &'a Document,
-    program: Option<&'a LoweredProgram>,
-    ast_nodes: Vec<&'a Expr>,
-    ast_ids: HashMap<usize, u32>,
+    program: &'a LoweredProgram,
 }
 
 impl<'a> ExprEmission<'a> {
-    fn for_ast(document: &'a Document, root: &'a Expr) -> Self {
-        fn collect<'a>(expr: &'a Expr, nodes: &mut Vec<&'a Expr>, ids: &mut HashMap<usize, u32>) {
-            let key = std::ptr::from_ref(expr) as usize;
-            if ids.contains_key(&key) {
-                return;
-            }
-            let id = u32::try_from(nodes.len()).expect("expression arena exceeds u32");
-            ids.insert(key, id);
-            nodes.push(expr);
-            match expr {
-                Expr::List(values) | Expr::Call { args: values, .. } => {
-                    for value in values {
-                        collect(value, nodes, ids);
-                    }
-                }
-                Expr::Unary { value, .. } => collect(value, nodes, ids),
-                Expr::Binary { left, right, .. } => {
-                    collect(left, nodes, ids);
-                    collect(right, nodes, ids);
-                }
-                _ => {}
-            }
-        }
-
-        let mut ast_nodes = Vec::new();
-        let mut ast_ids = HashMap::new();
-        collect(root, &mut ast_nodes, &mut ast_ids);
-        Self {
-            document,
-            program: None,
-            ast_nodes,
-            ast_ids,
-        }
-    }
-
-    fn for_checked(program: &'a LoweredProgram) -> Self {
-        Self {
-            document: program.document(),
-            program: Some(program),
-            ast_nodes: Vec::new(),
-            ast_ids: HashMap::new(),
-        }
-    }
-
-    fn ast_node(&self, expr: &Expr) -> ExprNode {
-        let key = std::ptr::from_ref(expr) as usize;
-        ExprNode::Ast(self.ast_ids[&key])
-    }
-
-    fn ast_expr(&self, node: ExprNode) -> Option<&'a Expr> {
-        match node {
-            ExprNode::Ast(id) => self.ast_nodes.get(id as usize).copied(),
-            ExprNode::Checked(_) => None,
-        }
+    fn for_resolved(program: &'a LoweredProgram) -> Self {
+        Self { program }
     }
 
     fn kind(&self, node: ExprNode) -> ExprNodeKind<'a> {
         match node {
-            ExprNode::Ast(id) => match self.ast_nodes[id as usize] {
-                Expr::Bool(value) => ExprNodeKind::Bool(*value),
-                Expr::I64(value) => ExprNodeKind::I64(*value),
-                Expr::F64(value) => ExprNodeKind::F64(*value),
-                Expr::Str(value) => ExprNodeKind::Str(value),
-                Expr::Bytes(values) => ExprNodeKind::Bytes(values),
-                Expr::EmptyList => ExprNodeKind::List(Vec::new()),
-                Expr::List(values) => {
-                    ExprNodeKind::List(values.iter().map(|value| self.ast_node(value)).collect())
-                }
-                Expr::None => ExprNodeKind::None,
-                Expr::Path(path) => ExprNodeKind::Path(ExprPath::Ast(path)),
-                Expr::Call { name, args } => ExprNodeKind::Call {
-                    target: ExprCallTarget::Ast(name),
-                    arguments: ExprArguments(
-                        args.iter()
-                            .map(|value| ExprArgument::Value(self.ast_node(value)))
-                            .collect(),
-                    ),
-                },
-                Expr::Unary { op, value } => ExprNodeKind::Unary {
-                    op: *op,
-                    value: self.ast_node(value),
-                },
-                Expr::Binary { left, op, right } => ExprNodeKind::Binary {
-                    left: self.ast_node(left),
-                    op: *op,
-                    right: self.ast_node(right),
-                },
-            },
-            ExprNode::Checked(id) => {
-                let expression = self
-                    .program
-                    .expect("checked expression has a lowered program")
-                    .checked_facts()
-                    .expression(id);
+            ExprNode::Resolved(id) => {
+                let expression = self.program.expressions().expression(id);
                 match &expression.kind {
-                    CheckedExprKind::Bool(value) => ExprNodeKind::Bool(*value),
-                    CheckedExprKind::I64(value) => ExprNodeKind::I64(*value),
-                    CheckedExprKind::F64(value) => ExprNodeKind::F64(*value),
-                    CheckedExprKind::Str(value) => ExprNodeKind::Str(value),
-                    CheckedExprKind::Bytes(values) => ExprNodeKind::Bytes(values),
-                    CheckedExprKind::List(values) => {
-                        ExprNodeKind::List(values.iter().copied().map(ExprNode::Checked).collect())
+                    ResolvedExpressionKind::Bool(value) => ExprNodeKind::Bool(*value),
+                    ResolvedExpressionKind::I64(value) => ExprNodeKind::I64(*value),
+                    ResolvedExpressionKind::F64(value) => ExprNodeKind::F64(*value),
+                    ResolvedExpressionKind::Str(value) => ExprNodeKind::Str(value),
+                    ResolvedExpressionKind::Bytes(values) => ExprNodeKind::Bytes(values),
+                    ResolvedExpressionKind::List(values) => {
+                        ExprNodeKind::List(values.iter().copied().map(ExprNode::Resolved).collect())
                     }
-                    CheckedExprKind::None => ExprNodeKind::None,
-                    CheckedExprKind::SlotProvided(slot) => ExprNodeKind::SlotProvided(*slot),
-                    CheckedExprKind::Path { root, projections } => {
-                        ExprNodeKind::Path(ExprPath::Checked { root, projections })
+                    ResolvedExpressionKind::None => ExprNodeKind::None,
+                    ResolvedExpressionKind::SlotProvided(slot) => ExprNodeKind::SlotProvided(*slot),
+                    ResolvedExpressionKind::Path { root, projections } => {
+                        ExprNodeKind::Path(ExprPath::Resolved { root, projections })
                     }
-                    CheckedExprKind::Call { target, arguments } => ExprNodeKind::Call {
+                    ResolvedExpressionKind::Call { target, arguments } => ExprNodeKind::Call {
                         target: match target {
-                            CheckedCallTarget::Builtin(id) => ExprCallTarget::Builtin(
-                                self.program
-                                    .expect("checked builtin has a lowered program")
-                                    .checked_facts()
-                                    .builtin(*id),
-                            ),
-                            CheckedCallTarget::Extern(reference) => {
-                                ExprCallTarget::Extern(reference.id)
+                            ResolvedCallTarget::Builtin(name) => ExprCallTarget::Builtin(name),
+                            ResolvedCallTarget::Extern(function) => {
+                                ExprCallTarget::Extern(*function)
                             }
-                            CheckedCallTarget::EnumVariant(id) => ExprCallTarget::EnumVariant(*id),
+                            ResolvedCallTarget::EnumVariant {
+                                enum_rust_name,
+                                variant_name,
+                            } => ExprCallTarget::EnumVariant {
+                                enum_rust_name,
+                                variant_name,
+                            },
                         },
                         arguments: ExprArguments(
                             arguments
                                 .iter()
                                 .map(|argument| match argument {
-                                    CheckedCallArgument::Value(id) => {
-                                        ExprArgument::Value(ExprNode::Checked(*id))
+                                    ResolvedCallArgument::Value(id) => {
+                                        ExprArgument::Value(ExprNode::Resolved(*id))
                                     }
-                                    CheckedCallArgument::Binding(id) => ExprArgument::Binding(*id),
+                                    ResolvedCallArgument::Binding(id) => ExprArgument::Binding(*id),
                                 })
                                 .collect(),
                         ),
                     },
-                    CheckedExprKind::Unary { operator, value } => ExprNodeKind::Unary {
+                    ResolvedExpressionKind::Unary { operator, value } => ExprNodeKind::Unary {
                         op: match operator {
-                            CheckedUnaryOperator::BooleanNot => UnaryOp::Not,
-                            CheckedUnaryOperator::NumericNegation(_) => UnaryOp::Neg,
+                            ResolvedUnaryOperator::BooleanNot => UnaryOp::Not,
+                            ResolvedUnaryOperator::NumericNegation => UnaryOp::Neg,
                         },
-                        value: ExprNode::Checked(*value),
+                        value: ExprNode::Resolved(*value),
                     },
-                    CheckedExprKind::Binary {
+                    ResolvedExpressionKind::Binary {
                         operator,
                         left,
                         right,
                     } => ExprNodeKind::Binary {
-                        left: ExprNode::Checked(*left),
-                        op: match operator {
-                            CheckedBinaryOperator::Boolean(op)
-                            | CheckedBinaryOperator::Equality { op, .. }
-                            | CheckedBinaryOperator::Ordering { op, .. }
-                            | CheckedBinaryOperator::Arithmetic { op, .. } => *op,
-                        },
-                        right: ExprNode::Checked(*right),
+                        left: ExprNode::Resolved(*left),
+                        op: *operator,
+                        right: ExprNode::Resolved(*right),
                     },
                 }
             }
         }
     }
 
-    fn ty(&self, node: ExprNode, env: &dyn BindingEnvironment) -> Result<Type, Error> {
+    fn ty(&self, node: ExprNode, _env: &dyn BindingEnvironment) -> Result<Type, Error> {
         match node {
-            ExprNode::Ast(id) => expr_type(
-                self.ast_nodes[id as usize],
-                &BindingTypeEnv(env),
-                self.document,
-                &Span::line(1),
-            ),
-            ExprNode::Checked(id) => Ok(self
-                .program
-                .expect("checked expression has a lowered program")
-                .checked_facts()
-                .expression(id)
-                .ty
-                .clone()),
+            ExprNode::Resolved(id) => Ok(self.program.expressions().expression(id).ty.clone()),
         }
     }
 
@@ -561,35 +416,12 @@ impl<'a> ExprEmission<'a> {
     }
 }
 
-pub(in crate::codegen) fn expr_list_code(
-    values: &[Expr],
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    Ok(values
-        .iter()
-        .map(|value| expr_code(value, env, document, ValueMode::Owned))
-        .collect::<Result<Vec<_>, _>>()?
-        .join(", "))
-}
-
-pub(in crate::codegen) fn expr_code(
-    expr: &Expr,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-    mode: ValueMode,
-) -> Result<String, Error> {
-    let context = ExprEmission::for_ast(document, expr);
-    expr_node_code(context.ast_node(expr), env, &context, mode)
-}
-
 fn expr_node_code(
     expr: ExprNode,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     mode: ValueMode,
 ) -> Result<String, Error> {
-    let document = context.document;
     Ok(match context.kind(expr) {
         ExprNodeKind::Bool(value) => value.to_string(),
         ExprNodeKind::I64(value) => value.to_string(),
@@ -613,221 +445,34 @@ fn expr_node_code(
         ),
         ExprNodeKind::None => "::std::option::Option::None".into(),
         ExprNodeKind::SlotProvided(slot) => {
-            let slot = context
-                .program
-                .expect("checked slot expression has a lowered program")
-                .component_slot_name(slot)?;
+            let slot = context.program.component_slot_name(slot)?;
             env.contains_key(&format!("\0slot-provided:{slot}"))
                 .to_string()
         }
-        ExprNodeKind::Path(ExprPath::Ast(path)) => {
-            if let [contract, palette] = path
-                && document
-                    .theme_contract
-                    .as_ref()
-                    .is_some_and(|item| item.name == *contract)
-                && document.palettes.iter().any(|item| item.name == *palette)
-            {
-                return Ok(format!(
-                    "{}::{}",
-                    generated_named_rust(contract),
-                    pascal(palette)
-                ));
-            }
-            if let [enum_name, variant_name] = path
-                && document.enums.iter().any(|item| {
-                    item.name == *enum_name
-                        && item.variants.iter().any(|variant| {
-                            variant.name == *variant_name && variant.payload.is_none()
-                        })
-                })
-            {
-                return Ok(format!(
-                    "{}::{}",
-                    generated_named_rust(enum_name),
-                    pascal(variant_name)
-                ));
-            }
-            let binding = env.get(&path[0]).ok_or_else(|| {
-                Error::new(
-                    "E150",
-                    &Span::line(1),
-                    format!("unknown value `{}`", path[0]),
-                )
-            })?;
-            let mut code = binding.code.clone();
-            let mut ty = binding.ty.clone();
-            let mut owned_projection = false;
-            for field in &path[1..] {
-                if let Some((projection, projected_ty)) = native_field_projection(&ty, field, &code)
-                {
-                    code = projection;
-                    ty = projected_ty;
-                    owned_projection = true;
-                    continue;
-                }
-                if let Type::Option(inner) = &ty
-                    && **inner == Type::WidgetTarget
-                {
-                    code = format!("({code}).as_ref().map(|value| value.{field}.clone())");
-                    ty = Type::Option(Box::new(
-                        widget_target_field_type(field).unwrap_or(Type::Unknown),
-                    ));
-                    owned_projection = true;
-                    continue;
-                }
-                write!(code, ".{field}").unwrap();
-                if let Type::Named(name) = &ty {
-                    ty = document
-                        .structs
-                        .iter()
-                        .find(|item| item.name == *name)
-                        .and_then(|item| item.fields.iter().find(|(name, _)| name == field))
-                        .map(|(_, ty)| ty.clone())
-                        .unwrap_or(Type::Unknown);
-                } else if ty == Type::WidgetTarget {
-                    ty = widget_target_field_type(field).unwrap_or(Type::Unknown);
-                } else if let Some(field_ty) = native_field_type(&ty, field) {
-                    ty = field_ty;
-                }
-            }
-            let clone_unnecessary = matches!(
-                ty,
-                Type::Bool
-                    | Type::I64
-                    | Type::F64
-                    | Type::PhysicalKey
-                    | Type::KeyLocation
-                    | Type::KeyModifiers
-                    | Type::Pixels
-                    | Type::Padding
-                    | Type::Degrees
-                    | Type::Radians
-                    | Type::Rotation
-                    | Type::ContentFit
-                    | Type::Color
-                    | Type::Background
-                    | Type::Gradient
-                    | Type::LinearGradient
-                    | Type::ColorStop
-                    | Type::Font
-                    | Type::FontFamily
-                    | Type::FontWeight
-                    | Type::FontStretch
-                    | Type::FontStyle
-                    | Type::ThemeMode
-                    | Type::TextAlignment
-                    | Type::TextShaping
-                    | Type::TextWrapping
-                    | Type::TextLineHeight
-                    | Type::MouseInteraction
-                    | Type::ScrollDelta
-                    | Type::EventStatus
-                    | Type::Length
-                    | Type::Alignment
-                    | Type::HorizontalAlignment
-                    | Type::VerticalAlignment
-                    | Type::Border
-                    | Type::Radius
-                    | Type::Shadow
-                    | Type::Point
-                    | Type::PointU32
-                    | Type::Vector
-                    | Type::Size
-                    | Type::SizeU32
-                    | Type::Rectangle
-                    | Type::RectangleU32
-                    | Type::Transformation
-                    | Type::MouseButton
-                    | Type::MouseCursor
-                    | Type::MouseClick
-                    | Type::TouchFinger
-                    | Type::WindowId
-                    | Type::WindowPosition
-                    | Type::RedrawRequest
-                    | Type::WindowDirection
-                    | Type::WindowLevel
-                    | Type::WindowMode
-                    | Type::WindowAttention
-                    | Type::Unit
-            ) || (binding.local && path.len() == 1)
-                || owned_projection;
-            if matches!(mode, ValueMode::Owned) && !clone_unnecessary {
-                if ty == Type::Str {
-                    code.push_str(".to_owned()");
-                } else {
-                    code.push_str(".clone()");
-                }
-            }
-            code
-        }
-        ExprNodeKind::Path(ExprPath::Checked { root, projections }) => {
-            checked_path_code(root, projections, env, context, mode)?
+        ExprNodeKind::Path(ExprPath::Resolved { root, projections }) => {
+            resolved_path_code(root, projections, env, context, mode)?
         }
         ExprNodeKind::Call { target, arguments } => {
             let args = arguments;
             let name = match target {
-                ExprCallTarget::EnumVariant(id) => {
-                    let program = context.program.expect("checked enum has a lowered program");
-                    let variant = program.declarations().enum_variant_decl(id);
-                    let owner = program.declarations().enum_decl(id.owner);
+                ExprCallTarget::EnumVariant {
+                    enum_rust_name,
+                    variant_name,
+                } => {
                     return Ok(format!(
                         "{}::{}({})",
-                        owner.rust_name,
-                        pascal(&variant.name),
+                        enum_rust_name,
+                        pascal(variant_name),
                         expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?
                     ));
                 }
                 ExprCallTarget::Extern(id) => {
-                    let function = context
-                        .program
-                        .expect("checked extern has a lowered program")
-                        .extern_function(id);
+                    let function = context.program.extern_function(id);
                     let args = expr_node_list_code(&args.values()?, env, context)?;
                     return Ok(format!("{}({args})", function.rust_path));
                 }
                 ExprCallTarget::Builtin(name) => name,
-                ExprCallTarget::Ast(name) => name,
             };
-            if unqualified_name(name) == "provided" {
-                let value = args.value(0)?;
-                let Some(Expr::Path(path)) = context.ast_expr(value) else {
-                    return Err(Error::new(
-                        "E196",
-                        &Span::line(1),
-                        "provided slot was not preserved as an AST view expression",
-                    ));
-                };
-                let [slot] = path.as_slice() else {
-                    return Err(Error::new("E196", &Span::line(1), "invalid provided slot"));
-                };
-                let slot = unqualified_name(slot);
-                return Ok(env
-                    .contains_key(&format!("\0slot-provided:{slot}"))
-                    .to_string());
-            }
-            if matches!(target, ExprCallTarget::Ast(_))
-                && let Some((enum_name, variant_name)) = name.split_once('.')
-                && document.enums.iter().any(|item| {
-                    item.name == enum_name
-                        && item.variants.iter().any(|variant| {
-                            variant.name == variant_name && variant.payload.is_some()
-                        })
-                })
-            {
-                return Ok(format!(
-                    "{}::{}({})",
-                    generated_named_rust(enum_name),
-                    pascal(variant_name),
-                    expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?
-                ));
-            }
-            if matches!(target, ExprCallTarget::Ast(_))
-                && let Some(function) = find_extern_function(document, name, ExternKind::Sync)
-            {
-                let args = expr_node_list_code(&args.values()?, env, context)?;
-                return Ok(format!("{}({args})", function.rust_path));
-            }
             let name = unqualified_name(name);
             if let Some(code) = expr_builtin_group_1(name, &args, env, context, mode)? {
                 code
@@ -2228,7 +1873,6 @@ fn expr_builtin_group_6(
     context: &ExprEmission<'_>,
     _mode: ValueMode,
 ) -> Result<Option<String>, Error> {
-    let document = context.document;
     Ok(Some(match name {
         "trim" => format!(
             "({}).trim().to_owned()",
@@ -2303,12 +1947,7 @@ fn expr_builtin_group_6(
             "({}).as_ref().is_some_and(::iced::task::Handle::is_aborted)",
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
-        _ => {
-            let function = find_extern_function(document, name, ExternKind::Sync)
-                .expect("checker accepts only declared sync calls");
-            let args = expr_node_list_code(&args.values()?, env, context)?;
-            format!("{}({args})", function.rust_path)
-        }
+        _ => return Ok(None),
     }))
 }
 
@@ -2324,17 +1963,17 @@ fn expr_node_list_code(
         .join(", "))
 }
 
-fn checked_path_code(
-    root: &CheckedPathRoot,
-    projections: &[CheckedProjection],
+fn resolved_path_code(
+    root: &ResolvedPathRoot,
+    projections: &[ResolvedProjection],
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     mode: ValueMode,
 ) -> Result<String, Error> {
-    let program = context.program.expect("checked path has a lowered program");
+    let program = context.program;
     let (mut code, mut ty, root_local) = match root {
-        CheckedPathRoot::Value(value_ref) => {
-            let value = program.checked_facts().value_by_ref(*value_ref);
+        ResolvedPathRoot::Value(value_ref) => {
+            let value = program.expressions().value(*value_ref);
             let origin = program.origin(value.origin);
             let span = Span {
                 line: origin.line,
@@ -2362,8 +2001,8 @@ fn checked_path_code(
             }
             (binding.code.clone(), binding.ty.clone(), binding.local)
         }
-        CheckedPathRoot::Local(id) => {
-            let local = program.checked_facts().local(*id);
+        ResolvedPathRoot::Local(id) => {
+            let local = program.expressions().local(*id);
             let origin = program.origin(local.origin);
             let span = Span {
                 line: origin.line,
@@ -2391,34 +2030,17 @@ fn checked_path_code(
             }
             (binding.code.clone(), binding.ty.clone(), binding.local)
         }
-        CheckedPathRoot::EnumVariant(id) => {
-            let variant = program
-                .declarations()
-                .try_enum_variant_decl(*id)
-                .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        &Span::line(1),
-                        "checked path references an invalid enum variant ID",
-                    )
-                })?;
-            let owner = program
-                .declarations()
-                .try_enum_decl(id.owner)
-                .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        &Span::line(1),
-                        "checked path references an invalid enum ID",
-                    )
-                })?;
-            return Ok(format!("{}::{}", owner.rust_name, pascal(&variant.name)));
+        ResolvedPathRoot::EnumVariant {
+            enum_rust_name,
+            variant_name,
+        } => {
+            return Ok(format!("{}::{}", enum_rust_name, pascal(variant_name)));
         }
-        CheckedPathRoot::Palette(id) => {
+        ResolvedPathRoot::Palette(id) => {
             let palette = &program.theme().palettes[id.0 as usize];
             return Ok(format!(
                 "{}::{}",
-                generated_named_rust(&program.theme().contract.name),
+                canonical_rust_type_name(&program.theme().contract.name),
                 pascal(&palette.name)
             ));
         }
@@ -2427,17 +2049,17 @@ fn checked_path_code(
     let mut owned_projection = false;
     for projection in projections {
         match projection.kind {
-            crate::check::CheckedProjectionKind::Struct(_) => {
+            ResolvedProjectionKind::Struct(_) => {
                 write!(code, ".{}", projection.field).unwrap();
             }
-            crate::check::CheckedProjectionKind::OptionalWidgetTarget => {
+            ResolvedProjectionKind::OptionalWidgetTarget => {
                 code = format!(
                     "({code}).as_ref().map(|value| value.{}.clone())",
                     projection.field
                 );
                 owned_projection = true;
             }
-            crate::check::CheckedProjectionKind::Native => {
+            ResolvedProjectionKind::Native => {
                 if let Some((native, _)) =
                     native_field_projection(&projection.input, &projection.field, &code)
                 {
@@ -2615,22 +2237,22 @@ fn expr_animation_at_code(
     }
 }
 
-pub(in crate::codegen) fn checked_expr_use_code(
+pub(in crate::codegen) fn resolved_expr_use_code(
     program: &LoweredProgram,
-    expression_use: CheckedExprUseId,
+    expression_use: ResolvedExpressionId,
     env: &dyn BindingEnvironment,
     mode: ValueMode,
 ) -> Result<String, Error> {
-    let facts = program.checked_facts();
-    let expression_use = facts.expression_use(expression_use);
-    let context = ExprEmission::for_checked(program);
-    let code = expr_node_code(ExprNode::Checked(expression_use.root), env, &context, mode)?;
+    let expressions = program.expressions();
+    let expression_use = expressions.expression_use(expression_use);
+    let context = ExprEmission::for_resolved(program);
+    let code = expr_node_code(ExprNode::Resolved(expression_use.root), env, &context, mode)?;
     Ok(match &expression_use.coercion {
-        CheckedInitializerCoercion::None => code,
-        CheckedInitializerCoercion::ListToCombo { .. } => {
+        ResolvedInitializerCoercion::None => code,
+        ResolvedInitializerCoercion::ListToCombo { .. } => {
             format!("::iced::widget::combo_box::State::new({code})")
         }
-        CheckedInitializerCoercion::ValueToAnimation { value } => {
+        ResolvedInitializerCoercion::ValueToAnimation { value } => {
             let code = if *value == Type::F64 {
                 format!("({code}) as f32")
             } else {
@@ -2638,18 +2260,18 @@ pub(in crate::codegen) fn checked_expr_use_code(
             };
             format!("::iced::Animation::new({code})")
         }
-        CheckedInitializerCoercion::StrToMarkdown => {
-            match &facts.expression(expression_use.root).kind {
-                CheckedExprKind::Str(value) => format!(
+        ResolvedInitializerCoercion::StrToMarkdown => {
+            match &expressions.expression(expression_use.root).kind {
+                ResolvedExpressionKind::Str(value) => format!(
                     "::iced::widget::markdown::Content::parse({})",
                     rust_string(value)
                 ),
                 _ => format!("::iced::widget::markdown::Content::parse(&({code}))"),
             }
         }
-        CheckedInitializerCoercion::StrToEditor => {
-            match &facts.expression(expression_use.root).kind {
-                CheckedExprKind::Str(value) => format!(
+        ResolvedInitializerCoercion::StrToEditor => {
+            match &expressions.expression(expression_use.root).kind {
+                ResolvedExpressionKind::Str(value) => format!(
                     "::iced::widget::text_editor::Content::with_text({})",
                     rust_string(value)
                 ),
@@ -2659,34 +2281,31 @@ pub(in crate::codegen) fn checked_expr_use_code(
     })
 }
 
-pub(in crate::codegen) fn checked_expr_node_code(
+pub(in crate::codegen) fn resolved_expr_node_code(
     program: &LoweredProgram,
-    expression_use: CheckedExprUseId,
-    node: CheckedExprId,
+    expression_use: ResolvedExpressionId,
+    node: ResolvedExpressionNodeId,
     env: &dyn BindingEnvironment,
     mode: ValueMode,
 ) -> Result<String, Error> {
-    let expression = program
-        .checked_facts()
-        .try_expression(node)
-        .ok_or_else(|| {
-            Error::new(
-                "E196",
-                &Span::line(1),
-                "checked test expression node is outside its arena",
-            )
-        })?;
+    let expression = program.expressions().try_expression(node).ok_or_else(|| {
+        Error::new(
+            "E196",
+            &Span::line(1),
+            "normalized test expression node is outside its arena",
+        )
+    })?;
     if expression.owner != expression_use {
         return Err(Error::new(
             "E196",
             &Span::line(1),
-            "checked test expression node belongs to another expression use",
+            "normalized test expression node belongs to another expression use",
         ));
     }
     expr_node_code(
-        ExprNode::Checked(node),
+        ExprNode::Resolved(node),
         env,
-        &ExprEmission::for_checked(program),
+        &ExprEmission::for_resolved(program),
         mode,
     )
 }

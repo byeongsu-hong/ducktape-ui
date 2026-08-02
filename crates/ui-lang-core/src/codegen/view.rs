@@ -2,48 +2,86 @@ use super::*;
 
 pub(super) fn identify_rendered(
     rendered: String,
-    id: Option<&Id>,
+    identity: Option<&ResolvedViewIdentity>,
     message: &str,
     env: &dyn BindingEnvironment,
-    document: &Document,
+    program: &LoweredProgram,
     scope: &str,
 ) -> Result<String, Error> {
-    let Some(id) = id else {
+    let Some(identity) = identity else {
         return Ok(rendered);
     };
-    let id = id_code(id, scope, env, document)?;
+    let id = resolved_view_identity_code(identity, scope, env, program)?;
     Ok(format!(
         "{{ let __identified: __IceElement<'_, {message}> = {rendered}; let __ice_id = {id}; #[cfg(test)] ::ui_lang_runtime::testing::register_render_source(&__ice_id); ::iced::widget::container(__identified).id(::iced::widget::Id::from(__ice_id)).into() }}"
     ))
 }
 
 pub(super) fn rendered_child_scope(
-    id: Option<&Id>,
+    identity: Option<&ResolvedViewIdentity>,
     scope: &str,
     env: &dyn BindingEnvironment,
-    document: &Document,
+    program: &LoweredProgram,
 ) -> Result<String, Error> {
-    id.map_or_else(
+    identity.map_or_else(
         || Ok(scope.to_owned()),
-        |id| id_code(id, scope, env, document),
+        |identity| resolved_view_identity_code(identity, scope, env, program),
+    )
+}
+
+fn resolved_view_identity_code(
+    identity: &ResolvedViewIdentity,
+    scope: &str,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    if let Some(key) = identity.key {
+        let key = resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?;
+        Ok(format!(
+            "format!(\"{{}}/{}({{}})\", {scope}, {key})",
+            identity.name
+        ))
+    } else {
+        Ok(format!("format!(\"{{}}/{}\", {scope})", identity.name))
+    }
+}
+
+pub(super) fn resolved_accessibility_key_code(
+    identity: Option<&ResolvedViewIdentity>,
+    kind: &str,
+    origin: OriginId,
+    scope: &str,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    identity.map_or_else(
+        || {
+            let scope = reconciliation_scope(scope, env);
+            Ok(format!(
+                "format!(\"{{}}/@{kind}:{}\", {scope})",
+                program.origin(origin).line
+            ))
+        },
+        |identity| resolved_view_identity_code(identity, scope, env, program),
     )
 }
 
 pub(in crate::codegen) fn component_slot_context(
     slots: &[ResolvedSlot],
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     env: &dyn BindingEnvironment,
     parent: Option<&SlotContext>,
 ) -> Result<Option<SlotContext>, Error> {
     let mut entries = Vec::new();
     for slot in slots {
-        let Some(content) = &slot.content else {
+        let Some(content) = slot.content else {
             continue;
         };
         if !node_is_omitted(content, document, env, parent)? {
             entries.push(SlotContent {
+                slot: slot.slot,
                 name: slot.name.clone(),
-                node: content.clone(),
+                view: content,
                 env: env.snapshot(),
             });
         }
@@ -55,8 +93,8 @@ pub(in crate::codegen) fn component_slot_context(
 }
 
 pub(in crate::codegen) fn render_node_if_present(
-    node: &ViewNode,
-    document: &RenderDocument<'_>,
+    node: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -70,83 +108,88 @@ pub(in crate::codegen) fn render_node_if_present(
 }
 
 fn node_is_omitted(
-    node: &ViewNode,
-    document: &RenderDocument<'_>,
+    node: ViewId,
+    document: &LoweredProgram,
     env: &dyn BindingEnvironment,
     slot: Option<&SlotContext>,
 ) -> Result<bool, Error> {
-    document.program().validate_checked_view(node)?;
-    let omitted = match node {
-        ViewNode::Slot { name, .. } => {
+    let view = document.resolved_view(node)?;
+    let omitted = match &view.kind {
+        ResolvedViewKind::Slot { slot: slot_id, .. } => {
             let Some((content, parent)) = slot.and_then(|slot| {
                 slot.entries
                     .iter()
-                    .find(|entry| entry.name == *name)
+                    .find(|entry| entry.slot == *slot_id)
                     .map(|content| (content, slot.parent.as_deref()))
             }) else {
                 return Ok(true);
             };
-            node_is_omitted(&content.node, document, &content.env, parent)?
+            node_is_omitted(content.view, document, &content.env, parent)?
         }
-        ViewNode::Component { span, .. } => {
-            let call = document.program().component_call(span)?;
-            let component = document.program().component(call.component);
+        ResolvedViewKind::Component { call } => {
+            let call = document.component_call_by_id(*call)?;
+            let component = document.component(call.component);
             let slots = component_slot_context(&call.slots, document, env, slot)?;
-            node_is_omitted(&component.root, document, env, slots.as_ref())?
+            node_is_omitted(component.root, document, env, slots.as_ref())?
         }
-        ViewNode::Layout {
-            kind: Layout::Scroll,
-            children,
-            ..
-        } => node_is_omitted(&children[0], document, env, slot)?,
-        ViewNode::Container { content, .. }
-        | ViewNode::MouseArea { content, .. }
-        | ViewNode::ResizeHandle { content, .. }
-        | ViewNode::Theme { content, .. }
-        | ViewNode::Float { content, .. }
-        | ViewNode::Pin { content, .. }
-        | ViewNode::Sensor { content, .. }
-        | ViewNode::KeyedColumn { child: content, .. }
-        | ViewNode::Lazy { child: content, .. } => node_is_omitted(content, document, env, slot)?,
-        ViewNode::Button {
+        ResolvedViewKind::Layout { children }
+            if matches!(
+                document.resolved_layout(node)?.mode,
+                ResolvedLayoutMode::Scroll(_)
+            ) =>
+        {
+            node_is_omitted(children[0], document, env, slot)?
+        }
+        ResolvedViewKind::Container { content }
+        | ResolvedViewKind::MouseArea { content }
+        | ResolvedViewKind::ResizeHandle { content }
+        | ResolvedViewKind::Theme { content }
+        | ResolvedViewKind::Float { content }
+        | ResolvedViewKind::Pin { content }
+        | ResolvedViewKind::Sensor { content }
+        | ResolvedViewKind::KeyedColumn { child: content }
+        | ResolvedViewKind::Lazy { child: content } => {
+            node_is_omitted(*content, document, env, slot)?
+        }
+        ResolvedViewKind::Button {
             content: Some(content),
-            ..
-        } => node_is_omitted(content, document, env, slot)?,
-        ViewNode::Tooltip { content, tip, .. } => {
-            node_is_omitted(content, document, env, slot)?
-                || node_is_omitted(tip, document, env, slot)?
+        } => node_is_omitted(*content, document, env, slot)?,
+        ResolvedViewKind::Tooltip { content, tip } => {
+            node_is_omitted(*content, document, env, slot)?
+                || node_is_omitted(*tip, document, env, slot)?
         }
-        ViewNode::Overlay { content, layer, .. } => {
-            node_is_omitted(content, document, env, slot)?
-                || node_is_omitted(layer, document, env, slot)?
+        ResolvedViewKind::Overlay { content, layer } => {
+            node_is_omitted(*content, document, env, slot)?
+                || node_is_omitted(*layer, document, env, slot)?
         }
-        ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                node_is_omitted(narrow, document, env, slot)?
-                    || node_is_omitted(wide, document, env, slot)?
-            }
-            ResponsiveContent::Size { content, .. } => {
-                node_is_omitted(content, document, env, slot)?
-            }
-        },
-        ViewNode::Table { columns, .. } => {
+        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => {
+            node_is_omitted(*narrow, document, env, slot)?
+                || node_is_omitted(*wide, document, env, slot)?
+        }
+        ResolvedViewKind::ResponsiveSize { content } => {
+            node_is_omitted(*content, document, env, slot)?
+        }
+        ResolvedViewKind::Table { columns } => {
             let mut omitted = false;
             for column in columns {
-                omitted |= node_is_omitted(&column.header, document, env, slot)?
-                    || node_is_omitted(&column.cell, document, env, slot)?;
+                omitted |= node_is_omitted(column.header, document, env, slot)?
+                    || node_is_omitted(column.cell, document, env, slot)?;
             }
             omitted
         }
-        ViewNode::PaneGrid {
-            panes, templates, ..
-        } => {
+        ResolvedViewKind::PaneGrid { panes, templates } => {
             let mut omitted = false;
-            for child in panes
-                .iter()
-                .flat_map(PaneView::nodes)
-                .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-            {
-                omitted |= node_is_omitted(child, document, env, slot)?;
+            for pane in panes.iter().chain(templates) {
+                omitted |= node_is_omitted(pane.content, document, env, slot)?;
+                if let Some(title) = &pane.title {
+                    omitted |= node_is_omitted(title.content, document, env, slot)?;
+                    for child in [title.controls, title.compact_controls]
+                        .into_iter()
+                        .flatten()
+                    {
+                        omitted |= node_is_omitted(child, document, env, slot)?;
+                    }
+                }
             }
             omitted
         }
@@ -156,14 +199,14 @@ fn node_is_omitted(
 }
 
 pub(in crate::codegen) fn render_node(
-    node: &ViewNode,
-    document: &RenderDocument<'_>,
+    node: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    document.program().validate_checked_view(node)?;
+    let view = document.resolved_view(node)?;
     let rendered = if let Some(rendered) =
         render_foundation(node, document, message, env, scope, slot)?
     {
@@ -182,12 +225,13 @@ pub(in crate::codegen) fn render_node(
         unreachable!("every view node belongs to a render group")
     };
     let track_descendants = matches!(
-        node,
-        ViewNode::ExternComponent { .. } | ViewNode::TextEditor { .. }
+        view.kind,
+        ResolvedViewKind::ExternComponent | ResolvedViewKind::TextEditor
     );
-    Ok(source_mapped_expression(
+    Ok(source_mapped_expression_origin(
         rendered,
-        node.span(),
+        document,
+        view.origin,
         message,
         track_descendants,
     ))
@@ -213,6 +257,7 @@ mod selection;
 mod structure;
 mod table;
 mod text;
+mod themer_shader;
 
 pub(super) use boolean::*;
 pub(super) use button::*;
@@ -234,3 +279,4 @@ pub(super) use selection::*;
 pub(super) use structure::*;
 pub(super) use table::*;
 pub(super) use text::*;
+pub(super) use themer_shader::*;
