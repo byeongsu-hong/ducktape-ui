@@ -105,6 +105,7 @@ fn __ice_system_info(value: ::iced::system::Information) -> __IceSystemInfo {
 pub(in crate::codegen) fn generate_widget_selector_types(
     out: &mut String,
     document: &Document,
+    component_declarations: &[ResolvedExternComponentDeclaration],
     component_ids: &HashSet<ExternFnId>,
 ) {
     let uses_builtin = |statements: &[Statement]| {
@@ -112,7 +113,7 @@ pub(in crate::codegen) fn generate_widget_selector_types(
             !matches!(selector, WidgetSelector::Extern { .. })
         })
     };
-    if !document_uses_widget_target(document, component_ids)
+    if !document_uses_widget_target(document, component_declarations, component_ids)
         && !document
             .handlers
             .iter()
@@ -197,10 +198,20 @@ fn __ice_widget_target_from_text(value: ::iced::widget::selector::Text) -> __Ice
     );
 }
 
-fn document_uses_widget_target(document: &Document, component_ids: &HashSet<ExternFnId>) -> bool {
+fn document_uses_widget_target(
+    document: &Document,
+    component_declarations: &[ResolvedExternComponentDeclaration],
+    component_ids: &HashSet<ExternFnId>,
+) -> bool {
     let uses = document_type_uses_widget_target;
 
-    document.states.iter().any(|state| uses(&state.ty))
+    component_declarations.iter().any(|declaration| {
+        declaration
+            .parameters
+            .iter()
+            .any(|parameter| uses(&parameter.ty))
+            || uses(&declaration.output)
+    }) || document.states.iter().any(|state| uses(&state.ty))
         || document
             .structs
             .iter()

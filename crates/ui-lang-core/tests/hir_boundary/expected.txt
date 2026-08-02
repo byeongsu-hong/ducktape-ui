@@ -1,7 +1,7 @@
 [source AST import]
 src/codegen.rs 1 0aa1e53a820312b67736ac2cdbda5a1e
 [source AST semantic reference]
-src/codegen.rs 73 a4dac9858bfa63ed91d0725faf50a210
+src/codegen.rs 73 cbea5a78b2a235184b928beba746595b
 src/codegen/application.rs 18 25e29179f8818353282cc8100b819a48
 src/codegen/canvas.rs 13 dedb3b588ab817c51d03f7b622994c46
 src/codegen/canvas/commands.rs 8 f1813cd8bbe28d5c1cf93599ce2ae1cc
@@ -13,7 +13,7 @@ src/codegen/expr/children.rs 11 13d0103fdf8d47ed785ffbcccd9ed631
 src/codegen/expr/discovery.rs 69 cca25954b76c05b042e8568a22356529
 src/codegen/expr/routes.rs 39 8eee862cea74aa45124dda7834749aac
 src/codegen/probes.rs 48 d3d4d8dc2a5022741eec540554cd1bba
-src/codegen/runtime.rs 43 37f1cb05e4dac59c9c7b9b024abbef2e
+src/codegen/runtime.rs 43 e12b32c88e4a23ac0a18d6016eabf0cd
 src/codegen/settings.rs 3 e781417a63da97c0b8c68e23c087cabe
 src/codegen/statement.rs 45 3df4fb3235e806655360a4ab8579c1c6
 src/codegen/statement/task.rs 18 cfb735f520bd5f9923c7041fdf983c6f
@@ -41,7 +41,7 @@ src/codegen/view/table.rs 12 c22edae2efcba236ea3913875d50313d
 src/codegen/view/text.rs 3 32e502cf8be19458ab8740d8df2c9f8c
 src/codegen/view/themer_shader.rs 2 49dbdb6207a45dd1df15008c0826f3e6
 [checked-document escape]
-src/codegen.rs 3 884a0413ad8a84933a38049f4b305689
+src/codegen.rs 3 e0f88dc8ca3e4938d7462f21d4913100
 src/codegen/application.rs 1 70bc4898a51079f50eb0813afb376810
 src/codegen/expr.rs 1 f53af1902b94a0fc4f80366f1ad68dd8
 src/codegen/expr/discovery.rs 1 c539f025a2098447f9b3f7181f13bcad
@@ -103,7 +103,7 @@ src/codegen/expr.rs 4 eead9066cb1f9913287ed9015d508a0c
 src/codegen/expr/discovery.rs 5 db4ab16e70fe420eff4d89c947658bae
 src/codegen/expr/routes.rs 7 3cb1266b7674e1de74a33d1e72acd29b
 src/codegen/probes.rs 2 289b1b18bc0d6b930af54ac321c14038
-src/codegen/runtime.rs 7 177b133e183c0dbc46fd0fe75eef9bc5
+src/codegen/runtime.rs 7 75e4d2e27d307c6941f5979b3f996b1c
 src/codegen/style/helpers.rs 2 8186b2a95890740408c9061ab63899a9
 src/codegen/view.rs 2 5b5d7d1b8f0f28258e34196b3b7e437b
 [Expr reference]
@@ -112,4 +112,4 @@ src/codegen/expr/routes.rs 1 0e734ea0b4c23f061a47e6e89be3c1d8
 [Route reference]
 src/codegen/expr/routes.rs 7 a2e687c7e7b3eab76b5d9e9efe3bd003
 [Statement reference]
-src/codegen/runtime.rs 10 158d335031e7f7fdae1b038f2c26c4a3
+src/codegen/runtime.rs 10 6baff4eb64b0197b70578e69624401b8

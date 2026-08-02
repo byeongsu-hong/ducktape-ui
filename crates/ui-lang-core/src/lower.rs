@@ -14435,6 +14435,23 @@ view
     }
 
     #[test]
+    fn normalized_unused_extern_component_widget_targets_enable_codegen_helpers() {
+        let source = format!(
+            "app ExternWidgetTargetHelpers\nextern crate::backend\n  component target_input(target:widget-target?) -> unit\n  component target_output() -> [widget-target]\n{THEME}view\n  text \"ready\"\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let generated = crate::codegen::generate(&program, "extern-widget-target.ice").unwrap();
+
+        assert_eq!(generated.matches("struct __IceWidgetTarget").count(), 1);
+        assert!(generated.contains(
+            "fn __ui_lang_check_component_target_input(arg0: ::std::option::Option<__IceWidgetTarget>)"
+        ));
+        assert!(generated.contains(
+            "fn __ui_lang_check_component_target_output() { let _: __IceElement<'static, ::std::vec::Vec<__IceWidgetTarget>>"
+        ));
+    }
+
+    #[test]
     fn extern_component_lowering_rejects_cross_owner_identity_route_origin_and_id_corruption() {
         let source = format!(
             "app ExternIdentity\nextern crate::backend\n  component first_surface(active:bool) -> bool\n  component second_surface(active:bool) -> bool\n{THEME}state\n  active = false\non first_changed(next)\non second_changed(next)\nview\n  col\n    extern first_surface(active) -> first_changed _\n    extern second_surface(active) -> second_changed _\n"
