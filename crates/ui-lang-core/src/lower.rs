@@ -36,6 +36,7 @@ mod button;
 mod canvas;
 mod conditional;
 mod container;
+mod content_primitives;
 mod editor;
 mod float;
 mod input;
@@ -63,6 +64,7 @@ pub(crate) use button::*;
 pub(crate) use canvas::*;
 pub(crate) use conditional::*;
 pub(crate) use container::*;
+pub(crate) use content_primitives::*;
 pub(crate) use editor::*;
 pub(crate) use float::*;
 pub(crate) use input::*;
@@ -1517,6 +1519,9 @@ pub(crate) struct LoweredProgram {
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
     sliders: HashMap<ViewId, ResolvedSlider>,
     progresses: HashMap<ViewId, ResolvedProgress>,
+    rules: HashMap<ViewId, ResolvedRule>,
+    qr_codes: HashMap<ViewId, ResolvedQrCode>,
+    spaces: HashMap<ViewId, ResolvedSpace>,
     controlled_inputs: Vec<ResolvedControlledInputBinding>,
     controlled_editors: Vec<ResolvedControlledEditorBinding>,
     controlled_editors_by_name: HashMap<String, usize>,
@@ -3127,6 +3132,21 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn rule(&self, id: ViewId) -> Option<&ResolvedRule> {
+        self.rules.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn qr_code(&self, id: ViewId) -> Option<&ResolvedQrCode> {
+        self.qr_codes.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn space(&self, id: ViewId) -> Option<&ResolvedSpace> {
+        self.spaces.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
         self.media.get(&id)
     }
@@ -3539,6 +3559,81 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "progress reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_rule_for(&self, node: &ViewNode) -> Result<&ResolvedRule, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "rule reached code generation without a shared view ID",
+            )
+        })?;
+        if self.facts.view(id).id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "rule reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.rules.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "rule reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_qr_code_for(&self, node: &ViewNode) -> Result<&ResolvedQrCode, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "qr reached code generation without a shared view ID",
+            )
+        })?;
+        if self.facts.view(id).id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "qr reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.qr_codes.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "qr reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_space_for(&self, node: &ViewNode) -> Result<&ResolvedSpace, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "space reached code generation without a shared view ID",
+            )
+        })?;
+        if self.facts.view(id).id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "space reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.spaces.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "space reached code generation without normalized HIR",
             )
         })
     }
@@ -4317,6 +4412,9 @@ pub(crate) struct Lowerer {
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
     sliders: HashMap<ViewId, ResolvedSlider>,
     progresses: HashMap<ViewId, ResolvedProgress>,
+    rules: HashMap<ViewId, ResolvedRule>,
+    qr_codes: HashMap<ViewId, ResolvedQrCode>,
+    spaces: HashMap<ViewId, ResolvedSpace>,
     controlled_inputs: Vec<AppStateId>,
     controlled_editors: Vec<CheckedControlledEditor>,
     media: HashMap<ViewId, ResolvedMedia>,
@@ -5070,6 +5168,9 @@ impl Lowerer {
             combo_boxes: HashMap::new(),
             sliders: HashMap::new(),
             progresses: HashMap::new(),
+            rules: HashMap::new(),
+            qr_codes: HashMap::new(),
+            spaces: HashMap::new(),
             controlled_inputs,
             controlled_editors,
             media: HashMap::new(),
@@ -5232,6 +5333,9 @@ impl Lowerer {
             combo_boxes: self.combo_boxes,
             sliders: self.sliders,
             progresses: self.progresses,
+            rules: self.rules,
+            qr_codes: self.qr_codes,
+            spaces: self.spaces,
             controlled_inputs,
             controlled_editors,
             controlled_editors_by_name,
@@ -9350,6 +9454,48 @@ impl Lowerer {
                     span,
                     outer_component,
                 )?;
+            }
+            ViewNode::Rule {
+                axis,
+                thickness,
+                options,
+                styles,
+                span,
+                ..
+            } => {
+                self.lower_rule(*axis, thickness, options, styles, span, outer_component)?;
+            }
+            ViewNode::QrCode {
+                payload,
+                correction,
+                version,
+                cell_size,
+                total_size,
+                cell,
+                background,
+                span,
+                ..
+            } => {
+                self.lower_qr_code(
+                    payload,
+                    *correction,
+                    *version,
+                    cell_size,
+                    total_size,
+                    cell,
+                    background,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::Space {
+                width,
+                height,
+                styles,
+                span,
+                ..
+            } => {
+                self.lower_space(width, height, styles, span, outer_component)?;
             }
             ViewNode::Layout {
                 kind,
@@ -17895,6 +18041,425 @@ test stable_flow
             assert_eq!(error.code, "E196");
             assert!(error.message.contains("invalid checked expression ID"));
         }
+    }
+
+    #[test]
+    fn normalizes_rule_qr_code_and_space_contracts() {
+        let source = format!(
+            "app ContentPrimitiveHir\n{THEME}state\n  thickness = 2.0\n  percent = 75.0\n  radius = 4.0\n  snap = false\n  payload = \"https://example.com/invite\"\n  cell_size = 4.0\n  width = 20.0\nview\n  col\n    rule horizontal thickness=thickness style=weak fill=percent(percent) color=primary/50 r=radius r-tl=radius snap=snap\n    qr payload correction=high version=normal(4) cell-size=cell_size cell=primary bg=bg\n    qr bytes(00 ff a4) version=micro(4) size=128.0 cell=danger/25\n    space w=width h=fill(2)\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+
+        let rule = program.rule(ViewId(1)).unwrap();
+        assert_eq!(rule.id, ViewId(1));
+        assert_eq!(rule.axis, ResolvedRuleAxis::Horizontal);
+        assert_eq!(rule.preset, ResolvedRulePreset::Weak);
+        assert!(matches!(rule.fill, Some(ResolvedRuleFill::Percent(_))));
+        assert!(rule.radius.all.is_some());
+        assert!(rule.radius.top_left.is_some());
+        assert!(rule.snap.is_some());
+        assert!(matches!(
+            rule.color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                opacity: Some(50),
+            }) if token == program.theme().native_tokens.primary
+        ));
+
+        let text_qr = program.qr_code(ViewId(2)).unwrap();
+        assert_eq!(text_qr.id, ViewId(2));
+        assert_eq!(text_qr.payload_kind, ResolvedQrPayloadKind::Text);
+        assert_eq!(
+            text_qr.encoding,
+            ResolvedQrEncoding::Versioned {
+                version: ResolvedQrVersion::Normal(4),
+                correction: ResolvedQrCorrection::High,
+            }
+        );
+        assert!(matches!(text_qr.size, ResolvedQrSize::Cell(_)));
+        assert!(matches!(
+            text_qr.background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.background
+        ));
+
+        let bytes_qr = program.qr_code(ViewId(3)).unwrap();
+        assert_eq!(bytes_qr.payload_kind, ResolvedQrPayloadKind::Bytes);
+        assert_eq!(
+            bytes_qr.encoding,
+            ResolvedQrEncoding::Versioned {
+                version: ResolvedQrVersion::Micro(4),
+                correction: ResolvedQrCorrection::Medium,
+            }
+        );
+        assert!(matches!(bytes_qr.size, ResolvedQrSize::Total(_)));
+
+        let space = program.space(ViewId(4)).unwrap();
+        assert_eq!(space.id, ViewId(4));
+        assert!(matches!(
+            space.width,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert!(matches!(
+            space.height,
+            Some(ResolvedContainerLength::FillPortion(2))
+        ));
+
+        for (view, types) in [
+            (
+                ViewId(1),
+                vec![Type::F64, Type::F64, Type::F64, Type::F64, Type::Bool],
+            ),
+            (ViewId(2), vec![Type::Str, Type::F64]),
+            (ViewId(3), vec![Type::Bytes, Type::F64]),
+            (ViewId(4), vec![Type::F64]),
+        ] {
+            let checked = program.checked_facts().interaction(view).unwrap();
+            assert_eq!(checked.expression_count as usize, types.len());
+            for (index, ty) in types.into_iter().enumerate() {
+                let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: view,
+                    index: index as u32,
+                });
+                let expression = program
+                    .checked_facts()
+                    .expression_use_by_owner(owner)
+                    .unwrap();
+                let retained = program.checked_facts().expression_use(expression);
+                assert_eq!(retained.owner, owner);
+                assert_eq!(retained.source, ty);
+                assert_eq!(retained.destination, ty);
+                assert_eq!(
+                    program.origin(retained.origin).parent,
+                    Some(program.checked_facts().view(view).origin)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn content_primitive_lowering_uses_checked_expressions_and_codegen_ignores_raw_contracts() {
+        let source = format!(
+            "app CheckedContentPrimitives\n{THEME}state\n  thickness = 2.0\n  percent = 75.0\n  radius = 4.0\n  snap = false\n  payload = \"https://example.com/invite\"\n  cell_size = 4.0\n  width = 20.0\n  height = 10.0\nview\n  col\n    rule horizontal thickness=thickness style=weak fill=percent(percent) color=primary/50 r=radius snap=snap\n    qr payload correction=high version=normal(4) cell-size=cell_size cell=primary bg=bg\n    space w=width h=height\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-content-primitives.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Rule {
+            thickness, options, ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a rule");
+        };
+        *thickness = Expr::F64(999.0);
+        options.fill = Some(RuleFill::Percent(Expr::F64(999.0)));
+        options.radius = Some(Expr::F64(999.0));
+        options.snap = Some(Expr::Bool(true));
+        let ViewNode::QrCode {
+            payload, cell_size, ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a qr code");
+        };
+        *payload = Expr::Str("raw-checked-poison".into());
+        *cell_size = Some(Expr::F64(999.0));
+        let ViewNode::Space { width, height, .. } = &mut children[2] else {
+            panic!("third child must be a space");
+        };
+        *width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        *height = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-content-primitives.ice")
+                .unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("raw-checked-poison"));
+
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected =
+            crate::codegen::generate(&program, "lowered-content-primitives.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Rule {
+            axis,
+            thickness,
+            options,
+            styles,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a rule");
+        };
+        *axis = Axis::Vertical;
+        *thickness = Expr::F64(777.0);
+        *options = RuleOptions::default();
+        styles.push("raw-rule-poison".into());
+        let ViewNode::QrCode {
+            payload,
+            correction,
+            version,
+            cell_size,
+            total_size,
+            cell,
+            background,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a qr code");
+        };
+        *payload = Expr::Str("raw-qr-poison".into());
+        *correction = Some(QrCorrection::Low);
+        *version = Some(QrVersion::Micro(1));
+        *cell_size = None;
+        *total_size = Some(Expr::F64(777.0));
+        *cell = Some("danger".into());
+        *background = Some("fg".into());
+        let ViewNode::Space {
+            width,
+            height,
+            styles,
+            ..
+        } = &mut children[2]
+        else {
+            panic!("third child must be a space");
+        };
+        *width = Some(LengthValue::Shrink);
+        *height = Some(LengthValue::Fill);
+        styles.push("raw-space-poison".into());
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(0, 1);
+        let actual = crate::codegen::generate(&program, "lowered-content-primitives.ice").unwrap();
+        assert_eq!(actual, expected);
+        for poison in ["raw-rule-poison", "raw-qr-poison", "raw-space-poison"] {
+            assert!(!actual.contains(poison));
+        }
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Rule { axis, .. } = &mut children[0] else {
+            panic!("first child must be a rule");
+        };
+        *axis = Axis::Vertical;
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn content_primitive_lowering_rejects_same_type_identity_and_corrupt_facts() {
+        let source = format!(
+            "app ContentPrimitiveIdentity\n{THEME}state\n  first = 2.0\n  second = 75.0\n  first_payload = \"first\"\n  second_payload = \"second\"\nview\n  col\n    rule horizontal thickness=first fill=percent(second)\n    space w=first h=second\n    qr first_payload cell-size=first\n    qr second_payload cell-size=second\n"
+        );
+
+        let mut swapped_rule = analyze(&source).unwrap();
+        swapped_rule
+            .facts
+            .swap_interaction_option_expressions(ViewId(1), 0, 1);
+        let error = lower(swapped_rule).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_space = analyze(&source).unwrap();
+        swapped_space
+            .facts
+            .swap_interaction_option_expressions(ViewId(2), 0, 1);
+        let error = lower(swapped_space).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut transplanted_qr = analyze(&source).unwrap();
+        transplanted_qr
+            .facts
+            .transplant_interaction_option_expression(ViewId(3), 0, ViewId(4), 0);
+        let error = lower(transplanted_qr).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut corrupt_payload_type = analyze(&source).unwrap();
+        corrupt_payload_type
+            .facts
+            .corrupt_qr_payload_type(ViewId(3), Type::Bytes);
+        let error = lower(corrupt_payload_type).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut corrupt_rule = analyze(&source).unwrap();
+        corrupt_rule.facts.corrupt_rule_id(ViewId(1), u32::MAX);
+        let error = lower(corrupt_rule).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_qr = analyze(&source).unwrap();
+        corrupt_qr.facts.corrupt_qr_code_id(ViewId(3), u32::MAX);
+        let error = lower(corrupt_qr).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_space = analyze(&source).unwrap();
+        corrupt_space.facts.corrupt_space_id(ViewId(2), u32::MAX);
+        let error = lower(corrupt_space).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn imported_content_primitives_keep_exact_expression_and_theme_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-content-primitive-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("content.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedContentPrimitiveApp\nuse \"content.ice\"\n{THEME}state\n  payload = \"https://example.com\"\nview\n  ImportedContent payload=payload\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedContent(payload:str)\n  col\n    rule horizontal thickness=2.0 fill=percent(75.0) color=primary r=4.0 snap=false\n    qr payload version=normal(4) cell-size=4.0 cell=fg bg=bg\n    space w=10.0 h=fill(2)\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let entries = [
+            (program.rules.values().next().unwrap().id, 3usize),
+            (program.qr_codes.values().next().unwrap().id, 4usize),
+            (program.spaces.values().next().unwrap().id, 5usize),
+        ];
+        for (view, line) in entries {
+            let checked = program.checked_facts().interaction(view).unwrap();
+            let view_origin = program.checked_facts().view(view).origin;
+            let origin = program.origin(view_origin);
+            assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(origin.line, line);
+            assert_eq!(origin.column, 1);
+            for expression in &checked.option_expressions {
+                let expression_origin =
+                    program.origin(program.checked_facts().expression_use(*expression).origin);
+                assert_eq!(expression_origin.path.as_deref(), Some(imported.as_path()));
+                assert_eq!(expression_origin.line, line);
+                assert_eq!(expression_origin.column, 1);
+                assert_eq!(expression_origin.parent, Some(view_origin));
+            }
+        }
+        let rule = program.rules.values().next().unwrap();
+        assert!(matches!(
+            rule.color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.primary
+        ));
+        let qr = program.qr_codes.values().next().unwrap();
+        assert!(matches!(
+            qr.cell,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.text
+        ));
+        assert!(matches!(
+            qr.background,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.background
+        ));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn malformed_checked_content_primitive_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidContentPrimitives\n{THEME}view\n  col\n    rule horizontal thickness=2.0\n    qr \"payload\"\n    space w=10.0\n"
+        );
+        for view in [ViewId(1), ViewId(2), ViewId(3)] {
+            let mut checked = analyze(&source).unwrap();
+            checked.facts.corrupt_expression_use_root(
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: view,
+                    index: 0,
+                }),
+                u32::MAX,
+            );
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("invalid checked expression ID"));
+        }
+    }
+
+    #[test]
+    #[ignore = "large normalized content-primitive lowering and emission performance contract"]
+    fn performance_contract_four_thousand_content_primitives_lower_and_emit_under_two_seconds() {
+        const PRIMITIVES: usize = 4_000;
+        let mut source = format!(
+            "app ContentPrimitiveScale\n{THEME}state\n  amount = 25.0\n  payload = \"https://example.com\"\nview\n  col\n"
+        );
+        for index in 0..PRIMITIVES {
+            match index % 3 {
+                0 => writeln!(
+                    source,
+                    "    rule horizontal #rule_{index} thickness=amount fill=percent(amount)"
+                )
+                .unwrap(),
+                1 => writeln!(
+                    source,
+                    "    qr payload #qr_{index} correction=high cell-size=amount"
+                )
+                .unwrap(),
+                _ => writeln!(source, "    space #space_{index} w=amount h=fill").unwrap(),
+            }
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "content-primitive-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(
+            program.rules.len() + program.qr_codes.len() + program.spaces.len(),
+            PRIMITIVES
+        );
+        assert_eq!(
+            generated
+                .matches("::iced::widget::rule::horizontal(")
+                .count(),
+            1_334
+        );
+        assert_eq!(
+            generated.matches("::ui_lang_runtime::qr_code(").count(),
+            1_333
+        );
+        assert_eq!(generated.matches("::iced::widget::space()").count(), 1_333);
+        eprintln!("4k normalized content primitives lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized content primitives lowered and emitted in {elapsed:?}"
+        );
     }
 
     #[test]

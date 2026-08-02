@@ -18,77 +18,16 @@ pub(in crate::codegen) fn render_content(
         _ => None,
     };
     let rendered = match node {
-        ViewNode::Rule {
-            axis,
-            thickness,
-            options,
-            ..
-        } => {
-            let thickness = expr_code(thickness, env, document, ValueMode::Owned)?;
-            let axis = match axis {
-                Axis::Horizontal => "horizontal",
-                Axis::Vertical => "vertical",
-            };
-            let mut code = format!("::iced::widget::rule::{axis}({thickness} as f32)");
-            append_rule_options(&mut code, options, env, document)?;
-            Ok(format!("{code}.into()"))
+        ViewNode::Rule { .. } => {
+            render_rule(document.program().resolved_rule_for(node)?, document, env)
         }
-        ViewNode::QrCode {
-            payload,
-            correction,
-            version,
-            cell_size,
-            total_size,
-            cell,
-            background,
-            ..
-        } => {
-            let data = qr_data_code(payload, *correction, *version, env, document)?;
-            let mut code = format!("::ui_lang_runtime::qr_code({data}.ok())");
-            // QR v40 has 177 cells plus four quiet-zone cells; spacing counts gaps.
-            if let Some(value) = cell_size {
-                write!(
-                    code,
-                    ".cell_size(::ui_lang_runtime::bounded_spacing({}, 182))",
-                    expr_code(value, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            if let Some(value) = total_size {
-                write!(
-                    code,
-                    ".total_size(::ui_lang_runtime::bounded_spacing({}, 3))",
-                    expr_code(value, env, document, ValueMode::Owned)?
-                )
-                .unwrap();
-            }
-            if cell.is_some() || background.is_some() {
-                let cell = cell.as_deref().map(|value| theme_color(document, value));
-                let background = background
-                    .as_deref()
-                    .map(|value| theme_color(document, value));
-                let (theme, default) = if cell.is_none() || background.is_none() {
-                    (
-                        "theme",
-                        "let default = ::iced::widget::qr_code::default(theme); ",
-                    )
-                } else {
-                    ("_theme", "")
-                };
-                write!(
-                    code,
-                    ".style(move |{theme}| {{ {default}::iced::widget::qr_code::Style {{ cell: {}, background: {} }} }})",
-                    cell.unwrap_or_else(|| "default.cell".into()),
-                    background.unwrap_or_else(|| "default.background".into())
-                )
-                .unwrap();
-            }
-            Ok(format!("{code}.into()"))
-        }
-        ViewNode::Space { width, height, .. } => {
-            let mut code = String::from("::iced::widget::space()");
-            append_dimensions(&mut code, [width, height], env, document)?;
-            Ok(format!("{code}.into()"))
+        ViewNode::QrCode { .. } => render_qr_code(
+            document.program().resolved_qr_code_for(node)?,
+            document,
+            env,
+        ),
+        ViewNode::Space { .. } => {
+            render_space(document.program().resolved_space_for(node)?, document, env)
         }
         ViewNode::Component { span, .. } => {
             let call = document.program().component_call(span)?;

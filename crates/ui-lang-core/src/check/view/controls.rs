@@ -506,6 +506,7 @@ pub(in crate::check) fn infer_controls_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_nonnegative_f64(thickness, env, document, "rule thickness", span)?;
             if let Some(RuleFill::Percent(percent)) = &options.fill {
                 require_type(&expr_type(percent, env, document, span)?, &Type::F64, span)?;
@@ -530,6 +531,7 @@ pub(in crate::check) fn infer_controls_group(
                 require_type(&expr_type(snap, env, document, span)?, &Type::Bool, span)?;
             }
             check_styles(styles, document, span, StyleTarget::Rule)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::QrCode {
             payload,
@@ -543,6 +545,7 @@ pub(in crate::check) fn infer_controls_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             let ty = expr_type(payload, env, document, span)?;
             if !matches!(ty, Type::Str | Type::Bytes) {
                 return Err(type_error(span, &Type::Str, &ty).hint("qr accepts str or bytes"));
@@ -561,6 +564,7 @@ pub(in crate::check) fn infer_controls_group(
                     require_theme_color(color, document, span, "E136", &format!("qr {label}"))?;
                 }
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Space {
             id,
@@ -570,10 +574,12 @@ pub(in crate::check) fn infer_controls_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             for length in [width, height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "space length")?;
             }
             check_styles(styles, document, span, StyleTarget::Space)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         _ => return Ok(false),
     };

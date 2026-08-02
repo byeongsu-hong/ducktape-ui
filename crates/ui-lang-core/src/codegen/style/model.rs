@@ -183,44 +183,6 @@ pub(in crate::codegen) fn resolved_background_code(
     })
 }
 
-/// Encodes a QR payload where it is rendered, never once in application state:
-/// the payload is an expression, so a matrix built at startup would be stale
-/// the moment the expression changes.
-pub(in crate::codegen) fn qr_data_code(
-    payload: &Expr,
-    correction: Option<QrCorrection>,
-    version: Option<QrVersion>,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    let module = "::iced::widget::qr_code";
-    let data = format!(
-        "&({})",
-        expr_code(payload, env, document, ValueMode::Borrowed)?
-    );
-    let correction_code = |value| match value {
-        QrCorrection::Low => format!("{module}::ErrorCorrection::Low"),
-        QrCorrection::Medium => format!("{module}::ErrorCorrection::Medium"),
-        QrCorrection::Quartile => format!("{module}::ErrorCorrection::Quartile"),
-        QrCorrection::High => format!("{module}::ErrorCorrection::High"),
-    };
-    Ok(if let Some(version) = version {
-        let version = match version {
-            QrVersion::Normal(value) => format!("{module}::Version::Normal({value})"),
-            QrVersion::Micro(value) => format!("{module}::Version::Micro({value})"),
-        };
-        let correction = correction_code(correction.unwrap_or(QrCorrection::Medium));
-        format!("{module}::Data::with_version({data}, {version}, {correction})")
-    } else if let Some(value) = correction {
-        format!(
-            "{module}::Data::with_error_correction({data}, {})",
-            correction_code(value)
-        )
-    } else {
-        format!("{module}::Data::new({data})")
-    })
-}
-
 pub(in crate::codegen) fn color_code(value: &str, opacity: Option<u8>) -> String {
     let hex = value.trim_start_matches('#');
     let byte = |range: std::ops::Range<usize>| u8::from_str_radix(&hex[range], 16).unwrap_or(0);

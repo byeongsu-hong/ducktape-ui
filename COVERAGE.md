@@ -429,8 +429,10 @@ rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Button, TextEditor, Float, Pin, Responsive, Lazy, KeyedColumn,
-Table, PaneGrid, If, For, and Match families remain outside this slice.
+MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText,
+Input, Button, TextEditor, PickList, ComboBox, Slider, Progress, Rule, QrCode,
+Space, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and
+Match families remain outside this slice.
 The `hir_boundary` integration ratchet records selected lexical markers for the
 remaining code-generation AST/checker boundary: exported AST identifiers,
 explicit checker imports and uses, checked-document and `RenderDocument`
@@ -494,8 +496,10 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Button, TextEditor, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
-If, For, and Match remain open HIR slices.
+ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Button,
+TextEditor, PickList, ComboBox, Slider, Progress, Rule, QrCode, Space, Float,
+Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and Match remain
+open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -774,6 +778,19 @@ native output tests, and explicit 4,000-PickList plus 4,000-distinct-ComboBox
 budgets cover the boundary. App-only callbacks perform zero full binding
 environment clones; the distinct-state contract lowers in about 100 ms and
 emits in about 400 ms on the reference development machine.
+
+Rule, QrCode, and Space have complete private HIR boundaries. Shared checked
+interaction records freeze each primitive's stable view identity, ordered
+expression partition, static option topology, and parented physical origin; a
+dedicated QrCode fact also freezes its exact `str`/`bytes` payload type.
+Lowering publishes `ResolvedRule`, `ResolvedQrCode`, and `ResolvedSpace` with
+canonical axis/fill/preset, correction/version/defaulting, exclusive sizing,
+native-versus-numeric length, and resolved theme-color contracts. Production
+emission reads the source node only for the shared widget ID. Structural HIR
+assertions, pre- and post-lowering raw poisoning, same-arena and cross-widget
+operand identity attacks, corrupt facts, imported origin parents, complete
+native output tests, the lexical boundary ratchet, and an ignored mixed
+4,000-primitive lower+emit budget cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

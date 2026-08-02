@@ -959,6 +959,22 @@ pub(crate) struct CheckedProgress {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedRule {
+    pub(crate) id: ViewId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedQrCode {
+    pub(crate) id: ViewId,
+    pub(crate) payload_type: Type,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedSpace {
+    pub(crate) id: ViewId,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTooltip {
     pub(crate) id: ViewId,
     pub(crate) expression_count: u32,
@@ -981,6 +997,9 @@ pub(crate) enum CheckedInteractionKind {
     Checkbox,
     Toggler,
     Radio,
+    Rule,
+    QrCode,
+    Space,
     MouseArea,
     ResizeHandle,
     Sensor,
@@ -1073,6 +1092,9 @@ pub(crate) struct CheckedFacts {
     combo_boxes: HashMap<ViewId, CheckedComboBox>,
     sliders: HashMap<ViewId, CheckedSlider>,
     progresses: HashMap<ViewId, CheckedProgress>,
+    rules: HashMap<ViewId, CheckedRule>,
+    qr_codes: HashMap<ViewId, CheckedQrCode>,
+    spaces: HashMap<ViewId, CheckedSpace>,
     tooltips: HashMap<ViewId, CheckedTooltip>,
     interactions: HashMap<ViewId, CheckedInteraction>,
     pane_grids: HashMap<ViewId, CheckedPaneGrid>,
@@ -1240,6 +1262,21 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn transplant_interaction_option_expression(
+        &mut self,
+        destination_view: ViewId,
+        destination_index: usize,
+        source_view: ViewId,
+        source_index: usize,
+    ) {
+        let source = self.interactions[&source_view].option_expressions[source_index];
+        self.interactions
+            .get_mut(&destination_view)
+            .unwrap()
+            .option_expressions[destination_index] = source;
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_text_editor_binding(&mut self, view: ViewId, binding: CheckedValueRef) {
         self.text_editors.get_mut(&view).unwrap().binding = binding;
     }
@@ -1310,6 +1347,26 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_progress_id(&mut self, view: ViewId, raw: u32) {
         self.progresses.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_rule_id(&mut self, view: ViewId, raw: u32) {
+        self.rules.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_qr_code_id(&mut self, view: ViewId, raw: u32) {
+        self.qr_codes.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_qr_payload_type(&mut self, view: ViewId, payload_type: Type) {
+        self.qr_codes.get_mut(&view).unwrap().payload_type = payload_type;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_space_id(&mut self, view: ViewId, raw: u32) {
+        self.spaces.get_mut(&view).unwrap().id = ViewId(raw);
     }
 
     #[cfg(test)]
@@ -1509,6 +1566,18 @@ impl CheckedFacts {
         self.progresses
             .get(&id)
             .filter(|progress| progress.id == id)
+    }
+
+    pub(crate) fn rule(&self, id: ViewId) -> Option<&CheckedRule> {
+        self.rules.get(&id).filter(|rule| rule.id == id)
+    }
+
+    pub(crate) fn qr_code(&self, id: ViewId) -> Option<&CheckedQrCode> {
+        self.qr_codes.get(&id).filter(|qr| qr.id == id)
+    }
+
+    pub(crate) fn space(&self, id: ViewId) -> Option<&CheckedSpace> {
+        self.spaces.get(&id).filter(|space| space.id == id)
     }
 
     pub(crate) fn tooltip(&self, id: ViewId) -> Option<&CheckedTooltip> {
@@ -4194,6 +4263,124 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "progress facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_rule_facts(
+        &mut self,
+        rule: ViewId,
+        axis: Axis,
+        thickness: &Expr,
+        options: &RuleOptions,
+        styles: &[String],
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.lower_interaction_facts(
+            rule,
+            CheckedInteractionKind::Rule,
+            crate::ast::rule_semantic_key(axis, options, styles),
+            crate::ast::rule_expression_roots(thickness, options)
+                .into_iter()
+                .map(|expression| (expression, None))
+                .collect(),
+            Vec::new(),
+            env,
+            span,
+        )?;
+        if self
+            .facts
+            .rules
+            .insert(rule, CheckedRule { id: rule })
+            .is_some()
+        {
+            return Err(self.invariant(span, "rule facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_qr_code_facts(
+        &mut self,
+        qr: ViewId,
+        payload: &Expr,
+        correction: Option<QrCorrection>,
+        version: Option<QrVersion>,
+        cell_size: &Option<Expr>,
+        total_size: &Option<Expr>,
+        cell: &Option<String>,
+        background: &Option<String>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.lower_interaction_facts(
+            qr,
+            CheckedInteractionKind::QrCode,
+            crate::ast::qr_code_semantic_key(
+                correction, version, cell_size, total_size, cell, background,
+            ),
+            crate::ast::qr_code_expression_roots(payload, cell_size, total_size)
+                .into_iter()
+                .map(|expression| (expression, None))
+                .collect(),
+            Vec::new(),
+            env,
+            span,
+        )?;
+        let payload_type = self
+            .facts
+            .interaction(qr)
+            .and_then(|interaction| interaction.option_expressions.first())
+            .and_then(|expression| self.facts.try_expression_use(*expression))
+            .map(|expression| expression.source.clone())
+            .ok_or_else(|| self.invariant(span, "qr payload type disappeared"))?;
+        if self
+            .facts
+            .qr_codes
+            .insert(
+                qr,
+                CheckedQrCode {
+                    id: qr,
+                    payload_type,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "qr facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    fn lower_space_facts(
+        &mut self,
+        space: ViewId,
+        width: &Option<LengthValue>,
+        height: &Option<LengthValue>,
+        styles: &[String],
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.lower_interaction_facts(
+            space,
+            CheckedInteractionKind::Space,
+            crate::ast::space_semantic_key(width, height, styles),
+            crate::ast::space_expression_roots(width, height)
+                .into_iter()
+                .map(|expression| (expression, None))
+                .collect(),
+            Vec::new(),
+            env,
+            span,
+        )?;
+        if self
+            .facts
+            .spaces
+            .insert(space, CheckedSpace { id: space })
+            .is_some()
+        {
+            return Err(self.invariant(span, "space facts were produced more than once"));
         }
         Ok(())
     }
@@ -8925,6 +9112,52 @@ impl<'a> FactsBuilder<'a> {
                 self.lower_progress_facts(
                     view, value, min, max, options, *vertical, styles, env, span,
                 )?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Rule {
+                axis,
+                thickness,
+                options,
+                styles,
+                span,
+                ..
+            } => {
+                self.lower_rule_facts(view, *axis, thickness, options, styles, env, span)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::QrCode {
+                payload,
+                correction,
+                version,
+                cell_size,
+                total_size,
+                cell,
+                background,
+                span,
+                ..
+            } => {
+                self.lower_qr_code_facts(
+                    view,
+                    payload,
+                    *correction,
+                    *version,
+                    cell_size,
+                    total_size,
+                    cell,
+                    background,
+                    env,
+                    span,
+                )?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Space {
+                width,
+                height,
+                styles,
+                span,
+                ..
+            } => {
+                self.lower_space_facts(view, width, height, styles, env, span)?;
                 CheckedViewFlow::None
             }
             ViewNode::Layout {

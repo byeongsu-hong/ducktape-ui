@@ -352,6 +352,121 @@ pub enum RuleFill {
     AsymmetricPadding(u16, u16),
 }
 
+pub(crate) fn rule_expression_roots<'a>(
+    thickness: &'a Expr,
+    options: &'a RuleOptions,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![thickness];
+    if let Some(RuleFill::Percent(percent)) = &options.fill {
+        roots.push(percent);
+    }
+    roots.extend(
+        [
+            &options.radius,
+            &options.radius_top_left,
+            &options.radius_top_right,
+            &options.radius_bottom_right,
+            &options.radius_bottom_left,
+            &options.snap,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn rule_semantic_key(axis: Axis, options: &RuleOptions, styles: &[String]) -> String {
+    let axis = match axis {
+        Axis::Horizontal => "horizontal",
+        Axis::Vertical => "vertical",
+    };
+    let fill = match &options.fill {
+        None => "none".into(),
+        Some(RuleFill::Full) => "full".into(),
+        Some(RuleFill::Percent(_)) => "percent".into(),
+        Some(RuleFill::Padded(value)) => format!("pad:{value}"),
+        Some(RuleFill::AsymmetricPadding(first, second)) => {
+            format!("pad:{first}:{second}")
+        }
+    };
+    format!(
+        "rule|axis={axis}|preset={:?}|fill={fill}|color={:?}|radius={:?}|snap={}|styles={styles:?}",
+        options.style,
+        options.color,
+        [
+            options.radius.is_some(),
+            options.radius_top_left.is_some(),
+            options.radius_top_right.is_some(),
+            options.radius_bottom_right.is_some(),
+            options.radius_bottom_left.is_some(),
+        ],
+        options.snap.is_some(),
+    )
+}
+
+pub(crate) fn qr_code_expression_roots<'a>(
+    payload: &'a Expr,
+    cell_size: &'a Option<Expr>,
+    total_size: &'a Option<Expr>,
+) -> Vec<&'a Expr> {
+    std::iter::once(payload)
+        .chain(cell_size.iter())
+        .chain(total_size.iter())
+        .collect()
+}
+
+pub(crate) fn qr_code_semantic_key(
+    correction: Option<QrCorrection>,
+    version: Option<QrVersion>,
+    cell_size: &Option<Expr>,
+    total_size: &Option<Expr>,
+    cell: &Option<String>,
+    background: &Option<String>,
+) -> String {
+    let correction = match correction {
+        None => "none",
+        Some(QrCorrection::Low) => "low",
+        Some(QrCorrection::Medium) => "medium",
+        Some(QrCorrection::Quartile) => "quartile",
+        Some(QrCorrection::High) => "high",
+    };
+    let version = match version {
+        None => "none".into(),
+        Some(QrVersion::Normal(value)) => format!("normal:{value}"),
+        Some(QrVersion::Micro(value)) => format!("micro:{value}"),
+    };
+    format!(
+        "qr|correction={correction}|version={version}|cell-size={}|total-size={}|cell={cell:?}|background={background:?}",
+        cell_size.is_some(),
+        total_size.is_some(),
+    )
+}
+
+pub(crate) fn space_expression_roots<'a>(
+    width: &'a Option<LengthValue>,
+    height: &'a Option<LengthValue>,
+) -> Vec<&'a Expr> {
+    [width, height]
+        .into_iter()
+        .filter_map(|length| match length {
+            Some(LengthValue::Fixed(expression)) => Some(expression),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn space_semantic_key(
+    width: &Option<LengthValue>,
+    height: &Option<LengthValue>,
+    styles: &[String],
+) -> String {
+    format!(
+        "space|width={}|height={}|styles={styles:?}",
+        range_length_semantic_key(width),
+        range_length_semantic_key(height),
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconSide {
     Left,

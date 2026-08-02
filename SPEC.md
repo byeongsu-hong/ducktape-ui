@@ -471,6 +471,21 @@ the borrowed binding environment instead of cloning every App binding, keeping
 identity, malformed-ID, pre-/post-lowering mutation, imported-origin, native
 generation, and 4,000-node performance contracts cover the boundary.
 
+Rule, QrCode, and Space are completed content-primitive HIR slices. Their
+checked interaction records own stable `ViewId`s, deterministic expression
+slots, physical origins, and canonical static topology. QrCode additionally
+retains the exact `str` or `bytes` payload type. Lowering resolves Rule axis,
+preset, fill mode, radii, snap, and theme color; folds QrCode's optional
+correction into a canonical auto or versioned encoding (with `medium` as the
+versioned default), resolves its mutually exclusive cell/total size and theme
+colors; and distinguishes Space's numeric and native lengths. Generation
+consumes `ResolvedRule`, `ResolvedQrCode`, and `ResolvedSpace` plus checked
+expression IDs. It does not reread primitive options, payloads, colors, or
+dimensions from the source AST. Raw-contract poisoning, same-type and
+cross-widget identity attacks, malformed facts, imported origins, native Rust
+generation, and a mixed 4,000-node lower+emit budget provide the executable
+evidence.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

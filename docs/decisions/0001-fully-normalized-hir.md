@@ -117,9 +117,11 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and Match therefore remain open
-implementation slices; this status does not satisfy the migration-complete
-criteria below.
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout,
+Text, RichText, Input, Button, TextEditor, PickList, ComboBox, Slider, Progress,
+Rule, QrCode, Space, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
+If, For, and Match therefore remain open implementation slices; this status
+does not satisfy the migration-complete criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
 directly for imported and root source markers.
 
@@ -493,6 +495,17 @@ scope requires capture, preventing an App-state-count by callback-count
 quadratic path. Complete structural, corruption, raw-poisoning,
 imported-origin, native-output, and 4,000-node/distinct-state performance
 contracts provide the executable evidence.
+
+Rule, QrCode, and Space are completed content-primitive slices. The checked
+interaction arena freezes stable view identity, exact ordered expression uses,
+static option topology, and parented source origins, while the QrCode-specific
+fact retains the exact payload type. Lowering resolves Rule styling and fill,
+canonical QrCode version/correction/default and size modes, theme colors, and
+Space length variants into named records. Production emission consumes those
+records and checked expression IDs; the deleted Rule and QR style helpers no
+longer provide a raw semantic path. Structural, raw-poisoning, same-type and
+cross-widget identity, corrupt-fact, imported-origin, native-output, and mixed
+4,000-node performance contracts provide the executable evidence.
 
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
