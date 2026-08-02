@@ -792,6 +792,17 @@ operand identity attacks, corrupt facts, imported origin parents, complete
 native output tests, the lexical boundary ratchet, and an ignored mixed
 4,000-primitive lower+emit budget cover the boundary.
 
+Markdown has a complete private HIR boundary. Its checked interaction record
+freezes the concrete markdown state identity, ordered settings and style
+expressions, font topology, exact viewer extern ID and arguments, link route,
+and parented origins. Lowering publishes `ResolvedMarkdown` with canonical
+defaults, resolved fonts and theme colors, viewer argument modes, and typed
+link delivery. Production emission consumes that record and checked expression
+IDs; it does not reread raw content, settings, styles, viewer names, arguments,
+or routes. Raw-poisoning, cross-owner and invalid-ID attacks, imported physical
+origins and generated markers, native output tests, the lexical boundary
+ratchet, and an ignored 4,000-Markdown lower+emit contract cover the boundary.
+
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,

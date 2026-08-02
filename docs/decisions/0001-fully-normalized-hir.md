@@ -507,6 +507,18 @@ longer provide a raw semantic path. Structural, raw-poisoning, same-type and
 cross-widget identity, corrupt-fact, imported-origin, native-output, and mixed
 4,000-node performance contracts provide the executable evidence.
 
+Markdown is a completed document-content slice. Its checked contract freezes
+the exact markdown state identity, ordered settings and style operands, font
+choices, viewer extern identity and arguments, optional link route, and
+parented physical origins. Lowering resolves those facts into
+`ResolvedMarkdown`, including canonical defaults and route payload delivery.
+Production emission consumes only that record and checked expression IDs; raw
+content names, settings, styles, viewer names, arguments, and routes cannot
+change output after lowering. Structural and cross-owner corruption,
+pre-/post-lowering raw poisoning, imported-origin and source-marker coverage,
+native generation, and a 4,000-node lower+emit budget provide the executable
+evidence.
+
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates expression ownership and DAG, scope and value type,

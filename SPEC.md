@@ -486,6 +486,16 @@ cross-widget identity attacks, malformed facts, imported origins, native Rust
 generation, and a mixed 4,000-node lower+emit budget provide the executable
 evidence.
 
+Markdown is a completed document-content HIR slice. Its checked contract owns
+the exact markdown state reference, every dynamic setting and style operand,
+font selection, viewer extern identity and arguments, optional link route, and
+their source origins. Lowering resolves those facts into `ResolvedMarkdown`
+with canonical defaults and typed link delivery. Generation consumes that
+record and checked expression IDs; raw content names, settings, styles, viewer
+names, arguments, and routes cannot affect output after lowering. Structural
+and cross-owner corruption, raw poisoning, imported-origin/source-marker,
+native generation, and 4,000-node performance contracts cover the boundary.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust
