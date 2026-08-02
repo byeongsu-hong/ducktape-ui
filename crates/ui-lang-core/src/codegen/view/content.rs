@@ -292,52 +292,12 @@ pub(in crate::codegen) fn render_content(
                 "(|| {{ let __slot_content: __IceElement<'_, {message}> = {rendered}; __slot_content }})()"
             ))
         }
-        ViewNode::ExternComponent {
-            function,
-            args,
-            route,
-            span,
-            ..
-        } => {
-            let component = find_extern_function(document, function, ExternKind::Component)
-                .ok_or_else(|| {
-                    Error::new(
-                        "E130",
-                        span,
-                        format!("unknown extern component `{function}`"),
-                    )
-                })?;
-            let args = args
-                .iter()
-                .enumerate()
-                .map(|(index, arg)| {
-                    if component.borrowed[index] {
-                        let arg = expr_code(arg, env, document, ValueMode::Borrowed)?;
-                        let borrow = if matches!(
-                            component.params[index].1,
-                            Type::Str | Type::Bytes | Type::List(_)
-                        ) {
-                            "::std::convert::AsRef::as_ref"
-                        } else {
-                            "::std::borrow::Borrow::borrow"
-                        };
-                        Ok(format!("{borrow}(&({arg}))"))
-                    } else {
-                        expr_code(arg, env, document, ValueMode::Owned)
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .join(", ");
-            let mapped = if let Some(route) = route {
-                route_callback_code(route, "__value", "__value", env, document, message)?
-            } else {
-                format!("move |__value| {message}::__ExternNoop")
-            };
-            Ok(format!(
-                "{}({args}).map({mapped}).into()",
-                component.rust_path
-            ))
-        }
+        ViewNode::ExternComponent { .. } => render_extern_component(
+            document.program().resolved_extern_component_for(node)?,
+            document,
+            message,
+            env,
+        ),
         ViewNode::Themer {
             function,
             args,

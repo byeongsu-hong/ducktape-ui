@@ -277,6 +277,7 @@ pub(in crate::check) fn infer_components_group(
             route,
             span,
         } => {
+            let extern_component_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             let component = extern_function(document, function, ExternKind::Component, span)?;
             check_call_args(component, args, env, document, span)?;
@@ -300,6 +301,7 @@ pub(in crate::check) fn infer_components_group(
                     ));
                 }
             }
+            retain_interaction_analyses(span, extern_component_analysis_guard.finish())?;
         }
         ViewNode::Themer {
             function,

@@ -333,6 +333,18 @@ pub enum ViewNode {
     },
 }
 
+pub(crate) fn extern_component_semantic_key(
+    function: &str,
+    args: &[Expr],
+    route: &Option<Route>,
+) -> String {
+    format!(
+        "extern-component|function={function}|arguments={}|route={}",
+        args.len(),
+        route.is_some()
+    )
+}
+
 impl ViewNode {
     pub fn span(&self) -> &Span {
         match self {

@@ -454,7 +454,7 @@ pub(in crate::codegen) fn generate_update(
             .any(|(pane, _)| pane.resize_leeway.is_some() || pane.draggable)
         || !program.controlled_input_bindings()?.is_empty()
         || !program.controlled_editor_bindings()?.is_empty()
-        || needs_extern_noop(document);
+        || needs_extern_noop(program, document);
     let task_binding = if has_fallthrough_arm {
         "let __task = "
     } else {
@@ -744,7 +744,7 @@ pub(in crate::codegen) fn generate_update(
             .unwrap();
         }
     }
-    if needs_extern_noop(document) {
+    if needs_extern_noop(program, document) {
         writeln!(out, "{message}::__ExternNoop => ::iced::Task::none(),").unwrap();
     }
     if has_animations(program) {

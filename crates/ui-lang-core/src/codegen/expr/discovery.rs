@@ -349,12 +349,10 @@ pub(in crate::codegen) fn canvas_group_symbol(group: &str) -> String {
     }
 }
 
-pub(in crate::codegen) fn needs_extern_noop(document: &Document) -> bool {
+pub(in crate::codegen) fn needs_extern_noop(program: &LoweredProgram, document: &Document) -> bool {
     fn contains(node: &ViewNode) -> bool {
         match node {
-            ViewNode::ExternComponent { route: None, .. }
-            | ViewNode::Themer { route: None, .. }
-            | ViewNode::Shader { route: None, .. } => true,
+            ViewNode::Themer { route: None, .. } | ViewNode::Shader { route: None, .. } => true,
             ViewNode::Layout { children, .. }
             | ViewNode::If { children, .. }
             | ViewNode::For { children, .. } => children.iter().any(contains),
@@ -393,7 +391,10 @@ pub(in crate::codegen) fn needs_extern_noop(document: &Document) -> bool {
             _ => false,
         }
     }
-    contains(&document.view)
+    program
+        .extern_components()
+        .any(|component| component.route.is_none())
+        || contains(&document.view)
         || document.components.iter().any(|item| contains(&item.root))
         || document
             .tests

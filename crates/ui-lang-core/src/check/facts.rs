@@ -922,6 +922,13 @@ pub(crate) struct CheckedMarkdown {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedExternComponent {
+    pub(crate) id: ViewId,
+    pub(crate) function: ExternFnId,
+    pub(crate) output: Type,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedBooleanControl {
     pub(crate) id: ViewId,
     pub(crate) style: Option<ExternFnId>,
@@ -1000,6 +1007,7 @@ pub(crate) enum CheckedInteractionKind {
     Button,
     TextEditor,
     Markdown,
+    ExternComponent,
     PickList,
     ComboBox,
     Slider,
@@ -1098,6 +1106,7 @@ pub(crate) struct CheckedFacts {
     buttons: HashMap<ViewId, CheckedButton>,
     text_editors: HashMap<ViewId, CheckedTextEditor>,
     markdowns: HashMap<ViewId, CheckedMarkdown>,
+    extern_components: HashMap<ViewId, CheckedExternComponent>,
     boolean_controls: HashMap<ViewId, CheckedBooleanControl>,
     pick_lists: HashMap<ViewId, CheckedPickList>,
     combo_boxes: HashMap<ViewId, CheckedComboBox>,
@@ -1315,6 +1324,36 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_markdown_viewer_output(&mut self, view: ViewId, output: Type) {
         self.markdowns.get_mut(&view).unwrap().viewer_output = output;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_extern_component_function(&mut self, view: ViewId, function: ExternFnId) {
+        self.extern_components.get_mut(&view).unwrap().function = function;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_extern_component_output(&mut self, view: ViewId, output: Type) {
+        self.extern_components.get_mut(&view).unwrap().output = output;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_extern_component_id(&mut self, view: ViewId, raw: u32) {
+        self.extern_components.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_interaction_expression_origin(
+        &mut self,
+        view: ViewId,
+        index: u32,
+        raw: u32,
+    ) {
+        let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+            widget: view,
+            index,
+        });
+        let expression = self.expression_uses_by_owner[&owner];
+        self.expression_uses[expression.0 as usize].origin = OriginId(raw);
     }
 
     #[cfg(test)]
@@ -1582,6 +1621,12 @@ impl CheckedFacts {
 
     pub(crate) fn markdown(&self, id: ViewId) -> Option<&CheckedMarkdown> {
         self.markdowns.get(&id).filter(|markdown| markdown.id == id)
+    }
+
+    pub(crate) fn extern_component(&self, id: ViewId) -> Option<&CheckedExternComponent> {
+        self.extern_components
+            .get(&id)
+            .filter(|component| component.id == id)
     }
 
     pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&CheckedBooleanControl> {
@@ -4145,6 +4190,54 @@ impl<'a> FactsBuilder<'a> {
         Ok(())
     }
 
+    fn lower_extern_component_facts(
+        &mut self,
+        component: ViewId,
+        function: &str,
+        args: &[Expr],
+        route: &Option<Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let declaration = self
+            .declarations
+            .extern_decl_by_name(function)
+            .filter(|declaration| declaration.kind == ExternKind::Component)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "extern component declaration disappeared"))?;
+        if declaration.params.len() != args.len() || declaration.borrowed.len() != args.len() {
+            return Err(self.invariant(span, "extern component argument contract diverged"));
+        }
+        self.lower_interaction_facts(
+            component,
+            CheckedInteractionKind::ExternComponent,
+            crate::ast::extern_component_semantic_key(function, args, route),
+            args.iter()
+                .zip(&declaration.params)
+                .map(|(argument, (_, destination))| (argument, Some(destination.clone())))
+                .collect(),
+            route.iter().collect(),
+            env,
+            span,
+        )?;
+        if self
+            .facts
+            .extern_components
+            .insert(
+                component,
+                CheckedExternComponent {
+                    id: component,
+                    function: declaration.declaration.id,
+                    output: declaration.output,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "extern component facts were produced more than once"));
+        }
+        Ok(())
+    }
+
     fn lower_boolean_control_facts(
         &mut self,
         control: ViewId,
@@ -5244,9 +5337,10 @@ impl<'a> FactsBuilder<'a> {
         self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
         self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
         self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
-        let source = analysis.type_of(expression).cloned().ok_or_else(|| {
+        let inferred = analysis.type_of(expression).cloned().ok_or_else(|| {
             self.invariant(span, "missing retained interaction expression root type")
         })?;
+        let source = resolve_erased_type(&contextual_type(inferred, destination));
         let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let origin = self.origins.push(span, Some(parent));
         let lowering = ExpressionLowering {
@@ -9558,6 +9652,16 @@ impl<'a> FactsBuilder<'a> {
                 for slot in slots {
                     self.lower_view_expression_tree(&slot.content, env)?;
                 }
+                CheckedViewFlow::None
+            }
+            ViewNode::ExternComponent {
+                function,
+                args,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_extern_component_facts(view, function, args, route, env, span)?;
                 CheckedViewFlow::None
             }
             _ => {

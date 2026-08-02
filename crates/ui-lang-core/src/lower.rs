@@ -38,6 +38,7 @@ mod conditional;
 mod container;
 mod content_primitives;
 mod editor;
+mod extern_component;
 mod float;
 mod input;
 mod interaction;
@@ -67,6 +68,7 @@ pub(crate) use conditional::*;
 pub(crate) use container::*;
 pub(crate) use content_primitives::*;
 pub(crate) use editor::*;
+pub(crate) use extern_component::*;
 pub(crate) use float::*;
 pub(crate) use input::*;
 pub(crate) use interaction::*;
@@ -1517,6 +1519,7 @@ pub(crate) struct LoweredProgram {
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
     markdowns: HashMap<ViewId, ResolvedMarkdown>,
+    extern_components: HashMap<ViewId, ResolvedExternComponent>,
     boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
@@ -3115,6 +3118,15 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn extern_component(&self, id: ViewId) -> Option<&ResolvedExternComponent> {
+        self.extern_components.get(&id)
+    }
+
+    pub(crate) fn extern_components(&self) -> impl Iterator<Item = &ResolvedExternComponent> {
+        self.extern_components.values()
+    }
+
+    #[cfg(test)]
     pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&ResolvedBooleanControl> {
         self.boolean_controls.get(&id)
     }
@@ -3446,6 +3458,36 @@ impl LoweredProgram {
             ));
         }
         Ok(markdown)
+    }
+
+    pub(crate) fn resolved_extern_component_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedExternComponent, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "extern component reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        let component = self.extern_components.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "extern component reached code generation without normalized HIR",
+            )
+        })?;
+        if checked.id != id || component.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "extern component reached code generation with a mismatched checked view ID",
+            ));
+        }
+        Ok(component)
     }
 
     pub(crate) fn resolved_boolean_control_for(
@@ -4453,6 +4495,7 @@ pub(crate) struct Lowerer {
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
     markdowns: HashMap<ViewId, ResolvedMarkdown>,
+    extern_components: HashMap<ViewId, ResolvedExternComponent>,
     boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
@@ -5210,6 +5253,7 @@ impl Lowerer {
             inputs: HashMap::new(),
             text_editors: HashMap::new(),
             markdowns: HashMap::new(),
+            extern_components: HashMap::new(),
             boolean_controls: HashMap::new(),
             pick_lists: HashMap::new(),
             combo_boxes: HashMap::new(),
@@ -5376,6 +5420,7 @@ impl Lowerer {
             inputs: self.inputs,
             text_editors: self.text_editors,
             markdowns: self.markdowns,
+            extern_components: self.extern_components,
             boolean_controls: self.boolean_controls,
             pick_lists: self.pick_lists,
             combo_boxes: self.combo_boxes,
@@ -9330,6 +9375,15 @@ impl Lowerer {
                 ..
             } => {
                 self.lower_markdown(content, options, route, span, outer_component)?;
+            }
+            ViewNode::ExternComponent {
+                function,
+                args,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_extern_component(function, args, route, span, outer_component)?;
             }
             ViewNode::Checkbox {
                 id,
@@ -14044,6 +14098,269 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized boolean controls lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_the_complete_extern_component_contract() {
+        let source = format!(
+            "app ExternComponentHir\nextern crate::backend\n  component borrowed_surface(label:&str, active:&bool, choice:bool?) -> bool\n{THEME}state\n  label = \"Native\"\n  active = false\non changed(next)\nview\n  extern borrowed_surface(label, active, none) -> changed _\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let component = program.extern_component(ViewId(0)).unwrap();
+
+        assert_eq!(component.id, ViewId(0));
+        assert_eq!(component.function.id, ExternFnId(0));
+        assert_eq!(component.function.name, "borrowed_surface");
+        assert_eq!(
+            component.function.rust_path,
+            "crate::backend::borrowed_surface"
+        );
+        assert_eq!(component.arguments.len(), 3);
+        assert_eq!(component.arguments[0].ty, Type::Str);
+        assert_eq!(
+            component.arguments[0].mode,
+            ResolvedExternComponentArgumentMode::BorrowedAsRef
+        );
+        assert_eq!(component.arguments[1].ty, Type::Bool);
+        assert_eq!(
+            component.arguments[1].mode,
+            ResolvedExternComponentArgumentMode::Borrowed
+        );
+        assert_eq!(
+            component.arguments[2].ty,
+            Type::Option(Box::new(Type::Bool))
+        );
+        assert_eq!(
+            component.arguments[2].mode,
+            ResolvedExternComponentArgumentMode::Owned
+        );
+        assert_eq!(component.output, Type::Bool);
+        assert!(matches!(
+            component.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+        assert_eq!(
+            component.route.as_ref().unwrap().source_payloads,
+            vec![Type::Bool]
+        );
+
+        let generated = crate::codegen::generate(&program, "extern-component-hir.ice").unwrap();
+        assert!(generated.contains("crate::backend::borrowed_surface("));
+        assert!(generated.contains("::std::convert::AsRef::as_ref"));
+        assert!(generated.contains("::std::borrow::Borrow::borrow"));
+        assert!(generated.contains("__ExternComponentHirMessage::Changed(__value)"));
+    }
+
+    #[test]
+    fn extern_component_routes_direct_component_handlers_and_component_outputs() {
+        let direct = format!(
+            "app ExternDirect\nextern crate::backend\n  component native_surface(active:bool) -> bool\n{THEME}state\n  active = false\non changed(next)\nview\n  extern native_surface(active) -> changed _\n"
+        );
+        let program = lower(analyze(&direct).unwrap()).unwrap();
+        assert!(matches!(
+            program
+                .extern_component(ViewId(0))
+                .unwrap()
+                .route
+                .as_ref()
+                .unwrap()
+                .target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+
+        let local = format!(
+            "app ExternLocal\nextern crate::backend\n  component native_surface(active:bool) -> bool\n{THEME}state\n  active = false\ncomponent Wrapper(active:bool)\n  on changed(next)\n  extern native_surface(active) -> changed _\nview\n  Wrapper active=active\n"
+        );
+        let program = lower(analyze(&local).unwrap()).unwrap();
+        let component = program.extern_components.values().next().unwrap();
+        assert!(matches!(
+            component.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+
+        let output = format!(
+            "app ExternOutput\nextern crate::backend\n  component native_surface(active:bool) -> bool\n{THEME}state\n  active = false\ncomponent Wrapper(active:bool) -> bool\n  extern native_surface(active) -> emit(_)\non changed(next)\nview\n  Wrapper active=active -> changed _\n"
+        );
+        let program = lower(analyze(&output).unwrap()).unwrap();
+        let component = program.extern_components.values().next().unwrap();
+        assert!(matches!(
+            component.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::OutputCallback {
+                output: Type::Bool,
+                ..
+            }
+        ));
+        let generated = crate::codegen::generate(&program, "extern-output.ice").unwrap();
+        assert!(generated.contains("crate::backend::native_surface("));
+        assert!(generated.contains("__ExternOutputMessage::Changed(__value)"));
+
+        let no_output = format!(
+            "app ExternUnit\nextern crate::backend\n  component native_surface(active:bool) -> unit\n{THEME}state\n  active = false\nview\n  extern native_surface(active)\n"
+        );
+        let program = lower(analyze(&no_output).unwrap()).unwrap();
+        let component = program.extern_component(ViewId(0)).unwrap();
+        assert_eq!(component.output, Type::Unit);
+        assert!(component.route.is_none());
+        let generated = crate::codegen::generate(&program, "extern-unit.ice").unwrap();
+        assert!(generated.contains("__ExternNoop"));
+    }
+
+    #[test]
+    fn extern_component_codegen_ignores_every_raw_semantic_field_after_lowering() {
+        let source = format!(
+            "app ExternPoison\nextern crate::backend\n  component primary_surface(active:bool) -> bool\n  component poisoned_surface(active:bool) -> bool\n{THEME}state\n  active = false\non changed(next)\nview\n  extern primary_surface(active) -> changed _\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "extern-poison.ice").unwrap();
+        let ViewNode::ExternComponent {
+            function,
+            args,
+            route,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be an extern component");
+        };
+        *function = "poisoned_surface".into();
+        *args = vec![Expr::Str("POISONED".into())];
+        *route = None;
+
+        let actual = crate::codegen::generate(&program, "extern-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+    }
+
+    #[test]
+    fn extern_component_lowering_rejects_cross_owner_identity_route_origin_and_id_corruption() {
+        let source = format!(
+            "app ExternIdentity\nextern crate::backend\n  component first_surface(active:bool) -> bool\n  component second_surface(active:bool) -> bool\n{THEME}state\n  active = false\non first_changed(next)\non second_changed(next)\nview\n  col\n    extern first_surface(active) -> first_changed _\n    extern second_surface(active) -> second_changed _\n"
+        );
+        let first = ViewId(1);
+        let second = ViewId(2);
+
+        let mut swapped_expressions = analyze(&source).unwrap();
+        swapped_expressions
+            .facts
+            .transplant_interaction_option_expression(first, 0, second, 0);
+        let error = lower(swapped_expressions).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut corrupt_function = analyze(&source).unwrap();
+        corrupt_function
+            .facts
+            .corrupt_extern_component_function(first, ExternFnId(1));
+        let error = lower(corrupt_function).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut corrupt_output = analyze(&source).unwrap();
+        corrupt_output
+            .facts
+            .corrupt_extern_component_output(first, Type::Unit);
+        let error = lower(corrupt_output).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut swapped_routes = analyze(&source).unwrap();
+        swapped_routes.facts.swap_interaction_routes(first, second);
+        let error = lower(swapped_routes).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut corrupt_origin = analyze(&source).unwrap();
+        corrupt_origin
+            .facts
+            .corrupt_interaction_expression_origin(first, 0, u32::MAX);
+        let error = lower(corrupt_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument origin is invalid"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id
+            .facts
+            .corrupt_extern_component_id(first, u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn imported_extern_component_keeps_declaration_argument_route_and_source_map_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-extern-component-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("native.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedExternApp\nuse \"native.ice\"\n{THEME}state\n  label = \"Imported\"\non opened(next)\nview\n  ImportedSurface label=label -> opened _\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  component imported_surface(label:&str) -> bool\ncomponent ImportedSurface(label:str) -> bool\n  extern imported_surface(label) -> emit(_)\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let component = program.extern_components.values().next().unwrap();
+        let widget_origin = program.origin(component.origin);
+        assert_eq!(widget_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(widget_origin.line, 4);
+        let declaration_origin = program.origin(component.function.declaration_origin);
+        assert_eq!(declaration_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(declaration_origin.line, 2);
+        let argument_origin = program.origin(component.arguments[0].origin);
+        assert_eq!(argument_origin.parent, Some(component.origin));
+        assert_eq!(argument_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(argument_origin.line, 4);
+        let route_origin = program.origin(component.route.as_ref().unwrap().origin);
+        assert_eq!(route_origin.parent, Some(component.origin));
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.line, 4);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized extern-component lowering and emission performance contract"]
+    fn performance_contract_four_thousand_extern_components_lower_and_emit_under_two_seconds() {
+        const EXTERN_COMPONENTS: usize = 4_000;
+        let mut source = format!(
+            "app ExternScale\nextern crate::backend\n  component native_surface(index:i64) -> unit\n{THEME}state\n  index = 7\nview\n  col\n"
+        );
+        for _ in 0..EXTERN_COMPONENTS {
+            writeln!(source, "    extern native_surface(index)").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "extern-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.extern_components.len(), EXTERN_COMPONENTS);
+        assert_eq!(
+            generated
+                .matches(".map(move |__value| __ExternScaleMessage::__ExternNoop)")
+                .count(),
+            EXTERN_COMPONENTS
+        );
+        eprintln!("4k normalized extern components lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized extern components lowered and emitted in {elapsed:?}"
         );
     }
 

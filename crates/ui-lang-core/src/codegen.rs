@@ -578,7 +578,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
-    if needs_extern_noop(document) {
+    if needs_extern_noop(program, document) {
         writeln!(out, "__ExternNoop,").unwrap();
     }
     if has_animations(program) {
