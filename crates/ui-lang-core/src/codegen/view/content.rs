@@ -96,7 +96,7 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            for event in &call.events {
+            for (event_index, event) in call.events.iter().enumerate() {
                 let payloads = (0..event.payloads().len())
                     .map(|index| format!("__event_{index}"))
                     .collect::<Vec<_>>();
@@ -113,6 +113,9 @@ pub(in crate::codegen) fn render_content(
                         )?
                     }
                     ResolvedEventRoute::Forward {
+                        event: callee_event,
+                        name: callee_event_name,
+                        payloads: callee_payloads,
                         outer_component,
                         outer_component_name,
                         outer_event,
@@ -122,14 +125,22 @@ pub(in crate::codegen) fn render_content(
                         ..
                     } => {
                         let program = document.program();
+                        program.validate_component_call_event_contract(
+                            call,
+                            event_index,
+                            *callee_event,
+                            callee_event_name,
+                            callee_payloads,
+                            *origin,
+                        )?;
                         let outer = program
                             .try_component(*outer_component)
                             .filter(|component| {
                                 component.id == *outer_component
                                     && component.name == *outer_component_name
                                     && outer_event.component == *outer_component
-                                    && *outer_event_name == event.name()
-                                    && outer_payloads == event.payloads()
+                                    && *outer_event_name == *callee_event_name
+                                    && outer_payloads == callee_payloads
                                     && program.component_event_matches(
                                         *outer_event,
                                         outer_event_name,
@@ -141,7 +152,7 @@ pub(in crate::codegen) fn render_content(
                                     *origin,
                                     format!(
                                         "lowered forwarded event `{}` has an invalid outer contract",
-                                        event.name()
+                                        callee_event_name
                                     ),
                                 )
                             })?;
@@ -151,7 +162,7 @@ pub(in crate::codegen) fn render_content(
                                     *origin,
                                     format!(
                                         "lowered forwarded event `{}` is absent from component context",
-                                        event.name()
+                                        callee_event_name
                                     ),
                                 )
                             })?

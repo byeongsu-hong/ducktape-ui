@@ -4363,6 +4363,45 @@ impl LoweredProgram {
             .is_some_and(|event| event.id == id && event.name == name && event.payloads == payloads)
     }
 
+    pub(crate) fn validate_component_call_event_contract(
+        &self,
+        call: &ComponentCall,
+        index: usize,
+        event: ComponentEventId,
+        name: &str,
+        payloads: &[Type],
+        origin: OriginId,
+    ) -> Result<(), Error> {
+        let checked_routes = self.facts.component_call_routes(call.id).ok_or_else(|| {
+            self.invariant_at_origin(
+                call.origin,
+                "lowered component call has no checked event routes",
+            )
+        })?;
+        let checked = checked_routes.events.get(index).ok_or_else(|| {
+            self.invariant_at_origin(
+                call.origin,
+                "lowered component call has an unmatched event route",
+            )
+        })?;
+        if checked_routes.call != call.id
+            || checked_routes.component != call.component
+            || checked_routes.events.len() != call.events.len()
+            || event.component != call.component
+            || checked.event != event
+            || checked.name != name
+            || checked.payloads != payloads
+            || checked.origin != origin
+            || !self.component_event_matches(event, name, payloads)
+        {
+            return Err(self.invariant_at_origin(
+                checked.origin,
+                format!("lowered component event `{name}` has an invalid callee contract"),
+            ));
+        }
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub(crate) fn handlers(&self) -> &[ResolvedHandler] {
         &self.handlers
@@ -19025,6 +19064,14 @@ view
                 .unwrap();
             checked.declarations.component_call_id(view).unwrap()
         };
+        fn forwarded_event(program: &mut LoweredProgram) -> &mut ResolvedEventRoute {
+            program
+                .calls
+                .iter_mut()
+                .flat_map(|call| &mut call.events)
+                .find(|event| matches!(event, ResolvedEventRoute::Forward { .. }))
+                .unwrap()
+        }
 
         let mut invalid_component = analyze_file(&root).unwrap();
         let call = forward_call(&invalid_component);
@@ -19100,6 +19147,38 @@ view
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
         assert_eq!(error.line, 10);
+
+        let mut invalid_callee_event = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { event, .. } = forwarded_event(&mut invalid_callee_event)
+        else {
+            unreachable!();
+        };
+        *event = ComponentEventId {
+            component: ComponentId(0),
+            index: u32::MAX,
+        };
+        let error =
+            crate::codegen::generate(&invalid_callee_event, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_forward_origin = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { origin, .. } =
+            forwarded_event(&mut invalid_forward_origin)
+        else {
+            unreachable!();
+        };
+        *origin = OriginId(u32::MAX);
+        let error =
+            crate::codegen::generate(&invalid_forward_origin, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 10);
+        assert_eq!(error.column, 1);
 
         let mut missing_callback = lower(analyze_file(&root).unwrap()).unwrap();
         let forward = missing_callback
