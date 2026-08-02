@@ -39,6 +39,12 @@ pub(crate) struct ResolvedResponsive {
     pub(crate) origin: OriginId,
 }
 
+#[derive(Default)]
+struct ResponsiveExpressionValidation {
+    graph: CheckedExpressionGraph,
+    consumed: HashSet<CheckedExprUseId>,
+}
+
 impl Lowerer {
     pub(super) fn lower_responsive(
         &mut self,
@@ -61,69 +67,95 @@ impl Lowerer {
             return Err(self.invariant(span, "responsive scope diverged after semantic checking"));
         }
         let expected_key = crate::ast::responsive_semantic_key(content, width, height);
-        let mut graph = CheckedExpressionGraph::default();
-        let (semantic_key, dimensions, kind) = match (&checked_view.flow, content) {
-            (
-                CheckedViewFlow::ResponsiveBreakpoint {
-                    semantic_key,
-                    breakpoint,
-                    dimensions,
-                },
-                ResponsiveContent::Breakpoint { .. },
-            ) => {
-                self.validate_responsive_expression(
-                    id,
-                    checked_view.scope,
-                    *breakpoint,
-                    CheckedViewExprRole::ResponsiveBreakpoint,
-                    &Type::F64,
-                    span,
-                    &mut graph,
-                )?;
+        let expected_expression_count =
+            crate::ast::responsive_expression_count(content, width, height);
+        let mut expressions = ResponsiveExpressionValidation::default();
+        let (semantic_key, expression_count, dimensions, breakpoint, kind) =
+            match (&checked_view.flow, content) {
                 (
+                    CheckedViewFlow::ResponsiveBreakpoint {
+                        semantic_key,
+                        expression_count,
+                        breakpoint,
+                        dimensions,
+                    },
+                    ResponsiveContent::Breakpoint { .. },
+                ) => (
                     semantic_key,
+                    expression_count,
                     dimensions,
+                    Some(*breakpoint),
                     ResolvedResponsiveKind::Breakpoint {
                         breakpoint: *breakpoint,
                     },
-                )
-            }
-            (
-                CheckedViewFlow::ResponsiveSize {
+                ),
+                (
+                    CheckedViewFlow::ResponsiveSize {
+                        semantic_key,
+                        expression_count,
+                        width,
+                        height,
+                        dimensions,
+                    },
+                    ResponsiveContent::Size { .. },
+                ) => (
                     semantic_key,
-                    width,
-                    height,
+                    expression_count,
                     dimensions,
-                },
-                ResponsiveContent::Size { .. },
-            ) => (
-                semantic_key,
-                dimensions,
-                ResolvedResponsiveKind::Size {
-                    width: self.resolve_responsive_local(
-                        id,
-                        *width,
-                        CheckedViewLocalRole::ResponsiveWidth,
-                        span,
-                    )?,
-                    height: self.resolve_responsive_local(
-                        id,
-                        *height,
-                        CheckedViewLocalRole::ResponsiveHeight,
-                        span,
-                    )?,
-                },
-            ),
-            _ => {
-                return Err(
-                    self.invariant(span, "responsive content diverged after semantic checking")
-                );
-            }
-        };
-        if semantic_key != &expected_key {
+                    None,
+                    ResolvedResponsiveKind::Size {
+                        width: self.resolve_responsive_local(
+                            id,
+                            *width,
+                            CheckedViewLocalRole::ResponsiveWidth,
+                            span,
+                        )?,
+                        height: self.resolve_responsive_local(
+                            id,
+                            *height,
+                            CheckedViewLocalRole::ResponsiveHeight,
+                            span,
+                        )?,
+                    },
+                ),
+                _ => {
+                    return Err(
+                        self.invariant(span, "responsive content diverged after semantic checking")
+                    );
+                }
+            };
+        if semantic_key != &expected_key
+            || !responsive_length_topology_matches(width, &dimensions[0])
+            || !responsive_length_topology_matches(height, &dimensions[1])
+        {
             return Err(
                 self.invariant(span, "responsive topology diverged after semantic checking")
             );
+        }
+        let checked_expression_count = u32::from(breakpoint.is_some())
+            + dimensions
+                .iter()
+                .filter(|dimension| matches!(dimension, CheckedResponsiveLength::Fixed { .. }))
+                .count() as u32;
+        if *expression_count != expected_expression_count
+            || checked_expression_count != *expression_count
+        {
+            return Err(self.invariant(
+                span,
+                "responsive expression cardinality diverged after semantic checking",
+            ));
+        }
+        self.validate_responsive_expression_owners(id, breakpoint, dimensions, span)?;
+        if let Some(breakpoint) = breakpoint {
+            self.validate_responsive_expression(
+                id,
+                checked_view.scope,
+                breakpoint,
+                CheckedViewExprRole::ResponsiveBreakpoint,
+                &Type::F64,
+                span,
+                &mut expressions,
+            )?;
         }
         let width = self.resolve_responsive_length(
             id,
@@ -131,7 +163,7 @@ impl Lowerer {
             &dimensions[0],
             CheckedViewExprRole::ResponsiveWidthDimension,
             span,
-            &mut graph,
+            &mut expressions,
         )?;
         let height = self.resolve_responsive_length(
             id,
@@ -139,8 +171,11 @@ impl Lowerer {
             &dimensions[1],
             CheckedViewExprRole::ResponsiveHeightDimension,
             span,
-            &mut graph,
+            &mut expressions,
         )?;
+        if expressions.consumed.len() != *expression_count as usize {
+            return Err(self.invariant(span, "responsive left checked expressions unconsumed"));
+        }
 
         let resolved = ResolvedResponsive {
             id,
@@ -188,7 +223,7 @@ impl Lowerer {
         length: &CheckedResponsiveLength,
         role: CheckedViewExprRole,
         span: &Span,
-        graph: &mut CheckedExpressionGraph,
+        expressions: &mut ResponsiveExpressionValidation,
     ) -> Result<Option<ResolvedResponsiveLength>, Error> {
         Ok(match length {
             CheckedResponsiveLength::None => None,
@@ -205,7 +240,7 @@ impl Lowerer {
                     role,
                     source,
                     span,
-                    graph,
+                    expressions,
                 )?;
                 Some(match source {
                     Type::F64 => ResolvedResponsiveLength::FixedF64(*expression),
@@ -230,7 +265,7 @@ impl Lowerer {
         role: CheckedViewExprRole,
         expected: &Type,
         span: &Span,
-        graph: &mut CheckedExpressionGraph,
+        expressions: &mut ResponsiveExpressionValidation,
     ) -> Result<(), Error> {
         let owner = CheckedExprOwner::View {
             view: responsive,
@@ -260,14 +295,83 @@ impl Lowerer {
             span,
             canvas_locals: false,
             own_view_locals: false,
+            allowed_own_view_locals: None,
             family: "responsive",
         };
-        let root_scope = graph.root_scope();
-        let source =
-            self.validate_checked_expression_node(expression.root, &policy, graph, root_scope)?;
+        let root_scope = expressions.graph.root_scope();
+        let source = self.validate_checked_expression_node(
+            expression.root,
+            &policy,
+            &mut expressions.graph,
+            root_scope,
+        )?;
         if source != expression.source {
             return Err(self.invariant(span, "responsive expression root type diverged"));
         }
+        if !expressions.consumed.insert(use_id) {
+            return Err(self.invariant(span, "responsive expression was consumed more than once"));
+        }
         Ok(())
     }
+
+    fn validate_responsive_expression_owners(
+        &self,
+        responsive: ViewId,
+        breakpoint: Option<CheckedExprUseId>,
+        dimensions: &[CheckedResponsiveLength; 2],
+        span: &Span,
+    ) -> Result<(), Error> {
+        let expected = [
+            (CheckedViewExprRole::ResponsiveBreakpoint, breakpoint),
+            (
+                CheckedViewExprRole::ResponsiveWidthDimension,
+                responsive_dimension_expression(&dimensions[0]),
+            ),
+            (
+                CheckedViewExprRole::ResponsiveHeightDimension,
+                responsive_dimension_expression(&dimensions[1]),
+            ),
+        ];
+        for (role, expected) in expected {
+            let actual = self.facts.expression_use_by_owner(CheckedExprOwner::View {
+                view: responsive,
+                role,
+            });
+            if actual != expected {
+                return Err(
+                    self.invariant(span, "responsive expression owner cardinality diverged")
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+fn responsive_dimension_expression(length: &CheckedResponsiveLength) -> Option<CheckedExprUseId> {
+    match length {
+        CheckedResponsiveLength::Fixed { expression, .. } => Some(*expression),
+        _ => None,
+    }
+}
+
+fn responsive_length_topology_matches(
+    raw: &Option<LengthValue>,
+    checked: &CheckedResponsiveLength,
+) -> bool {
+    matches!(
+        (raw, checked),
+        (None, CheckedResponsiveLength::None)
+            | (Some(LengthValue::Fill), CheckedResponsiveLength::Fill)
+            | (Some(LengthValue::Shrink), CheckedResponsiveLength::Shrink)
+            | (
+                Some(LengthValue::Fixed(_)),
+                CheckedResponsiveLength::Fixed { .. }
+            )
+    ) || matches!(
+        (raw, checked),
+        (
+            Some(LengthValue::FillPortion(raw)),
+            CheckedResponsiveLength::FillPortion(checked)
+        ) if raw == checked
+    )
 }

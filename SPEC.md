@@ -347,6 +347,212 @@ not reread source patterns, checked Match flow or payload-local types, or enum
 and palette declarations; source nodes provide only child subtrees whose IDs
 must still match their resolved arm.
 
+Table is a completed structural collection HIR slice. Its row list, typed row
+local, table width and bounded metrics, and each column's width, horizontal and
+vertical alignment, and origin are resolved before Rust generation. Numeric
+fixed and native-length fixed widths are distinct HIR variants. Lowering
+validates owner mappings, expression DAGs, scope, list/row types, local
+ownership, origin parentage, and static option/column topology before publishing
+`ResolvedTable`. Rust generation reads that record plus header/cell subtrees and
+does not reread table expressions, metadata, checked flow, or checked local
+facts.
+
+PaneGrid is a completed stateful structural collection HIR slice. One checked
+record owns the persistent grid name and configuration tree, dimensions and
+bounded metrics, resize/drag/click behavior, custom and typed grid styles,
+static panes, dynamic templates, typed item/maximized locals, pane/title
+surfaces, control topology, and parented source origins. Lowering validates
+every expression DAG against its exact lexical-local contract, resolves routes,
+externs, theme colors, lengths, bindings, and split identities, then publishes
+`ResolvedPaneGrid`. Application fields, pane enums and configuration, message
+and update arms, helper discovery, and rendering all consume that record. Source
+pane nodes supply only content/title/control subtrees; generation does not
+reread PaneGrid expressions, names, configuration, options, styles, routes, or
+checker facts.
+
+Overlay is a completed structural interaction HIR slice. Its visibility and
+padding expressions, resolved backdrop color, horizontal and vertical
+alignment, optional typed dismiss route, stable view identity, and parented
+origins are published as `ResolvedOverlay`. Lowering revalidates expression
+ownership, DAGs, scope and types plus route identity, target, arguments, and
+origin parentage. Rust generation reads that record and uses the source node
+only for the content and layer subtrees and the still-shared widget ID surface;
+it does not reread Overlay options or its dismiss route.
+
+Container is a completed structural layout HIR slice. One checked record owns
+its padding, dimensions, clipping, custom style arguments, typed surface,
+dashed-border pattern, utility style, and CSS flex-child metadata. Lowering
+resolves every theme color and style extern, separates numeric and native
+lengths, folds padding and margin precedence into explicit sides, and publishes
+`ResolvedContainer` with stable expression owners and physical source origin.
+Box rendering and flex-parent item construction consume that record; the source
+node supplies only its content subtree and the still-shared widget ID surface.
+Generation does not reread Container options, surface colors, custom style,
+border dash, flex basis/alignment/margins, or utility lookup state.
+
+Layout is a completed structural HIR slice. Column, Row, Grid, Stack, CSS
+Flexbox, and Scroll share one checked interaction record that owns their stable
+view identity, canonical static topology, expression partition, scroll routes,
+resolved custom style identity, and parented scroll-status origins. Lowering
+folds padding precedence and minimum-cell Grid sugar, resolves native lengths,
+grid sizing, flex flow and alignment, scrollbar geometry and anchors, typed
+status surfaces, theme colors, utility style, and payload routes, then publishes
+one `ResolvedLayout` mode. Generation reads that record and uses source nodes
+only for child subtrees and the still-shared widget ID surface; it does not
+reread layout/scroll options, route syntax, status selectors, surface colors,
+style extern names, or utility lookup state.
+
+Text and RichText are completed content HIR slices. A shared checked
+interaction contract assigns stable expression and route owners and freezes
+all option, custom-style, font, span, decoration, theme-color, and link-route
+topology. The text-specific checked record retains the exact text-style extern
+ID and parented physical origin for every rich span. Lowering resolves lengths,
+line heights, declared and built-in fonts, alignments, shaping, wrapping,
+tracking, theme tokens, utility styles, gradients, borders, padding,
+decorations, and optional link delivery into `ResolvedText` and
+`ResolvedRichSpan`. Generation consumes those records and checked expression
+IDs; it does not reread raw text values, options, spans, colors, styles, routes,
+or extern declarations. Structural snapshots, corrupt-fact handling,
+pre-/post-lowering AST mutation, imported root/span/route source maps, complete
+native text codegen, and a 4,000-node lower+emit budget provide the executable
+evidence.
+
+Input is a completed controlled-content HIR slice. Its checked interaction
+contract owns the exact writable string-state reference, option expressions,
+accessibility values, change/submit/paste routes, icon and custom-style
+identity, and active/hovered/focused/focused-hovered/disabled surface origins.
+Lowering resolves concrete App, bind-prop, or component-state IDs plus lengths,
+typography, fonts, theme colors, utility style, status surfaces, and payload
+delivery into `ResolvedInput`. The checked document separately retains every
+App state reached through controlled Input composition as an `AppStateId`, so
+message variants and update arms do not traverse the source view tree.
+Generation consumes the normalized record and checked expression IDs; it does
+not reread the label, binding name, hint, disabled/accessibility/secure values,
+routes, options, styles, or extern name. Mutation, corrupt-ID, imported-origin,
+complete native generation, and 4,000-node lower+emit contracts provide the
+executable evidence.
+
+Button is a completed interaction HIR slice. Its checked contract owns the
+literal-label or checked-child topology, every dynamic option and custom-style
+argument, the required route, exact Button-style extern identity, and parented
+origins for all four status surfaces. Lowering resolves accessibility,
+dimensions, padding, clipping, preset/custom style, utility precedence, theme
+colors, status surfaces, and route delivery into `ResolvedButton`. Generation
+uses that normalized record and checked expression IDs; the source node remains
+only for its shared ID and child traversal. Raw labels, options, routes,
+utilities, typed styles, and extern names cannot affect output after lowering.
+Structural, corruption, same-arena identity-swap, imported-origin, complete
+native generation, and 4,000-node lower+emit contracts provide the executable
+evidence.
+
+TextEditor is a completed controlled-document HIR slice. Its checked
+interaction contract owns the exact writable editor-state reference, every
+dynamic option, key-binding payload route, highlighter/action/style extern
+identity, and the parented origins of all five status surfaces. Lowering
+resolves exact App state IDs and bind-prop forwarding plus dimensions, line
+height, wrapping, fonts, built-in highlighting, theme colors, route
+payloads, and extern arguments into `ResolvedTextEditor`. The checked document
+also retains each App-level editor state and optional editor-action as stable
+IDs, so message and update generation never rediscover them from the source
+view tree. Generation consumes only that normalized contract and checked
+expression IDs; raw editor options, routes, styles, bindings, and extern names
+cannot affect output after lowering. Structural, corruption, same-kind identity
+swap, imported-origin, complete native generation, and 4,000-node lower+emit
+contracts provide the executable evidence.
+
+PickList and ComboBox are completed selection-control HIR slices. Their
+checked interaction contracts own the deterministic option-expression and
+route partitions, exact custom widget/menu style extern IDs, font and icon or
+handle topology, status/menu origins, and ComboBox's concrete `combo[T]`
+state identity. Lowering resolves generic `T`, optional selection values,
+dimensions, typography, fonts, theme colors, gradients, handles/icons,
+widget/menu status surfaces, and selection/input/hover/open/close delivery into
+`ResolvedPickList` and `ResolvedComboBox`. Generation consumes those records
+and checked expression IDs; it reads the source node only for its shared widget
+ID. App callbacks that require no component-scope capture emit directly from
+the borrowed binding environment instead of cloning every App binding, keeping
+4,000 distinct ComboBox states and callbacks linear. Structural, same-arena
+identity, malformed-ID, pre-/post-lowering mutation, imported-origin, native
+generation, and 4,000-node performance contracts cover the boundary.
+
+Rule, QrCode, and Space are completed content-primitive HIR slices. Their
+checked interaction records own stable `ViewId`s, deterministic expression
+slots, physical origins, and canonical static topology. QrCode additionally
+retains the exact `str` or `bytes` payload type. Lowering resolves Rule axis,
+preset, fill mode, radii, snap, and theme color; folds QrCode's optional
+correction into a canonical auto or versioned encoding (with `medium` as the
+versioned default), resolves its mutually exclusive cell/total size and theme
+colors; and distinguishes Space's numeric and native lengths. Generation
+consumes `ResolvedRule`, `ResolvedQrCode`, and `ResolvedSpace` plus checked
+expression IDs. It does not reread primitive options, payloads, colors, or
+dimensions from the source AST. Raw-contract poisoning, same-type and
+cross-widget identity attacks, malformed facts, imported origins, native Rust
+generation, and a mixed 4,000-node lower+emit budget provide the executable
+evidence.
+
+Component-call direct output and named-event routes are a completed private HIR
+sub-slice. A checked call-route contract owns the stable call, view, component,
+event, outer-event, and ordered route IDs; exact output/source/target payload
+types; direct/forward topology; checked expression owners and payload indexes;
+and physical origin parents. Lowering publishes `ResolvedInteractionRoute`
+values for direct delivery and fixed IDs for forwards. Component rendering
+consumes those records and does not receive raw `Route`, route `Expr`, or source
+component declarations. Post-check dynamic and static poisoning,
+post-lowering raw poisoning, cross-owner and valid-ID/type/cardinality/origin
+corruption, imported diagnostics/markers, the lexical ratchet, and a 4,000-call
+lower+emit budget provide executable evidence. Component root and slot child
+topology plus the general expression fallback remain later HIR slices.
+
+Markdown is a completed document-content HIR slice. Its checked contract owns
+the exact markdown state reference, every dynamic setting and style operand,
+font selection, viewer extern identity and arguments, optional link route, and
+their source origins. Lowering resolves those facts into `ResolvedMarkdown`
+with canonical defaults and typed link delivery. Generation consumes that
+record and checked expression IDs; raw content names, settings, styles, viewer
+names, arguments, and routes cannot affect output after lowering. Structural
+and cross-owner corruption, raw poisoning, imported-origin/source-marker,
+native generation, and 4,000-node performance contracts cover the boundary.
+
+ExternComponent is a completed native-boundary HIR slice. Its checked contract
+owns the exact component extern identity and Rust path, ordered parameter and
+argument types, borrow modes, output type, optional route, and their source
+origins. Lowering resolves used call sites into `ResolvedExternComponent` and
+every component extern declaration, including unused declarations, into
+`ResolvedExternComponentDeclaration`. Generation consumes those records and
+checked expression IDs; component probes do not reread raw declaration names,
+Rust paths, parameter/borrow shapes, output types, or spans. Direct,
+component-local, output, and unit delivery, call-site and declaration
+raw-poisoning, corrupt declaration HIR, imported diagnostics/source markers,
+native generation, and separate 4,000-call plus 4,000-unused-probe performance
+contracts cover the boundary.
+
+Themer and Shader are completed extern-view-adapter HIR slices. Their checked
+interaction records freeze exact extern IDs, ordered owned argument types,
+declared output payloads, optional routes, and physical origins. Themer and
+Shader parameters remain owned-only under the existing Core grammar; borrowed
+parameters are still exclusive to extern components. Lowering resolves function
+paths, argument expression owners, route targets, and Shader width/height into
+`ResolvedThemer` and `ResolvedShader`, including distinct fill, fill-portion,
+shrink, numeric-fixed, and native-length-fixed variants. Generation consumes
+only those records and checked expression IDs. It does not re-resolve raw extern
+names, re-type arguments or dimensions, or inspect raw route presence for noop
+discovery. Cross-owner and invalid-ID corruption, post-check and post-lowering
+raw poisoning, imported origins and diagnostics, native Rust fragments, the
+lexical HIR ratchet, and a mixed 4,000-node lower+emit budget provide the
+executable evidence.
+
+Nested Theme is a completed wrapper HIR slice. A shared `ViewId` owns the
+checked preset/factory identity, ordered factory arguments, text/background
+theme colors, gradient discriminator and stop-color order, and physical
+origin. Dynamic factory, angle, and stop-offset operands use deterministic
+checked expression-use IDs. Lowering fixes the factory Rust path and argument
+mode and publishes `ResolvedNestedTheme`; generation consumes that record and
+the checked expressions while retaining only the child subtree and common
+widget identity as raw view topology. Post-check static drift fails with E196,
+post-lowering preset/factory/color/gradient poisoning cannot change output,
+and imported diagnostics, cross-owner corruption, the lexical ratchet, and a
+4,000-node lower+emit contract cover the boundary.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust
@@ -362,9 +568,11 @@ the manifest-relative literal to the corresponding file in `OUT_DIR` and
 expands one `include!`. Generated Rust emits probes for every declared extern
 struct field and async function. Rustc therefore rejects missing, private, or
 shape-incompatible Rust items even when an extern declaration is not reached
-at runtime. Generated items suppress backend-only Rust and Clippy warnings at
-their item boundary without changing their enclosing module, visibility, or
-name resolution; compile errors remain unsuppressed.
+at runtime. Component probes are emitted from normalized declaration HIR,
+including declarations with no view call site. Generated items suppress
+backend-only Rust and Clippy warnings at their item boundary without changing
+their enclosing module, visibility, or name resolution; compile errors remain
+unsuppressed.
 
 Generated Rust refers to the public `::iced` and `::ui_lang_runtime` paths, so
 a consuming application must declare `iced = "=0.14.0"` and

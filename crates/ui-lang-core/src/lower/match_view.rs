@@ -88,6 +88,7 @@ impl Lowerer {
             span,
             canvas_locals: false,
             own_view_locals: false,
+            allowed_own_view_locals: None,
             family: "match view",
         };
         let mut graph = CheckedExpressionGraph::default();
