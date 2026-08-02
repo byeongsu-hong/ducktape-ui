@@ -523,14 +523,16 @@ evidence.
 ExternComponent is a completed native-boundary slice. Its checked contract
 freezes the exact component extern ID and Rust path, parameter types and borrow
 modes, ordered argument expressions, output type, optional route, and parented
-widget/declaration/argument/route origins. Lowering publishes
-`ResolvedExternComponent` after validating complete expression and route
-ownership. Production emission consumes only that record and checked
-expression IDs; raw function names, argument syntax, borrow decisions, and
-routes cannot affect output after lowering. Direct, component-local, output,
-and unit routes; raw poisoning; cross-owner and corrupt-ID failures; imported
-source markers and diagnostics; native generation; and a 4,000-node lower+emit
-budget provide the executable evidence.
+widget/declaration/argument/route origins. Lowering publishes call-site
+`ResolvedExternComponent` records and declaration-level
+`ResolvedExternComponentDeclaration` records for used and unused component
+externs. Production rendering and probes consume those records and checked
+expression IDs; raw declaration names, Rust paths, parameters, borrow flags,
+outputs, spans, argument syntax, and routes cannot affect output after lowering.
+Direct, component-local, output, and unit routes; call-site/declaration raw
+poisoning; cross-owner and corrupt-ID failures; imported source markers and
+diagnostics; native generation; and separate 4,000-call and 4,000-unused-probe
+lower+emit budgets provide the executable evidence.
 
 Themer and Shader now extend the extern-view-adapter HIR boundary. Their stable
 checked records own exact extern identity, typed argument slots, output routes,

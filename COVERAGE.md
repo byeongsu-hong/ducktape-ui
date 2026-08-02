@@ -806,13 +806,15 @@ ratchet, and an ignored 4,000-Markdown lower+emit contract cover the boundary.
 ExternComponent has a complete private HIR boundary. Its checked facts freeze
 the exact component extern ID, Rust path, ordered parameter and argument types,
 borrow modes, output type, route, and parented physical origins. Lowering
-publishes `ResolvedExternComponent` only after validating expression owners,
-route payloads, declaration identity, and complete cardinality. Production
-emission consumes that record and checked expression IDs; raw function names,
-arguments, borrow choices, and routes are not reread. Direct, component-local,
-output, and unit delivery; raw-poisoning; cross-owner and corrupt-ID attacks;
-imported source markers and source-mapped `E196`; native output; the lexical
-ratchet; and an ignored 4,000-component lower+emit contract cover the boundary.
+publishes `ResolvedExternComponent` for call sites and a typed
+`ResolvedExternComponentDeclaration` for every declaration, including unused
+ones. Production rendering and component probe emission consume those records;
+raw function/declaration names, Rust paths, parameters, borrow choices, outputs,
+spans, arguments, and routes are not reread. Direct, component-local, output,
+and unit delivery; call-site and complete declaration raw-poisoning; cross-owner
+and corrupt-ID attacks; imported declaration/widget markers and source-mapped
+`E196`; native output; the lexical ratchet; and ignored 4,000-call plus
+4,000-unused-probe lower+emit contracts cover the boundary.
 
 Themer and Shader have complete private HIR boundaries. Shared checked
 interaction records retain exact `ExternFnId`s, deterministic argument and

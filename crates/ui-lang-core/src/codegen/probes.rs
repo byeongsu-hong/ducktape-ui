@@ -98,12 +98,16 @@ fn style_probe(
     })
 }
 
-pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Document) {
-    if document
-        .functions
-        .iter()
-        .any(|item| item.kind == ExternKind::EventFilter)
-    {
+pub(in crate::codegen) fn generate_extern_probes(
+    out: &mut String,
+    program: &LoweredProgram,
+    document: &Document,
+    component_declarations: &[ResolvedExternComponentDeclaration],
+    component_ids: &HashSet<ExternFnId>,
+) {
+    if document.functions.iter().enumerate().any(|(index, item)| {
+        !component_ids.contains(&ExternFnId(index as u32)) && item.kind == ExternKind::EventFilter
+    }) {
         writeln!(out, "#[cfg(not(target_arch = \"wasm32\"))] type __IceEventStream<T> = ::iced::futures::stream::BoxStream<'static, T>; #[cfg(target_arch = \"wasm32\")] type __IceEventStream<T> = ::iced::futures::stream::LocalBoxStream<'static, T>;").unwrap();
     }
     for item in &document.structs {
@@ -125,10 +129,11 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
         writeln!(out, "}}").unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
-    for item in &document.functions {
+    for (index, item) in document.functions.iter().enumerate() {
+        if component_ids.contains(&ExternFnId(index as u32)) {
+            continue;
+        }
         writeln!(out, "{}", source_marker(&item.span)).unwrap();
-        let borrowed_component = item.kind == ExternKind::Component
-            && item.borrowed.iter().copied().any(|borrowed| borrowed);
         let params = item
             .params
             .iter()
@@ -182,15 +187,6 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
                 out,
                 "#[allow(dead_code)] async fn __ui_lang_check_future_{}({params}) {{ let _: {output} = {}({args}).await; }}",
                 item.name, item.rust_path
-            )
-            .unwrap(),
-            ExternKind::Component => writeln!(
-                out,
-                "#[allow(dead_code)] fn __ui_lang_check_component_{}{}({params}) {{ let _: __IceElement<'{}, {output}> = {}({args}); }}",
-                item.name,
-                if borrowed_component { "<'a>" } else { "" },
-                if borrowed_component { "a" } else { "static" },
-                item.rust_path
             )
             .unwrap(),
             ExternKind::Shader => writeln!(
@@ -337,14 +333,62 @@ pub(in crate::codegen) fn generate_extern_probes(out: &mut String, document: &Do
         }
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
+
+    for declaration in component_declarations {
+        writeln!(
+            out,
+            "{}",
+            source_marker_for_origin(program, declaration.origin)
+        )
+        .unwrap();
+        let borrowed = declaration
+            .parameters
+            .iter()
+            .any(|parameter| parameter.mode != ResolvedExternComponentArgumentMode::Owned);
+        let params = declaration
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| {
+                let ty = match parameter.mode {
+                    ResolvedExternComponentArgumentMode::Owned => {
+                        parameter.ty.rust(&document.structs)
+                    }
+                    ResolvedExternComponentArgumentMode::BorrowedAsRef
+                    | ResolvedExternComponentArgumentMode::Borrowed => {
+                        borrowed_type(&parameter.ty, document)
+                    }
+                };
+                format!("arg{index}: {ty}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let args = (0..declaration.parameters.len())
+            .map(|index| format!("arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            out,
+            "#[allow(dead_code)] fn __ui_lang_check_component_{}{}({params}) {{ let _: __IceElement<'{}, {}> = {}({args}); }}",
+            declaration.name,
+            if borrowed { "<'a>" } else { "" },
+            if borrowed { "a" } else { "static" },
+            declaration.output.rust(&document.structs),
+            declaration.rust_path
+        )
+        .unwrap();
+        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
+    }
 }
 
-pub(in crate::codegen) fn generate_editor_binding_mapper(out: &mut String, document: &Document) {
-    if !document
-        .functions
-        .iter()
-        .any(|item| item.kind == ExternKind::EditorBinding)
-    {
+pub(in crate::codegen) fn generate_editor_binding_mapper(
+    out: &mut String,
+    document: &Document,
+    component_ids: &HashSet<ExternFnId>,
+) {
+    if !document.functions.iter().enumerate().any(|(index, item)| {
+        !component_ids.contains(&ExternFnId(index as u32)) && item.kind == ExternKind::EditorBinding
+    }) {
         return;
     }
     writeln!(

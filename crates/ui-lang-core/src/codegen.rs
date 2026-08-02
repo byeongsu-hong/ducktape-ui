@@ -1,9 +1,9 @@
 use crate::ast::*;
 use crate::check::{CheckedLocalId, CheckedValueRef, expr_type};
-use crate::hir::{HandlerId, RunSiteId};
+use crate::hir::{ExternFnId, HandlerId, RunSiteId};
 use crate::lower::*;
 use crate::{Error, canonical_snake};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::ops::Deref;
 use std::path::Path;
@@ -285,6 +285,11 @@ fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Er
 
 pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, Error> {
     program.validate_handler_hir()?;
+    let extern_component_declarations = program.extern_component_declarations()?;
+    let extern_component_ids = extern_component_declarations
+        .iter()
+        .map(|declaration| declaration.id)
+        .collect::<HashSet<_>>();
     let document = program.document();
     let message = format!("__{}Message", document.app);
     let lint_macro = format!("__ice_generated_items_{}", encode_source_path(source_path));
@@ -318,7 +323,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     }
     generate_keyboard_types(&mut out, document, program.subscriptions());
     generate_system_types(&mut out, document, program.subscriptions());
-    generate_widget_selector_types(&mut out, document);
+    generate_widget_selector_types(&mut out, document, &extern_component_ids);
     generate_canvas_types(&mut out, document);
     generate_pane_types(&mut out, program)?;
     let theme = program.theme();
@@ -616,8 +621,14 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     )
     .unwrap();
 
-    generate_extern_probes(&mut out, document);
-    generate_editor_binding_mapper(&mut out, document);
+    generate_extern_probes(
+        &mut out,
+        program,
+        document,
+        extern_component_declarations,
+        &extern_component_ids,
+    );
+    generate_editor_binding_mapper(&mut out, document, &extern_component_ids);
     writeln!(out, "#[allow(unused_parens)]\nimpl {} {{", document.app).unwrap();
     let app_settings = program.settings();
     if let Some(font) = &app_settings.default_font {

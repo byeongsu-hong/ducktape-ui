@@ -102,13 +102,17 @@ fn __ice_system_info(value: ::iced::system::Information) -> __IceSystemInfo {
     }
 }
 
-pub(in crate::codegen) fn generate_widget_selector_types(out: &mut String, document: &Document) {
+pub(in crate::codegen) fn generate_widget_selector_types(
+    out: &mut String,
+    document: &Document,
+    component_ids: &HashSet<ExternFnId>,
+) {
     let uses_builtin = |statements: &[Statement]| {
         statements_use_widget_selector(statements, |selector| {
             !matches!(selector, WidgetSelector::Extern { .. })
         })
     };
-    if !document_uses_widget_target(document)
+    if !document_uses_widget_target(document, component_ids)
         && !document
             .handlers
             .iter()
@@ -193,7 +197,7 @@ fn __ice_widget_target_from_text(value: ::iced::widget::selector::Text) -> __Ice
     );
 }
 
-fn document_uses_widget_target(document: &Document) -> bool {
+fn document_uses_widget_target(document: &Document, component_ids: &HashSet<ExternFnId>) -> bool {
     let uses = document_type_uses_widget_target;
 
     document.states.iter().any(|state| uses(&state.ty))
@@ -202,11 +206,12 @@ fn document_uses_widget_target(document: &Document) -> bool {
             .iter()
             .flat_map(|item| &item.fields)
             .any(|(_, ty)| uses(ty))
-        || document.functions.iter().any(|item| {
-            item.params.iter().any(|(_, ty)| uses(ty))
-                || item.progress.as_ref().is_some_and(uses)
-                || uses(&item.output)
-                || item.error.as_ref().is_some_and(uses)
+        || document.functions.iter().enumerate().any(|(index, item)| {
+            !component_ids.contains(&ExternFnId(index as u32))
+                && (item.params.iter().any(|(_, ty)| uses(ty))
+                    || item.progress.as_ref().is_some_and(uses)
+                    || uses(&item.output)
+                    || item.error.as_ref().is_some_and(uses))
         })
         || document
             .handlers
