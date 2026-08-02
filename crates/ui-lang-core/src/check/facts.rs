@@ -913,6 +913,15 @@ pub(crate) struct CheckedTextEditor {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedMarkdown {
+    pub(crate) id: ViewId,
+    pub(crate) content: CheckedValueRef,
+    pub(crate) viewer: Option<ExternFnId>,
+    pub(crate) viewer_output: Type,
+    pub(crate) style_origin: Option<OriginId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedBooleanControl {
     pub(crate) id: ViewId,
     pub(crate) style: Option<ExternFnId>,
@@ -990,6 +999,7 @@ pub(crate) enum CheckedInteractionKind {
     Input,
     Button,
     TextEditor,
+    Markdown,
     PickList,
     ComboBox,
     Slider,
@@ -1087,6 +1097,7 @@ pub(crate) struct CheckedFacts {
     inputs: HashMap<ViewId, CheckedInput>,
     buttons: HashMap<ViewId, CheckedButton>,
     text_editors: HashMap<ViewId, CheckedTextEditor>,
+    markdowns: HashMap<ViewId, CheckedMarkdown>,
     boolean_controls: HashMap<ViewId, CheckedBooleanControl>,
     pick_lists: HashMap<ViewId, CheckedPickList>,
     combo_boxes: HashMap<ViewId, CheckedComboBox>,
@@ -1279,6 +1290,31 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_text_editor_binding(&mut self, view: ViewId, binding: CheckedValueRef) {
         self.text_editors.get_mut(&view).unwrap().binding = binding;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_markdown_content(&mut self, view: ViewId, content: CheckedValueRef) {
+        self.markdowns.get_mut(&view).unwrap().content = content;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_markdown_viewer(&mut self, view: ViewId, viewer: ExternFnId) {
+        self.markdowns.get_mut(&view).unwrap().viewer = Some(viewer);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_markdown_id(&mut self, view: ViewId, raw: u32) {
+        self.markdowns.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_markdown_style_origin(&mut self, view: ViewId, raw: u32) {
+        self.markdowns.get_mut(&view).unwrap().style_origin = Some(OriginId(raw));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_markdown_viewer_output(&mut self, view: ViewId, output: Type) {
+        self.markdowns.get_mut(&view).unwrap().viewer_output = output;
     }
 
     #[cfg(test)]
@@ -1542,6 +1578,10 @@ impl CheckedFacts {
 
     pub(crate) fn text_editor(&self, id: ViewId) -> Option<&CheckedTextEditor> {
         self.text_editors.get(&id).filter(|editor| editor.id == id)
+    }
+
+    pub(crate) fn markdown(&self, id: ViewId) -> Option<&CheckedMarkdown> {
+        self.markdowns.get(&id).filter(|markdown| markdown.id == id)
     }
 
     pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&CheckedBooleanControl> {
@@ -3997,6 +4037,110 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "text editor facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    fn lower_markdown_facts(
+        &mut self,
+        markdown: ViewId,
+        content: &str,
+        options: &MarkdownOptions,
+        route: &Route,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let content = env
+            .get(content)
+            .and_then(|(root, ty)| {
+                (ty == &Type::Markdown)
+                    .then_some(match root {
+                        CheckedPathRoot::Value(value) => Some(*value),
+                        _ => None,
+                    })
+                    .flatten()
+            })
+            .ok_or_else(|| self.invariant(span, "markdown content lost its checked value"))?;
+        let viewer = options
+            .viewer
+            .as_ref()
+            .map(|call| {
+                self.declarations
+                    .extern_decl_by_name(&call.function)
+                    .filter(|function| function.kind == ExternKind::MarkdownViewer)
+                    .cloned()
+                    .ok_or_else(|| self.invariant(span, "markdown viewer extern disappeared"))
+            })
+            .transpose()?;
+        let roots = crate::ast::markdown_expression_roots(options);
+        let viewer_argument_count = options.viewer.as_ref().map_or(0, |call| call.args.len());
+        let metric_count = roots
+            .len()
+            .checked_sub(viewer_argument_count)
+            .ok_or_else(|| self.invariant(span, "markdown viewer argument cardinality diverged"))?;
+        let style_span = options.style.span.as_ref().unwrap_or(span);
+        let style_expressions = crate::ast::markdown_style_expression_roots(&options.style)
+            .into_iter()
+            .map(|expression| std::ptr::from_ref(expression).addr())
+            .collect::<HashSet<_>>();
+        let mut expressions = Vec::with_capacity(roots.len());
+        for expression in roots.iter().take(metric_count) {
+            let expression_span =
+                if style_expressions.contains(&std::ptr::from_ref(*expression).addr()) {
+                    style_span
+                } else {
+                    span
+                };
+            expressions.push((*expression, Some(Type::F64), expression_span));
+        }
+        if let Some(function) = &viewer {
+            if function.params.len() != viewer_argument_count
+                || function.borrowed.len() != viewer_argument_count
+            {
+                return Err(self.invariant(span, "markdown viewer checked contract diverged"));
+            }
+            for (expression, (_, destination)) in roots[metric_count..].iter().zip(&function.params)
+            {
+                expressions.push((*expression, Some(destination.clone()), span));
+            }
+        } else if viewer_argument_count != 0 {
+            return Err(self.invariant(span, "markdown viewer arguments have no extern"));
+        }
+        self.lower_interaction_facts_with_spans(
+            markdown,
+            CheckedInteractionKind::Markdown,
+            crate::ast::markdown_semantic_key(options),
+            expressions,
+            vec![route],
+            env,
+            span,
+        )?;
+        let parent = self.declarations.view(markdown).origin;
+        let style_origin = options
+            .style
+            .span
+            .as_ref()
+            .map(|style_span| self.origins.push(style_span, Some(parent)));
+        let viewer_output = viewer
+            .as_ref()
+            .map(|function| function.output.clone())
+            .unwrap_or(Type::Str);
+        if self
+            .facts
+            .markdowns
+            .insert(
+                markdown,
+                CheckedMarkdown {
+                    id: markdown,
+                    content,
+                    viewer: viewer.map(|function| function.declaration.id),
+                    viewer_output,
+                    style_origin,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "markdown facts were produced more than once"));
         }
         Ok(())
     }
@@ -8887,6 +9031,16 @@ impl<'a> FactsBuilder<'a> {
                 ..
             } => {
                 self.lower_text_editor_facts(view, binding, disabled, options, env, span)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Markdown {
+                content,
+                options,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_markdown_facts(view, content, options, route, env, span)?;
                 CheckedViewFlow::None
             }
             ViewNode::Checkbox {

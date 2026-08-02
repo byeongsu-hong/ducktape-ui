@@ -66,33 +66,6 @@ pub(in crate::codegen) fn container_style_value(style: &ResolvedStyle) -> Option
     ))
 }
 
-pub(in crate::codegen) fn theme_color(document: &Document, token: &str) -> String {
-    let (name, opacity) = token
-        .split_once('/')
-        .map_or((token, None), |(name, opacity)| {
-            (name, opacity.parse::<u8>().ok())
-        });
-    let color = match name {
-        "white" => color_code("#ffffff", None),
-        "black" => color_code("#000000", None),
-        "transparent" => color_code("#00000000", None),
-        name => {
-            let index = document
-                .theme_contract
-                .as_ref()
-                .and_then(|contract| contract.tokens.iter().position(|token| token == name))
-                .expect("checker validates theme tokens");
-            format!("__ice_palette.colors[{index}]")
-        }
-    };
-    opacity.map_or(color.clone(), |opacity| {
-        format!(
-            "{{ let mut __color = {color}; __color.a = {:.6}; __color }}",
-            opacity as f32 / 100.0
-        )
-    })
-}
-
 pub(in crate::codegen) fn resolved_theme_color(color: &ResolvedThemeColor) -> String {
     let value = match color.base {
         ResolvedThemeColorBase::White => color_code("#ffffff", None),

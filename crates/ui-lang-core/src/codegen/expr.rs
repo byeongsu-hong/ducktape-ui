@@ -2691,17 +2691,6 @@ pub(in crate::codegen) fn checked_expr_node_code(
     )
 }
 
-pub(in crate::codegen) fn clamped_f32_code(
-    expr: &Expr,
-    min: &str,
-    max: &str,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    let code = expr_code(expr, env, document, ValueMode::Owned)?;
-    Ok(format!("(({code}) as f32).max({min}).min({max})"))
-}
-
 mod binding;
 mod children;
 mod discovery;

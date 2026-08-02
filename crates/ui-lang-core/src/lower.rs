@@ -4,13 +4,13 @@ use crate::check::{
     CheckedCallTarget, CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget,
     CheckedComboBox, CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind,
     CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion, CheckedInput, CheckedInteraction,
-    CheckedInteractionKind, CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern,
-    CheckedMedia, CheckedPaneAxis, CheckedPaneBackground, CheckedPaneConfiguration,
-    CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength, CheckedPanePadding,
-    CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface, CheckedPaneTemplate,
-    CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList, CheckedProjectionKind,
-    CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
-    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    CheckedInteractionKind, CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown,
+    CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
+    CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
+    CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
+    CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
+    CheckedProjectionKind, CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator,
+    CheckedValueRef, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
     ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
@@ -45,6 +45,7 @@ mod iteration;
 mod keyed_column;
 mod layout;
 mod lazy;
+mod markdown;
 mod match_view;
 mod media;
 mod overlay;
@@ -73,6 +74,7 @@ pub(crate) use iteration::*;
 pub(crate) use keyed_column::*;
 pub(crate) use layout::*;
 pub(crate) use lazy::*;
+pub(crate) use markdown::*;
 pub(crate) use match_view::*;
 pub(crate) use media::*;
 pub(crate) use overlay::*;
@@ -1514,6 +1516,7 @@ pub(crate) struct LoweredProgram {
     buttons: HashMap<ViewId, ResolvedButton>,
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
+    markdowns: HashMap<ViewId, ResolvedMarkdown>,
     boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
@@ -3107,6 +3110,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn markdown(&self, id: ViewId) -> Option<&ResolvedMarkdown> {
+        self.markdowns.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&ResolvedBooleanControl> {
         self.boolean_controls.get(&id)
     }
@@ -3408,6 +3416,36 @@ impl LoweredProgram {
                 "text editor reached code generation without normalized HIR",
             )
         })
+    }
+
+    pub(crate) fn resolved_markdown_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedMarkdown, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "markdown reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        let markdown = self.markdowns.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "markdown reached code generation without normalized HIR",
+            )
+        })?;
+        if checked.id != id || markdown.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "markdown reached code generation with a mismatched checked view ID",
+            ));
+        }
+        Ok(markdown)
     }
 
     pub(crate) fn resolved_boolean_control_for(
@@ -4372,6 +4410,13 @@ impl LoweredProgram {
         self.declarations.extern_decl(id)
     }
 
+    pub(crate) fn try_extern_function(
+        &self,
+        id: ExternFnId,
+    ) -> Option<&crate::hir::ExternDeclaration> {
+        self.declarations.try_extern_decl(id)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn origin(&self, id: OriginId) -> &Origin {
         self.origins.get(id)
@@ -4407,6 +4452,7 @@ pub(crate) struct Lowerer {
     buttons: HashMap<ViewId, ResolvedButton>,
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
+    markdowns: HashMap<ViewId, ResolvedMarkdown>,
     boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
@@ -5163,6 +5209,7 @@ impl Lowerer {
             buttons: HashMap::new(),
             inputs: HashMap::new(),
             text_editors: HashMap::new(),
+            markdowns: HashMap::new(),
             boolean_controls: HashMap::new(),
             pick_lists: HashMap::new(),
             combo_boxes: HashMap::new(),
@@ -5328,6 +5375,7 @@ impl Lowerer {
             buttons: self.buttons,
             inputs: self.inputs,
             text_editors: self.text_editors,
+            markdowns: self.markdowns,
             boolean_controls: self.boolean_controls,
             pick_lists: self.pick_lists,
             combo_boxes: self.combo_boxes,
@@ -9273,6 +9321,15 @@ impl Lowerer {
                 ..
             } => {
                 self.lower_text_editor(binding, disabled, options, span, outer_component)?;
+            }
+            ViewNode::Markdown {
+                content,
+                options,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_markdown(content, options, route, span, outer_component)?;
             }
             ViewNode::Checkbox {
                 id,
@@ -13987,6 +14044,305 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized boolean controls lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_the_complete_markdown_contract() {
+        let source = format!(
+            "app MarkdownHir\nextern crate::backend\n  markdown-viewer docs_viewer(prefix:str, generation:i64) -> str\nfont ui family=sans\n{THEME}state\n  docs:markdown = \"# Docs\"\n  prefix = \"guide\"\n  generation = 7\non opened(url)\nview\n  markdown docs text-size=16.0 h1-size=32.0 h2-size=28.0 h3-size=24.0 h4-size=20.0 h5-size=18.0 h6-size=16.0 code-size=13.0 gap=12.0 viewer=docs_viewer(prefix, generation) -> opened _\n    style font=ui inline-code-bg=linear(1.57, bg@0.0, primary/25@1.0) inline-code-fg=fg inline-code-font=mono code-block-font=mono link=primary inline-code-p=2.0 inline-code-px=3.0 inline-code-py=4.0 inline-code-pt=5.0 inline-code-pr=6.0 inline-code-pb=7.0 inline-code-pl=8.0 inline-code-border=danger inline-code-border-w=1.0 inline-code-r=4.0 inline-code-r-tl=1.0 inline-code-r-tr=2.0 inline-code-r-br=3.0 inline-code-r-bl=4.0\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let markdown = program.markdown(ViewId(0)).unwrap();
+
+        assert_eq!(markdown.id, ViewId(0));
+        assert_eq!(
+            markdown.content.id,
+            CheckedValueRef::AppState(AppStateId(0))
+        );
+        assert_eq!(markdown.content.name, "docs");
+        assert!(markdown.text_size.is_some());
+        assert!(markdown.h1_size.is_some());
+        assert!(markdown.h2_size.is_some());
+        assert!(markdown.h3_size.is_some());
+        assert!(markdown.h4_size.is_some());
+        assert!(markdown.h5_size.is_some());
+        assert!(markdown.h6_size.is_some());
+        assert!(markdown.code_size.is_some());
+        assert!(markdown.spacing.is_some());
+        let viewer = markdown.viewer.as_ref().unwrap();
+        assert_eq!(program.extern_function(viewer.function).name, "docs_viewer");
+        assert_eq!(viewer.arguments.len(), 2);
+        assert_eq!(viewer.borrowed, vec![false, false]);
+        assert_eq!(viewer.output, Type::Str);
+        assert!(matches!(
+            markdown.style.font,
+            Some(ResolvedTextFont::Named(_))
+        ));
+        assert!(matches!(
+            markdown.style.inline_code_background,
+            Some(ResolvedContainerBackground::Linear { ref stops, .. }) if stops.len() == 2
+        ));
+        assert!(markdown.style.inline_code_color.is_some());
+        assert!(markdown.style.inline_code_font.is_some());
+        assert!(markdown.style.code_block_font.is_some());
+        assert!(markdown.style.link_color.is_some());
+        assert!(markdown.style.inline_code_padding.all.is_some());
+        assert!(markdown.style.inline_code_padding.left.is_some());
+        assert!(markdown.style.inline_code_border_color.is_some());
+        assert!(markdown.style.inline_code_border_width.is_some());
+        assert!(markdown.style.inline_code_radius.all.is_some());
+        assert!(markdown.style.inline_code_radius.bottom_left.is_some());
+        assert!(matches!(
+            markdown.link.target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+        assert_eq!(markdown.link.source_payloads, vec![Type::Str]);
+    }
+
+    #[test]
+    fn markdown_routes_direct_component_handlers_and_component_outputs() {
+        let direct = format!(
+            "app MarkdownDirect\n{THEME}state\n  docs:markdown = \"# Docs\"\non opened(url)\nview\n  markdown docs -> opened _\n"
+        );
+        let program = lower(analyze(&direct).unwrap()).unwrap();
+        assert!(matches!(
+            program.markdown(ViewId(0)).unwrap().link.target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+
+        let component = format!(
+            "app MarkdownComponent\n{THEME}state\n  docs:markdown = \"# Docs\"\ncomponent Viewer(bind docs:markdown)\n  on opened(url)\n  markdown docs -> opened _\nview\n  Viewer docs<->docs\n"
+        );
+        let program = lower(analyze(&component).unwrap()).unwrap();
+        let markdown = program.markdowns.values().next().unwrap();
+        assert!(matches!(
+            markdown.content.id,
+            CheckedValueRef::ComponentParam(_)
+        ));
+        assert!(matches!(
+            markdown.link.target,
+            ResolvedInteractionRouteTarget::TargetHandler(_)
+        ));
+
+        let output = format!(
+            "app MarkdownOutput\n{THEME}state\n  docs:markdown = \"# Docs\"\ncomponent Viewer(bind docs:markdown) -> str\n  markdown docs -> emit(_)\non opened(url)\nview\n  Viewer docs<->docs -> opened _\n"
+        );
+        let program = lower(analyze(&output).unwrap()).unwrap();
+        let markdown = program.markdowns.values().next().unwrap();
+        assert!(matches!(
+            markdown.link.target,
+            ResolvedInteractionRouteTarget::OutputCallback {
+                output: Type::Str,
+                ..
+            }
+        ));
+        let generated = crate::codegen::generate(&program, "markdown-output.ice").unwrap();
+        assert!(generated.contains("::iced::widget::markdown::view("));
+        assert!(generated.contains("__MarkdownOutputMessage::Opened(__value)"));
+    }
+
+    #[test]
+    fn markdown_codegen_ignores_every_raw_semantic_field_after_lowering() {
+        let source = format!(
+            "app MarkdownPoison\nextern crate::backend\n  markdown-viewer primary_viewer(prefix:str) -> str\n  markdown-viewer poisoned_viewer(prefix:str) -> str\nfont ui family=sans\n{THEME}state\n  docs:markdown = \"# Docs\"\n  other:markdown = \"# Other\"\n  prefix = \"guide\"\non opened(url)\nview\n  markdown docs text-size=16.0 viewer=primary_viewer(prefix) -> opened _\n    style font=ui inline-code-bg=primary inline-code-fg=fg link=primary inline-code-p=2.0 inline-code-border=danger inline-code-border-w=1.0 inline-code-r=4.0\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "markdown-poison.ice").unwrap();
+        let ViewNode::Markdown {
+            content,
+            options,
+            route,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be markdown");
+        };
+        *content = "other".into();
+        options.text_size = Some(Expr::F64(999.0));
+        options.viewer.as_mut().unwrap().function = "poisoned_viewer".into();
+        options.viewer.as_mut().unwrap().args = vec![Expr::Str("POISONED".into())];
+        options.style.font = Some(FontPreset::Monospace);
+        options.style.inline_code_background = Some(BackgroundValue::Color("danger".into()));
+        options.style.inline_code_color = Some("danger".into());
+        options.style.link_color = Some("danger".into());
+        options.style.inline_code_padding = PaddingOptions::default();
+        options.style.inline_code_border_color = Some("fg".into());
+        options.style.inline_code_border_width = Some(Expr::F64(99.0));
+        options.style.inline_code_radius = Some(Expr::F64(99.0));
+        route.handler = "poisoned".into();
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(1, 3);
+
+        let actual = crate::codegen::generate(&program, "markdown-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+    }
+
+    #[test]
+    fn markdown_lowering_rejects_cross_owner_state_viewer_route_origin_and_id_corruption() {
+        let source = format!(
+            "app MarkdownIdentity\nextern crate::backend\n  markdown-viewer first_viewer(prefix:str) -> str\n  markdown-viewer second_viewer(prefix:str) -> str\n{THEME}state\n  first:markdown = \"# First\"\n  second:markdown = \"# Second\"\n  prefix = \"docs\"\non first_opened(url)\non second_opened(url)\nview\n  col\n    markdown first text-size=16.0 viewer=first_viewer(prefix) -> first_opened _\n      style inline-code-p=2.0\n    markdown second text-size=16.0 viewer=second_viewer(prefix) -> second_opened _\n      style inline-code-p=2.0\n"
+        );
+        let first = ViewId(1);
+        let second = ViewId(2);
+
+        let mut swapped_expressions = analyze(&source).unwrap();
+        swapped_expressions
+            .facts
+            .transplant_interaction_option_expression(first, 0, second, 0);
+        let error = lower(swapped_expressions).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut corrupt_content = analyze(&source).unwrap();
+        corrupt_content
+            .facts
+            .corrupt_markdown_content(first, CheckedValueRef::AppState(AppStateId(1)));
+        let error = lower(corrupt_content).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("content identity"));
+
+        let mut corrupt_viewer = analyze(&source).unwrap();
+        corrupt_viewer
+            .facts
+            .corrupt_markdown_viewer(first, ExternFnId(1));
+        let error = lower(corrupt_viewer).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("viewer contract diverged"));
+
+        let mut corrupt_output = analyze(&source).unwrap();
+        corrupt_output
+            .facts
+            .corrupt_markdown_viewer_output(first, Type::Bool);
+        let error = lower(corrupt_output).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("viewer contract diverged"));
+
+        let mut swapped_routes = analyze(&source).unwrap();
+        swapped_routes.facts.swap_interaction_routes(first, second);
+        let error = lower(swapped_routes).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut corrupt_origin = analyze(&source).unwrap();
+        corrupt_origin
+            .facts
+            .corrupt_markdown_style_origin(first, u32::MAX);
+        let error = lower(corrupt_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("style origin"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id.facts.corrupt_markdown_id(first, u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn imported_markdown_keeps_content_expression_style_route_and_source_map_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-markdown-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("docs.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedMarkdownApp\nuse \"docs.ice\"\nfont ui family=sans\n{THEME}state\n  docs:markdown = \"# Imported\"\nview\n  ImportedDocs docs<->docs\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedDocs(bind docs:markdown)\n  on open(url)\n  markdown docs text-size=16.0 -> open _\n    style font=ui inline-code-bg=linear(1.0, bg@0.0, primary@1.0) inline-code-p=2.0 link=primary\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let markdown = program.markdowns.values().next().unwrap();
+        let widget_origin = program.origin(markdown.origin);
+        assert_eq!(widget_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(widget_origin.line, 3);
+        assert!(matches!(
+            markdown.content.id,
+            CheckedValueRef::ComponentParam(_)
+        ));
+        let style_origin = program.origin(markdown.style.origin.unwrap());
+        assert_eq!(style_origin.parent, Some(markdown.origin));
+        assert_eq!(style_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(style_origin.line, 4);
+        let interaction = program.checked_facts().interaction(markdown.id).unwrap();
+        let metric_origin = program.origin(
+            program
+                .checked_facts()
+                .expression_use(interaction.option_expressions[0])
+                .origin,
+        );
+        assert_eq!(metric_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(metric_origin.line, 3);
+        let style_metric_origin = program.origin(
+            program
+                .checked_facts()
+                .expression_use(interaction.option_expressions[1])
+                .origin,
+        );
+        assert_eq!(
+            style_metric_origin.path.as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(style_metric_origin.line, 4);
+        let route_origin = program.origin(markdown.link.origin);
+        assert_eq!(route_origin.parent, Some(markdown.origin));
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.line, 3);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized markdown lowering and emission performance contract"]
+    fn performance_contract_four_thousand_markdown_views_lower_and_emit_under_two_seconds() {
+        const MARKDOWN_VIEWS: usize = 4_000;
+        let mut source = format!(
+            "app MarkdownScale\n{THEME}state\n  docs:markdown = \"# Docs\"\non opened(url)\nview\n  col\n"
+        );
+        for _ in 0..MARKDOWN_VIEWS {
+            writeln!(
+                source,
+                "    markdown docs text-size=16.0 gap=8.0 -> opened _"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "markdown-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.markdowns.len(), MARKDOWN_VIEWS);
+        assert_eq!(
+            generated.matches("::iced::widget::markdown::view(").count(),
+            MARKDOWN_VIEWS
+        );
+        eprintln!("4k normalized markdown views lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized markdown views lowered and emitted in {elapsed:?}"
         );
     }
 

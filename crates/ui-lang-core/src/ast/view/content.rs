@@ -143,6 +143,120 @@ pub struct MarkdownStyleOptions {
     pub inline_code_radius_top_right: Option<Expr>,
     pub inline_code_radius_bottom_right: Option<Expr>,
     pub inline_code_radius_bottom_left: Option<Expr>,
+    pub span: Option<Span>,
+}
+
+pub(crate) fn markdown_style_expression_roots(style: &MarkdownStyleOptions) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    if let Some(BackgroundValue::Linear { angle, stops }) = &style.inline_code_background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+    roots.extend(
+        [
+            &style.inline_code_padding.all,
+            &style.inline_code_padding.x,
+            &style.inline_code_padding.y,
+            &style.inline_code_padding.top,
+            &style.inline_code_padding.right,
+            &style.inline_code_padding.bottom,
+            &style.inline_code_padding.left,
+            &style.inline_code_border_width,
+            &style.inline_code_radius,
+            &style.inline_code_radius_top_left,
+            &style.inline_code_radius_top_right,
+            &style.inline_code_radius_bottom_right,
+            &style.inline_code_radius_bottom_left,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn markdown_expression_roots(options: &MarkdownOptions) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    roots.extend(
+        [
+            &options.text_size,
+            &options.h1_size,
+            &options.h2_size,
+            &options.h3_size,
+            &options.h4_size,
+            &options.h5_size,
+            &options.h6_size,
+            &options.code_size,
+            &options.spacing,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots.extend(markdown_style_expression_roots(&options.style));
+    if let Some(viewer) = &options.viewer {
+        roots.extend(&viewer.args);
+    }
+    roots
+}
+
+pub(crate) fn markdown_semantic_key(options: &MarkdownOptions) -> String {
+    let style = &options.style;
+    let background = style
+        .inline_code_background
+        .as_ref()
+        .map(|background| match background {
+            BackgroundValue::Color(color) => format!("color:{color}"),
+            BackgroundValue::Linear { stops, .. } => format!(
+                "linear:{}",
+                stops
+                    .iter()
+                    .map(|stop| stop.color.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        });
+    format!(
+        "markdown|metrics={:?}|viewer={:?}|fonts={:?}|background={background:?}|colors={:?}|style-metrics={:?}",
+        [
+            options.text_size.is_some(),
+            options.h1_size.is_some(),
+            options.h2_size.is_some(),
+            options.h3_size.is_some(),
+            options.h4_size.is_some(),
+            options.h5_size.is_some(),
+            options.h6_size.is_some(),
+            options.code_size.is_some(),
+            options.spacing.is_some(),
+        ],
+        options
+            .viewer
+            .as_ref()
+            .map(|viewer| viewer.function.as_str()),
+        [
+            style.font.as_ref(),
+            style.inline_code_font.as_ref(),
+            style.code_block_font.as_ref(),
+        ],
+        [
+            style.inline_code_color.as_deref(),
+            style.link_color.as_deref(),
+            style.inline_code_border_color.as_deref(),
+        ],
+        [
+            style.inline_code_padding.all.is_some(),
+            style.inline_code_padding.x.is_some(),
+            style.inline_code_padding.y.is_some(),
+            style.inline_code_padding.top.is_some(),
+            style.inline_code_padding.right.is_some(),
+            style.inline_code_padding.bottom.is_some(),
+            style.inline_code_padding.left.is_some(),
+            style.inline_code_border_width.is_some(),
+            style.inline_code_radius.is_some(),
+            style.inline_code_radius_top_left.is_some(),
+            style.inline_code_radius_top_right.is_some(),
+            style.inline_code_radius_bottom_right.is_some(),
+            style.inline_code_radius_bottom_left.is_some(),
+        ],
+    )
 }
 
 #[derive(Clone, Debug, Default)]
