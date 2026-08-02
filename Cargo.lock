@@ -2419,7 +2419,7 @@ dependencies = [
  "log",
  "num-traits",
  "ouroboros",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.2",
  "qrcode 0.13.0",
  "rustc-hash 2.1.3",
  "thiserror 2.0.18",
@@ -3049,7 +3049,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "iced_highlighter",
- "pulldown-cmark",
+ "pulldown-cmark 0.13.4",
  "rfd",
  "ui-lang",
  "ui-lang-build",
@@ -4184,6 +4184,17 @@ dependencies = [
  "getopts",
  "memchr",
  "pulldown-cmark-escape",
+ "unicase",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
+dependencies = [
+ "bitflags 2.13.1",
+ "memchr",
  "unicase",
 ]
 
