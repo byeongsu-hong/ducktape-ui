@@ -906,7 +906,7 @@ pub(crate) use facts::{
     CheckedExprUseId, CheckedExternViewAdapter, CheckedFacts, CheckedInitializerCoercion,
     CheckedInput, CheckedInteraction, CheckedInteractionKind, CheckedInteractionRoute,
     CheckedKeyedLength, CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown,
-    CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
+    CheckedMatchArm, CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
     CheckedPaneConfiguration, CheckedPaneCustomStyle, CheckedPaneGrid, CheckedPaneGridStyle,
     CheckedPaneLength, CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite,
     CheckedPaneSurface, CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot,
