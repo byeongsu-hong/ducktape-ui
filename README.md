@@ -406,7 +406,12 @@ The showcase also renders 100,000 logical rows through the fixed-height
 are materialized; the Ice view owns a typed extern state/event route and uses
 the shared `VirtualList.Frame` composition. The list sits in a bounded fixed
 region and owns its vertical scrolling; the catalog below it has a separate
-vertical scrollable. No `virtual-for` or other Core syntax is involved.
+vertical scrollable. The adjacent fixed-height
+[`TreeView`](crates/ui/docs/tree-view.md) uses the same collection engine for
+100,000 preorder nodes while retaining keyed expansion, hierarchical keyboard
+movement, lazy-load requests, rename state, drag targets, and native Tree/
+TreeItem semantics. No `virtual-for`, `tree-for`, or other Core syntax is
+involved.
 
 ```ice
 test counter_contract
