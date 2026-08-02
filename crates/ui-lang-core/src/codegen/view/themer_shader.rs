@@ -52,7 +52,7 @@ fn extern_view_mapping(
 
 pub(in crate::codegen) fn render_themer(
     themer: &ResolvedThemer,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
@@ -62,7 +62,7 @@ pub(in crate::codegen) fn render_themer(
     Ok(format!(
         "{{ let (__theme, __content, __text_color, __background) = {}({args}); let mut __themer = ::iced::widget::themer(__theme, __content); if let ::std::option::Option::Some(__text_color) = __text_color {{ __themer = __themer.text_color(__text_color); }} if let ::std::option::Option::Some(__background) = __background {{ __themer = __themer.background(__background); }} let __themed: __IceElement<'_, {}> = __themer.into(); __themed.map({mapped}).into() }}",
         themer.adapter.function.rust_path,
-        themer.adapter.output.rust(&document.structs)
+        themer.adapter.output.rust(document.extern_structs())
     ))
 }
 
@@ -89,7 +89,7 @@ fn shader_length_code(
 
 pub(in crate::codegen) fn render_shader(
     shader: &ResolvedShader,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
@@ -113,7 +113,7 @@ pub(in crate::codegen) fn render_shader(
         }
     }
     let mapped = extern_view_mapping(&shader.adapter, program, message, env)?;
-    let output = shader.adapter.output.rust(&document.structs);
+    let output = shader.adapter.output.rust(document.extern_structs());
     Ok(format!(
         "{{ let __shader: __IceElement<'_, {output}> = {code}.into(); __shader.map({mapped}).into() }}"
     ))

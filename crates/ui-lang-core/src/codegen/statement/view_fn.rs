@@ -7,7 +7,6 @@ pub(in crate::codegen) fn generate_view(
 ) -> Result<(), Error> {
     let document = program.document();
     let daemon = program.settings().kind == ProgramKind::Daemon;
-    let render_document = RenderDocument::new(program);
     let mounted = program
         .components()
         .iter()
@@ -36,8 +35,8 @@ pub(in crate::codegen) fn generate_view(
         "__ice_root_scope_ref".into()
     };
     let rendered_root = render_node_if_present(
-        &document.view,
-        &render_document,
+        program.app_view(),
+        program,
         message,
         &env,
         &root_scope,

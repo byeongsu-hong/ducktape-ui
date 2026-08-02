@@ -152,11 +152,18 @@ pub(crate) enum CheckedViewScope {
 pub(crate) struct CheckedView {
     pub(crate) id: ViewId,
     pub(crate) kind: &'static str,
+    pub(crate) identity: Option<CheckedViewIdentity>,
     pub(crate) scope: CheckedViewScope,
     pub(crate) parent: Option<ViewId>,
     pub(crate) children: Vec<ViewId>,
     pub(crate) flow: CheckedViewFlow,
     pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedViewIdentity {
+    pub(crate) name: String,
+    pub(crate) key: Option<CheckedExprUseId>,
 }
 
 #[derive(Clone, Debug)]
@@ -614,6 +621,7 @@ pub(crate) enum CheckedComponentEventDelivery {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CheckedViewExprRole {
+    IdentityKey,
     IfCondition,
     ForItems,
     MatchValue,
@@ -9025,6 +9033,30 @@ impl<'a> FactsBuilder<'a> {
             self.invariant(node.span(), "view expression owner has no shared view ID")
         })?;
         let origin = self.declarations.view(view).origin;
+        let identity = match node.identity() {
+            Some(identity) => Some(CheckedViewIdentity {
+                name: identity.name.clone(),
+                key: identity
+                    .key
+                    .as_ref()
+                    .map(|key| {
+                        self.push_view_expression(
+                            CheckedExprOwner::View {
+                                view,
+                                role: CheckedViewExprRole::IdentityKey,
+                            },
+                            key,
+                            None,
+                            env,
+                            node.span(),
+                            origin,
+                        )
+                    })
+                    .transpose()?,
+            }),
+            None => None,
+        };
+        self.facts.views[view.0 as usize].identity = identity;
         let flow = match node {
             ViewNode::If {
                 condition,
@@ -9699,7 +9731,7 @@ impl<'a> FactsBuilder<'a> {
                             id, label, checked, disabled, options, style, route,
                         ),
                         expressions: crate::ast::checkbox_expression_roots(
-                            id, label, checked, disabled, options, style,
+                            label, checked, disabled, options, style,
                         ),
                         statuses,
                         style: style
@@ -9750,7 +9782,7 @@ impl<'a> FactsBuilder<'a> {
                             id, label, checked, disabled, options, style, route,
                         ),
                         expressions: crate::ast::toggler_expression_roots(
-                            id, label, checked, disabled, options, style,
+                            label, checked, disabled, options, style,
                         ),
                         statuses,
                         style: style
@@ -9799,7 +9831,7 @@ impl<'a> FactsBuilder<'a> {
                             id, label, value, selected, options, style, route,
                         ),
                         expressions: crate::ast::radio_expression_roots(
-                            id, label, value, selected, options, style,
+                            label, value, selected, options, style,
                         ),
                         statuses,
                         style: style
@@ -10829,6 +10861,7 @@ impl<'a> FactsBuilder<'a> {
         self.facts.views.push(CheckedView {
             id,
             kind: crate::hir::view_kind(node),
+            identity: None,
             scope,
             parent,
             children: Vec::new(),
@@ -12363,7 +12396,7 @@ view
     }
 
     #[test]
-    fn raw_view_topology_mutation_is_rejected_before_emission() {
+    fn raw_view_topology_mutation_is_rejected_during_lowering() {
         let source =
             format!("app MutatedView\n{THEME}state\n  count = 1\nview\n  col\n    text count\n");
         let mut checked = analyze(&source).unwrap();
@@ -12373,11 +12406,51 @@ view
         let expected_line = span.line;
         children.clear();
 
-        let program = lower::lower(checked).unwrap();
-        let error = crate::codegen::generate(&program, "mutated-view.ice").unwrap_err();
+        let error = lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.line, expected_line);
-        assert!(error.message.contains("checked topology"));
+        assert!(
+            error
+                .message
+                .contains("children diverged from checked topology")
+        );
+    }
+
+    #[test]
+    fn checked_view_parent_cycle_is_rejected_before_view_lowering() {
+        let source = format!("app CyclicView\n{THEME}view\n  col\n    text \"child\"\n");
+        let mut checked = analyze(&source).unwrap();
+        let child = checked.facts.views[0].children[0];
+        let expected_line = checked
+            .origins
+            .get(checked.declarations.view(child).origin)
+            .line;
+        checked.facts.views[child.0 as usize].parent = Some(child);
+
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("child identity, parent, or scope"));
+    }
+
+    #[test]
+    fn checked_view_origin_swap_is_rejected_at_its_declaration() {
+        let source = format!(
+            "app SwappedViewOrigin\n{THEME}view\n  col\n    text \"first\"\n    text \"second\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let first = checked.facts.views[0].children[0];
+        let second = checked.facts.views[0].children[1];
+        let expected = checked.declarations.view(first).origin;
+        let poisoned = checked.declarations.view(second).origin;
+        assert_ne!(expected, poisoned);
+        let expected_line = checked.origins.get(expected).line;
+        checked.facts.views[first.0 as usize].origin = poisoned;
+
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("identity or origin diverged"));
     }
 
     #[test]
@@ -12456,11 +12529,14 @@ view
                 ..
             }
         ));
-        let argument = program
-            .component_call(program.document().view.span())
+        let crate::lower::ResolvedViewKind::Component { call } = program
+            .resolved_view(program.app_view())
+            .map(|view| &view.kind)
             .unwrap()
-            .arguments[0]
-            .expression;
+        else {
+            panic!("application root is not a component call")
+        };
+        let argument = program.component_call_by_id(*call).unwrap().arguments[0].expression;
         let root = program.checked_facts().expression_use(argument).root;
         assert!(matches!(
             program.checked_facts().expression(root).kind,

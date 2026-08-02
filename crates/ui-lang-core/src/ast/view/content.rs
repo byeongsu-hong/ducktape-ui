@@ -1279,19 +1279,13 @@ pub struct CheckboxStatusStyle {
 }
 
 pub(crate) fn checkbox_expression_roots<'a>(
-    id: &'a Option<Id>,
     label: &'a Expr,
     checked: &'a Expr,
     disabled: &'a Option<Expr>,
     options: &'a BoolControlOptions,
     style: &'a CheckboxStyleSet,
 ) -> Vec<&'a Expr> {
-    let mut roots = id
-        .as_ref()
-        .and_then(|id| id.key.as_ref())
-        .into_iter()
-        .collect::<Vec<_>>();
-    roots.extend([label, checked]);
+    let mut roots = vec![label, checked];
     roots.extend(disabled);
     push_bool_control_option_roots(&mut roots, options, true);
     if let Some(custom) = &style.custom {
@@ -1380,19 +1374,13 @@ pub struct TogglerStatusStyle {
 }
 
 pub(crate) fn toggler_expression_roots<'a>(
-    id: &'a Option<Id>,
     label: &'a Expr,
     checked: &'a Expr,
     disabled: &'a Option<Expr>,
     options: &'a BoolControlOptions,
     style: &'a TogglerStyleSet,
 ) -> Vec<&'a Expr> {
-    let mut roots = id
-        .as_ref()
-        .and_then(|id| id.key.as_ref())
-        .into_iter()
-        .collect::<Vec<_>>();
-    roots.extend([label, checked]);
+    let mut roots = vec![label, checked];
     roots.extend(disabled);
     push_bool_control_option_roots(&mut roots, options, true);
     if let Some(custom) = &style.custom {
@@ -1474,19 +1462,13 @@ pub struct RadioStatusStyle {
 }
 
 pub(crate) fn radio_expression_roots<'a>(
-    id: &'a Option<Id>,
     label: &'a Expr,
     value: &'a Expr,
     selected: &'a Expr,
     options: &'a BoolControlOptions,
     style: &'a RadioStyleSet,
 ) -> Vec<&'a Expr> {
-    let mut roots = id
-        .as_ref()
-        .and_then(|id| id.key.as_ref())
-        .into_iter()
-        .collect::<Vec<_>>();
-    roots.extend([label, value, selected]);
+    let mut roots = vec![label, value, selected];
     push_bool_control_option_roots(&mut roots, options, false);
     if let Some(custom) = &style.custom {
         roots.extend(&custom.args);

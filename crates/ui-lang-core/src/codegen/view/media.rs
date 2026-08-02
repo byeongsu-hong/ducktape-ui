@@ -1,55 +1,44 @@
 use super::*;
 
 pub(in crate::codegen) fn render_media(
-    node: &ViewNode,
-    document: &RenderDocument<'_>,
+    node: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
-    let id = match node {
-        ViewNode::Media { id, .. }
-        | ViewNode::Tooltip { id, .. }
-        | ViewNode::MouseArea { id, .. }
-        | ViewNode::ResizeHandle { id, .. }
-        | ViewNode::Canvas { id, .. } => id.as_ref(),
-        _ => None,
-    };
-    let child_scope = rendered_child_scope(id, scope, env, document)?;
-    let rendered = match node {
-        ViewNode::Media { .. } => {
-            let hir = document.hir();
-            let resolved = hir.resolved_media_for(node)?;
-            render_resolved_media(resolved, hir, env, scope)
+    let view = document.resolved_view(node)?;
+    let identity = view.identity.as_ref();
+    let child_scope = rendered_child_scope(identity, scope, env, document)?;
+    let rendered = match &view.kind {
+        ResolvedViewKind::Media => {
+            let resolved = document.resolved_media(node)?;
+            render_resolved_media(resolved, document, env, scope)
         }
-        ViewNode::Tooltip { content, tip, .. } => {
-            let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let tip = render_node(tip, document, message, env, &child_scope, slot)?;
-            let hir = document.hir();
-            let resolved = hir.resolved_tooltip_for(node)?;
-            render_resolved_tooltip(resolved, hir, message, env, content, tip)
+        ResolvedViewKind::Tooltip { content, tip } => {
+            let content = render_node(*content, document, message, env, &child_scope, slot)?;
+            let tip = render_node(*tip, document, message, env, &child_scope, slot)?;
+            let resolved = document.resolved_tooltip(node)?;
+            render_resolved_tooltip(resolved, document, message, env, content, tip)
         }
-        ViewNode::MouseArea { content, .. } => {
-            let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let hir = document.hir();
-            let resolved = hir.resolved_mouse_area_for(node)?;
-            render_resolved_mouse_area(resolved, hir, message, env, content)
+        ResolvedViewKind::MouseArea { content } => {
+            let content = render_node(*content, document, message, env, &child_scope, slot)?;
+            let resolved = document.resolved_mouse_area(node)?;
+            render_resolved_mouse_area(resolved, document, message, env, content)
         }
-        ViewNode::ResizeHandle { content, .. } => {
-            let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let hir = document.hir();
-            let resolved = hir.resolved_resize_handle_for(node)?;
-            render_resolved_resize_handle(resolved, hir, message, env, content)
+        ResolvedViewKind::ResizeHandle { content } => {
+            let content = render_node(*content, document, message, env, &child_scope, slot)?;
+            let resolved = document.resolved_resize_handle(node)?;
+            render_resolved_resize_handle(resolved, document, message, env, content)
         }
-        ViewNode::Canvas { .. } => {
-            let hir = document.hir();
-            let resolved = hir.resolved_canvas_for(node)?;
-            render_canvas(resolved, hir, message, env)
+        ResolvedViewKind::Canvas => {
+            let resolved = document.resolved_canvas(node)?;
+            render_canvas(resolved, document, message, env)
         }
         _ => return Ok(None),
     }?;
-    let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
+    let rendered = identify_rendered(rendered, identity, message, env, document, scope)?;
     Ok(Some(rendered))
 }
 

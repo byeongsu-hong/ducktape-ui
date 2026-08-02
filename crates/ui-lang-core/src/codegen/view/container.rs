@@ -3,22 +3,24 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_container(
     container: &ResolvedContainer,
-    id: &Option<Id>,
-    content: &ViewNode,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    content: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let program = document.program();
-    let span = Span::line(container.source_line);
-    let accessibility_key =
-        accessibility_key_code(id.as_ref(), "container", &span, scope, env, document)?;
-    let child_scope = id.as_ref().map_or_else(
-        || Ok(scope.to_owned()),
-        |id| id_code(id, scope, env, document),
+    let accessibility_key = resolved_accessibility_key_code(
+        identity,
+        "container",
+        container.origin,
+        scope,
+        env,
+        document,
     )?;
+    let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
     let mut style = container.utility_style.clone();
     let mut surface = container.surface.clone();
@@ -35,11 +37,11 @@ pub(in crate::codegen) fn render_container(
         style.border_width = 0;
     }
     let mut code = String::from("::iced::widget::container(__container_content)");
-    if let Some(id) = id {
+    if let Some(identity) = identity {
         write!(
             code,
             ".id(::iced::widget::Id::from({}))",
-            id_code(id, scope, env, document)?
+            resolved_view_identity_code(identity, scope, env, document)?
         )
         .unwrap();
     }
@@ -424,18 +426,18 @@ fn resolved_container_clamped_f32(
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_overlay(
-    id: &Option<Id>,
+    identity: Option<&ResolvedViewIdentity>,
     overlay: &ResolvedOverlay,
-    content: &ViewNode,
-    layer: &ViewNode,
-    document: &RenderDocument<'_>,
+    content: ViewId,
+    layer: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let program = document.program();
-    let child_scope = rendered_child_scope(id.as_ref(), scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
     let layer = render_node(layer, document, message, env, &child_scope, slot)?;
     let visible = checked_expr_use_code(program, overlay.visible, env, ValueMode::Owned)?;
@@ -459,5 +461,5 @@ pub(in crate::codegen) fn render_overlay(
     let rendered = format!(
         "{{ let __overlay_base: __IceElement<'_, {message}> = {content}; let __overlay_stack = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_base); if {visible} {{ let __overlay_layer: __IceElement<'_, {message}> = {layer}; let __overlay_backdrop = ::iced::widget::container(::iced::widget::space()).width(::iced::Fill).height(::iced::Fill).style(move |_| ::iced::widget::container::Style {{ background: ::std::option::Option::Some(::iced::Background::Color({backdrop})), ..::iced::widget::container::Style::default() }}); let __overlay_backdrop: __IceElement<'_, {message}> = ::iced::widget::mouse_area(__overlay_backdrop).on_press({dismiss}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop}).into(); let __overlay_panel = ::iced::widget::mouse_area(__overlay_layer).on_press({noop}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop}); let __overlay_panel: __IceElement<'_, {message}> = ::iced::widget::container(__overlay_panel).width(::iced::Fill).height(::iced::Fill).padding({padding} as f32).align_x(::iced::alignment::Horizontal::{align_x}).align_y(::iced::alignment::Vertical::{align_y}).into(); let __overlay_surface: __IceElement<'_, {message}> = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_backdrop).push(__overlay_panel).into(); __overlay_stack.push(::iced::widget::float(__overlay_surface).translate(|_, _| ::iced::Vector::new(::core::f32::EPSILON, 0.0))).into() }} else {{ __overlay_stack.into() }} }}"
     );
-    identify_rendered(rendered, id.as_ref(), message, env, document, scope)
+    identify_rendered(rendered, identity, message, env, document, scope)
 }

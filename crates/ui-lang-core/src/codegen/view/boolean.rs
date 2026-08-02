@@ -2,6 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn render_boolean_control(
     control: &ResolvedBooleanControl,
+    identity: Option<&ResolvedViewIdentity>,
     program: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
@@ -28,7 +29,7 @@ pub(in crate::codegen) fn render_boolean_control(
                 message,
             )?;
             let accessibility_key =
-                resolved_boolean_identity_code(control, "checkbox", scope, program, env)?;
+                resolved_boolean_identity_code(control, identity, "checkbox", scope, program, env)?;
             let (accessibility_label, accessibility_description) =
                 resolved_boolean_accessibility(control, "__label.clone()", program, env)?;
             let mut widget = "::iced::widget::checkbox(__checked).label(__label.clone())".into();
@@ -61,7 +62,7 @@ pub(in crate::codegen) fn render_boolean_control(
                 message,
             )?;
             let accessibility_key =
-                resolved_boolean_identity_code(control, "toggler", scope, program, env)?;
+                resolved_boolean_identity_code(control, identity, "toggler", scope, program, env)?;
             let (accessibility_label, accessibility_description) =
                 resolved_boolean_accessibility(control, "__label.clone()", program, env)?;
             let mut widget = "::iced::widget::toggler(__checked).label(__label.clone())".into();
@@ -107,7 +108,7 @@ pub(in crate::codegen) fn render_boolean_control(
         control.kind,
         ResolvedBooleanKind::Toggler | ResolvedBooleanKind::Radio
     ) {
-        identify_resolved_boolean(rendered, control, message, scope, program, env)
+        identify_resolved_boolean(rendered, control, identity, message, scope, program, env)
     } else {
         Ok(rendered)
     }
@@ -115,12 +116,13 @@ pub(in crate::codegen) fn render_boolean_control(
 
 fn resolved_boolean_identity_code(
     control: &ResolvedBooleanControl,
+    identity: Option<&ResolvedViewIdentity>,
     kind: &str,
     scope: &str,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let Some(identity) = &control.identity else {
+    let Some(identity) = identity else {
         let scope = reconciliation_scope(scope, env);
         return Ok(format!(
             "format!(\"{{}}/@{kind}:{}\", {scope})",
@@ -141,15 +143,16 @@ fn resolved_boolean_identity_code(
 fn identify_resolved_boolean(
     rendered: String,
     control: &ResolvedBooleanControl,
+    identity: Option<&ResolvedViewIdentity>,
     message: &str,
     scope: &str,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    if control.identity.is_none() {
+    if identity.is_none() {
         return Ok(rendered);
     }
-    let id = resolved_boolean_identity_code(control, "boolean", scope, program, env)?;
+    let id = resolved_boolean_identity_code(control, identity, "boolean", scope, program, env)?;
     Ok(format!(
         "{{ let __identified: __IceElement<'_, {message}> = {rendered}; let __ice_id = {id}; #[cfg(test)] ::ui_lang_runtime::testing::register_render_source(&__ice_id); ::iced::widget::container(__identified).id(::iced::widget::Id::from(__ice_id)).into() }}"
     ))

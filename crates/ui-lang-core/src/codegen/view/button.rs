@@ -3,18 +3,17 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_button(
     button: &ResolvedButton,
-    id: &Option<Id>,
-    raw_child: Option<&ViewNode>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    child: Option<ViewId>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let source_span = Span::line(program.origin(button.origin).line);
     let accessibility_key =
-        accessibility_key_code(id.as_ref(), "button", &source_span, scope, env, document)?;
+        resolved_accessibility_key_code(identity, "button", button.origin, scope, env, document)?;
     let fallback_label = match &button.content {
         ResolvedButtonContent::Label(label) => rust_string(label),
         ResolvedButtonContent::Child(_) => "::std::string::String::new()".into(),
@@ -36,24 +35,20 @@ pub(in crate::codegen) fn render_button(
         .transpose()?
         .unwrap_or_else(|| "false".into());
     let activate = resolved_interaction_route_code(&button.route, &[], env, program, message)?;
-    let mut content = match (&button.content, raw_child) {
+    let mut content = match (&button.content, child) {
         (ResolvedButtonContent::Label(label), None) => {
             let mut text = format!("::iced::widget::text({})", rust_string(label));
             append_resolved_button_label_style(&mut text, &button.utility_style);
             format!("{text}.into()")
         }
         (ResolvedButtonContent::Child(expected), Some(child)) => {
-            let actual = program.checked_view(child.span())?.id;
-            if actual != *expected {
+            if child != *expected {
                 return Err(program.invariant_at_origin(
                     button.origin,
                     "button child diverged from normalized HIR",
                 ));
             }
-            let child_scope = id.as_ref().map_or_else(
-                || Ok(scope.to_owned()),
-                |id| id_code(id, scope, env, document),
-            )?;
+            let child_scope = rendered_child_scope(identity, scope, env, document)?;
             render_node(child, document, message, env, &child_scope, slot)?
         }
         _ => {

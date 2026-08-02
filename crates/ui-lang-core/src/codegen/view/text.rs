@@ -1,11 +1,9 @@
 use super::*;
 
-type TextRenderDocument<'a> = RenderDocument<'a>;
-
 pub(in crate::codegen) fn render_text(
     text: &ResolvedText,
-    id: &Option<Id>,
-    document: &TextRenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -14,9 +12,14 @@ pub(in crate::codegen) fn render_text(
     match &text.content {
         ResolvedTextContent::Plain { value } => {
             let value = checked_expr_use_code(program, *value, env, ValueMode::Borrowed)?;
-            let source_span = Span::line(text.source_line);
-            let accessibility_key =
-                accessibility_key_code(id.as_ref(), "text", &source_span, scope, env, document)?;
+            let accessibility_key = resolved_accessibility_key_code(
+                identity,
+                "text",
+                text.origin,
+                scope,
+                env,
+                document,
+            )?;
             let code = resolved_plain_text_code(text, message, env, program)?;
             let selection = text
                 .options
@@ -36,7 +39,7 @@ pub(in crate::codegen) fn render_text(
             route,
         } => render_resolved_rich_text(
             text,
-            id,
+            identity,
             color.as_ref(),
             spans,
             route.as_ref(),
@@ -135,11 +138,11 @@ fn append_resolved_glyph_options(
 #[allow(clippy::too_many_arguments)]
 fn render_resolved_rich_text(
     text: &ResolvedText,
-    id: &Option<Id>,
+    identity: Option<&ResolvedViewIdentity>,
     color: Option<&ResolvedThemeColor>,
     spans: &[ResolvedRichSpan],
     route: Option<&ResolvedInteractionRoute>,
-    document: &TextRenderDocument<'_>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -171,10 +174,10 @@ fn render_resolved_rich_text(
     let rendered = format!(
         "{{ let __rich_spans: ::std::vec::Vec<::iced::widget::text::Span<'_, ::std::string::String>> = ::std::vec![{spans}]; {code}.into() }}"
     );
-    let Some(id) = id else {
+    let Some(identity) = identity else {
         return Ok(rendered);
     };
-    let id = id_code(id, scope, env, document)?;
+    let id = resolved_view_identity_code(identity, scope, env, document)?;
     Ok(format!(
         "{{ let __a11y_key = {id}; let __identified_text: __IceElement<'_, {message}> = {rendered}; ::ui_lang_runtime::accessible(__identified_text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).into() }}"
     ))

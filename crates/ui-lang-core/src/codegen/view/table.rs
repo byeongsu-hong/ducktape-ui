@@ -3,8 +3,8 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_table(
     table: &ResolvedTable,
-    columns: &[TableColumn],
-    document: &RenderDocument<'_>,
+    columns: &[ResolvedTableColumnTopology],
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -13,7 +13,7 @@ pub(in crate::codegen) fn render_table(
     let program = document.hir();
     let rows = checked_expr_use_code(program, table.rows, env, ValueMode::Owned)?;
     let item_name = &table.row.name;
-    let row_rust = table.row.ty.rust(&document.structs);
+    let row_rust = table.row.ty.rust(document.extern_structs());
     let mut cell_env = ScopedBindingEnv::new(env);
     cell_env.insert(
         item_name.clone(),
@@ -23,15 +23,8 @@ pub(in crate::codegen) fn render_table(
     for (index, (column, resolved)) in columns.iter().zip(&table.columns).enumerate() {
         let header_scope = format!("format!(\"{{}}/header({index})\", {scope})");
         let cell_scope = format!("format!(\"{{}}/row({{}})/col({index})\", {scope}, __row)");
-        let header = render_node(&column.header, document, message, env, &header_scope, slot)?;
-        let cell = render_node(
-            &column.cell,
-            document,
-            message,
-            &cell_env,
-            &cell_scope,
-            slot,
-        )?;
+        let header = render_node(column.header, document, message, env, &header_scope, slot)?;
+        let cell = render_node(column.cell, document, message, &cell_env, &cell_scope, slot)?;
         let mut code = format!(
             "{{ let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item_name}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let _ = &{item_name}; let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
         );
@@ -131,8 +124,8 @@ fn resolved_table_length_code(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_keyed_column(
     keyed: &ResolvedKeyedColumn,
-    child: &ViewNode,
-    document: &RenderDocument<'_>,
+    child: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,

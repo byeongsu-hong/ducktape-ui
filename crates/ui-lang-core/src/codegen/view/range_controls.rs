@@ -2,8 +2,8 @@ use super::*;
 
 pub(in crate::codegen) fn render_slider(
     slider: &ResolvedSlider,
-    id: Option<&Id>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -66,9 +66,8 @@ pub(in crate::codegen) fn render_slider(
         )
         .unwrap();
     }
-    let source_span = Span::line(program.origin(slider.origin).line);
     let accessibility_key =
-        accessibility_key_code(id, "slider", &source_span, scope, env, document)?;
+        resolved_accessibility_key_code(identity, "slider", slider.origin, scope, env, document)?;
     Ok(format!(
         "{{ let __a11y_key = {accessibility_key}; let __slider_value = {value}; let __slider = {widget}; ::ui_lang_runtime::accessible(__slider, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Slider).logical_id(__a11y_key.clone()).label(\"Slider\").value(format!(\"{{}}\", __slider_value)).into() }}"
     ))
@@ -76,8 +75,8 @@ pub(in crate::codegen) fn render_slider(
 
 pub(in crate::codegen) fn render_progress(
     progress: &ResolvedProgress,
-    id: Option<&Id>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
@@ -103,9 +102,14 @@ pub(in crate::codegen) fn render_progress(
         widget.push_str(".vertical()");
     }
     widget.push_str(&resolved_progress_style_code(progress, program, env)?);
-    let source_span = Span::line(program.origin(progress.origin).line);
-    let accessibility_key =
-        accessibility_key_code(id, "progress", &source_span, scope, env, document)?;
+    let accessibility_key = resolved_accessibility_key_code(
+        identity,
+        "progress",
+        progress.origin,
+        scope,
+        env,
+        document,
+    )?;
     Ok(format!(
         "{{ let __a11y_key = {accessibility_key}; let __progress_input = {value}; let __progress = {{ let (__progress_range, __progress_value) = ::ui_lang_runtime::progress_range({min}, {max}, __progress_input); {widget} }}; ::ui_lang_runtime::accessible(__progress, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ProgressIndicator).logical_id(__a11y_key.clone()).label(\"Progress\").value(format!(\"{{}}\", __progress_input)).into() }}"
     ))

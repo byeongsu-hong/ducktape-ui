@@ -1,11 +1,10 @@
 use crate::ast::*;
-use crate::check::{CheckedLocalId, CheckedValueRef, expr_type};
+use crate::check::{CheckedLocalId, CheckedValueRef};
 use crate::hir::{ExternFnId, HandlerId, RunSiteId};
 use crate::lower::*;
 use crate::{Error, canonical_snake};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
-use std::ops::Deref;
 use std::path::Path;
 
 const RECONCILIATION_SCOPE_BINDING: &str = "\0__ice_reconciliation_scope";
@@ -35,15 +34,29 @@ fn source_marker_for_origin(program: &LoweredProgram, origin: crate::hir::Origin
     source_marker_origin(program, origin)
 }
 
-fn source_mapped_expression(
+fn source_mapped_expression_origin(
     code: String,
-    span: &Span,
+    program: &LoweredProgram,
+    origin: OriginId,
     message: &str,
     track_descendants: bool,
 ) -> String {
-    let render_source = format!(
-        "{RENDER_SOURCE_MARKER}{}_{}{RENDER_SOURCE_MARKER_END}",
-        span.line, span.column
+    let origin_value = program.origin(origin);
+    let render_source = origin_value.path.as_ref().map_or_else(
+        || {
+            format!(
+                "{RENDER_SOURCE_MARKER}{}_{}{RENDER_SOURCE_MARKER_END}",
+                origin_value.line, origin_value.column
+            )
+        },
+        |path| {
+            format!(
+                "::ui_lang_runtime::testing::Location::new({}, {}, {}, \"rendered view node\")",
+                rust_string(&path.display().to_string()),
+                origin_value.line,
+                origin_value.column
+            )
+        },
     );
     let descendant_source = if track_descendants {
         "#[cfg(test)]\nlet __ice_rendered = ::ui_lang_runtime::testing::sourced(__ice_rendered, __ice_render_source_location);\n"
@@ -52,7 +65,7 @@ fn source_mapped_expression(
     };
     format!(
         "{{\n{}\n#[cfg(test)]\nlet __ice_render_source_location = {render_source};\n#[cfg(test)]\nlet __ice_render_source = ::ui_lang_runtime::testing::push_render_source(__ice_render_source_location);\nlet __ice_rendered: __IceElement<'_, {message}> = {code};\n{descendant_source}#[cfg(test)]\ndrop(__ice_render_source);\n__ice_rendered\n{SOURCE_MARKER_END}\n}}",
-        source_marker(span)
+        source_marker_for_origin(program, origin)
     )
 }
 
@@ -179,33 +192,29 @@ fn checked_local_binding(
     }
 }
 
-fn resolved_match_pattern_code(arm: &ResolvedMatchArm, span: &Span) -> Result<String, Error> {
+fn resolved_match_pattern_code(
+    arm: &ResolvedMatchArm,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
     let binding_name = arm.binding.as_ref().map(|binding| binding.name.as_str());
     Ok(match &arm.pattern {
         ResolvedMatchPattern::Some => format!(
             "::std::option::Option::Some({})",
-            binding_name.ok_or_else(|| Error::new(
-                "E196",
-                span,
-                "normalized some pattern has no payload local",
-            ))?
+            binding_name.ok_or_else(|| {
+                program
+                    .invariant_at_origin(arm.origin, "normalized some pattern has no payload local")
+            })?
         ),
         ResolvedMatchPattern::None => "::std::option::Option::None".into(),
         ResolvedMatchPattern::Ok => format!(
             "::std::result::Result::Ok({})",
-            binding_name.ok_or_else(|| Error::new(
-                "E196",
-                span,
-                "normalized ok pattern has no payload local",
-            ))?
+            binding_name.ok_or_else(|| program
+                .invariant_at_origin(arm.origin, "normalized ok pattern has no payload local",))?
         ),
         ResolvedMatchPattern::Err => format!(
             "::std::result::Result::Err({})",
-            binding_name.ok_or_else(|| Error::new(
-                "E196",
-                span,
-                "normalized err pattern has no payload local",
-            ))?
+            binding_name.ok_or_else(|| program
+                .invariant_at_origin(arm.origin, "normalized err pattern has no payload local",))?
         ),
         ResolvedMatchPattern::Enum { owner, variant } => binding_name.map_or_else(
             || format!("{}::{}", owner, pascal(variant)),
@@ -284,6 +293,7 @@ fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Er
 }
 
 pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, Error> {
+    program.validate_view_hir()?;
     program.validate_handler_hir()?;
     let extern_component_declarations = program.extern_component_declarations()?;
     let extern_component_ids = extern_component_declarations
@@ -321,15 +331,10 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap(),
     }
-    generate_keyboard_types(&mut out, document, program.subscriptions());
-    generate_system_types(&mut out, document, program.subscriptions());
-    generate_widget_selector_types(
-        &mut out,
-        document,
-        extern_component_declarations,
-        &extern_component_ids,
-    );
-    generate_canvas_types(&mut out, document);
+    generate_keyboard_types(&mut out, program, program.subscriptions());
+    generate_system_types(&mut out);
+    generate_widget_selector_types(&mut out);
+    generate_canvas_types(&mut out, program);
     generate_pane_types(&mut out, program)?;
     let theme = program.theme();
     let token_count = theme.contract.tokens.len();
@@ -588,7 +593,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
-    if needs_extern_noop(program, document) {
+    if needs_extern_noop(program) {
         writeln!(out, "__ExternNoop,").unwrap();
     }
     if has_animations(program) {
@@ -736,32 +741,6 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_tests(&mut out, program, &message, source_path)?;
     writeln!(out, "}}").unwrap();
     Ok(resolve_source_markers(out, program, source_path))
-}
-
-pub(in crate::codegen) struct RenderDocument<'a> {
-    program: &'a LoweredProgram,
-}
-
-impl<'a> RenderDocument<'a> {
-    pub(in crate::codegen) fn new(program: &'a LoweredProgram) -> Self {
-        Self { program }
-    }
-
-    pub(in crate::codegen) fn program(&self) -> &'a LoweredProgram {
-        self.program
-    }
-
-    pub(in crate::codegen) fn hir(&self) -> &'a LoweredProgram {
-        self.program
-    }
-}
-
-impl Deref for RenderDocument<'_> {
-    type Target = Document;
-
-    fn deref(&self) -> &Self::Target {
-        self.program.document()
-    }
 }
 
 mod application;

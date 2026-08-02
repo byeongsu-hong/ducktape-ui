@@ -11,7 +11,8 @@ pub(in crate::check) fn check_id(
         return Ok(());
     };
     if let Some(key) = &id.key {
-        let ty = expr_type(key, env, document, span)?;
+        let ty =
+            retained_view_expr_type(key, env, document, span, CheckedViewExprRole::IdentityKey)?;
         if !matches!(ty, Type::I64 | Type::Str) {
             return Err(Error::new(
                 "E160",

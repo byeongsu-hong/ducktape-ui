@@ -2,8 +2,8 @@ use super::*;
 
 pub(in crate::codegen) fn render_pick_list(
     pick: &ResolvedPickList,
-    id: Option<&Id>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -97,9 +97,8 @@ pub(in crate::codegen) fn render_pick_list(
         .unwrap();
     }
     widget.push_str(&resolved_pick_style_code(pick, program, env)?);
-    let source_span = Span::line(program.origin(pick.origin).line);
     let accessibility_key =
-        accessibility_key_code(id, "pick-list", &source_span, scope, env, document)?;
+        resolved_accessibility_key_code(identity, "pick-list", pick.origin, scope, env, document)?;
     let accessibility_label = pick
         .placeholder
         .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))
@@ -112,8 +111,8 @@ pub(in crate::codegen) fn render_pick_list(
 
 pub(in crate::codegen) fn render_combo_box(
     combo: &ResolvedComboBox,
-    id: Option<&Id>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -225,9 +224,8 @@ pub(in crate::codegen) fn render_combo_box(
     }
     widget.push_str(&resolved_combo_style_code(combo, program, env)?);
     widget.push_str(&resolved_menu_style_code(&combo.menu, program, env)?);
-    let source_span = Span::line(program.origin(combo.origin).line);
     let accessibility_key =
-        accessibility_key_code(id, "combo-box", &source_span, scope, env, document)?;
+        resolved_accessibility_key_code(identity, "combo-box", combo.origin, scope, env, document)?;
     Ok(format!(
         "{{ let __a11y_key = {accessibility_key}; let __combo_selection = {selected}; let __combo_option_count = {}.options().len(); let __combo = {widget}; ::ui_lang_runtime::accessible(__combo, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ComboBox).logical_id(__a11y_key.clone()).label({}).value_maybe(__combo_selection).into() }}",
         state.code,

@@ -46,8 +46,9 @@ pub(in crate::codegen) struct SlotContext {
 
 #[derive(Clone)]
 pub(in crate::codegen) struct SlotContent {
+    pub(in crate::codegen) slot: ComponentSlotId,
     pub(in crate::codegen) name: String,
-    pub(in crate::codegen) node: ViewNode,
+    pub(in crate::codegen) view: ViewId,
     pub(in crate::codegen) env: HashMap<String, Binding>,
 }
 
@@ -265,28 +266,6 @@ pub(in crate::codegen) fn checked_state_env(
         )
     }));
     env
-}
-
-pub(in crate::codegen) fn native_field_type(ty: &Type, field: &str) -> Option<Type> {
-    match ty {
-        Type::KeyPress => match field {
-            "key" | "modified_key" => Some(Type::Key),
-            "physical_key" => Some(Type::PhysicalKey),
-            "location" => Some(Type::KeyLocation),
-            "modifiers" => Some(Type::KeyModifiers),
-            "text" => Some(Type::Option(Box::new(Type::Str))),
-            "repeat" => Some(Type::Bool),
-            _ => None,
-        },
-        Type::KeyRelease => match field {
-            "key" | "modified_key" => Some(Type::Key),
-            "physical_key" => Some(Type::PhysicalKey),
-            "location" => Some(Type::KeyLocation),
-            "modifiers" => Some(Type::KeyModifiers),
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 pub(in crate::codegen) fn native_field_projection(

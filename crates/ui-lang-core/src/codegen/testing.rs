@@ -7,7 +7,6 @@ pub(in crate::codegen) fn generate_test_mounts(
     source_path: &str,
 ) -> Result<(), Error> {
     let daemon = program.settings().kind == ProgramKind::Daemon;
-    let render_document = RenderDocument::new(program);
     let presets = if program.preset_names().is_empty() {
         String::new()
     } else {
@@ -45,7 +44,7 @@ pub(in crate::codegen) fn generate_test_mounts(
         }
         let root = render_node_if_present(
             mount,
-            &render_document,
+            program,
             message,
             &env,
             &rust_string(program.app_name()),

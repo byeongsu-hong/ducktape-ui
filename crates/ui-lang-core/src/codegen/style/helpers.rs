@@ -130,37 +130,3 @@ pub(in crate::codegen) fn editor_variant(binding: &str) -> String {
         format!("__0E{}", rust_identifier_hex(binding))
     }
 }
-
-pub(in crate::codegen) fn id_code(
-    id: &Id,
-    scope: &str,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    if let Some(key) = &id.key {
-        Ok(format!(
-            "format!(\"{{}}/{}({{}})\", {scope}, {})",
-            id.name,
-            expr_code(key, env, document, ValueMode::Borrowed)?
-        ))
-    } else {
-        Ok(format!("format!(\"{{}}/{}\", {scope})", id.name))
-    }
-}
-
-pub(in crate::codegen) fn accessibility_key_code(
-    id: Option<&Id>,
-    kind: &str,
-    span: &Span,
-    scope: &str,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    id.map_or_else(
-        || {
-            let scope = reconciliation_scope(scope, env);
-            Ok(format!("format!(\"{{}}/@{kind}:{}\", {scope})", span.line))
-        },
-        |id| id_code(id, scope, env, document),
-    )
-}

@@ -62,6 +62,7 @@ mod table;
 mod testing;
 mod text;
 mod tooltip;
+mod view_topology;
 
 pub(crate) use boolean::*;
 pub(crate) use button::*;
@@ -93,6 +94,7 @@ pub(crate) use text::*;
 
 pub(crate) use style::*;
 pub(crate) use tooltip::*;
+pub(crate) use view_topology::*;
 
 pub(crate) type ResolvedExpressionId = CheckedExprUseId;
 
@@ -1349,7 +1351,7 @@ pub(crate) struct ComponentContract {
     slots: Vec<ComponentSlotContract>,
     pub(crate) states: Vec<ComponentStateContract>,
     pub(crate) handlers: Vec<HandlerId>,
-    pub(crate) root: ViewNode,
+    pub(crate) root: ViewId,
     pub(crate) storage: ComponentStorage,
     pub(crate) origin: OriginId,
 }
@@ -1452,10 +1454,10 @@ impl ResolvedEventRoute {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedSlot {
-    slot: ComponentSlotId,
+    pub(crate) slot: ComponentSlotId,
     pub(crate) name: String,
     pub(crate) optional: bool,
-    pub(crate) content: Option<ViewNode>,
+    pub(crate) content: Option<ViewId>,
     pub(crate) origin: OriginId,
 }
 
@@ -1463,7 +1465,6 @@ pub(crate) struct ResolvedSlot {
 #[derive(Clone, Debug)]
 pub(crate) enum ComponentScope {
     Explicit {
-        id: Id,
         origin: OriginId,
     },
     Implicit {
@@ -1487,7 +1488,7 @@ pub(crate) enum ComponentOutputRoute {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ComponentCall {
-    id: ComponentCallId,
+    pub(crate) id: ComponentCallId,
     pub(crate) component: ComponentId,
     pub(crate) origin: OriginId,
     pub(crate) arguments: Vec<ResolvedArgument>,
@@ -1509,6 +1510,7 @@ struct CallSite {
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
     document: Document,
+    app_view: ViewId,
     facts: CheckedFacts,
     declarations: DeclarationIndex,
     settings: ResolvedAppSettings,
@@ -1551,7 +1553,8 @@ pub(crate) struct LoweredProgram {
     tables: HashMap<ViewId, ResolvedTable>,
     pane_grids: HashMap<ViewId, ResolvedPaneGrid>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
-    test_mounts: HashMap<TestId, ViewNode>,
+    views: Vec<ResolvedView>,
+    test_mounts: HashMap<TestId, ViewId>,
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
     app_states: Vec<AppStateContract>,
@@ -3062,6 +3065,30 @@ impl LoweredProgram {
         &self.document
     }
 
+    pub(crate) fn program(&self) -> &Self {
+        self
+    }
+
+    pub(crate) fn hir(&self) -> &Self {
+        self
+    }
+
+    pub(crate) fn app_view(&self) -> ViewId {
+        self.app_view
+    }
+
+    pub(crate) fn resolved_view(&self, id: ViewId) -> Result<&ResolvedView, Error> {
+        self.views
+            .get(id.0 as usize)
+            .filter(|view| view.id == id)
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    OriginId(u32::MAX),
+                    "resolved view ID is outside its canonical arena",
+                )
+            })
+    }
+
     pub(crate) fn app_name(&self) -> &str {
         &self.settings.app_name
     }
@@ -3313,933 +3340,8 @@ impl LoweredProgram {
         self.interaction_widgets.get(&id)
     }
 
-    pub(crate) fn resolved_canvas_for(&self, node: &ViewNode) -> Result<&ResolvedCanvas, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "canvas reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "canvas reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.canvases.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "canvas reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_container_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedContainer, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "container reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "container reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.containers.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "container reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_layout_for(&self, node: &ViewNode) -> Result<&ResolvedLayout, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "layout reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "layout reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.layouts.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "layout reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_text_for(&self, node: &ViewNode) -> Result<&ResolvedText, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "text reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "text reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.texts.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "text reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_input_for(&self, node: &ViewNode) -> Result<&ResolvedInput, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "input reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "input reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.inputs.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "input reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_button_for(&self, node: &ViewNode) -> Result<&ResolvedButton, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "button reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "button reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.buttons.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "button reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_text_editor_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedTextEditor, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "text editor reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "text editor reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.text_editors.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "text editor reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_markdown_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedMarkdown, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "markdown reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let markdown = self.markdowns.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "markdown reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || markdown.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "markdown reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(markdown)
-    }
-
-    pub(crate) fn resolved_extern_component_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedExternComponent, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "extern component reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let component = self.extern_components.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "extern component reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || component.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "extern component reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(component)
-    }
-
-    pub(crate) fn resolved_themer_for(&self, node: &ViewNode) -> Result<&ResolvedThemer, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "themer reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let themer = self.themers.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "themer reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || themer.id != id {
-            return Err(self.invariant_at_origin(
-                themer.origin,
-                "themer reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(themer)
-    }
-
-    pub(crate) fn resolved_shader_for(&self, node: &ViewNode) -> Result<&ResolvedShader, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "shader reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let shader = self.shaders.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "shader reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || shader.id != id {
-            return Err(self.invariant_at_origin(
-                shader.origin,
-                "shader reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(shader)
-    }
-
-    pub(crate) fn resolved_boolean_control_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedBooleanControl, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "boolean control reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let expected_kind = match node {
-            ViewNode::Checkbox { .. } => ResolvedBooleanKind::Checkbox,
-            ViewNode::Toggler { .. } => ResolvedBooleanKind::Toggler,
-            ViewNode::Radio { .. } => ResolvedBooleanKind::Radio,
-            _ => {
-                return Err(self.invariant_at_origin(
-                    checked.origin,
-                    "non-boolean node requested boolean HIR",
-                ));
-            }
-        };
-        let control = self.boolean_controls.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "boolean control reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || control.id != id || control.kind != expected_kind {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "boolean control HIR identity or kind diverged",
-            ));
-        }
-        Ok(control)
-    }
-
-    pub(crate) fn resolved_pick_list_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedPickList, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "pick list reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "pick list reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.pick_lists.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "pick list reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_slider_for(&self, node: &ViewNode) -> Result<&ResolvedSlider, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "slider reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "slider reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.sliders.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "slider reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_combo_box_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedComboBox, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "combo box reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "combo box reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.combo_boxes.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "combo box reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_progress_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedProgress, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "progress reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "progress reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.progresses.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "progress reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_rule_for(&self, node: &ViewNode) -> Result<&ResolvedRule, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "rule reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "rule reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.rules.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "rule reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_qr_code_for(&self, node: &ViewNode) -> Result<&ResolvedQrCode, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "qr reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "qr reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.qr_codes.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "qr reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_space_for(&self, node: &ViewNode) -> Result<&ResolvedSpace, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "space reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "space reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.spaces.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "space reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_media_for(&self, node: &ViewNode) -> Result<&ResolvedMedia, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "media reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "media reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.media.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "media reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_overlay_for(&self, node: &ViewNode) -> Result<&ResolvedOverlay, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "overlay reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "overlay reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.overlays.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "overlay reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_tooltip_for(&self, node: &ViewNode) -> Result<&ResolvedTooltip, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "tooltip reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "tooltip reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.tooltips.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "tooltip reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_mouse_area_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedMouseArea, Error> {
-        let (origin, interaction) = self.resolved_interaction_for(node, "mouse area")?;
-        let ResolvedInteractionWidget::MouseArea(mouse) = interaction else {
-            return Err(self.invariant_at_origin(
-                origin,
-                "mouse area reached code generation with the wrong normalized kind",
-            ));
-        };
-        Ok(mouse)
-    }
-
-    pub(crate) fn resolved_resize_handle_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedResizeHandle, Error> {
-        let (origin, interaction) = self.resolved_interaction_for(node, "resize handle")?;
-        let ResolvedInteractionWidget::ResizeHandle(handle) = interaction else {
-            return Err(self.invariant_at_origin(
-                origin,
-                "resize handle reached code generation with the wrong normalized kind",
-            ));
-        };
-        Ok(handle)
-    }
-
-    pub(crate) fn resolved_sensor_for(&self, node: &ViewNode) -> Result<&ResolvedSensor, Error> {
-        let (origin, interaction) = self.resolved_interaction_for(node, "sensor")?;
-        let ResolvedInteractionWidget::Sensor(sensor) = interaction else {
-            return Err(self.invariant_at_origin(
-                origin,
-                "sensor reached code generation with the wrong normalized kind",
-            ));
-        };
-        Ok(sensor)
-    }
-
-    pub(crate) fn resolved_float_for(&self, node: &ViewNode) -> Result<&ResolvedFloat, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "float reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "float reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.floats.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "float reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_pin_for(&self, node: &ViewNode) -> Result<&ResolvedPin, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "pin reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "pin reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.pins.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "pin reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_responsive_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedResponsive, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "responsive reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "responsive reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.responsives.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "responsive reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_lazy_for(&self, node: &ViewNode) -> Result<&ResolvedLazy, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "lazy reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "lazy reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.lazy_views.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "lazy reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_keyed_column_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedKeyedColumn, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "keyed column reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "keyed column reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.keyed_columns.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "keyed column reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_table_for(&self, node: &ViewNode) -> Result<&ResolvedTable, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "table reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "table reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.tables.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "table reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_pane_grid_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedPaneGrid, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "pane grid reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "pane grid reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.pane_grids.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "pane grid reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_conditional_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedConditional, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "if view reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "if view reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.conditionals.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "if view reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_iteration_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedIteration, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "for view reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "for view reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.iterations.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "for view reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_match_for(&self, node: &ViewNode) -> Result<&ResolvedMatch, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "match view reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "match view reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.match_views.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "match view reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    fn resolved_interaction_for(
-        &self,
-        node: &ViewNode,
-        family: &str,
-    ) -> Result<(OriginId, &ResolvedInteractionWidget), Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                format!("{family} reached code generation without a shared view ID"),
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                format!("{family} reached code generation with a mismatched checked view ID"),
-            ));
-        }
-        let interaction = self.interaction_widgets.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                format!("{family} reached code generation without normalized HIR"),
-            )
-        })?;
-        Ok((checked.origin, interaction))
-    }
-
-    pub(crate) fn test_mount(&self, id: TestId) -> Option<&ViewNode> {
-        self.test_mounts.get(&id)
+    pub(crate) fn test_mount(&self, id: TestId) -> Option<ViewId> {
+        self.test_mounts.get(&id).copied()
     }
 
     pub(crate) fn preset_names(&self) -> &[String] {
@@ -4448,86 +3550,19 @@ impl LoweredProgram {
             })
     }
 
-    pub(crate) fn component_call(&self, span: &Span) -> Result<&ComponentCall, Error> {
-        let site = CallSite {
-            line: span.line,
-            column: span.column,
-        };
-        let id = self.calls_by_site.get(&site).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "component call reached code generation without a lowered call",
-            )
-        })?;
-        self.calls.get(id.0 as usize).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "component call references an invalid lowered call ID",
-            )
-        })
-    }
-
-    pub(crate) fn checked_view(&self, span: &Span) -> Result<&crate::check::CheckedView, Error> {
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "view reached code generation without a shared view ID",
-            )
-        })?;
-        let view = self.facts.view(id);
-        if view.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "view reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(view)
-    }
-
-    pub(crate) fn validate_checked_view(&self, node: &ViewNode) -> Result<(), Error> {
-        let span = node.span();
-        let view = self.checked_view(span)?;
-        let id = view.id;
-        if view.kind != crate::hir::view_kind(node) {
-            return Err(Error::new(
-                "E196",
-                span,
-                "raw view kind diverged from its checked topology",
-            ));
-        }
-        let children = crate::hir::view_children(node)
-            .into_iter()
-            .map(|child| {
-                self.declarations.view_id(child.span()).ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        child.span(),
-                        "raw view child has no shared checked ID",
-                    )
-                })
+    pub(crate) fn component_call_by_id(
+        &self,
+        id: ComponentCallId,
+    ) -> Result<&ComponentCall, Error> {
+        self.calls
+            .get(id.0 as usize)
+            .filter(|call| call.id == id)
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    OriginId(u32::MAX),
+                    "component call ID is outside its canonical arena",
+                )
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        if children != view.children {
-            return Err(Error::new(
-                "E196",
-                span,
-                "raw view children diverged from its checked topology",
-            ));
-        }
-        for child in &children {
-            if self.facts.view(*child).parent != Some(id) {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked view child has a mismatched parent",
-                ));
-            }
-        }
-        Ok(())
     }
 
     #[cfg(test)]
@@ -4542,34 +3577,6 @@ impl LoweredProgram {
     #[cfg(test)]
     pub(crate) fn nested_theme(&self, id: ViewId) -> Option<&ResolvedNestedTheme> {
         self.styles.nested_theme(id)
-    }
-
-    pub(crate) fn resolved_nested_theme_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedNestedTheme, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "nested theme reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let theme = self.styles.nested_theme(id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "nested theme reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || theme.id != id {
-            return Err(self.invariant_at_origin(
-                theme.origin,
-                "nested theme reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(theme)
     }
 
     pub(crate) fn extern_function(&self, id: ExternFnId) -> &crate::hir::ExternDeclaration {
@@ -4646,6 +3653,7 @@ pub(crate) struct Lowerer {
     tables: HashMap<ViewId, ResolvedTable>,
     pane_grids: HashMap<ViewId, ResolvedPaneGrid>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
+    views: Vec<ResolvedView>,
 }
 
 #[derive(Default)]
@@ -5406,10 +4414,12 @@ impl Lowerer {
             tables: HashMap::new(),
             pane_grids: HashMap::new(),
             interaction_widgets: HashMap::new(),
+            views: Vec::new(),
         }
     }
 
     fn lower(mut self) -> Result<LoweredProgram, Error> {
+        self.validate_checked_view_topology()?;
         if let Err((origin, message)) = self.facts.validate_expression_arena() {
             return Err(self.invariant_at_origin(origin, message));
         }
@@ -5430,15 +4440,20 @@ impl Lowerer {
         self.lower_handlers()?;
         let tests = self.lower_tests()?;
         let component_roots = self
+            .document
             .components
             .iter()
-            .map(|component| (component.id, component.root.clone()))
+            .enumerate()
+            .map(|(index, component)| (ComponentId(index as u32), component.root.clone()))
             .collect::<Vec<_>>();
         for (component, root) in component_roots {
             self.lower_view(&root, Some(component))?;
         }
         let app_view = self.document.view.clone();
         self.lower_view(&app_view, None)?;
+        let app_view_id = self.declarations.view_id(app_view.span()).ok_or_else(|| {
+            self.invariant(app_view.span(), "application root has no shared view ID")
+        })?;
         let mounts = self
             .document
             .tests
@@ -5523,9 +4538,11 @@ impl Lowerer {
             .iter()
             .enumerate()
             .filter_map(|(index, test)| {
-                test.mount
-                    .clone()
-                    .map(|mount| (TestId(index as u32), mount))
+                test.mount.as_ref().and_then(|mount| {
+                    self.declarations
+                        .view_id(mount.span())
+                        .map(|view| (TestId(index as u32), view))
+                })
             })
             .collect();
         let preset_names = self
@@ -5536,6 +4553,7 @@ impl Lowerer {
             .collect();
         Ok(LoweredProgram {
             document: self.document,
+            app_view: app_view_id,
             facts: self.facts,
             declarations: self.declarations,
             settings,
@@ -5578,6 +4596,7 @@ impl Lowerer {
             tables: self.tables,
             pane_grids: self.pane_grids,
             interaction_widgets: self.interaction_widgets,
+            views: self.views,
             test_mounts,
             preset_names,
             named_type_rust_paths,
@@ -7716,6 +6735,15 @@ impl Lowerer {
                 .enumerate()
                 .map(|(index, slot)| (slot.name.clone(), index))
                 .collect();
+            let root = self
+                .declarations
+                .view_id(component.root.span())
+                .ok_or_else(|| {
+                    self.invariant(
+                        component.root.span(),
+                        "component root has no shared view ID",
+                    )
+                })?;
             self.components.push(ComponentContract {
                 id,
                 name: component.name,
@@ -7725,7 +6753,7 @@ impl Lowerer {
                 slots,
                 states,
                 handlers: Vec::new(),
-                root: component.root,
+                root,
                 storage,
                 origin,
             });
@@ -9301,6 +8329,7 @@ impl Lowerer {
         node: &ViewNode,
         outer_component: Option<ComponentId>,
     ) -> Result<(), Error> {
+        self.lower_view_topology(node, outer_component)?;
         self.lower_view_style(node)?;
         match node {
             ViewNode::Media {
@@ -10173,7 +9202,18 @@ impl Lowerer {
                 slot: declared.id,
                 name: declared.name.clone(),
                 optional: declared.optional,
-                content: supplied.map(|slot| (*slot.content).clone()),
+                content: supplied
+                    .map(|slot| {
+                        self.declarations
+                            .view_id(slot.content.span())
+                            .ok_or_else(|| {
+                                self.invariant(
+                                    &slot.span,
+                                    "component slot content has no shared view ID",
+                                )
+                            })
+                    })
+                    .transpose()?,
                 origin: supplied.map_or(declared.origin, |slot| {
                     self.push_origin(&slot.span, Some(origin))
                 }),
@@ -10186,10 +9226,7 @@ impl Lowerer {
                 call_site: span.line,
                 origin,
             },
-            |id| ComponentScope::Explicit {
-                id: id.clone(),
-                origin,
-            },
+            |_| ComponentScope::Explicit { origin },
         );
         if call_id.0 as usize != self.calls.len() {
             return Err(self.invariant(span, "component call arena order diverged"));
@@ -11529,7 +10566,7 @@ view
         invalid_component.components[0].id = ComponentId(u32::MAX);
         let error = crate::codegen::generate(&invalid_component, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("component identity"));
+        assert!(error.message.contains("component root view"));
     }
 
     #[test]
@@ -14289,6 +13326,24 @@ view
     }
 
     #[test]
+    fn view_family_hir_rejects_an_extra_cross_family_entry() {
+        let source = format!(
+            "app ExtraViewFamily\n{THEME}view\n  col\n    text \"first\"\n    text \"second\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let root = program.app_view;
+        let root_origin = program.views[root.0 as usize].origin;
+        let mut extra = program.texts.values().next().unwrap().clone();
+        extra.id = root;
+        extra.origin = root_origin;
+        assert!(program.texts.insert(root, extra).is_none());
+
+        let error = crate::codegen::generate(&program, "extra-view-family.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("text normalized HIR cardinality"));
+    }
+
+    #[test]
     fn boolean_lowering_rejects_same_type_slot_route_extern_and_id_swaps() {
         let source = format!(
             "app BooleanIdentity\nextern crate::backend\n  checkbox-style first(active:bool)\n  checkbox-style second(active:bool)\n{THEME}state\n  enabled = false\non changed(next)\n  enabled = next\nview\n  checkbox \"Checkbox\" checked=enabled style=first(enabled) size=20.0 gap=8.0 -> changed _\n"
@@ -14625,7 +13680,7 @@ view
         let expected = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
         assert!(!expected.contains("type __IceEventStream"));
         assert!(!expected.contains("fn __ice_map_editor_binding"));
-        assert!(!expected.contains("struct __IceWidgetTarget"));
+        assert_eq!(expected.matches("struct __IceWidgetTarget").count(), 1);
 
         program.document.functions[0].kind = ExternKind::EventFilter;
         let actual = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
@@ -18996,7 +18051,11 @@ view
                 .sum::<usize>(),
             CALLS * (1 + DEFAULT_PARAMS + EVENTS + SLOTS)
         );
-        let ViewNode::Layout { children, .. } = &program.components[0].root else {
+        let ResolvedViewKind::Layout { children } = &program
+            .resolved_view(program.components[0].root)
+            .unwrap()
+            .kind
+        else {
             panic!("wide component root must remain a layout");
         };
         assert_eq!(children.len(), BODY_NODES + SLOTS + 1);

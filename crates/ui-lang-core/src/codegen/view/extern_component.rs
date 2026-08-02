@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn render_extern_component(
     component: &ResolvedExternComponent,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {

@@ -168,20 +168,6 @@ pub(in crate::codegen) fn resolved_interaction_route_code(
     }
 }
 
-pub(in crate::codegen) fn widget_target_field_type(field: &str) -> Option<Type> {
-    match field {
-        "kind" => Some(Type::Str),
-        "id" => Some(Type::Option(Box::new(Type::WidgetId))),
-        "x" | "y" | "width" | "height" => Some(Type::F64),
-        "visible_x" | "visible_y" | "visible_width" | "visible_height" | "content_x"
-        | "content_y" | "content_width" | "content_height" | "translation_x" | "translation_y" => {
-            Some(Type::Option(Box::new(Type::F64)))
-        }
-        "content" => Some(Type::Option(Box::new(Type::Str))),
-        _ => None,
-    }
-}
-
 pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
     route: &ResolvedInteractionRoute,
     pattern: &str,

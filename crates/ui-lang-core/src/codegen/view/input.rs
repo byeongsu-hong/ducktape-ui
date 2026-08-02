@@ -2,8 +2,8 @@ use super::*;
 
 pub(in crate::codegen) fn render_input(
     input: &ResolvedInput,
-    id: &Option<Id>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -47,9 +47,8 @@ pub(in crate::codegen) fn render_input(
         })
         .transpose()?
         .unwrap_or(binding_constructor);
-    let source_span = Span::line(program.origin(input.origin).line);
     let accessibility_key =
-        accessibility_key_code(id.as_ref(), "input", &source_span, scope, env, document)?;
+        resolved_accessibility_key_code(identity, "input", input.origin, scope, env, document)?;
     let accessibility_label = input
         .accessibility_label
         .map(|value| checked_expr_use_code(program, value, env, ValueMode::Owned))

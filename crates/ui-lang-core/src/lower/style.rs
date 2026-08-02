@@ -562,7 +562,6 @@ impl StyleProgram {
         self.nested_themes.get(&id).filter(|theme| theme.id == id)
     }
 
-    #[cfg(test)]
     pub(super) fn nested_theme_count(&self) -> usize {
         self.nested_themes.len()
     }

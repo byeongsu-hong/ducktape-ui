@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn render_rule(
     rule: &ResolvedRule,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let program = document.hir();
@@ -18,7 +18,7 @@ pub(in crate::codegen) fn render_rule(
 
 pub(in crate::codegen) fn render_qr_code(
     qr: &ResolvedQrCode,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let program = document.hir();
@@ -66,7 +66,7 @@ pub(in crate::codegen) fn render_qr_code(
 
 pub(in crate::codegen) fn render_space(
     space: &ResolvedSpace,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let program = document.hir();

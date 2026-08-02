@@ -2,18 +2,19 @@ use super::*;
 
 pub(in crate::codegen) fn render_children(
     out: &mut String,
-    children: &[ViewNode],
-    document: &RenderDocument<'_>,
+    children: &[ViewId],
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<(), Error> {
     for child in children {
-        match child {
-            ViewNode::If { children, .. } => {
-                let program = document.hir();
-                let conditional = program.resolved_conditional_for(child)?;
+        let view = document.resolved_view(*child)?;
+        match &view.kind {
+            ResolvedViewKind::If { children } => {
+                let program = document;
+                let conditional = program.resolved_conditional(*child)?;
                 let condition =
                     checked_expr_use_code(program, conditional.condition, env, ValueMode::Owned)?;
                 if condition == "false" {
@@ -27,9 +28,9 @@ pub(in crate::codegen) fn render_children(
                 render_children(out, children, document, message, env, scope, slot)?;
                 out.push_str(" }");
             }
-            ViewNode::For { children, .. } => {
-                let program = document.hir();
-                let iteration = program.resolved_iteration_for(child)?;
+            ResolvedViewKind::For { children } => {
+                let program = document;
+                let iteration = program.resolved_iteration(*child)?;
                 let item_name = &iteration.item.name;
                 let items =
                     checked_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
@@ -52,20 +53,22 @@ pub(in crate::codegen) fn render_children(
                 render_children(out, children, document, message, &child_env, scope, slot)?;
                 out.push_str(" }");
             }
-            ViewNode::Match { arms, span, .. } => {
-                let program = document.hir();
-                let resolved = program.resolved_match_for(child)?;
+            ResolvedViewKind::Match { arms } => {
+                let program = document;
+                let resolved = program.resolved_match(*child)?;
                 if arms.len() != resolved.arms.len() {
-                    return Err(Error::new("E196", span, "match HIR arm length diverged"));
+                    return Err(
+                        program.invariant_at_origin(view.origin, "match HIR arm length diverged")
+                    );
                 }
                 let value =
                     checked_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
                 write!(out, " match &({value}) {{").unwrap();
-                for (arm, resolved_arm) in arms.iter().zip(&resolved.arms) {
+                for (arm_children, resolved_arm) in arms.iter().zip(&resolved.arms) {
                     write!(
                         out,
                         " {} => {{",
-                        resolved_match_pattern_code(resolved_arm, &arm.span)?
+                        resolved_match_pattern_code(resolved_arm, program)?
                     )
                     .unwrap();
                     let mut child_env = ScopedBindingEnv::new(env);
@@ -78,7 +81,7 @@ pub(in crate::codegen) fn render_children(
                     }
                     render_children(
                         out,
-                        &arm.children,
+                        arm_children,
                         document,
                         message,
                         &child_env,
@@ -91,7 +94,7 @@ pub(in crate::codegen) fn render_children(
             }
             _ => {
                 if let Some(child) =
-                    render_node_if_present(child, document, message, env, scope, slot)?
+                    render_node_if_present(*child, document, message, env, scope, slot)?
                 {
                     write!(out, " __children.push({child});").unwrap();
                 }

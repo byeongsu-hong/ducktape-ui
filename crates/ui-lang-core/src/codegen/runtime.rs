@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::codegen) fn generate_keyboard_types(
     out: &mut String,
-    document: &Document,
+    program: &LoweredProgram,
     subscriptions: &[ResolvedSubscription],
 ) {
     if !subscriptions.iter().any(|subscription| {
@@ -10,7 +10,7 @@ pub(in crate::codegen) fn generate_keyboard_types(
             &subscription.source,
             ResolvedSubscriptionSource::Keyboard(_)
         )
-    }) && !canvas_events(document)
+    }) && !canvas_events(program)
         .iter()
         .any(|event| matches!(event.source, SubscriptionSource::Keyboard(_)))
     {
@@ -41,22 +41,9 @@ pub(crate) struct __IceKeyRelease {
     );
 }
 
-pub(in crate::codegen) fn generate_system_types(
-    out: &mut String,
-    document: &Document,
-    subscriptions: &[ResolvedSubscription],
-) {
-    let information = uses_system_task(document, "__ice_system_info");
-    let theme = uses_system_task(document, "__ice_system_theme")
-        || subscriptions.iter().any(|subscription| {
-            matches!(
-                &subscription.source,
-                ResolvedSubscriptionSource::SystemTheme
-            )
-        });
-    if information {
-        out.push_str(
-            r#"#[allow(dead_code)]
+pub(in crate::codegen) fn generate_system_types(out: &mut String) {
+    out.push_str(
+        r#"#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct __IceSystemInfo {
     system_name: ::std::option::Option<::std::string::String>,
@@ -86,11 +73,9 @@ fn __ice_system_info(value: ::iced::system::Information) -> __IceSystemInfo {
     }
 }
 "#,
-        );
-    }
-    if theme {
-        out.push_str(
-            r#"fn __ice_system_theme(value: ::iced::theme::Mode) -> ::std::string::String {
+    );
+    out.push_str(
+        r#"fn __ice_system_theme(value: ::iced::theme::Mode) -> ::std::string::String {
     match value {
         ::iced::theme::Mode::None => "none",
         ::iced::theme::Mode::Light => "light",
@@ -98,33 +83,10 @@ fn __ice_system_info(value: ::iced::system::Information) -> __IceSystemInfo {
     }.to_owned()
 }
 "#,
-        );
-    }
+    );
 }
 
-pub(in crate::codegen) fn generate_widget_selector_types(
-    out: &mut String,
-    document: &Document,
-    component_declarations: &[ResolvedExternComponentDeclaration],
-    component_ids: &HashSet<ExternFnId>,
-) {
-    let uses_builtin = |statements: &[Statement]| {
-        statements_use_widget_selector(statements, |selector| {
-            !matches!(selector, WidgetSelector::Extern { .. })
-        })
-    };
-    if !document_uses_widget_target(document, component_declarations, component_ids)
-        && !document
-            .handlers
-            .iter()
-            .any(|handler| uses_builtin(&handler.statements))
-        && !document
-            .presets
-            .iter()
-            .any(|preset| uses_builtin(&preset.statements))
-    {
-        return;
-    }
+pub(in crate::codegen) fn generate_widget_selector_types(out: &mut String) {
     out.push_str(
         r#"#[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -198,87 +160,8 @@ fn __ice_widget_target_from_text(value: ::iced::widget::selector::Text) -> __Ice
     );
 }
 
-fn document_uses_widget_target(
-    document: &Document,
-    component_declarations: &[ResolvedExternComponentDeclaration],
-    component_ids: &HashSet<ExternFnId>,
-) -> bool {
-    let uses = document_type_uses_widget_target;
-
-    component_declarations.iter().any(|declaration| {
-        declaration
-            .parameters
-            .iter()
-            .any(|parameter| uses(&parameter.ty))
-            || uses(&declaration.output)
-    }) || document.states.iter().any(|state| uses(&state.ty))
-        || document
-            .structs
-            .iter()
-            .flat_map(|item| &item.fields)
-            .any(|(_, ty)| uses(ty))
-        || document.functions.iter().enumerate().any(|(index, item)| {
-            !component_ids.contains(&ExternFnId(index as u32))
-                && (item.params.iter().any(|(_, ty)| uses(ty))
-                    || item.progress.as_ref().is_some_and(uses)
-                    || uses(&item.output)
-                    || item.error.as_ref().is_some_and(uses))
-        })
-        || document
-            .handlers
-            .iter()
-            .flat_map(|handler| &handler.params)
-            .any(|param| uses(&param.ty))
-        || canvases(document)
-            .into_iter()
-            .flat_map(|(_, locals, _)| locals)
-            .any(|state| uses(&state.ty))
-        || document.components.iter().any(|component| {
-            component.params.iter().any(|param| uses(&param.ty))
-                || uses(&component.output)
-                || component.states.iter().any(|state| uses(&state.ty))
-                || component
-                    .handlers
-                    .iter()
-                    .flat_map(|handler| &handler.params)
-                    .any(|param| uses(&param.ty))
-        })
-}
-
-fn document_type_uses_widget_target(ty: &Type) -> bool {
-    match ty {
-        Type::WidgetTarget => true,
-        Type::List(inner) | Type::Option(inner) | Type::Combo(inner) | Type::Animation(inner) => {
-            document_type_uses_widget_target(inner)
-        }
-        Type::Result(output, error) => {
-            document_type_uses_widget_target(output) || document_type_uses_widget_target(error)
-        }
-        _ => false,
-    }
-}
-
-pub(in crate::codegen) fn statements_use_widget_selector(
-    statements: &[Statement],
-    predicate: impl Copy + Fn(&WidgetSelector) -> bool,
-) -> bool {
-    statements.iter().any(|statement| match statement {
-        Statement::WidgetOperation {
-            operation: WidgetOperation::Find { selector, .. },
-            ..
-        } => predicate(selector),
-        Statement::TaskGroup { statements, .. } => {
-            statements_use_widget_selector(statements, predicate)
-        }
-        Statement::Abortable { task, .. } => {
-            statements_use_widget_selector(::std::slice::from_ref(task), predicate)
-        }
-        _ => false,
-    })
-}
-
-pub(in crate::codegen) fn generate_canvas_types(out: &mut String, document: &Document) {
-    if !uses_canvas(document) {
+pub(in crate::codegen) fn generate_canvas_types(out: &mut String, program: &LoweredProgram) {
+    if !uses_canvas(program) {
         return;
     }
     out.push_str(
@@ -376,7 +259,7 @@ fn __ice_canvas_interaction(value: &str) -> ::iced::mouse::Interaction {
 }
 "#,
     );
-    for group in canvas_cache_groups(document) {
+    for group in canvas_cache_groups(program) {
         writeln!(
             out,
             "static {}: ::std::sync::OnceLock<::iced::widget::canvas::Group> = ::std::sync::OnceLock::new();",
@@ -384,50 +267,6 @@ fn __ice_canvas_interaction(value: &str) -> ::iced::mouse::Interaction {
         )
         .unwrap();
     }
-}
-
-pub(in crate::codegen) fn uses_system_task(document: &Document, name: &str) -> bool {
-    document
-        .handlers
-        .iter()
-        .any(|handler| statements_use_system_task(&handler.statements, name))
-        || document
-            .presets
-            .iter()
-            .any(|preset| statements_use_system_task(&preset.statements, name))
-}
-
-pub(in crate::codegen) fn statements_use_system_task(statements: &[Statement], name: &str) -> bool {
-    statements.iter().any(|statement| match statement {
-        Statement::Run {
-            kind: EffectKind::Task,
-            function,
-            ..
-        } => function == name,
-        Statement::TaskGroup { statements, .. } => statements_use_system_task(statements, name),
-        Statement::Abortable { task, .. } => {
-            statements_use_system_task(::std::slice::from_ref(task), name)
-        }
-        Statement::TaskFlow {
-            source, transforms, ..
-        } => {
-            task_source_uses_system(source, name)
-                || transforms.iter().any(|transform| match transform {
-                    TaskTransform::Then { source, .. } | TaskTransform::AndThen { source, .. } => {
-                        task_source_uses_system(source, name)
-                    }
-                    TaskTransform::Map { .. }
-                    | TaskTransform::MapError { .. }
-                    | TaskTransform::Collect { .. }
-                    | TaskTransform::Discard { .. } => false,
-                })
-        }
-        _ => false,
-    })
-}
-
-pub(in crate::codegen) fn task_source_uses_system(source: &TaskSource, name: &str) -> bool {
-    matches!(source, TaskSource::Effect { function, .. } if function == name)
 }
 
 pub(in crate::codegen) fn borrowed_type(ty: &Type, document: &Document) -> String {

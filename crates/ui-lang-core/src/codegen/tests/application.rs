@@ -938,9 +938,14 @@ view
   Label value=count
 "#;
     let program = crate::lower::lower(crate::analyze(source).unwrap()).unwrap();
-    let call = program
-        .component_call(program.document().view.span())
-        .unwrap();
+    let crate::lower::ResolvedViewKind::Component { call } = program
+        .resolved_view(program.app_view())
+        .map(|view| &view.kind)
+        .unwrap()
+    else {
+        panic!("application root is not a component call")
+    };
+    let call = program.component_call_by_id(*call).unwrap();
     let expression = call.arguments[0].expression;
     let mut env = checked_state_env(&program, "self");
     env.get_mut("count").unwrap().owner = None;

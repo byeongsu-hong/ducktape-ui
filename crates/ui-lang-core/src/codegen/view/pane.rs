@@ -5,9 +5,9 @@ use crate::hir::OriginId;
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_pane_grid(
     pane_grid: &ResolvedPaneGrid,
-    panes: &[PaneView],
-    templates: &[PaneTemplate],
-    document: &RenderDocument<'_>,
+    panes: &[ResolvedPaneViewTopology],
+    templates: &[ResolvedPaneViewTopology],
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -20,11 +20,11 @@ pub(in crate::codegen) fn render_pane_grid(
             "pane grid render topology diverged from normalized HIR",
         ));
     }
-    let id = Id {
+    let identity = ResolvedViewIdentity {
         name: pane_grid.name.clone(),
         key: None,
     };
-    let pane_grid_scope = id_code(&id, scope, env, document)?;
+    let pane_grid_scope = resolved_view_identity_code(&identity, scope, env, document)?;
     let pane_type = (!pane_grid.templates.is_empty()).then(|| pane_type(&pane_grid.name));
     let mut arms = panes
         .iter()
@@ -76,7 +76,7 @@ pub(in crate::codegen) fn render_pane_grid(
             item
         );
         let content = render_pane_content(
-            &template.pane,
+            template,
             &resolved.pane,
             document,
             message,
@@ -171,7 +171,7 @@ pub(in crate::codegen) fn render_pane_grid(
     append_pane_grid_style(&mut code, pane_grid, env, document)?;
     identify_rendered(
         format!("{code}.into()"),
-        Some(&id),
+        Some(&identity),
         message,
         env,
         document,
@@ -183,7 +183,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
     code: &mut String,
     pane_grid: &ResolvedPaneGrid,
     env: &dyn BindingEnvironment,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
 ) -> Result<(), Error> {
     let program = document.hir();
     let style = &pane_grid.style;
@@ -284,9 +284,9 @@ pub(in crate::codegen) fn append_pane_grid_style(
 }
 
 pub(in crate::codegen) fn render_pane_content(
-    pane: &PaneView,
+    pane: &ResolvedPaneViewTopology,
     resolved: &ResolvedPaneView,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -299,7 +299,7 @@ pub(in crate::codegen) fn render_pane_content(
             "pane title render topology diverged from normalized HIR",
         ));
     }
-    let body = render_node(&pane.content, document, message, env, scope, slot)?;
+    let body = render_node(pane.content, document, message, env, scope, slot)?;
     let mut declarations = format!("let __pane_content: __IceElement<'_, {message}> = {body};");
     let mut content = String::from("::iced::widget::pane_grid::Content::new(__pane_content)");
     if let Some(style) =
@@ -316,7 +316,7 @@ pub(in crate::codegen) fn render_pane_content(
                 "pane controls render topology diverged from normalized HIR",
             ));
         }
-        let title_content = render_node(&title.content, document, message, env, scope, slot)?;
+        let title_content = render_node(title.content, document, message, env, scope, slot)?;
         write!(
             declarations,
             " let __pane_title: __IceElement<'_, {message}> = {title_content};"
@@ -326,14 +326,14 @@ pub(in crate::codegen) fn render_pane_content(
         if let Some(padding) = resolved_pane_padding_code(&resolved_title.padding, program, env)? {
             write!(title_bar, ".padding({padding})").unwrap();
         }
-        if let Some(controls) = &title.controls {
+        if let Some(controls) = title.controls {
             let controls = render_node(controls, document, message, env, scope, slot)?;
             write!(
                 declarations,
                 " let __pane_controls: __IceElement<'_, {message}> = {controls};"
             )
             .unwrap();
-            if let Some(compact) = &title.compact_controls {
+            if let Some(compact) = title.compact_controls {
                 let compact = render_node(compact, document, message, env, scope, slot)?;
                 write!(
                     declarations,
