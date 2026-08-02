@@ -44,6 +44,9 @@ transitive reverse edges are retained. They also prove notification-free import
 edits, same-length timestamp-preserving and atomic replacements, source and
 asset symlink retargeting, stable overlay close across a root-symlink retarget,
 font deletion/recreation, and invalid icon-byte changes are observed.
+Watcher-validated source batches reuse the unchanged parsed closure. A focused
+fixture asserts one leaf edit loads, hashes, and import-scans exactly one file,
+checks only its affected root, and leaves an independent root as a cache hit.
 LSP diagnostics, the dev
 preflight loop, `cargo ice` analysis, and each `ui-lang-build` compilation batch
 own and reuse this same DB API without global or process-persistent state.
@@ -202,8 +205,11 @@ the metadata trigger performs no content reads before the existing two-pass
 stamp verification. Configuration-change plus periodic-rescan tests cover the
 other complete-snapshot safety paths. Selective-snapshot tests prove that a known
 Rust file or source-only Ice edit performs two content reads regardless of graph
-size, while new and removed files refresh the inventory. A changed snapshot is
-settled and built while the accepted process remains alive. The shadow
+size, while new and removed files refresh the inventory. The second settled Ice
+read is retained as the analysis input; an explicit 10,000-source performance
+contract requires exactly one loaded, hashed, and scanned file, one checked
+root, and an independent root cache hit within five seconds. A changed snapshot
+is settled and built while the accepted process remains alive. The shadow
 executable is adopted only after its generated root completes a draw, atomically
 publishes the runner's exact readiness token, and is confirmed alive; failure
 and timeout tests keep the previous process and clean the candidate. This is

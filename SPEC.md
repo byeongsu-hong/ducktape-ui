@@ -5416,6 +5416,9 @@ only affected paths. A path absent from the accepted inventories, a removed or
 renamed path, or a directory path refreshes the metadata inventory so added and
 removed inputs participate without hashing unchanged contents. A change is
 settled only when two equivalent snapshots 50 milliseconds apart are identical.
+The final stabilized bytes for affected Ice files are reused by incremental
+analysis. Unchanged files in the retained import closure are neither read,
+hashed, nor scanned again; newly imported files still load from disk.
 
 After a settled Ice, Rust, Cargo, build-script, configuration, or embedded-asset
 change, the runner builds a new executable while the accepted process remains
