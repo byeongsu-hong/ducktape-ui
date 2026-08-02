@@ -561,18 +561,6 @@ impl<'a> ExprEmission<'a> {
     }
 }
 
-pub(in crate::codegen) fn expr_list_code(
-    values: &[Expr],
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    Ok(values
-        .iter()
-        .map(|value| expr_code(value, env, document, ValueMode::Owned))
-        .collect::<Result<Vec<_>, _>>()?
-        .join(", "))
-}
-
 pub(in crate::codegen) fn expr_code(
     expr: &Expr,
     env: &dyn BindingEnvironment,

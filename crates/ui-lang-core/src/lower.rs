@@ -4539,8 +4539,37 @@ impl LoweredProgram {
         &self.styles.theme
     }
 
-    pub(crate) fn nested_theme(&self, span: &Span) -> Result<&ResolvedNestedTheme, Error> {
-        self.styles.nested_theme(span)
+    #[cfg(test)]
+    pub(crate) fn nested_theme(&self, id: ViewId) -> Option<&ResolvedNestedTheme> {
+        self.styles.nested_theme(id)
+    }
+
+    pub(crate) fn resolved_nested_theme_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedNestedTheme, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "nested theme reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        let theme = self.styles.nested_theme(id).ok_or_else(|| {
+            self.invariant_at_origin(
+                checked.origin,
+                "nested theme reached code generation without normalized HIR",
+            )
+        })?;
+        if checked.id != id || theme.id != id {
+            return Err(self.invariant_at_origin(
+                theme.origin,
+                "nested theme reached code generation with a mismatched checked view ID",
+            ));
+        }
+        Ok(theme)
     }
 
     pub(crate) fn extern_function(&self, id: ExternFnId) -> &crate::hir::ExternDeclaration {
@@ -9749,7 +9778,15 @@ impl Lowerer {
                     self.lower_view(child, outer_component)?;
                 }
             }
-            ViewNode::Theme { content, .. } => {
+            ViewNode::Theme {
+                preset,
+                text,
+                background,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_nested_theme(preset, text, background, span, outer_component)?;
                 self.lower_view(content, outer_component)?;
             }
             ViewNode::Container {
@@ -18679,15 +18716,23 @@ view
             program.extern_function(factory.function).name,
             "native_theme"
         );
-        let nested = program
-            .nested_theme(&program.document.view.span().clone())
-            .unwrap();
+        let nested = program.nested_theme(ViewId(0)).unwrap();
         let ResolvedThemePreset::Factory(factory) = &nested.preset else {
             panic!("nested theme factory must be resolved");
         };
+        assert_eq!(factory.function.name, "native_theme");
+        assert_eq!(factory.function.rust_path, "crate::backend::native_theme");
+        assert_eq!(factory.arguments.len(), 1);
+        assert_eq!(program.origin(factory.origin).parent, Some(nested.origin));
         assert_eq!(
-            program.extern_function(factory.function).name,
-            "native_theme"
+            program
+                .checked_facts()
+                .expression_use(factory.arguments[0].expression)
+                .owner,
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: ViewId(0),
+                index: 0,
+            })
         );
         assert!(matches!(
             nested.text,
@@ -18696,10 +18741,26 @@ view
                 ..
             })
         ));
-        let ResolvedBackground::Linear { stops, .. } = &nested.background.as_ref().unwrap() else {
+        let ResolvedBackground::Linear { angle, stops } = &nested.background.as_ref().unwrap()
+        else {
             panic!("nested gradient must be normalized");
         };
         assert_eq!(stops.len(), 2);
+        for (index, expression) in std::iter::once(*angle)
+            .chain(stops.iter().map(|stop| stop.offset))
+            .enumerate()
+        {
+            let expression = program.checked_facts().expression_use(expression);
+            assert_eq!(expression.source, Type::F64);
+            assert_eq!(expression.destination, Type::F64);
+            assert_eq!(
+                expression.owner,
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: ViewId(0),
+                    index: index as u32 + 1,
+                })
+            );
+        }
         let ViewNode::Theme { content, .. } = &program.document.view else {
             panic!("fixture root must be a theme");
         };
@@ -18711,6 +18772,295 @@ view
                 opacity: Some(60),
             })
         ));
+    }
+
+    #[test]
+    fn nested_theme_post_check_and_post_lowering_raw_poison_is_contained() {
+        let source = format!(
+            "app NestedThemePoison\nextern crate::backend\n  theme primary_theme(value:f64)\n  theme poisoned_theme(value:f64)\n{THEME}state\n  value = 0.5\nview\n  theme primary_theme(value) fg=fg bg=linear(value, bg@value, primary@value)\n    text \"Content\"\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "nested-theme-poison.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Theme {
+            preset, background, ..
+        } = &mut checked.document.view
+        else {
+            panic!("fixture root must be a nested theme");
+        };
+        let ThemePreset::Factory(factory) = preset else {
+            panic!("fixture must use a nested theme factory");
+        };
+        factory.args[0] = Expr::F64(91.0);
+        let Some(BackgroundValue::Linear { angle, stops }) = background else {
+            panic!("fixture must use a linear background");
+        };
+        *angle = Expr::F64(92.0);
+        stops[0].offset = Expr::F64(93.0);
+        stops[1].offset = Expr::F64(94.0);
+        let mut program = lower(checked).unwrap();
+        let checked_poison = crate::codegen::generate(&program, "nested-theme-poison.ice").unwrap();
+        assert_eq!(checked_poison, expected);
+        assert!(!checked_poison.contains("91.0"));
+        assert!(!checked_poison.contains("92.0"));
+        assert!(!checked_poison.contains("93.0"));
+        assert!(!checked_poison.contains("94.0"));
+
+        let ViewNode::Theme {
+            preset,
+            text,
+            background,
+            ..
+        } = &mut program.document.view
+        else {
+            panic!("fixture root must be a nested theme");
+        };
+        *preset = ThemePreset::Factory(ExternCall {
+            function: "poisoned_theme".into(),
+            args: vec![Expr::F64(99.0)],
+        });
+        *text = Some("danger".into());
+        *background = Some(BackgroundValue::Color("danger".into()));
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(1, 3);
+        let lowered_poison = crate::codegen::generate(&program, "nested-theme-poison.ice").unwrap();
+        assert_eq!(lowered_poison, expected);
+        assert!(!lowered_poison.contains("99.0"));
+
+        let mut static_poison = analyze(&source).unwrap();
+        let ViewNode::Theme { text, .. } = &mut static_poison.document.view else {
+            panic!("fixture root must be a nested theme");
+        };
+        *text = Some("danger".into());
+        let error = lower(static_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+
+        let mut factory_poison = analyze(&source).unwrap();
+        let ViewNode::Theme { preset, .. } = &mut factory_poison.document.view else {
+            panic!("fixture root must be a nested theme");
+        };
+        let ThemePreset::Factory(factory) = preset else {
+            panic!("fixture must use a nested theme factory");
+        };
+        factory.function = "poisoned_theme".into();
+        let error = lower(factory_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+
+        let mut background_poison = analyze(&source).unwrap();
+        let ViewNode::Theme { background, .. } = &mut background_poison.document.view else {
+            panic!("fixture root must be a nested theme");
+        };
+        *background = Some(BackgroundValue::Color("bg".into()));
+        let error = lower(background_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn nested_theme_rejects_cross_owner_factory_identity_and_origin_corruption() {
+        let source = format!(
+            "app NestedThemeIdentity\nextern crate::backend\n  theme first_theme(value:f64)\n  theme second_theme(value:f64)\n{THEME}state\n  value = 0.5\nview\n  col\n    theme first_theme(value) bg=linear(value, bg@value, primary@value)\n      text \"First\"\n    theme second_theme(value) bg=linear(value, bg@value, primary@value)\n      text \"Second\"\n"
+        );
+        let first = ViewId(1);
+        let second = ViewId(3);
+
+        let mut transplanted = analyze(&source).unwrap();
+        transplanted
+            .facts
+            .transplant_interaction_option_expression(first, 0, second, 0);
+        let error = lower(transplanted).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut reordered = analyze(&source).unwrap();
+        reordered
+            .facts
+            .swap_interaction_option_expressions(first, 0, 1);
+        let error = lower(reordered).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut corrupt_factory = analyze(&source).unwrap();
+        corrupt_factory
+            .facts
+            .corrupt_nested_theme_factory(first, ExternFnId(1));
+        let error = lower(corrupt_factory).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(
+            error
+                .message
+                .contains("factory declaration contract diverged")
+        );
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id.facts.corrupt_nested_theme_id(first, u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_origin = analyze(&source).unwrap();
+        corrupt_origin
+            .facts
+            .corrupt_interaction_expression_origin(first, 0, u32::MAX);
+        let error = lower(corrupt_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("origin is invalid"));
+    }
+
+    #[test]
+    fn imported_nested_theme_keeps_origins_markers_and_e196_paths() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-nested-theme-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("nested.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedNestedTheme\nuse \"nested.ice\"\n{THEME}state\n  value = 0.5\nview\n  ImportedTheme value=value\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  theme imported_theme(value:f64)\ncomponent ImportedTheme(value:f64)\n  theme imported_theme(value) fg=fg bg=linear(value, bg@value, primary@value)\n    text \"Imported\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let theme_id = program
+            .declarations
+            .view_id(program.document.components[0].root.span())
+            .unwrap();
+        let theme = program.nested_theme(theme_id).unwrap();
+        let theme_origin = theme.origin;
+        let origin = program.origin(theme_origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+        let ResolvedThemePreset::Factory(factory) = &theme.preset else {
+            panic!("imported nested theme must use a factory");
+        };
+        assert_eq!(factory.function.rust_path, "crate::backend::imported_theme");
+        assert_eq!(
+            program
+                .origin(factory.function.declaration_origin)
+                .path
+                .as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(program.origin(factory.function.declaration_origin).line, 2);
+        assert_eq!(program.origin(factory.origin).parent, Some(theme_origin));
+        for expression in factory
+            .arguments
+            .iter()
+            .map(|argument| argument.expression)
+            .chain(match &theme.background {
+                Some(ResolvedBackground::Linear { angle, stops }) => std::iter::once(*angle)
+                    .chain(stops.iter().map(|stop| stop.offset))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+                _ => panic!("imported nested theme must use a gradient"),
+            })
+        {
+            let expression = program.checked_facts().expression_use(expression);
+            assert_eq!(program.origin(expression.origin).parent, Some(theme_origin));
+            assert_eq!(
+                program.origin(expression.origin).path.as_deref(),
+                Some(imported.as_path())
+            );
+        }
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.styles.corrupt_nested_theme_id(theme_id, u32::MAX);
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        let mut corrupt_checked = analyze_file(&root).unwrap();
+        let theme_id = corrupt_checked
+            .declarations
+            .view_id(corrupt_checked.document.components[0].root.span())
+            .unwrap();
+        corrupt_checked
+            .facts
+            .corrupt_nested_theme_factory(theme_id, ExternFnId(u32::MAX));
+        let error = lower(corrupt_checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized nested Theme lowering and emission performance contract"]
+    fn performance_contract_four_thousand_nested_themes_lower_and_emit_under_two_seconds() {
+        const THEMES: usize = 4_000;
+        let mut source = format!(
+            "app NestedThemeScale\nextern crate::backend\n  theme native_theme(value:f64)\n{THEME}state\n  value = 0.5\nview\n  col\n"
+        );
+        for _ in 0..THEMES {
+            writeln!(
+                source,
+                "    theme native_theme(value) fg=fg bg=linear(value, bg@value, primary@value)\n      space"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        assert_eq!(checked.facts.metrics().type_scope_env_full_clones, 0);
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "nested-theme-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.styles.nested_theme_count(), THEMES);
+        let expression_count = program
+            .styles
+            .nested_themes()
+            .map(|theme| {
+                let arguments = match &theme.preset {
+                    ResolvedThemePreset::Factory(factory) => factory.arguments.len(),
+                    _ => 0,
+                };
+                let background = match &theme.background {
+                    Some(ResolvedBackground::Linear { stops, .. }) => 1 + stops.len(),
+                    _ => 0,
+                };
+                arguments + background
+            })
+            .sum::<usize>();
+        assert_eq!(expression_count, THEMES * 4);
+        assert_eq!(
+            generated
+                .matches("::ui_lang_runtime::dynamic_themer(")
+                .count(),
+            THEMES
+        );
+        eprintln!("4k normalized nested Theme nodes lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized nested Theme nodes lowered and emitted in {elapsed:?}"
+        );
     }
 
     #[test]
@@ -18793,7 +19143,11 @@ view
             &program.theme().app_theme,
             ResolvedAppThemeSelection::BuiltIn(name) if name == "dark"
         ));
-        let nested = program.nested_theme(program.document.view.span()).unwrap();
+        let theme_id = program
+            .declarations
+            .view_id(program.document.view.span())
+            .unwrap();
+        let nested = program.nested_theme(theme_id).unwrap();
         assert!(matches!(
             &nested.preset,
             ResolvedThemePreset::BuiltIn(name) if name == "light"
@@ -18852,17 +19206,18 @@ view
         );
         let contract_origin = program.origin(program.theme().contract.origin);
         assert_eq!(contract_origin.path.as_deref(), Some(root.as_path()));
-        let ViewNode::Theme { content, span, .. } = &program.document.view else {
+        let ViewNode::Theme { content, .. } = &program.document.view else {
             panic!("fixture root must be a nested theme");
         };
-        let nested = program.nested_theme(span).unwrap();
+        let theme_id = program
+            .declarations
+            .view_id(program.document.view.span())
+            .unwrap();
+        let nested = program.nested_theme(theme_id).unwrap();
         let ResolvedThemePreset::Factory(factory) = &nested.preset else {
             panic!("namespaced nested theme factory must be resolved");
         };
-        assert_eq!(
-            program.extern_function(factory.function).name,
-            "ui::native_theme"
-        );
+        assert_eq!(factory.function.name, "ui::native_theme");
         assert_eq!(
             program.origin(nested.origin).path.as_deref(),
             Some(root.as_path())

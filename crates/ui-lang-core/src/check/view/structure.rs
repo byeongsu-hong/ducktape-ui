@@ -18,6 +18,7 @@ pub(in crate::check) fn infer_structure_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let theme_analysis_guard = expr::HandlerAnalysisGuard::start();
             if let ThemePreset::Factory(factory) = preset {
                 let function =
                     extern_function(document, &factory.function, ExternKind::Theme, span)?;
@@ -36,6 +37,7 @@ pub(in crate::check) fn infer_structure_group(
                     "nested theme background",
                 )?;
             }
+            retain_interaction_analyses(span, theme_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Float {

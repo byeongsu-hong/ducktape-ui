@@ -379,6 +379,60 @@ pub(crate) fn shader_semantic_key(
     )
 }
 
+fn nested_theme_background_semantic_key(background: &Option<BackgroundValue>) -> String {
+    match background {
+        None => "none".into(),
+        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+        Some(BackgroundValue::Linear { stops, .. }) => format!(
+            "linear:{}",
+            stops
+                .iter()
+                .map(|stop| stop.color.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
+pub(crate) fn nested_theme_semantic_key(
+    preset: &ThemePreset,
+    text: &Option<String>,
+    background: &Option<BackgroundValue>,
+) -> String {
+    let preset = match preset {
+        ThemePreset::Default => "default".into(),
+        ThemePreset::App => "app".into(),
+        ThemePreset::BuiltIn(name) => format!("built-in:{name}"),
+        ThemePreset::Factory(factory) => {
+            format!("factory:{}:{}", factory.function, factory.args.len())
+        }
+    };
+    let text = text
+        .as_ref()
+        .map(|color| format!("color:{color}"))
+        .unwrap_or_else(|| "none".into());
+    format!(
+        "nested-theme|preset={preset}|text={}|background={}",
+        text,
+        nested_theme_background_semantic_key(background)
+    )
+}
+
+pub(crate) fn nested_theme_expression_roots<'a>(
+    preset: &'a ThemePreset,
+    background: &'a Option<BackgroundValue>,
+) -> Vec<&'a Expr> {
+    let mut expressions = match preset {
+        ThemePreset::Factory(factory) => factory.args.iter().collect(),
+        ThemePreset::Default | ThemePreset::App | ThemePreset::BuiltIn(_) => Vec::new(),
+    };
+    if let Some(BackgroundValue::Linear { angle, stops }) = background {
+        expressions.push(angle);
+        expressions.extend(stops.iter().map(|stop| &stop.offset));
+    }
+    expressions
+}
+
 impl ViewNode {
     pub fn span(&self) -> &Span {
         match self {

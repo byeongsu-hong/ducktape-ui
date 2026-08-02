@@ -832,6 +832,18 @@ origin/source-marker and source-mapped `E196` evidence, native output, the
 lexical boundary ratchet, and an ignored mixed 4,000-node lower+emit contract
 cover the boundary.
 
+Nested Theme has a complete private wrapper HIR boundary. Its checked record
+and interaction-expression partition freeze the shared view ID, preset or exact
+theme-factory ID, ordered argument types, text/background theme colors, linear
+gradient topology, and parented physical origins. `ResolvedNestedTheme` fixes
+the factory Rust path and owns checked IDs for factory arguments, gradient
+angle, and stop offsets. Production rendering reads none of those fields from
+the source AST; only child traversal and common widget identity remain in the
+general view topology. Dynamic/static and post-lowering raw poisoning,
+same-type cross-owner expression attacks, factory/view/origin corruption,
+imported marker and source-mapped E196 evidence, the reduced HIR ratchet, and an
+ignored 4,000-node lower+emit budget cover the boundary.
+
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,

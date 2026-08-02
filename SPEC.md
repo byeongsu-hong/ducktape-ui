@@ -524,6 +524,18 @@ raw poisoning, imported origins and diagnostics, native Rust fragments, the
 lexical HIR ratchet, and a mixed 4,000-node lower+emit budget provide the
 executable evidence.
 
+Nested Theme is a completed wrapper HIR slice. A shared `ViewId` owns the
+checked preset/factory identity, ordered factory arguments, text/background
+theme colors, gradient discriminator and stop-color order, and physical
+origin. Dynamic factory, angle, and stop-offset operands use deterministic
+checked expression-use IDs. Lowering fixes the factory Rust path and argument
+mode and publishes `ResolvedNestedTheme`; generation consumes that record and
+the checked expressions while retaining only the child subtree and common
+widget identity as raw view topology. Post-check static drift fails with E196,
+post-lowering preset/factory/color/gradient poisoning cannot change output,
+and imported diagnostics, cross-owner corruption, the lexical ratchet, and a
+4,000-node lower+emit contract cover the boundary.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

@@ -936,6 +936,12 @@ pub(crate) struct CheckedExternViewAdapter {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedNestedTheme {
+    pub(crate) id: ViewId,
+    pub(crate) factory: Option<ExternFnId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedBooleanControl {
     pub(crate) id: ViewId,
     pub(crate) style: Option<ExternFnId>,
@@ -1017,6 +1023,7 @@ pub(crate) enum CheckedInteractionKind {
     ExternComponent,
     Themer,
     Shader,
+    NestedTheme,
     PickList,
     ComboBox,
     Slider,
@@ -1118,6 +1125,7 @@ pub(crate) struct CheckedFacts {
     extern_components: HashMap<ViewId, CheckedExternComponent>,
     themers: HashMap<ViewId, CheckedExternViewAdapter>,
     shaders: HashMap<ViewId, CheckedExternViewAdapter>,
+    nested_themes: HashMap<ViewId, CheckedNestedTheme>,
     boolean_controls: HashMap<ViewId, CheckedBooleanControl>,
     pick_lists: HashMap<ViewId, CheckedPickList>,
     combo_boxes: HashMap<ViewId, CheckedComboBox>,
@@ -1380,6 +1388,16 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_shader_id(&mut self, view: ViewId, raw: u32) {
         self.shaders.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_nested_theme_factory(&mut self, view: ViewId, function: ExternFnId) {
+        self.nested_themes.get_mut(&view).unwrap().factory = Some(function);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_nested_theme_id(&mut self, view: ViewId, raw: u32) {
+        self.nested_themes.get_mut(&view).unwrap().id = ViewId(raw);
     }
 
     #[cfg(test)]
@@ -1676,6 +1694,10 @@ impl CheckedFacts {
 
     pub(crate) fn shader(&self, id: ViewId) -> Option<&CheckedExternViewAdapter> {
         self.shaders.get(&id).filter(|shader| shader.id == id)
+    }
+
+    pub(crate) fn nested_theme(&self, id: ViewId) -> Option<&CheckedNestedTheme> {
+        self.nested_themes.get(&id).filter(|theme| theme.id == id)
     }
 
     pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&CheckedBooleanControl> {
@@ -4400,6 +4422,66 @@ impl<'a> FactsBuilder<'a> {
         )?;
         if self.facts.shaders.insert(view, checked).is_some() {
             return Err(self.invariant(span, "shader facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    fn lower_nested_theme_facts(
+        &mut self,
+        view: ViewId,
+        preset: &ThemePreset,
+        text: &Option<String>,
+        background: &Option<BackgroundValue>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let factory = match preset {
+            ThemePreset::Factory(factory) => Some(
+                self.declarations
+                    .extern_decl_by_name(&factory.function)
+                    .filter(|declaration| declaration.kind == ExternKind::Theme)
+                    .cloned()
+                    .ok_or_else(|| self.invariant(span, "nested theme factory disappeared"))?,
+            ),
+            ThemePreset::Default | ThemePreset::App | ThemePreset::BuiltIn(_) => None,
+        };
+        let roots = crate::ast::nested_theme_expression_roots(preset, background);
+        let mut expressions = Vec::with_capacity(roots.len());
+        if let (ThemePreset::Factory(call), Some(declaration)) = (preset, factory.as_ref()) {
+            if declaration.params.len() != call.args.len()
+                || declaration.borrowed.len() != call.args.len()
+            {
+                return Err(self.invariant(span, "nested theme factory contract diverged"));
+            }
+            expressions.extend(
+                call.args
+                    .iter()
+                    .zip(&declaration.params)
+                    .map(|(argument, (_, destination))| (argument, Some(destination.clone()))),
+            );
+        }
+        if let Some(BackgroundValue::Linear { angle, stops }) = background {
+            expressions.push((angle, Some(Type::F64)));
+            expressions.extend(stops.iter().map(|stop| (&stop.offset, Some(Type::F64))));
+        }
+        if expressions.len() != roots.len() {
+            return Err(self.invariant(span, "nested theme expression partition diverged"));
+        }
+        self.lower_interaction_facts(
+            view,
+            CheckedInteractionKind::NestedTheme,
+            crate::ast::nested_theme_semantic_key(preset, text, background),
+            expressions,
+            Vec::new(),
+            env,
+            span,
+        )?;
+        let checked = CheckedNestedTheme {
+            id: view,
+            factory: factory.map(|declaration| declaration.declaration.id),
+        };
+        if self.facts.nested_themes.insert(view, checked).is_some() {
+            return Err(self.invariant(span, "nested theme facts were produced more than once"));
         }
         Ok(())
     }
@@ -9850,6 +9932,18 @@ impl<'a> FactsBuilder<'a> {
                 ..
             } => {
                 self.lower_shader_facts(view, function, args, width, height, route, env, span)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Theme {
+                preset,
+                text,
+                background,
+                content,
+                span,
+                ..
+            } => {
+                self.lower_nested_theme_facts(view, preset, text, background, env, span)?;
+                self.lower_view_expression_tree(content, env)?;
                 CheckedViewFlow::None
             }
             _ => {

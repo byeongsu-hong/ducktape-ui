@@ -20,10 +20,11 @@ pub(in crate::codegen) fn render_structure(
     };
     let child_scope = rendered_child_scope(id, scope, env, document)?;
     let rendered = match node {
-        ViewNode::Theme { content, span, .. } => {
+        ViewNode::Theme { content, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let theme = document.program().nested_theme(span)?;
-            let preset = resolved_theme_preset_code(&theme.preset, env, document.program())?;
+            let program = document.program();
+            let theme = program.resolved_nested_theme_for(node)?;
+            let preset = resolved_theme_preset_code(&theme.preset, env, program)?;
             let text = theme.text.as_ref().map(resolved_theme_color).map_or_else(
                 || "::std::option::Option::None".into(),
                 |color| format!("::std::option::Option::Some({color})"),
@@ -31,7 +32,7 @@ pub(in crate::codegen) fn render_structure(
             let background = theme
                 .background
                 .as_ref()
-                .map(|background| resolved_background_code(background, env, document))
+                .map(|background| resolved_background_code(background, env, program))
                 .transpose()?
                 .map_or_else(
                     || "::std::option::Option::None".into(),

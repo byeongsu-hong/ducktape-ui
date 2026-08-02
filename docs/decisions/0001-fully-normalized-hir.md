@@ -545,6 +545,18 @@ route presence, or Shader dimensions from the source AST. Imported diagnostics,
 raw poisoning, identity corruption, the lexical ratchet, and explicit
 4,000-node budgets guard the boundary without adding Core syntax.
 
+Nested Theme is now a completed wrapper slice distinct from the native Themer
+adapter. Its stable `ViewId` selects checked facts that freeze the preset or
+exact theme-factory declaration, ordered owned arguments, text and background
+token identities, gradient topology, and parented physical origins. Lowering
+publishes a `ResolvedNestedTheme` keyed by that ID, fixes the factory Rust path,
+and replaces factory, angle, and stop expressions with checked expression-use
+IDs. Production rendering retains only the raw child subtree and shared widget
+ID as general view topology; it does not reread preset, factory name or args,
+colors, gradient values, or theme-token declaration order. Raw poisoning,
+cross-owner and corrupt-ID/origin failures, imported source mapping, the lexical
+ratchet, and an explicit 4,000-node budget guard the boundary.
+
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates expression ownership and DAG, scope and value type,
