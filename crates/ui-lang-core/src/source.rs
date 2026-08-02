@@ -50,7 +50,8 @@ pub fn analyze_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
 pub(crate) fn analyze_interface_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
     let loaded = load_interface(path.as_ref())?;
     let document = analyze_interface_loaded(&loaded)?;
-    check_assets(&document, &loaded).map_err(|error| remap_error(error, &loaded))?;
+    check_assets(document.source_document(), &loaded)
+        .map_err(|error| remap_error(error, &loaded))?;
     Ok(document)
 }
 
@@ -88,7 +89,7 @@ pub fn discover_file_dependencies(path: impl AsRef<Path>) -> Result<Vec<PathBuf>
 pub fn discover_file_asset_dependencies(path: impl AsRef<Path>) -> Result<Vec<PathBuf>, Error> {
     let loaded = load(path.as_ref())?;
     let document = analyze_loaded_without_assets(&loaded)?;
-    Ok(asset_dependencies(&document, &loaded))
+    Ok(asset_dependencies(document.source_document(), &loaded))
 }
 
 /// Analyze an unsaved root buffer while resolving its `use` graph from disk.
@@ -793,6 +794,7 @@ mod tests {
         let document = analyze_file(fixture.path("app.ice")).unwrap();
         assert_eq!(
             document
+                .source_document()
                 .components
                 .iter()
                 .map(|component| component.name.as_str())
@@ -801,29 +803,39 @@ mod tests {
         );
         assert!(
             document
+                .source_document()
                 .recipes
                 .iter()
                 .any(|recipe| recipe.name == "first::panel")
         );
         assert!(
             document
+                .source_document()
                 .fonts
                 .iter()
                 .any(|font| font.name == "second::body")
         );
         assert!(
             document
+                .source_document()
                 .structs
                 .iter()
                 .any(|item| item.name == "first::Data")
         );
         assert!(
             document
+                .source_document()
                 .functions
                 .iter()
                 .any(|function| function.name == "second::label")
         );
-        assert!(document.enums.iter().any(|item| item.name == "first::Mode"));
+        assert!(
+            document
+                .source_document()
+                .enums
+                .iter()
+                .any(|item| item.name == "first::Mode")
+        );
 
         let compiled = compile_file(fixture.path("app.ice")).unwrap();
         assert!(compiled.rust.contains("crate::helpers::label"));
@@ -864,7 +876,10 @@ mod tests {
 
         let document = analyze_file(fixture.path("app.ice")).unwrap();
 
-        assert_eq!(document.components[0].name, "ui::parts::Badge");
+        assert_eq!(
+            document.source_document().components[0].name,
+            "ui::parts::Badge"
+        );
     }
 
     #[test]
@@ -880,9 +895,17 @@ mod tests {
         );
 
         let document = analyze_file(fixture.path("app.ice")).unwrap();
-        assert_eq!(document.theme_contract.as_ref().unwrap().name, "AppTheme");
-        assert_eq!(document.palettes[0].name, "light");
-        assert_eq!(document.components[0].name, "ui::Badge");
+        assert_eq!(
+            document
+                .source_document()
+                .theme_contract
+                .as_ref()
+                .unwrap()
+                .name,
+            "AppTheme"
+        );
+        assert_eq!(document.source_document().palettes[0].name, "light");
+        assert_eq!(document.source_document().components[0].name, "ui::Badge");
     }
 
     #[test]
@@ -914,7 +937,10 @@ mod tests {
         );
 
         let document = analyze_file(fixture.path("app.ice")).unwrap();
-        assert_eq!(document.recipes[1].base.as_deref(), Some("ui::action"));
+        assert_eq!(
+            document.source_document().recipes[1].base.as_deref(),
+            Some("ui::action")
+        );
     }
 
     #[test]
@@ -1084,7 +1110,7 @@ mod tests {
         let part = fixture.path("tests.ice").canonicalize().unwrap();
 
         let checked = analyze_file_with_source(&root, &fs::read_to_string(&root).unwrap()).unwrap();
-        let release = &checked.tests[0].steps[0].span;
+        let release = &checked.source_document().tests[0].steps[0].span;
         let (origin, line) = checked.source_origin(release.line).unwrap();
         assert_eq!(origin, part);
         assert_eq!(line, 3);

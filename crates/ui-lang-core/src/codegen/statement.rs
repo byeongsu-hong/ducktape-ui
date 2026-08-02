@@ -27,7 +27,7 @@ fn editor_self_assignment_code(
         owner: Some(BindingOwner::Value(target.value)),
     };
     let moved = LayeredBindingEnv::new(env, &target.name, binding);
-    checked_expr_use_code(program, value, &moved, ValueMode::Owned)
+    resolved_expr_use_code(program, value, &moved, ValueMode::Owned)
 }
 
 fn resolved_widget_target_code(
@@ -41,7 +41,7 @@ fn resolved_widget_target_code(
         .unwrap_or_else(|| rust_string(program.app_name()));
     for segment in &target.segments {
         scope = if let Some(key) = segment.key {
-            let key = checked_expr_use_code(program, key, env, ValueMode::Borrowed)?;
+            let key = resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?;
             format!("format!(\"{{}}/{}({{}})\", {scope}, {key})", segment.name)
         } else {
             format!("format!(\"{{}}/{}\", {scope})", segment.name)
@@ -85,14 +85,14 @@ fn resolved_widget_selector_code(
             Some("__ice_widget_target_from_target"),
         ),
         ResolvedWidgetSelector::Text(value) => (
-            checked_expr_use_code(program, *value, env, ValueMode::Owned)?,
+            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?,
             Some("__ice_widget_target_from_text"),
         ),
         ResolvedWidgetSelector::Point { x, y } => (
             format!(
                 "::iced::Point::new(({}) as f32, ({}) as f32)",
-                checked_expr_use_code(program, *x, env, ValueMode::Owned)?,
-                checked_expr_use_code(program, *y, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *x, env, ValueMode::Owned)?,
+                resolved_expr_use_code(program, *y, env, ValueMode::Owned)?
             ),
             Some("__ice_widget_target_from_target"),
         ),
@@ -104,7 +104,7 @@ fn resolved_widget_selector_code(
             let function = program.extern_function(*target);
             let args = args
                 .iter()
-                .map(|arg| checked_expr_use_code(program, *arg, env, ValueMode::Owned))
+                .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
                 .collect::<Result<Vec<_>, _>>()?
                 .join(", ");
             (format!("{}({args})", function.rust_path), None)
@@ -128,7 +128,7 @@ fn resolved_pane_value_code(
             "{}::{}({})",
             pane_type(grid),
             pane_template_variant(template),
-            checked_expr_use_code(program, *key, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *key, env, ValueMode::Owned)?
         ),
     })
 }
@@ -191,7 +191,7 @@ pub(in crate::codegen) fn generate_statements(
                 ty,
                 value,
             } => {
-                let code = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                let code = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
                 writeln!(out, "let {name} = {code};").unwrap();
                 env.insert(
                     name.clone(),
@@ -213,7 +213,7 @@ pub(in crate::codegen) fn generate_statements(
                 let code = if *move_self {
                     editor_self_assignment_code(target, *value, env, program, state)?
                 } else {
-                    checked_expr_use_code(program, *value, env, ValueMode::Owned)?
+                    resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
                 };
                 if matches!(target.ty, Type::Combo(_)) {
                     writeln!(
@@ -230,7 +230,7 @@ pub(in crate::codegen) fn generate_statements(
                     };
                     let at = at
                         .as_ref()
-                        .map(|at| checked_expr_use_code(program, *at, env, ValueMode::Owned))
+                        .map(|at| resolved_expr_use_code(program, *at, env, ValueMode::Owned))
                         .transpose()?
                         .unwrap_or_else(|| "::iced::time::Instant::now()".into());
                     writeln!(out, "{state}.{}.go_mut({code}, {at});", target.name).unwrap();
@@ -239,15 +239,15 @@ pub(in crate::codegen) fn generate_statements(
                 }
             }
             ResolvedStatementKind::MarkdownAppend { target, value } => {
-                let code = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                let code = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
                 writeln!(out, "{state}.{}.push_str(&{code});", target.name).unwrap();
             }
             ResolvedStatementKind::ComboPush { target, value } => {
-                let code = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                let code = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
                 writeln!(out, "{state}.{}.push({code});", target.name).unwrap();
             }
             ResolvedStatementKind::ReturnIf { condition } => {
-                let code = checked_expr_use_code(program, *condition, env, ValueMode::Owned)?;
+                let code = resolved_expr_use_code(program, *condition, env, ValueMode::Owned)?;
                 writeln!(out, "if {code} {{ return ::iced::Task::none(); }}").unwrap();
             }
             ResolvedStatementKind::Exit => {
@@ -274,7 +274,8 @@ pub(in crate::codegen) fn generate_statements(
                 };
                 if let ResolvedEffectTarget::Builtin(function) = target {
                     if function == "__ice_font_load" {
-                        let bytes = checked_expr_use_code(program, args[0], env, ValueMode::Owned)?;
+                        let bytes =
+                            resolved_expr_use_code(program, args[0], env, ValueMode::Owned)?;
                         let success_message = route_result_code(
                             success,
                             "value",
@@ -291,7 +292,7 @@ pub(in crate::codegen) fn generate_statements(
                     }
                     if function == "__ice_image_allocate" {
                         let handle =
-                            checked_expr_use_code(program, args[0], env, ValueMode::Owned)?;
+                            resolved_expr_use_code(program, args[0], env, ValueMode::Owned)?;
                         let success_message = route_result_code(
                             success,
                             "value",
@@ -348,7 +349,7 @@ pub(in crate::codegen) fn generate_statements(
                 let action = program.extern_function(*action);
                 let args = args
                     .iter()
-                    .map(|arg| checked_expr_use_code(program, *arg, env, ValueMode::Owned))
+                    .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
                     .collect::<Result<Vec<_>, _>>()?
                     .join(", ");
                 let success_message = route_result_code(
@@ -401,7 +402,7 @@ pub(in crate::codegen) fn generate_statements(
                 let action = program.extern_function(*target);
                 let args = args
                     .iter()
-                    .map(|arg| checked_expr_use_code(program, *arg, env, ValueMode::Owned))
+                    .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
                     .collect::<Result<Vec<_>, _>>()?
                     .join(", ");
                 let progress_message = route_result_code(
@@ -541,7 +542,7 @@ pub(in crate::codegen) fn generate_statements(
                 writeln!(out, "if let ::std::option::Option::Some(__handle) = &{state}.{} {{ __handle.abort(); }}", handle.name).unwrap();
             }
             ResolvedStatementKind::DebugStart { name, target } => {
-                let name = checked_expr_use_code(program, *name, env, ValueMode::Owned)?;
+                let name = resolved_expr_use_code(program, *name, env, ValueMode::Owned)?;
                 writeln!(out, "if let ::std::option::Option::Some(__span) = {state}.{}.take() {{ __span.finish(); }}", target.name).unwrap();
                 writeln!(
                     out,
@@ -554,7 +555,7 @@ pub(in crate::codegen) fn generate_statements(
                 writeln!(out, "if let ::std::option::Option::Some(__span) = {state}.{}.take() {{ __span.finish(); }}", target.name).unwrap();
             }
             ResolvedStatementKind::ClipboardWrite { primary, value } => {
-                let value = checked_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
                 let function = if *primary { "write_primary" } else { "write" };
                 writeln!(
                     out,
@@ -570,7 +571,7 @@ pub(in crate::codegen) fn generate_statements(
                     resolved_widget_target_code(target, env, program)
                 };
                 let value = |value: ResolvedExpressionId, cast: &str| {
-                    let code = checked_expr_use_code(program, value, env, ValueMode::Owned)?;
+                    let code = resolved_expr_use_code(program, value, env, ValueMode::Owned)?;
                     Ok::<_, Error>(if cast == "usize" {
                         format!("usize::try_from({code}).unwrap_or(0)")
                     } else {
@@ -621,8 +622,8 @@ pub(in crate::codegen) fn generate_statements(
                         value(*end, "usize")?
                     ),
                     ResolvedWidgetOperation::Snap { target, x, y } => {
-                        let x = checked_expr_use_code(program, *x, env, ValueMode::Owned)?;
-                        let y = checked_expr_use_code(program, *y, env, ValueMode::Owned)?;
+                        let x = resolved_expr_use_code(program, *x, env, ValueMode::Owned)?;
+                        let y = resolved_expr_use_code(program, *y, env, ValueMode::Owned)?;
                         format!(
                             "::iced::widget::operation::snap_to::<{message}>({}, ::iced::widget::operation::RelativeOffset {{ x: (({x}) as f32).max(0.0).min(1.0), y: (({y}) as f32).max(0.0).min(1.0) }})",
                             id(target)?,
@@ -729,7 +730,7 @@ pub(in crate::codegen) fn generate_statements(
                         writeln!(
                             out,
                             "{{ let __split = {split}; if let ::std::option::Option::Some(__split) = __split {{ {state}.{field}.resize(__split, (({}) as f32).max(0.0).min(1.0)); }} }}",
-                            checked_expr_use_code(program, *ratio, env, ValueMode::Owned)?
+                            resolved_expr_use_code(program, *ratio, env, ValueMode::Owned)?
                         )
                         .unwrap();
                     }
@@ -765,7 +766,7 @@ pub(in crate::codegen) fn generate_statements(
                         let value = resolved_pane_value_code(
                             name, grid, *dynamic, env, program,
                         )?;
-                        let ratio = checked_expr_use_code(program, *ratio, env, ValueMode::Owned)?;
+                        let ratio = resolved_expr_use_code(program, *ratio, env, ValueMode::Owned)?;
                         if *dynamic {
                             writeln!(
                                 out,
@@ -828,20 +829,20 @@ pub(in crate::codegen) fn generate_statements(
             } => {
                 let target = target
                     .as_ref()
-                    .map(|target| checked_expr_use_code(program, *target, env, ValueMode::Owned))
+                    .map(|target| resolved_expr_use_code(program, *target, env, ValueMode::Owned))
                     .transpose()?;
                 let id = target.as_deref().unwrap_or("__window");
                 let value = |value: ResolvedExpressionId, cast: &str| {
                     Ok::<_, Error>(format!(
                         "({}) as {cast}",
-                        checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                        resolved_expr_use_code(program, value, env, ValueMode::Owned)?
                     ))
                 };
                 let size = |width: ResolvedExpressionId, height: ResolvedExpressionId| {
                     let positive = |value| {
                         Ok::<_, Error>(format!(
                             "(({}) as f32).max(f32::EPSILON).min(f32::MAX)",
-                            checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                            resolved_expr_use_code(program, value, env, ValueMode::Owned)?
                         ))
                     };
                     Ok::<_, Error>(format!(
@@ -860,7 +861,7 @@ pub(in crate::codegen) fn generate_statements(
                         })
                     };
                 let bool_value = |value: ResolvedExpressionId| {
-                    checked_expr_use_code(program, value, env, ValueMode::Owned)
+                    resolved_expr_use_code(program, value, env, ValueMode::Owned)
                 };
                 let task = match operation {
                     ResolvedWindowOperation::Open(index) => {
@@ -1081,10 +1082,10 @@ pub(in crate::codegen) fn generate_statements(
                         height,
                     } => {
                         let pixels =
-                            checked_expr_use_code(program, *pixels, env, ValueMode::Owned)?;
-                        let width = checked_expr_use_code(program, *width, env, ValueMode::Owned)?;
+                            resolved_expr_use_code(program, *pixels, env, ValueMode::Owned)?;
+                        let width = resolved_expr_use_code(program, *width, env, ValueMode::Owned)?;
                         let height =
-                            checked_expr_use_code(program, *height, env, ValueMode::Owned)?;
+                            resolved_expr_use_code(program, *height, env, ValueMode::Owned)?;
                         format!(
                             "{{ let __pixels = {pixels}; let __width = {width}; let __height = {height}; match (::std::primitive::u32::try_from(__width), ::std::primitive::u32::try_from(__height)) {{ (::std::result::Result::Ok(__width), ::std::result::Result::Ok(__height)) if __width > 0 && __height > 0 && __width.checked_mul(__height).is_some() => ::iced::window::icon::from_rgba(__pixels, __width, __height).map_or_else(|_| ::iced::Task::none(), |__icon| ::iced::window::set_icon::<{message}>({id}, __icon)), _ => ::iced::Task::none(), }} }}"
                         )
@@ -1097,7 +1098,7 @@ pub(in crate::codegen) fn generate_statements(
                         let args = args
                             .iter()
                             .map(|arg| {
-                                checked_expr_use_code(program, *arg, env, ValueMode::Owned)
+                                resolved_expr_use_code(program, *arg, env, ValueMode::Owned)
                                     .map(|arg| format!(", {arg}"))
                             })
                             .collect::<Result<String, _>>()?;

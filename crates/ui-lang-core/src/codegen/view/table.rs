@@ -2,54 +2,50 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_table(
-    options: &TableOptions,
-    columns: &[TableColumn],
-    span: &Span,
-    document: &RenderDocument<'_>,
+    table: &ResolvedTable,
+    columns: &[ResolvedTableColumnTopology],
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let CheckedViewFlow::Table { rows, item } = &document.program().checked_view(span)?.flow else {
-        return Err(Error::new("E196", span, "table has no checked flow"));
-    };
-    let rows = checked_expr_use_code(document.program(), *rows, env, ValueMode::Owned)?;
-    let checked_item = document.program().checked_facts().local(*item);
-    let item_name = &checked_item.name;
-    let row_type = checked_item.ty.clone();
-    let row_rust = row_type.rust(&document.structs);
+    let program = document.hir();
+    if columns.len() != table.columns.len() {
+        return Err(program.invariant_at_origin(table.origin, "table HIR column length diverged"));
+    }
+    let rows = resolved_expr_use_code(program, table.rows, env, ValueMode::Owned)?;
+    let item_name = &table.row.name;
+    let row_rust = rust_type_code(program, &table.row.ty);
     let mut cell_env = ScopedBindingEnv::new(env);
     cell_env.insert(
         item_name.clone(),
-        checked_local_binding(document.program(), *item, item_name.clone(), true),
+        resolved_local_binding(
+            LocalBindingTypeSource::Resolved(program),
+            table.row.local,
+            item_name.clone(),
+            true,
+        ),
     );
     let mut column_codes = Vec::with_capacity(columns.len());
-    for (index, column) in columns.iter().enumerate() {
+    for (index, (column, resolved)) in columns.iter().zip(&table.columns).enumerate() {
         let header_scope = format!("format!(\"{{}}/header({index})\", {scope})");
         let cell_scope = format!("format!(\"{{}}/row({{}})/col({index})\", {scope}, __row)");
-        let header = render_node(&column.header, document, message, env, &header_scope, slot)?;
-        let cell = render_node(
-            &column.cell,
-            document,
-            message,
-            &cell_env,
-            &cell_scope,
-            slot,
-        )?;
+        let header = render_node(column.header, document, message, env, &header_scope, slot)?;
+        let cell = render_node(column.cell, document, message, &cell_env, &cell_scope, slot)?;
         let mut code = format!(
             "{{ let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item_name}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let _ = &{item_name}; let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
         );
-        if let Some(width) = &column.width {
+        if let Some(width) = &resolved.width {
             write!(
                 code,
                 ".width(::ui_lang_runtime::bounded_fill_length({}, {}))",
-                length_code(width, env, document)?,
+                resolved_table_length_code(width, program, env)?,
                 columns.len()
             )
             .unwrap();
         }
-        if let Some(align) = column.align_x {
+        if let Some(align) = resolved.align_x {
             let align = match align {
                 InputAlignment::Left => "Left",
                 InputAlignment::Center => "Center",
@@ -57,7 +53,7 @@ pub(in crate::codegen) fn render_table(
             };
             write!(code, ".align_x(::iced::alignment::Horizontal::{align})").unwrap();
         }
-        if let Some(align) = column.align_y {
+        if let Some(align) = resolved.align_y {
             let align = match align {
                 VerticalAlignment::Top => "Top",
                 VerticalAlignment::Center => "Center",
@@ -72,33 +68,30 @@ pub(in crate::codegen) fn render_table(
         "{{ let __table_rows = {rows}; let __table_row_count = __table_rows.len().saturating_add(1); ::iced::widget::table::table(::std::vec![{}], __table_rows.into_iter().enumerate())",
         column_codes.join(", ")
     );
-    if let Some(width) = &options.width {
-        write!(code, ".width({})", length_code(width, env, document)?).unwrap();
+    if let Some(width) = &table.width {
+        write!(
+            code,
+            ".width({})",
+            resolved_table_length_code(width, program, env)?
+        )
+        .unwrap();
     }
     for (value, method, entries) in [
         (
-            &options.padding,
+            table.padding,
             "padding",
             format!("{}usize.max(__table_row_count)", columns.len()),
         ),
-        (&options.padding_x, "padding_x", columns.len().to_string()),
+        (table.padding_x, "padding_x", columns.len().to_string()),
+        (table.padding_y, "padding_y", "__table_row_count".to_owned()),
         (
-            &options.padding_y,
-            "padding_y",
-            "__table_row_count".to_owned(),
-        ),
-        (
-            &options.separator,
+            table.separator,
             "separator",
             format!("{}usize.max(__table_row_count)", columns.len()),
         ),
+        (table.separator_x, "separator_x", columns.len().to_string()),
         (
-            &options.separator_x,
-            "separator_x",
-            columns.len().to_string(),
-        ),
-        (
-            &options.separator_y,
+            table.separator_y,
             "separator_y",
             "__table_row_count".to_owned(),
         ),
@@ -107,7 +100,7 @@ pub(in crate::codegen) fn render_table(
             write!(
                 code,
                 ".{method}(::ui_lang_runtime::bounded_table_metric({}, {entries}))",
-                expr_code(value, env, document, ValueMode::Owned)?,
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?,
             )
             .unwrap();
         }
@@ -115,56 +108,86 @@ pub(in crate::codegen) fn render_table(
     Ok(format!("{code}.into() }}"))
 }
 
+fn resolved_table_length_code(
+    length: &ResolvedTableLength,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match length {
+        ResolvedTableLength::Fill => "::iced::Fill".into(),
+        ResolvedTableLength::FillPortion(portion) => {
+            format!("::iced::Length::FillPortion({portion})")
+        }
+        ResolvedTableLength::Shrink => "::iced::Shrink".into(),
+        ResolvedTableLength::FixedF64(expression) => format!(
+            "{} as f32",
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        ),
+        ResolvedTableLength::FixedLength(expression) => {
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        }
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_keyed_column(
-    options: &LayoutOptions,
-    child: &ViewNode,
-    span: &Span,
-    document: &RenderDocument<'_>,
+    keyed: &ResolvedKeyedColumn,
+    child: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
-    let CheckedViewFlow::Keyed { items, key, item } = &document.program().checked_view(span)?.flow
-    else {
-        return Err(Error::new("E196", span, "keyed column has no checked flow"));
-    };
-    let items = checked_expr_use_code(document.program(), *items, env, ValueMode::Borrowed)?;
-    let checked_item = document.program().checked_facts().local(*item);
-    let item_name = &checked_item.name;
+    let program = document.hir();
+    let items = resolved_expr_use_code(program, keyed.items, env, ValueMode::Borrowed)?;
+    let item_name = &keyed.item.name;
     let mut child_env = ScopedBindingEnv::new(env);
     child_env.insert(
         item_name.clone(),
-        checked_local_binding(document.program(), *item, item_name.clone(), false),
+        resolved_local_binding(
+            LocalBindingTypeSource::Resolved(program),
+            keyed.item.local,
+            item_name.clone(),
+            false,
+        ),
     );
-    let key = checked_expr_use_code(document.program(), *key, &child_env, ValueMode::Owned)?;
+    let key = resolved_expr_use_code(program, keyed.key, &child_env, ValueMode::Owned)?;
     let child_scope = format!("format!(\"{{}}/key({{}})\", {scope}, __key)");
     let child = render_node(child, document, message, &child_env, &child_scope, slot)?;
     let mut code = format!(
         "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}.iter() {{ let __key = {key}; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }} let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>(); let __layout = ::iced::widget::keyed_column(__children)"
     );
-    if let Some(spacing) = &options.spacing {
+    if let Some(spacing) = keyed.spacing {
         write!(
             code,
             ".spacing(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-            expr_code(spacing, env, document, ValueMode::Owned)?
+            resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    if let Some(padding) = typed_padding_code(&options.padding, env, document)? {
+    if let Some(padding) = resolved_keyed_padding_code(&keyed.padding, program, env)? {
         write!(code, ".padding({padding})").unwrap();
     }
-    append_dimensions(&mut code, [&options.width, &options.height], env, document)?;
-    if let Some(max_width) = &options.max_width {
+    for (method, length) in [("width", &keyed.width), ("height", &keyed.height)] {
+        if let Some(length) = length {
+            write!(
+                code,
+                ".{method}({})",
+                resolved_keyed_length_code(length, program, env)?
+            )
+            .unwrap();
+        }
+    }
+    if let Some(max_width) = keyed.max_width {
         write!(
             code,
             ".max_width({} as f32)",
-            expr_code(max_width, env, document, ValueMode::Owned)?
+            resolved_expr_use_code(program, max_width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
-    if let Some(align) = options.align {
+    if let Some(align) = keyed.align {
         let align = match align {
             FlexAlignment::Start => "Start",
             FlexAlignment::Center => "Center",
@@ -173,4 +196,57 @@ pub(in crate::codegen) fn render_keyed_column(
         write!(code, ".align_items(::iced::Alignment::{align})").unwrap();
     }
     Ok(format!("{code}; __layout.into() }}"))
+}
+
+fn resolved_keyed_length_code(
+    length: &ResolvedKeyedLength,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match length {
+        ResolvedKeyedLength::Fill => "::iced::Fill".into(),
+        ResolvedKeyedLength::FillPortion(portion) => {
+            format!("::iced::Length::FillPortion({portion})")
+        }
+        ResolvedKeyedLength::Shrink => "::iced::Shrink".into(),
+        ResolvedKeyedLength::FixedF64(expression) => format!(
+            "{} as f32",
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        ),
+        ResolvedKeyedLength::FixedLength(expression) => {
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        }
+    })
+}
+
+fn resolved_keyed_padding_code(
+    padding: &ResolvedKeyedPadding,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    if padding.all.is_none()
+        && padding.x.is_none()
+        && padding.y.is_none()
+        && padding.top.is_none()
+        && padding.right.is_none()
+        && padding.bottom.is_none()
+        && padding.left.is_none()
+    {
+        return Ok(None);
+    }
+    let code = |value: Option<ResolvedExpressionId>| {
+        value
+            .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
+            .transpose()
+    };
+    let all = code(padding.all)?.unwrap_or_else(|| "0.0".into());
+    let x = code(padding.x)?.unwrap_or_else(|| all.clone());
+    let y = code(padding.y)?.unwrap_or_else(|| all.clone());
+    let top = code(padding.top)?.unwrap_or_else(|| y.clone());
+    let right = code(padding.right)?.unwrap_or_else(|| x.clone());
+    let bottom = code(padding.bottom)?.unwrap_or(y);
+    let left = code(padding.left)?.unwrap_or(x);
+    Ok(Some(format!(
+        "::ui_lang_runtime::bounded_padding({top}, {right}, {bottom}, {left})"
+    )))
 }

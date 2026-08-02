@@ -18,6 +18,7 @@ pub(in crate::check) fn infer_structure_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let theme_analysis_guard = expr::HandlerAnalysisGuard::start();
             if let ThemePreset::Factory(factory) = preset {
                 let function =
                     extern_function(document, &factory.function, ExternKind::Theme, span)?;
@@ -36,6 +37,7 @@ pub(in crate::check) fn infer_structure_group(
                     "nested theme background",
                 )?;
             }
+            retain_interaction_analyses(span, theme_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Float {
@@ -47,8 +49,8 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
-            let float_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let float_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(&expr_type(scale, env, document, span)?, &Type::F64, span)?;
             let mut translate_env = scoped_view_env(env);
             for name in [
@@ -80,8 +82,8 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
-            let pin_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let pin_analysis_guard = expr::HandlerAnalysisGuard::start();
             for value in [x, y] {
                 require_f32_value(value, env, document, "pin position", span)?;
             }
@@ -97,8 +99,8 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
-            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             for (route, label) in [
                 (&options.show, "sensor show"),
                 (&options.resize, "sensor resize"),
@@ -151,9 +153,20 @@ pub(in crate::check) fn infer_structure_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
-            for length in [width, height].into_iter().flatten() {
-                check_length_value(length, env, document, span, "responsive size")?;
-            }
+            check_responsive_length(
+                width,
+                CheckedViewExprRole::ResponsiveWidthDimension,
+                env,
+                document,
+                span,
+            )?;
+            check_responsive_length(
+                height,
+                CheckedViewExprRole::ResponsiveHeightDimension,
+                env,
+                document,
+                span,
+            )?;
             match content {
                 ResponsiveContent::Breakpoint {
                     breakpoint,
@@ -196,4 +209,31 @@ pub(in crate::check) fn infer_structure_group(
         _ => return Ok(false),
     };
     Ok(true)
+}
+
+fn check_responsive_length(
+    length: &Option<LengthValue>,
+    role: CheckedViewExprRole,
+    env: &dyn ExprTypeEnv,
+    document: &Document,
+    span: &Span,
+) -> Result<(), Error> {
+    let Some(LengthValue::Fixed(value)) = length else {
+        return Ok(());
+    };
+    let actual = retained_view_expr_type(value, env, document, span, role)?;
+    if actual == Type::Length {
+        return Ok(());
+    }
+    if actual != Type::F64 {
+        return Err(Error::new(
+            "E101",
+            span,
+            format!(
+                "expected `f64` or `length`, got `{}` for responsive size",
+                actual.display()
+            ),
+        ));
+    }
+    require_f32_literal_range(value, 0.0, None, "responsive size", span)
 }
