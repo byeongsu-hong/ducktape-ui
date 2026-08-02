@@ -175,7 +175,10 @@ enum SemanticDocument {
 
 impl SemanticDocument {
     fn as_document(&self) -> &ui_lang_core::Document {
-        self
+        match self {
+            Self::Retained(analysis) => analysis.document.source_document(),
+            Self::Detached(document) => document.source_document(),
+        }
     }
 }
 

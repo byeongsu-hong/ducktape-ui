@@ -440,8 +440,7 @@ pub(in crate::codegen) fn generate_update(
     program: &LoweredProgram,
     message: &str,
 ) -> Result<(), Error> {
-    let document = program.document();
-    let accessibility_root = rust_string(&document.app);
+    let accessibility_root = rust_string(program.app_name());
     let has_fallthrough_arm = program
         .app_handlers()
         .any(|handler| handler.name != "mount")

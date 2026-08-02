@@ -161,7 +161,7 @@ pub(in crate::codegen) fn render_structure(
                 "__lazy_scope.clone()",
                 None,
             )?;
-            let dependency_rust = lazy.binding.ty.rust(document.extern_structs());
+            let dependency_rust = program.rust_type(&lazy.binding.ty);
             Ok(format!(
                 "::iced::widget::lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
             ))

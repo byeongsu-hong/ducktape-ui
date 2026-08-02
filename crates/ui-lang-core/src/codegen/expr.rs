@@ -320,16 +320,12 @@ impl ExprArguments {
 }
 
 struct ExprEmission<'a> {
-    document: &'a Document,
     program: &'a LoweredProgram,
 }
 
 impl<'a> ExprEmission<'a> {
     fn for_checked(program: &'a LoweredProgram) -> Self {
-        Self {
-            document: program.document(),
-            program,
-        }
+        Self { program }
     }
 
     fn kind(&self, node: ExprNode) -> ExprNodeKind<'a> {
@@ -1880,7 +1876,6 @@ fn expr_builtin_group_6(
     context: &ExprEmission<'_>,
     _mode: ValueMode,
 ) -> Result<Option<String>, Error> {
-    let document = context.document;
     Ok(Some(match name {
         "trim" => format!(
             "({}).trim().to_owned()",
@@ -1955,12 +1950,7 @@ fn expr_builtin_group_6(
             "({}).as_ref().is_some_and(::iced::task::Handle::is_aborted)",
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
-        _ => {
-            let function = find_extern_function(document, name, ExternKind::Sync)
-                .expect("checker accepts only declared sync calls");
-            let args = expr_node_list_code(&args.values()?, env, context)?;
-            format!("{}({args})", function.rust_path)
-        }
+        _ => return Ok(None),
     }))
 }
 

@@ -31,7 +31,6 @@ pub use source::{
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
-use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
@@ -173,6 +172,13 @@ impl CheckedDocument {
         }
     }
 
+    /// Returns the parsed source model for syntax-oriented tooling.
+    ///
+    /// Semantic consumers should use checked facts or lower to HIR instead.
+    pub fn source_document(&self) -> &Document {
+        &self.document
+    }
+
     pub fn warnings(&self) -> &[Warning] {
         &self.warnings
     }
@@ -290,14 +296,6 @@ impl CheckedDocument {
     #[cfg(test)]
     pub(crate) fn source_origin(&self, merged_line: usize) -> Option<(&Path, usize)> {
         self.origins.source_origin(merged_line)
-    }
-}
-
-impl Deref for CheckedDocument {
-    type Target = Document;
-
-    fn deref(&self) -> &Self::Target {
-        &self.document
     }
 }
 

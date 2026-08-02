@@ -1029,6 +1029,10 @@ impl DeclarationIndex {
             .collect()
     }
 
+    pub(crate) fn enum_declarations(&self) -> &[EnumDeclaration] {
+        &self.enums
+    }
+
     pub(crate) fn derived(&self, index: usize) -> Declaration<DerivedId> {
         self.derived[index]
     }
@@ -1189,6 +1193,10 @@ impl DeclarationIndex {
     pub(crate) fn struct_decl_by_name(&self, name: &str) -> Option<&StructDeclaration> {
         let id = self.structs_by_name.get(name)?;
         self.structs.get(id.0 as usize)
+    }
+
+    pub(crate) fn struct_declarations(&self) -> &[StructDeclaration] {
+        &self.structs
     }
 
     pub(crate) fn try_struct_decl(&self, id: StructId) -> Option<&StructDeclaration> {

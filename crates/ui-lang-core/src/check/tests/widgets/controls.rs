@@ -66,7 +66,12 @@ view
     slider precise min=slider_number(0.0) max=slider_number(100.0) step=slider_number(5.0) default=slider_number(50.0) shift-step=slider_number(1.0) -> precise_changed _
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty.display(), "SliderNumber");
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "SliderNumber"
+    );
 
     let bad_step = source.replace("step=5.0", "step=0.0");
     let error = analyze(&bad_step).unwrap_err();
@@ -307,10 +312,30 @@ view
     text "Track me"
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[0].params[0].ty.display(), "f64");
-    assert_eq!(document.handlers[0].params[1].ty.display(), "f64");
-    assert_eq!(document.handlers[1].params[0].ty.display(), "f64");
-    assert_eq!(document.handlers[1].params[2].ty.display(), "bool");
+    assert_eq!(
+        document.source_document().handlers[0].params[0]
+            .ty
+            .display(),
+        "f64"
+    );
+    assert_eq!(
+        document.source_document().handlers[0].params[1]
+            .ty
+            .display(),
+        "f64"
+    );
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "f64"
+    );
+    assert_eq!(
+        document.source_document().handlers[1].params[2]
+            .ty
+            .display(),
+        "bool"
+    );
 }
 
 #[test]
@@ -384,11 +409,11 @@ view
         y-scroller bg=danger
 "#;
     let document = analyze(source).unwrap();
-    for param in &document.handlers[0].params {
+    for param in &document.source_document().handlers[0].params {
         assert_eq!(param.ty.display(), "f64");
     }
-    assert_eq!(document.handlers[1].params.len(), 14);
-    for param in &document.handlers[1].params {
+    assert_eq!(document.source_document().handlers[1].params.len(), 14);
+    for param in &document.source_document().handlers[1].params {
         assert_eq!(param.ty.display(), "f64");
     }
 
@@ -475,8 +500,18 @@ view
     icon code="•" font=ui size=12.0 gap=4.0 side=right
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[0].params[0].ty.display(), "str");
-    assert_eq!(document.handlers[2].params[0].ty.display(), "str");
+    assert_eq!(
+        document.source_document().handlers[0].params[0]
+            .ty
+            .display(),
+        "str"
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0]
+            .ty
+            .display(),
+        "str"
+    );
 
     let error =
         analyze(&source.replace("dynamic_input(disabled)", "missing(disabled)")).unwrap_err();
@@ -762,9 +797,24 @@ view
       radio "Item" value=item selected=false -> item_changed _
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[0].params[0].ty.display(), "str");
-    assert_eq!(document.handlers[1].params[0].ty.display(), "f64");
-    assert_eq!(document.handlers[2].params[0].ty.display(), "Item");
+    assert_eq!(
+        document.source_document().handlers[0].params[0]
+            .ty
+            .display(),
+        "str"
+    );
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "f64"
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0]
+            .ty
+            .display(),
+        "Item"
+    );
 
     let error =
         analyze(&source.replace("border=primary border-w", "border=missing border-w")).unwrap_err();
@@ -988,7 +1038,7 @@ view
   text "Fonts" font=black
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.fonts.len(), 9);
+    assert_eq!(document.source_document().fonts.len(), 9);
 
     let error = analyze(&source.replace("font=black", "font=missing")).unwrap_err();
     assert_eq!(error.code, "E114");

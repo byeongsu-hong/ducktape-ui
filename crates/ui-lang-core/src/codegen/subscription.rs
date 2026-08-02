@@ -416,7 +416,7 @@ pub(in crate::codegen) fn resolved_type_code(
                     "resolved subscription type references an invalid declaration ID",
                 )
             })?,
-        ResolvedType::Value(ty) => ty.rust(&[]),
+        ResolvedType::Value(ty) => program.rust_type(ty),
     })
 }
 

@@ -169,9 +169,10 @@ fn review_opened(
         Ok(analysis) => analysis,
         Err(error) => return analysis_failure(root, source, output, run_id, error),
     };
-    let selected = selected_tests(&analysis.document.tests, &options.tests)?;
+    let selected = selected_tests(&analysis.document.source_document().tests, &options.tests)?;
     let baseline_scope = BaselineScope::from_selection(&selected, !options.tests.is_empty());
-    let expected_captures = expected_capture_keys(&analysis.document.tests, &selected)?;
+    let expected_captures =
+        expected_capture_keys(&analysis.document.source_document().tests, &selected)?;
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let package = options
         .package

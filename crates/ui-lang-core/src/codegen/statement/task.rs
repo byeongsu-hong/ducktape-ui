@@ -67,10 +67,9 @@ pub(in crate::codegen) fn task_source_code(
             "::iced::Task::done({})",
             checked_expr_use_code(program, *value, env, ValueMode::Owned)?
         ),
-        ResolvedTaskSource::None { output, .. } => format!(
-            "::iced::Task::<{}>::none()",
-            output.rust(program.extern_structs())
-        ),
+        ResolvedTaskSource::None { output, .. } => {
+            format!("::iced::Task::<{}>::none()", program.rust_type(output))
+        }
         ResolvedTaskSource::Effect {
             kind, target, args, ..
         } => resolved_effect_call(*kind, target, args, program, env)?,

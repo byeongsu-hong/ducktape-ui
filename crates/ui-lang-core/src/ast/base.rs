@@ -137,6 +137,18 @@ pub enum Type {
 
 impl Type {
     pub fn rust(&self, structs: &[ExternStruct]) -> String {
+        self.rust_with_named(&|name| {
+            structs
+                .iter()
+                .find(|item| item.name == name)
+                .map(|item| item.rust_path.clone())
+        })
+    }
+
+    pub(crate) fn rust_with_named(
+        &self,
+        named_rust_path: &impl Fn(&str) -> Option<String>,
+    ) -> String {
         match self {
             Self::Bool => "bool".into(),
             Self::I64 => "i64".into(),
@@ -148,19 +160,31 @@ impl Type {
             Self::ImageMemory => "::std::sync::Weak<::iced::advanced::image::Memory>".into(),
             Self::ImageError => "::iced::widget::image::Error".into(),
             Self::DebugSpan => "::iced::debug::Span".into(),
-            Self::List(inner) => format!("::std::vec::Vec<{}>", inner.rust(structs)),
-            Self::Option(inner) => format!("::std::option::Option<{}>", inner.rust(structs)),
+            Self::List(inner) => format!(
+                "::std::vec::Vec<{}>",
+                inner.rust_with_named(named_rust_path)
+            ),
+            Self::Option(inner) => format!(
+                "::std::option::Option<{}>",
+                inner.rust_with_named(named_rust_path)
+            ),
             Self::Result(output, error) => format!(
                 "::std::result::Result<{}, {}>",
-                output.rust(structs),
-                error.rust(structs)
+                output.rust_with_named(named_rust_path),
+                error.rust_with_named(named_rust_path)
             ),
             Self::Combo(inner) => {
-                format!("::iced::widget::combo_box::State<{}>", inner.rust(structs))
+                format!(
+                    "::iced::widget::combo_box::State<{}>",
+                    inner.rust_with_named(named_rust_path)
+                )
             }
             Self::Animation(inner) => match inner.as_ref() {
                 Self::F64 => "::iced::Animation<f32>".into(),
-                inner => format!("::iced::Animation<{}>", inner.rust(structs)),
+                inner => format!(
+                    "::iced::Animation<{}>",
+                    inner.rust_with_named(named_rust_path)
+                ),
             },
             Self::Markdown => "::iced::widget::markdown::Content".into(),
             Self::Editor => "::iced::widget::text_editor::Content".into(),
@@ -229,10 +253,9 @@ impl Type {
             Self::TestTarget => "::ui_lang_runtime::testing::Target".into(),
             Self::TaskHandle => "::iced::task::Handle".into(),
             Self::Palette(contract) => generated_named_rust(contract),
-            Self::Named(name) => structs
-                .iter()
-                .find(|item| item.name == *name)
-                .map_or_else(|| generated_named_rust(name), |item| item.rust_path.clone()),
+            Self::Named(name) => {
+                named_rust_path(name).unwrap_or_else(|| generated_named_rust(name))
+            }
             Self::Unit => "()".into(),
             Self::Unknown => "_".into(),
         }

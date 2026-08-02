@@ -1512,6 +1512,10 @@ struct CallSite {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
+    // Adversarial tests retain a poisonable source sidecar to prove that
+    // production code generation never observes the source AST. Release
+    // builds do not store it.
+    #[cfg(test)]
     document: Document,
     app_view: ViewId,
     facts: CheckedFacts,
@@ -1954,9 +1958,8 @@ fn resolved_handler_operation_contract(
                     index
                         .map(|index| {
                             program
-                                .document
                                 .settings
-                                .windows
+                                .named_windows
                                 .get(index as usize)
                                 .map(|window| window.name.clone())
                                 .ok_or_else(|| {
@@ -3064,10 +3067,6 @@ impl LoweredProgram {
         Ok(())
     }
 
-    pub(crate) fn document(&self) -> &Document {
-        &self.document
-    }
-
     pub(crate) fn program(&self) -> &Self {
         self
     }
@@ -3096,8 +3095,24 @@ impl LoweredProgram {
         &self.settings.app_name
     }
 
-    pub(crate) fn extern_structs(&self) -> &[ExternStruct] {
-        &self.document.structs
+    pub(crate) fn struct_declarations(&self) -> &[crate::hir::StructDeclaration] {
+        self.declarations.struct_declarations()
+    }
+
+    pub(crate) fn enum_declarations(&self) -> &[crate::hir::EnumDeclaration] {
+        self.declarations.enum_declarations()
+    }
+
+    pub(crate) fn extern_functions(&self) -> impl Iterator<Item = &crate::hir::ExternDeclaration> {
+        self.declarations.extern_declarations()
+    }
+
+    pub(crate) fn rust_type(&self, ty: &Type) -> String {
+        ty.rust_with_named(&|name| {
+            self.declarations
+                .struct_decl_by_name(name)
+                .map(|declaration| declaration.rust_path.clone())
+        })
     }
 
     #[allow(dead_code)]
@@ -3378,16 +3393,14 @@ impl LoweredProgram {
                     state.id == binding.state && state.name == binding.name && state.ty == Type::Str
                 })
                 .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        self.document.view.span(),
+                    self.invariant_at_origin(
+                        self.settings.origin,
                         "controlled input binding does not match its normalized app state",
                     )
                 })?;
             if !seen.insert(state.id) {
-                return Err(Error::new(
-                    "E196",
-                    self.document.view.span(),
+                return Err(self.invariant_at_origin(
+                    self.settings.origin,
                     "controlled input binding is duplicated in normalized HIR",
                 ));
             }
@@ -3404,9 +3417,8 @@ impl LoweredProgram {
         for binding in &self.controlled_editors {
             let state = self.validate_controlled_editor_binding(binding)?;
             if !seen.insert(state.id) {
-                return Err(Error::new(
-                    "E196",
-                    self.document.view.span(),
+                return Err(self.invariant_at_origin(
+                    self.settings.origin,
                     "controlled editor binding is duplicated in normalized HIR",
                 ));
             }
@@ -3425,9 +3437,8 @@ impl LoweredProgram {
             .and_then(|index| self.controlled_editors.get(*index))
             .filter(|binding| binding.name == name)
             .ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    self.document.view.span(),
+                self.invariant_at_origin(
+                    self.settings.origin,
                     "normalized editor is absent from the controlled binding index",
                 )
             })?;
@@ -3446,9 +3457,8 @@ impl LoweredProgram {
                 state.id == binding.state && state.name == binding.name && state.ty == Type::Editor
             })
             .ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    self.document.view.span(),
+                self.invariant_at_origin(
+                    self.settings.origin,
                     "controlled editor binding does not match its normalized app state",
                 )
             })?;
@@ -3457,9 +3467,8 @@ impl LoweredProgram {
                 .try_extern_decl(action)
                 .filter(|function| function.kind == ExternKind::EditorAction)
                 .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        self.document.view.span(),
+                    self.invariant_at_origin(
+                        self.settings.origin,
                         "controlled editor action does not match its normalized extern",
                     )
                 })?;
@@ -4594,6 +4603,7 @@ impl Lowerer {
             .map(|preset| preset.name.clone())
             .collect();
         Ok(LoweredProgram {
+            #[cfg(test)]
             document: self.document,
             app_view: app_view_id,
             facts: self.facts,

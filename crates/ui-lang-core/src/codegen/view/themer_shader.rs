@@ -62,7 +62,7 @@ pub(in crate::codegen) fn render_themer(
     Ok(format!(
         "{{ let (__theme, __content, __text_color, __background) = {}({args}); let mut __themer = ::iced::widget::themer(__theme, __content); if let ::std::option::Option::Some(__text_color) = __text_color {{ __themer = __themer.text_color(__text_color); }} if let ::std::option::Option::Some(__background) = __background {{ __themer = __themer.background(__background); }} let __themed: __IceElement<'_, {}> = __themer.into(); __themed.map({mapped}).into() }}",
         themer.adapter.function.rust_path,
-        themer.adapter.output.rust(document.extern_structs())
+        program.rust_type(&themer.adapter.output)
     ))
 }
 
@@ -113,7 +113,7 @@ pub(in crate::codegen) fn render_shader(
         }
     }
     let mapped = extern_view_mapping(&shader.adapter, program, message, env)?;
-    let output = shader.adapter.output.rust(document.extern_structs());
+    let output = program.rust_type(&shader.adapter.output);
     Ok(format!(
         "{{ let __shader: __IceElement<'_, {output}> = {code}.into(); __shader.map({mapped}).into() }}"
     ))

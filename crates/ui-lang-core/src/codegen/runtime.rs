@@ -269,11 +269,11 @@ fn __ice_canvas_interaction(value: &str) -> ::iced::mouse::Interaction {
     }
 }
 
-pub(in crate::codegen) fn borrowed_type(ty: &Type, document: &Document) -> String {
+pub(in crate::codegen) fn borrowed_type(ty: &Type, program: &LoweredProgram) -> String {
     match ty {
         Type::Str => "&'a str".into(),
         Type::Bytes => "&'a [u8]".into(),
-        Type::List(inner) => format!("&'a [{}]", inner.rust(&document.structs)),
-        _ => format!("&'a {}", ty.rust(&document.structs)),
+        Type::List(inner) => format!("&'a [{}]", program.rust_type(inner)),
+        _ => format!("&'a {}", program.rust_type(ty)),
     }
 }

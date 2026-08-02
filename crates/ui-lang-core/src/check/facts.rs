@@ -13157,27 +13157,24 @@ state
 view
   svg "icon.svg" w=48.0 h=shrink fit=scale-down rotate=rotation.solid(radians(0.1)) opacity=0.9 color=fg hover=primary style=dynamic_svg(active) label="Icon" description="Status icon"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
-        let checked = program.checked_facts().media(ViewId(0)).unwrap();
+        let checked_document = analyze(source).unwrap();
         let ViewNode::Media {
             kind,
             source,
             options,
             ..
-        } = &program.document().view
+        } = &checked_document.document.view
         else {
             panic!("fixture root must be media");
         };
+        let expected_expression_count = crate::ast::media_expression_roots(source, options).len();
+        let expected_semantic_key = crate::ast::media_semantic_key(*kind, options);
+        let program = lower::lower(checked_document).unwrap();
+        let checked = program.checked_facts().media(ViewId(0)).unwrap();
         assert_eq!(checked.id, ViewId(0));
-        assert_eq!(
-            checked.expression_count as usize,
-            crate::ast::media_expression_roots(source, options).len()
-        );
+        assert_eq!(checked.expression_count as usize, expected_expression_count);
         assert_eq!(checked.style, Some(ExternFnId(0)));
-        assert_eq!(
-            checked.semantic_key,
-            crate::ast::media_semantic_key(*kind, options)
-        );
+        assert_eq!(checked.semantic_key, expected_semantic_key);
         for index in 0..checked.expression_count {
             assert!(
                 program
@@ -13214,21 +13211,18 @@ view
     text "Hover"
     text "Tip"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
-        let checked = program.checked_facts().tooltip(ViewId(0)).unwrap();
-        let ViewNode::Tooltip { options, .. } = &program.document().view else {
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Tooltip { options, .. } = &checked_document.document.view else {
             panic!("fixture root must be a tooltip");
         };
+        let expected_expression_count = crate::ast::tooltip_expression_roots(options).len();
+        let expected_semantic_key = crate::ast::tooltip_semantic_key(options);
+        let program = lower::lower(checked_document).unwrap();
+        let checked = program.checked_facts().tooltip(ViewId(0)).unwrap();
         assert_eq!(checked.id, ViewId(0));
-        assert_eq!(
-            checked.expression_count as usize,
-            crate::ast::tooltip_expression_roots(options).len()
-        );
+        assert_eq!(checked.expression_count as usize, expected_expression_count);
         assert_eq!(checked.style, Some(ExternFnId(0)));
-        assert_eq!(
-            checked.semantic_key,
-            crate::ast::tooltip_semantic_key(options)
-        );
+        assert_eq!(checked.semantic_key, expected_semantic_key);
         for index in 0..checked.expression_count {
             assert!(
                 program
@@ -13272,7 +13266,19 @@ view
     sensor show=resized resize=resized hide=hidden key=active anticipate=16.0 delay=20
       text "Observed"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Layout { children, .. } = &checked_document.document.view else {
+            panic!("fixture root must be a column");
+        };
+        let expected_sensor_key = match &children[2] {
+            ViewNode::Sensor { options, .. } => crate::ast::sensor_semantic_key(options),
+            _ => panic!("third child must be a sensor"),
+        };
+        let expected_mouse_key = match &children[0] {
+            ViewNode::MouseArea { options, .. } => crate::ast::mouse_area_semantic_key(options),
+            _ => panic!("first child must be a mouse area"),
+        };
+        let program = lower::lower(checked_document).unwrap();
         let facts = program.checked_facts();
         assert_eq!(facts.interactions.len(), 7);
         let layout = facts.interaction(ViewId(0)).expect("checked root layout");
@@ -13336,23 +13342,8 @@ view
             assert_eq!(expression.source, expected);
             assert_eq!(expression.destination, expected);
         }
-        let ViewNode::Layout { children, .. } = &program.document().view else {
-            panic!("fixture root must be a column");
-        };
-        let ViewNode::Sensor { options, .. } = &children[2] else {
-            panic!("third child must be a sensor");
-        };
-        assert_eq!(
-            sensor.semantic_key,
-            crate::ast::sensor_semantic_key(options)
-        );
-        assert_eq!(
-            mouse.semantic_key,
-            crate::ast::mouse_area_semantic_key(match &children[0] {
-                ViewNode::MouseArea { options, .. } => options,
-                _ => panic!("first child must be a mouse area"),
-            })
-        );
+        assert_eq!(sensor.semantic_key, expected_sensor_key);
+        assert_eq!(mouse.semantic_key, expected_mouse_key);
         for id in [ViewId(2), ViewId(4), ViewId(6)] {
             assert_eq!(
                 facts.interaction(id).expect("checked child text").kind,
@@ -13380,7 +13371,12 @@ view
   float scale=1.1 x=(viewport_x + shift) y=(original_y - shift) shadow=primary/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=4.0 r=8.0 r-tl=1.0 r-tr=2.0 r-br=3.0 r-bl=4.0
     text "Floating"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Float { style, .. } = &checked_document.document.view else {
+            panic!("root must be a float");
+        };
+        let expected_semantic_key = crate::ast::float_semantic_key(style);
+        let program = lower::lower(checked_document).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
         let CheckedViewFlow::Float {
             semantic_key,
@@ -13424,10 +13420,7 @@ view
                 "missing float expression {index}"
             );
         }
-        let ViewNode::Float { style, .. } = &program.document().view else {
-            panic!("root must be a float");
-        };
-        assert_eq!(semantic_key, &crate::ast::float_semantic_key(style));
+        assert_eq!(semantic_key, &expected_semantic_key);
     }
 
     #[test]
@@ -13450,7 +13443,12 @@ view
   pin w=fill h=height x=offset y=8.0
     text "Pinned"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Pin { width, height, .. } = &checked_document.document.view else {
+            panic!("root must be a pin");
+        };
+        let expected_semantic_key = crate::ast::pin_semantic_key(width, height);
+        let program = lower::lower(checked_document).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
         let CheckedViewFlow::Pin {
             semantic_key,
@@ -13472,10 +13470,7 @@ view
                 "missing pin expression {index}"
             );
         }
-        let ViewNode::Pin { width, height, .. } = &program.document().view else {
-            panic!("root must be a pin");
-        };
-        assert_eq!(semantic_key, &crate::ast::pin_semantic_key(width, height));
+        assert_eq!(semantic_key, &expected_semantic_key);
     }
 
     #[test]

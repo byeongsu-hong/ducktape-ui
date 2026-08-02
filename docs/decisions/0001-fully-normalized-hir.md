@@ -634,6 +634,28 @@ contracts verify exact overlay growth, linear binding allocations, and zero
 full-scope clones under wall-clock ceilings. The thread-local
 collection context is guarded across both ordinary errors and panic unwinding.
 
+The program-metadata boundary no longer retains a source `Document` in release
+`LoweredProgram` values. Application identity, app state, presets, generated
+enums, extern structs and functions, borrowed parameter shapes, named type Rust
+paths, and probe-helper discovery are emitted from normalized settings and
+declaration arenas. Production code generation has zero `Document` references,
+zero `CheckedDocument` escapes, and zero extern-name fallback resolution. A
+test-only source sidecar remains available exclusively to adversarial tests
+that poison the parsed AST after lowering and prove the backend cannot observe
+it; release HIR does not allocate or expose that sidecar.
+
+`CheckedDocument` also no longer implements `Deref<Target = Document>`.
+Syntax-oriented tooling must request `source_document()` explicitly, while
+semantic consumers use checked APIs or lower to HIR. This closes accidental
+AST access without preventing the formatter, LSP, review selector, API
+fingerprinter, and asset discovery from inspecting source syntax when that is
+their stated job.
+
+This is not yet the migration-complete claim below. The boundary inventory
+still records shared AST value types and direct checked-expression arena types
+inside code generation; those dependencies must move behind backend-neutral
+HIR-owned interfaces before the final status can be declared complete.
+
 The migration is complete when:
 
 - the code-generation module has no source-AST or checker dependency;
