@@ -148,6 +148,7 @@ pub(in crate::check) fn infer_controls_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             let value_type = expr_type(value, env, document, span)?;
             if !matches!(&value_type, Type::F64 | Type::Named(_)) {
                 return Err(Error::new(
@@ -226,6 +227,7 @@ pub(in crate::check) fn infer_controls_group(
                 infer_route(release, None, env, document, signatures)?;
             }
             check_styles(styles, document, span, StyleTarget::Slider)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Progress {
             value,
@@ -238,6 +240,7 @@ pub(in crate::check) fn infer_controls_group(
             ..
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             for expr in [value, min, max] {
                 require_f32_value(expr, env, document, "progress value", span)?;
             }
@@ -278,6 +281,7 @@ pub(in crate::check) fn infer_controls_group(
                 }
             }
             check_styles(styles, document, span, StyleTarget::Progress)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Radio {
             label,

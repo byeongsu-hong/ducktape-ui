@@ -47,6 +47,7 @@ mod media;
 mod overlay;
 mod pane_grid;
 mod pin;
+mod range_controls;
 mod responsive;
 mod selection;
 mod style;
@@ -71,6 +72,7 @@ pub(crate) use media::*;
 pub(crate) use overlay::*;
 pub(crate) use pane_grid::*;
 pub(crate) use pin::*;
+pub(crate) use range_controls::*;
 pub(crate) use responsive::*;
 pub(crate) use selection::*;
 pub(crate) use table::*;
@@ -1507,6 +1509,8 @@ pub(crate) struct LoweredProgram {
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
+    sliders: HashMap<ViewId, ResolvedSlider>,
+    progresses: HashMap<ViewId, ResolvedProgress>,
     controlled_inputs: Vec<ResolvedControlledInputBinding>,
     controlled_editors: Vec<ResolvedControlledEditorBinding>,
     controlled_editors_by_name: HashMap<String, usize>,
@@ -3097,6 +3101,16 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn slider(&self, id: ViewId) -> Option<&ResolvedSlider> {
+        self.sliders.get(&id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn progress(&self, id: ViewId) -> Option<&ResolvedProgress> {
+        self.progresses.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
         self.media.get(&id)
     }
@@ -3362,6 +3376,32 @@ impl LoweredProgram {
         })
     }
 
+    pub(crate) fn resolved_slider_for(&self, node: &ViewNode) -> Result<&ResolvedSlider, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "slider reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "slider reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.sliders.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "slider reached code generation without normalized HIR",
+            )
+        })
+    }
+
     pub(crate) fn resolved_combo_box_for(
         &self,
         node: &ViewNode,
@@ -3386,6 +3426,35 @@ impl LoweredProgram {
                 "E196",
                 span,
                 "combo box reached code generation without normalized HIR",
+            )
+        })
+    }
+
+    pub(crate) fn resolved_progress_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedProgress, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "progress reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        if checked.id != id {
+            return Err(Error::new(
+                "E196",
+                span,
+                "progress reached code generation with a mismatched checked view ID",
+            ));
+        }
+        self.progresses.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "progress reached code generation without normalized HIR",
             )
         })
     }
@@ -4147,6 +4216,8 @@ pub(crate) struct Lowerer {
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
+    sliders: HashMap<ViewId, ResolvedSlider>,
+    progresses: HashMap<ViewId, ResolvedProgress>,
     controlled_inputs: Vec<AppStateId>,
     controlled_editors: Vec<CheckedControlledEditor>,
     media: HashMap<ViewId, ResolvedMedia>,
@@ -4896,6 +4967,8 @@ impl Lowerer {
             text_editors: HashMap::new(),
             pick_lists: HashMap::new(),
             combo_boxes: HashMap::new(),
+            sliders: HashMap::new(),
+            progresses: HashMap::new(),
             controlled_inputs,
             controlled_editors,
             media: HashMap::new(),
@@ -5054,6 +5127,8 @@ impl Lowerer {
             text_editors: self.text_editors,
             pick_lists: self.pick_lists,
             combo_boxes: self.combo_boxes,
+            sliders: self.sliders,
+            progresses: self.progresses,
             controlled_inputs,
             controlled_editors,
             controlled_editors_by_name,
@@ -9024,6 +9099,54 @@ impl Lowerer {
                     placeholder,
                     options,
                     route,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::Slider {
+                value,
+                min,
+                max,
+                step,
+                options,
+                vertical,
+                styles,
+                route,
+                release,
+                span,
+                ..
+            } => {
+                self.lower_slider(
+                    value,
+                    min,
+                    max,
+                    step,
+                    options,
+                    *vertical,
+                    styles,
+                    route,
+                    release,
+                    span,
+                    outer_component,
+                )?;
+            }
+            ViewNode::Progress {
+                value,
+                min,
+                max,
+                options,
+                vertical,
+                styles,
+                span,
+                ..
+            } => {
+                self.lower_progress(
+                    value,
+                    min,
+                    max,
+                    options,
+                    *vertical,
+                    styles,
                     span,
                     outer_component,
                 )?;
@@ -16640,6 +16763,396 @@ test stable_flow
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "{COMMANDS} checked Canvas commands lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_slider_and_progress_contracts() {
+        let source = format!(
+            "app RangeHir\nextern crate::backend\n  RangeNumber()\n  sync range_number(value:f64) -> RangeNumber\n  slider-style slider_style(active:bool)\n  progress-style progress_style(active:bool)\n{THEME}state\n  amount = 25.0\n  precise:RangeNumber = range_number(25.0)\n  active = true\non changed(next)\n  precise = next\non released\nview\n  col\n    slider precise min=range_number(0.0) max=range_number(100.0) step=range_number(1.0) default=range_number(25.0) shift-step=range_number(5.0) vertical w=20.0 h=fill(2) style=slider_style(active) release=released -> changed _\n      active rail-start=linear(0.0, primary@0.0, danger@1.0) rail-end=bg rail-w=4.0 rail-border=fg rail-border-w=1.0 rail-r=2.0 handle=rect(12) handle-color=primary handle-border=fg handle-border-w=1.0 handle-r=3.0\n    progress amount vertical length=fill(2) girth=20.0 style=progress_style(active) bg=bg bar=primary border=fg border-w=1.0 r=4.0\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let slider = program.slider(ViewId(1)).unwrap();
+        assert_eq!(slider.value_type, Type::Named("RangeNumber".into()));
+        assert_eq!(slider.axis, ResolvedRangeAxis::Vertical);
+        assert!(slider.default.is_some());
+        assert!(slider.shift_step.is_some());
+        assert!(matches!(
+            slider.height,
+            Some(ResolvedContainerLength::FillPortion(2))
+        ));
+        assert!(slider.change.source_payloads == [Type::Named("RangeNumber".into())]);
+        assert!(slider.release.is_some());
+        assert!(slider.custom_style.is_some());
+        let active = slider.styles.active.as_ref().unwrap();
+        assert!(matches!(
+            active.rail_start,
+            Some(ResolvedContainerBackground::Linear { .. })
+        ));
+        assert!(matches!(
+            active.handle_shape,
+            Some(ResolvedSliderHandleShape::Rectangle { width: 12, .. })
+        ));
+
+        let progress = program.progress(ViewId(2)).unwrap();
+        assert_eq!(progress.axis, ResolvedRangeAxis::Vertical);
+        assert!(matches!(
+            progress.length,
+            Some(ResolvedContainerLength::FillPortion(2))
+        ));
+        assert!(progress.custom_style.is_some());
+        assert!(matches!(
+            progress.background,
+            Some(ResolvedContainerBackground::Color(_))
+        ));
+        assert!(matches!(
+            progress.bar,
+            Some(ResolvedContainerBackground::Color(_))
+        ));
+
+        for range in [slider.id, progress.id] {
+            let checked = program.checked_facts().interaction(range).unwrap();
+            for index in 0..checked.expression_count {
+                let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: range,
+                    index,
+                });
+                let expression = program
+                    .checked_facts()
+                    .expression_use_by_owner(owner)
+                    .unwrap();
+                assert_eq!(
+                    program.checked_facts().expression_use(expression).owner,
+                    owner
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn range_lowering_uses_checked_expressions_and_codegen_ignores_raw_contracts() {
+        let source = format!(
+            "app CheckedRanges\nextern crate::backend\n  slider-style slider_style(active:bool)\n  progress-style progress_style(active:bool)\n{THEME}state\n  amount = 25.0\n  active = true\non changed(next)\n  amount = next\non released\nview\n  col\n    slider amount min=0.0 max=100.0 step=1.0 default=25.0 shift-step=5.0 vertical w=20.0 h=fill style=slider_style(active) release=released -> changed _\n      active rail-start=primary rail-end=bg rail-w=4.0 rail-border=fg rail-border-w=1.0 handle=circle(7.0) handle-color=primary handle-border=fg handle-border-w=1.0\n    progress amount vertical length=fill girth=20.0 style=progress_style(active) bg=bg bar=primary border=fg border-w=1.0 r=4.0\n"
+        );
+        let expected = crate::codegen::generate(
+            &lower(analyze(&source).unwrap()).unwrap(),
+            "checked-ranges.ice",
+        )
+        .unwrap();
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Slider {
+            value,
+            min,
+            max,
+            step,
+            options,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a slider");
+        };
+        *value = Expr::F64(999.0);
+        *min = Expr::F64(999.0);
+        *max = Expr::F64(999.0);
+        *step = Expr::F64(999.0);
+        options.default = Some(Expr::F64(999.0));
+        options.shift_step = Some(Expr::F64(999.0));
+        options.style.custom.as_mut().unwrap().args[0] = Expr::Bool(false);
+        options.style.active.as_mut().unwrap().rail_width = Some(Expr::F64(999.0));
+        let ViewNode::Progress { value, options, .. } = &mut children[1] else {
+            panic!("second child must be progress");
+        };
+        *value = Expr::F64(999.0);
+        options.custom_style.as_mut().unwrap().args[0] = Expr::Bool(false);
+        options.border_width = Some(Expr::F64(999.0));
+        let actual =
+            crate::codegen::generate(&lower(checked).unwrap(), "checked-ranges.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-ranges.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Slider {
+            value,
+            min,
+            max,
+            step,
+            options,
+            vertical,
+            styles,
+            route,
+            release,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a slider");
+        };
+        *value = Expr::F64(777.0);
+        *min = Expr::F64(777.0);
+        *max = Expr::F64(777.0);
+        *step = Expr::F64(777.0);
+        **options = SliderOptions::default();
+        *vertical = false;
+        styles.clear();
+        route.handler = "poisoned".into();
+        *release = None;
+        let ViewNode::Progress {
+            value,
+            min,
+            max,
+            options,
+            vertical,
+            styles,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be progress");
+        };
+        *value = Expr::F64(777.0);
+        *min = Expr::F64(777.0);
+        *max = Expr::F64(777.0);
+        *options = ProgressOptions::default();
+        *vertical = false;
+        styles.clear();
+        program
+            .document
+            .theme_contract
+            .as_mut()
+            .unwrap()
+            .tokens
+            .swap(0, 1);
+        let actual = crate::codegen::generate(&program, "lowered-ranges.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("poisoned"));
+
+        let mut changed_static = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut changed_static.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Slider { vertical, .. } = &mut children[0] else {
+            panic!("first child must be a slider");
+        };
+        *vertical = false;
+        let error = lower(changed_static).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn range_lowering_rejects_same_type_slot_route_and_extern_swaps() {
+        let source = format!(
+            "app RangeIdentity\nextern crate::backend\n  slider-style slider_first(active:bool)\n  slider-style slider_second(active:bool)\n  progress-style progress_first(active:bool)\n  progress-style progress_second(active:bool)\n{THEME}state\n  amount = 25.0\n  active = true\non first(next)\n  amount = next\non second(next)\n  amount = next\nview\n  col\n    slider amount min=0.0 max=100.0 step=1.0 style=slider_first(active) -> first _\n    progress amount min=0.0 max=100.0 style=progress_first(active) border-w=1.0 r=4.0\n    slider amount min=0.0 max=100.0 step=1.0 -> second _\n"
+        );
+
+        let mut swapped_slider_slots = analyze(&source).unwrap();
+        swapped_slider_slots
+            .facts
+            .swap_interaction_option_expressions(ViewId(1), 1, 2);
+        let error = lower(swapped_slider_slots).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_progress_slots = analyze(&source).unwrap();
+        swapped_progress_slots
+            .facts
+            .swap_interaction_option_expressions(ViewId(2), 0, 1);
+        let error = lower(swapped_progress_slots).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_route = analyze(&source).unwrap();
+        swapped_route
+            .facts
+            .corrupt_interaction_route_handler(ViewId(1), 0, HandlerId(1));
+        let error = lower(swapped_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("handler contract diverged"));
+
+        let mut swapped_slider_extern = analyze(&source).unwrap();
+        swapped_slider_extern
+            .facts
+            .corrupt_slider_style(ViewId(1), ExternFnId(1));
+        let error = lower(swapped_slider_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("style extern contract diverged"));
+
+        let mut swapped_progress_extern = analyze(&source).unwrap();
+        swapped_progress_extern
+            .facts
+            .corrupt_progress_style(ViewId(2), ExternFnId(3));
+        let error = lower(swapped_progress_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("style extern contract diverged"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id.facts.corrupt_slider_id(ViewId(1), u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id.facts.corrupt_progress_id(ViewId(2), u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn imported_ranges_keep_expression_route_extern_theme_and_status_origins() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-range-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("ranges.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedRangesApp\nuse \"ranges.ice\"\n{THEME}state\n  amount = 25.0\nview\n  ImportedRanges value=amount\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  slider-style imported_slider()\n  progress-style imported_progress()\ncomponent ImportedRanges(value:f64)\n  on changed(next)\n  on released\n  col\n    slider value min=0.0 max=100.0 step=1.0 style=imported_slider() release=released -> changed _\n      active rail-start=primary rail-border=fg rail-w=4.0 handle=circle(7.0) handle-color=primary\n    progress value min=0.0 max=100.0 style=imported_progress() bg=bg bar=primary border=fg border-w=1.0\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let slider = program.sliders.values().next().unwrap();
+        let slider_origin = program.origin(slider.origin);
+        assert_eq!(slider_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(slider_origin.line, 8);
+        let value = program.checked_facts().expression_use(slider.value);
+        let value_origin = program.origin(value.origin);
+        assert_eq!(value_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(value_origin.line, 8);
+        assert_eq!(value_origin.parent, Some(slider.origin));
+        let route_origin = program.origin(slider.change.origin);
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.line, 8);
+        assert_eq!(route_origin.parent, Some(slider.origin));
+        let style = slider.custom_style.as_ref().unwrap();
+        let style_origin = program.origin(style.origin);
+        assert_eq!(style_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(style_origin.line, 8);
+        assert_eq!(style_origin.parent, Some(slider.origin));
+        let extern_origin =
+            program.origin(program.extern_function(style.function).declaration.origin);
+        assert_eq!(extern_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(extern_origin.line, 2);
+        let active = slider.styles.active.as_ref().unwrap();
+        let status_origin = program.origin(active.origin);
+        assert_eq!(status_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(status_origin.line, 9);
+        assert_eq!(status_origin.parent, Some(slider.origin));
+        assert!(matches!(
+            active.rail_border_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            }) if token == program.theme().native_tokens.text
+        ));
+
+        let progress = program.progresses.values().next().unwrap();
+        let progress_origin = program.origin(progress.origin);
+        assert_eq!(progress_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(progress_origin.line, 10);
+        let value_origin = program.origin(
+            program
+                .checked_facts()
+                .expression_use(progress.value)
+                .origin,
+        );
+        assert_eq!(value_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(value_origin.line, 10);
+        assert_eq!(value_origin.parent, Some(progress.origin));
+        let style = progress.custom_style.as_ref().unwrap();
+        let style_origin = program.origin(style.origin);
+        assert_eq!(style_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(style_origin.line, 10);
+        assert_eq!(style_origin.parent, Some(progress.origin));
+        let extern_origin =
+            program.origin(program.extern_function(style.function).declaration.origin);
+        assert_eq!(extern_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(extern_origin.line, 3);
+        assert!(matches!(
+            progress.bar,
+            Some(ResolvedContainerBackground::Color(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(token),
+                ..
+            })) if token == program.theme().native_tokens.primary
+        ));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn malformed_checked_range_ids_do_not_panic() {
+        let source = format!(
+            "app InvalidRanges\n{THEME}state\n  amount = 25.0\non changed(next)\n  amount = next\nview\n  col\n    slider amount min=0.0 max=100.0 step=1.0 -> changed _\n    progress amount\n"
+        );
+        for (view, index) in [(ViewId(1), 0), (ViewId(2), 0)] {
+            let mut checked = analyze(&source).unwrap();
+            checked.facts.corrupt_expression_use_root(
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: view,
+                    index,
+                }),
+                u32::MAX,
+            );
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("invalid checked expression ID"));
+        }
+    }
+
+    #[test]
+    #[ignore = "large normalized range-control lowering and emission performance contract"]
+    fn performance_contract_four_thousand_range_controls_lower_and_emit_under_two_seconds() {
+        const EACH: usize = 2_000;
+        let mut source = format!(
+            "app RangeScale\n{THEME}state\n  amount = 25.0\non changed(next)\n  amount = next\nview\n  col\n"
+        );
+        for index in 0..EACH {
+            writeln!(
+                source,
+                "    slider amount #slider_{index} min=0.0 max=100.0 step=1.0 w=fill -> changed _"
+            )
+            .unwrap();
+            writeln!(
+                source,
+                "    progress amount #progress_{index} min=0.0 max=100.0 length=fill"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "range-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.sliders.len(), EACH);
+        assert_eq!(program.progresses.len(), EACH);
+        assert_eq!(generated.matches("::iced::widget::slider(").count(), EACH);
+        assert_eq!(
+            generated.matches("::iced::widget::progress_bar(").count(),
+            EACH
+        );
+        eprintln!("4k normalized range controls lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized range controls lowered and emitted in {elapsed:?}"
         );
     }
 

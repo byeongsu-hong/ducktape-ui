@@ -86,6 +86,258 @@ pub enum ProgressStyle {
     Danger,
 }
 
+fn range_length_semantic_key(length: &Option<LengthValue>) -> String {
+    match length {
+        None => "none".into(),
+        Some(LengthValue::Fill) => "fill".into(),
+        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
+        Some(LengthValue::Shrink) => "shrink".into(),
+        Some(LengthValue::Fixed(_)) => "fixed".into(),
+    }
+}
+
+fn range_background_semantic_key(background: &Option<BackgroundValue>) -> String {
+    match background {
+        None => "none".into(),
+        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+        Some(BackgroundValue::Linear { stops, .. }) => format!(
+            "linear:{}",
+            stops
+                .iter()
+                .map(|stop| stop.color.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
+fn range_route_semantic_key(route: Option<&Route>) -> String {
+    route.map_or_else(
+        || "none".into(),
+        |route| {
+            let arguments = route
+                .args
+                .iter()
+                .map(|argument| match argument {
+                    RouteArg::Expr(_) => 'e',
+                    RouteArg::Payload => 'p',
+                })
+                .collect::<String>();
+            format!("{}:{arguments}", route.handler)
+        },
+    )
+}
+
+fn push_range_length_root<'a>(
+    roots: &mut Vec<(&'a Expr, &'a Span)>,
+    length: &'a Option<LengthValue>,
+    span: &'a Span,
+) {
+    if let Some(LengthValue::Fixed(expression)) = length {
+        roots.push((expression, span));
+    }
+}
+
+fn push_range_background_roots<'a>(
+    roots: &mut Vec<(&'a Expr, &'a Span)>,
+    background: &'a Option<BackgroundValue>,
+    span: &'a Span,
+) {
+    if let Some(BackgroundValue::Linear { angle, stops }) = background {
+        roots.push((angle, span));
+        roots.extend(stops.iter().map(|stop| (&stop.offset, span)));
+    }
+}
+
+fn slider_status_semantic_key(style: &SliderStyle) -> String {
+    let handle = match &style.handle_shape {
+        None => "none".into(),
+        Some(SliderHandleShape::Circle(_)) => "circle".into(),
+        Some(SliderHandleShape::Rectangle { width }) => format!("rect:{width}"),
+    };
+    format!(
+        "rail={}:{}|colors={:?}|fields={:?}|handle={handle}",
+        range_background_semantic_key(&style.rail_start),
+        range_background_semantic_key(&style.rail_end),
+        [
+            style.rail_border_color.as_deref(),
+            style.handle_border_color.as_deref(),
+        ],
+        [
+            style.rail_width.is_some(),
+            style.rail_border_width.is_some(),
+            style.rail_radius.is_some(),
+            style.rail_radius_top_left.is_some(),
+            style.rail_radius_top_right.is_some(),
+            style.rail_radius_bottom_right.is_some(),
+            style.rail_radius_bottom_left.is_some(),
+            style.handle_border_width.is_some(),
+            style.handle_radius.is_some(),
+            style.handle_radius_top_left.is_some(),
+            style.handle_radius_top_right.is_some(),
+            style.handle_radius_bottom_right.is_some(),
+            style.handle_radius_bottom_left.is_some(),
+        ],
+    ) + &format!(
+        "|handle-color={}",
+        range_background_semantic_key(&style.handle_color)
+    )
+}
+
+pub(crate) fn slider_expression_roots<'a>(
+    value: &'a Expr,
+    min: &'a Expr,
+    max: &'a Expr,
+    step: &'a Expr,
+    options: &'a SliderOptions,
+    span: &'a Span,
+) -> Vec<(&'a Expr, &'a Span)> {
+    let mut roots = vec![(value, span), (min, span), (max, span), (step, span)];
+    roots.extend(
+        [&options.default, &options.shift_step]
+            .into_iter()
+            .flatten()
+            .map(|expression| (expression, span)),
+    );
+    push_range_length_root(&mut roots, &options.width, span);
+    push_range_length_root(&mut roots, &options.height, span);
+    if let Some(custom) = &options.style.custom {
+        roots.extend(custom.args.iter().map(|expression| (expression, span)));
+    }
+    for status in [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.dragged,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let status_span = status.span.as_ref().unwrap_or(span);
+        push_range_background_roots(&mut roots, &status.rail_start, status_span);
+        push_range_background_roots(&mut roots, &status.rail_end, status_span);
+        push_range_background_roots(&mut roots, &status.handle_color, status_span);
+        roots.extend(
+            [
+                &status.rail_width,
+                &status.rail_border_width,
+                &status.rail_radius,
+                &status.rail_radius_top_left,
+                &status.rail_radius_top_right,
+                &status.rail_radius_bottom_right,
+                &status.rail_radius_bottom_left,
+                &status.handle_border_width,
+                &status.handle_radius,
+                &status.handle_radius_top_left,
+                &status.handle_radius_top_right,
+                &status.handle_radius_bottom_right,
+                &status.handle_radius_bottom_left,
+            ]
+            .into_iter()
+            .flatten()
+            .map(|expression| (expression, status_span)),
+        );
+        if let Some(SliderHandleShape::Circle(radius)) = &status.handle_shape {
+            roots.push((radius, status_span));
+        }
+    }
+    roots
+}
+
+pub(crate) fn slider_semantic_key(
+    options: &SliderOptions,
+    vertical: bool,
+    styles: &[String],
+    route: &Route,
+    release: &Option<Route>,
+) -> String {
+    let custom = options.style.custom.as_ref().map_or_else(
+        || "none".into(),
+        |call| format!("{}:{}", call.function, call.args.len()),
+    );
+    let statuses = [
+        &options.style.active,
+        &options.style.hovered,
+        &options.style.dragged,
+    ]
+    .into_iter()
+    .map(|status| {
+        status
+            .as_ref()
+            .map(slider_status_semantic_key)
+            .unwrap_or_else(|| "none".into())
+    })
+    .collect::<Vec<_>>()
+    .join(";");
+    format!(
+        "slider|axis={vertical}|default={}|shift={}|w={}|h={}|custom={custom}|statuses={statuses}|styles={styles:?}|change={}|release={}",
+        options.default.is_some(),
+        options.shift_step.is_some(),
+        range_length_semantic_key(&options.width),
+        range_length_semantic_key(&options.height),
+        range_route_semantic_key(Some(route)),
+        range_route_semantic_key(release.as_ref()),
+    )
+}
+
+pub(crate) fn progress_expression_roots<'a>(
+    value: &'a Expr,
+    min: &'a Expr,
+    max: &'a Expr,
+    options: &'a ProgressOptions,
+    span: &'a Span,
+) -> Vec<(&'a Expr, &'a Span)> {
+    let mut roots = vec![(value, span), (min, span), (max, span)];
+    push_range_length_root(&mut roots, &options.length, span);
+    push_range_length_root(&mut roots, &options.girth, span);
+    if let Some(custom) = &options.custom_style {
+        roots.extend(custom.args.iter().map(|expression| (expression, span)));
+    }
+    push_range_background_roots(&mut roots, &options.background, span);
+    push_range_background_roots(&mut roots, &options.bar, span);
+    roots.extend(
+        [
+            &options.border_width,
+            &options.radius,
+            &options.radius_top_left,
+            &options.radius_top_right,
+            &options.radius_bottom_right,
+            &options.radius_bottom_left,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|expression| (expression, span)),
+    );
+    roots
+}
+
+pub(crate) fn progress_semantic_key(
+    options: &ProgressOptions,
+    vertical: bool,
+    styles: &[String],
+) -> String {
+    let custom = options.custom_style.as_ref().map_or_else(
+        || "none".into(),
+        |call| format!("{}:{}", call.function, call.args.len()),
+    );
+    format!(
+        "progress|axis={vertical}|length={}|girth={}|preset={:?}|custom={custom}|bg={}|bar={}|border={:?}|fields={:?}|styles={styles:?}",
+        range_length_semantic_key(&options.length),
+        range_length_semantic_key(&options.girth),
+        options.style,
+        range_background_semantic_key(&options.background),
+        range_background_semantic_key(&options.bar),
+        options.border_color,
+        [
+            options.border_width.is_some(),
+            options.radius.is_some(),
+            options.radius_top_left.is_some(),
+            options.radius_top_right.is_some(),
+            options.radius_bottom_right.is_some(),
+            options.radius_bottom_left.is_some(),
+        ],
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuleStyle {
     Default,

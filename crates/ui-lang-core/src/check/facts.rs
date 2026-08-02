@@ -927,6 +927,22 @@ pub(crate) struct CheckedComboBox {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedSlider {
+    pub(crate) id: ViewId,
+    pub(crate) value_type: Type,
+    pub(crate) style: Option<ExternFnId>,
+    pub(crate) style_origin: Option<OriginId>,
+    pub(crate) status_origins: Vec<OriginId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedProgress {
+    pub(crate) id: ViewId,
+    pub(crate) style: Option<ExternFnId>,
+    pub(crate) style_origin: Option<OriginId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedTooltip {
     pub(crate) id: ViewId,
     pub(crate) expression_count: u32,
@@ -943,6 +959,8 @@ pub(crate) enum CheckedInteractionKind {
     TextEditor,
     PickList,
     ComboBox,
+    Slider,
+    Progress,
     MouseArea,
     ResizeHandle,
     Sensor,
@@ -1031,6 +1049,8 @@ pub(crate) struct CheckedFacts {
     text_editors: HashMap<ViewId, CheckedTextEditor>,
     pick_lists: HashMap<ViewId, CheckedPickList>,
     combo_boxes: HashMap<ViewId, CheckedComboBox>,
+    sliders: HashMap<ViewId, CheckedSlider>,
+    progresses: HashMap<ViewId, CheckedProgress>,
     tooltips: HashMap<ViewId, CheckedTooltip>,
     interactions: HashMap<ViewId, CheckedInteraction>,
     pane_grids: HashMap<ViewId, CheckedPaneGrid>,
@@ -1200,6 +1220,51 @@ impl CheckedFacts {
             .unwrap()
             .status_origins
             .swap(0, 1);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_interaction_option_expressions(
+        &mut self,
+        view: ViewId,
+        left: usize,
+        right: usize,
+    ) {
+        self.interactions
+            .get_mut(&view)
+            .unwrap()
+            .option_expressions
+            .swap(left, right);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_interaction_route_handler(
+        &mut self,
+        view: ViewId,
+        route: usize,
+        handler: HandlerId,
+    ) {
+        self.interactions.get_mut(&view).unwrap().routes[route].target =
+            CheckedCanvasRouteTarget::Handler(handler);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_slider_style(&mut self, view: ViewId, style: ExternFnId) {
+        self.sliders.get_mut(&view).unwrap().style = Some(style);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_progress_style(&mut self, view: ViewId, style: ExternFnId) {
+        self.progresses.get_mut(&view).unwrap().style = Some(style);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_slider_id(&mut self, view: ViewId, raw: u32) {
+        self.sliders.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_progress_id(&mut self, view: ViewId, raw: u32) {
+        self.progresses.get_mut(&view).unwrap().id = ViewId(raw);
     }
 
     #[cfg(test)]
@@ -1379,6 +1444,16 @@ impl CheckedFacts {
 
     pub(crate) fn combo_box(&self, id: ViewId) -> Option<&CheckedComboBox> {
         self.combo_boxes.get(&id).filter(|combo| combo.id == id)
+    }
+
+    pub(crate) fn slider(&self, id: ViewId) -> Option<&CheckedSlider> {
+        self.sliders.get(&id).filter(|slider| slider.id == id)
+    }
+
+    pub(crate) fn progress(&self, id: ViewId) -> Option<&CheckedProgress> {
+        self.progresses
+            .get(&id)
+            .filter(|progress| progress.id == id)
     }
 
     pub(crate) fn tooltip(&self, id: ViewId) -> Option<&CheckedTooltip> {
@@ -3727,6 +3802,155 @@ impl<'a> FactsBuilder<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn lower_slider_facts(
+        &mut self,
+        slider: ViewId,
+        value: &Expr,
+        min: &Expr,
+        max: &Expr,
+        step: &Expr,
+        options: &SliderOptions,
+        vertical: bool,
+        styles: &[String],
+        route: &Route,
+        release: &Option<Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let roots = crate::ast::slider_expression_roots(value, min, max, step, options, span);
+        self.lower_interaction_facts_with_spans(
+            slider,
+            CheckedInteractionKind::Slider,
+            crate::ast::slider_semantic_key(options, vertical, styles, route, release),
+            roots
+                .into_iter()
+                .map(|(expression, origin)| (expression, None, origin))
+                .collect(),
+            std::iter::once(route).chain(release.iter()).collect(),
+            env,
+            span,
+        )?;
+        let interaction = self
+            .facts
+            .interaction(slider)
+            .ok_or_else(|| self.invariant(span, "slider interaction facts disappeared"))?;
+        let value_type = interaction
+            .option_expressions
+            .first()
+            .and_then(|expression| self.facts.try_expression_use(*expression))
+            .map(|expression| expression.source.clone())
+            .ok_or_else(|| self.invariant(span, "slider value type disappeared"))?;
+        let style = options
+            .style
+            .custom
+            .as_ref()
+            .map(|style| {
+                self.declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::SliderStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "slider style extern disappeared"))
+            })
+            .transpose()?;
+        let parent = self.declarations.view(slider).origin;
+        let style_origin = options
+            .style
+            .custom
+            .as_ref()
+            .map(|_| self.origins.push(span, Some(parent)));
+        let status_origins = [
+            &options.style.active,
+            &options.style.hovered,
+            &options.style.dragged,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|status| {
+            self.origins
+                .push(status.span.as_ref().unwrap_or(span), Some(parent))
+        })
+        .collect();
+        if self
+            .facts
+            .sliders
+            .insert(
+                slider,
+                CheckedSlider {
+                    id: slider,
+                    value_type,
+                    style,
+                    style_origin,
+                    status_origins,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "slider facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_progress_facts(
+        &mut self,
+        progress: ViewId,
+        value: &Expr,
+        min: &Expr,
+        max: &Expr,
+        options: &ProgressOptions,
+        vertical: bool,
+        styles: &[String],
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let roots = crate::ast::progress_expression_roots(value, min, max, options, span);
+        self.lower_interaction_facts_with_spans(
+            progress,
+            CheckedInteractionKind::Progress,
+            crate::ast::progress_semantic_key(options, vertical, styles),
+            roots
+                .into_iter()
+                .map(|(expression, origin)| (expression, None, origin))
+                .collect(),
+            Vec::new(),
+            env,
+            span,
+        )?;
+        let style = options
+            .custom_style
+            .as_ref()
+            .map(|style| {
+                self.declarations
+                    .extern_decl_by_name(&style.function)
+                    .filter(|function| function.kind == ExternKind::ProgressStyle)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "progress style extern disappeared"))
+            })
+            .transpose()?;
+        let parent = self.declarations.view(progress).origin;
+        let style_origin = options
+            .custom_style
+            .as_ref()
+            .map(|_| self.origins.push(span, Some(parent)));
+        if self
+            .facts
+            .progresses
+            .insert(
+                progress,
+                CheckedProgress {
+                    id: progress,
+                    style,
+                    style_origin,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "progress facts were produced more than once"));
+        }
+        Ok(())
+    }
+
     fn lower_media_facts(
         &mut self,
         media: ViewId,
@@ -4183,18 +4407,43 @@ impl<'a> FactsBuilder<'a> {
         env: &dyn FactEnvironment,
         span: &Span,
     ) -> Result<(), Error> {
+        self.lower_interaction_facts_with_spans(
+            widget,
+            kind,
+            semantic_key,
+            option_expressions
+                .into_iter()
+                .map(|(expression, destination)| (expression, destination, span))
+                .collect(),
+            routes,
+            env,
+            span,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_interaction_facts_with_spans(
+        &mut self,
+        widget: ViewId,
+        kind: CheckedInteractionKind,
+        semantic_key: String,
+        option_expressions: Vec<(&Expr, Option<Type>, &Span)>,
+        routes: Vec<&Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
         let parent = self.declarations.view(widget).origin;
         let mut expression_count = 0u32;
         let option_expressions = option_expressions
             .into_iter()
-            .map(|(expression, destination)| {
+            .map(|(expression, destination, expression_span)| {
                 self.push_interaction_expression(
                     widget,
                     &mut expression_count,
                     expression,
                     destination.as_ref(),
                     env,
-                    span,
+                    expression_span,
                     parent,
                 )
             })
@@ -8228,6 +8477,40 @@ impl<'a> FactsBuilder<'a> {
                     route,
                     env,
                     span,
+                )?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Slider {
+                value,
+                min,
+                max,
+                step,
+                options,
+                vertical,
+                styles,
+                route,
+                release,
+                span,
+                ..
+            } => {
+                self.lower_slider_facts(
+                    view, value, min, max, step, options, *vertical, styles, route, release, env,
+                    span,
+                )?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Progress {
+                value,
+                min,
+                max,
+                options,
+                vertical,
+                styles,
+                span,
+                ..
+            } => {
+                self.lower_progress_facts(
+                    view, value, min, max, options, *vertical, styles, env, span,
                 )?;
                 CheckedViewFlow::None
             }

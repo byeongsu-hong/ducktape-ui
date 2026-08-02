@@ -13,25 +13,6 @@ pub(in crate::codegen) fn custom_style_call_code(
     Ok(format!("{}({leading_args}{args})", function.rust_path))
 }
 
-pub(in crate::codegen) fn append_f32_fields<'a>(
-    code: &mut String,
-    fields: impl IntoIterator<Item = (&'a Option<Expr>, &'a str)>,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<(), Error> {
-    for (value, field) in fields {
-        if let Some(value) = value {
-            write!(
-                code,
-                " {field} = {} as f32;",
-                expr_code(value, env, document, ValueMode::Owned)?
-            )
-            .unwrap();
-        }
-    }
-    Ok(())
-}
-
 pub(in crate::codegen) fn text_shaping_code(shaping: TextShaping) -> &'static str {
     match shaping {
         TextShaping::Auto => "Auto",

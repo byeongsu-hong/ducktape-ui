@@ -190,100 +190,21 @@ pub(in crate::codegen) fn render_controls(
                 "{code}; ::ui_lang_runtime::accessible(__toggler, __a11y_id, ::ui_lang_runtime::Role::Switch).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
             ))
         }
-        ViewNode::Slider {
-            value,
-            id,
-            min,
-            max,
-            step,
-            options,
-            vertical,
-            route,
-            release,
-            span,
-            ..
-        } => {
-            let value = expr_code(value, env, document, ValueMode::Borrowed)?;
-            let min = expr_code(min, env, document, ValueMode::Borrowed)?;
-            let max = expr_code(max, env, document, ValueMode::Borrowed)?;
-            let step = expr_code(step, env, document, ValueMode::Borrowed)?;
-            let callback =
-                route_callback_code(route, "__value", "__value", env, document, message)?;
-            let helper = if *vertical {
-                "vertical_slider"
-            } else {
-                "slider"
-            };
-            let mut code = format!(
-                "::iced::widget::{helper}(({min})..=({max}), __slider_value, {callback}).step({step})"
-            );
-            if let Some(default) = &options.default {
-                write!(
-                    code,
-                    ".default({})",
-                    expr_code(default, env, document, ValueMode::Borrowed)?
-                )
-                .unwrap();
-            }
-            if let Some(shift_step) = &options.shift_step {
-                write!(
-                    code,
-                    ".shift_step({})",
-                    expr_code(shift_step, env, document, ValueMode::Borrowed)?
-                )
-                .unwrap();
-            }
-            for (length, method) in [(&options.width, "width"), (&options.height, "height")] {
-                if let Some(length) = length {
-                    write!(code, ".{method}({})", length_code(length, env, document)?).unwrap();
-                }
-            }
-            append_slider_styles(&mut code, &options.style, env, document)?;
-            if let Some(release) = release {
-                write!(
-                    code,
-                    ".on_release({})",
-                    route_code(release, "", env, document, message)?
-                )
-                .unwrap();
-            }
-            let accessibility_key =
-                accessibility_key_code(id.as_ref(), "slider", span, scope, env, document)?;
-            Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __slider_value = {value}; let __slider = {code}; ::ui_lang_runtime::accessible(__slider, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Slider).logical_id(__a11y_key.clone()).label(\"Slider\").value(format!(\"{{}}\", __slider_value)).into() }}"
-            ))
-        }
-        ViewNode::Progress {
-            value,
-            id,
-            min,
-            max,
-            options,
-            vertical,
-            span,
-            ..
-        } => {
-            let value = expr_code(value, env, document, ValueMode::Owned)?;
-            let min = expr_code(min, env, document, ValueMode::Owned)?;
-            let max = expr_code(max, env, document, ValueMode::Owned)?;
-            let mut code =
-                "::iced::widget::progress_bar(__progress_range, __progress_value)".to_owned();
-            if let Some(length) = &options.length {
-                write!(code, ".length({})", length_code(length, env, document)?).unwrap();
-            }
-            if let Some(girth) = &options.girth {
-                write!(code, ".girth({})", length_code(girth, env, document)?).unwrap();
-            }
-            if *vertical {
-                code.push_str(".vertical()");
-            }
-            append_progress_options(&mut code, options, env, document)?;
-            let accessibility_key =
-                accessibility_key_code(id.as_ref(), "progress", span, scope, env, document)?;
-            Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __progress_input = {value}; let __progress = {{ let (__progress_range, __progress_value) = ::ui_lang_runtime::progress_range({min}, {max}, __progress_input); {code} }}; ::ui_lang_runtime::accessible(__progress, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ProgressIndicator).logical_id(__a11y_key.clone()).label(\"Progress\").value(format!(\"{{}}\", __progress_input)).into() }}"
-            ))
-        }
+        ViewNode::Slider { id, .. } => render_slider(
+            document.program().resolved_slider_for(node)?,
+            id.as_ref(),
+            document,
+            message,
+            env,
+            scope,
+        ),
+        ViewNode::Progress { id, .. } => render_progress(
+            document.program().resolved_progress_for(node)?,
+            id.as_ref(),
+            document,
+            env,
+            scope,
+        ),
         ViewNode::Radio {
             label,
             value,
