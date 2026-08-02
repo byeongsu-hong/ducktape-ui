@@ -38,6 +38,8 @@ pub mod combobox;
 pub mod command;
 #[cfg(feature = "context-menu")]
 pub mod context_menu;
+#[cfg(feature = "data-grid")]
+pub mod data_grid;
 #[cfg(feature = "data-table")]
 pub mod data_table;
 #[cfg(feature = "date-picker")]
@@ -70,6 +72,8 @@ pub mod item;
 pub mod kbd;
 #[cfg(feature = "label")]
 pub mod label;
+#[cfg(feature = "log-timeline")]
+pub mod log_timeline;
 #[cfg(feature = "marker")]
 pub mod marker;
 #[cfg(feature = "menu")]

@@ -13,6 +13,11 @@ use ducktape_ui::ui::{
     },
     command::{command as ui_command, command_group, command_item},
     context_menu::{ContextMenuIds, context_menu as ui_context_menu},
+    data_grid::{
+        AccessibilitySortDirection, DataGridCellId, DataGridColumn, DataGridConfig,
+        DataGridEvent as UiDataGridEvent, DataGridId, DataGridState as UiDataGridState,
+        data_grid as ui_data_grid,
+    },
     data_table::{DataTableState, Sort, SortDirection},
     date_picker::{DateFormat, DatePickerIds, DatePickerValue, date_picker as ui_date_picker},
     direction::Direction,
@@ -24,6 +29,10 @@ use ducktape_ui::ui::{
     focus_control::FocusControl,
     hover_card::{HoverCardId, hover_card as ui_hover_card},
     input_otp::{OtpPattern, input_otp as ui_input_otp},
+    log_timeline::{
+        LogTimelineEvent as UiLogTimelineEvent, LogTimelineState as UiLogTimelineState,
+        log_timeline as ui_log_timeline,
+    },
     menu::{MenuEntry, MenuEvent, MenuGroup, MenuItem, MenuState},
     menubar::{MenubarMenu, MenubarState as UiMenubarState, menubar as ui_menubar},
     message_scroller::{
@@ -92,8 +101,30 @@ pub use ducktape_ui::ui::{
 
 pub type CommandEvent = ducktape_ui::ui::command::CommandEvent<String>;
 pub type SelectEvent = ducktape_ui::ui::select::SelectEvent<String>;
+pub type LogTimelineEvent = UiLogTimelineEvent<u64>;
 pub type VirtualListEvent = UiVirtualListEvent<u64>;
 pub type TreeViewEvent = UiTreeViewEvent<u64>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DataGridEvent {
+    Grid(UiDataGridEvent<u64, u8>),
+    EditChanged(String),
+}
+
+#[derive(Debug)]
+pub struct LogTimelineState {
+    timeline: UiLogTimelineState<u64>,
+    rows: Arc<[u64]>,
+}
+
+impl Clone for LogTimelineState {
+    fn clone(&self) -> Self {
+        Self {
+            timeline: self.timeline.update_snapshot(),
+            rows: Arc::clone(&self.rows),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct VirtualListState {
@@ -149,6 +180,59 @@ impl TreeViewState {
             .get(&item.key)
             .cloned()
             .unwrap_or_else(|| tree_label(item))
+    }
+}
+
+#[derive(Debug)]
+pub struct DataGridState {
+    grid: UiDataGridState<u64, u8>,
+    rows: Arc<[u64]>,
+    columns: Arc<[DataGridColumn<u8>]>,
+    sort: Option<(u8, AccessibilitySortDirection)>,
+    edits: Arc<HashMap<(u64, u8), String>>,
+    draft: String,
+    focus_target: DataGridFocusTarget,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DataGridFocusTarget {
+    None,
+    Editor,
+    Grid,
+}
+
+impl Clone for DataGridState {
+    fn clone(&self) -> Self {
+        Self {
+            grid: self.grid.update_snapshot(),
+            rows: Arc::clone(&self.rows),
+            columns: Arc::clone(&self.columns),
+            sort: self.sort,
+            edits: Arc::clone(&self.edits),
+            draft: self.draft.clone(),
+            focus_target: self.focus_target,
+        }
+    }
+}
+
+impl DataGridState {
+    fn value(&self, row: u64, column: u8) -> String {
+        self.edits
+            .get(&(row, column))
+            .cloned()
+            .unwrap_or_else(|| match column {
+                0 => format!("Repository item {row:05}"),
+                1 => format!("#{row:05}"),
+                2 => {
+                    if row.is_multiple_of(3) {
+                        "Ready".to_owned()
+                    } else {
+                        "Review".to_owned()
+                    }
+                }
+                3 => format!("owner-{}", row % 17),
+                _ => format!("value {row}:{}", column + 1),
+            })
     }
 }
 
@@ -1683,6 +1767,106 @@ fn virtual_list_config() -> VirtualListConfig {
         .overscan(3)
 }
 
+fn log_timeline_config() -> VirtualListConfig {
+    VirtualListConfig::new(24.0)
+        .expect("showcase log-timeline geometry is valid")
+        .overscan(3)
+}
+
+pub fn log_timeline_state() -> LogTimelineState {
+    let rows: Arc<[u64]> = (0..100_000_u64).collect::<Vec<_>>().into();
+    let mut timeline = UiLogTimelineState::new(VirtualListId::new("showcase-log-timeline"));
+    timeline
+        .reconcile(&rows, |row| *row, log_timeline_config())
+        .expect("showcase log-timeline keys are unique and append-only");
+    LogTimelineState { timeline, rows }
+}
+
+pub fn log_timeline_apply(
+    mut state: LogTimelineState,
+    event: LogTimelineEvent,
+) -> LogTimelineState {
+    state.timeline.apply(event, log_timeline_config());
+    state
+}
+
+pub fn log_timeline_append(mut state: LogTimelineState) -> LogTimelineState {
+    let mut rows = Vec::from(state.rows.as_ref());
+    rows.push(
+        rows.last()
+            .copied()
+            .map_or(0, |last| last.saturating_add(1)),
+    );
+    state
+        .timeline
+        .reconcile(&rows, |row| *row, log_timeline_config())
+        .expect("showcase appends preserve log history");
+    state.rows = rows.into();
+    state
+}
+
+pub fn log_timeline_resume(mut state: LogTimelineState) -> LogTimelineState {
+    state
+        .timeline
+        .apply(UiLogTimelineEvent::ResumeTail, log_timeline_config());
+    state
+}
+
+pub fn log_timeline(state: &LogTimelineState) -> Element<'_, LogTimelineEvent> {
+    let theme = theme();
+    let inspection = state.timeline.inspect(log_timeline_config());
+    let status = if inspection.following_tail {
+        "following"
+    } else {
+        "paused"
+    };
+    let summary = row![
+        text(format!("{status} · {} unread", inspection.unread_count))
+            .size(11)
+            .font(ui_font(Weight::Semibold)),
+        iced::widget::Space::new().width(Length::Fill),
+        text(format!(
+            "mounted {}..{}",
+            inspection.list.mounted_range.start, inspection.list.mounted_range.end
+        ))
+        .size(10)
+        .color(theme.palette.muted_foreground),
+    ]
+    .align_y(iced::Alignment::Center);
+    let timeline = ui_log_timeline(
+        &state.timeline,
+        &state.rows,
+        log_timeline_config(),
+        "Build output",
+        |row| *row,
+        |row| format!("Build log line {row}"),
+        |_, row, selected| {
+            row![
+                text(format!("{row:06}"))
+                    .size(11)
+                    .font(ui_font(Weight::Semibold)),
+                text(format!("worker: completed build step {row}"))
+                    .size(11)
+                    .color(theme.palette.muted_foreground),
+                iced::widget::Space::new().width(Length::Fill),
+                text(if selected { "selected" } else { "" })
+                    .size(10)
+                    .color(theme.palette.primary),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center)
+            .into()
+        },
+        |event| event,
+        &theme,
+    );
+    column![summary, timeline]
+        .spacing(8)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
 pub fn virtual_list_state() -> VirtualListState {
     let items: Arc<[u64]> = (0..100_000_u64).collect::<Vec<_>>().into();
     let mut list = UiVirtualListState::new(VirtualListId::new("showcase-virtual-list"));
@@ -1972,6 +2156,194 @@ pub fn tree_view(state: &TreeViewState) -> Element<'_, TreeViewEvent> {
         &theme,
     );
     column![summary, tree]
+        .spacing(8)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn data_grid_config() -> DataGridConfig {
+    DataGridConfig::new(28.0, 32.0)
+        .expect("showcase data-grid geometry is valid")
+        .overscan(3)
+}
+
+fn data_grid_columns() -> Arc<[DataGridColumn<u8>]> {
+    (0_u8..16)
+        .map(|column| {
+            let label = match column {
+                0 => "Name".to_owned(),
+                1 => "ID".to_owned(),
+                2 => "Status".to_owned(),
+                3 => "Owner".to_owned(),
+                _ => format!("Field {}", column + 1),
+            };
+            DataGridColumn::new(column, label, if column == 0 { 184.0 } else { 104.0 })
+                .sortable(column < 4)
+                .editable(matches!(column, 0 | 3))
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+fn data_grid_editor_id(cell: &DataGridCellId<u64, u8>) -> iced::widget::Id {
+    iced::widget::Id::from(format!(
+        "showcase-data-grid-edit-{}-{}",
+        cell.row, cell.column
+    ))
+}
+
+pub fn data_grid_state() -> DataGridState {
+    let rows: Arc<[u64]> = (0..100_000_u64).collect::<Vec<_>>().into();
+    let columns = data_grid_columns();
+    let mut grid = UiDataGridState::new(DataGridId::new("showcase-data-grid"));
+    grid.reconcile(&rows, |row| *row, &columns, data_grid_config())
+        .expect("showcase data-grid keys and widths are valid");
+    DataGridState {
+        grid,
+        rows,
+        columns,
+        sort: None,
+        edits: Arc::new(HashMap::new()),
+        draft: String::new(),
+        focus_target: DataGridFocusTarget::None,
+    }
+}
+
+pub fn data_grid_focus(state: DataGridState) -> iced::Task<()> {
+    match state.focus_target {
+        DataGridFocusTarget::Editor => state
+            .grid
+            .editing_cell()
+            .map_or_else(iced::Task::none, |cell| {
+                iced::widget::operation::focus(data_grid_editor_id(cell))
+            }),
+        DataGridFocusTarget::Grid => state.grid.focus_task(),
+        DataGridFocusTarget::None => iced::Task::none(),
+    }
+}
+
+pub fn data_grid_apply(mut state: DataGridState, event: DataGridEvent) -> DataGridState {
+    let event = match event {
+        DataGridEvent::Grid(event) => event,
+        DataGridEvent::EditChanged(value) => {
+            state.draft = value;
+            state.focus_target = DataGridFocusTarget::None;
+            return state;
+        }
+    };
+    state.focus_target = match &event {
+        UiDataGridEvent::BeginEdit(_) => DataGridFocusTarget::Editor,
+        UiDataGridEvent::CommitEdit(_) | UiDataGridEvent::CancelEdit(_) => {
+            DataGridFocusTarget::Grid
+        }
+        _ => DataGridFocusTarget::None,
+    };
+    let outcome = state.grid.apply(event, data_grid_config());
+    if let Some(cell) = outcome.edit_started {
+        state.draft = state.value(cell.row, cell.column);
+    }
+    if let Some(cell) = outcome.edit_committed {
+        Arc::make_mut(&mut state.edits).insert((cell.row, cell.column), state.draft.clone());
+    }
+    if let Some(column) = outcome.sort_requested {
+        state.sort = match state.sort {
+            Some((active, AccessibilitySortDirection::Ascending)) if active == column => {
+                Some((column, AccessibilitySortDirection::Descending))
+            }
+            Some((active, AccessibilitySortDirection::Descending)) if active == column => None,
+            _ => Some((column, AccessibilitySortDirection::Ascending)),
+        };
+        let rows = Arc::make_mut(&mut state.rows);
+        rows.sort_unstable();
+        if let Some((column, direction)) = state.sort {
+            rows.sort_by_key(|row| row.wrapping_mul(u64::from(column) + 17) % 100_003);
+            if direction == AccessibilitySortDirection::Descending {
+                rows.reverse();
+            }
+        }
+        state
+            .grid
+            .reconcile(&state.rows, |row| *row, &state.columns, data_grid_config())
+            .expect("caller-owned sorting preserves unique rows and fixed columns");
+    }
+    state
+}
+
+pub fn data_grid(state: &DataGridState) -> Element<'_, DataGridEvent> {
+    let theme = theme();
+    let inspection = state.grid.inspect(data_grid_config());
+    let active = state.grid.active_cell().map_or_else(
+        || "No active cell".to_owned(),
+        |cell| format!("Active row {} · column {}", cell.row, cell.column + 1),
+    );
+    let summary = row![
+        text(format!(
+            "mounted {}..{} of {} rows",
+            inspection.mounted_rows.start, inspection.mounted_rows.end, inspection.logical_rows
+        ))
+        .size(11)
+        .font(ui_font(Weight::Semibold)),
+        iced::widget::Space::new().width(Length::Fill),
+        text(active).size(10).color(theme.palette.muted_foreground),
+    ]
+    .align_y(iced::Alignment::Center);
+    let grid = ui_data_grid(
+        &state.grid,
+        &state.rows,
+        data_grid_config(),
+        "Repository data grid",
+        |row| *row,
+        |row| format!("Repository row {row}"),
+        |row, column| format!("{}: {}", column.label(), state.value(*row, *column.key())),
+        |column| {
+            state
+                .sort
+                .filter(|(active, _)| active == column)
+                .map(|(_, direction)| direction)
+        },
+        |header| {
+            let marker = match header.sort_direction {
+                Some(AccessibilitySortDirection::Ascending) => " ↑",
+                Some(AccessibilitySortDirection::Descending) => " ↓",
+                _ => "",
+            };
+            text(format!("{}{marker}", header.column.label()))
+                .size(11)
+                .font(ui_font(Weight::Semibold))
+                .into()
+        },
+        |cell| {
+            let cell_id = DataGridCellId {
+                row: *cell.row,
+                column: *cell.column.key(),
+            };
+            if cell.editing {
+                let input_id = data_grid_editor_id(&cell_id);
+                let editor = iced::widget::text_input("Cell value", &state.draft)
+                    .id(input_id.clone())
+                    .on_input(DataGridEvent::EditChanged)
+                    .on_submit(DataGridEvent::Grid(UiDataGridEvent::CommitEdit(
+                        cell_id.clone(),
+                    )))
+                    .size(11);
+                let semantic_id = format!("data-grid-editor-{}-{}", cell_id.row, cell_id.column);
+                accessible(editor, StableId::new(&semantic_id), Role::TextInput)
+                    .logical_id(semantic_id)
+                    .label("Cell value")
+                    .value(&state.draft)
+                    .focus_id(input_id)
+                    .into()
+            } else {
+                text(state.value(*cell.row, *cell.column.key()))
+                    .size(11)
+                    .into()
+            }
+        },
+        DataGridEvent::Grid,
+        &theme,
+    );
+    column![summary, grid]
         .spacing(8)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -2344,6 +2716,8 @@ mod tests {
         let _: Element<'_, String> = radio_group("default");
         let scroller = message_scroller_state();
         let _: Element<'_, MessageScrollerEvent> = message_scroller(&scroller);
+        let timeline = log_timeline_state();
+        let _: Element<'_, LogTimelineEvent> = log_timeline(&timeline);
         let _: Element<'_, Vec<f64>> = resizable_demo(&[0.25, 0.5, 0.25]);
         let _: Element<'_, PopoverEvent> = popover_demo(false);
         let _: iced::Task<bool> = popover_apply(PopoverEvent::Open);

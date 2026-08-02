@@ -164,11 +164,26 @@ on message_scroller_applied(next)
 on virtual_list_changed(event)
   virtual_list = virtual_list_apply(virtual_list, event)
 
+on log_timeline_changed(event)
+  log_timeline = log_timeline_apply(log_timeline, event)
+
+on append_log
+  log_timeline = log_timeline_append(log_timeline)
+
+on resume_log_tail
+  log_timeline = log_timeline_resume(log_timeline)
+
 on tree_view_changed(event)
   tree_view = tree_view_apply(tree_view, event)
   task tree_view_focus(tree_view) -> tree_view_focused
 
 on tree_view_focused
+
+on data_grid_changed(event)
+  data_grid = data_grid_apply(data_grid, event)
+  task data_grid_focus(data_grid) -> data_grid_focused
+
+on data_grid_focused
 
 on begin_tree_rename
   tree_view = tree_view_begin_selected_rename(tree_view)

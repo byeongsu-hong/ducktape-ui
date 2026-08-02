@@ -373,6 +373,20 @@ row subtree before accepting the first frame. V1 explicitly excludes
 variable-height measurement, scrolling-ancestor touch transforms, and new Ice
 syntax.
 
+Fixed-height `LogTimeline` composes that exact `VirtualListState` boundary
+under the existing runtime `virtual-list` feature. Focused tests cover default
+tail following, exact live-edge synchronization, pause after upward native
+scroll and historical keyboard navigation, explicit-only resume, saturating
+unread append accounting, stable selectors across append, typed-key scrolling,
+atomic duplicate/history rejection, explicit stream replacement, and bounded
+headless windows for 100,000 caller-owned rows. A separate ignored release
+contract measures a 100,000-row prefix validation, keyed reconciliation,
+single-row append, and inspection with p50/p95 time and allocation budgets.
+The Ducktape wrapper has a minimal-feature import/build test and inherits the
+runtime list's mounted-only AccessKit collection/item contract. This is not a
+second transcript scroller: unlike variable-height `MessageScroller`, it has
+no measurement, message anchors, prepend restoration, or built-in jump control.
+
 Fixed-height `TreeView` reuses the same mounted-window engine and has separate
 runtime evidence for atomic preorder validation including referenced-leaf and
 closed-subtree rejection, retained expansion, collapse selection rehoming,
@@ -389,6 +403,34 @@ hierarchical navigation plus rename focus, commit/cancel, and tree-focus
 restoration. Native and wasm minimal-feature checks
 compile the public boundary, and WGPU readiness requires both VirtualList and
 TreeView mounted-row draw probes.
+
+Fixed-height `DataGrid` reuses the mounted-row engine without extending Ice
+Core, `Table`, or `DataTableState`. Runtime evidence covers atomic duplicate and
+invalid-width rejection, stable typed row and column identity across reorder,
+single active-cell and row selection, all directional/row/grid/page keyboard
+movements, two-axis reveal, constant-time key lookup and `scroll_to_cell`, typed
+sort requests, and caller-owned edit begin/commit/cancel. Interactive children
+receive pointer and key events first: a captured editor click owns focus
+exclusively, and Escape/Tab cannot leak following arrows back to the grid. This
+preserves native text input, IME, submission, and control chords. Headless
+inspection proves visible and mounted row ranges, complete
+fixed-column geometry, mounted row/cell counts, active/selected/editing state,
+viewport geometry, and both offsets. Mounted-only AccessKit tests cover the
+Grid, header Row, ColumnHeader, data Row, and Cell hierarchy, total row/column
+counts, one-based indexes, selected state, caller-supplied sort direction,
+stable semantic identity, and mounted active descendant.
+
+Release contracts separately measure unchanged 100,000-row by 16-column
+build/diff/layout/draw frames, full reconciliation, and the constant-time
+`update_snapshot` plus scroll and `scroll_to_cell` reducer path with zero scalar
+allocations. Native and wasm minimal-feature checks compile the runtime and
+themed boundary, and the extracted runtime package repeats the direct
+`data-grid,x11` contract. The showcase
+owns rows, sort direction, draft and committed cell values behind a typed Ice
+extern; its first-class test covers keyboard focus, native editing, commit, and
+navigation. Windows WGPU readiness additionally requires the DataGrid mounted
+cell draw probe. V1 excludes variable-height rows, variable/resizable or
+virtualized columns, range selection, frozen data columns, and new Core syntax.
 
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component

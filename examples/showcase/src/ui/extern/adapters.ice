@@ -20,10 +20,14 @@ extern crate::adapters
   MenubarEvent()
   MessageScrollerState()
   MessageScrollerEvent()
+  LogTimelineState()
+  LogTimelineEvent()
   VirtualListState()
   VirtualListEvent()
   TreeViewState()
   TreeViewEvent()
+  DataGridState()
+  DataGridEvent()
   DropdownMenuState()
   DropdownMenuEvent()
   PopoverEvent()
@@ -93,6 +97,11 @@ extern crate::adapters
   task message_scroller_bootstrap(state:MessageScrollerState) -> MessageScrollerState
   task message_scroller_apply(state:MessageScrollerState, event:MessageScrollerEvent) -> MessageScrollerState
   component message_scroller(state:&MessageScrollerState) -> MessageScrollerEvent
+  sync log_timeline_state() -> LogTimelineState
+  sync log_timeline_apply(state:LogTimelineState, event:LogTimelineEvent) -> LogTimelineState
+  sync log_timeline_append(state:LogTimelineState) -> LogTimelineState
+  sync log_timeline_resume(state:LogTimelineState) -> LogTimelineState
+  component log_timeline(state:&LogTimelineState) -> LogTimelineEvent
   sync virtual_list_state() -> VirtualListState
   sync virtual_list_apply(state:VirtualListState, event:VirtualListEvent) -> VirtualListState
   component virtual_list(state:&VirtualListState) -> VirtualListEvent
@@ -102,6 +111,10 @@ extern crate::adapters
   sync tree_view_begin_selected_rename(state:TreeViewState) -> TreeViewState
   sync tree_view_cancel_rename(state:TreeViewState) -> TreeViewState
   component tree_view(state:&TreeViewState) -> TreeViewEvent
+  sync data_grid_state() -> DataGridState
+  task data_grid_focus(state:DataGridState) -> unit
+  sync data_grid_apply(state:DataGridState, event:DataGridEvent) -> DataGridState
+  component data_grid(state:&DataGridState) -> DataGridEvent
   component aspect_ratio_demo() -> unit
   sync data_table_rows(query:str, sort:str, page:i64) -> [CatalogItem]
   sync data_table_page(query:str, page:i64) -> i64

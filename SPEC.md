@@ -2446,6 +2446,31 @@ identity, one-based level, sibling position and size, selection, and expansion.
 `TreeView.Frame` composes an app-owned typed extern; v1 remains fixed-height,
 caller-flattened, and outside Core syntax.
 
+Large fixed-row tabular surfaces use `ui_lang_runtime::DataGridState` and the
+feature-gated `ducktape_ui::ui::data_grid` boundary. Callers reconcile unique
+typed row keys and unique fixed-pixel typed columns. Successful reconciliation
+atomically publishes constant-time row and column indexes; stable row semantic
+identity, the active cell, and its selected row follow keys across reorder.
+Only visible rows plus overscan are materialized, while every fixed column is
+mounted for each mounted row. The grid owns native horizontal and vertical
+scrolling in a bounded parent and exposes both axes, mounted ranges and counts,
+selection, edit target, and logical dimensions through headless inspection.
+
+Arrow keys navigate cells, Home/End navigate a row, Ctrl/Cmd+Home and
+Ctrl/Cmd+End navigate the complete grid, and PageUp/PageDown use the measured
+viewport. Navigation reveals its destination. Sort activation returns a typed
+column key and leaves direction, row ordering, and data mutation to the caller.
+F2, Enter, and double click can begin an editable cell, but the caller owns the
+draft and committed value, mounts and focuses a native editor, and returns focus
+to the grid after commit or cancellation. Descendant controls handle events
+first, so the grid does not intercept their IME or text-editing protocol.
+AccessKit exposes a named Grid, a mounted header Row and ColumnHeader nodes, and
+mounted data Row and Cell nodes with total counts, one-based indexes, selected
+state, caller-supplied sort direction, and an active descendant for a mounted
+active cell. `DataGrid.Frame` composes the typed extern. V1 excludes variable
+row heights, resizable or virtualized columns, range selection, and Core
+syntax; it does not extend the small-data `Table` or `DataTableState` helpers.
+
 `editor-style` receives Theme and editor Status implicitly and returns native
 `text_editor::Style`, covering the advanced catalog class. An editor or input
 inside a component may bind only a prop declared with `bind`. Every call passes

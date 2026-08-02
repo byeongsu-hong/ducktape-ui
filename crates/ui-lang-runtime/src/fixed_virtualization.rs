@@ -95,21 +95,27 @@ pub(crate) struct FixedRowWindow {
 
 #[derive(Debug)]
 pub(crate) struct KeyedRows<Key> {
-    local_ids: Arc<HashMap<Key, u32>>,
+    entries: Arc<HashMap<Key, KeyedRow>>,
     next_local_id: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KeyedRow {
+    local_id: u32,
+    index: usize,
 }
 
 impl<Key> KeyedRows<Key> {
     pub(crate) fn new(first_local_id: u32) -> Self {
         Self {
-            local_ids: Arc::new(HashMap::new()),
+            entries: Arc::new(HashMap::new()),
             next_local_id: first_local_id,
         }
     }
 
     pub(crate) fn snapshot(&self) -> Self {
         Self {
-            local_ids: Arc::clone(&self.local_ids),
+            entries: Arc::clone(&self.entries),
             next_local_id: self.next_local_id,
         }
     }
@@ -118,11 +124,18 @@ impl<Key> KeyedRows<Key> {
     where
         Key: Eq + Hash,
     {
-        self.local_ids.get(key).copied()
+        self.entries.get(key).map(|entry| entry.local_id)
     }
 
-    pub(crate) fn local_ids(&self) -> &HashMap<Key, u32> {
-        &self.local_ids
+    pub(crate) fn index(&self, key: &Key) -> Option<usize>
+    where
+        Key: Eq + Hash,
+    {
+        self.entries.get(key).map(|entry| entry.index)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
     }
 
     pub(crate) const fn next_local_id(&self) -> u32 {
@@ -131,7 +144,7 @@ impl<Key> KeyedRows<Key> {
 
     #[cfg(test)]
     pub(crate) fn shares_ids_with(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.local_ids, &other.local_ids)
+        Arc::ptr_eq(&self.entries, &other.entries)
     }
 }
 
@@ -147,27 +160,31 @@ where
         retained: Option<&Key>,
         exhausted_message: &'static str,
     ) -> Result<Option<usize>, Key> {
-        let mut local_ids = HashMap::with_capacity(items.len());
+        let mut entries = HashMap::with_capacity(items.len());
         let mut retained_index = None;
         let mut next_local_id = self.next_local_id;
         for (index, item) in items.iter().enumerate() {
             let item_key = key(item);
-            if local_ids.contains_key(&item_key) {
+            if entries.contains_key(&item_key) {
                 return Err(item_key);
             }
             if retained == Some(&item_key) {
                 retained_index = Some(index);
             }
-            let local_id = self.local_ids.get(&item_key).copied().unwrap_or_else(|| {
-                let local_id = next_local_id;
-                next_local_id = next_local_id
-                    .checked_add(1)
-                    .unwrap_or_else(|| panic!("{exhausted_message}"));
-                local_id
-            });
-            local_ids.insert(item_key, local_id);
+            let local_id = self
+                .entries
+                .get(&item_key)
+                .map(|entry| entry.local_id)
+                .unwrap_or_else(|| {
+                    let local_id = next_local_id;
+                    next_local_id = next_local_id
+                        .checked_add(1)
+                        .unwrap_or_else(|| panic!("{exhausted_message}"));
+                    local_id
+                });
+            entries.insert(item_key, KeyedRow { local_id, index });
         }
-        self.local_ids = Arc::new(local_ids);
+        self.entries = Arc::new(entries);
         self.next_local_id = next_local_id;
         Ok(retained_index)
     }
@@ -264,6 +281,15 @@ impl FixedRowScroll {
             .min(f64::from(rows.max_offset(item_count, self.viewport_height)))
             as f32;
         self.set_offset(offset, item_count, rows, true)
+    }
+
+    pub(crate) fn scroll_to_end(&mut self, item_count: usize, rows: FixedRows) -> bool {
+        self.set_offset(
+            rows.max_offset(item_count, self.viewport_height),
+            item_count,
+            rows,
+            true,
+        )
     }
 
     fn set_offset(
