@@ -3172,16 +3172,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "pin reached code generation with a mismatched checked view ID",
             ));
         }
         self.pins.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "pin reached code generation without normalized HIR",
             )
         })
@@ -10886,6 +10884,53 @@ view
         assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
 
         program.responsives.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_pin_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-pin-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("pin-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedPin\nuse \"pin-card.ice\"\n{THEME}view\n  PinCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component PinCard()\n  pin x=0.0 y=0.0\n    text \"Pinned\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pin = program
+            .pins
+            .values()
+            .next()
+            .expect("imported pin must be normalized");
+        let origin = program.origin(pin.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.pins.clear();
         let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
