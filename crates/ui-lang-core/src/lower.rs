@@ -15508,18 +15508,21 @@ view
 
         let combo = program.combo_boxes.remove(&combo_id).unwrap();
         let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
         assert_eq!(error.line, 7);
         program.combo_boxes.insert(combo_id, combo);
 
         let media = program.media.remove(&media_id).unwrap();
         let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
         assert_eq!(error.line, 8);
         program.media.insert(media_id, media);
 
         let tooltip = program.tooltips.remove(&tooltip_id).unwrap();
         let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
         assert_eq!(error.line, 9);
         program.tooltips.insert(tooltip_id, tooltip);
