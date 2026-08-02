@@ -1106,14 +1106,6 @@ impl DeclarationIndex {
             .filter(|declaration| declaration.id == id)
     }
 
-    pub(crate) fn component_slot(
-        &self,
-        component: ComponentId,
-        index: usize,
-    ) -> Declaration<ComponentSlotId> {
-        self.components[component.0 as usize].slots[index]
-    }
-
     pub(crate) fn try_component_slot(
         &self,
         id: ComponentSlotId,
@@ -1124,6 +1116,13 @@ impl DeclarationIndex {
             .get(id.index as usize)
             .copied()
             .filter(|declaration| declaration.id == id)
+    }
+
+    pub(crate) fn component_slot_count(&self, component: ComponentId) -> Option<usize> {
+        self.components
+            .get(component.0 as usize)
+            .filter(|declarations| declarations.declaration.id == component)
+            .map(|declarations| declarations.slots.len())
     }
 
     pub(crate) fn view(&self, id: ViewId) -> Declaration<ViewId> {
