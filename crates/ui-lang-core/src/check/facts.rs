@@ -507,6 +507,7 @@ pub(crate) enum CheckedResponsiveLength {
 pub(crate) struct CheckedMatchArm {
     pub(crate) pattern: CheckedMatchPattern,
     pub(crate) binding: Option<CheckedLocalId>,
+    pub(crate) children: Vec<ViewId>,
     pub(crate) origin: OriginId,
 }
 
@@ -1119,6 +1120,40 @@ impl CheckedFacts {
             panic!("test view must be match");
         };
         arms[arm].binding = Some(CheckedLocalId(raw));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_match_pattern(
+        &mut self,
+        view: ViewId,
+        arm: usize,
+        pattern: CheckedMatchPattern,
+    ) {
+        let CheckedViewFlow::Match { arms, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be match");
+        };
+        arms[arm].pattern = pattern;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_match_arm(&mut self, view: ViewId, arm: usize) {
+        let CheckedViewFlow::Match { arms, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be match");
+        };
+        arms.remove(arm);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_match_arm_origin(&mut self, view: ViewId, arm: usize, origin: OriginId) {
+        let CheckedViewFlow::Match { arms, .. } = &mut self.views[view.0 as usize].flow else {
+            panic!("test view must be match");
+        };
+        arms[arm].origin = origin;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_local_type(&mut self, local: CheckedLocalId, ty: Type) {
+        self.locals[local.0 as usize].ty = ty;
     }
 
     #[cfg(test)]
@@ -7061,6 +7096,18 @@ impl<'a> FactsBuilder<'a> {
                     checked_arms.push(CheckedMatchArm {
                         pattern,
                         binding,
+                        children: arm
+                            .children
+                            .iter()
+                            .map(|child| {
+                                self.declarations.view_id(child.span()).ok_or_else(|| {
+                                    self.invariant(
+                                        &arm.span,
+                                        "match arm child has no shared view ID",
+                                    )
+                                })
+                            })
+                            .collect::<Result<_, _>>()?,
                         origin: arm_origin,
                     });
                 }
