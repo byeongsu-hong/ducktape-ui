@@ -19047,13 +19047,13 @@ view
         fs::write(
             &root,
             format!(
-                "app ImportedComponentForward\nuse \"forward.ice\"\n{THEME}state\n  label = \"app\"\non accepted(value)\n  label = value\nview\n  Outer\n    events\n      changed -> accepted _\n"
+                "app ImportedComponentForward\nuse \"forward.ice\"\n{THEME}state\n  label = \"app\"\non accepted(value)\n  label = value\nview\n  Outer\n    events\n      changed -> accepted _\n      renamed -> accepted _\n"
             ),
         )
         .unwrap();
         fs::write(
             &imported,
-            "component Leaf()\n  emits\n    changed(str)\n  button \"Emit\" -> emit(changed, \"leaf\")\ncomponent Outer()\n  emits\n    changed(str)\n  Leaf\n    forward\n      changed\ncomponent Mirror()\n  emits\n    changed(str)\n  space\n",
+            "component Leaf()\n  emits\n    changed(str)\n    renamed(str)\n  button \"Emit\" -> emit(changed, \"leaf\")\ncomponent Outer()\n  emits\n    changed(str)\n    renamed(str)\n  Leaf\n    forward\n      changed\n      renamed\ncomponent Mirror()\n  emits\n    changed(str)\n  space\n",
         )
         .unwrap();
 
@@ -19072,6 +19072,20 @@ view
                 .find(|event| matches!(event, ResolvedEventRoute::Forward { .. }))
                 .unwrap()
         }
+        fn forwarded_events(program: &mut LoweredProgram) -> &mut Vec<ResolvedEventRoute> {
+            &mut program
+                .calls
+                .iter_mut()
+                .find(|call| {
+                    call.events.len() >= 2
+                        && call
+                            .events
+                            .iter()
+                            .all(|event| matches!(event, ResolvedEventRoute::Forward { .. }))
+                })
+                .unwrap()
+                .events
+        }
 
         let mut invalid_component = analyze_file(&root).unwrap();
         let call = forward_call(&invalid_component);
@@ -19081,7 +19095,7 @@ view
         let error = lower(invalid_component).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 10);
+        assert_eq!(error.line, 12);
 
         let mut invalid_event = analyze_file(&root).unwrap();
         let call = forward_call(&invalid_event);
@@ -19098,7 +19112,7 @@ view
         let error = lower(invalid_event).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 10);
+        assert_eq!(error.line, 12);
 
         let mut invalid_component_name = analyze_file(&root).unwrap();
         let call = forward_call(&invalid_component_name);
@@ -19108,7 +19122,7 @@ view
         let error = lower(invalid_component_name).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 10);
+        assert_eq!(error.line, 12);
 
         let mut invalid_event_name = analyze_file(&root).unwrap();
         let call = forward_call(&invalid_event_name);
@@ -19118,7 +19132,7 @@ view
         let error = lower(invalid_event_name).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 10);
+        assert_eq!(error.line, 12);
 
         let mut invalid_payload = analyze_file(&root).unwrap();
         let call = forward_call(&invalid_payload);
@@ -19128,7 +19142,7 @@ view
         let error = lower(invalid_payload).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 10);
+        assert_eq!(error.line, 12);
 
         let mut invalid_lowered_id = lower(analyze_file(&root).unwrap()).unwrap();
         let forward = invalid_lowered_id
@@ -19146,7 +19160,7 @@ view
             crate::codegen::generate(&invalid_lowered_id, root.to_str().unwrap()).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 10);
+        assert_eq!(error.line, 12);
 
         let mut invalid_callee_event = lower(analyze_file(&root).unwrap()).unwrap();
         let ResolvedEventRoute::Forward { event, .. } = forwarded_event(&mut invalid_callee_event)
@@ -19162,7 +19176,7 @@ view
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("invalid callee contract"));
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 10);
+        assert_eq!(error.line, 12);
         assert_eq!(error.column, 1);
 
         let mut invalid_forward_origin = lower(analyze_file(&root).unwrap()).unwrap();
@@ -19177,7 +19191,46 @@ view
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("invalid callee contract"));
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 10);
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_callee_name = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { name, .. } = forwarded_event(&mut invalid_callee_name)
+        else {
+            unreachable!();
+        };
+        *name = "poisoned".into();
+        let error =
+            crate::codegen::generate(&invalid_callee_name, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_callee_payloads = lower(analyze_file(&root).unwrap()).unwrap();
+        let ResolvedEventRoute::Forward { payloads, .. } =
+            forwarded_event(&mut invalid_callee_payloads)
+        else {
+            unreachable!();
+        };
+        *payloads = vec![Type::Bool];
+        let error =
+            crate::codegen::generate(&invalid_callee_payloads, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_event_order = lower(analyze_file(&root).unwrap()).unwrap();
+        forwarded_events(&mut invalid_event_order).swap(0, 1);
+        let error =
+            crate::codegen::generate(&invalid_event_order, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("invalid callee contract"));
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 12);
         assert_eq!(error.column, 1);
 
         let mut missing_callback = lower(analyze_file(&root).unwrap()).unwrap();
@@ -19217,7 +19270,7 @@ view
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("absent from component context"));
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 10);
+        assert_eq!(error.line, 12);
 
         fs::remove_dir_all(directory).unwrap();
     }
