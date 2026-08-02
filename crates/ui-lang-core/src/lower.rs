@@ -3355,16 +3355,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "for view reached code generation with a mismatched checked view ID",
             ));
         }
         self.iterations.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "for view reached code generation without normalized HIR",
             )
         })
@@ -11773,6 +11771,55 @@ view
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
         assert_eq!(error.line, 6);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_for_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-for-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("iteration-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedFor\nuse \"iteration-card.ice\"\n{THEME}view\n  IterationCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component IterationCard()\n  state\n    items:[str] = [\"A\", \"B\"]\n  col\n    for item in items\n      text item\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let iteration = program
+            .iterations
+            .values()
+            .next()
+            .expect("imported for must be normalized");
+        let origin = program.origin(iteration.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 5);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        // Flow nodes emit their children inline, so the generated marker belongs to the
+        // imported body while the normalized iteration retains the flow's own origin.
+        assert!(generated.contains(&format!("// __ICE_SOURCE 6 1 {encoded_import}")));
+
+        program.iterations.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 5);
 
         fs::remove_dir_all(directory).unwrap();
     }
