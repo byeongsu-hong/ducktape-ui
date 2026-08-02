@@ -164,6 +164,20 @@ on message_scroller_applied(next)
 on virtual_list_changed(event)
   virtual_list = virtual_list_apply(virtual_list, event)
 
+on tree_view_changed(event)
+  tree_view = tree_view_apply(tree_view, event)
+  task tree_view_focus(tree_view) -> tree_view_focused
+
+on tree_view_focused
+
+on begin_tree_rename
+  tree_view = tree_view_begin_selected_rename(tree_view)
+  task tree_view_focus(tree_view) -> tree_view_focused
+
+on cancel_tree_rename
+  tree_view = tree_view_cancel_rename(tree_view)
+  task tree_view_focus(tree_view) -> tree_view_focused
+
 on native_popover_changed(event)
   task popover_apply(event) -> native_popover_applied _
 
