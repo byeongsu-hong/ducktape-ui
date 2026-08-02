@@ -19,10 +19,35 @@ struct Occurrence {
     normalized_item: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AstBinding {
+    Glob,
+    Name(String),
+    Module(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScopedAstBinding {
+    binding: AstBinding,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct UseLeaf {
+    path: Vec<String>,
+    alias: Option<String>,
+    glob: bool,
+    use_index: usize,
+    start: usize,
+    end: usize,
+}
+
 #[derive(Default)]
 struct AstUseMarkers {
-    module_indices: BTreeSet<usize>,
-    aliases: BTreeSet<String>,
+    import_indices: BTreeSet<usize>,
+    use_ranges: Vec<(usize, usize)>,
+    bindings: Vec<ScopedAstBinding>,
 }
 
 const CATEGORIES: &[&str] = &[
@@ -54,7 +79,7 @@ pub(super) fn exported_ast_types(ast_sources: &[String]) -> BTreeSet<String> {
         let tokens = lex(source);
         for (start, end) in item_ranges(&tokens) {
             let item = &tokens[start..end];
-            let Some(mut index) = item.iter().position(|token| token.text == "pub") else {
+            let Some(mut index) = top_level_token(item, "pub") else {
                 continue;
             };
             index += 1;
@@ -105,10 +130,10 @@ pub(super) fn inventory(
     for file in files {
         let tokens = lex(&file.source);
         let items = item_ranges(&tokens);
-        let ast_uses = ast_use_markers(&tokens, &items);
+        let ast_uses = ast_use_markers(&tokens, &items, ast_types);
         for index in 0..tokens.len() {
             let text = tokens[index].text.as_str();
-            if ast_import_at(&tokens, index) || ast_uses.module_indices.contains(&index) {
+            if ast_uses.import_indices.contains(&index) {
                 record(
                     &mut by_category,
                     "source AST import",
@@ -118,9 +143,8 @@ pub(super) fn inventory(
                     index,
                 );
             }
-            if (ast_types.contains(text) || ast_uses.aliases.contains(text))
-                && !qualified_by_non_ast_path(&tokens, index)
-            {
+            let ast_reference = ast_semantic_reference_at(&tokens, index, ast_types, &ast_uses);
+            if ast_reference {
                 record(
                     &mut by_category,
                     "source AST semantic reference",
@@ -168,7 +192,7 @@ pub(super) fn inventory(
                 ("Route reference", "Route"),
                 ("Statement reference", "Statement"),
             ] {
-                if text == token && !qualified_by_non_ast_path(&tokens, index) {
+                if text == token && ast_reference {
                     record(&mut by_category, category, file, &tokens, &items, index);
                 }
             }
@@ -304,92 +328,258 @@ fn checker_symbols(files: &[SourceFile]) -> Result<BTreeSet<String>, String> {
     Ok(symbols)
 }
 
-fn ast_use_markers(tokens: &[Token], items: &[(usize, usize)]) -> AstUseMarkers {
+fn ast_use_markers(
+    tokens: &[Token],
+    items: &[(usize, usize)],
+    ast_types: &BTreeSet<String>,
+) -> AstUseMarkers {
     let mut markers = AstUseMarkers::default();
-    for (start, end) in items {
-        let item = &tokens[*start..*end];
-        let Some(use_index) = item.iter().position(|token| token.text == "use") else {
-            continue;
-        };
-        if item[..use_index]
-            .iter()
-            .any(|token| matches!(token.text.as_str(), "{" | ";"))
-        {
+    let depths = token_depths(tokens);
+    let mut leaves = Vec::new();
+    for (use_index, token) in tokens.iter().enumerate() {
+        if token.text != "use" {
             continue;
         }
+        let Some(statement_end) = tokens[use_index..]
+            .iter()
+            .position(|token| token.text == ";")
+            .map(|offset| use_index + offset + 1)
+        else {
+            continue;
+        };
+        markers.use_ranges.push((use_index, statement_end));
+        let (start, end) = if depths[use_index] == 0 {
+            (0, tokens.len())
+        } else {
+            items
+                .iter()
+                .copied()
+                .find(|(start, end)| *start <= use_index && use_index < *end)
+                .unwrap_or((use_index, statement_end))
+        };
         let mut index = use_index + 1;
-        collect_ast_use_tree(item, &mut index, &[], *start, &mut markers);
+        parse_use_tree(
+            tokens,
+            &mut index,
+            statement_end,
+            &[],
+            use_index,
+            start,
+            end,
+            &mut leaves,
+        );
+    }
+
+    // A module alias can be consumed by another use declaration, so resolve
+    // the leaves to a fixed point instead of depending on source order.
+    loop {
+        let mut changed = false;
+        for leaf in &leaves {
+            let Some(binding) = resolved_ast_binding(leaf, ast_types, &markers) else {
+                continue;
+            };
+            changed |= markers.import_indices.insert(leaf.use_index);
+            if let Some(binding) = binding
+                && !markers.bindings.iter().any(|existing| {
+                    existing.binding == binding
+                        && existing.start == leaf.start
+                        && existing.end == leaf.end
+                })
+            {
+                markers.bindings.push(ScopedAstBinding {
+                    binding,
+                    start: leaf.start,
+                    end: leaf.end,
+                });
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
     }
     markers
 }
 
-fn collect_ast_use_tree(
+#[allow(clippy::too_many_arguments)]
+fn parse_use_tree(
     tokens: &[Token],
     index: &mut usize,
-    inherited_path: &[String],
-    absolute_start: usize,
-    markers: &mut AstUseMarkers,
+    statement_end: usize,
+    prefix: &[String],
+    use_index: usize,
+    start: usize,
+    end: usize,
+    leaves: &mut Vec<UseLeaf>,
 ) {
-    let mut path = inherited_path.to_vec();
-    while *index < tokens.len() {
-        match tokens[*index].text.as_str() {
-            "{" => {
-                *index += 1;
-                while *index < tokens.len() && tokens[*index].text != "}" {
-                    collect_ast_use_tree(tokens, index, &path, absolute_start, markers);
-                    if tokens.get(*index).is_some_and(|token| token.text != "}") {
-                        *index += 1;
-                    }
-                }
-                if tokens.get(*index).is_some_and(|token| token.text == "}") {
-                    *index += 1;
-                }
-                return;
-            }
-            "*" => {
-                *index += 1;
-                return;
-            }
-            "," | "}" | ";" => return,
-            _ if !is_identifier(&tokens[*index].text) => {
-                *index += 1;
-                return;
-            }
-            _ => {}
-        }
-
-        let segment_index = *index;
-        path.push(tokens[*index].text.clone());
-        if path.len() == 2 && path[0] == "crate" && path[1] == "ast" {
-            markers
-                .module_indices
-                .insert(absolute_start + segment_index);
-        }
+    if *index >= statement_end {
+        return;
+    }
+    if tokens[*index].text == "{" {
         *index += 1;
-
-        if tokens.get(*index).is_some_and(|token| token.text == "as") {
-            *index += 1;
-            if let Some(alias) = tokens.get(*index)
-                && is_ast_path(&path)
-                && is_identifier(&alias.text)
-                && alias.text != "_"
-            {
-                markers.aliases.insert(alias.text.clone());
+        while *index < statement_end && tokens[*index].text != "}" {
+            parse_use_tree(
+                tokens,
+                index,
+                statement_end,
+                prefix,
+                use_index,
+                start,
+                end,
+                leaves,
+            );
+            if tokens.get(*index).is_some_and(|token| token.text == ",") {
+                *index += 1;
             }
-            *index += usize::from(*index < tokens.len());
-            return;
         }
-        if tokens.get(*index).is_some_and(|token| token.text == "::") {
+        if tokens.get(*index).is_some_and(|token| token.text == "}") {
             *index += 1;
-            continue;
         }
         return;
     }
+    if tokens[*index].text == "*" {
+        *index += 1;
+        leaves.push(UseLeaf {
+            path: prefix.to_vec(),
+            alias: None,
+            glob: true,
+            use_index,
+            start,
+            end,
+        });
+        return;
+    }
+    if !is_identifier(&tokens[*index].text) {
+        *index += 1;
+        return;
+    }
+
+    let mut path = prefix.to_vec();
+    path.push(tokens[*index].text.clone());
+    *index += 1;
+    if tokens.get(*index).is_some_and(|token| token.text == "as") {
+        *index += 1;
+        let alias = tokens.get(*index).map(|token| token.text.clone());
+        *index += usize::from(*index < statement_end);
+        leaves.push(UseLeaf {
+            path,
+            alias,
+            glob: false,
+            use_index,
+            start,
+            end,
+        });
+        return;
+    }
+    if tokens.get(*index).is_some_and(|token| token.text == "::") {
+        *index += 1;
+        if *index < statement_end {
+            parse_use_tree(
+                tokens,
+                index,
+                statement_end,
+                &path,
+                use_index,
+                start,
+                end,
+                leaves,
+            );
+            return;
+        }
+    }
+    leaves.push(UseLeaf {
+        path,
+        alias: None,
+        glob: false,
+        use_index,
+        start,
+        end,
+    });
 }
 
-fn is_ast_path(path: &[String]) -> bool {
-    path.first().is_some_and(|segment| segment == "crate")
+fn resolved_ast_binding(
+    leaf: &UseLeaf,
+    ast_types: &BTreeSet<String>,
+    markers: &AstUseMarkers,
+) -> Option<Option<AstBinding>> {
+    let mut path = leaf.path.as_slice();
+    let mut module_default = None;
+    let ast_path = if path.first().is_some_and(|segment| segment == "crate")
         && path.get(1).is_some_and(|segment| segment == "ast")
+    {
+        module_default = Some("ast");
+        path = &path[2..];
+        true
+    } else if let Some(module) = path
+        .first()
+        .filter(|segment| markers.has_module(segment, leaf.use_index))
+    {
+        module_default = Some(module.as_str());
+        path = &path[1..];
+        true
+    } else if path.first().is_some_and(|segment| segment == "crate") {
+        path = &path[1..];
+        path.is_empty() && leaf.glob
+            || !leaf.glob && path.len() == 1 && ast_types.contains(&path[0])
+    } else {
+        false
+    };
+    if !ast_path {
+        return None;
+    }
+    if leaf.alias.as_deref() == Some("_") {
+        return Some(None);
+    }
+    if leaf.glob {
+        return Some(Some(AstBinding::Glob));
+    }
+
+    let imports_self = path.last().is_some_and(|segment| segment == "self");
+    if imports_self {
+        path = &path[..path.len() - 1];
+    }
+    let name = leaf
+        .alias
+        .as_deref()
+        .or_else(|| path.last().map(String::as_str))
+        .or(module_default)?
+        .to_owned();
+    let item_name = path.last();
+    if imports_self || path.is_empty() || item_name.is_none_or(|name| !ast_types.contains(name)) {
+        Some(Some(AstBinding::Module(name)))
+    } else {
+        Some(Some(AstBinding::Name(name)))
+    }
+}
+
+impl AstUseMarkers {
+    fn in_use(&self, index: usize) -> bool {
+        self.use_ranges
+            .iter()
+            .any(|(start, end)| *start <= index && index < *end)
+    }
+
+    fn has_glob(&self, index: usize) -> bool {
+        self.bindings.iter().any(|binding| {
+            binding.start <= index && index < binding.end && binding.binding == AstBinding::Glob
+        })
+    }
+
+    fn has_name(&self, name: &str, index: usize) -> bool {
+        self.bindings.iter().any(|binding| {
+            binding.start <= index
+                && index < binding.end
+                && matches!(&binding.binding, AstBinding::Name(bound) if bound == name)
+        })
+    }
+
+    fn has_module(&self, name: &str, index: usize) -> bool {
+        self.bindings.iter().any(|binding| {
+            binding.start <= index
+                && index < binding.end
+                && matches!(&binding.binding, AstBinding::Module(bound) if bound == name)
+        })
+    }
 }
 
 fn rooted_use_module(tokens: &[Token], module: &str) -> Option<usize> {
@@ -425,9 +615,83 @@ fn item_ranges(tokens: &[Token]) -> Vec<(usize, usize)> {
     ranges
 }
 
-fn ast_import_at(tokens: &[Token], index: usize) -> bool {
-    sequence_at(tokens, index.saturating_sub(2), &["crate", "::", "ast"])
-        && tokens.get(index).is_some_and(|token| token.text == "ast")
+fn top_level_token(tokens: &[Token], expected: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        if depth == 0 && token.text == expected {
+            return Some(index);
+        }
+        match token.text.as_str() {
+            "{" | "(" | "[" => depth += 1,
+            "}" | ")" | "]" => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn token_depths(tokens: &[Token]) -> Vec<usize> {
+    let mut depth = 0usize;
+    tokens
+        .iter()
+        .map(|token| {
+            let current = depth;
+            match token.text.as_str() {
+                "{" | "(" | "[" => depth += 1,
+                "}" | ")" | "]" => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            current
+        })
+        .collect()
+}
+
+fn ast_semantic_reference_at(
+    tokens: &[Token],
+    index: usize,
+    ast_types: &BTreeSet<String>,
+    markers: &AstUseMarkers,
+) -> bool {
+    if markers.in_use(index) {
+        return false;
+    }
+    let name = tokens[index].text.as_str();
+    let path = path_prefix(tokens, index);
+    if path.is_empty() {
+        return markers.has_name(name, index)
+            || ast_types.contains(name) && markers.has_glob(index);
+    }
+    if path.starts_with(&["crate", "ast"]) {
+        return ast_types.contains(name);
+    }
+    if path == ["crate"] {
+        return ast_types.contains(name);
+    }
+    if markers.has_module(path[0], index) {
+        return ast_types.contains(name);
+    }
+    if matches!(path[0], "self" | "super") {
+        return markers.has_name(name, index)
+            || ast_types.contains(name) && markers.has_glob(index);
+    }
+    false
+}
+
+fn path_prefix(tokens: &[Token], index: usize) -> Vec<&str> {
+    if index < 2 || tokens[index - 1].text != "::" {
+        return Vec::new();
+    }
+    let mut cursor = index - 2;
+    let mut path = Vec::new();
+    loop {
+        path.push(tokens[cursor].text.as_str());
+        if cursor < 2 || tokens[cursor - 1].text != "::" {
+            break;
+        }
+        cursor -= 2;
+    }
+    path.reverse();
+    path
 }
 
 fn checker_path_at(tokens: &[Token], index: usize) -> bool {
@@ -462,30 +726,6 @@ fn sequence_at(tokens: &[Token], index: usize, expected: &[&str]) -> bool {
 
 fn token_texts(tokens: &[Token]) -> Vec<&str> {
     tokens.iter().map(|token| token.text.as_str()).collect()
-}
-
-fn qualified_by_non_ast_path(tokens: &[Token], index: usize) -> bool {
-    if index < 2 || tokens[index - 1].text != "::" {
-        return false;
-    }
-    let mut cursor = index - 2;
-    let mut path = Vec::new();
-    loop {
-        path.push(tokens[cursor].text.as_str());
-        if cursor < 2 || tokens[cursor - 1].text != "::" {
-            break;
-        }
-        cursor -= 2;
-    }
-    if path.contains(&"ast") {
-        return false;
-    }
-    if path.iter().any(|part| matches!(*part, "hir" | "lower")) {
-        return true;
-    }
-    !path
-        .last()
-        .is_some_and(|root| matches!(*root, "crate" | "self" | "super"))
 }
 
 fn normalize(tokens: &[Token]) -> String {

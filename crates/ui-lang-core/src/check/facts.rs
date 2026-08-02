@@ -3,18 +3,25 @@ use super::expr::{
     unify_type_evidence,
 };
 use super::*;
+#[cfg(test)]
+use crate::hir::DerivedId;
 use crate::hir::{
-    AppSettingExprId, AppStateId, CanvasCommandId, CanvasEventId, CanvasExpressionId,
-    CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
-    ComponentSlotId, ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId,
-    ExternRef, FloatExpressionId, HandlerId, InteractionExpressionId, InteractionRouteId,
-    MediaExpressionId, OriginArena, OriginId, PaletteId, PinExpressionId, RouteId, StatementId,
-    StructFieldId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, TooltipExpressionId,
-    ViewId,
+    AppSettingExprId, CanvasCommandId, CanvasEventId, CanvasExpressionId, CanvasLocalId,
+    CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
+    ComponentSlotId, DeclarationIndex, EnumVariantId, ExternFnId, ExternRef, FloatExpressionId,
+    HandlerId, InteractionExpressionId, InteractionRouteId, MediaExpressionId, OriginArena,
+    OriginId, PaletteId, PinExpressionId, RouteId, StatementId, StructFieldId, SubscriptionId,
+    TaskId, TestId, TestStepId, TestTargetId, TooltipExpressionId, ViewId,
+};
+pub(crate) use crate::hir::{
+    ExpressionId as CheckedExprUseId, ExpressionNodeId as CheckedExprId, LocalId as CheckedLocalId,
+    ValueRef as CheckedValueRef,
 };
 use crate::unqualified_name;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 #[derive(Debug, Default)]
@@ -27,12 +34,6 @@ impl Clone for LookupCount {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedExprId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedExprUseId(u32);
-
 #[cfg(test)]
 impl CheckedExprUseId {
     pub(crate) fn invalid_for_test() -> Self {
@@ -42,9 +43,6 @@ impl CheckedExprUseId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedValueId(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CheckedLocalId(u32);
 
 #[cfg(test)]
 impl CheckedLocalId {
@@ -60,14 +58,6 @@ pub(crate) struct CheckedBuiltinId(u32);
 enum ValueScope {
     App,
     Component(ComponentId),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum CheckedValueRef {
-    AppState(AppStateId),
-    Derived(DerivedId),
-    ComponentParam(ComponentParamId),
-    ComponentState(ComponentStateId),
 }
 
 #[derive(Clone, Debug)]
@@ -152,11 +142,27 @@ pub(crate) enum CheckedViewScope {
 pub(crate) struct CheckedView {
     pub(crate) id: ViewId,
     pub(crate) kind: &'static str,
+    pub(crate) identity: Option<CheckedViewIdentity>,
     pub(crate) scope: CheckedViewScope,
     pub(crate) parent: Option<ViewId>,
     pub(crate) children: Vec<ViewId>,
     pub(crate) flow: CheckedViewFlow,
     pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CheckedComponentSlot {
+    pub(crate) id: ComponentSlotId,
+    pub(crate) view: ViewId,
+    pub(crate) name: String,
+    pub(crate) optional: bool,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedViewIdentity {
+    pub(crate) name: String,
+    pub(crate) key: Option<CheckedExprUseId>,
 }
 
 #[derive(Clone, Debug)]
@@ -250,11 +256,13 @@ pub(crate) enum CheckedViewFlow {
     },
     ResponsiveBreakpoint {
         semantic_key: String,
+        expression_count: u32,
         breakpoint: CheckedExprUseId,
         dimensions: [CheckedResponsiveLength; 2],
     },
     ResponsiveSize {
         semantic_key: String,
+        expression_count: u32,
         width: CheckedLocalId,
         height: CheckedLocalId,
         dimensions: [CheckedResponsiveLength; 2],
@@ -622,6 +630,7 @@ pub(crate) enum CheckedComponentEventDelivery {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CheckedViewExprRole {
+    IdentityKey,
     IfCondition,
     ForItems,
     MatchValue,
@@ -1123,6 +1132,8 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) values: usize,
     pub(crate) locals: usize,
     pub(crate) views: usize,
+    pub(crate) component_slots: usize,
+    pub(crate) component_slot_index_visits: usize,
     pub(crate) expression_uses: usize,
     pub(crate) expressions: usize,
     pub(crate) type_analysis_queries: usize,
@@ -1155,6 +1166,8 @@ pub(crate) struct CheckedFacts {
     locals: Vec<CheckedLocal>,
     locals_by_owner: HashMap<CheckedLocalOwner, CheckedLocalId>,
     views: Vec<CheckedView>,
+    component_slots: Vec<Vec<CheckedComponentSlot>>,
+    component_slots_by_view: HashMap<ViewId, ComponentSlotId>,
     canvases: HashMap<ViewId, CheckedCanvas>,
     media: HashMap<ViewId, CheckedMedia>,
     containers: HashMap<ViewId, CheckedContainer>,
@@ -1197,6 +1210,8 @@ pub(crate) struct CheckedFacts {
     metrics: CheckedFactMetrics,
     #[cfg(test)]
     lookup_count: LookupCount,
+    #[cfg(test)]
+    component_slot_index_elapsed: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -1474,6 +1489,110 @@ impl CheckedFacts {
         component: ComponentId,
     ) {
         self.component_call_routes.get_mut(&call).unwrap().component = component;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_component_slot(&mut self, component: ComponentId, index: usize) {
+        self.component_slots[component.0 as usize].remove(index);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn duplicate_component_slot(&mut self, component: ComponentId, index: usize) {
+        let slot = self.component_slots[component.0 as usize][index].clone();
+        self.component_slots[component.0 as usize].push(slot);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slots(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        self.component_slots[component.0 as usize].swap(left, right);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_origin(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        raw: u32,
+    ) {
+        self.component_slots[component.0 as usize][index].origin = OriginId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slot_origins(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        let slots = &mut self.component_slots[component.0 as usize];
+        let left_origin = slots[left].origin;
+        slots[left].origin = slots[right].origin;
+        slots[right].origin = left_origin;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_id(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        raw: u32,
+    ) {
+        self.component_slots[component.0 as usize][index].id.index = raw;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slot_views(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        let slots = &mut self.component_slots[component.0 as usize];
+        let left_view = slots[left].view;
+        slots[left].view = slots[right].view;
+        slots[right].view = left_view;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_view(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        raw: u32,
+    ) {
+        self.component_slots[component.0 as usize][index].view = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slot_reverse_associations(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        let slots = &self.component_slots[component.0 as usize];
+        let left_view = slots[left].view;
+        let right_view = slots[right].view;
+        let left_slot = self.component_slots_by_view[&left_view];
+        let right_slot = self.component_slots_by_view[&right_view];
+        self.component_slots_by_view.insert(left_view, right_slot);
+        self.component_slots_by_view.insert(right_view, left_slot);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_reverse_association(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        id: ComponentSlotId,
+    ) {
+        let view = self.component_slots[component.0 as usize][index].view;
+        self.component_slots_by_view.insert(view, id);
     }
 
     #[cfg(test)]
@@ -1785,6 +1904,58 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_responsive_dimension(
+        &mut self,
+        view: ViewId,
+        index: usize,
+        replacement: CheckedResponsiveLength,
+    ) {
+        let dimensions = match &mut self.views[view.0 as usize].flow {
+            CheckedViewFlow::ResponsiveBreakpoint { dimensions, .. }
+            | CheckedViewFlow::ResponsiveSize { dimensions, .. } => dimensions,
+            _ => panic!("test view must be responsive"),
+        };
+        dimensions[index] = replacement;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_responsive_expression_count(&mut self, view: ViewId, value: u32) {
+        let expression_count = match &mut self.views[view.0 as usize].flow {
+            CheckedViewFlow::ResponsiveBreakpoint {
+                expression_count, ..
+            }
+            | CheckedViewFlow::ResponsiveSize {
+                expression_count, ..
+            } => expression_count,
+            _ => panic!("test view must be responsive"),
+        };
+        *expression_count = value;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_responsive_dimension_expression_role(
+        &mut self,
+        view: ViewId,
+        target_index: usize,
+        source_role: CheckedViewExprRole,
+    ) {
+        let source = self.expression_uses_by_owner[&CheckedExprOwner::View {
+            view,
+            role: source_role,
+        }];
+        let dimensions = match &mut self.views[view.0 as usize].flow {
+            CheckedViewFlow::ResponsiveBreakpoint { dimensions, .. }
+            | CheckedViewFlow::ResponsiveSize { dimensions, .. } => dimensions,
+            _ => panic!("test view must be responsive"),
+        };
+        let CheckedResponsiveLength::Fixed { expression, .. } = &mut dimensions[target_index]
+        else {
+            panic!("test dimension must be fixed");
+        };
+        *expression = source;
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_expression_use_root(&mut self, owner: CheckedExprOwner, raw: u32) {
         let id = self.expression_uses_by_owner[&owner];
         self.expression_uses[id.0 as usize].root = CheckedExprId(raw);
@@ -1889,6 +2060,35 @@ impl CheckedFacts {
     pub(crate) fn view(&self, id: ViewId) -> &CheckedView {
         self.record_lookup();
         &self.views[id.0 as usize]
+    }
+
+    pub(crate) fn try_view(&self, id: ViewId) -> Option<&CheckedView> {
+        self.record_lookup();
+        self.views.get(id.0 as usize).filter(|view| view.id == id)
+    }
+
+    pub(crate) fn component_slots(
+        &self,
+        component: ComponentId,
+    ) -> Option<&[CheckedComponentSlot]> {
+        self.record_lookup();
+        self.component_slots
+            .get(component.0 as usize)
+            .map(Vec::as_slice)
+    }
+
+    pub(crate) fn component_slot(&self, id: ComponentSlotId) -> Option<&CheckedComponentSlot> {
+        self.record_lookup();
+        self.component_slots
+            .get(id.component.0 as usize)?
+            .get(id.index as usize)
+            .filter(|slot| slot.id == id)
+    }
+
+    pub(crate) fn component_slot_for_view(&self, view: ViewId) -> Option<&CheckedComponentSlot> {
+        self.record_lookup();
+        let id = self.component_slots_by_view.get(&view)?;
+        self.component_slot(*id).filter(|slot| slot.view == view)
     }
 
     pub(crate) fn subscriptions(&self) -> &[CheckedSubscription] {
@@ -2447,6 +2647,11 @@ impl CheckedFacts {
 
     pub(crate) fn metrics(&self) -> CheckedFactMetrics {
         self.metrics
+    }
+
+    #[cfg(test)]
+    pub(crate) fn component_slot_index_elapsed(&self) -> Duration {
+        self.component_slot_index_elapsed
     }
 
     #[cfg(test)]
@@ -3149,6 +3354,7 @@ impl<'a> FactsBuilder<'a> {
         self.lower_initializers()?;
         self.lower_app_setting_expressions()?;
         self.index_views()?;
+        self.index_component_slots()?;
         self.lower_view_expressions()?;
         self.lower_test_expressions()?;
         self.lower_subscriptions()?;
@@ -3195,6 +3401,7 @@ impl<'a> FactsBuilder<'a> {
         self.facts.metrics.values = self.facts.values.len();
         self.facts.metrics.locals = self.facts.locals.len();
         self.facts.metrics.views = self.facts.views.len();
+        self.facts.metrics.component_slots = self.facts.component_slots.iter().map(Vec::len).sum();
         self.facts.metrics.expression_uses = self.facts.expression_uses.len();
         self.facts.metrics.expressions = self.facts.expressions.len();
         Ok(self.facts)
@@ -3541,16 +3748,11 @@ impl<'a> FactsBuilder<'a> {
         for (index, component) in self.document.components.iter().enumerate() {
             let component_id = self.declarations.component(index).id;
             let mut env = self.fact_env(ValueScope::Component(component_id));
-            for (slot_index, (name, _, _)) in crate::check::component_slots(&component.root)
-                .into_iter()
-                .enumerate()
-            {
-                env.insert_slot(
-                    name.to_owned(),
-                    self.declarations
-                        .component_slot(component_id, slot_index)
-                        .id,
-                );
+            let slots = self.facts.component_slots(component_id).ok_or_else(|| {
+                self.invariant(&component.span, "component has no checked slot partition")
+            })?;
+            for slot in slots {
+                env.insert_slot(slot.name.clone(), slot.id);
             }
             self.lower_view_expression_tree(&component.root, &env)?;
         }
@@ -9208,6 +9410,30 @@ impl<'a> FactsBuilder<'a> {
             self.invariant(node.span(), "view expression owner has no shared view ID")
         })?;
         let origin = self.declarations.view(view).origin;
+        let identity = match node.identity() {
+            Some(identity) => Some(CheckedViewIdentity {
+                name: identity.name.clone(),
+                key: identity
+                    .key
+                    .as_ref()
+                    .map(|key| {
+                        self.push_view_expression(
+                            CheckedExprOwner::View {
+                                view,
+                                role: CheckedViewExprRole::IdentityKey,
+                            },
+                            key,
+                            None,
+                            env,
+                            node.span(),
+                            origin,
+                        )
+                    })
+                    .transpose()?,
+            }),
+            None => None,
+        };
+        self.facts.views[view.0 as usize].identity = identity;
         let flow = match node {
             ViewNode::If {
                 condition,
@@ -9684,6 +9910,8 @@ impl<'a> FactsBuilder<'a> {
                 ..
             } => {
                 let semantic_key = crate::ast::responsive_semantic_key(content, width, height);
+                let expression_count =
+                    crate::ast::responsive_expression_count(content, width, height);
                 let dimensions = [
                     self.lower_responsive_length(
                         view,
@@ -9723,6 +9951,7 @@ impl<'a> FactsBuilder<'a> {
                         self.lower_view_expression_tree(wide, env)?;
                         CheckedViewFlow::ResponsiveBreakpoint {
                             semantic_key,
+                            expression_count,
                             breakpoint,
                             dimensions,
                         }
@@ -9760,6 +9989,7 @@ impl<'a> FactsBuilder<'a> {
                         self.lower_view_expression_tree(content, &scoped)?;
                         CheckedViewFlow::ResponsiveSize {
                             semantic_key,
+                            expression_count,
                             width: width_local,
                             height: height_local,
                             dimensions,
@@ -9894,7 +10124,7 @@ impl<'a> FactsBuilder<'a> {
                             id, label, checked, disabled, options, style, route,
                         ),
                         expressions: crate::ast::checkbox_expression_roots(
-                            id, label, checked, disabled, options, style,
+                            label, checked, disabled, options, style,
                         ),
                         statuses,
                         style: style
@@ -9945,7 +10175,7 @@ impl<'a> FactsBuilder<'a> {
                             id, label, checked, disabled, options, style, route,
                         ),
                         expressions: crate::ast::toggler_expression_roots(
-                            id, label, checked, disabled, options, style,
+                            label, checked, disabled, options, style,
                         ),
                         statuses,
                         style: style
@@ -9994,7 +10224,7 @@ impl<'a> FactsBuilder<'a> {
                             id, label, value, selected, options, style, route,
                         ),
                         expressions: crate::ast::radio_expression_roots(
-                            id, label, value, selected, options, style,
+                            label, value, selected, options, style,
                         ),
                         statuses,
                         style: style
@@ -11008,6 +11238,79 @@ impl<'a> FactsBuilder<'a> {
         Ok(())
     }
 
+    fn index_component_slots(&mut self) -> Result<(), Error> {
+        #[cfg(test)]
+        let started = Instant::now();
+        self.facts.component_slots = Vec::with_capacity(self.document.components.len());
+        for (component_index, component) in self.document.components.iter().enumerate() {
+            let component_id = self.declarations.component(component_index).id;
+            let source_slots = crate::check::component_slots(&component.root);
+            let declared_count = self
+                .declarations
+                .component_slot_count(component_id)
+                .ok_or_else(|| {
+                    self.invariant(
+                        &component.span,
+                        "component slot declaration arena is missing",
+                    )
+                })?;
+            if source_slots.len() != declared_count {
+                return Err(self.invariant(
+                    &component.span,
+                    "component slot source and declaration cardinality diverged",
+                ));
+            }
+
+            let mut checked = Vec::with_capacity(source_slots.len());
+            for (index, (name, optional, span)) in source_slots.into_iter().enumerate() {
+                self.facts.metrics.component_slot_index_visits += 1;
+                let id = ComponentSlotId {
+                    component: component_id,
+                    index: index as u32,
+                };
+                let declaration = self
+                    .declarations
+                    .try_component_slot(id)
+                    .ok_or_else(|| self.invariant(span, "component slot declaration is missing"))?;
+                let view = self
+                    .declarations
+                    .view_id(span)
+                    .ok_or_else(|| self.invariant(span, "component slot has no shared view ID"))?;
+                let checked_view = self
+                    .facts
+                    .try_view(view)
+                    .ok_or_else(|| self.invariant(span, "component slot has no checked view"))?;
+                if checked_view.scope != CheckedViewScope::Component(component_id)
+                    || checked_view.kind != "slot"
+                    || checked_view.origin != self.declarations.view(view).origin
+                {
+                    return Err(self.invariant(span, "component slot checked view is inconsistent"));
+                }
+                if self
+                    .facts
+                    .component_slots_by_view
+                    .insert(view, id)
+                    .is_some()
+                {
+                    return Err(self.invariant(span, "component slot view is associated twice"));
+                }
+                checked.push(CheckedComponentSlot {
+                    id,
+                    view,
+                    name: name.to_owned(),
+                    optional,
+                    origin: declaration.origin,
+                });
+            }
+            self.facts.component_slots.push(checked);
+        }
+        #[cfg(test)]
+        {
+            self.facts.component_slot_index_elapsed = started.elapsed();
+        }
+        Ok(())
+    }
+
     fn index_view(
         &mut self,
         node: &ViewNode,
@@ -11024,6 +11327,7 @@ impl<'a> FactsBuilder<'a> {
         self.facts.views.push(CheckedView {
             id,
             kind: crate::hir::view_kind(node),
+            identity: None,
             scope,
             parent,
             children: Vec::new(),
@@ -11108,7 +11412,7 @@ fn compatible_operand(left: &Type, right: &Type) -> Type {
 
 #[cfg(test)]
 impl CheckedFacts {
-    fn structural_snapshot(&self) -> String {
+    pub(crate) fn structural_snapshot(&self) -> String {
         use std::fmt::Write as _;
 
         let mut output = String::new();
@@ -11185,6 +11489,16 @@ impl CheckedFacts {
                 view.kind, view.scope, view.parent, view.children, view.flow, view.origin.0
             )
             .unwrap();
+        }
+        for slots in &self.component_slots {
+            for slot in slots {
+                writeln!(
+                    output,
+                    "component-slot {:?} view={:?} name={:?} optional={} origin=o{}",
+                    slot.id, slot.view, slot.name, slot.optional, slot.origin.0
+                )
+                .unwrap();
+            }
         }
         for (index, subscription) in self.subscriptions.iter().enumerate() {
             writeln!(
@@ -11264,13 +11578,13 @@ view
 
         assert_eq!(
             facts.structural_snapshot(),
-            r#"value v0 AppState(AppStateId(0)) user:Named("User") init=Some(CheckedExprUseId(0)) origin=o0
-value v1 AppState(AppStateId(1)) color:Color init=Some(CheckedExprUseId(1)) origin=o1
-value v2 AppState(AppStateId(2)) mode:Named("Mode") init=Some(CheckedExprUseId(2)) origin=o2
-value v3 Derived(DerivedId(0)) name:Str init=Some(CheckedExprUseId(3)) origin=o3
-value v4 Derived(DerivedId(1)) visible:Bool init=Some(CheckedExprUseId(4)) origin=o4
-value v5 ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 }) label:Str init=Some(CheckedExprUseId(5)) origin=o6
-value v6 ComponentState(ComponentStateId { component: ComponentId(0), index: 0 }) open:Bool init=Some(CheckedExprUseId(6)) origin=o7
+            r#"value v0 AppState(AppStateId(0)) user:Named("User") init=Some(ExpressionId(0)) origin=o0
+value v1 AppState(AppStateId(1)) color:Color init=Some(ExpressionId(1)) origin=o1
+value v2 AppState(AppStateId(2)) mode:Named("Mode") init=Some(ExpressionId(2)) origin=o2
+value v3 Derived(DerivedId(0)) name:Str init=Some(ExpressionId(3)) origin=o3
+value v4 Derived(DerivedId(1)) visible:Bool init=Some(ExpressionId(4)) origin=o4
+value v5 ComponentParam(ComponentParamId { component: ComponentId(0), index: 0 }) label:Str init=Some(ExpressionId(5)) origin=o6
+value v6 ComponentState(ComponentStateId { component: ComponentId(0), index: 0 }) open:Bool init=Some(ExpressionId(6)) origin=o7
 use u0 Value(AppState(AppStateId(0))) root=e1 source=Named("User") destination=Named("User") coercion=None origin=o0
 use u1 Value(AppState(AppStateId(1))) root=e5 source=Color destination=Color coercion=None origin=o1
 use u2 Value(AppState(AppStateId(2))) root=e6 source=Named("Mode") destination=Named("Mode") coercion=None origin=o2
@@ -11305,7 +11619,7 @@ expr e19 path Value(ComponentState(ComponentStateId { component: ComponentId(0),
 expr e20 str "Open" : Str origin=o26
 view w0 layout Component(ComponentId(0)) parent=None children=[ViewId(1), ViewId(2)] flow=None origin=o15
 view w1 text Component(ComponentId(0)) parent=Some(ViewId(0)) children=[] flow=None origin=o16
-view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: CheckedExprUseId(9) } origin=o17
+view w2 if Component(ComponentId(0)) parent=Some(ViewId(0)) children=[ViewId(3)] flow=If { condition: ExpressionId(9) } origin=o17
 view w3 text Component(ComponentId(0)) parent=Some(ViewId(2)) children=[] flow=None origin=o18
 view w4 layout App parent=None children=[ViewId(5), ViewId(6)] flow=None origin=o19
 view w5 component App parent=Some(ViewId(4)) children=[] flow=None origin=o20
@@ -11318,6 +11632,8 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 values: 7,
                 locals: 0,
                 views: 7,
+                component_slots: 0,
+                component_slot_index_visits: 0,
                 expression_uses: 11,
                 expressions: 21,
                 type_analysis_queries: 21,
@@ -12558,7 +12874,7 @@ view
     }
 
     #[test]
-    fn raw_view_topology_mutation_is_rejected_before_emission() {
+    fn raw_view_topology_mutation_is_rejected_during_lowering() {
         let source =
             format!("app MutatedView\n{THEME}state\n  count = 1\nview\n  col\n    text count\n");
         let mut checked = analyze(&source).unwrap();
@@ -12568,11 +12884,51 @@ view
         let expected_line = span.line;
         children.clear();
 
-        let program = lower::lower(checked).unwrap();
-        let error = crate::codegen::generate(&program, "mutated-view.ice").unwrap_err();
+        let error = lower::lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.line, expected_line);
-        assert!(error.message.contains("checked topology"));
+        assert!(
+            error
+                .message
+                .contains("children diverged from checked topology")
+        );
+    }
+
+    #[test]
+    fn checked_view_parent_cycle_is_rejected_before_view_lowering() {
+        let source = format!("app CyclicView\n{THEME}view\n  col\n    text \"child\"\n");
+        let mut checked = analyze(&source).unwrap();
+        let child = checked.facts.views[0].children[0];
+        let expected_line = checked
+            .origins
+            .get(checked.declarations.view(child).origin)
+            .line;
+        checked.facts.views[child.0 as usize].parent = Some(child);
+
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("child identity, parent, or scope"));
+    }
+
+    #[test]
+    fn checked_view_origin_swap_is_rejected_at_its_declaration() {
+        let source = format!(
+            "app SwappedViewOrigin\n{THEME}view\n  col\n    text \"first\"\n    text \"second\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let first = checked.facts.views[0].children[0];
+        let second = checked.facts.views[0].children[1];
+        let expected = checked.declarations.view(first).origin;
+        let poisoned = checked.declarations.view(second).origin;
+        assert_ne!(expected, poisoned);
+        let expected_line = checked.origins.get(expected).line;
+        checked.facts.views[first.0 as usize].origin = poisoned;
+
+        let error = lower::lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, expected_line);
+        assert!(error.message.contains("identity or origin diverged"));
     }
 
     #[test]
@@ -12651,11 +13007,14 @@ view
                 ..
             }
         ));
-        let argument = program
-            .component_call(program.document().view.span())
+        let crate::lower::ResolvedViewKind::Component { call } = program
+            .resolved_view(program.app_view())
+            .map(|view| &view.kind)
             .unwrap()
-            .arguments[0]
-            .expression;
+        else {
+            panic!("application root is not a component call")
+        };
+        let argument = program.component_call_by_id(*call).unwrap().arguments[0].expression;
         let root = program.checked_facts().expression_use(argument).root;
         assert!(matches!(
             program.checked_facts().expression(root).kind,
@@ -12844,27 +13203,24 @@ state
 view
   svg "icon.svg" w=48.0 h=shrink fit=scale-down rotate=rotation.solid(radians(0.1)) opacity=0.9 color=fg hover=primary style=dynamic_svg(active) label="Icon" description="Status icon"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
-        let checked = program.checked_facts().media(ViewId(0)).unwrap();
+        let checked_document = analyze(source).unwrap();
         let ViewNode::Media {
             kind,
             source,
             options,
             ..
-        } = &program.document().view
+        } = &checked_document.document.view
         else {
             panic!("fixture root must be media");
         };
+        let expected_expression_count = crate::ast::media_expression_roots(source, options).len();
+        let expected_semantic_key = crate::ast::media_semantic_key(*kind, options);
+        let program = lower::lower(checked_document).unwrap();
+        let checked = program.checked_facts().media(ViewId(0)).unwrap();
         assert_eq!(checked.id, ViewId(0));
-        assert_eq!(
-            checked.expression_count as usize,
-            crate::ast::media_expression_roots(source, options).len()
-        );
+        assert_eq!(checked.expression_count as usize, expected_expression_count);
         assert_eq!(checked.style, Some(ExternFnId(0)));
-        assert_eq!(
-            checked.semantic_key,
-            crate::ast::media_semantic_key(*kind, options)
-        );
+        assert_eq!(checked.semantic_key, expected_semantic_key);
         for index in 0..checked.expression_count {
             assert!(
                 program
@@ -12901,21 +13257,18 @@ view
     text "Hover"
     text "Tip"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
-        let checked = program.checked_facts().tooltip(ViewId(0)).unwrap();
-        let ViewNode::Tooltip { options, .. } = &program.document().view else {
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Tooltip { options, .. } = &checked_document.document.view else {
             panic!("fixture root must be a tooltip");
         };
+        let expected_expression_count = crate::ast::tooltip_expression_roots(options).len();
+        let expected_semantic_key = crate::ast::tooltip_semantic_key(options);
+        let program = lower::lower(checked_document).unwrap();
+        let checked = program.checked_facts().tooltip(ViewId(0)).unwrap();
         assert_eq!(checked.id, ViewId(0));
-        assert_eq!(
-            checked.expression_count as usize,
-            crate::ast::tooltip_expression_roots(options).len()
-        );
+        assert_eq!(checked.expression_count as usize, expected_expression_count);
         assert_eq!(checked.style, Some(ExternFnId(0)));
-        assert_eq!(
-            checked.semantic_key,
-            crate::ast::tooltip_semantic_key(options)
-        );
+        assert_eq!(checked.semantic_key, expected_semantic_key);
         for index in 0..checked.expression_count {
             assert!(
                 program
@@ -12959,7 +13312,19 @@ view
     sensor show=resized resize=resized hide=hidden key=active anticipate=16.0 delay=20
       text "Observed"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Layout { children, .. } = &checked_document.document.view else {
+            panic!("fixture root must be a column");
+        };
+        let expected_sensor_key = match &children[2] {
+            ViewNode::Sensor { options, .. } => crate::ast::sensor_semantic_key(options),
+            _ => panic!("third child must be a sensor"),
+        };
+        let expected_mouse_key = match &children[0] {
+            ViewNode::MouseArea { options, .. } => crate::ast::mouse_area_semantic_key(options),
+            _ => panic!("first child must be a mouse area"),
+        };
+        let program = lower::lower(checked_document).unwrap();
         let facts = program.checked_facts();
         assert_eq!(facts.interactions.len(), 7);
         let layout = facts.interaction(ViewId(0)).expect("checked root layout");
@@ -13023,23 +13388,8 @@ view
             assert_eq!(expression.source, expected);
             assert_eq!(expression.destination, expected);
         }
-        let ViewNode::Layout { children, .. } = &program.document().view else {
-            panic!("fixture root must be a column");
-        };
-        let ViewNode::Sensor { options, .. } = &children[2] else {
-            panic!("third child must be a sensor");
-        };
-        assert_eq!(
-            sensor.semantic_key,
-            crate::ast::sensor_semantic_key(options)
-        );
-        assert_eq!(
-            mouse.semantic_key,
-            crate::ast::mouse_area_semantic_key(match &children[0] {
-                ViewNode::MouseArea { options, .. } => options,
-                _ => panic!("first child must be a mouse area"),
-            })
-        );
+        assert_eq!(sensor.semantic_key, expected_sensor_key);
+        assert_eq!(mouse.semantic_key, expected_mouse_key);
         for id in [ViewId(2), ViewId(4), ViewId(6)] {
             assert_eq!(
                 facts.interaction(id).expect("checked child text").kind,
@@ -13067,7 +13417,12 @@ view
   float scale=1.1 x=(viewport_x + shift) y=(original_y - shift) shadow=primary/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=4.0 r=8.0 r-tl=1.0 r-tr=2.0 r-br=3.0 r-bl=4.0
     text "Floating"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Float { style, .. } = &checked_document.document.view else {
+            panic!("root must be a float");
+        };
+        let expected_semantic_key = crate::ast::float_semantic_key(style);
+        let program = lower::lower(checked_document).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
         let CheckedViewFlow::Float {
             semantic_key,
@@ -13111,10 +13466,7 @@ view
                 "missing float expression {index}"
             );
         }
-        let ViewNode::Float { style, .. } = &program.document().view else {
-            panic!("root must be a float");
-        };
-        assert_eq!(semantic_key, &crate::ast::float_semantic_key(style));
+        assert_eq!(semantic_key, &expected_semantic_key);
     }
 
     #[test]
@@ -13137,7 +13489,12 @@ view
   pin w=fill h=height x=offset y=8.0
     text "Pinned"
 "#;
-        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked_document = analyze(source).unwrap();
+        let ViewNode::Pin { width, height, .. } = &checked_document.document.view else {
+            panic!("root must be a pin");
+        };
+        let expected_semantic_key = crate::ast::pin_semantic_key(width, height);
+        let program = lower::lower(checked_document).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
         let CheckedViewFlow::Pin {
             semantic_key,
@@ -13159,10 +13516,7 @@ view
                 "missing pin expression {index}"
             );
         }
-        let ViewNode::Pin { width, height, .. } = &program.document().view else {
-            panic!("root must be a pin");
-        };
-        assert_eq!(semantic_key, &crate::ast::pin_semantic_key(width, height));
+        assert_eq!(semantic_key, &expected_semantic_key);
     }
 
     #[test]
@@ -13189,6 +13543,7 @@ view
         let program = lower::lower(analyze(breakpoint_source).unwrap()).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
         let CheckedViewFlow::ResponsiveBreakpoint {
+            expression_count,
             breakpoint,
             dimensions,
             ..
@@ -13196,6 +13551,7 @@ view
         else {
             panic!("root must retain responsive breakpoint facts");
         };
+        assert_eq!(*expression_count, 2);
         assert_eq!(dimensions[0], CheckedResponsiveLength::Fill);
         assert!(matches!(
             dimensions[1],
@@ -13229,9 +13585,16 @@ view
 "#;
         let program = lower::lower(analyze(size_source).unwrap()).unwrap();
         let checked = program.checked_facts().view(ViewId(0));
-        let CheckedViewFlow::ResponsiveSize { width, height, .. } = &checked.flow else {
+        let CheckedViewFlow::ResponsiveSize {
+            expression_count,
+            width,
+            height,
+            ..
+        } = &checked.flow
+        else {
             panic!("root must retain responsive size facts");
         };
+        assert_eq!(*expression_count, 0);
         for (local, role) in [
             (*width, CheckedViewLocalRole::ResponsiveWidth),
             (*height, CheckedViewLocalRole::ResponsiveHeight),

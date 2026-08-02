@@ -49,8 +49,8 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
-            let float_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let float_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(&expr_type(scale, env, document, span)?, &Type::F64, span)?;
             let mut translate_env = scoped_view_env(env);
             for name in [
@@ -82,8 +82,8 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
-            let pin_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let pin_analysis_guard = expr::HandlerAnalysisGuard::start();
             for value in [x, y] {
                 require_f32_value(value, env, document, "pin position", span)?;
             }
@@ -99,8 +99,8 @@ pub(in crate::check) fn infer_structure_group(
             content,
             span,
         } => {
-            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             for (route, label) in [
                 (&options.show, "sensor show"),
                 (&options.resize, "sensor resize"),

@@ -1,37 +1,30 @@
 use super::*;
 
 pub(in crate::codegen) fn render_content(
-    node: &ViewNode,
-    document: &RenderDocument<'_>,
+    node: ViewId,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
 ) -> Result<Option<String>, Error> {
-    let id = match node {
-        ViewNode::Rule { id, .. }
-        | ViewNode::QrCode { id, .. }
-        | ViewNode::Space { id, .. }
-        | ViewNode::ExternComponent { id, .. }
-        | ViewNode::Themer { id, .. }
-        | ViewNode::Shader { id, .. } => id.as_ref(),
+    let view = document.resolved_view(node)?;
+    let identity = match view.kind {
+        ResolvedViewKind::Rule
+        | ResolvedViewKind::QrCode
+        | ResolvedViewKind::Space
+        | ResolvedViewKind::ExternComponent
+        | ResolvedViewKind::Themer
+        | ResolvedViewKind::Shader => view.identity.as_ref(),
         _ => None,
     };
-    let rendered = match node {
-        ViewNode::Rule { .. } => {
-            render_rule(document.program().resolved_rule_for(node)?, document, env)
-        }
-        ViewNode::QrCode { .. } => render_qr_code(
-            document.program().resolved_qr_code_for(node)?,
-            document,
-            env,
-        ),
-        ViewNode::Space { .. } => {
-            render_space(document.program().resolved_space_for(node)?, document, env)
-        }
-        ViewNode::Component { span, .. } => {
-            let call = document.program().component_call(span)?;
-            let component = document.program().component(call.component);
+    let rendered = match &view.kind {
+        ResolvedViewKind::Rule => render_rule(document.resolved_rule(node)?, document, env),
+        ResolvedViewKind::QrCode => render_qr_code(document.resolved_qr_code(node)?, document, env),
+        ResolvedViewKind::Space => render_space(document.resolved_space(node)?, document, env),
+        ResolvedViewKind::Component { call } => {
+            let call = document.component_call_by_id(*call)?;
+            let component = document.component(call.component);
             let name = &component.name;
             let mut component_env = HashMap::new();
             let default_env = HashMap::new();
@@ -48,9 +41,8 @@ pub(in crate::codegen) fn render_content(
                         env.get(state.name())
                             .and_then(|binding| binding.state.clone())
                             .ok_or_else(|| {
-                                Error::new(
-                                    "E196",
-                                    span,
+                                document.invariant_at_origin(
+                                    view.origin,
                                     format!(
                                         "lowered writable state `{}` is absent from the render environment",
                                         state.name()
@@ -62,7 +54,7 @@ pub(in crate::codegen) fn render_content(
                 component_env.insert(
                     argument.name.clone(),
                     Binding {
-                        code: checked_expr_use_code(
+                        code: resolved_expr_use_code(
                             document.program(),
                             argument.expression,
                             value_env,
@@ -71,7 +63,7 @@ pub(in crate::codegen) fn render_content(
                         ty: argument.ty.clone(),
                         local: false,
                         state,
-                        owner: Some(BindingOwner::Value(CheckedValueRef::ComponentParam(
+                        owner: Some(BindingOwner::Value(ResolvedValueRef::ComponentParam(
                             argument.param,
                         ))),
                     },
@@ -97,6 +89,9 @@ pub(in crate::codegen) fn render_content(
                 );
             }
             for (event_index, event) in call.events.iter().enumerate() {
+                document
+                    .program()
+                    .validate_component_call_event_contract(call, event_index)?;
                 let payloads = (0..event.payloads().len())
                     .map(|index| format!("__event_{index}"))
                     .collect::<Vec<_>>();
@@ -113,7 +108,7 @@ pub(in crate::codegen) fn render_content(
                         )?
                     }
                     ResolvedEventRoute::Forward {
-                        event: callee_event,
+                        event: _,
                         name: callee_event_name,
                         payloads: callee_payloads,
                         outer_component,
@@ -125,14 +120,6 @@ pub(in crate::codegen) fn render_content(
                         ..
                     } => {
                         let program = document.program();
-                        program.validate_component_call_event_contract(
-                            call,
-                            event_index,
-                            *callee_event,
-                            callee_event_name,
-                            callee_payloads,
-                            *origin,
-                        )?;
                         let outer = program
                             .try_component(*outer_component)
                             .filter(|component| {
@@ -202,7 +189,17 @@ pub(in crate::codegen) fn render_content(
                     let scope = reconciliation_scope(scope, env);
                     format!("format!(\"{{}}/{}@{}\", {scope})", name, call_site)
                 }
-                ComponentScope::Explicit { id, .. } => id_code(id, scope, env, document)?,
+                ComponentScope::Explicit { .. } => resolved_view_identity_code(
+                    view.identity.as_ref().ok_or_else(|| {
+                        document.invariant_at_origin(
+                            view.origin,
+                            "explicit component scope has no resolved view identity",
+                        )
+                    })?,
+                    scope,
+                    env,
+                    document,
+                )?,
             };
             set_reconciliation_scope(&mut component_env, component_scope.clone());
             let scope_binding = component_scope_binding(name, call.binding_site);
@@ -231,7 +228,7 @@ pub(in crate::codegen) fn render_content(
                                 name: state.name.clone(),
                                 scope: scope_binding.clone(),
                             }),
-                            owner: Some(BindingOwner::Value(CheckedValueRef::ComponentState(
+                            owner: Some(BindingOwner::Value(ResolvedValueRef::ComponentState(
                                 state.id,
                             ))),
                         },
@@ -268,7 +265,7 @@ pub(in crate::codegen) fn render_content(
                 format!("{scope_binding}.clone()")
             };
             let rendered = render_node(
-                &component.root,
+                component.root,
                 document,
                 message,
                 &component_env,
@@ -291,30 +288,29 @@ pub(in crate::codegen) fn render_content(
                 "(|| {{ let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content }})()"
             ))
         }
-        ViewNode::Slot {
+        ResolvedViewKind::Slot {
+            slot: slot_id,
             name,
             optional,
-            span,
+            ..
         } => {
             let slot = slot.ok_or_else(|| {
-                Error::new(
-                    "E170",
-                    span,
+                document.invariant_at_origin(
+                    view.origin,
                     "slot reached codegen without component content",
                 )
             })?;
             let content = slot
                 .entries
                 .iter()
-                .find(|entry| entry.name == *name)
+                .find(|entry| entry.slot == *slot_id)
                 .map_or_else(
                     || {
                         if *optional {
                             Ok(None)
                         } else {
-                            Err(Error::new(
-                                "E170",
-                                span,
+                            Err(document.invariant_at_origin(
+                                view.origin,
                                 format!("slot `{name}` reached codegen without component content"),
                             ))
                         }
@@ -327,7 +323,7 @@ pub(in crate::codegen) fn render_content(
             let mut content_env = content.env.clone();
             set_reconciliation_scope(&mut content_env, scope.to_owned());
             let rendered = render_node(
-                &content.node,
+                content.view,
                 document,
                 message,
                 &content_env,
@@ -338,26 +334,20 @@ pub(in crate::codegen) fn render_content(
                 "(|| {{ let __slot_content: __IceElement<'_, {message}> = {rendered}; __slot_content }})()"
             ))
         }
-        ViewNode::ExternComponent { .. } => render_extern_component(
-            document.program().resolved_extern_component_for(node)?,
+        ResolvedViewKind::ExternComponent => render_extern_component(
+            document.resolved_extern_component(node)?,
             document,
             message,
             env,
         ),
-        ViewNode::Themer { .. } => render_themer(
-            document.program().resolved_themer_for(node)?,
-            document,
-            message,
-            env,
-        ),
-        ViewNode::Shader { .. } => render_shader(
-            document.program().resolved_shader_for(node)?,
-            document,
-            message,
-            env,
-        ),
+        ResolvedViewKind::Themer => {
+            render_themer(document.resolved_themer(node)?, document, message, env)
+        }
+        ResolvedViewKind::Shader => {
+            render_shader(document.resolved_shader(node)?, document, message, env)
+        }
         _ => return Ok(None),
     }?;
-    let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
+    let rendered = identify_rendered(rendered, identity, message, env, document, scope)?;
     Ok(Some(rendered))
 }

@@ -28,6 +28,7 @@ pub(crate) use crate::hir::{
     PaletteId, PinExpressionId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId,
     TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
+use crate::semantic::*;
 use crate::{CheckedControlledEditor, CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -39,6 +40,7 @@ mod conditional;
 mod container;
 mod content_primitives;
 mod editor;
+mod expression;
 mod extern_component;
 mod extern_view_adapter;
 mod float;
@@ -62,6 +64,7 @@ mod table;
 mod testing;
 mod text;
 mod tooltip;
+mod view_topology;
 
 pub(crate) use boolean::*;
 pub(crate) use button::*;
@@ -70,6 +73,7 @@ pub(crate) use conditional::*;
 pub(crate) use container::*;
 pub(crate) use content_primitives::*;
 pub(crate) use editor::*;
+pub(crate) use expression::*;
 pub(crate) use extern_component::*;
 pub(crate) use extern_view_adapter::*;
 pub(crate) use float::*;
@@ -93,8 +97,7 @@ pub(crate) use text::*;
 
 pub(crate) use style::*;
 pub(crate) use tooltip::*;
-
-pub(crate) type ResolvedExpressionId = CheckedExprUseId;
+pub(crate) use view_topology::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResolvedTestTheme {
@@ -1349,7 +1352,7 @@ pub(crate) struct ComponentContract {
     slots: Vec<ComponentSlotContract>,
     pub(crate) states: Vec<ComponentStateContract>,
     pub(crate) handlers: Vec<HandlerId>,
-    pub(crate) root: ViewNode,
+    pub(crate) root: ViewId,
     pub(crate) storage: ComponentStorage,
     pub(crate) origin: OriginId,
 }
@@ -1419,6 +1422,7 @@ impl ResolvedArgument {
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedEventRoute {
     Direct {
+        route_index: u32,
         event: ComponentEventId,
         name: String,
         payloads: Vec<Type>,
@@ -1426,6 +1430,7 @@ pub(crate) enum ResolvedEventRoute {
         origin: OriginId,
     },
     Forward {
+        route_index: u32,
         event: ComponentEventId,
         name: String,
         payloads: Vec<Type>,
@@ -1455,10 +1460,10 @@ impl ResolvedEventRoute {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedSlot {
-    slot: ComponentSlotId,
+    pub(crate) slot: ComponentSlotId,
     pub(crate) name: String,
     pub(crate) optional: bool,
-    pub(crate) content: Option<ViewNode>,
+    pub(crate) content: Option<ViewId>,
     pub(crate) origin: OriginId,
 }
 
@@ -1466,7 +1471,6 @@ pub(crate) struct ResolvedSlot {
 #[derive(Clone, Debug)]
 pub(crate) enum ComponentScope {
     Explicit {
-        id: Id,
         origin: OriginId,
     },
     Implicit {
@@ -1490,7 +1494,7 @@ pub(crate) enum ComponentOutputRoute {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ComponentCall {
-    id: ComponentCallId,
+    pub(crate) id: ComponentCallId,
     pub(crate) component: ComponentId,
     pub(crate) origin: OriginId,
     pub(crate) arguments: Vec<ResolvedArgument>,
@@ -1511,7 +1515,17 @@ struct CallSite {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct LoweredProgram {
+    // Adversarial tests retain a poisonable source sidecar to prove that
+    // production code generation never observes the source AST. Release
+    // builds do not store it.
+    #[cfg(test)]
     document: Document,
+    app_view: ViewId,
+    expressions: ResolvedExpressionProgram,
+    // Adversarial tests retain checker facts only to verify lowering
+    // invariants after deliberate HIR corruption. Release programs do not
+    // carry checker state into the backend boundary.
+    #[cfg(test)]
     facts: CheckedFacts,
     declarations: DeclarationIndex,
     settings: ResolvedAppSettings,
@@ -1554,7 +1568,8 @@ pub(crate) struct LoweredProgram {
     tables: HashMap<ViewId, ResolvedTable>,
     pane_grids: HashMap<ViewId, ResolvedPaneGrid>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
-    test_mounts: HashMap<TestId, ViewNode>,
+    views: Vec<ResolvedView>,
+    test_mounts: HashMap<TestId, ViewId>,
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
     app_states: Vec<AppStateContract>,
@@ -1618,6 +1633,7 @@ fn validate_expression_declaration_references(
     Ok(())
 }
 
+#[cfg(test)]
 fn resolved_statement_semantic_key(
     program: &LoweredProgram,
     statement: &ResolvedStatement,
@@ -1795,6 +1811,7 @@ fn resolved_statement_semantic_key(
     })
 }
 
+#[cfg(test)]
 fn resolved_handler_operation_contract(
     program: &LoweredProgram,
     statement: &ResolvedStatement,
@@ -1951,9 +1968,8 @@ fn resolved_handler_operation_contract(
                     index
                         .map(|index| {
                             program
-                                .document
                                 .settings
-                                .windows
+                                .named_windows
                                 .get(index as usize)
                                 .map(|window| window.name.clone())
                                 .ok_or_else(|| {
@@ -2030,6 +2046,7 @@ fn resolved_handler_operation_contract(
 }
 
 impl LoweredProgram {
+    #[cfg(test)]
     pub(crate) fn validate_handler_hir(&self) -> Result<(), Error> {
         fn validate_expression_use(
             program: &LoweredProgram,
@@ -3061,21 +3078,59 @@ impl LoweredProgram {
         Ok(())
     }
 
-    pub(crate) fn document(&self) -> &Document {
-        &self.document
+    pub(crate) fn program(&self) -> &Self {
+        self
+    }
+
+    pub(crate) fn hir(&self) -> &Self {
+        self
+    }
+
+    pub(crate) fn app_view(&self) -> ViewId {
+        self.app_view
+    }
+
+    pub(crate) fn resolved_view(&self, id: ViewId) -> Result<&ResolvedView, Error> {
+        self.views
+            .get(id.0 as usize)
+            .filter(|view| view.id == id)
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    OriginId(u32::MAX),
+                    "resolved view ID is outside its canonical arena",
+                )
+            })
     }
 
     pub(crate) fn app_name(&self) -> &str {
         &self.settings.app_name
     }
 
-    pub(crate) fn extern_structs(&self) -> &[ExternStruct] {
-        &self.document.structs
+    pub(crate) fn struct_declarations(&self) -> &[crate::hir::StructDeclaration] {
+        self.declarations.struct_declarations()
     }
 
-    #[allow(dead_code)]
+    pub(crate) fn enum_declarations(&self) -> &[crate::hir::EnumDeclaration] {
+        self.declarations.enum_declarations()
+    }
+
+    pub(crate) fn extern_functions(&self) -> impl Iterator<Item = &crate::hir::ExternDeclaration> {
+        self.declarations.extern_declarations()
+    }
+
+    pub(crate) fn struct_rust_path_by_name(&self, name: &str) -> Option<&str> {
+        self.declarations
+            .struct_decl_by_name(name)
+            .map(|declaration| declaration.rust_path.as_str())
+    }
+
+    #[cfg(test)]
     pub(crate) fn checked_facts(&self) -> &CheckedFacts {
         &self.facts
+    }
+
+    pub(crate) fn expressions(&self) -> &ResolvedExpressionProgram {
+        &self.expressions
     }
 
     pub(crate) fn subscriptions(&self) -> &[ResolvedSubscription] {
@@ -3316,903 +3371,8 @@ impl LoweredProgram {
         self.interaction_widgets.get(&id)
     }
 
-    pub(crate) fn resolved_canvas_for(&self, node: &ViewNode) -> Result<&ResolvedCanvas, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "canvas reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "canvas reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.canvases.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "canvas reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_container_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedContainer, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "container reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "container reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.containers.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "container reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_layout_for(&self, node: &ViewNode) -> Result<&ResolvedLayout, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "layout reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "layout reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.layouts.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "layout reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_text_for(&self, node: &ViewNode) -> Result<&ResolvedText, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "text reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "text reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.texts.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "text reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_input_for(&self, node: &ViewNode) -> Result<&ResolvedInput, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "input reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "input reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.inputs.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "input reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_button_for(&self, node: &ViewNode) -> Result<&ResolvedButton, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "button reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "button reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.buttons.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "button reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_text_editor_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedTextEditor, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "text editor reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "text editor reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.text_editors.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "text editor reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_markdown_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedMarkdown, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "markdown reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let markdown = self.markdowns.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "markdown reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || markdown.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "markdown reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(markdown)
-    }
-
-    pub(crate) fn resolved_extern_component_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedExternComponent, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "extern component reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let component = self.extern_components.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "extern component reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || component.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "extern component reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(component)
-    }
-
-    pub(crate) fn resolved_themer_for(&self, node: &ViewNode) -> Result<&ResolvedThemer, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "themer reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let themer = self.themers.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "themer reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || themer.id != id {
-            return Err(self.invariant_at_origin(
-                themer.origin,
-                "themer reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(themer)
-    }
-
-    pub(crate) fn resolved_shader_for(&self, node: &ViewNode) -> Result<&ResolvedShader, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "shader reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let shader = self.shaders.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "shader reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || shader.id != id {
-            return Err(self.invariant_at_origin(
-                shader.origin,
-                "shader reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(shader)
-    }
-
-    pub(crate) fn resolved_boolean_control_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedBooleanControl, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "boolean control reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let expected_kind = match node {
-            ViewNode::Checkbox { .. } => ResolvedBooleanKind::Checkbox,
-            ViewNode::Toggler { .. } => ResolvedBooleanKind::Toggler,
-            ViewNode::Radio { .. } => ResolvedBooleanKind::Radio,
-            _ => {
-                return Err(self.invariant_at_origin(
-                    checked.origin,
-                    "non-boolean node requested boolean HIR",
-                ));
-            }
-        };
-        let control = self.boolean_controls.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "boolean control reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || control.id != id || control.kind != expected_kind {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "boolean control HIR identity or kind diverged",
-            ));
-        }
-        Ok(control)
-    }
-
-    pub(crate) fn resolved_pick_list_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedPickList, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "pick list reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "pick list reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.pick_lists.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "pick list reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_slider_for(&self, node: &ViewNode) -> Result<&ResolvedSlider, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "slider reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "slider reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.sliders.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "slider reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_combo_box_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedComboBox, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "combo box reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "combo box reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.combo_boxes.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "combo box reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_progress_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedProgress, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "progress reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "progress reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.progresses.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "progress reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_rule_for(&self, node: &ViewNode) -> Result<&ResolvedRule, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "rule reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "rule reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.rules.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "rule reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_qr_code_for(&self, node: &ViewNode) -> Result<&ResolvedQrCode, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "qr reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "qr reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.qr_codes.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "qr reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_space_for(&self, node: &ViewNode) -> Result<&ResolvedSpace, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "space reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "space reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.spaces.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "space reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_media_for(&self, node: &ViewNode) -> Result<&ResolvedMedia, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "media reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "media reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.media.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "media reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_overlay_for(&self, node: &ViewNode) -> Result<&ResolvedOverlay, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "overlay reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "overlay reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.overlays.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "overlay reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_tooltip_for(&self, node: &ViewNode) -> Result<&ResolvedTooltip, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "tooltip reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "tooltip reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.tooltips.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "tooltip reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_mouse_area_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedMouseArea, Error> {
-        let (origin, interaction) = self.resolved_interaction_for(node, "mouse area")?;
-        let ResolvedInteractionWidget::MouseArea(mouse) = interaction else {
-            return Err(self.invariant_at_origin(
-                origin,
-                "mouse area reached code generation with the wrong normalized kind",
-            ));
-        };
-        Ok(mouse)
-    }
-
-    pub(crate) fn resolved_resize_handle_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedResizeHandle, Error> {
-        let (origin, interaction) = self.resolved_interaction_for(node, "resize handle")?;
-        let ResolvedInteractionWidget::ResizeHandle(handle) = interaction else {
-            return Err(self.invariant_at_origin(
-                origin,
-                "resize handle reached code generation with the wrong normalized kind",
-            ));
-        };
-        Ok(handle)
-    }
-
-    pub(crate) fn resolved_sensor_for(&self, node: &ViewNode) -> Result<&ResolvedSensor, Error> {
-        let (origin, interaction) = self.resolved_interaction_for(node, "sensor")?;
-        let ResolvedInteractionWidget::Sensor(sensor) = interaction else {
-            return Err(self.invariant_at_origin(
-                origin,
-                "sensor reached code generation with the wrong normalized kind",
-            ));
-        };
-        Ok(sensor)
-    }
-
-    pub(crate) fn resolved_float_for(&self, node: &ViewNode) -> Result<&ResolvedFloat, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "float reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "float reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.floats.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "float reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_pin_for(&self, node: &ViewNode) -> Result<&ResolvedPin, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "pin reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "pin reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.pins.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "pin reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_responsive_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedResponsive, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "responsive reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "responsive reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.responsives.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "responsive reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_lazy_for(&self, node: &ViewNode) -> Result<&ResolvedLazy, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "lazy reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "lazy reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.lazy_views.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "lazy reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_keyed_column_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedKeyedColumn, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "keyed column reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "keyed column reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.keyed_columns.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "keyed column reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_table_for(&self, node: &ViewNode) -> Result<&ResolvedTable, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "table reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "table reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.tables.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "table reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_pane_grid_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedPaneGrid, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "pane grid reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "pane grid reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.pane_grids.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "pane grid reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_conditional_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedConditional, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "if view reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "if view reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.conditionals.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "if view reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_iteration_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedIteration, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "for view reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "for view reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.iterations.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "for view reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    pub(crate) fn resolved_match_for(&self, node: &ViewNode) -> Result<&ResolvedMatch, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "match view reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                "match view reached code generation with a mismatched checked view ID",
-            ));
-        }
-        self.match_views.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "match view reached code generation without normalized HIR",
-            )
-        })
-    }
-
-    fn resolved_interaction_for(
-        &self,
-        node: &ViewNode,
-        family: &str,
-    ) -> Result<(OriginId, &ResolvedInteractionWidget), Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                format!("{family} reached code generation without a shared view ID"),
-            )
-        })?;
-        let checked = self.facts.view(id);
-        if checked.id != id {
-            return Err(self.invariant_at_origin(
-                checked.origin,
-                format!("{family} reached code generation with a mismatched checked view ID"),
-            ));
-        }
-        let interaction = self.interaction_widgets.get(&id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                format!("{family} reached code generation without normalized HIR"),
-            )
-        })?;
-        Ok((checked.origin, interaction))
-    }
-
-    pub(crate) fn test_mount(&self, id: TestId) -> Option<&ViewNode> {
-        self.test_mounts.get(&id)
+    pub(crate) fn test_mount(&self, id: TestId) -> Option<ViewId> {
+        self.test_mounts.get(&id).copied()
     }
 
     pub(crate) fn preset_names(&self) -> &[String] {
@@ -4223,6 +3383,7 @@ impl LoweredProgram {
         self.named_type_rust_paths.get(&id).map(String::as_str)
     }
 
+    #[cfg(test)]
     pub(crate) fn declarations(&self) -> &DeclarationIndex {
         &self.declarations
     }
@@ -4246,16 +3407,14 @@ impl LoweredProgram {
                     state.id == binding.state && state.name == binding.name && state.ty == Type::Str
                 })
                 .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        self.document.view.span(),
+                    self.invariant_at_origin(
+                        self.settings.origin,
                         "controlled input binding does not match its normalized app state",
                     )
                 })?;
             if !seen.insert(state.id) {
-                return Err(Error::new(
-                    "E196",
-                    self.document.view.span(),
+                return Err(self.invariant_at_origin(
+                    self.settings.origin,
                     "controlled input binding is duplicated in normalized HIR",
                 ));
             }
@@ -4272,9 +3431,8 @@ impl LoweredProgram {
         for binding in &self.controlled_editors {
             let state = self.validate_controlled_editor_binding(binding)?;
             if !seen.insert(state.id) {
-                return Err(Error::new(
-                    "E196",
-                    self.document.view.span(),
+                return Err(self.invariant_at_origin(
+                    self.settings.origin,
                     "controlled editor binding is duplicated in normalized HIR",
                 ));
             }
@@ -4293,9 +3451,8 @@ impl LoweredProgram {
             .and_then(|index| self.controlled_editors.get(*index))
             .filter(|binding| binding.name == name)
             .ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    self.document.view.span(),
+                self.invariant_at_origin(
+                    self.settings.origin,
                     "normalized editor is absent from the controlled binding index",
                 )
             })?;
@@ -4314,9 +3471,8 @@ impl LoweredProgram {
                 state.id == binding.state && state.name == binding.name && state.ty == Type::Editor
             })
             .ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    self.document.view.span(),
+                self.invariant_at_origin(
+                    self.settings.origin,
                     "controlled editor binding does not match its normalized app state",
                 )
             })?;
@@ -4325,9 +3481,8 @@ impl LoweredProgram {
                 .try_extern_decl(action)
                 .filter(|function| function.kind == ExternKind::EditorAction)
                 .ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        self.document.view.span(),
+                    self.invariant_at_origin(
+                        self.settings.origin,
                         "controlled editor action does not match its normalized extern",
                     )
                 })?;
@@ -4367,35 +3522,96 @@ impl LoweredProgram {
         &self,
         call: &ComponentCall,
         index: usize,
-        event: ComponentEventId,
-        name: &str,
-        payloads: &[Type],
-        origin: OriginId,
     ) -> Result<(), Error> {
-        let checked_routes = self.facts.component_call_routes(call.id).ok_or_else(|| {
-            self.invariant_at_origin(
-                call.origin,
-                "lowered component call has no checked event routes",
-            )
-        })?;
-        let checked = checked_routes.events.get(index).ok_or_else(|| {
+        let resolved = call.events.get(index).ok_or_else(|| {
             self.invariant_at_origin(
                 call.origin,
                 "lowered component call has an unmatched event route",
             )
         })?;
-        if checked_routes.call != call.id
-            || checked_routes.component != call.component
-            || checked_routes.events.len() != call.events.len()
+        let (route_index, event, name, payloads, origin) = match resolved {
+            ResolvedEventRoute::Direct {
+                route_index,
+                event,
+                name,
+                payloads,
+                origin,
+                ..
+            }
+            | ResolvedEventRoute::Forward {
+                route_index,
+                event,
+                name,
+                payloads,
+                origin,
+                ..
+            } => (*route_index, *event, name, payloads, *origin),
+        };
+        let origin_is_valid = self
+            .origins
+            .try_get(origin)
+            .is_some_and(|resolved| resolved.parent == Some(call.origin));
+        let forward_is_valid = match resolved {
+            ResolvedEventRoute::Direct { .. } => true,
+            ResolvedEventRoute::Forward {
+                outer_component,
+                outer_component_name,
+                outer_event,
+                outer_event_name,
+                outer_payloads,
+                ..
+            } => self
+                .try_component(*outer_component)
+                .is_some_and(|component| {
+                    component.id == *outer_component
+                        && component.name == *outer_component_name
+                        && outer_event.component == *outer_component
+                        && outer_event_name == name
+                        && outer_payloads == payloads
+                        && self.component_event_matches(
+                            *outer_event,
+                            outer_event_name,
+                            outer_payloads,
+                        )
+                }),
+        };
+        if route_index as usize != index
             || event.component != call.component
-            || checked.event != event
-            || checked.name != name
-            || checked.payloads != payloads
-            || checked.origin != origin
+            || !origin_is_valid
+            || !forward_is_valid
             || !self.component_event_matches(event, name, payloads)
         {
+            let diagnostic_origin = if route_index as usize != index {
+                call.events
+                    .iter()
+                    .find_map(|candidate| match candidate {
+                        ResolvedEventRoute::Direct {
+                            route_index,
+                            origin,
+                            ..
+                        }
+                        | ResolvedEventRoute::Forward {
+                            route_index,
+                            origin,
+                            ..
+                        } if *route_index as usize == index => Some(*origin),
+                        ResolvedEventRoute::Direct { .. } | ResolvedEventRoute::Forward { .. } => {
+                            None
+                        }
+                    })
+                    .filter(|origin| {
+                        self.origins
+                            .try_get(*origin)
+                            .is_some_and(|resolved| resolved.parent == Some(call.origin))
+                    })
+                    .unwrap_or(if origin_is_valid { origin } else { call.origin })
+            } else if origin_is_valid {
+                origin
+            } else {
+                call.origin
+            };
             return Err(self.invariant_at_origin(
-                checked.origin,
+                diagnostic_origin,
                 format!("lowered component event `{name}` has an invalid callee contract"),
             ));
         }
@@ -4460,86 +3676,19 @@ impl LoweredProgram {
             })
     }
 
-    pub(crate) fn component_call(&self, span: &Span) -> Result<&ComponentCall, Error> {
-        let site = CallSite {
-            line: span.line,
-            column: span.column,
-        };
-        let id = self.calls_by_site.get(&site).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "component call reached code generation without a lowered call",
-            )
-        })?;
-        self.calls.get(id.0 as usize).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "component call references an invalid lowered call ID",
-            )
-        })
-    }
-
-    pub(crate) fn checked_view(&self, span: &Span) -> Result<&crate::check::CheckedView, Error> {
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "view reached code generation without a shared view ID",
-            )
-        })?;
-        let view = self.facts.view(id);
-        if view.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
-                "view reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(view)
-    }
-
-    pub(crate) fn validate_checked_view(&self, node: &ViewNode) -> Result<(), Error> {
-        let span = node.span();
-        let view = self.checked_view(span)?;
-        let id = view.id;
-        if view.kind != crate::hir::view_kind(node) {
-            return Err(Error::new(
-                "E196",
-                span,
-                "raw view kind diverged from its checked topology",
-            ));
-        }
-        let children = crate::hir::view_children(node)
-            .into_iter()
-            .map(|child| {
-                self.declarations.view_id(child.span()).ok_or_else(|| {
-                    Error::new(
-                        "E196",
-                        child.span(),
-                        "raw view child has no shared checked ID",
-                    )
-                })
+    pub(crate) fn component_call_by_id(
+        &self,
+        id: ComponentCallId,
+    ) -> Result<&ComponentCall, Error> {
+        self.calls
+            .get(id.0 as usize)
+            .filter(|call| call.id == id)
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    OriginId(u32::MAX),
+                    "component call ID is outside its canonical arena",
+                )
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        if children != view.children {
-            return Err(Error::new(
-                "E196",
-                span,
-                "raw view children diverged from its checked topology",
-            ));
-        }
-        for child in &children {
-            if self.facts.view(*child).parent != Some(id) {
-                return Err(Error::new(
-                    "E196",
-                    span,
-                    "checked view child has a mismatched parent",
-                ));
-            }
-        }
-        Ok(())
     }
 
     #[cfg(test)]
@@ -4554,34 +3703,6 @@ impl LoweredProgram {
     #[cfg(test)]
     pub(crate) fn nested_theme(&self, id: ViewId) -> Option<&ResolvedNestedTheme> {
         self.styles.nested_theme(id)
-    }
-
-    pub(crate) fn resolved_nested_theme_for(
-        &self,
-        node: &ViewNode,
-    ) -> Result<&ResolvedNestedTheme, Error> {
-        let span = node.span();
-        let id = self.declarations.view_id(span).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
-                "nested theme reached code generation without a shared view ID",
-            )
-        })?;
-        let checked = self.facts.view(id);
-        let theme = self.styles.nested_theme(id).ok_or_else(|| {
-            self.invariant_at_origin(
-                checked.origin,
-                "nested theme reached code generation without normalized HIR",
-            )
-        })?;
-        if checked.id != id || theme.id != id {
-            return Err(self.invariant_at_origin(
-                theme.origin,
-                "nested theme reached code generation with a mismatched checked view ID",
-            ));
-        }
-        Ok(theme)
     }
 
     pub(crate) fn extern_function(&self, id: ExternFnId) -> &crate::hir::ExternDeclaration {
@@ -4658,6 +3779,7 @@ pub(crate) struct Lowerer {
     tables: HashMap<ViewId, ResolvedTable>,
     pane_grids: HashMap<ViewId, ResolvedPaneGrid>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
+    views: Vec<ResolvedView>,
 }
 
 #[derive(Default)]
@@ -5418,10 +4540,12 @@ impl Lowerer {
             tables: HashMap::new(),
             pane_grids: HashMap::new(),
             interaction_widgets: HashMap::new(),
+            views: Vec::new(),
         }
     }
 
     fn lower(mut self) -> Result<LoweredProgram, Error> {
+        self.validate_checked_view_topology()?;
         if let Err((origin, message)) = self.facts.validate_expression_arena() {
             return Err(self.invariant_at_origin(origin, message));
         }
@@ -5442,15 +4566,20 @@ impl Lowerer {
         self.lower_handlers()?;
         let tests = self.lower_tests()?;
         let component_roots = self
+            .document
             .components
             .iter()
-            .map(|component| (component.id, component.root.clone()))
+            .enumerate()
+            .map(|(index, component)| (ComponentId(index as u32), component.root.clone()))
             .collect::<Vec<_>>();
         for (component, root) in component_roots {
             self.lower_view(&root, Some(component))?;
         }
         let app_view = self.document.view.clone();
         self.lower_view(&app_view, None)?;
+        let app_view_id = self.declarations.view_id(app_view.span()).ok_or_else(|| {
+            self.invariant(app_view.span(), "application root has no shared view ID")
+        })?;
         let mounts = self
             .document
             .tests
@@ -5535,9 +4664,11 @@ impl Lowerer {
             .iter()
             .enumerate()
             .filter_map(|(index, test)| {
-                test.mount
-                    .clone()
-                    .map(|mount| (TestId(index as u32), mount))
+                test.mount.as_ref().and_then(|mount| {
+                    self.declarations
+                        .view_id(mount.span())
+                        .map(|view| (TestId(index as u32), view))
+                })
             })
             .collect();
         let preset_names = self
@@ -5546,8 +4677,13 @@ impl Lowerer {
             .iter()
             .map(|preset| preset.name.clone())
             .collect();
+        let expressions = ResolvedExpressionProgram::from_checked(&self.facts, &self.declarations);
         Ok(LoweredProgram {
+            #[cfg(test)]
             document: self.document,
+            app_view: app_view_id,
+            expressions,
+            #[cfg(test)]
             facts: self.facts,
             declarations: self.declarations,
             settings,
@@ -5590,6 +4726,7 @@ impl Lowerer {
             tables: self.tables,
             pane_grids: self.pane_grids,
             interaction_widgets: self.interaction_widgets,
+            views: self.views,
             test_mounts,
             preset_names,
             named_type_rust_paths,
@@ -7678,16 +6815,79 @@ impl Lowerer {
                     }
                 })
                 .collect();
-            let slots: Vec<ComponentSlotContract> = declared_slots(&component.root)
-                .into_iter()
-                .enumerate()
-                .map(|(index, (name, optional, _span))| ComponentSlotContract {
-                    id: self.declarations.component_slot(id, index).id,
-                    name,
-                    optional,
-                    origin: self.declarations.component_slot(id, index).origin,
-                })
-                .collect();
+            let checked_slots = self.facts.component_slots(id).ok_or_else(|| {
+                self.invariant(&component.span, "component has no checked slot partition")
+            })?;
+            let declared_slot_count =
+                self.declarations.component_slot_count(id).ok_or_else(|| {
+                    self.invariant(
+                        &component.span,
+                        "component slot declaration arena is missing",
+                    )
+                })?;
+            if checked_slots.len() != declared_slot_count {
+                return Err(self.invariant_at_origin(
+                    origin,
+                    "checked component slot cardinality diverged from declarations",
+                ));
+            }
+            let mut slots = Vec::with_capacity(checked_slots.len());
+            for (index, checked) in checked_slots.iter().enumerate() {
+                let expected_id = ComponentSlotId {
+                    component: id,
+                    index: index as u32,
+                };
+                let declaration = self
+                    .declarations
+                    .try_component_slot(expected_id)
+                    .ok_or_else(|| {
+                        self.invariant_at_origin(origin, "component slot declaration is missing")
+                    })?;
+                let authoritative_origin = declaration.origin;
+                let expected_view = self
+                    .declarations
+                    .component_slot_view(expected_id)
+                    .ok_or_else(|| {
+                        self.invariant_at_origin(
+                            authoritative_origin,
+                            "component slot has no stable view declaration",
+                        )
+                    })?;
+                let retained_origin =
+                    self.origins.try_get(authoritative_origin).ok_or_else(|| {
+                        self.invariant_at_origin(origin, "component slot origin is invalid")
+                    })?;
+                let checked_view = self.facts.try_view(expected_view).ok_or_else(|| {
+                    self.invariant_at_origin(
+                        authoritative_origin,
+                        "checked component slot has no checked view",
+                    )
+                })?;
+                if checked.id != expected_id
+                    || declaration.id != checked.id
+                    || checked.origin != authoritative_origin
+                    || checked.view != expected_view
+                    || retained_origin.parent != Some(origin)
+                    || checked_view.scope != CheckedViewScope::Component(id)
+                    || checked_view.kind != "slot"
+                    || checked_view.origin != self.declarations.view(expected_view).origin
+                    || self
+                        .facts
+                        .component_slot_for_view(expected_view)
+                        .is_none_or(|slot| slot.id != expected_id || slot.view != expected_view)
+                {
+                    return Err(self.invariant_at_origin(
+                        authoritative_origin,
+                        "checked component slot association is inconsistent",
+                    ));
+                }
+                slots.push(ComponentSlotContract {
+                    id: checked.id,
+                    name: checked.name.clone(),
+                    optional: checked.optional,
+                    origin: checked.origin,
+                });
+            }
             let states = component
                 .states
                 .iter()
@@ -7723,11 +6923,24 @@ impl Lowerer {
                 .enumerate()
                 .map(|(index, event)| (event.name.clone(), index))
                 .collect();
-            let slots_by_name = slots
-                .iter()
-                .enumerate()
-                .map(|(index, slot)| (slot.name.clone(), index))
-                .collect();
+            let mut slots_by_name = HashMap::with_capacity(slots.len());
+            for (index, slot) in slots.iter().enumerate() {
+                if slots_by_name.insert(slot.name.clone(), index).is_some() {
+                    return Err(self.invariant_at_origin(
+                        slot.origin,
+                        "checked component slot name is duplicated",
+                    ));
+                }
+            }
+            let root = self
+                .declarations
+                .view_id(component.root.span())
+                .ok_or_else(|| {
+                    self.invariant(
+                        component.root.span(),
+                        "component root has no shared view ID",
+                    )
+                })?;
             self.components.push(ComponentContract {
                 id,
                 name: component.name,
@@ -7737,7 +6950,7 @@ impl Lowerer {
                 slots,
                 states,
                 handlers: Vec::new(),
-                root: component.root,
+                root,
                 storage,
                 origin,
             });
@@ -9313,6 +8526,7 @@ impl Lowerer {
         node: &ViewNode,
         outer_component: Option<ComponentId>,
     ) -> Result<(), Error> {
+        self.lower_view_topology(node, outer_component)?;
         self.lower_view_style(node)?;
         match node {
             ViewNode::Media {
@@ -9458,6 +8672,13 @@ impl Lowerer {
                 for slot in slots {
                     self.lower_view(&slot.content, outer_component)?;
                 }
+            }
+            ViewNode::Slot {
+                name,
+                optional,
+                span,
+            } => {
+                self.lower_component_slot(name, *optional, span, outer_component)?;
             }
             ViewNode::If {
                 condition,
@@ -9850,7 +9071,42 @@ impl Lowerer {
                     self.lower_view(&column.cell, outer_component)?;
                 }
             }
-            _ => {}
+        }
+        Ok(())
+    }
+
+    fn lower_component_slot(
+        &self,
+        name: &str,
+        optional: bool,
+        span: &Span,
+        outer_component: Option<ComponentId>,
+    ) -> Result<(), Error> {
+        let component = outer_component
+            .ok_or_else(|| self.invariant(span, "component slot is outside a component"))?;
+        let view = self
+            .declarations
+            .view_id(span)
+            .ok_or_else(|| self.invariant(span, "component slot has no shared view ID"))?;
+        let checked = self.facts.component_slot_for_view(view).ok_or_else(|| {
+            self.invariant(span, "component slot view has no checked slot association")
+        })?;
+        let declaration = self
+            .declarations
+            .try_component_slot(checked.id)
+            .ok_or_else(|| {
+                self.invariant_at_origin(checked.origin, "component slot declaration is missing")
+            })?;
+        if checked.id.component != component
+            || checked.view != view
+            || checked.name != name
+            || checked.optional != optional
+            || declaration.origin != checked.origin
+        {
+            return Err(self.invariant_at_origin(
+                checked.origin,
+                "component slot source diverged from its checked contract",
+            ));
         }
         Ok(())
     }
@@ -10091,10 +9347,11 @@ impl Lowerer {
         }
 
         let mut resolved_events = Vec::with_capacity(events.len());
-        for ((event, supplied), checked) in events
+        for (event_route_index, ((event, supplied), checked)) in events
             .iter()
             .zip(supplied_events)
             .zip(&checked_routes.events)
+            .enumerate()
         {
             let supplied = supplied.ok_or_else(|| {
                 self.invariant(span, format!("event `{}` has no checked route", event.name))
@@ -10147,6 +9404,7 @@ impl Lowerer {
                         &supplied.span,
                     )?;
                     resolved_events.push(ResolvedEventRoute::Direct {
+                        route_index: event_route_index as u32,
                         event: event.id,
                         name: event.name.clone(),
                         payloads: event.payloads.clone(),
@@ -10206,6 +9464,7 @@ impl Lowerer {
                         ));
                     }
                     resolved_events.push(ResolvedEventRoute::Forward {
+                        route_index: event_route_index as u32,
                         event: event.id,
                         name: event.name.clone(),
                         payloads: event.payloads.clone(),
@@ -10241,7 +9500,18 @@ impl Lowerer {
                 slot: declared.id,
                 name: declared.name.clone(),
                 optional: declared.optional,
-                content: supplied.map(|slot| (*slot.content).clone()),
+                content: supplied
+                    .map(|slot| {
+                        self.declarations
+                            .view_id(slot.content.span())
+                            .ok_or_else(|| {
+                                self.invariant(
+                                    &slot.span,
+                                    "component slot content has no shared view ID",
+                                )
+                            })
+                    })
+                    .transpose()?,
                 origin: supplied.map_or(declared.origin, |slot| {
                     self.push_origin(&slot.span, Some(origin))
                 }),
@@ -10254,10 +9524,7 @@ impl Lowerer {
                 call_site: span.line,
                 origin,
             },
-            |id| ComponentScope::Explicit {
-                id: id.clone(),
-                origin,
-            },
+            |_| ComponentScope::Explicit { origin },
         );
         if call_id.0 as usize != self.calls.len() {
             return Err(self.invariant(span, "component call arena order diverged"));
@@ -10450,84 +9717,6 @@ impl Lowerer {
         }
         error
     }
-}
-
-fn declared_slots(node: &ViewNode) -> Vec<(String, bool, Span)> {
-    fn collect(node: &ViewNode, output: &mut Vec<(String, bool, Span)>) {
-        match node {
-            ViewNode::Slot {
-                name,
-                optional,
-                span,
-            } => output.push((name.clone(), *optional, span.clone())),
-            ViewNode::Layout { children, .. }
-            | ViewNode::If { children, .. }
-            | ViewNode::For { children, .. } => {
-                for child in children {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Match { arms, .. } => {
-                for child in arms.iter().flat_map(|arm| &arm.children) {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Button {
-                content: Some(content),
-                ..
-            }
-            | ViewNode::MouseArea { content, .. }
-            | ViewNode::ResizeHandle { content, .. }
-            | ViewNode::Container { content, .. }
-            | ViewNode::Theme { content, .. }
-            | ViewNode::Float { content, .. }
-            | ViewNode::Pin { content, .. }
-            | ViewNode::Sensor { content, .. }
-            | ViewNode::KeyedColumn { child: content, .. }
-            | ViewNode::Lazy { child: content, .. } => collect(content, output),
-            ViewNode::Tooltip { content, tip, .. } => {
-                collect(content, output);
-                collect(tip, output);
-            }
-            ViewNode::Overlay { content, layer, .. } => {
-                collect(content, output);
-                collect(layer, output);
-            }
-            ViewNode::PaneGrid {
-                panes, templates, ..
-            } => {
-                for child in panes
-                    .iter()
-                    .flat_map(PaneView::nodes)
-                    .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-                {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Table { columns, .. } => {
-                for column in columns {
-                    collect(&column.header, output);
-                    collect(&column.cell, output);
-                }
-            }
-            ViewNode::Component { slots, .. } => {
-                for slot in slots {
-                    collect(&slot.content, output);
-                }
-            }
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    collect(narrow, output);
-                    collect(wide, output);
-                }
-                ResponsiveContent::Size { content, .. } => collect(content, output),
-            },
-            _ => {}
-        }
-    }
-    let mut output = Vec::new();
-    collect(node, &mut output);
-    output
 }
 
 fn valid_f32(value: f64) -> bool {
@@ -10764,7 +9953,7 @@ mod tests {
     use crate::{analyze, analyze_file};
     use std::fmt::Write as _;
     use std::fs;
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     const THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
@@ -11054,16 +10243,16 @@ view
         assert_eq!(
             handler_snapshot(&program),
             r#"h0 App mount params=[] @19:1
-  s0 task=None final=false let request CheckedLocalId(0) = CheckedExprUseId(2) @20:1
+  s0 task=None final=false let request LocalId(0) = ExpressionId(2) @20:1
   s1 task=Some(TaskId(0)) final=true run Every site=None r0 -> app h1 loaded (payload 0:i64) @21:1 error=none @21:1
-h1 App loaded params=["next:i64:CheckedLocalId(1)"] @22:1
-  s2 task=None final=true assign value:i64, value=CheckedExprUseId(4), at=None, move=false @23:1
+h1 App loaded params=["next:i64:LocalId(1)"] @22:1
+  s2 task=None final=true assign value:i64, value=ExpressionId(4), at=None, move=false @23:1
 h2 Component(ComponentId(0)) start params=[] @27:1
   s3 task=Some(TaskId(1)) final=true run Replace site=Some(RunSiteId(0)) r1 -> component c0 h3 done (payload 0:i64) @28:1 error=none @28:1
-h3 Component(ComponentId(0)) done params=["next:i64:CheckedLocalId(2)"] @29:1
-  s4 task=None final=true assign local:i64, value=CheckedExprUseId(6), at=None, move=false @30:1
+h3 Component(ComponentId(0)) done params=["next:i64:LocalId(2)"] @29:1
+  s4 task=None final=true assign local:i64, value=ExpressionId(6), at=None, move=false @30:1
 h4 Preset(0) preset seeded params=[] @16:1
-  s5 task=None final=true assign value:i64, value=CheckedExprUseId(7), at=None, move=false @18:1
+  s5 task=None final=true assign value:i64, value=ExpressionId(7), at=None, move=false @18:1
 "#
         );
     }
@@ -11110,8 +10299,8 @@ view
             "s1 task=Some(TaskId(1)) final=true sip r0 -> app h1 progressed (payload 0:f64)",
             "r1 -> app h2 downloaded (payload 0:bytes)",
             "s2 task=Some(TaskId(2)) final=true flow source=[t3 Stream Extern(ExternFnId(1))",
-            "t4 map value:i64/local=CheckedLocalId(0)",
-            "t5 then value:i64/local=CheckedLocalId(1) -> t5 Task Extern(ExternFnId(2))",
+            "t4 map value:i64/local=LocalId(0)",
+            "t5 then value:i64/local=LocalId(1) -> t5 Task Extern(ExternFnId(2))",
             "t6 collect",
             "r2 -> app h3 collected (payload 0:[i64])",
             "r3 -> app h4 planned (payload 0:i64)",
@@ -11640,7 +10829,7 @@ view
         invalid_component.components[0].id = ComponentId(u32::MAX);
         let error = crate::codegen::generate(&invalid_component, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("component identity"));
+        assert!(error.message.contains("component root view"));
     }
 
     #[test]
@@ -12147,6 +11336,72 @@ view
         let error = lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("local ID is outside its arena"));
+    }
+
+    #[test]
+    fn malformed_checked_responsive_fixed_dimension_cannot_become_static() {
+        let source = format!(
+            "app InvalidResponsiveTopology\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        for replacement in [CheckedResponsiveLength::Fill, CheckedResponsiveLength::None] {
+            let mut checked = analyze(&source).unwrap();
+            checked
+                .facts
+                .corrupt_responsive_dimension(ViewId(0), 0, replacement);
+
+            let error = lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("topology diverged"));
+        }
+    }
+
+    #[test]
+    fn malformed_checked_responsive_fill_portion_value_drift_is_rejected() {
+        let source = format!(
+            "app InvalidResponsivePortion\n{THEME}view\n  responsive at=600.0 w=fill(2) h=fill\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_responsive_dimension(
+            ViewId(0),
+            0,
+            CheckedResponsiveLength::FillPortion(3),
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_responsive_expression_cannot_be_left_unconsumed() {
+        let source = format!(
+            "app InvalidResponsiveCardinality\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .facts
+            .corrupt_responsive_expression_count(ViewId(0), 2);
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression cardinality diverged"));
+    }
+
+    #[test]
+    fn malformed_checked_responsive_cross_role_expression_is_rejected() {
+        let source = format!(
+            "app InvalidResponsiveOwner\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.facts.corrupt_responsive_dimension_expression_role(
+            ViewId(0),
+            0,
+            CheckedViewExprRole::ResponsiveHeightDimension,
+        );
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("owner cardinality diverged"));
     }
 
     #[test]
@@ -14430,6 +13685,24 @@ view
     }
 
     #[test]
+    fn view_family_hir_rejects_an_extra_cross_family_entry() {
+        let source = format!(
+            "app ExtraViewFamily\n{THEME}view\n  col\n    text \"first\"\n    text \"second\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let root = program.app_view;
+        let root_origin = program.views[root.0 as usize].origin;
+        let mut extra = program.texts.values().next().unwrap().clone();
+        extra.id = root;
+        extra.origin = root_origin;
+        assert!(program.texts.insert(root, extra).is_none());
+
+        let error = crate::codegen::generate(&program, "extra-view-family.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("text normalized HIR cardinality"));
+    }
+
+    #[test]
     fn boolean_lowering_rejects_same_type_slot_route_extern_and_id_swaps() {
         let source = format!(
             "app BooleanIdentity\nextern crate::backend\n  checkbox-style first(active:bool)\n  checkbox-style second(active:bool)\n{THEME}state\n  enabled = false\non changed(next)\n  enabled = next\nview\n  checkbox \"Checkbox\" checked=enabled style=first(enabled) size=20.0 gap=8.0 -> changed _\n"
@@ -14766,7 +14039,7 @@ view
         let expected = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
         assert!(!expected.contains("type __IceEventStream"));
         assert!(!expected.contains("fn __ice_map_editor_binding"));
-        assert!(!expected.contains("struct __IceWidgetTarget"));
+        assert_eq!(expected.matches("struct __IceWidgetTarget").count(), 1);
 
         program.document.functions[0].kind = ExternKind::EventFilter;
         let actual = crate::codegen::generate(&program, "extern-helper-poison.ice").unwrap();
@@ -17362,7 +16635,11 @@ view
         arms.remove(1);
         let error = lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("not exhaustive"));
+        assert!(
+            error
+                .message
+                .contains("children diverged from checked topology")
+        );
     }
 
     #[test]
@@ -17386,12 +16663,13 @@ view
     }
 
     #[test]
-    fn normal_and_flex_match_codegen_reject_raw_arm_child_reassignment() {
+    fn normal_and_flex_match_codegen_ignore_raw_arm_child_reassignment() {
         for layout in ["col", "flex dir=column"] {
             let source = format!(
                 "app MatchTopology\n{THEME}state\n  choice:str? = none\nview\n  {layout}\n    match choice\n      some(label)\n        text \"first\"\n        text \"second\"\n      none\n        text \"none\"\n"
             );
             let mut program = lower(analyze(&source).unwrap()).unwrap();
+            let expected = crate::codegen::generate(&program, "match-topology.ice").unwrap();
             let ViewNode::Layout { children, .. } = &mut program.document.view else {
                 panic!("fixture root must be a layout");
             };
@@ -17401,9 +16679,8 @@ view
             let moved = arms[0].children.pop().unwrap();
             arms[1].children.insert(0, moved);
 
-            let error = crate::codegen::generate(&program, "match-topology.ice").unwrap_err();
-            assert_eq!(error.code, "E196");
-            assert!(error.message.contains("normalized HIR topology"));
+            let actual = crate::codegen::generate(&program, "match-topology.ice").unwrap();
+            assert_eq!(actual, expected);
         }
     }
 
@@ -18762,6 +18039,284 @@ view
     }
 
     #[test]
+    fn component_slot_contracts_reject_post_check_source_name_and_optional_swaps() {
+        let source = format!(
+            "app ComponentSlotSourcePoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+
+        let checked = analyze(&source).unwrap();
+        let slots = checked.facts.component_slots(ComponentId(0)).unwrap();
+        assert_eq!(checked.facts.metrics().component_slots, 3);
+        assert_eq!(
+            slots
+                .iter()
+                .map(|slot| (slot.id.index, slot.name.as_str(), slot.optional))
+                .collect::<Vec<_>>(),
+            vec![(0, "First", false), (1, "Middle", true), (2, "Last", true)]
+        );
+        for slot in slots {
+            assert_eq!(checked.facts.component_slot_for_view(slot.view), Some(slot));
+        }
+        assert!(
+            checked
+                .facts
+                .structural_snapshot()
+                .contains("component-slot ComponentSlotId { component: ComponentId(0), index: 2 }")
+        );
+
+        let mut swapped_names = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut swapped_names.document.components[0].root
+        else {
+            panic!("fixture component root must be a layout");
+        };
+        let [
+            ViewNode::Slot {
+                name: first_name, ..
+            },
+            _,
+            ViewNode::Slot {
+                name: last_name, ..
+            },
+        ] = children.as_mut_slice()
+        else {
+            panic!("fixture component must contain three slots");
+        };
+        std::mem::swap(first_name, last_name);
+        let error = lower(swapped_names).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("source diverged"));
+
+        let mut flipped_last_optional = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } =
+            &mut flipped_last_optional.document.components[0].root
+        else {
+            panic!("fixture component root must be a layout");
+        };
+        let ViewNode::Slot { optional, .. } = children.last_mut().unwrap() else {
+            panic!("fixture last child must be a slot");
+        };
+        *optional = false;
+        let error = lower(flipped_last_optional).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("source diverged"));
+    }
+
+    #[test]
+    fn component_slot_contracts_reject_n_minus_one_n_plus_one_order_and_last_corruption() {
+        let source = format!(
+            "app ComponentSlotContractPoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+        let component = ComponentId(0);
+
+        let mut n_minus_one = analyze(&source).unwrap();
+        n_minus_one.facts.remove_component_slot(component, 2);
+        let error = lower(n_minus_one).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cardinality diverged"));
+
+        let mut n_plus_one = analyze(&source).unwrap();
+        n_plus_one.facts.duplicate_component_slot(component, 2);
+        let error = lower(n_plus_one).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cardinality diverged"));
+
+        let mut wrong_order = analyze(&source).unwrap();
+        wrong_order.facts.swap_component_slots(component, 0, 2);
+        let error = lower(wrong_order).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut corrupt_last = analyze(&source).unwrap();
+        corrupt_last
+            .facts
+            .corrupt_component_slot_id(component, 2, u32::MAX);
+        let error = lower(corrupt_last).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_last_origin = analyze(&source).unwrap();
+        let authoritative_last = invalid_last_origin
+            .declarations
+            .try_component_slot(ComponentSlotId {
+                component,
+                index: 2,
+            })
+            .unwrap()
+            .origin;
+        let authoritative_last_line = invalid_last_origin.origins.get(authoritative_last).line;
+        invalid_last_origin
+            .facts
+            .corrupt_component_slot_origin(component, 2, u32::MAX);
+        let error = lower(invalid_last_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+        assert_eq!(error.line, authoritative_last_line);
+    }
+
+    #[test]
+    fn component_slot_contracts_reject_stable_view_and_reverse_association_corruption() {
+        let source = format!(
+            "app ComponentSlotViewPoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+        let component = ComponentId(0);
+
+        let mut valid_view_swap = analyze(&source).unwrap();
+        valid_view_swap
+            .facts
+            .swap_component_slot_views(component, 0, 2);
+        valid_view_swap
+            .facts
+            .swap_component_slot_reverse_associations(component, 0, 2);
+        let error = lower(valid_view_swap).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_view = analyze(&source).unwrap();
+        invalid_view
+            .facts
+            .corrupt_component_slot_view(component, 2, u32::MAX);
+        let error = lower(invalid_view).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut valid_reverse_swap = analyze(&source).unwrap();
+        valid_reverse_swap
+            .facts
+            .swap_component_slot_reverse_associations(component, 0, 2);
+        let error = lower(valid_reverse_swap).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_reverse = analyze(&source).unwrap();
+        invalid_reverse
+            .facts
+            .corrupt_component_slot_reverse_association(
+                component,
+                2,
+                ComponentSlotId {
+                    component,
+                    index: u32::MAX,
+                },
+            );
+        let error = lower(invalid_reverse).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+    }
+
+    #[test]
+    fn imported_component_slot_contract_diagnostics_keep_last_slot_source_origin() {
+        let directory = tempfile::Builder::new()
+            .prefix("ui-lang-component-slot-hir-origins-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let root = directory.path().join("app.ice");
+        let imported = directory.path().join("slots.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedComponentSlots\nuse \"slots.ice\"\n{THEME}view\n  Imported\n    First:\n      text \"body\"\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component Imported()\n  col\n    slot First\n    slot Last?\n",
+        )
+        .unwrap();
+
+        let checked = analyze_file(&root).unwrap();
+        let program = lower(checked).unwrap();
+        let contract = &program.components[0];
+        assert_eq!(contract.slots.len(), 2);
+        assert_eq!(contract.slots[0].id.index, 0);
+        assert_eq!(contract.slots[1].id.index, 1);
+        assert_eq!(contract.slots[1].name, "Last");
+        assert!(contract.slots[1].optional);
+        let last_origin = program.origin(contract.slots[1].origin);
+        assert_eq!(last_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(last_origin.line, 4);
+        assert_eq!(last_origin.parent, Some(contract.origin));
+
+        let mut sibling_origin = analyze_file(&root).unwrap();
+        sibling_origin
+            .facts
+            .swap_component_slot_origins(ComponentId(0), 0, 1);
+        let error = lower(sibling_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_origin = analyze_file(&root).unwrap();
+        invalid_origin
+            .facts
+            .corrupt_component_slot_origin(ComponentId(0), 1, u32::MAX);
+        let error = lower(invalid_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+        assert_eq!(error.column, 1);
+
+        let mut poisoned = analyze_file(&root).unwrap();
+        let ViewNode::Layout { children, .. } = &mut poisoned.document.components[0].root else {
+            panic!("fixture component root must be a layout");
+        };
+        let ViewNode::Slot { optional, .. } = children.last_mut().unwrap() else {
+            panic!("fixture last child must be a slot");
+        };
+        *optional = false;
+        let error = lower(poisoned).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+        assert_eq!(error.column, 1);
+    }
+
+    #[test]
+    #[ignore = "large checked component-slot association and lowering performance contract"]
+    fn performance_contract_four_thousand_component_slots_stay_linear() {
+        const SLOTS: usize = 4_000;
+        let mut source = format!("app ComponentSlotScale\n{THEME}component Wide()\n  col\n");
+        for index in 0..SLOTS {
+            writeln!(source, "    slot Slot{index}?").unwrap();
+        }
+        source.push_str("view\n  Wide\n");
+
+        let checker_started = Instant::now();
+        let checked = analyze(&source).unwrap();
+        let checker_elapsed = checker_started.elapsed();
+        let slot_index_elapsed = checked.facts.component_slot_index_elapsed();
+        assert_eq!(checked.facts.metrics().component_slots, SLOTS);
+        assert_eq!(checked.facts.metrics().component_slot_index_visits, SLOTS);
+        assert!(
+            slot_index_elapsed < Duration::from_millis(250),
+            "4k component slots indexed into checked HIR in {slot_index_elapsed:?}"
+        );
+        assert!(
+            checker_elapsed < Duration::from_secs(2),
+            "4k component slots checked in {checker_elapsed:?}"
+        );
+        checked.facts.reset_lookup_count();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.components[0].slots.len(), SLOTS);
+        assert_eq!(program.calls[0].slots.len(), SLOTS);
+        let lookups = program.checked_facts().lookup_count();
+        assert!(
+            lookups <= SLOTS * 8 + 100,
+            "4k component slots required {lookups} checked-HIR lookups"
+        );
+        eprintln!(
+            "4k component slots indexed in {slot_index_elapsed:?}, checked in {checker_elapsed:?}, and lowered with {lookups} lookups in {elapsed:?}"
+        );
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k checked component slots lowered in {elapsed:?}"
+        );
+    }
+
+    #[test]
     fn component_call_routes_ignore_dynamic_and_post_lowering_raw_poison() {
         let source = format!(
             "app ComponentRoutePoison\n{THEME}state\n  suffix = \"checked\"\non accepted(value)\n  suffix = value\non observed(label, count)\n  suffix = label\ncomponent Routed() -> str\n  emits\n    changed(str, i64)\n  col\n    button \"Output\" -> emit(\"output\")\n    button \"Event\" -> emit(changed, \"event\", 1)\nview\n  Routed -> accepted suffix\n    events\n      changed -> observed suffix _\n"
@@ -19191,7 +18746,9 @@ view
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("invalid callee contract"));
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
-        assert_eq!(error.line, 12);
+        // A corrupted event-origin ID cannot map itself, so the normalized
+        // call origin is the stable source-mapped fallback.
+        assert_eq!(error.line, 10);
         assert_eq!(error.column, 1);
 
         let mut invalid_callee_name = lower(analyze_file(&root).unwrap()).unwrap();
@@ -19515,10 +19072,10 @@ view
         );
         assert_eq!(
             snapshot,
-            "app AppStateId(0) progress Animation(F64) use=CheckedExprUseId(0) ValueToAnimation { value: F64 } line=15 animation=Some(ResolvedAnimation { easing: Some(Custom(ExternFnId(0))), duration: Some(Milliseconds(120)), delay_ms: Some(5), repeat: Some(2), repeat_forever: false, auto_reverse: true })\n\
-             derived DerivedId(0) total F64 use=CheckedExprUseId(1) None line=22\n\
-             default ComponentParamId { component: ComponentId(0), index: 0 } label Str use=CheckedExprUseId(2) None line=23\n\
-             component-state ComponentStateId { component: ComponentId(0), index: 0 } open Bool use=CheckedExprUseId(3) None line=25 animation=None\n"
+            "app AppStateId(0) progress Animation(F64) use=ExpressionId(0) ValueToAnimation { value: F64 } line=15 animation=Some(ResolvedAnimation { easing: Some(Custom(ExternFnId(0))), duration: Some(Milliseconds(120)), delay_ms: Some(5), repeat: Some(2), repeat_forever: false, auto_reverse: true })\n\
+             derived DerivedId(0) total F64 use=ExpressionId(1) None line=22\n\
+             default ComponentParamId { component: ComponentId(0), index: 0 } label Str use=ExpressionId(2) None line=23\n\
+             component-state ComponentStateId { component: ComponentId(0), index: 0 } open Bool use=ExpressionId(3) None line=25 animation=None\n"
         );
 
         let generated = crate::codegen::generate(&program, "initializers.ice").unwrap();
@@ -20098,7 +19655,11 @@ view
                 .sum::<usize>(),
             CALLS * (1 + DEFAULT_PARAMS + EVENTS + SLOTS)
         );
-        let ViewNode::Layout { children, .. } = &program.components[0].root else {
+        let ResolvedViewKind::Layout { children } = &program
+            .resolved_view(program.components[0].root)
+            .unwrap()
+            .kind
+        else {
             panic!("wide component root must remain a layout");
         };
         assert_eq!(children.len(), BODY_NODES + SLOTS + 1);
