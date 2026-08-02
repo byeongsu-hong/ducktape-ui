@@ -266,6 +266,15 @@ impl FixedRowScroll {
         self.set_offset(offset, item_count, rows, true)
     }
 
+    pub(crate) fn scroll_to_end(&mut self, item_count: usize, rows: FixedRows) -> bool {
+        self.set_offset(
+            rows.max_offset(item_count, self.viewport_height),
+            item_count,
+            rows,
+            true,
+        )
+    }
+
     fn set_offset(
         &mut self,
         offset: f32,

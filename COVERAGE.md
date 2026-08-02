@@ -373,6 +373,20 @@ row subtree before accepting the first frame. V1 explicitly excludes
 variable-height measurement, scrolling-ancestor touch transforms, and new Ice
 syntax.
 
+Fixed-height `LogTimeline` composes that exact `VirtualListState` boundary
+under the existing runtime `virtual-list` feature. Focused tests cover default
+tail following, exact live-edge synchronization, pause after upward native
+scroll and historical keyboard navigation, explicit-only resume, saturating
+unread append accounting, stable selectors across append, typed-key scrolling,
+atomic duplicate/history rejection, explicit stream replacement, and bounded
+headless windows for 100,000 caller-owned rows. A separate ignored release
+contract measures a 100,000-row prefix validation, keyed reconciliation,
+single-row append, and inspection with p50/p95 time and allocation budgets.
+The Ducktape wrapper has a minimal-feature import/build test and inherits the
+runtime list's mounted-only AccessKit collection/item contract. This is not a
+second transcript scroller: unlike variable-height `MessageScroller`, it has
+no measurement, message anchors, prepend restoration, or built-in jump control.
+
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component
 state, parameters, or extern calls; bind and mutable component-only values

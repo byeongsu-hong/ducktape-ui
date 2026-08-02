@@ -70,6 +70,8 @@ pub mod item;
 pub mod kbd;
 #[cfg(feature = "label")]
 pub mod label;
+#[cfg(feature = "log-timeline")]
+pub mod log_timeline;
 #[cfg(feature = "marker")]
 pub mod marker;
 #[cfg(feature = "menu")]

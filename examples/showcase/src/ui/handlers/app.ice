@@ -164,6 +164,15 @@ on message_scroller_applied(next)
 on virtual_list_changed(event)
   virtual_list = virtual_list_apply(virtual_list, event)
 
+on log_timeline_changed(event)
+  log_timeline = log_timeline_apply(log_timeline, event)
+
+on append_log
+  log_timeline = log_timeline_append(log_timeline)
+
+on resume_log_tail
+  log_timeline = log_timeline_resume(log_timeline)
+
 on native_popover_changed(event)
   task popover_apply(event) -> native_popover_applied _
 

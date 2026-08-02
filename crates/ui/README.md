@@ -64,6 +64,14 @@ application-owned typed extern. Give the extern slot a bounded height outside
 any vertical scrollable ancestor; the retained list owns vertical scrolling.
 This is intentionally a runtime widget, not new Core syntax.
 
+Append-only build output, agent traces, and service logs use the feature-gated
+[`LogTimeline`](docs/log-timeline.md). It composes `VirtualListState` for the
+same bounded fixed-row rendering, stable keys, selection, keyboard, headless,
+and AccessKit behavior, then adds default tail-follow, pause-on-history
+navigation, unread append counts, and explicit resume. It does not replace
+`MessageScroller`: transcripts retain variable-height measurement, message
+anchors, prepend restoration, and jump-control behavior.
+
 ## Rust library quick start
 
 Each component remains individually feature-gated, and enabling one also enables its internal component dependencies.

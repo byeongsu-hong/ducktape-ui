@@ -20,6 +20,8 @@ extern crate::adapters
   MenubarEvent()
   MessageScrollerState()
   MessageScrollerEvent()
+  LogTimelineState()
+  LogTimelineEvent()
   VirtualListState()
   VirtualListEvent()
   DropdownMenuState()
@@ -91,6 +93,11 @@ extern crate::adapters
   task message_scroller_bootstrap(state:MessageScrollerState) -> MessageScrollerState
   task message_scroller_apply(state:MessageScrollerState, event:MessageScrollerEvent) -> MessageScrollerState
   component message_scroller(state:&MessageScrollerState) -> MessageScrollerEvent
+  sync log_timeline_state() -> LogTimelineState
+  sync log_timeline_apply(state:LogTimelineState, event:LogTimelineEvent) -> LogTimelineState
+  sync log_timeline_append(state:LogTimelineState) -> LogTimelineState
+  sync log_timeline_resume(state:LogTimelineState) -> LogTimelineState
+  component log_timeline(state:&LogTimelineState) -> LogTimelineEvent
   sync virtual_list_state() -> VirtualListState
   sync virtual_list_apply(state:VirtualListState, event:VirtualListEvent) -> VirtualListState
   component virtual_list(state:&VirtualListState) -> VirtualListEvent
