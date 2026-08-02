@@ -61,13 +61,23 @@ view
                 title="Ice is the source of truth"
                 description="Layout, state, routes, styles, and accessibility are generated from .ice files."
 
-            VirtualList.Frame #virtual-list-panel
-              with
-                title="Virtual list"
-                description="A typed Rust boundary mounts only visible fixed-height keyed rows; Ice owns the state and event route."
-                count=100000
-              box w=fill h=96.0
-                extern virtual_list(virtual_list) #virtual-list -> virtual_list_changed _
+            row w=fill gap=12.0
+              box w=fill
+                VirtualList.Frame #virtual-list-panel
+                  with
+                    title="Virtual list"
+                    description="Only visible fixed-height keyed rows cross the typed boundary."
+                    count=100000
+                  box w=fill h=96.0
+                    extern virtual_list(virtual_list) #virtual-list -> virtual_list_changed _
+              box w=fill
+                TreeView.Frame #tree-view-panel
+                  with
+                    title="Tree view"
+                    description="Hierarchy, expansion, rename, and tree semantics stay retained."
+                    count=100000
+                  box w=fill h=96.0
+                    extern tree_view(tree_view) #tree-view -> tree_view_changed _
 
           scroll #catalog-scroll
             with
