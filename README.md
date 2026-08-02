@@ -406,7 +406,12 @@ The showcase also renders 100,000 logical rows through the fixed-height
 are materialized; the Ice view owns a typed extern state/event route and uses
 the shared `VirtualList.Frame` composition. The list sits in a bounded fixed
 region and owns its vertical scrolling; the catalog below it has a separate
-vertical scrollable. No `virtual-for` or other Core syntax is involved.
+vertical scrollable. The adjacent fixed-height
+[`TreeView`](crates/ui/docs/tree-view.md) uses the same collection engine for
+100,000 preorder nodes while retaining keyed expansion, hierarchical keyboard
+movement, lazy-load requests, rename state, drag targets, and native Tree/
+TreeItem semantics. No `virtual-for`, `tree-for`, or other Core syntax is
+involved.
 
 ```ice
 test counter_contract
@@ -717,6 +722,10 @@ and failed roots remain tracked so creating or repairing a dependency retries
 the owning root. It also exposes per-session counters for files and bytes
 loaded and hashed, files scanned for imports, roots checked/reused, symbols
 indexed, codegen roots, and load/check/codegen elapsed time.
+`cargo ice dev` also passes the final watcher-stabilized bytes for notified Ice
+files into the DB. Reanalysis scans those files once and reuses every unchanged
+parsed file in the retained import closure instead of reading and hashing the
+whole affected graph again.
 
 The cache lifetime is explicit: the LSP owns one DB for its server lifetime,
 `cargo ice dev` owns one for its rebuild loop, `cargo ice check` owns one for a
