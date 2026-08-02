@@ -8,6 +8,7 @@ mod format;
 mod hir;
 mod lower;
 mod parser;
+mod semantic;
 mod source;
 #[cfg(test)]
 mod test_support;
@@ -23,6 +24,7 @@ pub use editor::{
     editor_block_end, editor_component_name, editor_first_word, editor_indentation,
 };
 pub use format::{format_fragment, format_source};
+pub use semantic::*;
 pub use source::{
     FileAnalysis, FileCompilation, analyze_file, analyze_file_graph, analyze_file_with_overlays,
     analyze_file_with_source, compile_file, discover_file_asset_dependencies,
@@ -31,7 +33,6 @@ pub use source::{
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
-use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
@@ -44,6 +45,14 @@ pub struct CheckedDocument {
     warnings: Vec<Warning>,
     reachable_components: HashSet<String>,
     reachable_handlers: HashSet<String>,
+    controlled_inputs: Vec<hir::AppStateId>,
+    controlled_editors: Vec<CheckedControlledEditor>,
+}
+
+#[derive(Clone, Debug)]
+struct CheckedControlledEditor {
+    state: hir::AppStateId,
+    action: Option<hir::ExternFnId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -139,6 +148,7 @@ pub struct CheckedSymbol {
 }
 
 impl CheckedDocument {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         document: Document,
         facts: check::CheckedFacts,
@@ -147,6 +157,8 @@ impl CheckedDocument {
         warnings: Vec<Warning>,
         reachable_components: HashSet<String>,
         reachable_handlers: HashSet<String>,
+        controlled_inputs: Vec<hir::AppStateId>,
+        controlled_editors: Vec<CheckedControlledEditor>,
     ) -> Self {
         Self {
             document,
@@ -157,7 +169,16 @@ impl CheckedDocument {
             warnings,
             reachable_components,
             reachable_handlers,
+            controlled_inputs,
+            controlled_editors,
         }
+    }
+
+    /// Returns the parsed source model for syntax-oriented tooling.
+    ///
+    /// Semantic consumers should use checked facts or lower to HIR instead.
+    pub fn source_document(&self) -> &Document {
+        &self.document
     }
 
     pub fn warnings(&self) -> &[Warning] {
@@ -277,14 +298,6 @@ impl CheckedDocument {
     #[cfg(test)]
     pub(crate) fn source_origin(&self, merged_line: usize) -> Option<(&Path, usize)> {
         self.origins.source_origin(merged_line)
-    }
-}
-
-impl Deref for CheckedDocument {
-    type Target = Document;
-
-    fn deref(&self) -> &Self::Target {
-        &self.document
     }
 }
 
