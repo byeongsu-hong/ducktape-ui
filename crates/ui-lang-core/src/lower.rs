@@ -3213,16 +3213,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "pin reached code generation with a mismatched checked view ID",
             ));
         }
         self.pins.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "pin reached code generation without normalized HIR",
             )
         })
@@ -3242,16 +3240,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "responsive reached code generation with a mismatched checked view ID",
             ));
         }
         self.responsives.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "responsive reached code generation without normalized HIR",
             )
         })
@@ -3268,16 +3264,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "lazy reached code generation with a mismatched checked view ID",
             ));
         }
         self.lazy_views.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "lazy reached code generation without normalized HIR",
             )
         })
@@ -3297,16 +3291,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "keyed column reached code generation with a mismatched checked view ID",
             ));
         }
         self.keyed_columns.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "keyed column reached code generation without normalized HIR",
             )
         })
@@ -3326,16 +3318,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "if view reached code generation with a mismatched checked view ID",
             ));
         }
         self.conditionals.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "if view reached code generation without normalized HIR",
             )
         })
@@ -11820,6 +11810,245 @@ view
         assert_eq!(error.code, "E196");
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
         assert_eq!(error.line, 5);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_if_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-if-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("conditional-card.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedConditional\nuse \"conditional-card.ice\"\n{THEME}view\n  ConditionalCard\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ConditionalCard()\n  col\n    if true\n      text \"Visible\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let conditional = program
+            .conditionals
+            .values()
+            .next()
+            .expect("imported if must be normalized");
+        let origin = program.origin(conditional.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 3);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.conditionals.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_keyed_column_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-keyed-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("keyed-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedKeyed\nuse \"keyed-card.ice\"\n{THEME}view\n  KeyedCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component KeyedCard()\n  state\n    items:[i64] = [1, 2]\n  keyed item in items by=item\n    text item\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let keyed = program
+            .keyed_columns
+            .values()
+            .next()
+            .expect("imported keyed column must be normalized");
+        let origin = program.origin(keyed.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 4);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 4 1 {encoded_import}")));
+
+        program.keyed_columns.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_lazy_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-lazy-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("lazy-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedLazy\nuse \"lazy-card.ice\"\n{THEME}view\n  LazyCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component LazyCard()\n  lazy \"Hello\" as cached\n    text cached\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let lazy = program
+            .lazy_views
+            .values()
+            .next()
+            .expect("imported lazy must be normalized");
+        let origin = program.origin(lazy.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.lazy_views.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_responsive_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-responsive-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("responsive-card.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedResponsive\nuse \"responsive-card.ice\"\n{THEME}view\n  ResponsiveCard\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ResponsiveCard()\n  responsive at=600.0 w=fill h=40.0\n    text \"Narrow\"\n    text \"Wide\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let responsive = program
+            .responsives
+            .values()
+            .next()
+            .expect("imported responsive must be normalized");
+        let origin = program.origin(responsive.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.responsives.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_pin_keeps_hir_origin_source_marker_and_diagnostic() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-pin-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("pin-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedPin\nuse \"pin-card.ice\"\n{THEME}view\n  PinCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component PinCard()\n  pin x=0.0 y=0.0\n    text \"Pinned\"\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let pin = program
+            .pins
+            .values()
+            .next()
+            .expect("imported pin must be normalized");
+        let origin = program.origin(pin.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.pins.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
 
         fs::remove_dir_all(directory).unwrap();
     }
