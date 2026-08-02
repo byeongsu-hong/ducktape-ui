@@ -11001,6 +11001,47 @@ view
     }
 
     #[test]
+    fn imported_lazy_keeps_hir_origin_and_generated_source_marker() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-lazy-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("lazy-card.ice");
+        fs::write(
+            &root,
+            format!("app ImportedLazy\nuse \"lazy-card.ice\"\n{THEME}view\n  LazyCard\n"),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component LazyCard()\n  lazy \"Hello\" as cached\n    text cached\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let lazy = program
+            .lazy_views
+            .values()
+            .next()
+            .expect("imported lazy must be normalized");
+        let origin = program.origin(lazy.origin);
+        assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(origin.line, 2);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn normalizes_media_source_options_colors_styles_and_viewer_defaults() {
         let source = format!(
             "app MediaHir\nextern crate::backend\n  svg-style dynamic_svg(active:bool)\n{THEME}state\n  active = true\n  path = \"photo.png\"\nview\n  col\n    image path w=fill h=64.0 filter=nearest crop=(1, 2, 30, 40)\n    viewer path min-scale=0.5 p=8.0 scale-step=0.25\n    svg \"icon.svg\" color=fg hover=none style=dynamic_svg(active) opacity=0.8\n"
