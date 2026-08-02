@@ -156,6 +156,12 @@ fn performance_contract_validated_leaf_analysis_in_a_10k_source_graph() {
     std::fs::write(&app_source, source).unwrap();
     std::fs::write(&other_source, valid_app().replace("Demo", "Other")).unwrap();
     let mut db = ui_lang_core::AnalysisDb::default();
+    // Isolate the watcher-validated path from the DB's independent periodic
+    // freshness fallback; creating 10,000 files can outlive the default epoch.
+    db.set_validation_policy(ui_lang_core::ValidationPolicy::new(
+        std::time::Duration::MAX,
+        std::time::Duration::MAX,
+    ));
     let compiled = compile_dev_with_db(&mut db, &app_source, None).unwrap();
     compile_dev_with_db(&mut db, &other_source, None).unwrap();
     let mut graph = CargoInputGraph::workspace(root);
