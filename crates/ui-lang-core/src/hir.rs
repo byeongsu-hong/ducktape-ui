@@ -308,6 +308,7 @@ struct ComponentDeclarations {
     params: Vec<Declaration<ComponentParamId>>,
     events: Vec<ComponentEventDeclaration>,
     slots: Vec<Declaration<ComponentSlotId>>,
+    slot_views: Vec<ViewId>,
     states: Vec<Declaration<ComponentStateId>>,
 }
 
@@ -484,7 +485,7 @@ impl DeclarationIndex {
                 origin: origins.push(&value.span, None),
             })
             .collect::<Vec<_>>();
-        let components = document
+        let mut components = document
             .components
             .iter()
             .enumerate()
@@ -548,6 +549,7 @@ impl DeclarationIndex {
                     params,
                     events,
                     slots,
+                    slot_views: Vec::new(),
                     states,
                 }
             })
@@ -797,6 +799,17 @@ impl DeclarationIndex {
                 &mut canvases,
                 &mut component_calls_by_view,
             );
+        }
+        for (component, declarations) in document.components.iter().zip(&mut components) {
+            declarations.slot_views = declared_slots(&component.root)
+                .into_iter()
+                .map(|span| {
+                    views_by_site[&SourceSite {
+                        line: span.line,
+                        column: span.column,
+                    }]
+                })
+                .collect();
         }
 
         let mut handlers = Vec::new();
@@ -1123,6 +1136,15 @@ impl DeclarationIndex {
             .get(component.0 as usize)
             .filter(|declarations| declarations.declaration.id == component)
             .map(|declarations| declarations.slots.len())
+    }
+
+    pub(crate) fn component_slot_view(&self, id: ComponentSlotId) -> Option<ViewId> {
+        let declarations = self.components.get(id.component.0 as usize)?;
+        declarations
+            .slots
+            .get(id.index as usize)
+            .filter(|declaration| declaration.id == id)?;
+        declarations.slot_views.get(id.index as usize).copied()
     }
 
     pub(crate) fn view(&self, id: ViewId) -> Declaration<ViewId> {

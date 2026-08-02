@@ -15,6 +15,8 @@ use crate::hir::{
 use crate::unqualified_name;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 #[derive(Debug, Default)]
@@ -1133,6 +1135,7 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) locals: usize,
     pub(crate) views: usize,
     pub(crate) component_slots: usize,
+    pub(crate) component_slot_index_visits: usize,
     pub(crate) expression_uses: usize,
     pub(crate) expressions: usize,
     pub(crate) type_analysis_queries: usize,
@@ -1209,6 +1212,8 @@ pub(crate) struct CheckedFacts {
     metrics: CheckedFactMetrics,
     #[cfg(test)]
     lookup_count: LookupCount,
+    #[cfg(test)]
+    component_slot_index_elapsed: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -1520,6 +1525,19 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn swap_component_slot_origins(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        let slots = &mut self.component_slots[component.0 as usize];
+        let left_origin = slots[left].origin;
+        slots[left].origin = slots[right].origin;
+        slots[right].origin = left_origin;
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_component_slot_id(
         &mut self,
         component: ComponentId,
@@ -1527,6 +1545,56 @@ impl CheckedFacts {
         raw: u32,
     ) {
         self.component_slots[component.0 as usize][index].id.index = raw;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slot_views(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        let slots = &mut self.component_slots[component.0 as usize];
+        let left_view = slots[left].view;
+        slots[left].view = slots[right].view;
+        slots[right].view = left_view;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_view(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        raw: u32,
+    ) {
+        self.component_slots[component.0 as usize][index].view = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slot_reverse_associations(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        let slots = &self.component_slots[component.0 as usize];
+        let left_view = slots[left].view;
+        let right_view = slots[right].view;
+        let left_slot = self.component_slots_by_view[&left_view];
+        let right_slot = self.component_slots_by_view[&right_view];
+        self.component_slots_by_view.insert(left_view, right_slot);
+        self.component_slots_by_view.insert(right_view, left_slot);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_reverse_association(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        id: ComponentSlotId,
+    ) {
+        let view = self.component_slots[component.0 as usize][index].view;
+        self.component_slots_by_view.insert(view, id);
     }
 
     #[cfg(test)]
@@ -2529,6 +2597,11 @@ impl CheckedFacts {
 
     pub(crate) fn metrics(&self) -> CheckedFactMetrics {
         self.metrics
+    }
+
+    #[cfg(test)]
+    pub(crate) fn component_slot_index_elapsed(&self) -> Duration {
+        self.component_slot_index_elapsed
     }
 
     #[cfg(test)]
@@ -11088,6 +11161,8 @@ impl<'a> FactsBuilder<'a> {
     }
 
     fn index_component_slots(&mut self) -> Result<(), Error> {
+        #[cfg(test)]
+        let started = Instant::now();
         self.facts.component_slots = Vec::with_capacity(self.document.components.len());
         for (component_index, component) in self.document.components.iter().enumerate() {
             let component_id = self.declarations.component(component_index).id;
@@ -11110,6 +11185,7 @@ impl<'a> FactsBuilder<'a> {
 
             let mut checked = Vec::with_capacity(source_slots.len());
             for (index, (name, optional, span)) in source_slots.into_iter().enumerate() {
+                self.facts.metrics.component_slot_index_visits += 1;
                 let id = ComponentSlotId {
                     component: component_id,
                     index: index as u32,
@@ -11149,6 +11225,10 @@ impl<'a> FactsBuilder<'a> {
                 });
             }
             self.facts.component_slots.push(checked);
+        }
+        #[cfg(test)]
+        {
+            self.facts.component_slot_index_elapsed = started.elapsed();
         }
         Ok(())
     }
@@ -11474,6 +11554,7 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 locals: 0,
                 views: 7,
                 component_slots: 0,
+                component_slot_index_visits: 0,
                 expression_uses: 11,
                 expressions: 21,
                 type_analysis_queries: 21,

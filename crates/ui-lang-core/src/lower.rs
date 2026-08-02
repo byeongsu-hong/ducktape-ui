@@ -7665,33 +7665,43 @@ impl Lowerer {
                     .declarations
                     .try_component_slot(expected_id)
                     .ok_or_else(|| {
+                        self.invariant_at_origin(origin, "component slot declaration is missing")
+                    })?;
+                let authoritative_origin = declaration.origin;
+                let expected_view = self
+                    .declarations
+                    .component_slot_view(expected_id)
+                    .ok_or_else(|| {
                         self.invariant_at_origin(
-                            checked.origin,
-                            "checked component slot has no declaration",
+                            authoritative_origin,
+                            "component slot has no stable view declaration",
                         )
                     })?;
-                let retained_origin = self.origins.try_get(checked.origin).ok_or_else(|| {
-                    self.invariant_at_origin(origin, "checked component slot has an invalid origin")
-                })?;
-                let checked_view = self.facts.try_view(checked.view).ok_or_else(|| {
+                let retained_origin =
+                    self.origins.try_get(authoritative_origin).ok_or_else(|| {
+                        self.invariant_at_origin(origin, "component slot origin is invalid")
+                    })?;
+                let checked_view = self.facts.try_view(expected_view).ok_or_else(|| {
                     self.invariant_at_origin(
-                        checked.origin,
+                        authoritative_origin,
                         "checked component slot has no checked view",
                     )
                 })?;
                 if checked.id != expected_id
                     || declaration.id != checked.id
-                    || declaration.origin != checked.origin
+                    || checked.origin != authoritative_origin
+                    || checked.view != expected_view
                     || retained_origin.parent != Some(origin)
                     || checked_view.scope != CheckedViewScope::Component(id)
                     || checked_view.kind != "slot"
+                    || checked_view.origin != self.declarations.view(expected_view).origin
                     || self
                         .facts
-                        .component_slot_for_view(checked.view)
-                        .is_none_or(|slot| slot.id != checked.id)
+                        .component_slot_for_view(expected_view)
+                        .is_none_or(|slot| slot.id != expected_id || slot.view != expected_view)
                 {
                     return Err(self.invariant_at_origin(
-                        checked.origin,
+                        authoritative_origin,
                         "checked component slot association is inconsistent",
                     ));
                 }
@@ -10746,7 +10756,7 @@ mod tests {
     use crate::{analyze, analyze_file};
     use std::fmt::Write as _;
     use std::fs;
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     const THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
@@ -18840,27 +18850,82 @@ view
         assert!(error.message.contains("association is inconsistent"));
 
         let mut invalid_last_origin = analyze(&source).unwrap();
+        let authoritative_last = invalid_last_origin
+            .declarations
+            .try_component_slot(ComponentSlotId {
+                component,
+                index: 2,
+            })
+            .unwrap()
+            .origin;
+        let authoritative_last_line = invalid_last_origin.origins.get(authoritative_last).line;
         invalid_last_origin
             .facts
             .corrupt_component_slot_origin(component, 2, u32::MAX);
         let error = lower(invalid_last_origin).unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("invalid origin"));
+        assert!(error.message.contains("association is inconsistent"));
+        assert_eq!(error.line, authoritative_last_line);
+    }
+
+    #[test]
+    fn component_slot_contracts_reject_stable_view_and_reverse_association_corruption() {
+        let source = format!(
+            "app ComponentSlotViewPoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+        let component = ComponentId(0);
+
+        let mut valid_view_swap = analyze(&source).unwrap();
+        valid_view_swap
+            .facts
+            .swap_component_slot_views(component, 0, 2);
+        valid_view_swap
+            .facts
+            .swap_component_slot_reverse_associations(component, 0, 2);
+        let error = lower(valid_view_swap).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_view = analyze(&source).unwrap();
+        invalid_view
+            .facts
+            .corrupt_component_slot_view(component, 2, u32::MAX);
+        let error = lower(invalid_view).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut valid_reverse_swap = analyze(&source).unwrap();
+        valid_reverse_swap
+            .facts
+            .swap_component_slot_reverse_associations(component, 0, 2);
+        let error = lower(valid_reverse_swap).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_reverse = analyze(&source).unwrap();
+        invalid_reverse
+            .facts
+            .corrupt_component_slot_reverse_association(
+                component,
+                2,
+                ComponentSlotId {
+                    component,
+                    index: u32::MAX,
+                },
+            );
+        let error = lower(invalid_reverse).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
     }
 
     #[test]
     fn imported_component_slot_contract_diagnostics_keep_last_slot_source_origin() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "ui-lang-component-slot-hir-origins-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&directory).unwrap();
-        let root = directory.join("app.ice");
-        let imported = directory.join("slots.ice");
+        let directory = tempfile::Builder::new()
+            .prefix("ui-lang-component-slot-hir-origins-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let root = directory.path().join("app.ice");
+        let imported = directory.path().join("slots.ice");
         fs::write(
             &root,
             format!(
@@ -18887,6 +18952,26 @@ view
         assert_eq!(last_origin.line, 4);
         assert_eq!(last_origin.parent, Some(contract.origin));
 
+        let mut sibling_origin = analyze_file(&root).unwrap();
+        sibling_origin
+            .facts
+            .swap_component_slot_origins(ComponentId(0), 0, 1);
+        let error = lower(sibling_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_origin = analyze_file(&root).unwrap();
+        invalid_origin
+            .facts
+            .corrupt_component_slot_origin(ComponentId(0), 1, u32::MAX);
+        let error = lower(invalid_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+        assert_eq!(error.column, 1);
+
         let mut poisoned = analyze_file(&root).unwrap();
         let ViewNode::Layout { children, .. } = &mut poisoned.document.components[0].root else {
             panic!("fixture component root must be a layout");
@@ -18900,8 +18985,6 @@ view
         assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
         assert_eq!(error.line, 4);
         assert_eq!(error.column, 1);
-
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -18914,8 +18997,20 @@ view
         }
         source.push_str("view\n  Wide\n");
 
+        let checker_started = Instant::now();
         let checked = analyze(&source).unwrap();
+        let checker_elapsed = checker_started.elapsed();
+        let slot_index_elapsed = checked.facts.component_slot_index_elapsed();
         assert_eq!(checked.facts.metrics().component_slots, SLOTS);
+        assert_eq!(checked.facts.metrics().component_slot_index_visits, SLOTS);
+        assert!(
+            slot_index_elapsed < Duration::from_millis(250),
+            "4k component slots indexed into checked HIR in {slot_index_elapsed:?}"
+        );
+        assert!(
+            checker_elapsed < Duration::from_secs(2),
+            "4k component slots checked in {checker_elapsed:?}"
+        );
         checked.facts.reset_lookup_count();
         let started = Instant::now();
         let program = lower(checked).unwrap();
@@ -18927,7 +19022,9 @@ view
             lookups <= SLOTS * 8 + 100,
             "4k component slots required {lookups} checked-HIR lookups"
         );
-        eprintln!("4k checked component slots lowered with {lookups} lookups in {elapsed:?}");
+        eprintln!(
+            "4k component slots indexed in {slot_index_elapsed:?}, checked in {checker_elapsed:?}, and lowered with {lookups} lookups in {elapsed:?}"
+        );
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k checked component slots lowered in {elapsed:?}"
