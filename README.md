@@ -717,6 +717,10 @@ and failed roots remain tracked so creating or repairing a dependency retries
 the owning root. It also exposes per-session counters for files and bytes
 loaded and hashed, files scanned for imports, roots checked/reused, symbols
 indexed, codegen roots, and load/check/codegen elapsed time.
+`cargo ice dev` also passes the final watcher-stabilized bytes for notified Ice
+files into the DB. Reanalysis scans those files once and reuses every unchanged
+parsed file in the retained import closure instead of reading and hashing the
+whole affected graph again.
 
 The cache lifetime is explicit: the LSP owns one DB for its server lifetime,
 `cargo ice dev` owns one for its rebuild loop, `cargo ice check` owns one for a

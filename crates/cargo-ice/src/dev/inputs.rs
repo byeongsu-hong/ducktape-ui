@@ -27,6 +27,33 @@ pub(super) enum FileStamp {
 pub(super) type SourceStamp = Vec<(PathBuf, FileStamp)>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SettledDevSnapshot {
+    pub(super) stamps: (SourceStamp, SourceStamp),
+    pub(super) validated_sources: Vec<ui_lang_core::ValidatedSource>,
+}
+
+struct FileSnapshot {
+    stamp: FileStamp,
+    contents: Option<Vec<u8>>,
+}
+
+impl FileSnapshot {
+    const fn missing() -> Self {
+        Self {
+            stamp: FileStamp::Missing,
+            contents: None,
+        }
+    }
+
+    const fn unreadable() -> Self {
+        Self {
+            stamp: FileStamp::Unreadable,
+            contents: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CargoInputGraph {
     pub(super) package_roots: Vec<PathBuf>,
     pub(super) package_roots_by_id: std::collections::BTreeMap<String, PathBuf>,
@@ -175,6 +202,7 @@ pub(super) fn settled_dev_stamps_with_cargo_inputs(
     )
 }
 
+#[cfg(test)]
 pub(super) fn settled_dev_stamps_for_paths_with_cargo_inputs(
     dependencies: &[PathBuf],
     asset_dependencies: &[PathBuf],
@@ -183,7 +211,27 @@ pub(super) fn settled_dev_stamps_for_paths_with_cargo_inputs(
     current_build: &SourceStamp,
     changed_paths: &[PathBuf],
 ) -> Option<(SourceStamp, SourceStamp)> {
-    settled_dev_stamps_for_paths_after_with_cargo_inputs(
+    settled_dev_snapshot_for_paths_after_with_cargo_inputs(
+        dependencies,
+        asset_dependencies,
+        cargo_inputs,
+        current_ice,
+        current_build,
+        changed_paths,
+        || thread::sleep(Duration::from_millis(50)),
+    )
+    .map(|snapshot| snapshot.stamps)
+}
+
+pub(super) fn settled_dev_snapshot_for_paths_with_cargo_inputs(
+    dependencies: &[PathBuf],
+    asset_dependencies: &[PathBuf],
+    cargo_inputs: &CargoInputGraph,
+    current_ice: &SourceStamp,
+    current_build: &SourceStamp,
+    changed_paths: &[PathBuf],
+) -> Option<SettledDevSnapshot> {
+    settled_dev_snapshot_for_paths_after_with_cargo_inputs(
         dependencies,
         asset_dependencies,
         cargo_inputs,
@@ -223,7 +271,7 @@ fn settled_dev_stamps_after_with_cargo_inputs(
     current_build: &SourceStamp,
     after_first_read: impl FnOnce(),
 ) -> Option<(SourceStamp, SourceStamp)> {
-    settled_dev_stamps_for_paths_after_with_cargo_inputs(
+    settled_dev_snapshot_for_paths_after_with_cargo_inputs(
         dependencies,
         asset_dependencies,
         cargo_inputs,
@@ -232,9 +280,10 @@ fn settled_dev_stamps_after_with_cargo_inputs(
         &[],
         after_first_read,
     )
+    .map(|snapshot| snapshot.stamps)
 }
 
-fn settled_dev_stamps_for_paths_after_with_cargo_inputs(
+fn settled_dev_snapshot_for_paths_after_with_cargo_inputs(
     dependencies: &[PathBuf],
     asset_dependencies: &[PathBuf],
     cargo_inputs: &CargoInputGraph,
@@ -242,7 +291,7 @@ fn settled_dev_stamps_for_paths_after_with_cargo_inputs(
     current_build: &SourceStamp,
     changed_paths: &[PathBuf],
     after_first_read: impl FnOnce(),
-) -> Option<(SourceStamp, SourceStamp)> {
+) -> Option<SettledDevSnapshot> {
     let read = || {
         if changed_paths.is_empty() {
             (
@@ -265,8 +314,46 @@ fn settled_dev_stamps_for_paths_after_with_cargo_inputs(
         return None;
     }
     after_first_read();
-    let second = read();
-    (first == second).then_some(second)
+    let (second, validated_sources) = if changed_paths.is_empty() {
+        (read(), Vec::new())
+    } else {
+        dev_snapshot_reusing(
+            dependencies,
+            asset_dependencies,
+            cargo_inputs,
+            current_ice,
+            current_build,
+            changed_paths,
+        )
+    };
+    (first == second).then_some(SettledDevSnapshot {
+        stamps: second,
+        validated_sources,
+    })
+}
+
+fn dev_snapshot_reusing(
+    dependencies: &[PathBuf],
+    asset_dependencies: &[PathBuf],
+    cargo_inputs: &CargoInputGraph,
+    current_ice: &SourceStamp,
+    current_build: &SourceStamp,
+    changed_paths: &[PathBuf],
+) -> (
+    (SourceStamp, SourceStamp),
+    Vec<ui_lang_core::ValidatedSource>,
+) {
+    let build = if can_reuse_build_inventory(current_ice, current_build, changed_paths) {
+        stamp_current_files_reusing(current_build, changed_paths)
+    } else {
+        stamp_files_reusing(
+            &build_input_files(cargo_inputs, asset_dependencies),
+            current_build,
+            changed_paths,
+        )
+    };
+    let (ice, validated_sources) = stamp_sources_reusing(dependencies, current_ice, changed_paths);
+    ((ice, build), validated_sources)
 }
 
 fn dev_stamps_reusing(
@@ -349,6 +436,46 @@ fn stamp_files_reusing(
         .collect()
 }
 
+fn stamp_sources_reusing(
+    files: &[PathBuf],
+    current: &SourceStamp,
+    changed_paths: &[PathBuf],
+) -> (SourceStamp, Vec<ui_lang_core::ValidatedSource>) {
+    let mut files = files.to_vec();
+    files.sort();
+    files.dedup();
+    let mut sources = Vec::new();
+    let stamps = files
+        .into_iter()
+        .map(|path| {
+            let previous = current
+                .binary_search_by(|(candidate, _)| candidate.cmp(&path))
+                .ok()
+                .map(|index| current[index].1);
+            let affected = changed_paths
+                .iter()
+                .any(|changed| path == *changed || path.starts_with(changed));
+            let stamp = if affected {
+                let FileSnapshot { stamp, contents } = snapshot_file(&path);
+                match contents {
+                    Some(contents) => {
+                        sources.push(ui_lang_core::ValidatedSource::new(path.clone(), contents))
+                    }
+                    None if stamp == FileStamp::Missing => {
+                        sources.push(ui_lang_core::ValidatedSource::missing(path.clone()));
+                    }
+                    None => {}
+                }
+                stamp
+            } else {
+                previous.unwrap_or_else(|| stamp_file(&path))
+            };
+            (path, stamp)
+        })
+        .collect();
+    (stamps, sources)
+}
+
 fn stamp_current_files_reusing(current: &SourceStamp, changed_paths: &[PathBuf]) -> SourceStamp {
     current
         .iter()
@@ -369,35 +496,48 @@ fn stamp_current_files_reusing(current: &SourceStamp, changed_paths: &[PathBuf])
 }
 
 fn stamp_file(path: &Path) -> FileStamp {
+    snapshot_file(path).stamp
+}
+
+fn snapshot_file(path: &Path) -> FileSnapshot {
     #[cfg(test)]
     FILE_STAMP_ATTEMPTS.with(|attempts| attempts.set(attempts.get() + 1));
 
     let identity = match path.canonicalize() {
         Ok(identity) => identity,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return FileStamp::Missing,
-        Err(_) => return FileStamp::Unreadable,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return FileSnapshot::missing();
+        }
+        Err(_) => return FileSnapshot::unreadable(),
     };
     let mut opened = match same_file::Handle::from_path(path) {
         Ok(opened) => opened,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return FileStamp::Missing,
-        Err(_) => return FileStamp::Unreadable,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return FileSnapshot::missing();
+        }
+        Err(_) => return FileSnapshot::unreadable(),
     };
     let identity_handle = match same_file::Handle::from_path(&identity) {
         Ok(identity) => identity,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return FileStamp::Missing,
-        Err(_) => return FileStamp::Unreadable,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return FileSnapshot::missing();
+        }
+        Err(_) => return FileSnapshot::unreadable(),
     };
     if opened != identity_handle {
-        return FileStamp::Unreadable;
+        return FileSnapshot::unreadable();
     }
     let mut bytes = Vec::new();
     if opened.as_file_mut().read_to_end(&mut bytes).is_err() {
-        return FileStamp::Unreadable;
+        return FileSnapshot::unreadable();
     }
     if path.canonicalize().ok().as_ref() != Some(&identity) {
-        return FileStamp::Unreadable;
+        return FileSnapshot::unreadable();
     }
-    FileStamp::Content(stable_file_hash(&identity, &bytes))
+    FileSnapshot {
+        stamp: FileStamp::Content(stable_file_hash(&identity, &bytes)),
+        contents: Some(bytes),
+    }
 }
 
 #[cfg(test)]
