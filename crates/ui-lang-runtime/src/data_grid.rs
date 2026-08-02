@@ -16,7 +16,8 @@ use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::keyboard;
 use iced::widget::{container, keyed_column, mouse_area, row, scrollable, space};
-use iced::{Element, Event, Length, Rectangle, Size, Vector};
+use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fmt::Write as _;
@@ -631,6 +632,13 @@ where
         vertical || horizontal
     }
 
+    fn reveal_column(&mut self, column_index: usize) {
+        let column = &self.columns[column_index];
+        if self.horizontal.reveal(column.start, column.column.width) {
+            self.bump_scroll_revision();
+        }
+    }
+
     pub fn apply(
         &mut self,
         event: DataGridEvent<RowKey, ColumnKey>,
@@ -741,7 +749,7 @@ where
             config,
         );
         self.active_column = Some(column.clone());
-        self.scroll_to_cell(&DataGridCellId { row, column }, config);
+        self.reveal_column(column_index);
         debug_assert_eq!(
             self.column_indexes
                 .get(self.active_column.as_ref().unwrap()),
@@ -855,6 +863,7 @@ where
     );
     let on_event: Rc<dyn Fn(DataGridEvent<RowKey, ColumnKey>) -> Message + 'a> = Rc::new(on_event);
     let sort_direction: Rc<SortDirectionFn<'a, ColumnKey>> = Rc::new(sort_direction);
+    let pointer_focus_claim = Rc::new(Cell::new(PointerFocusClaim::None));
     let total_width = state.horizontal.content_width;
 
     let mut header_children = Vec::with_capacity(state.columns.len());
@@ -973,16 +982,18 @@ where
                 column_index,
                 column: record.column.key.clone(),
             };
-            let mut area = mouse_area(
-                container(view)
+            let area: Element<'a, Message, Theme, Renderer> = Element::new(DataGridCellArea {
+                content: container(view)
                     .width(Length::Fixed(record.column.width))
-                    .height(Length::Fixed(config.row_height())),
-            )
-            .on_press(on_event(focus_event.clone()))
-            .interaction(mouse::Interaction::Pointer);
-            if record.column.editable {
-                area = area.on_double_click(on_event(DataGridEvent::BeginEdit(cell_id.clone())));
-            }
+                    .height(Length::Fixed(config.row_height()))
+                    .into(),
+                on_press: on_event(focus_event.clone()),
+                on_double_click: record
+                    .column
+                    .editable
+                    .then(|| on_event(DataGridEvent::BeginEdit(cell_id.clone()))),
+                pointer_focus_claim: Rc::clone(&pointer_focus_claim),
+            });
             let cell = accessible(
                 area,
                 state
@@ -1087,6 +1098,7 @@ where
         active_editable,
         active_sortable,
         has_mounted_cells,
+        pointer_focus_claim,
         on_event,
     };
     let active_descendant = active_cell.and_then(|cell| {
@@ -1111,6 +1123,201 @@ where
     .into()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PointerFocusClaim {
+    None,
+    Cell,
+    Descendant,
+}
+
+/// Child-first cell boundary that distinguishes a native control capture from
+/// the cell's own selection press before the grid updates focus ownership.
+struct DataGridCellArea<'a, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::Renderer,
+{
+    content: Element<'a, Message, Theme, Renderer>,
+    on_press: Message,
+    on_double_click: Option<Message>,
+    pointer_focus_claim: Rc<Cell<PointerFocusClaim>>,
+}
+
+#[derive(Default)]
+struct DataGridCellAreaState {
+    previous_click: Option<mouse::Click>,
+}
+
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for DataGridCellArea<'_, Message, Theme, Renderer>
+where
+    Message: Clone,
+    Renderer: iced::advanced::Renderer,
+{
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<DataGridCellAreaState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(DataGridCellAreaState::default())
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        let captured_before = shell.is_event_captured();
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+
+        let Some(position) = primary_press_position(event, cursor) else {
+            return;
+        };
+        if !layout.bounds().contains(position) || !viewport.contains(position) {
+            return;
+        }
+        if shell.is_event_captured() {
+            if !captured_before {
+                self.pointer_focus_claim.set(PointerFocusClaim::Descendant);
+            }
+            return;
+        }
+
+        shell.publish(self.on_press.clone());
+        self.pointer_focus_claim.set(PointerFocusClaim::Cell);
+        if let Some(message) = &self.on_double_click {
+            let state = tree.state.downcast_mut::<DataGridCellAreaState>();
+            let click = mouse::Click::new(position, mouse::Button::Left, state.previous_click);
+            if click.kind() == mouse::click::Kind::Double {
+                shell.publish(message.clone());
+            }
+            state.previous_click = Some(click);
+        }
+        shell.capture_event();
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        let interaction = self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        );
+        if interaction == mouse::Interaction::None && cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Pointer
+        } else {
+            interaction
+        }
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+fn primary_press_position(event: &Event, cursor: mouse::Cursor) -> Option<Point> {
+    match event {
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => cursor.position(),
+        Event::Touch(iced::touch::Event::FingerPressed { position, .. }) => Some(*position),
+        _ => None,
+    }
+}
+
 struct DataGridWidget<'a, RowKey, ColumnKey, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
@@ -1131,6 +1338,7 @@ where
     active_editable: bool,
     active_sortable: bool,
     has_mounted_cells: bool,
+    pointer_focus_claim: Rc<Cell<PointerFocusClaim>>,
     on_event: Rc<dyn Fn(DataGridEvent<RowKey, ColumnKey>) -> Message + 'a>,
 }
 
@@ -1290,6 +1498,10 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        let pointer_press = primary_press_position(event, cursor);
+        if pointer_press.is_some() {
+            self.pointer_focus_claim.set(PointerFocusClaim::None);
+        }
         let state = tree.state.downcast_mut::<DataGridWidgetState>();
         if state.reported_viewport != Some(state.measured_viewport) {
             state.reported_viewport = Some(state.measured_viewport);
@@ -1302,10 +1514,6 @@ where
                 }));
             }
         }
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
-            state.focused = cursor.is_over(layout.bounds());
-            state.focus_visible = false;
-        }
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -1316,6 +1524,16 @@ where
             shell,
             viewport,
         );
+        if let Some(position) = pointer_press {
+            state.focused = match self.pointer_focus_claim.get() {
+                PointerFocusClaim::Cell => true,
+                PointerFocusClaim::Descendant => false,
+                PointerFocusClaim::None => {
+                    !shell.is_event_captured() && layout.bounds().contains(position)
+                }
+            };
+            state.focus_visible = false;
+        }
         if shell.is_event_captured() || !state.focused {
             return;
         }
@@ -1496,7 +1714,6 @@ mod tests {
     use iced::{Font, Pixels, Theme};
     use iced_test::runtime::UserInterface;
     use iced_test::runtime::user_interface;
-    use std::cell::Cell;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     enum Column {
@@ -1514,6 +1731,7 @@ mod tests {
     #[derive(Debug, Clone, PartialEq)]
     enum Message {
         Grid(DataGridEvent<u64, Column>),
+        Input(String),
     }
 
     fn config() -> DataGridConfig {
@@ -1553,6 +1771,113 @@ mod tests {
             config(),
         );
         (state, items)
+    }
+
+    fn renderer() -> iced_test::renderer::Renderer {
+        iced_test::futures::futures::executor::block_on(
+            <iced_test::renderer::Renderer as renderer::Headless>::new(
+                Font::DEFAULT,
+                Pixels(16.0),
+                None,
+            ),
+        )
+        .expect("headless renderer")
+    }
+
+    fn key_pressed(named: keyboard::key::Named) -> Event {
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(named),
+            modified_key: keyboard::Key::Named(named),
+            physical_key: keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Unidentified,
+            ),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::default(),
+            text: None,
+            repeat: false,
+        })
+    }
+
+    fn plain_grid<'a>(
+        state: &'a DataGridState<u64, Column>,
+        items: &'a [Item],
+    ) -> Element<'a, Message, Theme, iced_test::renderer::Renderer> {
+        data_grid(
+            state,
+            items,
+            config(),
+            "Interactive grid",
+            |item| item.id,
+            |item| item.name.clone(),
+            |item, column| format!("{} {}", item.name, column.label()),
+            |_| None,
+            |header| iced::widget::text(header.column.label()).into(),
+            |cell| iced::widget::text(format!("{} {}", cell.row.id, cell.column.label())).into(),
+            Message::Grid,
+        )
+    }
+
+    fn editing_root<'a>(
+        state: &'a DataGridState<u64, Column>,
+        items: &'a [Item],
+        editor_id: iced::advanced::widget::Id,
+        after_id: iced::advanced::widget::Id,
+    ) -> Element<'a, Message, Theme, iced_test::renderer::Renderer> {
+        let editor = editor_id.clone();
+        let grid = data_grid(
+            state,
+            items,
+            config(),
+            "Editing grid",
+            |item| item.id,
+            |item| item.name.clone(),
+            |item, column| format!("{} {}", item.name, column.label()),
+            |_| None,
+            |header| iced::widget::text(header.column.label()).into(),
+            move |cell| {
+                if cell.editing {
+                    iced::widget::text_input("Cell value", "draft")
+                        .id(editor.clone())
+                        .on_input(Message::Input)
+                        .into()
+                } else {
+                    iced::widget::text(format!("{} {}", cell.row.id, cell.column.label())).into()
+                }
+            },
+            Message::Grid,
+        );
+        iced::widget::column![
+            iced::widget::container(grid).height(124.0),
+            iced::widget::container(
+                iced::widget::text_input("After grid", "")
+                    .id(after_id)
+                    .on_input(Message::Input)
+            )
+            .height(30.0),
+        ]
+        .into()
+    }
+
+    #[derive(Default)]
+    struct FocusedIds(Vec<iced::advanced::widget::Id>);
+
+    impl Operation for FocusedIds {
+        fn focusable(
+            &mut self,
+            id: Option<&iced::advanced::widget::Id>,
+            _bounds: Rectangle,
+            state: &mut dyn Focusable,
+        ) {
+            if state.is_focused()
+                && let Some(id) = id
+            {
+                self.0.push(id.clone());
+            }
+        }
+
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
     }
 
     #[test]
@@ -1640,6 +1965,224 @@ mod tests {
         let committed = state.apply(DataGridEvent::CommitEdit(cell.clone()), config());
         assert_eq!(committed.edit_committed, Some(cell));
         assert_eq!(state.editing_cell(), None);
+    }
+
+    #[test]
+    fn focusing_visible_rows_and_columns_preserves_the_vertical_offset() {
+        let (mut state, _) = prepared(100);
+        state.apply(
+            DataGridEvent::Scrolled {
+                offset_x: 0.0,
+                offset_y: 400.0,
+            },
+            config(),
+        );
+        assert_eq!(state.rows.scroll_offset(), 400.0);
+
+        state.apply(
+            DataGridEvent::FocusCell {
+                row_index: 22,
+                row: 22,
+                column_index: 2,
+                column: Column::Owner,
+            },
+            config(),
+        );
+        assert_eq!(state.rows.scroll_offset(), 400.0);
+        assert!(state.horizontal.offset > 0.0);
+
+        state.apply(DataGridEvent::Navigate(DataGridNavigation::Left), config());
+        assert_eq!(state.rows.scroll_offset(), 400.0);
+        assert_eq!(state.active_cell().unwrap().row, 22);
+    }
+
+    #[test]
+    fn plain_cell_click_claims_grid_focus_and_keeps_keyboard_editing() {
+        let (mut state, items) = prepared(10);
+        let grid_focus_id = state.rows.id().widget_id("focus");
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            plain_grid(&state, &items),
+            Size::new(160.0, 124.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut messages = Vec::new();
+        let point = Point::new(20.0, 34.0);
+        let _ = ui.update(
+            &[Event::Mouse(mouse::Event::ButtonPressed(
+                mouse::Button::Left,
+            ))],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        let focus = messages
+            .iter()
+            .find_map(|message| match message {
+                Message::Grid(event @ DataGridEvent::FocusCell { .. }) => Some(event.clone()),
+                _ => None,
+            })
+            .expect("plain cell click must focus the cell");
+        let mut focused = FocusedIds::default();
+        ui.operate(&renderer, &mut focused);
+        assert_eq!(focused.0, [grid_focus_id]);
+
+        let cache = ui.into_cache();
+        state.apply(focus, config());
+        let mut ui = UserInterface::build(
+            plain_grid(&state, &items),
+            Size::new(160.0, 124.0),
+            cache,
+            &mut renderer,
+        );
+        messages.clear();
+        let _ = ui.update(
+            &[key_pressed(keyboard::key::Named::ArrowRight)],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert_eq!(
+            messages,
+            [Message::Grid(DataGridEvent::Navigate(
+                DataGridNavigation::Right
+            ))]
+        );
+
+        messages.clear();
+        let _ = ui.update(
+            &[key_pressed(keyboard::key::Named::F2)],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert_eq!(
+            messages,
+            [Message::Grid(DataGridEvent::BeginEdit(DataGridCellId {
+                row: 0,
+                column: Column::Name,
+            }))]
+        );
+    }
+
+    #[test]
+    fn native_editor_capture_exclusively_owns_focus_through_escape_and_tab() {
+        let (mut state, items) = prepared(10);
+        let cell = DataGridCellId {
+            row: 0,
+            column: Column::Name,
+        };
+        state.apply(
+            DataGridEvent::FocusCell {
+                row_index: 0,
+                row: 0,
+                column_index: 0,
+                column: Column::Name,
+            },
+            config(),
+        );
+        state.apply(DataGridEvent::BeginEdit(cell), config());
+        let editor_id: iced::advanced::widget::Id = "data-grid-editor".into();
+        let after_id: iced::advanced::widget::Id = "after-data-grid".into();
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            editing_root(&state, &items, editor_id.clone(), after_id.clone()),
+            Size::new(160.0, 160.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let point = Point::new(20.0, 34.0);
+        let mut messages = Vec::new();
+
+        let _ = ui.update(
+            &[Event::Mouse(mouse::Event::ButtonPressed(
+                mouse::Button::Left,
+            ))],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::Grid(DataGridEvent::FocusCell { .. })))
+        );
+        let mut focused = FocusedIds::default();
+        ui.operate(&renderer, &mut focused);
+        assert_eq!(focused.0.as_slice(), std::slice::from_ref(&editor_id));
+
+        messages.clear();
+        let _ = ui.update(
+            &[key_pressed(keyboard::key::Named::Escape)],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        let mut focused = FocusedIds::default();
+        ui.operate(&renderer, &mut focused);
+        assert!(focused.0.is_empty());
+        messages.clear();
+        let _ = ui.update(
+            &[key_pressed(keyboard::key::Named::ArrowDown)],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::Grid(DataGridEvent::Navigate(_))))
+        );
+
+        messages.clear();
+        let _ = ui.update(
+            &[Event::Mouse(mouse::Event::ButtonPressed(
+                mouse::Button::Left,
+            ))],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        messages.clear();
+        let _ = ui.update(
+            &[key_pressed(keyboard::key::Named::Tab)],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        let mut focus_next: Box<dyn Operation> = Box::new(operation::focusable::focus_next::<()>());
+        loop {
+            ui.operate(&renderer, focus_next.as_mut());
+            match focus_next.finish() {
+                Outcome::Chain(next) => focus_next = next,
+                Outcome::None | Outcome::Some(()) => break,
+            }
+        }
+        let mut focused = FocusedIds::default();
+        ui.operate(&renderer, &mut focused);
+        assert_eq!(focused.0, [after_id]);
+        messages.clear();
+        let _ = ui.update(
+            &[key_pressed(keyboard::key::Named::ArrowDown)],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::Grid(DataGridEvent::Navigate(_))))
+        );
     }
 
     #[test]
@@ -1733,14 +2276,7 @@ mod tests {
             |cell| iced::widget::text(format!("{} {}", cell.row.id, cell.column.label())).into(),
             Message::Grid,
         );
-        let mut renderer = iced_test::futures::futures::executor::block_on(
-            <iced_test::renderer::Renderer as renderer::Headless>::new(
-                Font::DEFAULT,
-                Pixels(16.0),
-                None,
-            ),
-        )
-        .expect("headless renderer");
+        let mut renderer = renderer();
         let mut ui = UserInterface::build(
             element,
             Size::new(160.0, 124.0),

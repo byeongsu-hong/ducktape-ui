@@ -396,8 +396,10 @@ invalid-width rejection, stable typed row and column identity across reorder,
 single active-cell and row selection, all directional/row/grid/page keyboard
 movements, two-axis reveal, constant-time key lookup and `scroll_to_cell`, typed
 sort requests, and caller-owned edit begin/commit/cancel. Interactive children
-receive keys first, preserving native text input, IME, submission, and control
-chords. Headless inspection proves visible and mounted row ranges, complete
+receive pointer and key events first: a captured editor click owns focus
+exclusively, and Escape/Tab cannot leak following arrows back to the grid. This
+preserves native text input, IME, submission, and control chords. Headless
+inspection proves visible and mounted row ranges, complete
 fixed-column geometry, mounted row/cell counts, active/selected/editing state,
 viewport geometry, and both offsets. Mounted-only AccessKit tests cover the
 Grid, header Row, ColumnHeader, data Row, and Cell hierarchy, total row/column
