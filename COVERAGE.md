@@ -451,21 +451,37 @@ compile/diagnostic fixtures exercise production Rust plus lexical-scope
 rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
+
+Component-call direct output and named-event delivery have a complete private
+route HIR boundary. Checked call-route records own stable call/view/component,
+event, outer-event, and ordered route IDs; exact output and payload types;
+direct/forward topology; checked route expressions and payload indexes; and
+parented physical origins. Lowering publishes `ResolvedInteractionRoute`
+values inside the component call, and production callbacks consume those
+records without raw `Route`, `Expr`, or source component declarations. Dynamic
+and post-lowering raw poisoning, cross-owner expression and route attacks,
+valid-ID/type/cardinality/origin corruption, imported source mapping, the
+reduced lexical ratchet, native generation, and an ignored 4,000-call
+lower+emit budget cover the boundary. Component root/slot child topology and
+the general expression fallback remain separately tracked later slices.
+
 Expression-bearing widget options outside the completed Media, Tooltip,
-MouseArea, ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, and For families remain outside this slice.
-The `hir_boundary` integration ratchet records selected lexical markers for the
-remaining code-generation AST/checker boundary: exported AST identifiers,
-explicit checker imports and uses, checked-document and `RenderDocument`
-escapes, re-analysis calls, and raw expression fallbacks. Its dependency-free
-Rust scanner removes comments and literals, handles lifetime, mutable,
-by-value, container, and qualified type references, tracks exact aliases from
-grouped and nested AST imports, and fingerprints each occurrence from its
-normalized containing item and call-site context. The
-reviewed occurrence counts may not grow as later HIR slices delete their old
-paths, and every fingerprint change requires explicit review; completion still
-requires every selected count to reach zero. Mutation probes guard the scanner's
-documented lexical coverage. This is not Rust name resolution, and full HIR also
-requires ordinary semantic review for unrepresented behavior.
+MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText,
+Input, Button, TextEditor, PickList, ComboBox, Slider, Progress, Rule, QrCode,
+Space, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and
+Match families remain outside this slice.
+The `hir_boundary` integration ratchet now enforces an empty production
+code-generation AST/checker boundary: exported AST identifiers, explicit
+checker imports and uses, checked-document and `RenderDocument` escapes,
+re-analysis calls, and raw expression fallbacks all have zero occurrences. Its
+dependency-free Rust scanner removes comments and literals, discovers only
+top-level AST exports, follows import-reachable globs, names, module aliases,
+alias chains, qualified paths, and local uses, and fingerprints each occurrence
+from its normalized containing item and call-site context. Regression probes
+cover impl-method and same-name collisions as well as grouped, nested, module,
+and local aliases. The scanner is not Rust name resolution, so ordinary semantic
+review still guards unrepresented behavior; that review confirms production
+code generation consumes only normalized HIR and neutral semantic values.
 
 Application and daemon settings have a complete private HIR boundary. Stable
 setting-expression and named-window IDs retain title, active palette, theme,
@@ -516,7 +532,10 @@ invalid duration/option/hashability, intrinsic-swap corruption tests, imported
 diagnostic/source-marker coverage, and an ignored 500-to-4,000
 analyze+lower+codegen linearity contract provide the evidence.
 Remaining expression-bearing widget options outside Media, Tooltip, MouseArea,
-ResizeHandle, Sensor, Float, Pin, Responsive, Lazy, KeyedColumn, If, and For remain open HIR slices.
+ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText, Input, Button,
+TextEditor, PickList, ComboBox, Slider, Progress, Rule, QrCode, Space, Float,
+Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and Match remain
+open HIR slices.
 
 Canvas has a complete private HIR boundary. Stable Canvas-local, command,
 event, route, and expression IDs retain state initializers, built-in dimensions,
@@ -649,6 +668,222 @@ source nodes supply only child subtrees. Malformed expression/local IDs,
 post-check list and binding mutation, post-lowering flow poisoning, existing
 reconciliation codegen, and an ignored 4,000-node lower+emit contract cover the
 boundary.
+
+Match has a complete private HIR boundary. Its checked flow owns the stable
+value expression, exhaustive patterns, typed payload locals, and arm origins.
+Lowering revalidates the expression owner mapping and DAG, scope and value type,
+Option/Result/enum/palette pattern contracts, payload local types and owner
+roles, enum/palette declarations, checked duplicate/missing/wildcard coverage,
+arm-origin parent/source identity, and each arm's ordered child view IDs before
+publishing `ResolvedMatch`. Normal-layout and flex-layout emission consume
+resolved Rust owner/variant names and the resolved payload binding type; they do
+not reopen checked Match flow/local types or pattern declaration IDs. Source arm
+nodes supply only child subtrees; their spans are mapped to stable view IDs and
+rejected if those IDs move between arms.
+Malformed expression/local/enum IDs fail at the source-mapped arm during
+lowering; post-check and post-lowering AST poisoning, checked coverage and arm
+partition corruption, all typed pattern families, imported diagnostics, and an
+ignored 4,000-node lower+emit contract cover the boundary.
+
+Table has a complete private HIR boundary. Its checked flow owns the stable row
+list, typed row local, table width and metric expressions, and every column's
+width, alignment, and source origin. Fixed numeric and native-length widths are
+distinct resolved variants. Lowering revalidates expression owner mappings and
+DAGs, scope, list/row types, local ownership, column origin parentage, and
+static table/column topology before publishing `ResolvedTable`. Production
+emission consumes that record and checked expression IDs; source columns supply
+only header and cell subtrees. Malformed expression/local IDs, post-check
+expression/static mutation, post-lowering AST poisoning, complete configured
+codegen, and an ignored 4,000-table lower+emit contract cover the boundary.
+
+PaneGrid has a complete private HIR boundary. A dedicated checked record owns
+the stable grid identity and configuration, all dimensions and metrics,
+resize/drag/click behavior, custom and typed grid styles, static panes, dynamic
+templates, typed item/maximized locals, pane/title surfaces, control topology,
+and source origins. Lowering revalidates complete expression and route arena
+consumption, exact lexical-local access per expression, DAGs, scope and types,
+extern and theme identities, local owner roles, and origin parentage before
+publishing `ResolvedPaneGrid`. Production field/message/update discovery and
+rendering consume only that record; source nodes provide content, title, and
+control subtrees. Structural HIR assertions, malformed expression/local/origin
+IDs, pre- and post-lowering AST poisoning, existing full styled/dynamic codegen,
+source-merged style ownership before physical-origin remapping, and an ignored
+4,000-grid lower+emit contract cover the boundary.
+
+Overlay has a complete private HIR boundary. Its checked interaction record
+owns the visibility and padding expression uses and the dismiss route contract;
+lowering resolves the backdrop token/color, alignments, target handler or
+component callback, route arguments, stable view ID, and origin links into
+`ResolvedOverlay`. Production emission consumes that record and reads the raw
+node only for its content/layer subtrees and shared widget ID. Structural HIR
+assertions, malformed expression/route/origin IDs, pre-lowering expression and
+static-topology mutation, post-lowering option/route poisoning, existing native
+overlay codegen, and an ignored 4,000-overlay lower+emit contract cover the
+boundary.
+
+Container has a complete private HIR boundary. Its checked record owns a stable
+expression partition and static contract for padding, dimensions, clipping,
+custom style arguments, gradient stops, complete typed surface fields,
+dashed-border segments, CSS flex-child properties, and effective margin
+precedence. Lowering resolves lengths, theme colors, the exact box-style extern,
+utility style, alignments, flex basis and margins, stable view identity, and
+physical origin into `ResolvedContainer`. Production box rendering and flex
+item construction consume that record; the raw node supplies only its content
+subtree and shared widget ID. Structural HIR assertions, malformed expression
+IDs, pre-lowering expression and static-topology mutation, post-lowering box and
+flex-option poisoning, imported source markers, existing complete styled/flex
+codegen, and an ignored 4,000-container lower+emit contract cover the boundary.
+
+Layout has a complete private HIR boundary. A shared checked interaction record
+freezes the stable identity, expression partition, scroll routes, static
+topology, exact custom scroll-style extern, and parented status-style origins
+for Column, Row, Grid, Stack, Flexbox, and Scroll. Lowering resolves lengths,
+padding precedence, grid sizing, minimum-cell Grid sugar, flex flow,
+scrollbar geometry, anchors, status selectors, every typed surface and theme
+color, utility style, and route payload into `ResolvedLayout`. Production
+emission consumes that record and reads the source layout only for child
+subtrees and the shared widget ID. Structural assertions, malformed expression
+IDs, pre- and post-lowering AST poisoning, imported layout/status origins,
+complete native layout and scroll-style codegen, the lexical HIR-boundary
+ratchet, and an ignored 4,000-layout lower+emit contract cover the boundary.
+
+Text and RichText have a complete private HIR boundary. Their shared checked
+interaction records own deterministic expression partitions and freeze length,
+line-height, font, alignment, shaping, wrapping, tracking, custom-style, span,
+theme-color, decoration, and optional link-route topology. A dedicated checked
+text record retains the exact text-style extern ID and parented span origins.
+Lowering resolves fonts, theme tokens, utility styles, gradients, borders,
+padding, expression operands, and route payloads into `ResolvedText` and
+`ResolvedRichSpan`. Production emission consumes those records; the raw view
+node supplies only the shared widget ID. Structural assertions, malformed
+expression facts, pre-lowering expression/static mutation, post-lowering plain
+and rich content poisoning, imported root/span/route origins, complete native
+text generation, the lexical HIR-boundary ratchet, and an ignored 4,000-text
+lower+emit contract cover the boundary.
+
+Input has a complete private HIR boundary. Its checked interaction record
+freezes the writable string-state identity, deterministic option-expression
+partition, accessibility values, three route contracts, width and typography,
+font and icon topology, exact custom input-style extern, five status surfaces,
+utility style, and parented physical origins. Lowering resolves the binding to
+an App, bind-prop, or component-state ID and normalizes all routes, lengths,
+fonts, theme colors, gradients, borders, radii, and status overrides into
+`ResolvedInput`. App-level controlled bindings are retained as checked
+`AppStateId`s, so message and update generation no longer rediscovers Input
+bindings through the source view tree. Production emission reads the raw node
+only for its shared widget ID. Structural assertions, malformed expression and
+controlled-state IDs, pre-lowering expression/static mutation, post-lowering
+contract poisoning, imported widget/icon/status/route origins, complete native
+input generation, the lexical boundary ratchet, and an ignored 4,000-input
+lower+emit contract cover the boundary.
+
+Button has a complete private HIR boundary. Its checked interaction record
+freezes label-versus-child topology, every dynamic option and custom-style
+argument, the required route, the exact Button-style extern ID, and four
+parented status origins. Lowering resolves checked child identity, accessibility,
+dimensions, padding, clipping, preset/custom styles, utility precedence, theme
+colors, complete status surfaces, and route delivery into `ResolvedButton`.
+Production emission reads the raw node only for its shared ID and checked child
+traversal; raw labels, options, routes, utilities, and typed styles cannot affect
+output after lowering. Static and raw-contract poisoning, malformed and
+same-arena IDs, imported widget/status/route origins, complete native generation,
+the lexical boundary ratchet, and an ignored 4,000-button lower+emit contract
+cover the boundary.
+
+TextEditor has a complete private HIR boundary. Its checked interaction record
+freezes the exact writable editor-state identity, deterministic option and
+extern-argument expression partition, key-binding route, built-in and custom
+highlighting topology, exact highlighter/key-binding/action/style extern IDs,
+and five parented status origins. Lowering resolves App, bind-prop, or
+App state IDs and bind-prop forwarding, dimensions, line height, wrapping,
+fonts, theme colors, status surfaces, and payload routes into
+`ResolvedTextEditor`. App-level controlled editor bindings retain exact
+`AppStateId` and optional `ExternFnId` pairs, so message/update generation does
+not traverse the raw view graph. Production emission reads the raw node only
+for its shared widget ID. Structural assertions, malformed expression and
+controlled-state IDs, same-kind identity swaps, pre-/post-lowering poisoning,
+imported origin chains, complete native generation, the lexical boundary
+ratchet, and an ignored 4,000-editor lower+emit contract cover the boundary.
+
+PickList and ComboBox have complete private HIR boundaries. Their checked
+interaction records freeze every option-expression slot, generic selection
+type, selection/input/hover/open/close route, exact custom widget/menu style
+extern, font and handle/icon topology, parented status/menu origins, and the
+exact `CheckedValueRef` behind each `combo[T]` state. Lowering publishes
+`ResolvedPickList` and `ResolvedComboBox` with resolved dimensions, typography,
+fonts, colors, gradients, surfaces, handles/icons, and payload delivery.
+Production emission reads the raw source node only for its shared widget ID.
+Complete HIR assertions, expression and static poisoning, same-arena
+state/extern/route/status swaps, malformed IDs, imported physical origins,
+native output tests, and explicit 4,000-PickList plus 4,000-distinct-ComboBox
+budgets cover the boundary. App-only callbacks perform zero full binding
+environment clones; the distinct-state contract lowers in about 100 ms and
+emits in about 400 ms on the reference development machine.
+
+Rule, QrCode, and Space have complete private HIR boundaries. Shared checked
+interaction records freeze each primitive's stable view identity, ordered
+expression partition, static option topology, and parented physical origin; a
+dedicated QrCode fact also freezes its exact `str`/`bytes` payload type.
+Lowering publishes `ResolvedRule`, `ResolvedQrCode`, and `ResolvedSpace` with
+canonical axis/fill/preset, correction/version/defaulting, exclusive sizing,
+native-versus-numeric length, and resolved theme-color contracts. Production
+emission reads the source node only for the shared widget ID. Structural HIR
+assertions, pre- and post-lowering raw poisoning, same-arena and cross-widget
+operand identity attacks, corrupt facts, imported origin parents, complete
+native output tests, the lexical boundary ratchet, and an ignored mixed
+4,000-primitive lower+emit budget cover the boundary.
+
+Markdown has a complete private HIR boundary. Its checked interaction record
+freezes the concrete markdown state identity, ordered settings and style
+expressions, font topology, exact viewer extern ID and arguments, link route,
+and parented origins. Lowering publishes `ResolvedMarkdown` with canonical
+defaults, resolved fonts and theme colors, viewer argument modes, and typed
+link delivery. Production emission consumes that record and checked expression
+IDs; it does not reread raw content, settings, styles, viewer names, arguments,
+or routes. Raw-poisoning, cross-owner and invalid-ID attacks, imported physical
+origins and generated markers, native output tests, the lexical boundary
+ratchet, and an ignored 4,000-Markdown lower+emit contract cover the boundary.
+
+ExternComponent has a complete private HIR boundary. Its checked facts freeze
+the exact component extern ID, Rust path, ordered parameter and argument types,
+borrow modes, output type, route, and parented physical origins. Lowering
+publishes `ResolvedExternComponent` for call sites and a typed
+`ResolvedExternComponentDeclaration` for every declaration, including unused
+ones. Production rendering and component probe emission consume those records;
+raw function/declaration names, Rust paths, parameters, borrow choices, outputs,
+spans, arguments, and routes are not reread. Direct, component-local, output,
+and unit delivery; call-site and complete declaration raw-poisoning; cross-owner
+and corrupt-ID attacks; imported declaration/widget markers and source-mapped
+`E196`; native output; the lexical ratchet; and ignored 4,000-call plus
+4,000-unused-probe lower+emit contracts cover the boundary.
+
+Themer and Shader have complete private HIR boundaries. Shared checked
+interaction records retain exact `ExternFnId`s, deterministic argument and
+route partitions, declared output types, static dimension topology, and
+parented physical origins. Their accepted parameters are owned-only; lowering
+nevertheless records the exact argument mode rather than letting the backend
+infer a Rust calling convention. `ResolvedThemer` fixes the alternate-theme
+factory and mapped output, while `ResolvedShader` additionally distinguishes
+fill, fill-portion, shrink, checked `f64`, and checked native `length`
+dimensions. Production emission and noop discovery consume these records and
+never inspect raw extern names, arguments, dimensions, or routes. Structural
+HIR assertions, cross-owner and same-kind extern corruption, malformed IDs,
+post-check dynamic/static mutation, post-lowering full raw poisoning, imported
+origin/source-marker and source-mapped `E196` evidence, native output, the
+lexical boundary ratchet, and an ignored mixed 4,000-node lower+emit contract
+cover the boundary.
+
+Nested Theme has a complete private wrapper HIR boundary. Its checked record
+and interaction-expression partition freeze the shared view ID, preset or exact
+theme-factory ID, ordered argument types, text/background theme colors, linear
+gradient topology, and parented physical origins. `ResolvedNestedTheme` fixes
+the factory Rust path and owns checked IDs for factory arguments, gradient
+angle, and stop offsets. Production rendering reads none of those fields from
+the source AST; only child traversal and common widget identity remain in the
+general view topology. Dynamic/static and post-lowering raw poisoning,
+same-type cross-owner expression attacks, factory/view/origin corruption,
+imported marker and source-mapped E196 evidence, the reduced HIR ratchet, and an
+ignored 4,000-node lower+emit budget cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

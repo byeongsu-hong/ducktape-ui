@@ -141,13 +141,6 @@ pub struct CanvasPaint {
     pub stroke: Option<CanvasStroke>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CanvasFillRule {
-    #[default]
-    NonZero,
-    EvenOdd,
-}
-
 #[derive(Clone, Debug)]
 pub struct CanvasStroke {
     pub style: BackgroundValue,
@@ -156,22 +149,6 @@ pub struct CanvasStroke {
     pub join: CanvasLineJoin,
     pub dash: Vec<Expr>,
     pub dash_offset: Expr,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CanvasLineCap {
-    #[default]
-    Butt,
-    Square,
-    Round,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CanvasLineJoin {
-    #[default]
-    Miter,
-    Round,
-    Bevel,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -851,35 +828,4 @@ pub(crate) fn sensor_semantic_key(options: &SensorOptions) -> String {
             .map(route)
             .unwrap_or_else(|| "none".into()),
     )
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MouseInteraction {
-    None,
-    Hidden,
-    Idle,
-    ContextMenu,
-    Help,
-    Pointer,
-    Progress,
-    Wait,
-    Cell,
-    Crosshair,
-    Text,
-    Alias,
-    Copy,
-    Move,
-    NoDrop,
-    NotAllowed,
-    Grab,
-    Grabbing,
-    ResizingHorizontally,
-    ResizingVertically,
-    ResizingDiagonallyUp,
-    ResizingDiagonallyDown,
-    ResizingColumn,
-    ResizingRow,
-    AllScroll,
-    ZoomIn,
-    ZoomOut,
 }
