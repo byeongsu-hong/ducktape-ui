@@ -89,11 +89,10 @@ view
 #[test]
 fn checks_test_mount_targets_expressions_and_dispatch() {
     let document = analyze(VALID).unwrap();
-    assert_eq!(document.tests.len(), 1);
-    assert_eq!(document.handlers[1].params[0].ty, Type::Str);
+    assert_eq!(document.source_document().tests.len(), 1);
     assert_eq!(
-        Type::TestTarget.rust(&[]),
-        "::ui_lang_runtime::testing::Target"
+        document.source_document().handlers[1].params[0].ty,
+        Type::Str
     );
 }
 
@@ -102,7 +101,10 @@ fn checks_digits_in_snake_case_test_names() {
     let source = VALID.replace("test render_contract", "test render_contract_2");
     let document = analyze(&source).unwrap();
 
-    assert_eq!(document.tests[0].name, "render_contract_2");
+    assert_eq!(
+        document.source_document().tests[0].name,
+        "render_contract_2"
+    );
 }
 
 #[test]

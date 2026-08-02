@@ -63,6 +63,29 @@ view
 }
 
 #[test]
+fn lowers_stateless_component_outputs_without_ambient_component_context() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Choice() -> bool
+  checkbox "Choice" checked=false -> emit(_)
+on changed(next)
+view
+  Choice -> changed _
+"#;
+    let generated = compile(source, "stateless-output.ice").unwrap();
+    assert!(generated.contains("move |__value| __DemoMessage::Changed(__value)"));
+}
+
+#[test]
 fn lowers_named_component_events_through_caller_routes() {
     let source = r#"app Demo
 theme contract AppTheme

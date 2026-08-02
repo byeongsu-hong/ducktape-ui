@@ -107,10 +107,22 @@ view
   text last
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[0].params[0].ty, Type::Event);
-    assert_eq!(document.handlers[1].params[0].ty, Type::Str);
-    assert_eq!(document.handlers[2].params[0].ty, Type::WindowId);
-    assert_eq!(document.handlers[2].params[1].ty, Type::Event);
+    assert_eq!(
+        document.source_document().handlers[0].params[0].ty,
+        Type::Event
+    );
+    assert_eq!(
+        document.source_document().handlers[1].params[0].ty,
+        Type::Str
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0].ty,
+        Type::WindowId
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[1].ty,
+        Type::Event
+    );
 
     let error = analyze(&source.replace(
         "sync event_label(value:event) -> str?",
@@ -126,6 +138,7 @@ fn checks_all_native_input_method_subscription_payloads() {
     let source = example!("input_method_events.ice");
     let document = analyze(source).unwrap();
     let preedit = document
+        .source_document()
         .handlers
         .iter()
         .find(|handler| handler.name == "preedit")
@@ -161,6 +174,7 @@ fn checks_all_native_mouse_subscription_payloads() {
     let source = example!("mouse_events.ice");
     let document = analyze(source).unwrap();
     let handlers = document
+        .source_document()
         .handlers
         .iter()
         .map(|handler| {
@@ -210,7 +224,7 @@ fn checks_all_native_mouse_subscription_payloads() {
 fn checks_all_native_touch_subscription_payloads() {
     let source = example!("touch_events.ice");
     let document = analyze(source).unwrap();
-    for handler in &document.handlers {
+    for handler in &document.source_document().handlers {
         assert_eq!(
             handler
                 .params
@@ -236,8 +250,14 @@ fn checks_all_native_touch_subscription_payloads() {
 fn checks_typed_pointer_values() {
     let source = example!("pointer_values.ice");
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty, Type::MouseButton);
-    assert_eq!(document.handlers[2].params[0].ty, Type::TouchFinger);
+    assert_eq!(
+        document.source_document().handlers[1].params[0].ty,
+        Type::MouseButton
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0].ty,
+        Type::TouchFinger
+    );
 
     for (from, to, code, message) in [
         (
@@ -299,9 +319,12 @@ fn checks_typed_pointer_values() {
 fn checks_native_transformations() {
     let source = example!("transformation_values.ice");
     let document = analyze(source).unwrap();
-    assert_eq!(document.states[0].ty, Type::Transformation);
-    assert_eq!(document.states[6].ty, Type::Vector);
-    assert_eq!(document.states[11].ty, Type::Size);
+    assert_eq!(
+        document.source_document().states[0].ty,
+        Type::Transformation
+    );
+    assert_eq!(document.source_document().states[6].ty, Type::Vector);
+    assert_eq!(document.source_document().states[11].ty, Type::Size);
 
     for (from, to, code, message) in [
         (
@@ -357,10 +380,16 @@ fn checks_native_transformations() {
 fn checks_native_geometry_values() {
     let source = example!("geometry_values.ice");
     let document = analyze(source).unwrap();
-    assert_eq!(document.functions[0].output, Type::RectangleU32);
-    assert_eq!(document.functions[1].params[1].1, Type::PointU32);
     assert_eq!(
-        document.functions[1].params[5].1,
+        document.source_document().functions[0].output,
+        Type::RectangleU32
+    );
+    assert_eq!(
+        document.source_document().functions[1].params[1].1,
+        Type::PointU32
+    );
+    assert_eq!(
+        document.source_document().functions[1].params[5].1,
         Type::Option(Box::new(Type::RectangleU32))
     );
 
@@ -437,10 +466,22 @@ fn checks_native_geometry_values() {
 fn checks_native_padding_and_angles() {
     let source = example!("padding_angles.ice");
     let document = analyze(source).unwrap();
-    assert_eq!(document.functions[0].params[0].1, Type::Pixels);
-    assert_eq!(document.functions[0].params[1].1, Type::Padding);
-    assert_eq!(document.functions[0].params[2].1, Type::Degrees);
-    assert_eq!(document.functions[0].params[3].1, Type::Radians);
+    assert_eq!(
+        document.source_document().functions[0].params[0].1,
+        Type::Pixels
+    );
+    assert_eq!(
+        document.source_document().functions[0].params[1].1,
+        Type::Padding
+    );
+    assert_eq!(
+        document.source_document().functions[0].params[2].1,
+        Type::Degrees
+    );
+    assert_eq!(
+        document.source_document().functions[0].params[3].1,
+        Type::Radians
+    );
 
     for (from, to, code, message) in [
         (
@@ -527,6 +568,7 @@ fn checks_all_native_window_subscription_payloads() {
     let source = example!("window_events.ice");
     let document = analyze(source).unwrap();
     let opened = document
+        .source_document()
         .handlers
         .iter()
         .find(|handler| handler.name == "opened")

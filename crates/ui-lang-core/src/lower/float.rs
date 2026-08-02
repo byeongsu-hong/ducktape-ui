@@ -236,6 +236,7 @@ impl Lowerer {
                 span,
                 canvas_locals: false,
                 own_view_locals: matches!(index, 1 | 2),
+                allowed_own_view_locals: None,
                 family: "float",
             };
             let root_scope = graph.root_scope();

@@ -1,5 +1,9 @@
-use crate::{Layout, MediaKind, ResponsiveContent, ViewNode, analyze_file};
-use std::collections::BTreeSet;
+use crate::lower::{
+    ResolvedLayoutMode, ResolvedLinearAxis, ResolvedMediaKind, ResolvedView, ResolvedViewKind,
+};
+use crate::{analyze_file, analyze_file_with_overlays};
+use std::collections::{BTreeSet, HashMap};
+use std::fs;
 use std::path::Path;
 
 const ALL_RENDER_NODES: &[&str] = &[
@@ -56,189 +60,143 @@ const ALL_RENDER_NODES: &[&str] = &[
 #[test]
 fn render_contract_covers_every_render_node() {
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/iced-app/src/ui");
-    let mut covered = BTreeSet::new();
-
     let path = examples.join("render_surface.ice");
-    let document = analyze_file(&path).unwrap();
-    collect(
-        &document.view,
-        &document,
-        &mut covered,
-        &mut BTreeSet::new(),
-    );
+    let program = crate::lower::lower(analyze_file(&path).unwrap()).unwrap();
+    crate::codegen::generate(&program, path.to_str().unwrap())
+        .expect("every normalized render node dispatches through codegen");
+    let covered = program
+        .resolved_views()
+        .map(|view| normalized_render_kind(&program, view))
+        .collect::<BTreeSet<_>>();
 
     assert_eq!(covered, ALL_RENDER_NODES.iter().copied().collect());
 }
 
-fn collect(
-    node: &ViewNode,
-    document: &crate::Document,
-    covered: &mut BTreeSet<&'static str>,
-    visited_components: &mut BTreeSet<String>,
-) {
-    let kind = match node {
-        ViewNode::Layout { kind, options, .. } => {
-            if options.flexbox.is_some() {
-                "flex"
-            } else {
-                match kind {
-                    Layout::Column => "col",
-                    Layout::Row => "row",
-                    Layout::Scroll => "scroll",
-                    Layout::Grid => "grid",
-                    Layout::Stack => "stack",
-                }
+#[test]
+fn dynamic_identity_analysis_is_separate_from_every_render_family() {
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/iced-app/src/ui");
+    let path = examples.join("render_surface.ice").canonicalize().unwrap();
+    let source = fs::read_to_string(&path).unwrap();
+    let source = source
+        .split_once("\ntest renders_every_node\n")
+        .map_or(source.as_str(), |(application, _)| application);
+    let source = source.replacen(
+        "state\n",
+        "state\n  identity_key = \"canonical-view-key\"\n",
+        1,
+    );
+    let mut in_app_view = false;
+    let mut dynamic_identities = 0usize;
+    let mut preexisting_dynamic_identities = 0usize;
+    let source = source
+        .lines()
+        .map(|line| {
+            if line == "view" {
+                in_app_view = true;
+                return line.to_owned();
             }
-        }
-        ViewNode::Container { .. } => "box",
-        ViewNode::Overlay { .. } => "overlay",
-        ViewNode::PaneGrid { .. } => "panes",
-        ViewNode::Text { .. } => "text",
-        ViewNode::RichText { .. } => "rich-text",
-        ViewNode::Input { .. } => "input",
-        ViewNode::Button { .. } => "button",
-        ViewNode::Checkbox { .. } => "checkbox",
-        ViewNode::Toggler { .. } => "toggler",
-        ViewNode::Slider { .. } => "slider",
-        ViewNode::Progress { .. } => "progress",
-        ViewNode::Radio { .. } => "radio",
-        ViewNode::PickList { .. } => "pick",
-        ViewNode::ComboBox { .. } => "combo",
-        ViewNode::Rule { .. } => "rule",
-        ViewNode::QrCode { .. } => "qr",
-        ViewNode::Space { .. } => "space",
-        ViewNode::If { .. } => "if",
-        ViewNode::Match { .. } => "match",
-        ViewNode::For { .. } => "for",
-        ViewNode::KeyedColumn { .. } => "keyed",
-        ViewNode::Lazy { .. } => "lazy",
-        ViewNode::Markdown { .. } => "markdown",
-        ViewNode::TextEditor { .. } => "editor",
-        ViewNode::Table { .. } => "table",
-        ViewNode::Component { .. } => "component",
-        ViewNode::Slot { .. } => "slot",
-        ViewNode::ExternComponent { .. } => "extern",
-        ViewNode::Themer { .. } => "themer",
-        ViewNode::Shader { .. } => "shader",
-        ViewNode::Media { kind, .. } => match kind {
-            MediaKind::Image => "image",
-            MediaKind::Svg => "svg",
-            MediaKind::Viewer => "viewer",
-        },
-        ViewNode::Tooltip { .. } => "tooltip",
-        ViewNode::MouseArea { .. } => "mouse",
-        ViewNode::ResizeHandle { .. } => "resize",
-        ViewNode::Canvas { .. } => "canvas",
-        ViewNode::Theme { .. } => "theme",
-        ViewNode::Float { .. } => "float",
-        ViewNode::Pin { .. } => "pin",
-        ViewNode::Sensor { .. } => "sensor",
-        ViewNode::Responsive { .. } => "responsive",
-    };
-    covered.insert(kind);
+            if !in_app_view || line.trim_start().starts_with("panes #") {
+                return line.to_owned();
+            }
+            let Some(marker) = line.find(" #") else {
+                return line.to_owned();
+            };
+            let token_start = marker + 2;
+            let token_end = line[token_start..]
+                .find(char::is_whitespace)
+                .map_or(line.len(), |offset| token_start + offset);
+            if line[token_start..token_end].contains('(') {
+                preexisting_dynamic_identities += 1;
+                return line.to_owned();
+            }
+            dynamic_identities += 1;
+            format!(
+                "{}{}(identity_key){}",
+                &line[..token_start],
+                &line[token_start..token_end],
+                &line[token_end..]
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(dynamic_identities >= 40);
 
-    match node {
-        ViewNode::Layout { children, .. }
-        | ViewNode::If { children, .. }
-        | ViewNode::For { children, .. } => {
-            children
-                .iter()
-                .for_each(|child| collect(child, document, covered, visited_components));
-        }
-        ViewNode::Match { arms, .. } => {
-            arms.iter().flat_map(|arm| &arm.children).for_each(|child| {
-                collect(child, document, covered, visited_components);
-            });
-        }
-        ViewNode::Container { content, .. }
-        | ViewNode::MouseArea { content, .. }
-        | ViewNode::ResizeHandle { content, .. }
-        | ViewNode::Theme { content, .. }
-        | ViewNode::Float { content, .. }
-        | ViewNode::Pin { content, .. }
-        | ViewNode::Sensor { content, .. } => {
-            collect(content, document, covered, visited_components);
-        }
-        ViewNode::Overlay { content, layer, .. }
-        | ViewNode::Tooltip {
-            content,
-            tip: layer,
-            ..
-        } => {
-            collect(content, document, covered, visited_components);
-            collect(layer, document, covered, visited_components);
-        }
-        ViewNode::PaneGrid {
-            panes, templates, ..
-        } => {
-            for pane in panes {
-                pane.nodes().for_each(|node| {
-                    collect(node, document, covered, visited_components);
-                });
-            }
-            for template in templates {
-                template.pane.nodes().for_each(|node| {
-                    collect(node, document, covered, visited_components);
-                });
-            }
-        }
-        ViewNode::Table { columns, .. } => {
-            for column in columns {
-                collect(&column.header, document, covered, visited_components);
-                collect(&column.cell, document, covered, visited_components);
-            }
-        }
-        ViewNode::Component { name, slots, .. } => {
-            slots.iter().for_each(|slot| {
-                collect(&slot.content, document, covered, visited_components);
-            });
-            if visited_components.insert(name.clone()) {
-                let component = document
-                    .components
-                    .iter()
-                    .find(|component| component.name == *name)
-                    .expect("checked component call");
-                collect(&component.root, document, covered, visited_components);
-            }
-        }
-        ViewNode::Button {
-            content: Some(content),
-            ..
-        }
-        | ViewNode::KeyedColumn { child: content, .. }
-        | ViewNode::Lazy { child: content, .. } => {
-            collect(content, document, covered, visited_components);
-        }
-        ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                collect(narrow, document, covered, visited_components);
-                collect(wide, document, covered, visited_components);
-            }
-            ResponsiveContent::Size { content, .. } => {
-                collect(content, document, covered, visited_components);
-            }
+    let checked = analyze_file_with_overlays(&path, &HashMap::from([(path.clone(), source)]))
+        .expect("dynamic identities remain independently checked across the complete view surface");
+    let program = crate::lower::lower(checked)
+        .expect("identity expressions do not leak into widget-family analysis guards");
+    crate::codegen::generate(&program, path.to_str().unwrap())
+        .expect("every dynamic identity is emitted from canonical view HIR");
+    assert_eq!(
+        program
+            .resolved_views()
+            .filter_map(|view| view.identity.as_ref())
+            .filter(|identity| identity.key.is_some())
+            .count(),
+        dynamic_identities + preexisting_dynamic_identities
+    );
+}
+
+fn normalized_render_kind(
+    program: &crate::lower::LoweredProgram,
+    view: &ResolvedView,
+) -> &'static str {
+    match &view.kind {
+        ResolvedViewKind::Layout { .. } => match &program.resolved_layout(view.id).unwrap().mode {
+            ResolvedLayoutMode::Linear(layout) => match layout.axis {
+                ResolvedLinearAxis::Column => "col",
+                ResolvedLinearAxis::Row => "row",
+            },
+            ResolvedLayoutMode::Grid(_) => "grid",
+            ResolvedLayoutMode::Stack(_) => "stack",
+            ResolvedLayoutMode::Flex(_) => "flex",
+            ResolvedLayoutMode::Scroll(_) => "scroll",
         },
-        ViewNode::Text { .. }
-        | ViewNode::RichText { .. }
-        | ViewNode::Input { .. }
-        | ViewNode::Button { content: None, .. }
-        | ViewNode::Checkbox { .. }
-        | ViewNode::Toggler { .. }
-        | ViewNode::Slider { .. }
-        | ViewNode::Progress { .. }
-        | ViewNode::Radio { .. }
-        | ViewNode::PickList { .. }
-        | ViewNode::ComboBox { .. }
-        | ViewNode::Rule { .. }
-        | ViewNode::QrCode { .. }
-        | ViewNode::Space { .. }
-        | ViewNode::Markdown { .. }
-        | ViewNode::TextEditor { .. }
-        | ViewNode::Slot { .. }
-        | ViewNode::ExternComponent { .. }
-        | ViewNode::Themer { .. }
-        | ViewNode::Shader { .. }
-        | ViewNode::Media { .. }
-        | ViewNode::Canvas { .. } => {}
+        ResolvedViewKind::Container { .. } => "box",
+        ResolvedViewKind::Overlay { .. } => "overlay",
+        ResolvedViewKind::PaneGrid { .. } => "panes",
+        ResolvedViewKind::Text => "text",
+        ResolvedViewKind::RichText => "rich-text",
+        ResolvedViewKind::Input => "input",
+        ResolvedViewKind::Button { .. } => "button",
+        ResolvedViewKind::Checkbox => "checkbox",
+        ResolvedViewKind::Toggler => "toggler",
+        ResolvedViewKind::Slider => "slider",
+        ResolvedViewKind::Progress => "progress",
+        ResolvedViewKind::Radio => "radio",
+        ResolvedViewKind::PickList => "pick",
+        ResolvedViewKind::ComboBox => "combo",
+        ResolvedViewKind::Rule => "rule",
+        ResolvedViewKind::QrCode => "qr",
+        ResolvedViewKind::Space => "space",
+        ResolvedViewKind::If { .. } => "if",
+        ResolvedViewKind::Match { .. } => "match",
+        ResolvedViewKind::For { .. } => "for",
+        ResolvedViewKind::KeyedColumn { .. } => "keyed",
+        ResolvedViewKind::Lazy { .. } => "lazy",
+        ResolvedViewKind::Markdown => "markdown",
+        ResolvedViewKind::TextEditor => "editor",
+        ResolvedViewKind::Table { .. } => "table",
+        ResolvedViewKind::Component { .. } => "component",
+        ResolvedViewKind::Slot { .. } => "slot",
+        ResolvedViewKind::ExternComponent => "extern",
+        ResolvedViewKind::Themer => "themer",
+        ResolvedViewKind::Shader => "shader",
+        ResolvedViewKind::Media => match program.resolved_media(view.id).unwrap().kind {
+            ResolvedMediaKind::Image => "image",
+            ResolvedMediaKind::Svg => "svg",
+            ResolvedMediaKind::Viewer => "viewer",
+        },
+        ResolvedViewKind::Tooltip { .. } => "tooltip",
+        ResolvedViewKind::MouseArea { .. } => "mouse",
+        ResolvedViewKind::ResizeHandle { .. } => "resize",
+        ResolvedViewKind::Canvas => "canvas",
+        ResolvedViewKind::Theme { .. } => "theme",
+        ResolvedViewKind::Float { .. } => "float",
+        ResolvedViewKind::Pin { .. } => "pin",
+        ResolvedViewKind::Sensor { .. } => "sensor",
+        ResolvedViewKind::ResponsiveBreakpoint { .. } | ResolvedViewKind::ResponsiveSize { .. } => {
+            "responsive"
+        }
     }
 }

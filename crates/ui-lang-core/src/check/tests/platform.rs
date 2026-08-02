@@ -75,9 +75,24 @@ view
   text label
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[0].params[0].ty.display(), "key-press");
-    assert_eq!(document.handlers[1].params[0].ty.display(), "key-release");
-    assert_eq!(document.handlers[2].params[0].ty.display(), "key-modifiers");
+    assert_eq!(
+        document.source_document().handlers[0].params[0]
+            .ty
+            .display(),
+        "key-press"
+    );
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "key-release"
+    );
+    assert_eq!(
+        document.source_document().handlers[2].params[0]
+            .ty
+            .display(),
+        "key-modifiers"
+    );
 
     let error = analyze(&source.replace(
         "on released(event)\n  physical = event.physical_key",
@@ -153,8 +168,18 @@ view
   text cpu
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty.display(), "system-info");
-    assert_eq!(document.handlers[3].params[0].ty.display(), "str");
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "system-info"
+    );
+    assert_eq!(
+        document.source_document().handlers[3].params[0]
+            .ty
+            .display(),
+        "str"
+    );
 
     let error = analyze(&source.replace("info.cpu_brand", "info.unknown")).unwrap_err();
     assert_eq!(error.code, "E151");
@@ -200,8 +225,18 @@ view
   text "Clipboard"
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty.display(), "str?");
-    assert_eq!(document.handlers[3].params[0].ty.display(), "str?");
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "str?"
+    );
+    assert_eq!(
+        document.source_document().handlers[3].params[0]
+            .ty
+            .display(),
+        "str?"
+    );
 
     let error = analyze(&source.replace(
         "task clipboard write \"copied\"",
@@ -234,7 +269,12 @@ view
   text "Fonts"
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[1].params[0].ty.display(), "unit");
+    assert_eq!(
+        document.source_document().handlers[1].params[0]
+            .ty
+            .display(),
+        "unit"
+    );
 
     let error = analyze(&source.replace("font load font_bytes", "font load true")).unwrap_err();
     assert_eq!(error.code, "E101");
@@ -296,7 +336,12 @@ view
       text "Content"
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[4].params[0].ty.display(), "bool");
+    assert_eq!(
+        document.source_document().handlers[4].params[0]
+            .ty
+            .display(),
+        "bool"
+    );
 
     let error = analyze(&source.replace("focus #field", "focus #missing")).unwrap_err();
     assert_eq!(error.code, "E172");
@@ -356,7 +401,10 @@ view
         text id
 "#;
     let document = analyze(source).unwrap();
-    assert_eq!(document.handlers[2].params[0].ty, Type::Bool);
+    assert_eq!(
+        document.source_document().handlers[2].params[0].ty,
+        Type::Bool
+    );
 
     let error = analyze(&source.replacen("focus #field(selected)", "focus #missing(selected)", 1))
         .unwrap_err();
@@ -413,15 +461,15 @@ fn checks_widget_selectors() {
     let source = example!("widget_selectors.ice");
     let document = analyze(source).unwrap();
     assert_eq!(
-        document.handlers[6].params[0].ty,
+        document.source_document().handlers[6].params[0].ty,
         Type::Option(Box::new(Type::WidgetTarget))
     );
     assert_eq!(
-        document.handlers[7].params[0].ty,
+        document.source_document().handlers[7].params[0].ty,
         Type::List(Box::new(Type::WidgetTarget))
     );
     assert_eq!(
-        document.handlers[8].params[0].ty,
+        document.source_document().handlers[8].params[0].ty,
         Type::List(Box::new(Type::Str))
     );
 

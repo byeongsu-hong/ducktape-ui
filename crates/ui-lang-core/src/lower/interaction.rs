@@ -267,7 +267,7 @@ impl Lowerer {
         )
     }
 
-    fn interaction_contract(
+    pub(super) fn interaction_contract(
         &self,
         kind: CheckedInteractionKind,
         semantic_key: String,
@@ -300,7 +300,7 @@ impl Lowerer {
         Ok((id, checked, checked_view.scope, checked_view.origin))
     }
 
-    fn lower_optional_interaction_route(
+    pub(super) fn lower_optional_interaction_route(
         &self,
         source: &Option<Route>,
         checked: &CheckedInteraction,
@@ -327,7 +327,27 @@ impl Lowerer {
             .transpose()
     }
 
-    fn lower_interaction_route(
+    pub(super) fn lower_required_interaction_route(
+        &self,
+        source: &Route,
+        checked: &CheckedInteraction,
+        routes: &[&Route],
+        route: &mut usize,
+        widget: ViewId,
+        scope: CheckedViewScope,
+    ) -> Result<ResolvedInteractionRoute, Error> {
+        let expected = routes.get(*route).copied().ok_or_else(|| {
+            self.invariant(&source.span, "interaction route order is out of range")
+        })?;
+        if !std::ptr::eq(source, expected) {
+            return Err(self.invariant(&source.span, "interaction route order diverged"));
+        }
+        let result = self.lower_interaction_route(source, checked, *route, widget, scope)?;
+        *route += 1;
+        Ok(result)
+    }
+
+    pub(super) fn lower_interaction_route(
         &self,
         source: &Route,
         interaction: &CheckedInteraction,
@@ -345,6 +365,18 @@ impl Lowerer {
             })
         {
             return Err(self.invariant(&source.span, "interaction route ID diverged"));
+        }
+        let route_origin = self.origins.try_get(checked.origin).ok_or_else(|| {
+            self.invariant(
+                &source.span,
+                "interaction route origin is outside its arena",
+            )
+        })?;
+        if route_origin.parent != Some(self.facts.view(widget).origin) {
+            return Err(self.invariant(
+                &source.span,
+                "interaction route origin has the wrong view parent",
+            ));
         }
         let source_args = match &checked.target {
             CheckedCanvasRouteTarget::ComponentEvent { name, .. } => {
@@ -364,6 +396,12 @@ impl Lowerer {
         if source_args.len() != checked.args.len() {
             return Err(self.invariant(&source.span, "interaction route arity diverged"));
         }
+        let mut expected_expression_index = interaction.option_expressions.len() as u32
+            + interaction.routes[..route_index]
+                .iter()
+                .flat_map(|route| &route.args)
+                .filter(|argument| matches!(argument, CheckedCanvasRouteArg::Expression(_)))
+                .count() as u32;
         let mut payload = 0u32;
         let mut args = Vec::with_capacity(checked.args.len());
         for (raw, retained) in source_args.iter().zip(&checked.args) {
@@ -376,16 +414,17 @@ impl Lowerer {
                                 "interaction route expression ID is invalid",
                             )
                         })?;
-                    if !matches!(
-                        checked_expression.owner,
-                        CheckedExprOwner::Interaction(InteractionExpressionId {
-                            widget: owner,
-                            ..
-                        }) if owner == widget
-                    ) {
+                    let expected_owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                        widget,
+                        index: expected_expression_index,
+                    });
+                    expected_expression_index += 1;
+                    if checked_expression.owner != expected_owner
+                        || self.facts.expression_use_by_owner(expected_owner) != Some(*expression)
+                    {
                         return Err(self.invariant(
                             &source.span,
-                            "interaction route expression owner diverged",
+                            "interaction route expression slot identity diverged",
                         ));
                     }
                     args.push(ResolvedInteractionRouteArg::Expression(*expression));
@@ -487,11 +526,39 @@ impl Lowerer {
         })
     }
 
-    fn validate_interaction_expression_graphs(
+    pub(super) fn validate_interaction_expression_graphs(
         &self,
         widget: ViewId,
         scope: CheckedViewScope,
         count: u32,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.validate_interaction_expression_graphs_with_locals(widget, scope, count, None, span)
+    }
+
+    pub(super) fn validate_interaction_expression_graphs_with_local_contracts(
+        &self,
+        widget: ViewId,
+        scope: CheckedViewScope,
+        count: u32,
+        allowed_locals: &HashMap<CheckedExprUseId, HashSet<CheckedLocalId>>,
+        span: &Span,
+    ) -> Result<(), Error> {
+        self.validate_interaction_expression_graphs_with_locals(
+            widget,
+            scope,
+            count,
+            Some(allowed_locals),
+            span,
+        )
+    }
+
+    fn validate_interaction_expression_graphs_with_locals(
+        &self,
+        widget: ViewId,
+        scope: CheckedViewScope,
+        count: u32,
+        allowed_locals: Option<&HashMap<CheckedExprUseId, HashSet<CheckedLocalId>>>,
         span: &Span,
     ) -> Result<(), Error> {
         let mut graph = CheckedExpressionGraph::default();
@@ -506,6 +573,13 @@ impl Lowerer {
             if expression.owner != owner {
                 return Err(self.invariant(span, "interaction expression owner mapping diverged"));
             }
+            let expression_allowed_locals = allowed_locals
+                .map(|allowed| {
+                    allowed.get(&use_id).ok_or_else(|| {
+                        self.invariant(span, "interaction expression has no local-scope contract")
+                    })
+                })
+                .transpose()?;
             let policy = ViewWidgetExpressionPolicy {
                 lowerer: self,
                 view: widget,
@@ -513,7 +587,8 @@ impl Lowerer {
                 use_id,
                 span,
                 canvas_locals: false,
-                own_view_locals: false,
+                own_view_locals: allowed_locals.is_some(),
+                allowed_own_view_locals: expression_allowed_locals,
                 family: "interaction",
             };
             let root_scope = graph.root_scope();
