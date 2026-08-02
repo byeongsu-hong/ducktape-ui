@@ -44,6 +44,9 @@ transitive reverse edges are retained. They also prove notification-free import
 edits, same-length timestamp-preserving and atomic replacements, source and
 asset symlink retargeting, stable overlay close across a root-symlink retarget,
 font deletion/recreation, and invalid icon-byte changes are observed.
+Watcher-validated source batches reuse the unchanged parsed closure. A focused
+fixture asserts one leaf edit loads, hashes, and import-scans exactly one file,
+checks only its affected root, and leaves an independent root as a cache hit.
 LSP diagnostics, the dev
 preflight loop, `cargo ice` analysis, and each `ui-lang-build` compilation batch
 own and reuse this same DB API without global or process-persistent state.
@@ -202,8 +205,11 @@ the metadata trigger performs no content reads before the existing two-pass
 stamp verification. Configuration-change plus periodic-rescan tests cover the
 other complete-snapshot safety paths. Selective-snapshot tests prove that a known
 Rust file or source-only Ice edit performs two content reads regardless of graph
-size, while new and removed files refresh the inventory. A changed snapshot is
-settled and built while the accepted process remains alive. The shadow
+size, while new and removed files refresh the inventory. The second settled Ice
+read is retained as the analysis input; an explicit 10,000-source performance
+contract requires exactly one loaded, hashed, and scanned file, one checked
+root, and an independent root cache hit within five seconds. A changed snapshot
+is settled and built while the accepted process remains alive. The shadow
 executable is adopted only after its generated root completes a draw, atomically
 publishes the runner's exact readiness token, and is confirmed alive; failure
 and timeout tests keep the previous process and clean the candidate. This is
@@ -367,6 +373,23 @@ row subtree before accepting the first frame. V1 explicitly excludes
 variable-height measurement, scrolling-ancestor touch transforms, and new Ice
 syntax.
 
+Fixed-height `TreeView` reuses the same mounted-window engine and has separate
+runtime evidence for atomic preorder validation including referenced-leaf and
+closed-subtree rejection, retained expansion, collapse selection rehoming,
+lazy-load requests, hierarchical Left/Right navigation,
+rename commit/cancel, drag-target geometry, canonical selectors, and 100,000
+logical nodes with visible-plus-overscan mounting. Headless AccessKit evidence
+checks Tree/TreeItem roles, level, sibling position and size, expanded state,
+selection, and mounted-only node count. Release contracts measure unchanged
+100,000-node rendering, flat and maximum-depth preorder reconciliation,
+late-key hierarchical toggle/navigation, and the constant-time `update_snapshot`
+plus scroll reducer with zero allocation for scalar keys. The showcase consumes
+`TreeView.Frame` through a typed extern; a first-class Ice test exercises
+hierarchical navigation plus rename focus, commit/cancel, and tree-focus
+restoration. Native and wasm minimal-feature checks
+compile the public boundary, and WGPU readiness requires both VirtualList and
+TreeView mounted-row draw probes.
+
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component
 state, parameters, or extern calls; bind and mutable component-only values
@@ -428,24 +451,37 @@ compile/diagnostic fixtures exercise production Rust plus lexical-scope
 rejection. The ignored 500-to-4,000 call-site and sibling-scope contracts verify
 one analysis per supplied argument, exact borrowed-overlay growth, linear
 binding allocations, zero full scope clones, and debug-build wall-time budgets.
+
+Component-call direct output and named-event delivery have a complete private
+route HIR boundary. Checked call-route records own stable call/view/component,
+event, outer-event, and ordered route IDs; exact output and payload types;
+direct/forward topology; checked route expressions and payload indexes; and
+parented physical origins. Lowering publishes `ResolvedInteractionRoute`
+values inside the component call, and production callbacks consume those
+records without raw `Route`, `Expr`, or source component declarations. Dynamic
+and post-lowering raw poisoning, cross-owner expression and route attacks,
+valid-ID/type/cardinality/origin corruption, imported source mapping, the
+reduced lexical ratchet, native generation, and an ignored 4,000-call
+lower+emit budget cover the boundary. Component root/slot child topology and
+the general expression fallback remain separately tracked later slices.
+
 Expression-bearing widget options outside the completed Media, Tooltip,
 MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout, Text, RichText,
 Input, Button, TextEditor, PickList, ComboBox, Slider, Progress, Rule, QrCode,
 Space, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid, If, For, and
 Match families remain outside this slice.
-The `hir_boundary` integration ratchet records selected lexical markers for the
-remaining code-generation AST/checker boundary: exported AST identifiers,
-explicit checker imports and uses, checked-document and `RenderDocument`
-escapes, re-analysis calls, and raw expression fallbacks. Its dependency-free
-Rust scanner removes comments and literals, handles lifetime, mutable,
-by-value, container, and qualified type references, tracks exact aliases from
-grouped and nested AST imports, and fingerprints each occurrence from its
-normalized containing item and call-site context. The
-reviewed occurrence counts may not grow as later HIR slices delete their old
-paths, and every fingerprint change requires explicit review; completion still
-requires every selected count to reach zero. Mutation probes guard the scanner's
-documented lexical coverage. This is not Rust name resolution, and full HIR also
-requires ordinary semantic review for unrepresented behavior.
+The `hir_boundary` integration ratchet now enforces an empty production
+code-generation AST/checker boundary: exported AST identifiers, explicit
+checker imports and uses, checked-document and `RenderDocument` escapes,
+re-analysis calls, and raw expression fallbacks all have zero occurrences. Its
+dependency-free Rust scanner removes comments and literals, discovers only
+top-level AST exports, follows import-reachable globs, names, module aliases,
+alias chains, qualified paths, and local uses, and fingerprints each occurrence
+from its normalized containing item and call-site context. Regression probes
+cover impl-method and same-name collisions as well as grouped, nested, module,
+and local aliases. The scanner is not Rust name resolution, so ordinary semantic
+review still guards unrepresented behavior; that review confirms production
+code generation consumes only normalized HIR and neutral semantic values.
 
 Application and daemon settings have a complete private HIR boundary. Stable
 setting-expression and named-window IDs retain title, active palette, theme,
@@ -637,11 +673,16 @@ Match has a complete private HIR boundary. Its checked flow owns the stable
 value expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates the expression owner mapping and DAG, scope and value type,
 Option/Result/enum/palette pattern contracts, payload local types and owner
-roles, enum/palette declarations, and arm-origin parentage before publishing
-`ResolvedMatch`. Normal-layout and flex-layout emission consume resolved Rust
-owner/variant names and never reopen checker facts or declaration IDs. Malformed
-expression/local/enum IDs fail at the source-mapped arm during lowering;
-post-check and post-lowering AST poisoning, all typed pattern families, and an
+roles, enum/palette declarations, checked duplicate/missing/wildcard coverage,
+arm-origin parent/source identity, and each arm's ordered child view IDs before
+publishing `ResolvedMatch`. Normal-layout and flex-layout emission consume
+resolved Rust owner/variant names and the resolved payload binding type; they do
+not reopen checked Match flow/local types or pattern declaration IDs. Source arm
+nodes supply only child subtrees; their spans are mapped to stable view IDs and
+rejected if those IDs move between arms.
+Malformed expression/local/enum IDs fail at the source-mapped arm during
+lowering; post-check and post-lowering AST poisoning, checked coverage and arm
+partition corruption, all typed pattern families, imported diagnostics, and an
 ignored 4,000-node lower+emit contract cover the boundary.
 
 Table has a complete private HIR boundary. Its checked flow owns the stable row
@@ -791,6 +832,58 @@ assertions, pre- and post-lowering raw poisoning, same-arena and cross-widget
 operand identity attacks, corrupt facts, imported origin parents, complete
 native output tests, the lexical boundary ratchet, and an ignored mixed
 4,000-primitive lower+emit budget cover the boundary.
+
+Markdown has a complete private HIR boundary. Its checked interaction record
+freezes the concrete markdown state identity, ordered settings and style
+expressions, font topology, exact viewer extern ID and arguments, link route,
+and parented origins. Lowering publishes `ResolvedMarkdown` with canonical
+defaults, resolved fonts and theme colors, viewer argument modes, and typed
+link delivery. Production emission consumes that record and checked expression
+IDs; it does not reread raw content, settings, styles, viewer names, arguments,
+or routes. Raw-poisoning, cross-owner and invalid-ID attacks, imported physical
+origins and generated markers, native output tests, the lexical boundary
+ratchet, and an ignored 4,000-Markdown lower+emit contract cover the boundary.
+
+ExternComponent has a complete private HIR boundary. Its checked facts freeze
+the exact component extern ID, Rust path, ordered parameter and argument types,
+borrow modes, output type, route, and parented physical origins. Lowering
+publishes `ResolvedExternComponent` for call sites and a typed
+`ResolvedExternComponentDeclaration` for every declaration, including unused
+ones. Production rendering and component probe emission consume those records;
+raw function/declaration names, Rust paths, parameters, borrow choices, outputs,
+spans, arguments, and routes are not reread. Direct, component-local, output,
+and unit delivery; call-site and complete declaration raw-poisoning; cross-owner
+and corrupt-ID attacks; imported declaration/widget markers and source-mapped
+`E196`; native output; the lexical ratchet; and ignored 4,000-call plus
+4,000-unused-probe lower+emit contracts cover the boundary.
+
+Themer and Shader have complete private HIR boundaries. Shared checked
+interaction records retain exact `ExternFnId`s, deterministic argument and
+route partitions, declared output types, static dimension topology, and
+parented physical origins. Their accepted parameters are owned-only; lowering
+nevertheless records the exact argument mode rather than letting the backend
+infer a Rust calling convention. `ResolvedThemer` fixes the alternate-theme
+factory and mapped output, while `ResolvedShader` additionally distinguishes
+fill, fill-portion, shrink, checked `f64`, and checked native `length`
+dimensions. Production emission and noop discovery consume these records and
+never inspect raw extern names, arguments, dimensions, or routes. Structural
+HIR assertions, cross-owner and same-kind extern corruption, malformed IDs,
+post-check dynamic/static mutation, post-lowering full raw poisoning, imported
+origin/source-marker and source-mapped `E196` evidence, native output, the
+lexical boundary ratchet, and an ignored mixed 4,000-node lower+emit contract
+cover the boundary.
+
+Nested Theme has a complete private wrapper HIR boundary. Its checked record
+and interaction-expression partition freeze the shared view ID, preset or exact
+theme-factory ID, ordered argument types, text/background theme colors, linear
+gradient topology, and parented physical origins. `ResolvedNestedTheme` fixes
+the factory Rust path and owns checked IDs for factory arguments, gradient
+angle, and stop offsets. Production rendering reads none of those fields from
+the source AST; only child traversal and common widget identity remain in the
+general view topology. Dynamic/static and post-lowering raw poisoning,
+same-type cross-owner expression attacks, factory/view/origin corruption,
+imported marker and source-mapped E196 evidence, the reduced HIR ratchet, and an
+ignored 4,000-node lower+emit budget cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,

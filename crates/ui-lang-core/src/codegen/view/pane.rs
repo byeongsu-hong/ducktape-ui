@@ -1,13 +1,12 @@
 use super::*;
-use crate::check::CheckedExprUseId;
 use crate::hir::OriginId;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_pane_grid(
     pane_grid: &ResolvedPaneGrid,
-    panes: &[PaneView],
-    templates: &[PaneTemplate],
-    document: &RenderDocument<'_>,
+    panes: &[ResolvedPaneViewTopology],
+    templates: &[ResolvedPaneViewTopology],
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -20,11 +19,11 @@ pub(in crate::codegen) fn render_pane_grid(
             "pane grid render topology diverged from normalized HIR",
         ));
     }
-    let id = Id {
+    let identity = ResolvedViewIdentity {
         name: pane_grid.name.clone(),
         key: None,
     };
-    let pane_grid_scope = id_code(&id, scope, env, document)?;
+    let pane_grid_scope = resolved_view_identity_code(&identity, scope, env, document)?;
     let pane_type = (!pane_grid.templates.is_empty()).then(|| pane_type(&pane_grid.name));
     let mut arms = panes
         .iter()
@@ -34,7 +33,12 @@ pub(in crate::codegen) fn render_pane_grid(
             if let Some(binding) = &resolved.maximized {
                 pane_env.insert(
                     binding.name.clone(),
-                    checked_local_binding(program, binding.local, "__pane_maximized".into(), true),
+                    resolved_local_binding(
+                        LocalBindingTypeSource::Resolved(program),
+                        binding.local,
+                        "__pane_maximized".into(),
+                        true,
+                    ),
                 );
             }
             let pane_scope = format!("format!(\"{{}}/{}\", {pane_grid_scope})", resolved.name);
@@ -62,21 +66,31 @@ pub(in crate::codegen) fn render_pane_grid(
         let mut template_env = ScopedBindingEnv::new(env);
         template_env.insert(
             item.clone(),
-            checked_local_binding(program, resolved.item.local, format!("(*{item})"), false),
+            resolved_local_binding(
+                LocalBindingTypeSource::Resolved(program),
+                resolved.item.local,
+                format!("(*{item})"),
+                false,
+            ),
         );
         if let Some(binding) = &resolved.pane.maximized {
             template_env.insert(
                 binding.name.clone(),
-                checked_local_binding(program, binding.local, "__pane_maximized".into(), true),
+                resolved_local_binding(
+                    LocalBindingTypeSource::Resolved(program),
+                    binding.local,
+                    "__pane_maximized".into(),
+                    true,
+                ),
             );
         }
-        let key = checked_expr_use_code(program, resolved.key, &template_env, ValueMode::Owned)?;
+        let key = resolved_expr_use_code(program, resolved.key, &template_env, ValueMode::Owned)?;
         let pane_scope = format!(
             "format!(\"{{}}/{}({{}})\", {pane_grid_scope}, __pane_key)",
             item
         );
         let content = render_pane_content(
-            &template.pane,
+            template,
             &resolved.pane,
             document,
             message,
@@ -122,7 +136,7 @@ pub(in crate::codegen) fn render_pane_grid(
             write!(
                 code,
                 ".{method}(::ui_lang_runtime::bounded_table_metric({}, self.{field}.len()))",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -131,7 +145,7 @@ pub(in crate::codegen) fn render_pane_grid(
         write!(
             code,
             ".on_resize(::ui_lang_runtime::bounded_table_metric({}, self.{field}.len()), {message}::{})",
-            checked_expr_use_code(program, leeway, env, ValueMode::Owned)?,
+            resolved_expr_use_code(program, leeway, env, ValueMode::Owned)?,
             pane_resize_variant(&pane_grid.name)
         )
         .unwrap();
@@ -171,7 +185,7 @@ pub(in crate::codegen) fn render_pane_grid(
     append_pane_grid_style(&mut code, pane_grid, env, document)?;
     identify_rendered(
         format!("{code}.into()"),
-        Some(&id),
+        Some(&identity),
         message,
         env,
         document,
@@ -183,7 +197,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
     code: &mut String,
     pane_grid: &ResolvedPaneGrid,
     env: &dyn BindingEnvironment,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
 ) -> Result<(), Error> {
     let program = document.hir();
     let style = &pane_grid.style;
@@ -239,7 +253,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
         write!(
             code,
             " __style.hovered_region.border.width = {} as f32;",
-            checked_expr_use_code(program, *width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -274,7 +288,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
             write!(
                 code,
                 " __style.{field}.width = {} as f32;",
-                checked_expr_use_code(program, *width, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *width, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -284,9 +298,9 @@ pub(in crate::codegen) fn append_pane_grid_style(
 }
 
 pub(in crate::codegen) fn render_pane_content(
-    pane: &PaneView,
+    pane: &ResolvedPaneViewTopology,
     resolved: &ResolvedPaneView,
-    document: &RenderDocument<'_>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -299,7 +313,7 @@ pub(in crate::codegen) fn render_pane_content(
             "pane title render topology diverged from normalized HIR",
         ));
     }
-    let body = render_node(&pane.content, document, message, env, scope, slot)?;
+    let body = render_node(pane.content, document, message, env, scope, slot)?;
     let mut declarations = format!("let __pane_content: __IceElement<'_, {message}> = {body};");
     let mut content = String::from("::iced::widget::pane_grid::Content::new(__pane_content)");
     if let Some(style) =
@@ -316,7 +330,7 @@ pub(in crate::codegen) fn render_pane_content(
                 "pane controls render topology diverged from normalized HIR",
             ));
         }
-        let title_content = render_node(&title.content, document, message, env, scope, slot)?;
+        let title_content = render_node(title.content, document, message, env, scope, slot)?;
         write!(
             declarations,
             " let __pane_title: __IceElement<'_, {message}> = {title_content};"
@@ -326,14 +340,14 @@ pub(in crate::codegen) fn render_pane_content(
         if let Some(padding) = resolved_pane_padding_code(&resolved_title.padding, program, env)? {
             write!(title_bar, ".padding({padding})").unwrap();
         }
-        if let Some(controls) = &title.controls {
+        if let Some(controls) = title.controls {
             let controls = render_node(controls, document, message, env, scope, slot)?;
             write!(
                 declarations,
                 " let __pane_controls: __IceElement<'_, {message}> = {controls};"
             )
             .unwrap();
-            if let Some(compact) = &title.compact_controls {
+            if let Some(compact) = title.compact_controls {
                 let compact = render_node(compact, document, message, env, scope, slot)?;
                 write!(
                     declarations,
@@ -397,10 +411,10 @@ fn resolved_pane_length_code(
         ResolvedPaneLength::Shrink => "::iced::Shrink".into(),
         ResolvedPaneLength::FixedF64(expression) => format!(
             "{} as f32",
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         ),
         ResolvedPaneLength::FixedLength(expression) => {
-            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
 }
@@ -413,7 +427,7 @@ fn resolved_pane_custom_style_code(
     let arguments = style
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, *argument, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?;
     let suffix = arguments
         .into_iter()
@@ -437,13 +451,13 @@ fn resolved_pane_background_code(
         ResolvedPaneBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                checked_expr_use_code(program, *angle, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
             for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    checked_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
                     resolved_theme_color(&stop.color)
                 )
                 .unwrap();
@@ -470,10 +484,10 @@ fn resolved_pane_radius_code(
     if !resolved_pane_radius_present(radius) {
         return Ok(None);
     }
-    let value = |expression: Option<CheckedExprUseId>| {
+    let value = |expression: Option<ResolvedExpressionId>| {
         expression
             .map(|expression| {
-                checked_expr_use_code(program, expression, env, ValueMode::Owned)
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)
                     .map(|code| format!("(({code}) as f32).max(0.0).min(f32::MAX)"))
             })
             .transpose()
@@ -503,9 +517,9 @@ fn resolved_pane_padding_code(
     {
         return Ok(None);
     }
-    let value = |expression: Option<CheckedExprUseId>| {
+    let value = |expression: Option<ResolvedExpressionId>| {
         expression
-            .map(|expression| checked_expr_use_code(program, expression, env, ValueMode::Owned))
+            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
             .transpose()
     };
     let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
@@ -570,7 +584,7 @@ fn resolved_pane_surface_style_value(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
@@ -594,7 +608,7 @@ fn resolved_pane_surface_style_value(
             write!(
                 code,
                 " __style.shadow.{field} = {} as f32;",
-                checked_expr_use_code(program, expression, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -603,7 +617,7 @@ fn resolved_pane_surface_style_value(
         write!(
             code,
             " __style.snap = {};",
-            checked_expr_use_code(program, snap, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, snap, env, ValueMode::Owned)?
         )
         .unwrap();
     }

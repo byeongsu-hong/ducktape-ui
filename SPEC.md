@@ -339,9 +339,13 @@ identity, checked flow, or checked local facts.
 
 Match is a completed control-flow HIR slice. Its value expression, value type,
 exhaustive Option/Result/enum/palette/wildcard patterns, typed payload locals,
-resolved Rust owner and variant names, and arm origins are published as
-`ResolvedMatch`. Normal and flex layout generation consume that record and do
-not reread source patterns, checked flow/facts, or enum and palette declarations.
+resolved Rust owner and variant names, arm origins, and the checked child-view
+identity of every arm are published as `ResolvedMatch`. Lowering revalidates the
+checked pattern coverage, arm origin parent/source, and per-arm child topology.
+Normal and flex layout generation consume the resolved binding payload and do
+not reread source patterns, checked Match flow or payload-local types, or enum
+and palette declarations; source nodes provide only child subtrees whose IDs
+must still match their resolved arm.
 
 Table is a completed structural collection HIR slice. Its row list, typed row
 local, table width and bounded metrics, and each column's width, horizontal and
@@ -486,6 +490,69 @@ cross-widget identity attacks, malformed facts, imported origins, native Rust
 generation, and a mixed 4,000-node lower+emit budget provide the executable
 evidence.
 
+Component-call direct output and named-event routes are a completed private HIR
+sub-slice. A checked call-route contract owns the stable call, view, component,
+event, outer-event, and ordered route IDs; exact output/source/target payload
+types; direct/forward topology; checked expression owners and payload indexes;
+and physical origin parents. Lowering publishes `ResolvedInteractionRoute`
+values for direct delivery and fixed IDs for forwards. Component rendering
+consumes those records and does not receive raw `Route`, route `Expr`, or source
+component declarations. Post-check dynamic and static poisoning,
+post-lowering raw poisoning, cross-owner and valid-ID/type/cardinality/origin
+corruption, imported diagnostics/markers, the lexical ratchet, and a 4,000-call
+lower+emit budget provide executable evidence. Component root and slot child
+topology plus the general expression fallback remain later HIR slices.
+
+Markdown is a completed document-content HIR slice. Its checked contract owns
+the exact markdown state reference, every dynamic setting and style operand,
+font selection, viewer extern identity and arguments, optional link route, and
+their source origins. Lowering resolves those facts into `ResolvedMarkdown`
+with canonical defaults and typed link delivery. Generation consumes that
+record and checked expression IDs; raw content names, settings, styles, viewer
+names, arguments, and routes cannot affect output after lowering. Structural
+and cross-owner corruption, raw poisoning, imported-origin/source-marker,
+native generation, and 4,000-node performance contracts cover the boundary.
+
+ExternComponent is a completed native-boundary HIR slice. Its checked contract
+owns the exact component extern identity and Rust path, ordered parameter and
+argument types, borrow modes, output type, optional route, and their source
+origins. Lowering resolves used call sites into `ResolvedExternComponent` and
+every component extern declaration, including unused declarations, into
+`ResolvedExternComponentDeclaration`. Generation consumes those records and
+checked expression IDs; component probes do not reread raw declaration names,
+Rust paths, parameter/borrow shapes, output types, or spans. Direct,
+component-local, output, and unit delivery, call-site and declaration
+raw-poisoning, corrupt declaration HIR, imported diagnostics/source markers,
+native generation, and separate 4,000-call plus 4,000-unused-probe performance
+contracts cover the boundary.
+
+Themer and Shader are completed extern-view-adapter HIR slices. Their checked
+interaction records freeze exact extern IDs, ordered owned argument types,
+declared output payloads, optional routes, and physical origins. Themer and
+Shader parameters remain owned-only under the existing Core grammar; borrowed
+parameters are still exclusive to extern components. Lowering resolves function
+paths, argument expression owners, route targets, and Shader width/height into
+`ResolvedThemer` and `ResolvedShader`, including distinct fill, fill-portion,
+shrink, numeric-fixed, and native-length-fixed variants. Generation consumes
+only those records and checked expression IDs. It does not re-resolve raw extern
+names, re-type arguments or dimensions, or inspect raw route presence for noop
+discovery. Cross-owner and invalid-ID corruption, post-check and post-lowering
+raw poisoning, imported origins and diagnostics, native Rust fragments, the
+lexical HIR ratchet, and a mixed 4,000-node lower+emit budget provide the
+executable evidence.
+
+Nested Theme is a completed wrapper HIR slice. A shared `ViewId` owns the
+checked preset/factory identity, ordered factory arguments, text/background
+theme colors, gradient discriminator and stop-color order, and physical
+origin. Dynamic factory, angle, and stop-offset operands use deterministic
+checked expression-use IDs. Lowering fixes the factory Rust path and argument
+mode and publishes `ResolvedNestedTheme`; generation consumes that record and
+the checked expressions while retaining only the child subtree and common
+widget identity as raw view topology. Post-check static drift fails with E196,
+post-lowering preset/factory/color/gradient poisoning cannot change output,
+and imported diagnostics, cross-owner corruption, the lexical ratchet, and a
+4,000-node lower+emit contract cover the boundary.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust
@@ -501,9 +568,11 @@ the manifest-relative literal to the corresponding file in `OUT_DIR` and
 expands one `include!`. Generated Rust emits probes for every declared extern
 struct field and async function. Rustc therefore rejects missing, private, or
 shape-incompatible Rust items even when an extern declaration is not reached
-at runtime. Generated items suppress backend-only Rust and Clippy warnings at
-their item boundary without changing their enclosing module, visibility, or
-name resolution; compile errors remain unsuppressed.
+at runtime. Component probes are emitted from normalized declaration HIR,
+including declarations with no view call site. Generated items suppress
+backend-only Rust and Clippy warnings at their item boundary without changing
+their enclosing module, visibility, or name resolution; compile errors remain
+unsuppressed.
 
 Generated Rust refers to the public `::iced` and `::ui_lang_runtime` paths, so
 a consuming application must declare `iced = "=0.14.0"` and
@@ -2356,6 +2425,26 @@ no `virtual-for` syntax, variable-height measurement, or nested vertical-scroll
 contract in v1. Accessibility v1
 focuses and navigates the collection but does not create offscreen item nodes or
 per-item accessibility actions.
+
+Hierarchical fixed-row collections use `ui_lang_runtime::TreeViewState` and the
+feature-gated `ducktape_ui::ui::tree_view` boundary on that same native
+collection engine. Callers reconcile unique keyed nodes in preorder, with each
+parent preceding a contiguous child subtree and marked `has_children`; invalid
+duplicate, missing, later, leaf, or already-closed parents reject the complete
+reconciliation atomically.
+Expansion is retained by key. Right expands a branch or enters its first child,
+Left collapses it or selects its parent, and collapse rehomes hidden selection
+to the collapsed ancestor. Expanding an unloaded branch returns a typed
+load-request key. Rename initiation is an explicit caller action that sends
+typed rename state; the caller focuses its editor and routes text changes,
+submit, and cancel through the typed rename events, then runs the tree focus
+task after removing the editor. The tree does not intercept
+keys owned by another focused control. `drag_target` classifies pointer geometry
+as before, inside, or after a visible row. AccessKit exposes a named Tree with
+mounted TreeItem nodes carrying stable
+identity, one-based level, sibling position and size, selection, and expansion.
+`TreeView.Frame` composes an app-owned typed extern; v1 remains fixed-height,
+caller-flattened, and outside Core syntax.
 
 `editor-style` receives Theme and editor Status implicitly and returns native
 `text_editor::Style`, covering the advanced catalog class. An editor or input
@@ -5607,6 +5696,9 @@ only affected paths. A path absent from the accepted inventories, a removed or
 renamed path, or a directory path refreshes the metadata inventory so added and
 removed inputs participate without hashing unchanged contents. A change is
 settled only when two equivalent snapshots 50 milliseconds apart are identical.
+The final stabilized bytes for affected Ice files are reused by incremental
+analysis. Unchanged files in the retained import closure are neither read,
+hashed, nor scanned again; newly imported files still load from disk.
 
 After a settled Ice, Rust, Cargo, build-script, configuration, or embedded-asset
 change, the runner builds a new executable while the accepted process remains

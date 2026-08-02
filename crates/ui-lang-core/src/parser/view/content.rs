@@ -397,7 +397,10 @@ pub(in crate::parser) fn parse_markdown_style(line: &Line) -> Result<MarkdownSty
     if parts.first().map(String::as_str) != Some("style") {
         return Err(error("E097", line, "markdown child must be `style`"));
     }
-    let mut style = MarkdownStyleOptions::default();
+    let mut style = MarkdownStyleOptions {
+        span: Some(Span::line(line.number)),
+        ..MarkdownStyleOptions::default()
+    };
     let parse = |value: &str| parse_expr(strip_wrapping_parens(value), line);
     for part in &parts[1..] {
         let Some((name, value)) = part.split_once('=') else {

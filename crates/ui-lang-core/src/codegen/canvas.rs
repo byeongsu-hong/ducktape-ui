@@ -80,7 +80,7 @@ pub(in crate::codegen) fn render_canvas(
     let draw_commands = canvas_commands_code(&canvas.commands, &draw_env, program)?;
     let use_cache = options.cache.is_some();
     let cache_key = if let Some(dependency) = &options.cache {
-        let dependency = checked_expr_use_code(program, *dependency, env, ValueMode::Owned)?;
+        let dependency = resolved_expr_use_code(program, *dependency, env, ValueMode::Owned)?;
         format!(
             "::std::option::Option::Some({{ let mut __hasher = ::std::hash::DefaultHasher::new(); ::std::hash::Hash::hash(&(__ice_palette.name, {dependency}), &mut __hasher); ::std::hash::Hasher::finish(&__hasher) }})"
         )
@@ -97,7 +97,7 @@ pub(in crate::codegen) fn render_canvas(
         use_cache,
     )?;
     let interaction = if let Some(value) = &options.interaction_expr {
-        let interaction = checked_expr_use_code(
+        let interaction = resolved_expr_use_code(
             program,
             value.expression,
             &interaction_env,
@@ -122,7 +122,9 @@ pub(in crate::codegen) fn render_canvas(
     let interaction_outside = options
         .interaction_outside
         .as_ref()
-        .map(|outside| checked_expr_use_code(program, *outside, &interaction_env, ValueMode::Owned))
+        .map(|outside| {
+            resolved_expr_use_code(program, *outside, &interaction_env, ValueMode::Owned)
+        })
         .transpose()?
         .unwrap_or_else(|| "false".into());
     let interaction_guard = match interaction_outside.as_str() {
@@ -195,7 +197,7 @@ fn append_canvas_dimensions(
             }
             ResolvedCanvasLength::Shrink => "::iced::Shrink".into(),
             ResolvedCanvasLength::Fixed { expression, source } => {
-                let value = checked_expr_use_code(program, *expression, env, ValueMode::Owned)?;
+                let value = resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?;
                 if *source == Type::Length {
                     value
                 } else {

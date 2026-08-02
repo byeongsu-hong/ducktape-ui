@@ -96,6 +96,19 @@ pub(crate) fn responsive_semantic_key(
     )
 }
 
+pub(crate) fn responsive_expression_count(
+    content: &ResponsiveContent,
+    width: &Option<LengthValue>,
+    height: &Option<LengthValue>,
+) -> u32 {
+    let breakpoint = u32::from(matches!(content, ResponsiveContent::Breakpoint { .. }));
+    let dimensions = [width, height]
+        .into_iter()
+        .filter(|length| matches!(length, Some(LengthValue::Fixed(_))))
+        .count() as u32;
+    breakpoint + dimensions
+}
+
 fn length_semantic_key(length: &Option<LengthValue>) -> String {
     match length {
         None => "none".into(),
@@ -143,6 +156,120 @@ pub struct MarkdownStyleOptions {
     pub inline_code_radius_top_right: Option<Expr>,
     pub inline_code_radius_bottom_right: Option<Expr>,
     pub inline_code_radius_bottom_left: Option<Expr>,
+    pub span: Option<Span>,
+}
+
+pub(crate) fn markdown_style_expression_roots(style: &MarkdownStyleOptions) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    if let Some(BackgroundValue::Linear { angle, stops }) = &style.inline_code_background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+    roots.extend(
+        [
+            &style.inline_code_padding.all,
+            &style.inline_code_padding.x,
+            &style.inline_code_padding.y,
+            &style.inline_code_padding.top,
+            &style.inline_code_padding.right,
+            &style.inline_code_padding.bottom,
+            &style.inline_code_padding.left,
+            &style.inline_code_border_width,
+            &style.inline_code_radius,
+            &style.inline_code_radius_top_left,
+            &style.inline_code_radius_top_right,
+            &style.inline_code_radius_bottom_right,
+            &style.inline_code_radius_bottom_left,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn markdown_expression_roots(options: &MarkdownOptions) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    roots.extend(
+        [
+            &options.text_size,
+            &options.h1_size,
+            &options.h2_size,
+            &options.h3_size,
+            &options.h4_size,
+            &options.h5_size,
+            &options.h6_size,
+            &options.code_size,
+            &options.spacing,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots.extend(markdown_style_expression_roots(&options.style));
+    if let Some(viewer) = &options.viewer {
+        roots.extend(&viewer.args);
+    }
+    roots
+}
+
+pub(crate) fn markdown_semantic_key(options: &MarkdownOptions) -> String {
+    let style = &options.style;
+    let background = style
+        .inline_code_background
+        .as_ref()
+        .map(|background| match background {
+            BackgroundValue::Color(color) => format!("color:{color}"),
+            BackgroundValue::Linear { stops, .. } => format!(
+                "linear:{}",
+                stops
+                    .iter()
+                    .map(|stop| stop.color.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        });
+    format!(
+        "markdown|metrics={:?}|viewer={:?}|fonts={:?}|background={background:?}|colors={:?}|style-metrics={:?}",
+        [
+            options.text_size.is_some(),
+            options.h1_size.is_some(),
+            options.h2_size.is_some(),
+            options.h3_size.is_some(),
+            options.h4_size.is_some(),
+            options.h5_size.is_some(),
+            options.h6_size.is_some(),
+            options.code_size.is_some(),
+            options.spacing.is_some(),
+        ],
+        options
+            .viewer
+            .as_ref()
+            .map(|viewer| viewer.function.as_str()),
+        [
+            style.font.as_ref(),
+            style.inline_code_font.as_ref(),
+            style.code_block_font.as_ref(),
+        ],
+        [
+            style.inline_code_color.as_deref(),
+            style.link_color.as_deref(),
+            style.inline_code_border_color.as_deref(),
+        ],
+        [
+            style.inline_code_padding.all.is_some(),
+            style.inline_code_padding.x.is_some(),
+            style.inline_code_padding.y.is_some(),
+            style.inline_code_padding.top.is_some(),
+            style.inline_code_padding.right.is_some(),
+            style.inline_code_padding.bottom.is_some(),
+            style.inline_code_padding.left.is_some(),
+            style.inline_code_border_width.is_some(),
+            style.inline_code_radius.is_some(),
+            style.inline_code_radius_top_left.is_some(),
+            style.inline_code_radius_top_right.is_some(),
+            style.inline_code_radius_bottom_right.is_some(),
+            style.inline_code_radius_bottom_left.is_some(),
+        ],
+    )
 }
 
 #[derive(Clone, Debug, Default)]
@@ -360,31 +487,6 @@ pub enum ThemePreset {
     BuiltIn(String),
     Factory(ExternCall),
 }
-
-pub(crate) const BUILT_IN_THEMES: &[&str] = &[
-    "light",
-    "dark",
-    "dracula",
-    "nord",
-    "solarized-light",
-    "solarized-dark",
-    "gruvbox-light",
-    "gruvbox-dark",
-    "catppuccin-latte",
-    "catppuccin-frappe",
-    "catppuccin-macchiato",
-    "catppuccin-mocha",
-    "tokyo-night",
-    "tokyo-night-storm",
-    "tokyo-night-light",
-    "kanagawa-wave",
-    "kanagawa-dragon",
-    "kanagawa-lotus",
-    "moonfly",
-    "nightfly",
-    "oxocarbon",
-    "ferra",
-];
 
 #[derive(Clone, Debug)]
 pub enum ResponsiveContent {
@@ -1030,26 +1132,6 @@ pub(crate) fn button_semantic_key(
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InputAlignment {
-    Left,
-    Center,
-    Right,
-}
-
-impl std::str::FromStr for InputAlignment {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "left" => Ok(Self::Left),
-            "center" => Ok(Self::Center),
-            "right" => Ok(Self::Right),
-            _ => Err(()),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FontPreset {
     Default,
@@ -1165,19 +1247,13 @@ pub struct CheckboxStatusStyle {
 }
 
 pub(crate) fn checkbox_expression_roots<'a>(
-    id: &'a Option<Id>,
     label: &'a Expr,
     checked: &'a Expr,
     disabled: &'a Option<Expr>,
     options: &'a BoolControlOptions,
     style: &'a CheckboxStyleSet,
 ) -> Vec<&'a Expr> {
-    let mut roots = id
-        .as_ref()
-        .and_then(|id| id.key.as_ref())
-        .into_iter()
-        .collect::<Vec<_>>();
-    roots.extend([label, checked]);
+    let mut roots = vec![label, checked];
     roots.extend(disabled);
     push_bool_control_option_roots(&mut roots, options, true);
     if let Some(custom) = &style.custom {
@@ -1266,19 +1342,13 @@ pub struct TogglerStatusStyle {
 }
 
 pub(crate) fn toggler_expression_roots<'a>(
-    id: &'a Option<Id>,
     label: &'a Expr,
     checked: &'a Expr,
     disabled: &'a Option<Expr>,
     options: &'a BoolControlOptions,
     style: &'a TogglerStyleSet,
 ) -> Vec<&'a Expr> {
-    let mut roots = id
-        .as_ref()
-        .and_then(|id| id.key.as_ref())
-        .into_iter()
-        .collect::<Vec<_>>();
-    roots.extend([label, checked]);
+    let mut roots = vec![label, checked];
     roots.extend(disabled);
     push_bool_control_option_roots(&mut roots, options, true);
     if let Some(custom) = &style.custom {
@@ -1360,19 +1430,13 @@ pub struct RadioStatusStyle {
 }
 
 pub(crate) fn radio_expression_roots<'a>(
-    id: &'a Option<Id>,
     label: &'a Expr,
     value: &'a Expr,
     selected: &'a Expr,
     options: &'a BoolControlOptions,
     style: &'a RadioStyleSet,
 ) -> Vec<&'a Expr> {
-    let mut roots = id
-        .as_ref()
-        .and_then(|id| id.key.as_ref())
-        .into_iter()
-        .collect::<Vec<_>>();
-    roots.extend([label, value, selected]);
+    let mut roots = vec![label, value, selected];
     push_bool_control_option_roots(&mut roots, options, false);
     if let Some(custom) = &style.custom {
         roots.extend(&custom.args);
@@ -1415,63 +1479,4 @@ pub(crate) fn radio_semantic_key(
         style,
         route,
     )
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextShaping {
-    Auto,
-    Basic,
-    Advanced,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextWrapping {
-    None,
-    Word,
-    Glyph,
-    WordOrGlyph,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextAlignment {
-    Default,
-    Left,
-    Center,
-    Right,
-    Justified,
-}
-
-impl std::str::FromStr for TextAlignment {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "default" => Ok(Self::Default),
-            "left" => Ok(Self::Left),
-            "center" => Ok(Self::Center),
-            "right" => Ok(Self::Right),
-            "justified" => Ok(Self::Justified),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VerticalAlignment {
-    Top,
-    Center,
-    Bottom,
-}
-
-impl std::str::FromStr for VerticalAlignment {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "top" => Ok(Self::Top),
-            "center" => Ok(Self::Center),
-            "bottom" => Ok(Self::Bottom),
-            _ => Err(()),
-        }
-    }
 }

@@ -135,6 +135,111 @@ fn performance_contract_dev_snapshot_at_1k_and_10k_files() {
 }
 
 #[test]
+#[ignore = "CI performance contract; run explicitly"]
+fn performance_contract_validated_leaf_analysis_in_a_10k_source_graph() {
+    const IMPORTS: usize = 10_000;
+    const BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let app_source = root.join("app.ice");
+    let other_source = root.join("other.ice");
+    let mut source = String::from("app Scale\n");
+    for index in 0..IMPORTS {
+        let name = format!("part-{index:05}.ice");
+        std::fs::write(root.join(&name), format!("// fragment {index}\n")).unwrap();
+        source.push_str(&format!("use \"{name}\"\n"));
+    }
+    source.push_str(
+        "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"ready\"\n",
+    );
+    std::fs::write(&app_source, source).unwrap();
+    std::fs::write(&other_source, valid_app().replace("Demo", "Other")).unwrap();
+    let mut db = ui_lang_core::AnalysisDb::default();
+    // Isolate the watcher-validated path from the DB's independent periodic
+    // freshness fallback; creating 10,000 files can outlive the default epoch.
+    db.set_validation_policy(ui_lang_core::ValidationPolicy::new(
+        std::time::Duration::MAX,
+        std::time::Duration::MAX,
+    ));
+    let compiled = compile_dev_with_db(&mut db, &app_source, None).unwrap();
+    compile_dev_with_db(&mut db, &other_source, None).unwrap();
+    let mut graph = CargoInputGraph::workspace(root);
+    graph.package_roots.clear();
+    graph.workspace_files.clear();
+    let observed = dev_stamps_with_cargo_inputs(
+        root,
+        &compiled.dependencies,
+        &compiled.asset_dependencies,
+        &graph,
+    );
+    let changed = root.join("part-05000.ice");
+    let changed_source = b"// changed fragment\n";
+    std::fs::write(&changed, changed_source).unwrap();
+    db.take_metrics();
+    reset_file_stamp_attempts();
+
+    let started = std::time::Instant::now();
+    let snapshot = settled_dev_snapshot_for_paths_with_cargo_inputs(
+        &compiled.dependencies,
+        &compiled.asset_dependencies,
+        &graph,
+        &observed.0,
+        &observed.1,
+        std::slice::from_ref(&changed),
+    )
+    .unwrap();
+    compile_dev_with_db(&mut db, &app_source, Some(snapshot.validated_sources)).unwrap();
+    db.query_root(&other_source).unwrap();
+    let elapsed = started.elapsed();
+    let metrics = db.take_metrics();
+
+    assert_eq!(file_stamp_attempts(), 2);
+    assert_eq!(metrics.files_loaded, 1, "{metrics:?}");
+    assert_eq!(metrics.bytes_loaded, changed_source.len(), "{metrics:?}");
+    assert_eq!(metrics.files_hashed, 1, "{metrics:?}");
+    assert_eq!(metrics.bytes_hashed, changed_source.len(), "{metrics:?}");
+    assert_eq!(metrics.files_scanned, 1, "{metrics:?}");
+    assert_eq!(metrics.roots_checked, 1, "{metrics:?}");
+    assert_eq!(metrics.root_cache_hits, 1, "{metrics:?}");
+    assert!(
+        elapsed <= BUDGET,
+        "10k-source selective analysis took {elapsed:?}; budget is {BUDGET:?}"
+    );
+}
+
+#[test]
+fn selective_snapshot_carries_the_second_validated_ice_read() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let source = root.join("app.ice");
+    std::fs::write(&source, valid_app()).unwrap();
+    let mut graph = CargoInputGraph::workspace(root);
+    graph.package_roots.clear();
+    graph.workspace_files.clear();
+    let current = dev_stamps_with_cargo_inputs(root, std::slice::from_ref(&source), &[], &graph);
+    let changed_source = valid_app().replace("ready", "validated");
+    std::fs::write(&source, &changed_source).unwrap();
+
+    let snapshot = settled_dev_snapshot_for_paths_with_cargo_inputs(
+        std::slice::from_ref(&source),
+        &[],
+        &graph,
+        &current.0,
+        &current.1,
+        std::slice::from_ref(&source),
+    )
+    .unwrap();
+
+    assert_eq!(snapshot.validated_sources.len(), 1);
+    assert_eq!(snapshot.validated_sources[0].path(), source);
+    assert_eq!(
+        snapshot.validated_sources[0].contents(),
+        Some(changed_source.as_bytes())
+    );
+}
+
+#[test]
 fn selective_snapshot_hashes_only_changed_file_content() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path();

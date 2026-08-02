@@ -2,17 +2,17 @@ use super::*;
 
 pub(in crate::codegen) fn render_slider(
     slider: &ResolvedSlider,
-    id: Option<&Id>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let value = checked_expr_use_code(program, slider.value, env, ValueMode::Borrowed)?;
-    let min = checked_expr_use_code(program, slider.min, env, ValueMode::Borrowed)?;
-    let max = checked_expr_use_code(program, slider.max, env, ValueMode::Borrowed)?;
-    let step = checked_expr_use_code(program, slider.step, env, ValueMode::Borrowed)?;
+    let value = resolved_expr_use_code(program, slider.value, env, ValueMode::Borrowed)?;
+    let min = resolved_expr_use_code(program, slider.min, env, ValueMode::Borrowed)?;
+    let max = resolved_expr_use_code(program, slider.max, env, ValueMode::Borrowed)?;
+    let step = resolved_expr_use_code(program, slider.step, env, ValueMode::Borrowed)?;
     let callback = resolved_interaction_route_callback_code(
         &slider.change,
         "__value",
@@ -32,7 +32,7 @@ pub(in crate::codegen) fn render_slider(
         write!(
             widget,
             ".default({})",
-            checked_expr_use_code(program, default, env, ValueMode::Borrowed)?
+            resolved_expr_use_code(program, default, env, ValueMode::Borrowed)?
         )
         .unwrap();
     }
@@ -40,7 +40,7 @@ pub(in crate::codegen) fn render_slider(
         write!(
             widget,
             ".shift_step({})",
-            checked_expr_use_code(program, shift_step, env, ValueMode::Borrowed)?
+            resolved_expr_use_code(program, shift_step, env, ValueMode::Borrowed)?
         )
         .unwrap();
     }
@@ -66,9 +66,8 @@ pub(in crate::codegen) fn render_slider(
         )
         .unwrap();
     }
-    let source_span = Span::line(program.origin(slider.origin).line);
     let accessibility_key =
-        accessibility_key_code(id, "slider", &source_span, scope, env, document)?;
+        resolved_accessibility_key_code(identity, "slider", slider.origin, scope, env, document)?;
     Ok(format!(
         "{{ let __a11y_key = {accessibility_key}; let __slider_value = {value}; let __slider = {widget}; ::ui_lang_runtime::accessible(__slider, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Slider).logical_id(__a11y_key.clone()).label(\"Slider\").value(format!(\"{{}}\", __slider_value)).into() }}"
     ))
@@ -76,15 +75,15 @@ pub(in crate::codegen) fn render_slider(
 
 pub(in crate::codegen) fn render_progress(
     progress: &ResolvedProgress,
-    id: Option<&Id>,
-    document: &RenderDocument<'_>,
+    identity: Option<&ResolvedViewIdentity>,
+    document: &LoweredProgram,
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
     let program = document.hir();
-    let value = checked_expr_use_code(program, progress.value, env, ValueMode::Owned)?;
-    let min = checked_expr_use_code(program, progress.min, env, ValueMode::Owned)?;
-    let max = checked_expr_use_code(program, progress.max, env, ValueMode::Owned)?;
+    let value = resolved_expr_use_code(program, progress.value, env, ValueMode::Owned)?;
+    let min = resolved_expr_use_code(program, progress.min, env, ValueMode::Owned)?;
+    let max = resolved_expr_use_code(program, progress.max, env, ValueMode::Owned)?;
     let mut widget = "::iced::widget::progress_bar(__progress_range, __progress_value)".to_owned();
     for (method, length) in [
         ("length", progress.length.as_ref()),
@@ -103,9 +102,14 @@ pub(in crate::codegen) fn render_progress(
         widget.push_str(".vertical()");
     }
     widget.push_str(&resolved_progress_style_code(progress, program, env)?);
-    let source_span = Span::line(program.origin(progress.origin).line);
-    let accessibility_key =
-        accessibility_key_code(id, "progress", &source_span, scope, env, document)?;
+    let accessibility_key = resolved_accessibility_key_code(
+        identity,
+        "progress",
+        progress.origin,
+        scope,
+        env,
+        document,
+    )?;
     Ok(format!(
         "{{ let __a11y_key = {accessibility_key}; let __progress_input = {value}; let __progress = {{ let (__progress_range, __progress_value) = ::ui_lang_runtime::progress_range({min}, {max}, __progress_input); {widget} }}; ::ui_lang_runtime::accessible(__progress, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ProgressIndicator).logical_id(__a11y_key.clone()).label(\"Progress\").value(format!(\"{{}}\", __progress_input)).into() }}"
     ))
@@ -121,7 +125,7 @@ fn resolved_range_custom_style_call(
         .arguments
         .iter()
         .map(|argument| {
-            checked_expr_use_code(program, *argument, env, ValueMode::Owned)
+            resolved_expr_use_code(program, *argument, env, ValueMode::Owned)
                 .map(|argument| format!(", {argument}"))
         })
         .collect::<Result<String, _>>()?;
@@ -214,7 +218,7 @@ fn append_resolved_slider_status(
             write!(
                 code,
                 " {field} = {} as f32;",
-                checked_expr_use_code(program, value, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
             )
             .unwrap();
         }
@@ -226,7 +230,7 @@ fn append_resolved_slider_status(
         let shape = match shape {
             ResolvedSliderHandleShape::Circle(radius) => format!(
                 "::iced::widget::slider::HandleShape::Circle {{ radius: {} as f32 }}",
-                checked_expr_use_code(program, *radius, env, ValueMode::Owned)?
+                resolved_expr_use_code(program, *radius, env, ValueMode::Owned)?
             ),
             ResolvedSliderHandleShape::Rectangle { width, radius } => {
                 let radius = resolved_text_radius_code(radius, program, env)?
@@ -298,7 +302,7 @@ fn resolved_progress_style_code(
         write!(
             code,
             " __style.border.width = {} as f32;",
-            checked_expr_use_code(program, width, env, ValueMode::Owned)?
+            resolved_expr_use_code(program, width, env, ValueMode::Owned)?
         )
         .unwrap();
     }
