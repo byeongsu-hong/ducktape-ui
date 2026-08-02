@@ -15121,6 +15121,43 @@ view
     }
 
     #[test]
+    fn themer_and_shader_reject_expression_count_and_last_graph_corruption() {
+        let source = format!(
+            "app ExternViewExpressionCardinality\nextern crate::backend\n  themer first_theme(active:bool) -> bool\n  shader first_shader(active:bool) -> bool\n{THEME}state\n  active = false\non first(next)\non second(next)\nview\n  col\n    themer first_theme(active) -> first !active\n    shader first_shader(active) -> second !active\n"
+        );
+
+        for view in [ViewId(1), ViewId(2)] {
+            let mut decreased = analyze(&source).unwrap();
+            decreased
+                .facts
+                .corrupt_interaction_expression_count(view, 1);
+            let error = lower(decreased).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("cardinality diverged"));
+
+            let mut increased = analyze(&source).unwrap();
+            increased
+                .facts
+                .corrupt_interaction_expression_count(view, 3);
+            let error = lower(increased).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("cardinality diverged"));
+
+            let mut invalid_last_graph = analyze(&source).unwrap();
+            invalid_last_graph.facts.corrupt_expression_first_child(
+                CheckedExprOwner::Interaction(InteractionExpressionId {
+                    widget: view,
+                    index: 1,
+                }),
+                u32::MAX,
+            );
+            let error = lower(invalid_last_graph).unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("descendant ID"));
+        }
+    }
+
+    #[test]
     fn imported_themer_and_shader_keep_origins_markers_and_e196_paths() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -19407,6 +19444,34 @@ view
         let error = lower(corrupt_origin).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("origin is invalid"));
+    }
+
+    #[test]
+    fn nested_theme_rejects_expression_count_and_last_graph_corruption() {
+        let source = format!(
+            "app NestedThemeExpressionCardinality\nextern crate::backend\n  theme first_theme(value:f64)\n{THEME}state\n  value = 0.5\nview\n  theme first_theme(value) bg=linear(value, bg@value, primary@(value + 0.0))\n    text \"Content\"\n"
+        );
+        let theme = ViewId(0);
+
+        let mut decreased = analyze(&source).unwrap();
+        decreased
+            .facts
+            .corrupt_interaction_expression_count(theme, 3);
+        let error = lower(decreased).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cardinality diverged"));
+
+        let mut invalid_last_graph = analyze(&source).unwrap();
+        invalid_last_graph.facts.corrupt_expression_first_child(
+            CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: theme,
+                index: 3,
+            }),
+            u32::MAX,
+        );
+        let error = lower(invalid_last_graph).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("descendant ID"));
     }
 
     #[test]
