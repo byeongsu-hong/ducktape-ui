@@ -31,6 +31,290 @@ pub struct LayoutOptions {
     pub scroll: Option<ScrollOptions>,
 }
 
+pub(crate) fn layout_expression_roots(options: &LayoutOptions) -> Vec<&Expr> {
+    fn push_length<'a>(roots: &mut Vec<&'a Expr>, length: &'a Option<LengthValue>) {
+        if let Some(LengthValue::Fixed(expression)) = length {
+            roots.push(expression);
+        }
+    }
+
+    fn push_background<'a>(roots: &mut Vec<&'a Expr>, background: &'a BackgroundValue) {
+        if let BackgroundValue::Linear { angle, stops } = background {
+            roots.push(angle);
+            roots.extend(stops.iter().map(|stop| &stop.offset));
+        }
+    }
+
+    fn push_surface<'a>(roots: &mut Vec<&'a Expr>, surface: &'a ContainerStyleOptions) {
+        if let Some(background) = &surface.background {
+            push_background(roots, background);
+        }
+        roots.extend(
+            [
+                &surface.border_width,
+                &surface.radius,
+                &surface.radius_top_left,
+                &surface.radius_top_right,
+                &surface.radius_bottom_right,
+                &surface.radius_bottom_left,
+                &surface.shadow_x,
+                &surface.shadow_y,
+                &surface.shadow_blur,
+                &surface.pixel_snap,
+            ]
+            .into_iter()
+            .flatten(),
+        );
+    }
+
+    let mut roots = Vec::new();
+    roots.extend([&options.columns, &options.clip].into_iter().flatten());
+    push_length(&mut roots, &options.width);
+    push_length(&mut roots, &options.height);
+    roots.extend(
+        [
+            &options.spacing,
+            &options.padding.all,
+            &options.padding.x,
+            &options.padding.y,
+            &options.padding.top,
+            &options.padding.right,
+            &options.padding.bottom,
+            &options.padding.left,
+            &options.max_width,
+            &options.max_height,
+            &options.wrap_spacing,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    if let Some(flexbox) = &options.flexbox {
+        roots.extend(
+            [&flexbox.row_gap, &flexbox.column_gap]
+                .into_iter()
+                .flatten(),
+        );
+    }
+    roots.extend([&options.min_cell, &options.max_cell].into_iter().flatten());
+    if let Some(height) = &options.grid_height {
+        match height {
+            GridSizing::AspectRatio { width, height } => {
+                roots.extend([width, height]);
+            }
+            GridSizing::EvenlyDistribute(LengthValue::Fixed(expression)) => roots.push(expression),
+            GridSizing::EvenlyDistribute(
+                LengthValue::Fill | LengthValue::FillPortion(_) | LengthValue::Shrink,
+            ) => {}
+        }
+    }
+    if let Some(scroll) = &options.scroll {
+        push_length(&mut roots, &scroll.width);
+        push_length(&mut roots, &scroll.height);
+        roots.extend(
+            [
+                &scroll.bar_width,
+                &scroll.bar_margin,
+                &scroll.scroller_width,
+                &scroll.bar_spacing,
+                &scroll.auto_scroll,
+            ]
+            .into_iter()
+            .flatten(),
+        );
+        if let Some(style) = &scroll.custom_style {
+            roots.extend(&style.args);
+        }
+        for style in &scroll.styles {
+            for surface in [
+                &style.container,
+                &style.horizontal_rail.rail,
+                &style.horizontal_rail.scroller,
+                &style.vertical_rail.rail,
+                &style.vertical_rail.scroller,
+                &style.auto_scroll,
+            ] {
+                push_surface(&mut roots, surface);
+            }
+            if let Some(gap) = &style.gap {
+                push_background(&mut roots, gap);
+            }
+        }
+    }
+    roots
+}
+
+pub(crate) fn layout_routes(options: &LayoutOptions) -> Vec<&Route> {
+    options.scroll.as_ref().map_or_else(Vec::new, |scroll| {
+        [&scroll.route, &scroll.viewport_route]
+            .into_iter()
+            .flatten()
+            .collect()
+    })
+}
+
+pub(crate) fn layout_semantic_key(kind: Layout, options: &LayoutOptions) -> String {
+    fn length(length: &Option<LengthValue>) -> String {
+        match length {
+            None => "none".into(),
+            Some(LengthValue::Fill) => "fill".into(),
+            Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
+            Some(LengthValue::Shrink) => "shrink".into(),
+            Some(LengthValue::Fixed(_)) => "fixed".into(),
+        }
+    }
+
+    fn background(background: &Option<BackgroundValue>) -> String {
+        match background {
+            None => "none".into(),
+            Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+            Some(BackgroundValue::Linear { stops, .. }) => format!(
+                "linear:{}",
+                stops
+                    .iter()
+                    .map(|stop| stop.color.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        }
+    }
+
+    fn surface(surface: &ContainerStyleOptions) -> String {
+        format!(
+            "{}|text={:?}|border={:?}|shadow={:?}|expr={:?}",
+            background(&surface.background),
+            surface.text_color,
+            surface.border_color,
+            surface.shadow_color,
+            [
+                surface.border_width.is_some(),
+                surface.radius.is_some(),
+                surface.radius_top_left.is_some(),
+                surface.radius_top_right.is_some(),
+                surface.radius_bottom_right.is_some(),
+                surface.radius_bottom_left.is_some(),
+                surface.shadow_x.is_some(),
+                surface.shadow_y.is_some(),
+                surface.shadow_blur.is_some(),
+                surface.pixel_snap.is_some(),
+            ]
+        )
+    }
+
+    fn route(route: &Option<Route>) -> String {
+        route.as_ref().map_or_else(
+            || "none".into(),
+            |route| {
+                let args = route
+                    .args
+                    .iter()
+                    .map(|argument| match argument {
+                        RouteArg::Expr(_) => 'e',
+                        RouteArg::Payload => 'p',
+                    })
+                    .collect::<String>();
+                format!("{}:{args}", route.handler)
+            },
+        )
+    }
+
+    let flexbox = options.flexbox.as_ref().map_or_else(
+        || "none".into(),
+        |flexbox| {
+            format!(
+                "{:?}:{:?}:{:?}:{:?}:{:?}:{}{}",
+                flexbox.direction,
+                flexbox.wrap,
+                flexbox.justify_content,
+                flexbox.align_items,
+                flexbox.align_content,
+                flexbox.row_gap.is_some(),
+                flexbox.column_gap.is_some(),
+            )
+        },
+    );
+    let grid_height = match &options.grid_height {
+        None => "none".into(),
+        Some(GridSizing::AspectRatio { .. }) => "aspect".into(),
+        Some(GridSizing::EvenlyDistribute(length_value)) => {
+            format!("even:{}", length(&Some(length_value.clone())))
+        }
+    };
+    let scroll = options.scroll.as_ref().map_or_else(
+        || "none".into(),
+        |scroll| {
+            let custom = scroll.custom_style.as_ref().map_or_else(
+                || "none".into(),
+                |style| format!("{}:{}", style.function, style.args.len()),
+            );
+            let styles = scroll
+                .styles
+                .iter()
+                .map(|style| {
+                    format!(
+                        "{:?}:{:?}:{:?}:{:?}:{:?}:{}:{}:{}:{}:{}:{}:gap={}:icon={:?}",
+                        style.status,
+                        style.horizontal_interaction,
+                        style.vertical_interaction,
+                        style.horizontal_disabled,
+                        style.vertical_disabled,
+                        surface(&style.container),
+                        surface(&style.horizontal_rail.rail),
+                        surface(&style.horizontal_rail.scroller),
+                        surface(&style.vertical_rail.rail),
+                        surface(&style.vertical_rail.scroller),
+                        surface(&style.auto_scroll),
+                        background(&style.gap),
+                        style.auto_scroll_icon,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(";");
+            format!(
+                "{:?}:{}:{}:{}:{:?}:{:?}:{}{}{}{}{}:route={}:viewport={}:custom={custom}:styles={styles}",
+                scroll.direction,
+                length(&scroll.width),
+                length(&scroll.height),
+                scroll.hidden_bar,
+                scroll.anchor_x,
+                scroll.anchor_y,
+                scroll.bar_width.is_some(),
+                scroll.bar_margin.is_some(),
+                scroll.scroller_width.is_some(),
+                scroll.bar_spacing.is_some(),
+                scroll.auto_scroll.is_some(),
+                route(&scroll.route),
+                route(&scroll.viewport_route),
+            )
+        },
+    );
+    format!(
+        "layout:{kind:?}|columns={}|clip={}|size={}:{}|spacing={}|padding={:?}|max={}{}|align={:?}|wrap={}:{:?}:{}|flex={flexbox}|cell={}{}|grid-height={grid_height}|under={}|scroll={scroll}",
+        options.columns.is_some(),
+        options.clip.is_some(),
+        length(&options.width),
+        length(&options.height),
+        options.spacing.is_some(),
+        [
+            options.padding.all.is_some(),
+            options.padding.x.is_some(),
+            options.padding.y.is_some(),
+            options.padding.top.is_some(),
+            options.padding.right.is_some(),
+            options.padding.bottom.is_some(),
+            options.padding.left.is_some(),
+        ],
+        options.max_width.is_some(),
+        options.max_height.is_some(),
+        options.align,
+        options.wrap,
+        options.wrap_align,
+        options.wrap_spacing.is_some(),
+        options.min_cell.is_some(),
+        options.max_cell.is_some(),
+        options.under,
+    )
+}
+
 pub(crate) fn keyed_column_semantic_key(options: &LayoutOptions) -> String {
     fn length_key(length: &Option<LengthValue>) -> String {
         match length {
@@ -382,12 +666,6 @@ pub(crate) fn overlay_semantic_key(options: &OverlayOptions) -> String {
     )
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum PaneAxis {
-    Horizontal,
-    Vertical,
-}
-
 #[derive(Clone, Debug)]
 pub enum PaneConfiguration {
     Pane(String),
@@ -522,13 +800,6 @@ pub struct PaddingOptions {
     pub left: Option<Expr>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FlexAlignment {
-    Start,
-    Center,
-    End,
-}
-
 #[derive(Clone, Debug)]
 pub enum GridSizing {
     AspectRatio { width: Expr, height: Expr },
@@ -616,10 +887,4 @@ pub enum ScrollDirection {
 pub enum ScrollAnchor {
     Start,
     End,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Axis {
-    Horizontal,
-    Vertical,
 }
