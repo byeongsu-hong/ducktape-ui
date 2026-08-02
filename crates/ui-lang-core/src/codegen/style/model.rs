@@ -66,209 +66,6 @@ pub(in crate::codegen) fn container_style_value(style: &ResolvedStyle) -> Option
     ))
 }
 
-pub(in crate::codegen) fn button_style_code(
-    style: &ResolvedStyle,
-    typed: &ButtonStyleSet,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    let has_utilities = style.background.is_some()
-        || style.hover_background.is_some()
-        || style.pressed_background.is_some()
-        || style.disabled_background.is_some()
-        || style.disabled_text_color.is_some()
-        || style.text_color.is_some()
-        || style.border_width != 0
-        || style.border_color.is_some()
-        || style.radius != 0
-        || style.disabled_opacity.is_some();
-    let has_typed = typed.active.is_some()
-        || typed.hovered.is_some()
-        || typed.pressed.is_some()
-        || typed.disabled.is_some();
-    let custom = typed
-        .custom
-        .as_ref()
-        .map(|style| {
-            custom_style_call_code(
-                style,
-                ExternKind::ButtonStyle,
-                "__theme, __status",
-                env,
-                document,
-            )
-        })
-        .transpose()?;
-    let preset = match typed.preset {
-        ButtonStylePreset::Primary => "primary",
-        ButtonStylePreset::Secondary => "secondary",
-        ButtonStylePreset::Success => "success",
-        ButtonStylePreset::Warning => "warning",
-        ButtonStylePreset::Danger => "danger",
-        ButtonStylePreset::Text => "text",
-        ButtonStylePreset::Background => "background",
-        ButtonStylePreset::Subtle => "subtle",
-    };
-    if !has_utilities && !has_typed {
-        return Ok(if let Some(custom) = custom {
-            format!(".style(move |__theme, __status| {custom})")
-        } else if typed.preset == ButtonStylePreset::Primary {
-            String::new()
-        } else {
-            format!(".style(::iced::widget::button::{preset})")
-        });
-    }
-
-    let base =
-        custom.unwrap_or_else(|| format!("::iced::widget::button::{preset}(__theme, __status)"));
-    let mut code = format!(".style(move |__theme, __status| {{ let mut __style = {base};");
-    if has_utilities {
-        let normal = style.background.as_ref().map(resolved_theme_color);
-        let hover = style
-            .hover_background
-            .as_ref()
-            .map(resolved_theme_color)
-            .or_else(|| normal.clone());
-        let pressed = style
-            .pressed_background
-            .as_ref()
-            .map(resolved_theme_color)
-            .or_else(|| hover.clone())
-            .or_else(|| normal.clone());
-        let option = |color: Option<String>| {
-            color.map_or_else(|| "None".into(), |color| format!("Some({color})"))
-        };
-        write!(
-            code,
-            " let __background: Option<::iced::Color> = match __status {{ ::iced::widget::button::Status::Hovered => {}, ::iced::widget::button::Status::Pressed => {}, ::iced::widget::button::Status::Disabled => {}, _ => {} }}; if let Some(__background) = __background {{ __style.background = Some(::iced::Background::Color(__background)); }}",
-            option(hover),
-            option(pressed),
-            option(normal.clone()),
-            option(normal),
-        )
-        .unwrap();
-        if let Some(text) = &style.text_color {
-            write!(
-                code,
-                " __style.text_color = {};",
-                resolved_theme_color(text)
-            )
-            .unwrap();
-        }
-        if style.border_width > 0 {
-            write!(code, " __style.border.width = {}.0;", style.border_width).unwrap();
-        }
-        if let Some(border) = &style.border_color {
-            write!(
-                code,
-                " __style.border.color = {};",
-                resolved_theme_color(border)
-            )
-            .unwrap();
-        }
-        if style.radius > 0 {
-            write!(code, " __style.border.radius = {}.0.into();", style.radius).unwrap();
-        }
-        if style.background.is_some()
-            || style.text_color.is_some()
-            || style.disabled_opacity.is_some()
-            || style.disabled_background.is_some()
-            || style.disabled_text_color.is_some()
-        {
-            let disabled = style.disabled_opacity.unwrap_or(0.5);
-            code.push_str(" if matches!(__status, ::iced::widget::button::Status::Disabled) {");
-            if let Some(background) = &style.disabled_background {
-                write!(
-                    code,
-                    " __style.background = Some({}.into());",
-                    resolved_theme_color(background)
-                )
-                .unwrap();
-            } else if style.background.is_some() || style.disabled_opacity.is_some() {
-                write!(code, " if let Some(::iced::Background::Color(mut __color)) = __style.background {{ __color.a *= {disabled}; __style.background = Some(::iced::Background::Color(__color)); }}").unwrap();
-            }
-            if let Some(text) = &style.disabled_text_color {
-                write!(
-                    code,
-                    " __style.text_color = {};",
-                    resolved_theme_color(text)
-                )
-                .unwrap();
-            } else if style.text_color.is_some() || style.disabled_opacity.is_some() {
-                write!(code, " __style.text_color.a *= {disabled};").unwrap();
-            }
-            code.push_str(" }");
-        }
-    }
-    if has_typed {
-        if let Some(active) = &typed.active {
-            append_button_status_style(&mut code, active, env, document)?;
-        }
-        let overrides = [
-            ("Hovered", &typed.hovered),
-            ("Pressed", &typed.pressed),
-            ("Disabled", &typed.disabled),
-        ];
-        if overrides.iter().any(|(_, status)| status.is_some()) {
-            code.push_str(" match __status {");
-            for (variant, status) in overrides {
-                let Some(status) = status else { continue };
-                write!(code, " ::iced::widget::button::Status::{variant} => {{").unwrap();
-                append_button_status_style(&mut code, status, env, document)?;
-                code.push_str(" }");
-            }
-            code.push_str(" _ => {} }");
-        }
-    }
-    code.push_str(" __style })");
-    Ok(code)
-}
-
-fn append_button_status_style(
-    code: &mut String,
-    style: &ButtonStatusStyle,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<(), Error> {
-    append_surface_style_overrides(code, &style.options, env, document)?;
-    if let Some(color) = &style.options.text_color {
-        write!(
-            code,
-            " __style.text_color = {};",
-            theme_color(document, color)
-        )
-        .unwrap();
-    }
-    Ok(())
-}
-
-pub(in crate::codegen) fn theme_color(document: &Document, token: &str) -> String {
-    let (name, opacity) = token
-        .split_once('/')
-        .map_or((token, None), |(name, opacity)| {
-            (name, opacity.parse::<u8>().ok())
-        });
-    let color = match name {
-        "white" => color_code("#ffffff", None),
-        "black" => color_code("#000000", None),
-        "transparent" => color_code("#00000000", None),
-        name => {
-            let index = document
-                .theme_contract
-                .as_ref()
-                .and_then(|contract| contract.tokens.iter().position(|token| token == name))
-                .expect("checker validates theme tokens");
-            format!("__ice_palette.colors[{index}]")
-        }
-    };
-    opacity.map_or(color.clone(), |opacity| {
-        format!(
-            "{{ let mut __color = {color}; __color.a = {:.6}; __color }}",
-            opacity as f32 / 100.0
-        )
-    })
-}
-
 pub(in crate::codegen) fn resolved_theme_color(color: &ResolvedThemeColor) -> String {
     let value = match color.base {
         ResolvedThemeColorBase::White => color_code("#ffffff", None),
@@ -310,9 +107,29 @@ pub(in crate::codegen) fn resolved_theme_factory_code(
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
-    let function = program.extern_function(factory.function);
-    let args = expr_list_code(&factory.arguments, env, program.document())?;
-    Ok(format!("{}({args})", function.rust_path))
+    let args = factory
+        .arguments
+        .iter()
+        .map(|argument| {
+            let mode = match argument.mode {
+                ResolvedExternViewArgumentMode::Owned => ValueMode::Owned,
+                ResolvedExternViewArgumentMode::BorrowedAsRef
+                | ResolvedExternViewArgumentMode::Borrowed => ValueMode::Borrowed,
+            };
+            let code = resolved_expr_use_code(program, argument.expression, env, mode)?;
+            Ok(match argument.mode {
+                ResolvedExternViewArgumentMode::Owned => code,
+                ResolvedExternViewArgumentMode::BorrowedAsRef => {
+                    format!("::std::convert::AsRef::as_ref(&({code}))")
+                }
+                ResolvedExternViewArgumentMode::Borrowed => {
+                    format!("::std::borrow::Borrow::borrow(&({code}))")
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?
+        .join(", ");
+    Ok(format!("{}({args})", factory.function.rust_path))
 }
 
 pub(in crate::codegen) fn resolved_app_theme_factory_code(
@@ -324,7 +141,7 @@ pub(in crate::codegen) fn resolved_app_theme_factory_code(
     let args = factory
         .arguments
         .iter()
-        .map(|argument| checked_expr_use_code(program, argument.expression, env, ValueMode::Owned))
+        .map(|argument| resolved_expr_use_code(program, argument.expression, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     Ok(format!("{}({args})", function.rust_path))
@@ -333,7 +150,7 @@ pub(in crate::codegen) fn resolved_app_theme_factory_code(
 pub(in crate::codegen) fn resolved_background_code(
     background: &ResolvedBackground,
     env: &dyn BindingEnvironment,
-    document: &RenderDocument<'_>,
+    program: &LoweredProgram,
 ) -> Result<String, Error> {
     Ok(match background {
         ResolvedBackground::Color(color) => {
@@ -342,58 +159,20 @@ pub(in crate::codegen) fn resolved_background_code(
         ResolvedBackground::Linear { angle, stops } => {
             let mut code = format!(
                 "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                expr_code(angle, env, document, ValueMode::Owned)?
+                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
             );
-            for (color, offset) in stops {
+            for stop in stops {
                 write!(
                     code,
                     ".add_stop({} as f32, {})",
-                    expr_code(offset, env, document, ValueMode::Owned)?,
-                    resolved_theme_color(color)
+                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
+                    resolved_theme_color(&stop.color)
                 )
                 .unwrap();
             }
             code.push(')');
             code
         }
-    })
-}
-
-/// Encodes a QR payload where it is rendered, never once in application state:
-/// the payload is an expression, so a matrix built at startup would be stale
-/// the moment the expression changes.
-pub(in crate::codegen) fn qr_data_code(
-    payload: &Expr,
-    correction: Option<QrCorrection>,
-    version: Option<QrVersion>,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    let module = "::iced::widget::qr_code";
-    let data = format!(
-        "&({})",
-        expr_code(payload, env, document, ValueMode::Borrowed)?
-    );
-    let correction_code = |value| match value {
-        QrCorrection::Low => format!("{module}::ErrorCorrection::Low"),
-        QrCorrection::Medium => format!("{module}::ErrorCorrection::Medium"),
-        QrCorrection::Quartile => format!("{module}::ErrorCorrection::Quartile"),
-        QrCorrection::High => format!("{module}::ErrorCorrection::High"),
-    };
-    Ok(if let Some(version) = version {
-        let version = match version {
-            QrVersion::Normal(value) => format!("{module}::Version::Normal({value})"),
-            QrVersion::Micro(value) => format!("{module}::Version::Micro({value})"),
-        };
-        let correction = correction_code(correction.unwrap_or(QrCorrection::Medium));
-        format!("{module}::Data::with_version({data}, {version}, {correction})")
-    } else if let Some(value) = correction {
-        format!(
-            "{module}::Data::with_error_correction({data}, {})",
-            correction_code(value)
-        )
-    } else {
-        format!("{module}::Data::new({data})")
     })
 }
 

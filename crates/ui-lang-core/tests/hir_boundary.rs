@@ -103,6 +103,112 @@ fn lexical_scanner_ignores_comments_and_string_literals() {
 }
 
 #[test]
+fn lexical_scanner_exports_only_top_level_public_ast_declarations() {
+    let exported = exported_ast_types(&[
+        "pub struct Document { pub span: usize } impl Document { pub fn identity(&self) {} } mod nested { pub struct Hidden; } pub(crate) enum Expr {}"
+            .into(),
+    ]);
+    assert_eq!(
+        exported,
+        BTreeSet::from(["Document".to_owned(), "Expr".to_owned()])
+    );
+}
+
+#[test]
+fn lexical_scanner_ignores_same_named_local_items_without_an_ast_import() {
+    let ast_types = exported_ast_types(&[
+        "pub struct Component; pub enum TestStepKind {} pub struct Expr;".into(),
+    ]);
+    let actual = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "struct Component; enum TestStepKind {} struct Expr; fn emit(_: Component, _: TestStepKind, _: Expr) {}",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    assert_eq!(
+        section_count(
+            &actual,
+            "source AST semantic reference",
+            "src/codegen/probe.rs"
+        ),
+        0
+    );
+    assert_eq!(
+        section_count(&actual, "Expr reference", "src/codegen/probe.rs"),
+        0
+    );
+}
+
+#[test]
+fn lexical_scanner_ignores_non_ast_crate_globs() {
+    let ast_types = exported_ast_types(&["pub enum Type {} pub struct Component;".into()]);
+    let actual = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "use crate::lower::*; use crate::semantic::*; fn emit(_: Type, _: Component) {}",
+        )],
+        &ast_types,
+    )
+    .unwrap();
+    assert_eq!(
+        section_count(&actual, "source AST import", "src/codegen/probe.rs"),
+        0
+    );
+    assert_eq!(
+        section_count(
+            &actual,
+            "source AST semantic reference",
+            "src/codegen/probe.rs"
+        ),
+        0
+    );
+}
+
+#[test]
+fn lexical_scanner_resolves_ast_module_aliases_and_alias_chains() {
+    let actual = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "use crate::{ast as syntax}; use syntax::Expr as Expression; fn emit(_: syntax::Document, _: Expression) {}",
+        )],
+        &probe_ast_types(),
+    )
+    .unwrap();
+    assert_eq!(
+        section_count(
+            &actual,
+            "source AST semantic reference",
+            "src/codegen/probe.rs"
+        ),
+        2
+    );
+    assert!(section(&actual, "source AST import").contains("src/codegen/probe.rs"));
+}
+
+#[test]
+fn lexical_scanner_resolves_local_use_aliases_only_inside_their_item() {
+    let actual = inventory(
+        &[probe(
+            "src/codegen/probe.rs",
+            "fn imported() { use crate::{ast::{Expr as LocalExpr}}; let _: LocalExpr; } fn unrelated(_: LocalExpr) {}",
+        )],
+        &probe_ast_types(),
+    )
+    .unwrap();
+    assert_eq!(
+        section_count(
+            &actual,
+            "source AST semantic reference",
+            "src/codegen/probe.rs"
+        ),
+        1
+    );
+    assert!(section(&actual, "source AST import").contains("src/codegen/probe.rs"));
+}
+
+#[test]
 fn occurrence_fingerprints_reject_same_file_delete_and_add_swaps() {
     let ast_types = probe_ast_types();
     let before = inventory(

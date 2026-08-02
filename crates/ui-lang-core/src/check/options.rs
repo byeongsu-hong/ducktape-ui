@@ -202,12 +202,10 @@ pub(in crate::check) fn check_background_value(
     Ok(())
 }
 
-pub(in crate::check) fn infer_pane_view(
+pub(in crate::check) fn check_pane_view_options(
     pane: &PaneView,
     env: &dyn ExprTypeEnv,
     document: &Document,
-    signatures: &mut HashMap<String, Vec<Option<Type>>>,
-    ids: &mut HashSet<String>,
 ) -> Result<(), Error> {
     let mut pane_env = ScopedTypeEnv::new(env);
     if let Some(binding) = &pane.maximized {
@@ -249,8 +247,22 @@ pub(in crate::check) fn infer_pane_view(
         )?;
         check_container_style_options(&title.style, env, document, &title.span, "E187")?;
     }
+    Ok(())
+}
+
+pub(in crate::check) fn infer_pane_view_nodes(
+    pane: &PaneView,
+    env: &dyn ExprTypeEnv,
+    document: &Document,
+    signatures: &mut HashMap<String, Vec<Option<Type>>>,
+    ids: &mut HashSet<String>,
+) -> Result<(), Error> {
+    let mut pane_env = ScopedTypeEnv::new(env);
+    if let Some(binding) = &pane.maximized {
+        pane_env.insert(binding.clone(), Type::Bool);
+    }
     for node in pane.nodes() {
-        infer_view(node, env, document, signatures, ids)?;
+        infer_view(node, &pane_env, document, signatures, ids)?;
     }
     Ok(())
 }
