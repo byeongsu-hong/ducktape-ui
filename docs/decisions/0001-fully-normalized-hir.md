@@ -117,7 +117,7 @@ options gain normalized nodes; no compatibility fallback is added.
 
 The program still owns AST-backed nodes for semantic families not yet migrated.
 The remaining expression-backed native styles/colors and widget options outside
-Media, Tooltip, MouseArea, ResizeHandle, Sensor, and Float therefore remain open
+Media, Tooltip, MouseArea, ResizeHandle, Sensor, Float, and Pin therefore remain open
 implementation slices; this status does not satisfy the migration-complete
 criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
@@ -318,6 +318,15 @@ theme-token IDs, and complete arena consumption before publishing
 `ResolvedFloat`. Rust emission consumes only that record and checked IDs; the
 old raw Float style emitter has been removed. Expression/static mutation,
 post-lowering AST/theme poisoning, malformed IDs, and an ignored 4,000-node
+lower+emit budget provide the executable evidence.
+
+Pin is a completed structural-wrapper slice. Its checked expression arena owns
+position and fixed-dimension operands, and its static contract freezes absent,
+fill, fill-portion, shrink, and fixed length topology. Lowering distinguishes
+numeric-fixed from native-length-fixed dimensions, revalidates expression DAGs,
+scope, types, and complete arena consumption, then publishes `ResolvedPin`.
+Rust emission consumes only that record and checked IDs. Expression/static
+mutation, post-lowering AST poisoning, malformed IDs, and an ignored 4,000-node
 lower+emit budget provide the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and

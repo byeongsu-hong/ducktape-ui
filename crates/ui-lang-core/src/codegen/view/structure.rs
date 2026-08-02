@@ -47,22 +47,11 @@ pub(in crate::codegen) fn render_structure(
             let float = program.resolved_float_for(node)?;
             render_resolved_float(float, program, message, env, content)
         }
-        ViewNode::Pin {
-            width,
-            height,
-            x,
-            y,
-            content,
-            ..
-        } => {
+        ViewNode::Pin { content, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
-            let x = expr_code(x, env, document, ValueMode::Owned)?;
-            let y = expr_code(y, env, document, ValueMode::Owned)?;
-            let mut code = format!(
-                "{{ let __pin_content: __IceElement<'_, {message}> = {content}; ::iced::widget::pin(__pin_content).x({x} as f32).y({y} as f32)"
-            );
-            append_dimensions(&mut code, [width, height], env, document)?;
-            Ok(format!("{code}.into() }}"))
+            let program = document.hir();
+            let pin = program.resolved_pin_for(node)?;
+            render_resolved_pin(pin, program, message, env, content)
         }
         ViewNode::Sensor { content, .. } => {
             let content = render_node(content, document, message, env, &child_scope, slot)?;
@@ -276,6 +265,52 @@ fn render_resolved_float(
         code.push_str(" __style })");
     }
     Ok(format!("{code}; __float.into() }}"))
+}
+
+fn render_resolved_pin(
+    pin: &ResolvedPin,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    content: String,
+) -> Result<String, Error> {
+    let x = checked_expr_use_code(program, pin.x, env, ValueMode::Owned)?;
+    let y = checked_expr_use_code(program, pin.y, env, ValueMode::Owned)?;
+    let mut code = format!(
+        "{{ let __pin_content: __IceElement<'_, {message}> = {content}; ::iced::widget::pin(__pin_content).x({x} as f32).y({y} as f32)"
+    );
+    for (method, length) in [("width", &pin.width), ("height", &pin.height)] {
+        if let Some(length) = length {
+            write!(
+                code,
+                ".{method}({})",
+                resolved_pin_length_code(length, program, env)?
+            )
+            .unwrap();
+        }
+    }
+    Ok(format!("{code}.into() }}"))
+}
+
+fn resolved_pin_length_code(
+    length: &ResolvedPinLength,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(match length {
+        ResolvedPinLength::Fill => "::iced::Fill".into(),
+        ResolvedPinLength::FillPortion(portion) => {
+            format!("::iced::Length::FillPortion({portion})")
+        }
+        ResolvedPinLength::Shrink => "::iced::Shrink".into(),
+        ResolvedPinLength::FixedF64(expression) => format!(
+            "{} as f32",
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        ),
+        ResolvedPinLength::FixedLength(expression) => {
+            checked_expr_use_code(program, *expression, env, ValueMode::Owned)?
+        }
+    })
 }
 
 fn resolved_float_radius_code(

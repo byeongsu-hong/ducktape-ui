@@ -218,6 +218,28 @@ pub(super) fn retain_float_analyses(
     })
 }
 
+pub(super) fn retain_pin_analyses(
+    span: &Span,
+    analyses: super::expr::HandlerAnalyses,
+) -> Result<(), Error> {
+    ACTIVE_VIEW_ANALYSES.with(|active| {
+        let mut active = active.borrow_mut();
+        let active = active.as_mut().ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "pin analysis session has no active view analysis",
+            )
+        })?;
+        let pin = active
+            .views
+            .get(&(span.line, span.column))
+            .copied()
+            .ok_or_else(|| Error::new("E196", span, "pin has no shared view ID"))?;
+        active.analyses.retain_pin(pin, analyses)
+    })
+}
+
 impl Drop for ViewAnalysisGuard {
     fn drop(&mut self) {
         if self.active {
