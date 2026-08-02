@@ -35,7 +35,7 @@ src/codegen/view/foundation.rs 41 3636d5cfcdcfac5687e757f9aa258463
 src/codegen/view/layout.rs 167 fc766fc02a054504064981d7dc15cc2b
 src/codegen/view/media.rs 20 3f2bec4af015a98350177497155e1ff8
 src/codegen/view/pane.rs 22 b531c0156d22d29c22542e311e6dc197
-src/codegen/view/structure.rs 33 7fe77fcf17fc6d859b2b620cf8b0b847
+src/codegen/view/structure.rs 33 7fefd27357fe038e7388e3d9e234da1c
 src/codegen/view/table.rs 22 d29fd6069319eed17ee3f30287f13bb9
 [checked-document escape]
 src/codegen.rs 3 4f5749a361a5af355d7da180e0814fef
@@ -59,7 +59,7 @@ src/codegen/view/foundation.rs 1 ecdf2fe905d00b8aca15945f6efa9e82
 src/codegen/view/layout.rs 3 5459bc3385bd4f646ed2b717379c3c3a
 src/codegen/view/media.rs 1 08a6329273328a075fe1948147db2829
 src/codegen/view/pane.rs 3 35098f6f2d4db7eee45e2e29652650b3
-src/codegen/view/structure.rs 1 fd1eae6ff70c413f8e802337947b9abf
+src/codegen/view/structure.rs 1 8a9ad3331cb3ef097c740bf2d9179325
 src/codegen/view/table.rs 2 3e89d20e6e0f99f514edcd08f4e5e271
 [checker semantic reference]
 src/codegen.rs 20 cbab82d890b85efeba14a8beee17b946
@@ -73,7 +73,7 @@ src/codegen/style/common.rs 1 34abe2c0ee4cd1f9a4be0e32ae71206a
 src/codegen/view/content.rs 2 3ea6305f693b69253a2fc80983756fc1
 src/codegen/view/layout.rs 3 364ac313879d02a6cd24afd50cccb5a7
 src/codegen/view/pane.rs 1 388ade2bc8681938ae9450df83822f3a
-src/codegen/view/structure.rs 3 f8b112e16ab24ffc968a487f90606907
+src/codegen/view/structure.rs 3 2a6411fa8de48dc966ca6abb26f5fb21
 src/codegen/view/table.rs 2 1c6610f96bf7c113e90e024cb7739cea
 [checked-facts escape]
 src/codegen.rs 2 a19f4929f8bdea4e95ec35337d7a9933
@@ -83,7 +83,7 @@ src/codegen/expr/discovery.rs 1 6c7df6b14f0fa60cfde9046f6508ed91
 src/codegen/statement/view_fn.rs 1 98604f3ab7bb3a8303c6e7953aedde83
 src/codegen/view/layout.rs 3 f516ac421d7e630ba690cd190b6baf25
 src/codegen/view/pane.rs 3 6290a134d3a714af5dbeef241e6eee3a
-src/codegen/view/structure.rs 3 ebb2d65e27b6405db998fcd836b58ac1
+src/codegen/view/structure.rs 3 0842851afcc5c402e8c9edbd000df856
 src/codegen/view/table.rs 2 07d5ca18403f584a5fc31b9b7b32f66b
 [declaration-index escape]
 src/codegen.rs 3 6e2d45cb24a3a926a71f502c5c92c296

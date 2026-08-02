@@ -54,6 +54,42 @@ pub(crate) fn float_semantic_key(style: &FloatStyleOptions) -> String {
     )
 }
 
+pub(crate) fn pin_expression_roots<'a>(
+    width: &'a Option<LengthValue>,
+    height: &'a Option<LengthValue>,
+    x: &'a Expr,
+    y: &'a Expr,
+) -> Vec<&'a Expr> {
+    let mut roots = vec![x, y];
+    for length in [width, height].into_iter().flatten() {
+        if let LengthValue::Fixed(expression) = length {
+            roots.push(expression);
+        }
+    }
+    roots
+}
+
+pub(crate) fn pin_semantic_key(
+    width: &Option<LengthValue>,
+    height: &Option<LengthValue>,
+) -> String {
+    fn length_key(length: &Option<LengthValue>) -> String {
+        match length {
+            None => "none".into(),
+            Some(LengthValue::Fill) => "fill".into(),
+            Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
+            Some(LengthValue::Shrink) => "shrink".into(),
+            Some(LengthValue::Fixed(_)) => "fixed".into(),
+        }
+    }
+
+    format!(
+        "pin|width={}|height={}",
+        length_key(width),
+        length_key(height)
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct MarkdownOptions {
     pub text_size: Option<Expr>,

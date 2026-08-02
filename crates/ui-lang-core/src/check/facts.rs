@@ -8,8 +8,9 @@ use crate::hir::{
     CanvasLocalId, CanvasRouteId, ComponentCallId, ComponentEventId, ComponentId, ComponentParamId,
     ComponentSlotId, ComponentStateId, DeclarationIndex, DerivedId, EnumVariantId, ExternFnId,
     ExternRef, FloatExpressionId, HandlerId, InteractionExpressionId, InteractionRouteId,
-    MediaExpressionId, OriginArena, OriginId, PaletteId, RouteId, StatementId, StructFieldId,
-    SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, TooltipExpressionId, ViewId,
+    MediaExpressionId, OriginArena, OriginId, PaletteId, PinExpressionId, RouteId, StatementId,
+    StructFieldId, SubscriptionId, TaskId, TestId, TestStepId, TestTargetId, TooltipExpressionId,
+    ViewId,
 };
 use crate::unqualified_name;
 #[cfg(test)]
@@ -261,6 +262,10 @@ pub(crate) enum CheckedViewFlow {
         expression_count: u32,
         geometry: [CheckedLocalId; 8],
     },
+    Pin {
+        semantic_key: String,
+        expression_count: u32,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -328,6 +333,7 @@ pub(crate) enum CheckedExprOwner {
     Media(MediaExpressionId),
     Tooltip(TooltipExpressionId),
     Float(FloatExpressionId),
+    Pin(PinExpressionId),
     Interaction(InteractionExpressionId),
 }
 
@@ -1373,6 +1379,7 @@ pub(super) struct CheckedAnalyses {
     media_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     tooltip_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     float_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
+    pin_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     interaction_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
     interaction_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
 }
@@ -1417,6 +1424,7 @@ impl CheckedAnalyses {
             && self.media_entries.is_empty()
             && self.tooltip_entries.is_empty()
             && self.float_entries.is_empty()
+            && self.pin_entries.is_empty()
             && self.interaction_entries.is_empty()
             && self.interaction_route_inputs.is_empty()
     }
@@ -1528,6 +1536,15 @@ impl CheckedAnalyses {
                     "E196",
                     &Span::line(1),
                     "float expression was captured more than once",
+                ));
+            }
+        }
+        for (key, analysis) in other.pin_entries {
+            if self.pin_entries.insert(key, analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "pin expression was captured more than once",
                 ));
             }
         }
@@ -1690,6 +1707,30 @@ impl CheckedAnalyses {
                     "E196",
                     &Span::line(1),
                     "float expression was captured more than once",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn retain_pin(
+        &mut self,
+        pin: ViewId,
+        analyses: super::expr::HandlerAnalyses,
+    ) -> Result<(), Error> {
+        if !analyses.routes.is_empty() {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                "pin expression capture unexpectedly retained routes",
+            ));
+        }
+        for (key, analysis) in analyses.expressions {
+            if self.pin_entries.insert((pin, key), analysis).is_some() {
+                return Err(Error::new(
+                    "E196",
+                    &Span::line(1),
+                    "pin expression was captured more than once",
                 ));
             }
         }
@@ -1995,7 +2036,7 @@ impl<'a> FactsBuilder<'a> {
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
-                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, media_expressions={}, tooltip_expressions={}, float_expressions={}, interaction_expressions={}, interaction_routes={}, handler_expressions={}, handler_routes={}, presets={})",
+                    "checked analyses were not consumed (expressions={}, subscriptions={}, test_expressions={}, canvas_expressions={}, canvas_routes={}, media_expressions={}, tooltip_expressions={}, float_expressions={}, pin_expressions={}, interaction_expressions={}, interaction_routes={}, handler_expressions={}, handler_routes={}, presets={})",
                     self.analyses.entries.len(),
                     self.analyses.subscriptions.len(),
                     self.analyses.test_entries.len(),
@@ -2004,6 +2045,7 @@ impl<'a> FactsBuilder<'a> {
                     self.analyses.media_entries.len(),
                     self.analyses.tooltip_entries.len(),
                     self.analyses.float_entries.len(),
+                    self.analyses.pin_entries.len(),
                     self.analyses.interaction_entries.len(),
                     self.analyses.interaction_route_inputs.len(),
                     self.analyses.handler_entries.len(),
@@ -2970,6 +3012,101 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "duplicate checked float expression owner"));
+        }
+        Ok(id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_pin_facts(
+        &mut self,
+        pin: ViewId,
+        width: &Option<LengthValue>,
+        height: &Option<LengthValue>,
+        x: &Expr,
+        y: &Expr,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<CheckedViewFlow, Error> {
+        let parent = self.declarations.view(pin).origin;
+        let roots = crate::ast::pin_expression_roots(width, height, x, y);
+        for (index, expression) in roots.iter().enumerate() {
+            self.push_pin_expression(pin, index as u32, expression, env, span, parent)?;
+        }
+        let remaining = self
+            .analyses
+            .pin_entries
+            .keys()
+            .filter(|(owner, _)| *owner == pin)
+            .count();
+        if remaining != 0 {
+            return Err(self.invariant(
+                span,
+                format!("pin left {remaining} expression analyses unconsumed"),
+            ));
+        }
+        Ok(CheckedViewFlow::Pin {
+            semantic_key: crate::ast::pin_semantic_key(width, height),
+            expression_count: roots.len() as u32,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_pin_expression(
+        &mut self,
+        pin: ViewId,
+        index: u32,
+        expression: &Expr,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        parent: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let owner = CheckedExprOwner::Pin(PinExpressionId { pin, index });
+        let analysis = self
+            .analyses
+            .pin_entries
+            .remove(&(pin, super::expr::expr_key(expression)))
+            .ok_or_else(|| self.invariant(span, "missing authoritative pin expression analysis"))?;
+        let metrics = analysis.metrics();
+        self.facts.metrics.view_analysis_passes += 1;
+        self.facts.metrics.type_analysis_queries += metrics.queries;
+        self.facts.metrics.type_analysis_nodes += metrics.nodes;
+        self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+        self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+        self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        let source = analysis
+            .type_of(expression)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "missing retained pin expression root type"))?;
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let origin = self.origins.push(span, Some(parent));
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
+        if self.facts.expression(root).ty != source {
+            return Err(self.invariant(
+                span,
+                "pin expression source type does not match its checked root",
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            source: source.clone(),
+            destination: source,
+            coercion: CheckedInitializerCoercion::None,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, "duplicate checked pin expression owner"));
         }
         Ok(id)
     }
@@ -5981,6 +6118,19 @@ impl<'a> FactsBuilder<'a> {
                 self.lower_view_expression_tree(content, env)?;
                 flow
             }
+            ViewNode::Pin {
+                width,
+                height,
+                x,
+                y,
+                content,
+                span,
+                ..
+            } => {
+                let flow = self.lower_pin_facts(view, width, height, x, y, env, span)?;
+                self.lower_view_expression_tree(content, env)?;
+                flow
+            }
             ViewNode::MouseArea {
                 options,
                 content,
@@ -8807,6 +8957,54 @@ view
             panic!("root must be a float");
         };
         assert_eq!(semantic_key, &crate::ast::float_semantic_key(style));
+    }
+
+    #[test]
+    fn pin_facts_retain_expression_owners_and_dimension_contract() {
+        let source = r#"app PinFacts
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  offset = 12.0
+  height = 80.0
+view
+  pin w=fill h=height x=offset y=8.0
+    text "Pinned"
+"#;
+        let program = lower::lower(analyze(source).unwrap()).unwrap();
+        let checked = program.checked_facts().view(ViewId(0));
+        let CheckedViewFlow::Pin {
+            semantic_key,
+            expression_count,
+        } = &checked.flow
+        else {
+            panic!("root must retain pin facts");
+        };
+        assert_eq!(*expression_count, 3);
+        for index in 0..*expression_count {
+            assert!(
+                program
+                    .checked_facts()
+                    .expression_use_by_owner(CheckedExprOwner::Pin(PinExpressionId {
+                        pin: ViewId(0),
+                        index,
+                    }))
+                    .is_some(),
+                "missing pin expression {index}"
+            );
+        }
+        let ViewNode::Pin { width, height, .. } = &program.document().view else {
+            panic!("root must be a pin");
+        };
+        assert_eq!(semantic_key, &crate::ast::pin_semantic_key(width, height));
     }
 
     #[test]
