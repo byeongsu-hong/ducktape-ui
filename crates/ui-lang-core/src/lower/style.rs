@@ -1330,7 +1330,9 @@ impl Lowerer {
             return Err(self.invariant_at_origin(origin, "nested theme checked identity diverged"));
         }
         let expected_expressions = crate::ast::nested_theme_expression_roots(preset, background);
-        if interaction.option_expressions.len() != expected_expressions.len() {
+        if interaction.option_expressions.len() != expected_expressions.len()
+            || interaction.expression_count as usize != interaction.option_expressions.len()
+        {
             return Err(
                 self.invariant_at_origin(origin, "nested theme expression cardinality diverged")
             );
