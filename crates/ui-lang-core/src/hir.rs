@@ -1256,6 +1256,10 @@ impl DeclarationIndex {
         self.palette_names.get(id.0 as usize).map(String::as_str)
     }
 
+    pub(crate) fn palette_count(&self) -> usize {
+        self.palettes.len()
+    }
+
     pub(crate) fn extern_decl_by_name(&self, name: &str) -> Option<&ExternDeclaration> {
         #[cfg(test)]
         self.extern_name_lookups.0.fetch_add(1, Ordering::Relaxed);
