@@ -311,6 +311,60 @@ test virtual_list_native_boundary
   expect text "#99999"
   capture virtual_list_end_selection
 
+test tree_view_native_boundary
+  preset test
+  viewport 620 420
+  mount
+    TreeView.Frame #tree-view-frame
+      with
+        title="Tree view"
+        description="Only visible preorder nodes cross the typed boundary."
+        count=100000
+      col gap=4.0
+        row gap=4.0
+          button "Rename selected" #rename-tree-node -> begin_tree_rename
+          button "Cancel rename" #cancel-tree-rename -> cancel_tree_rename
+        box #tree-view-stage w=fill h=252.0
+          extern tree_view(tree_view) -> tree_view_changed _
+  target tree_stage = #tree-view-frame/root/tree-view-stage
+  target rename_one = #tree-view-frame/root/rename-tree-node
+  target cancel_rename_one = #tree-view-frame/root/cancel-tree-rename
+  expect tree_stage.height ~= 252.0
+  click tree_stage
+  idle
+  key home
+  key arrow-left
+  idle
+  expect text "100 visible / 100000 logical"
+  expect text "Selected 0"
+  key arrow-right
+  idle
+  expect text "1099 visible / 100000 logical"
+  key arrow-right
+  idle
+  expect text "Selected 1"
+  click rename_one
+  idle
+  replace "Renamed file"
+  key enter
+  idle
+  expect text "Renamed file"
+  key arrow-left
+  idle
+  expect text "Selected 0"
+  key arrow-right
+  idle
+  click rename_one
+  idle
+  replace "Discarded rename"
+  click cancel_rename_one
+  idle
+  expect text "Renamed file"
+  key arrow-left
+  idle
+  expect text "Selected 0"
+  capture tree_view_hierarchical_navigation
+
 test modal_trigger_is_only_the_action
   preset test
   viewport 560 240
