@@ -339,9 +339,13 @@ identity, checked flow, or checked local facts.
 
 Match is a completed control-flow HIR slice. Its value expression, value type,
 exhaustive Option/Result/enum/palette/wildcard patterns, typed payload locals,
-resolved Rust owner and variant names, and arm origins are published as
-`ResolvedMatch`. Normal and flex layout generation consume that record and do
-not reread source patterns, checked flow/facts, or enum and palette declarations.
+resolved Rust owner and variant names, arm origins, and the checked child-view
+identity of every arm are published as `ResolvedMatch`. Lowering revalidates the
+checked pattern coverage, arm origin parent/source, and per-arm child topology.
+Normal and flex layout generation consume the resolved binding payload and do
+not reread source patterns, checked Match flow or payload-local types, or enum
+and palette declarations; source nodes provide only child subtrees whose IDs
+must still match their resolved arm.
 
 Table is a completed structural collection HIR slice. Its row list, typed row
 local, table width and bounded metrics, and each column's width, horizontal and
@@ -2283,6 +2287,26 @@ no `virtual-for` syntax, variable-height measurement, or nested vertical-scroll
 contract in v1. Accessibility v1
 focuses and navigates the collection but does not create offscreen item nodes or
 per-item accessibility actions.
+
+Hierarchical fixed-row collections use `ui_lang_runtime::TreeViewState` and the
+feature-gated `ducktape_ui::ui::tree_view` boundary on that same native
+collection engine. Callers reconcile unique keyed nodes in preorder, with each
+parent preceding a contiguous child subtree and marked `has_children`; invalid
+duplicate, missing, later, leaf, or already-closed parents reject the complete
+reconciliation atomically.
+Expansion is retained by key. Right expands a branch or enters its first child,
+Left collapses it or selects its parent, and collapse rehomes hidden selection
+to the collapsed ancestor. Expanding an unloaded branch returns a typed
+load-request key. Rename initiation is an explicit caller action that sends
+typed rename state; the caller focuses its editor and routes text changes,
+submit, and cancel through the typed rename events, then runs the tree focus
+task after removing the editor. The tree does not intercept
+keys owned by another focused control. `drag_target` classifies pointer geometry
+as before, inside, or after a visible row. AccessKit exposes a named Tree with
+mounted TreeItem nodes carrying stable
+identity, one-based level, sibling position and size, selection, and expansion.
+`TreeView.Frame` composes an app-owned typed extern; v1 remains fixed-height,
+caller-flattened, and outside Core syntax.
 
 `editor-style` receives Theme and editor Status implicitly and returns native
 `text_editor::Style`, covering the advanced catalog class. An editor or input
@@ -5534,6 +5558,9 @@ only affected paths. A path absent from the accepted inventories, a removed or
 renamed path, or a directory path refreshes the metadata inventory so added and
 removed inputs participate without hashing unchanged contents. A change is
 settled only when two equivalent snapshots 50 milliseconds apart are identical.
+The final stabilized bytes for affected Ice files are reused by incremental
+analysis. Unchanged files in the retained import closure are neither read,
+hashed, nor scanned again; newly imported files still load from disk.
 
 After a settled Ice, Rust, Cargo, build-script, configuration, or embedded-asset
 change, the runner builds a new executable while the accepted process remains

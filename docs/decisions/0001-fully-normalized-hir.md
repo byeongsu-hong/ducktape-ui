@@ -445,15 +445,20 @@ poisoning, imported root/span/route origins, complete native generation, and an
 ignored 4,000-text lower+emit budget provide the executable evidence.
 
 Match is a completed control-flow slice. Its checked flow owns the stable value
-expression, exhaustive patterns, typed payload locals, and arm origins.
+expression, exhaustive patterns, typed payload locals, arm origins, and ordered
+child view IDs for each arm.
 Lowering revalidates expression ownership and DAG, scope and value type,
 Option/Result/enum/palette contracts, payload local types and owner roles,
-declaration IDs, and origin parentage before publishing `ResolvedMatch` with
-resolved Rust owner and variant names. Normal-layout and flex-layout emission
-consume that record without checker-fact or declaration-index lookups. Malformed
-IDs fail at the source-mapped arm during lowering; post-check and post-lowering
-AST poisoning, typed-pattern coverage, and an ignored 4,000-node lower+emit
-budget provide the executable evidence.
+declaration IDs, checked duplicate/missing/wildcard coverage, origin
+parent/source identity, and per-arm child topology before publishing
+`ResolvedMatch` with resolved Rust owner and variant names. Normal-layout and
+flex-layout emission consume its payload binding type without reopening checked
+Match flow/local types or pattern declaration-index entries. Raw child spans are
+mapped to stable view IDs only to verify that their subtrees remain attached to
+their resolved arms. Malformed IDs fail at the source-mapped arm during
+lowering; post-check and post-lowering AST poisoning, coverage/topology
+corruption, imported diagnostics, typed-pattern coverage, and an ignored
+4,000-node lower+emit budget provide the executable evidence.
 
 First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
 `TestStepId` form parented declaration arenas; target aliases are typed locals,
