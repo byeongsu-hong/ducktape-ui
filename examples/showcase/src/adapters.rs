@@ -55,6 +55,10 @@ use ducktape_ui::ui::{
     surface::{SurfaceVariant, surface},
     switch::switch as ui_switch,
     theme::LIGHT,
+    tree_view::{
+        TreeViewConfig, TreeViewEvent as UiTreeViewEvent, TreeViewId, TreeViewNode,
+        TreeViewState as UiTreeViewState, tree_view as ui_tree_view,
+    },
     virtual_list::{
         VirtualListConfig, VirtualListEvent as UiVirtualListEvent, VirtualListId,
         VirtualListState as UiVirtualListState, virtual_list as ui_virtual_list,
@@ -64,6 +68,7 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::font::{Style as FontStyle, Weight};
 use iced::widget::{column, container, row, text};
 use iced::{Background, Border, Element, Font, Length};
+use std::collections::HashMap;
 use std::sync::Arc;
 use ui_lang_runtime::{Role, StableId, accessible};
 
@@ -88,6 +93,7 @@ pub use ducktape_ui::ui::{
 pub type CommandEvent = ducktape_ui::ui::command::CommandEvent<String>;
 pub type SelectEvent = ducktape_ui::ui::select::SelectEvent<String>;
 pub type VirtualListEvent = UiVirtualListEvent<u64>;
+pub type TreeViewEvent = UiTreeViewEvent<u64>;
 
 #[derive(Debug)]
 pub struct VirtualListState {
@@ -101,6 +107,48 @@ impl Clone for VirtualListState {
             list: self.list.update_snapshot(),
             items: Arc::clone(&self.items),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TreeNode {
+    key: u64,
+    parent: Option<u64>,
+    has_children: bool,
+}
+
+#[derive(Debug)]
+pub struct TreeViewState {
+    tree: UiTreeViewState<u64>,
+    items: Arc<[TreeNode]>,
+    renames: Arc<HashMap<u64, String>>,
+    focus_target: TreeFocusTarget,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TreeFocusTarget {
+    None,
+    Rename,
+    Tree,
+}
+
+impl Clone for TreeViewState {
+    fn clone(&self) -> Self {
+        Self {
+            tree: self.tree.update_snapshot(),
+            items: Arc::clone(&self.items),
+            renames: Arc::clone(&self.renames),
+            focus_target: self.focus_target,
+        }
+    }
+}
+
+impl TreeViewState {
+    fn label(&self, item: &TreeNode) -> String {
+        self.renames
+            .get(&item.key)
+            .cloned()
+            .unwrap_or_else(|| tree_label(item))
     }
 }
 
@@ -1703,6 +1751,227 @@ pub fn virtual_list(state: &VirtualListState) -> Element<'_, VirtualListEvent> {
         &theme,
     );
     column![summary, list]
+        .spacing(8)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn tree_view_config() -> TreeViewConfig {
+    TreeViewConfig::new(28.0)
+        .expect("showcase tree-view geometry is valid")
+        .overscan(3)
+        .indentation(14.0)
+}
+
+fn tree_node(item: &TreeNode) -> TreeViewNode<u64> {
+    TreeViewNode {
+        key: item.key,
+        parent: item.parent,
+        has_children: item.has_children,
+        children_loaded: true,
+    }
+}
+
+fn tree_label(item: &TreeNode) -> String {
+    if item.has_children {
+        format!("Folder {:02}", item.key / 1_000)
+    } else {
+        format!("File {:05}.rs", item.key)
+    }
+}
+
+pub fn tree_view_state() -> TreeViewState {
+    let mut items = Vec::with_capacity(100_000);
+    for folder in 0..100_u64 {
+        let root = folder * 1_000;
+        items.push(TreeNode {
+            key: root,
+            parent: None,
+            has_children: true,
+        });
+        for offset in 1..1_000_u64 {
+            items.push(TreeNode {
+                key: root + offset,
+                parent: Some(root),
+                has_children: false,
+            });
+        }
+    }
+    let items: Arc<[TreeNode]> = items.into();
+    let mut tree = UiTreeViewState::new(TreeViewId::new("showcase-tree-view"));
+    tree.reconcile(&items, tree_node, tree_view_config())
+        .expect("showcase tree data is valid preorder");
+    tree.apply(UiTreeViewEvent::Toggle(0), tree_view_config());
+    TreeViewState {
+        tree,
+        items,
+        renames: Arc::new(HashMap::new()),
+        focus_target: TreeFocusTarget::None,
+    }
+}
+
+fn tree_rename_input_id(key: u64) -> iced::widget::Id {
+    iced::widget::Id::from(format!("showcase-tree-rename-{key}"))
+}
+
+pub fn tree_view_focus(state: TreeViewState) -> iced::Task<()> {
+    match state.focus_target {
+        TreeFocusTarget::Rename => state
+            .tree
+            .editing()
+            .map_or_else(iced::Task::none, |(key, _)| {
+                iced::widget::operation::focus(tree_rename_input_id(*key))
+            }),
+        TreeFocusTarget::Tree => state.tree.focus_task(),
+        TreeFocusTarget::None => iced::Task::none(),
+    }
+}
+
+pub fn tree_view_apply(mut state: TreeViewState, event: TreeViewEvent) -> TreeViewState {
+    state.focus_target = match &event {
+        UiTreeViewEvent::BeginRename { .. } => TreeFocusTarget::Rename,
+        UiTreeViewEvent::CommitRename | UiTreeViewEvent::CancelRename => TreeFocusTarget::Tree,
+        _ => TreeFocusTarget::None,
+    };
+    let outcome = state.tree.apply(event, tree_view_config());
+    if let Some(rename) = outcome.rename_committed {
+        Arc::make_mut(&mut state.renames).insert(rename.key, rename.value);
+    }
+    state
+}
+
+pub fn tree_view_begin_selected_rename(mut state: TreeViewState) -> TreeViewState {
+    let Some(key) = state.tree.selected().copied() else {
+        return state;
+    };
+    let value = state
+        .items
+        .iter()
+        .find(|item| item.key == key)
+        .map(|item| state.label(item))
+        .expect("selected tree key belongs to reconciled caller data");
+    state.tree.apply(
+        UiTreeViewEvent::BeginRename { key, value },
+        tree_view_config(),
+    );
+    state.focus_target = TreeFocusTarget::Rename;
+    state
+}
+
+pub fn tree_view_cancel_rename(mut state: TreeViewState) -> TreeViewState {
+    state
+        .tree
+        .apply(UiTreeViewEvent::CancelRename, tree_view_config());
+    state.focus_target = TreeFocusTarget::Tree;
+    state
+}
+
+pub fn tree_view(state: &TreeViewState) -> Element<'_, TreeViewEvent> {
+    let theme = theme();
+    let inspection = state.tree.inspect(tree_view_config());
+    let selected = state.tree.selected().map_or_else(
+        || "No node selected".to_owned(),
+        |key| format!("Selected {key}"),
+    );
+    let summary = row![
+        text(format!(
+            "{} visible / {} logical",
+            inspection.visible_nodes, inspection.logical_nodes
+        ))
+        .size(11)
+        .font(ui_font(Weight::Semibold)),
+        iced::widget::Space::new().width(Length::Fill),
+        text(selected)
+            .size(10)
+            .color(theme.palette.muted_foreground),
+    ]
+    .align_y(iced::Alignment::Center);
+    let tree = ui_tree_view(
+        &state.tree,
+        &state.items,
+        tree_view_config(),
+        "Repository tree",
+        |item| state.label(item),
+        |row_meta, item, selected| {
+            let disclosure = if row_meta.has_children() {
+                if row_meta.expanded() { "▾" } else { "▸" }
+            } else {
+                " "
+            };
+            let toggle = iced::widget::button(text(disclosure).size(11)).padding([0, 4]);
+            let toggle = if row_meta.has_children() {
+                toggle.on_press(UiTreeViewEvent::Toggle(item.key))
+            } else {
+                toggle
+            };
+            let label: Element<'_, TreeViewEvent> = if row_meta.editing() {
+                let value = state
+                    .tree
+                    .editing()
+                    .filter(|(key, _)| *key == &item.key)
+                    .map(|(_, value)| value)
+                    .expect("editing row has retained rename state");
+                let editor = iced::widget::text_input("Node name", value)
+                    .id(tree_rename_input_id(item.key))
+                    .on_input(UiTreeViewEvent::RenameChanged)
+                    .on_submit(UiTreeViewEvent::CommitRename)
+                    .size(11);
+                let editor_id = format!("tree-rename-input-{}", item.key);
+                let editor = accessible(editor, StableId::new(editor_id.clone()), Role::TextInput)
+                    .logical_id(editor_id)
+                    .label("Node name")
+                    .value(value)
+                    .focus_id(tree_rename_input_id(item.key));
+                let cancel_id = format!("tree-rename-cancel-{}", item.key);
+                let cancel = accessible(
+                    iced::widget::button(text("Cancel").size(10))
+                        .padding([0, 6])
+                        .on_press(UiTreeViewEvent::CancelRename),
+                    StableId::new(cancel_id.clone()),
+                    Role::Button,
+                )
+                .logical_id(cancel_id)
+                .label("Cancel rename")
+                .on_activate(UiTreeViewEvent::CancelRename);
+                row![editor, cancel,]
+                    .spacing(4)
+                    .align_y(iced::Alignment::Center)
+                    .into()
+            } else {
+                text(state.label(item)).size(11).into()
+            };
+            let rename: Element<'_, TreeViewEvent> = if selected && !row_meta.editing() {
+                let rename_id = format!("tree-rename-{}", item.key);
+                accessible(
+                    iced::widget::button(text("Rename").size(10))
+                        .padding([0, 6])
+                        .on_press(UiTreeViewEvent::BeginRename {
+                            key: item.key,
+                            value: state.label(item),
+                        }),
+                    StableId::new(rename_id.clone()),
+                    Role::Button,
+                )
+                .logical_id(rename_id)
+                .label("Rename node")
+                .on_activate(UiTreeViewEvent::BeginRename {
+                    key: item.key,
+                    value: state.label(item),
+                })
+                .into()
+            } else {
+                iced::widget::Space::new().into()
+            };
+            row![toggle, label, rename]
+                .spacing(6)
+                .align_y(iced::Alignment::Center)
+                .into()
+        },
+        |event| event,
+        &theme,
+    );
+    column![summary, tree]
         .spacing(8)
         .width(Length::Fill)
         .height(Length::Fill)
