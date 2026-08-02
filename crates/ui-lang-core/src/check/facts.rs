@@ -15,6 +15,8 @@ use crate::hir::{
 use crate::unqualified_name;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 #[derive(Debug, Default)]
@@ -157,6 +159,15 @@ pub(crate) struct CheckedView {
     pub(crate) parent: Option<ViewId>,
     pub(crate) children: Vec<ViewId>,
     pub(crate) flow: CheckedViewFlow,
+    pub(crate) origin: OriginId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CheckedComponentSlot {
+    pub(crate) id: ComponentSlotId,
+    pub(crate) view: ViewId,
+    pub(crate) name: String,
+    pub(crate) optional: bool,
     pub(crate) origin: OriginId,
 }
 
@@ -1131,6 +1142,8 @@ pub(crate) struct CheckedFactMetrics {
     pub(crate) values: usize,
     pub(crate) locals: usize,
     pub(crate) views: usize,
+    pub(crate) component_slots: usize,
+    pub(crate) component_slot_index_visits: usize,
     pub(crate) expression_uses: usize,
     pub(crate) expressions: usize,
     pub(crate) type_analysis_queries: usize,
@@ -1163,6 +1176,8 @@ pub(crate) struct CheckedFacts {
     locals: Vec<CheckedLocal>,
     locals_by_owner: HashMap<CheckedLocalOwner, CheckedLocalId>,
     views: Vec<CheckedView>,
+    component_slots: Vec<Vec<CheckedComponentSlot>>,
+    component_slots_by_view: HashMap<ViewId, ComponentSlotId>,
     canvases: HashMap<ViewId, CheckedCanvas>,
     media: HashMap<ViewId, CheckedMedia>,
     containers: HashMap<ViewId, CheckedContainer>,
@@ -1205,6 +1220,8 @@ pub(crate) struct CheckedFacts {
     metrics: CheckedFactMetrics,
     #[cfg(test)]
     lookup_count: LookupCount,
+    #[cfg(test)]
+    component_slot_index_elapsed: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -1482,6 +1499,110 @@ impl CheckedFacts {
         component: ComponentId,
     ) {
         self.component_call_routes.get_mut(&call).unwrap().component = component;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_component_slot(&mut self, component: ComponentId, index: usize) {
+        self.component_slots[component.0 as usize].remove(index);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn duplicate_component_slot(&mut self, component: ComponentId, index: usize) {
+        let slot = self.component_slots[component.0 as usize][index].clone();
+        self.component_slots[component.0 as usize].push(slot);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slots(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        self.component_slots[component.0 as usize].swap(left, right);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_origin(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        raw: u32,
+    ) {
+        self.component_slots[component.0 as usize][index].origin = OriginId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slot_origins(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        let slots = &mut self.component_slots[component.0 as usize];
+        let left_origin = slots[left].origin;
+        slots[left].origin = slots[right].origin;
+        slots[right].origin = left_origin;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_id(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        raw: u32,
+    ) {
+        self.component_slots[component.0 as usize][index].id.index = raw;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slot_views(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        let slots = &mut self.component_slots[component.0 as usize];
+        let left_view = slots[left].view;
+        slots[left].view = slots[right].view;
+        slots[right].view = left_view;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_view(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        raw: u32,
+    ) {
+        self.component_slots[component.0 as usize][index].view = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_component_slot_reverse_associations(
+        &mut self,
+        component: ComponentId,
+        left: usize,
+        right: usize,
+    ) {
+        let slots = &self.component_slots[component.0 as usize];
+        let left_view = slots[left].view;
+        let right_view = slots[right].view;
+        let left_slot = self.component_slots_by_view[&left_view];
+        let right_slot = self.component_slots_by_view[&right_view];
+        self.component_slots_by_view.insert(left_view, right_slot);
+        self.component_slots_by_view.insert(right_view, left_slot);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_component_slot_reverse_association(
+        &mut self,
+        component: ComponentId,
+        index: usize,
+        id: ComponentSlotId,
+    ) {
+        let view = self.component_slots[component.0 as usize][index].view;
+        self.component_slots_by_view.insert(view, id);
     }
 
     #[cfg(test)]
@@ -1897,6 +2018,35 @@ impl CheckedFacts {
     pub(crate) fn view(&self, id: ViewId) -> &CheckedView {
         self.record_lookup();
         &self.views[id.0 as usize]
+    }
+
+    pub(crate) fn try_view(&self, id: ViewId) -> Option<&CheckedView> {
+        self.record_lookup();
+        self.views.get(id.0 as usize).filter(|view| view.id == id)
+    }
+
+    pub(crate) fn component_slots(
+        &self,
+        component: ComponentId,
+    ) -> Option<&[CheckedComponentSlot]> {
+        self.record_lookup();
+        self.component_slots
+            .get(component.0 as usize)
+            .map(Vec::as_slice)
+    }
+
+    pub(crate) fn component_slot(&self, id: ComponentSlotId) -> Option<&CheckedComponentSlot> {
+        self.record_lookup();
+        self.component_slots
+            .get(id.component.0 as usize)?
+            .get(id.index as usize)
+            .filter(|slot| slot.id == id)
+    }
+
+    pub(crate) fn component_slot_for_view(&self, view: ViewId) -> Option<&CheckedComponentSlot> {
+        self.record_lookup();
+        let id = self.component_slots_by_view.get(&view)?;
+        self.component_slot(*id).filter(|slot| slot.view == view)
     }
 
     pub(crate) fn subscriptions(&self) -> &[CheckedSubscription] {
@@ -2455,6 +2605,11 @@ impl CheckedFacts {
 
     pub(crate) fn metrics(&self) -> CheckedFactMetrics {
         self.metrics
+    }
+
+    #[cfg(test)]
+    pub(crate) fn component_slot_index_elapsed(&self) -> Duration {
+        self.component_slot_index_elapsed
     }
 
     #[cfg(test)]
@@ -3157,6 +3312,7 @@ impl<'a> FactsBuilder<'a> {
         self.lower_initializers()?;
         self.lower_app_setting_expressions()?;
         self.index_views()?;
+        self.index_component_slots()?;
         self.lower_view_expressions()?;
         self.lower_test_expressions()?;
         self.lower_subscriptions()?;
@@ -3203,6 +3359,7 @@ impl<'a> FactsBuilder<'a> {
         self.facts.metrics.values = self.facts.values.len();
         self.facts.metrics.locals = self.facts.locals.len();
         self.facts.metrics.views = self.facts.views.len();
+        self.facts.metrics.component_slots = self.facts.component_slots.iter().map(Vec::len).sum();
         self.facts.metrics.expression_uses = self.facts.expression_uses.len();
         self.facts.metrics.expressions = self.facts.expressions.len();
         Ok(self.facts)
@@ -3549,16 +3706,11 @@ impl<'a> FactsBuilder<'a> {
         for (index, component) in self.document.components.iter().enumerate() {
             let component_id = self.declarations.component(index).id;
             let mut env = self.fact_env(ValueScope::Component(component_id));
-            for (slot_index, (name, _, _)) in crate::check::component_slots(&component.root)
-                .into_iter()
-                .enumerate()
-            {
-                env.insert_slot(
-                    name.to_owned(),
-                    self.declarations
-                        .component_slot(component_id, slot_index)
-                        .id,
-                );
+            let slots = self.facts.component_slots(component_id).ok_or_else(|| {
+                self.invariant(&component.span, "component has no checked slot partition")
+            })?;
+            for slot in slots {
+                env.insert_slot(slot.name.clone(), slot.id);
             }
             self.lower_view_expression_tree(&component.root, &env)?;
         }
@@ -11040,6 +11192,79 @@ impl<'a> FactsBuilder<'a> {
         Ok(())
     }
 
+    fn index_component_slots(&mut self) -> Result<(), Error> {
+        #[cfg(test)]
+        let started = Instant::now();
+        self.facts.component_slots = Vec::with_capacity(self.document.components.len());
+        for (component_index, component) in self.document.components.iter().enumerate() {
+            let component_id = self.declarations.component(component_index).id;
+            let source_slots = crate::check::component_slots(&component.root);
+            let declared_count = self
+                .declarations
+                .component_slot_count(component_id)
+                .ok_or_else(|| {
+                    self.invariant(
+                        &component.span,
+                        "component slot declaration arena is missing",
+                    )
+                })?;
+            if source_slots.len() != declared_count {
+                return Err(self.invariant(
+                    &component.span,
+                    "component slot source and declaration cardinality diverged",
+                ));
+            }
+
+            let mut checked = Vec::with_capacity(source_slots.len());
+            for (index, (name, optional, span)) in source_slots.into_iter().enumerate() {
+                self.facts.metrics.component_slot_index_visits += 1;
+                let id = ComponentSlotId {
+                    component: component_id,
+                    index: index as u32,
+                };
+                let declaration = self
+                    .declarations
+                    .try_component_slot(id)
+                    .ok_or_else(|| self.invariant(span, "component slot declaration is missing"))?;
+                let view = self
+                    .declarations
+                    .view_id(span)
+                    .ok_or_else(|| self.invariant(span, "component slot has no shared view ID"))?;
+                let checked_view = self
+                    .facts
+                    .try_view(view)
+                    .ok_or_else(|| self.invariant(span, "component slot has no checked view"))?;
+                if checked_view.scope != CheckedViewScope::Component(component_id)
+                    || checked_view.kind != "slot"
+                    || checked_view.origin != self.declarations.view(view).origin
+                {
+                    return Err(self.invariant(span, "component slot checked view is inconsistent"));
+                }
+                if self
+                    .facts
+                    .component_slots_by_view
+                    .insert(view, id)
+                    .is_some()
+                {
+                    return Err(self.invariant(span, "component slot view is associated twice"));
+                }
+                checked.push(CheckedComponentSlot {
+                    id,
+                    view,
+                    name: name.to_owned(),
+                    optional,
+                    origin: declaration.origin,
+                });
+            }
+            self.facts.component_slots.push(checked);
+        }
+        #[cfg(test)]
+        {
+            self.facts.component_slot_index_elapsed = started.elapsed();
+        }
+        Ok(())
+    }
+
     fn index_view(
         &mut self,
         node: &ViewNode,
@@ -11141,7 +11366,7 @@ fn compatible_operand(left: &Type, right: &Type) -> Type {
 
 #[cfg(test)]
 impl CheckedFacts {
-    fn structural_snapshot(&self) -> String {
+    pub(crate) fn structural_snapshot(&self) -> String {
         use std::fmt::Write as _;
 
         let mut output = String::new();
@@ -11218,6 +11443,16 @@ impl CheckedFacts {
                 view.kind, view.scope, view.parent, view.children, view.flow, view.origin.0
             )
             .unwrap();
+        }
+        for slots in &self.component_slots {
+            for slot in slots {
+                writeln!(
+                    output,
+                    "component-slot {:?} view={:?} name={:?} optional={} origin=o{}",
+                    slot.id, slot.view, slot.name, slot.optional, slot.origin.0
+                )
+                .unwrap();
+            }
         }
         for (index, subscription) in self.subscriptions.iter().enumerate() {
             writeln!(
@@ -11351,6 +11586,8 @@ view w6 text App parent=Some(ViewId(4)) children=[] flow=None origin=o21
                 values: 7,
                 locals: 0,
                 views: 7,
+                component_slots: 0,
+                component_slot_index_visits: 0,
                 expression_uses: 11,
                 expressions: 21,
                 type_analysis_queries: 21,

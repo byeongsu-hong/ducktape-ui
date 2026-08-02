@@ -616,21 +616,34 @@ impl Lowerer {
                     .component_call_id(id)
                     .ok_or_else(|| self.invariant(node.span(), "component view has no call ID"))?,
             },
-            ViewNode::Slot { name, optional, .. } => {
+            ViewNode::Slot { .. } => {
                 let component = outer_component.ok_or_else(|| {
                     self.invariant(node.span(), "slot view is outside a component")
                 })?;
+                let checked = self.facts.component_slot_for_view(id).ok_or_else(|| {
+                    self.invariant(node.span(), "slot view has no checked slot association")
+                })?;
+                if checked.id.component != component || checked.view != id {
+                    return Err(self.invariant_at_origin(
+                        checked.origin,
+                        "checked slot view association is inconsistent",
+                    ));
+                }
                 let contract = self
                     .components
                     .get(component.0 as usize)
-                    .and_then(|component| {
-                        component
-                            .slots
-                            .iter()
-                            .find(|slot| slot.name == *name && slot.optional == *optional)
+                    .and_then(|component| component.slots.get(checked.id.index as usize))
+                    .filter(|contract| {
+                        contract.id == checked.id
+                            && contract.name == checked.name
+                            && contract.optional == checked.optional
+                            && contract.origin == checked.origin
                     })
                     .ok_or_else(|| {
-                        self.invariant(node.span(), "slot view has no normalized declaration")
+                        self.invariant_at_origin(
+                            checked.origin,
+                            "slot view has no normalized declaration",
+                        )
                     })?;
                 ResolvedViewKind::Slot {
                     slot: contract.id,

@@ -6727,16 +6727,79 @@ impl Lowerer {
                     }
                 })
                 .collect();
-            let slots: Vec<ComponentSlotContract> = declared_slots(&component.root)
-                .into_iter()
-                .enumerate()
-                .map(|(index, (name, optional, _span))| ComponentSlotContract {
-                    id: self.declarations.component_slot(id, index).id,
-                    name,
-                    optional,
-                    origin: self.declarations.component_slot(id, index).origin,
-                })
-                .collect();
+            let checked_slots = self.facts.component_slots(id).ok_or_else(|| {
+                self.invariant(&component.span, "component has no checked slot partition")
+            })?;
+            let declared_slot_count =
+                self.declarations.component_slot_count(id).ok_or_else(|| {
+                    self.invariant(
+                        &component.span,
+                        "component slot declaration arena is missing",
+                    )
+                })?;
+            if checked_slots.len() != declared_slot_count {
+                return Err(self.invariant_at_origin(
+                    origin,
+                    "checked component slot cardinality diverged from declarations",
+                ));
+            }
+            let mut slots = Vec::with_capacity(checked_slots.len());
+            for (index, checked) in checked_slots.iter().enumerate() {
+                let expected_id = ComponentSlotId {
+                    component: id,
+                    index: index as u32,
+                };
+                let declaration = self
+                    .declarations
+                    .try_component_slot(expected_id)
+                    .ok_or_else(|| {
+                        self.invariant_at_origin(origin, "component slot declaration is missing")
+                    })?;
+                let authoritative_origin = declaration.origin;
+                let expected_view = self
+                    .declarations
+                    .component_slot_view(expected_id)
+                    .ok_or_else(|| {
+                        self.invariant_at_origin(
+                            authoritative_origin,
+                            "component slot has no stable view declaration",
+                        )
+                    })?;
+                let retained_origin =
+                    self.origins.try_get(authoritative_origin).ok_or_else(|| {
+                        self.invariant_at_origin(origin, "component slot origin is invalid")
+                    })?;
+                let checked_view = self.facts.try_view(expected_view).ok_or_else(|| {
+                    self.invariant_at_origin(
+                        authoritative_origin,
+                        "checked component slot has no checked view",
+                    )
+                })?;
+                if checked.id != expected_id
+                    || declaration.id != checked.id
+                    || checked.origin != authoritative_origin
+                    || checked.view != expected_view
+                    || retained_origin.parent != Some(origin)
+                    || checked_view.scope != CheckedViewScope::Component(id)
+                    || checked_view.kind != "slot"
+                    || checked_view.origin != self.declarations.view(expected_view).origin
+                    || self
+                        .facts
+                        .component_slot_for_view(expected_view)
+                        .is_none_or(|slot| slot.id != expected_id || slot.view != expected_view)
+                {
+                    return Err(self.invariant_at_origin(
+                        authoritative_origin,
+                        "checked component slot association is inconsistent",
+                    ));
+                }
+                slots.push(ComponentSlotContract {
+                    id: checked.id,
+                    name: checked.name.clone(),
+                    optional: checked.optional,
+                    origin: checked.origin,
+                });
+            }
             let states = component
                 .states
                 .iter()
@@ -6772,11 +6835,15 @@ impl Lowerer {
                 .enumerate()
                 .map(|(index, event)| (event.name.clone(), index))
                 .collect();
-            let slots_by_name = slots
-                .iter()
-                .enumerate()
-                .map(|(index, slot)| (slot.name.clone(), index))
-                .collect();
+            let mut slots_by_name = HashMap::with_capacity(slots.len());
+            for (index, slot) in slots.iter().enumerate() {
+                if slots_by_name.insert(slot.name.clone(), index).is_some() {
+                    return Err(self.invariant_at_origin(
+                        slot.origin,
+                        "checked component slot name is duplicated",
+                    ));
+                }
+            }
             let root = self
                 .declarations
                 .view_id(component.root.span())
@@ -8518,6 +8585,13 @@ impl Lowerer {
                     self.lower_view(&slot.content, outer_component)?;
                 }
             }
+            ViewNode::Slot {
+                name,
+                optional,
+                span,
+            } => {
+                self.lower_component_slot(name, *optional, span, outer_component)?;
+            }
             ViewNode::If {
                 condition,
                 children,
@@ -8909,7 +8983,42 @@ impl Lowerer {
                     self.lower_view(&column.cell, outer_component)?;
                 }
             }
-            _ => {}
+        }
+        Ok(())
+    }
+
+    fn lower_component_slot(
+        &self,
+        name: &str,
+        optional: bool,
+        span: &Span,
+        outer_component: Option<ComponentId>,
+    ) -> Result<(), Error> {
+        let component = outer_component
+            .ok_or_else(|| self.invariant(span, "component slot is outside a component"))?;
+        let view = self
+            .declarations
+            .view_id(span)
+            .ok_or_else(|| self.invariant(span, "component slot has no shared view ID"))?;
+        let checked = self.facts.component_slot_for_view(view).ok_or_else(|| {
+            self.invariant(span, "component slot view has no checked slot association")
+        })?;
+        let declaration = self
+            .declarations
+            .try_component_slot(checked.id)
+            .ok_or_else(|| {
+                self.invariant_at_origin(checked.origin, "component slot declaration is missing")
+            })?;
+        if checked.id.component != component
+            || checked.view != view
+            || checked.name != name
+            || checked.optional != optional
+            || declaration.origin != checked.origin
+        {
+            return Err(self.invariant_at_origin(
+                checked.origin,
+                "component slot source diverged from its checked contract",
+            ));
         }
         Ok(())
     }
@@ -9519,84 +9628,6 @@ impl Lowerer {
     }
 }
 
-fn declared_slots(node: &ViewNode) -> Vec<(String, bool, Span)> {
-    fn collect(node: &ViewNode, output: &mut Vec<(String, bool, Span)>) {
-        match node {
-            ViewNode::Slot {
-                name,
-                optional,
-                span,
-            } => output.push((name.clone(), *optional, span.clone())),
-            ViewNode::Layout { children, .. }
-            | ViewNode::If { children, .. }
-            | ViewNode::For { children, .. } => {
-                for child in children {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Match { arms, .. } => {
-                for child in arms.iter().flat_map(|arm| &arm.children) {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Button {
-                content: Some(content),
-                ..
-            }
-            | ViewNode::MouseArea { content, .. }
-            | ViewNode::ResizeHandle { content, .. }
-            | ViewNode::Container { content, .. }
-            | ViewNode::Theme { content, .. }
-            | ViewNode::Float { content, .. }
-            | ViewNode::Pin { content, .. }
-            | ViewNode::Sensor { content, .. }
-            | ViewNode::KeyedColumn { child: content, .. }
-            | ViewNode::Lazy { child: content, .. } => collect(content, output),
-            ViewNode::Tooltip { content, tip, .. } => {
-                collect(content, output);
-                collect(tip, output);
-            }
-            ViewNode::Overlay { content, layer, .. } => {
-                collect(content, output);
-                collect(layer, output);
-            }
-            ViewNode::PaneGrid {
-                panes, templates, ..
-            } => {
-                for child in panes
-                    .iter()
-                    .flat_map(PaneView::nodes)
-                    .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-                {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Table { columns, .. } => {
-                for column in columns {
-                    collect(&column.header, output);
-                    collect(&column.cell, output);
-                }
-            }
-            ViewNode::Component { slots, .. } => {
-                for slot in slots {
-                    collect(&slot.content, output);
-                }
-            }
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    collect(narrow, output);
-                    collect(wide, output);
-                }
-                ResponsiveContent::Size { content, .. } => collect(content, output),
-            },
-            _ => {}
-        }
-    }
-    let mut output = Vec::new();
-    collect(node, &mut output);
-    output
-}
-
 fn valid_f32(value: f64) -> bool {
     value.is_finite() && value.abs() <= f32::MAX as f64
 }
@@ -9831,7 +9862,7 @@ mod tests {
     use crate::{analyze, analyze_file};
     use std::fmt::Write as _;
     use std::fs;
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     const THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
@@ -17848,6 +17879,284 @@ view
             .find(|call| matches!(call.output, ComponentOutputRoute::Direct { .. }))
             .unwrap();
         assert!(matches!(output.output, ComponentOutputRoute::Direct { .. }));
+    }
+
+    #[test]
+    fn component_slot_contracts_reject_post_check_source_name_and_optional_swaps() {
+        let source = format!(
+            "app ComponentSlotSourcePoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+
+        let checked = analyze(&source).unwrap();
+        let slots = checked.facts.component_slots(ComponentId(0)).unwrap();
+        assert_eq!(checked.facts.metrics().component_slots, 3);
+        assert_eq!(
+            slots
+                .iter()
+                .map(|slot| (slot.id.index, slot.name.as_str(), slot.optional))
+                .collect::<Vec<_>>(),
+            vec![(0, "First", false), (1, "Middle", true), (2, "Last", true)]
+        );
+        for slot in slots {
+            assert_eq!(checked.facts.component_slot_for_view(slot.view), Some(slot));
+        }
+        assert!(
+            checked
+                .facts
+                .structural_snapshot()
+                .contains("component-slot ComponentSlotId { component: ComponentId(0), index: 2 }")
+        );
+
+        let mut swapped_names = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut swapped_names.document.components[0].root
+        else {
+            panic!("fixture component root must be a layout");
+        };
+        let [
+            ViewNode::Slot {
+                name: first_name, ..
+            },
+            _,
+            ViewNode::Slot {
+                name: last_name, ..
+            },
+        ] = children.as_mut_slice()
+        else {
+            panic!("fixture component must contain three slots");
+        };
+        std::mem::swap(first_name, last_name);
+        let error = lower(swapped_names).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("source diverged"));
+
+        let mut flipped_last_optional = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } =
+            &mut flipped_last_optional.document.components[0].root
+        else {
+            panic!("fixture component root must be a layout");
+        };
+        let ViewNode::Slot { optional, .. } = children.last_mut().unwrap() else {
+            panic!("fixture last child must be a slot");
+        };
+        *optional = false;
+        let error = lower(flipped_last_optional).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("source diverged"));
+    }
+
+    #[test]
+    fn component_slot_contracts_reject_n_minus_one_n_plus_one_order_and_last_corruption() {
+        let source = format!(
+            "app ComponentSlotContractPoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+        let component = ComponentId(0);
+
+        let mut n_minus_one = analyze(&source).unwrap();
+        n_minus_one.facts.remove_component_slot(component, 2);
+        let error = lower(n_minus_one).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cardinality diverged"));
+
+        let mut n_plus_one = analyze(&source).unwrap();
+        n_plus_one.facts.duplicate_component_slot(component, 2);
+        let error = lower(n_plus_one).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("cardinality diverged"));
+
+        let mut wrong_order = analyze(&source).unwrap();
+        wrong_order.facts.swap_component_slots(component, 0, 2);
+        let error = lower(wrong_order).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut corrupt_last = analyze(&source).unwrap();
+        corrupt_last
+            .facts
+            .corrupt_component_slot_id(component, 2, u32::MAX);
+        let error = lower(corrupt_last).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_last_origin = analyze(&source).unwrap();
+        let authoritative_last = invalid_last_origin
+            .declarations
+            .try_component_slot(ComponentSlotId {
+                component,
+                index: 2,
+            })
+            .unwrap()
+            .origin;
+        let authoritative_last_line = invalid_last_origin.origins.get(authoritative_last).line;
+        invalid_last_origin
+            .facts
+            .corrupt_component_slot_origin(component, 2, u32::MAX);
+        let error = lower(invalid_last_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+        assert_eq!(error.line, authoritative_last_line);
+    }
+
+    #[test]
+    fn component_slot_contracts_reject_stable_view_and_reverse_association_corruption() {
+        let source = format!(
+            "app ComponentSlotViewPoison\n{THEME}component Panel()\n  col\n    slot First\n    slot Middle?\n    slot Last?\nview\n  Panel\n    First:\n      text \"body\"\n"
+        );
+        let component = ComponentId(0);
+
+        let mut valid_view_swap = analyze(&source).unwrap();
+        valid_view_swap
+            .facts
+            .swap_component_slot_views(component, 0, 2);
+        valid_view_swap
+            .facts
+            .swap_component_slot_reverse_associations(component, 0, 2);
+        let error = lower(valid_view_swap).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_view = analyze(&source).unwrap();
+        invalid_view
+            .facts
+            .corrupt_component_slot_view(component, 2, u32::MAX);
+        let error = lower(invalid_view).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut valid_reverse_swap = analyze(&source).unwrap();
+        valid_reverse_swap
+            .facts
+            .swap_component_slot_reverse_associations(component, 0, 2);
+        let error = lower(valid_reverse_swap).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+
+        let mut invalid_reverse = analyze(&source).unwrap();
+        invalid_reverse
+            .facts
+            .corrupt_component_slot_reverse_association(
+                component,
+                2,
+                ComponentSlotId {
+                    component,
+                    index: u32::MAX,
+                },
+            );
+        let error = lower(invalid_reverse).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("association is inconsistent"));
+    }
+
+    #[test]
+    fn imported_component_slot_contract_diagnostics_keep_last_slot_source_origin() {
+        let directory = tempfile::Builder::new()
+            .prefix("ui-lang-component-slot-hir-origins-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let root = directory.path().join("app.ice");
+        let imported = directory.path().join("slots.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedComponentSlots\nuse \"slots.ice\"\n{THEME}view\n  Imported\n    First:\n      text \"body\"\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component Imported()\n  col\n    slot First\n    slot Last?\n",
+        )
+        .unwrap();
+
+        let checked = analyze_file(&root).unwrap();
+        let program = lower(checked).unwrap();
+        let contract = &program.components[0];
+        assert_eq!(contract.slots.len(), 2);
+        assert_eq!(contract.slots[0].id.index, 0);
+        assert_eq!(contract.slots[1].id.index, 1);
+        assert_eq!(contract.slots[1].name, "Last");
+        assert!(contract.slots[1].optional);
+        let last_origin = program.origin(contract.slots[1].origin);
+        assert_eq!(last_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(last_origin.line, 4);
+        assert_eq!(last_origin.parent, Some(contract.origin));
+
+        let mut sibling_origin = analyze_file(&root).unwrap();
+        sibling_origin
+            .facts
+            .swap_component_slot_origins(ComponentId(0), 0, 1);
+        let error = lower(sibling_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 3);
+        assert_eq!(error.column, 1);
+
+        let mut invalid_origin = analyze_file(&root).unwrap();
+        invalid_origin
+            .facts
+            .corrupt_component_slot_origin(ComponentId(0), 1, u32::MAX);
+        let error = lower(invalid_origin).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+        assert_eq!(error.column, 1);
+
+        let mut poisoned = analyze_file(&root).unwrap();
+        let ViewNode::Layout { children, .. } = &mut poisoned.document.components[0].root else {
+            panic!("fixture component root must be a layout");
+        };
+        let ViewNode::Slot { optional, .. } = children.last_mut().unwrap() else {
+            panic!("fixture last child must be a slot");
+        };
+        *optional = false;
+        let error = lower(poisoned).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 4);
+        assert_eq!(error.column, 1);
+    }
+
+    #[test]
+    #[ignore = "large checked component-slot association and lowering performance contract"]
+    fn performance_contract_four_thousand_component_slots_stay_linear() {
+        const SLOTS: usize = 4_000;
+        let mut source = format!("app ComponentSlotScale\n{THEME}component Wide()\n  col\n");
+        for index in 0..SLOTS {
+            writeln!(source, "    slot Slot{index}?").unwrap();
+        }
+        source.push_str("view\n  Wide\n");
+
+        let checker_started = Instant::now();
+        let checked = analyze(&source).unwrap();
+        let checker_elapsed = checker_started.elapsed();
+        let slot_index_elapsed = checked.facts.component_slot_index_elapsed();
+        assert_eq!(checked.facts.metrics().component_slots, SLOTS);
+        assert_eq!(checked.facts.metrics().component_slot_index_visits, SLOTS);
+        assert!(
+            slot_index_elapsed < Duration::from_millis(250),
+            "4k component slots indexed into checked HIR in {slot_index_elapsed:?}"
+        );
+        assert!(
+            checker_elapsed < Duration::from_secs(2),
+            "4k component slots checked in {checker_elapsed:?}"
+        );
+        checked.facts.reset_lookup_count();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.components[0].slots.len(), SLOTS);
+        assert_eq!(program.calls[0].slots.len(), SLOTS);
+        let lookups = program.checked_facts().lookup_count();
+        assert!(
+            lookups <= SLOTS * 8 + 100,
+            "4k component slots required {lookups} checked-HIR lookups"
+        );
+        eprintln!(
+            "4k component slots indexed in {slot_index_elapsed:?}, checked in {checker_elapsed:?}, and lowered with {lookups} lookups in {elapsed:?}"
+        );
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k checked component slots lowered in {elapsed:?}"
+        );
     }
 
     #[test]
