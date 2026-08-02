@@ -979,28 +979,3 @@ fn expr_source(expr: &Expr) -> String {
         ),
     }
 }
-
-pub(crate) fn test_keyboard_variant_name(name: &str) -> String {
-    if name
-        .bytes()
-        .next()
-        .is_some_and(|byte| byte.is_ascii_uppercase())
-    {
-        return name.to_owned();
-    }
-    match name {
-        "tv" => return "TV".into(),
-        "avr-input" => return "AVRInput".into(),
-        "avr-power" => return "AVRPower".into(),
-        "dvr" => return "DVR".into(),
-        _ => {}
-    }
-    name.split(['-', '_'])
-        .map(|part| {
-            let mut chars = part.chars();
-            chars.next().map_or_else(String::new, |first| {
-                first.to_uppercase().chain(chars).collect()
-            })
-        })
-        .collect()
-}

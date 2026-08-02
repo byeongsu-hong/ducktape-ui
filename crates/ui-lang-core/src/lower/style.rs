@@ -401,8 +401,8 @@ pub(crate) enum ResolvedPaletteSelection {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedThemeFactory {
-    pub(crate) function: ExternFnId,
-    pub(crate) arguments: Vec<Expr>,
+    pub(crate) function: ResolvedExternViewFunction,
+    pub(crate) arguments: Vec<ResolvedExternViewArgument>,
     pub(crate) origin: OriginId,
 }
 
@@ -435,14 +435,21 @@ pub(crate) enum ResolvedThemePreset {
 pub(crate) enum ResolvedBackground {
     Color(ResolvedThemeColor),
     Linear {
-        angle: Expr,
-        stops: Vec<(ResolvedThemeColor, Expr)>,
+        angle: CheckedExprUseId,
+        stops: Vec<ResolvedGradientStop>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedGradientStop {
+    pub(crate) color: ResolvedThemeColor,
+    pub(crate) offset: CheckedExprUseId,
 }
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedNestedTheme {
+    pub(crate) id: ViewId,
     pub(crate) preset: ResolvedThemePreset,
     pub(crate) text: Option<ResolvedThemeColor>,
     pub(crate) background: Option<ResolvedBackground>,
@@ -474,10 +481,11 @@ pub(super) struct StyleProgram {
     pub(super) theme: ResolvedThemeProgram,
     #[allow(dead_code)]
     pub(super) recipes: Vec<ResolvedRecipe>,
+    #[cfg(test)]
     pub(super) style_uses: Vec<ResolvedStyleUse>,
+    #[cfg(test)]
     style_uses_by_site: HashMap<CallSite, StyleUseId>,
-    nested_themes: Vec<ResolvedNestedTheme>,
-    nested_themes_by_site: HashMap<CallSite, usize>,
+    nested_themes: HashMap<ViewId, ResolvedNestedTheme>,
 }
 
 #[derive(Debug, Default)]
@@ -487,11 +495,9 @@ pub(super) struct StyleProgramBuilder {
     recipe_ids: HashMap<String, RecipeId>,
     token_ids: HashMap<String, ThemeTokenId>,
     palette_ids: HashMap<String, PaletteId>,
-    theme_factory_ids: HashMap<String, ExternFnId>,
     style_uses: Vec<ResolvedStyleUse>,
     style_uses_by_site: HashMap<CallSite, StyleUseId>,
-    nested_themes: Vec<ResolvedNestedTheme>,
-    nested_themes_by_site: HashMap<CallSite, usize>,
+    nested_themes: HashMap<ViewId, ResolvedNestedTheme>,
 }
 
 impl StyleProgramBuilder {
@@ -520,15 +526,17 @@ impl StyleProgramBuilder {
         Some(StyleProgram {
             theme: self.theme?,
             recipes: self.recipes,
+            #[cfg(test)]
             style_uses: self.style_uses,
+            #[cfg(test)]
             style_uses_by_site: self.style_uses_by_site,
             nested_themes: self.nested_themes,
-            nested_themes_by_site: self.nested_themes_by_site,
         })
     }
 }
 
 impl StyleProgram {
+    #[cfg(test)]
     pub(super) fn style_use(&self, span: &Span) -> Result<&ResolvedStyleUse, Error> {
         let site = CallSite {
             line: span.line,
@@ -550,50 +558,30 @@ impl StyleProgram {
         })
     }
 
-    pub(super) fn nested_theme(&self, span: &Span) -> Result<&ResolvedNestedTheme, Error> {
-        let site = CallSite {
-            line: span.line,
-            column: span.column,
-        };
-        self.nested_themes_by_site
-            .get(&site)
-            .and_then(|index| self.nested_themes.get(*index))
-            .ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    span,
-                    "nested theme reached code generation without normalized theme facts",
-                )
-            })
+    pub(super) fn nested_theme(&self, id: ViewId) -> Option<&ResolvedNestedTheme> {
+        self.nested_themes.get(&id).filter(|theme| theme.id == id)
+    }
+
+    #[cfg(test)]
+    pub(super) fn nested_theme_count(&self) -> usize {
+        self.nested_themes.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn nested_themes(&self) -> impl Iterator<Item = &ResolvedNestedTheme> {
+        self.nested_themes.values()
+    }
+
+    #[cfg(test)]
+    pub(super) fn corrupt_nested_theme_id(&mut self, id: ViewId, raw: u32) {
+        self.nested_themes.get_mut(&id).unwrap().id = ViewId(raw);
     }
 }
 
 impl Lowerer {
     pub(super) fn lower_style_program(&mut self) -> Result<(), Error> {
-        self.index_theme_factories()?;
         self.lower_theme_declarations()?;
         self.lower_recipes()?;
-        Ok(())
-    }
-
-    fn index_theme_factories(&mut self) -> Result<(), Error> {
-        for (index, function) in self.document.functions.iter().enumerate() {
-            if function.kind != ExternKind::Theme {
-                continue;
-            }
-            let id = self.declarations.extern_fn(index).id;
-            if self
-                .styles
-                .theme_factory_ids
-                .insert(function.name.clone(), id)
-                .is_some()
-            {
-                return Err(self.invariant(
-                    &function.span,
-                    format!("duplicate checked theme factory `{}`", function.name),
-                ));
-            }
-        }
         Ok(())
     }
 
@@ -828,10 +816,6 @@ impl Lowerer {
             }
             _ => Ok(ResolvedAppThemeSelection::Dynamic(expression)),
         }
-    }
-
-    fn theme_factory_id(&self, name: &str) -> Option<ExternFnId> {
-        self.styles.theme_factory_ids.get(name).copied()
     }
 
     fn lower_recipes(&mut self) -> Result<(), Error> {
@@ -1319,13 +1303,6 @@ impl Lowerer {
                     }
                 }
             }
-            ViewNode::Theme {
-                preset,
-                text,
-                background,
-                span,
-                ..
-            } => self.lower_nested_theme(preset, text, background, span)?,
             _ => {}
         }
         Ok(())
@@ -1337,22 +1314,85 @@ impl Lowerer {
         text: &Option<String>,
         background: &Option<BackgroundValue>,
         span: &Span,
+        outer_component: Option<ComponentId>,
     ) -> Result<(), Error> {
-        let origin = self.push_origin(span, None);
+        let semantic_key = crate::ast::nested_theme_semantic_key(preset, text, background);
+        let (id, interaction, scope, origin) = self.interaction_contract(
+            CheckedInteractionKind::NestedTheme,
+            semantic_key,
+            span,
+            outer_component,
+        )?;
+        let checked = self.facts.nested_theme(id).cloned().ok_or_else(|| {
+            self.invariant_at_origin(origin, "nested theme has no checked HIR facts")
+        })?;
+        if checked.id != id || !interaction.routes.is_empty() {
+            return Err(self.invariant_at_origin(origin, "nested theme checked identity diverged"));
+        }
+        let expected_expressions = crate::ast::nested_theme_expression_roots(preset, background);
+        if interaction.option_expressions.len() != expected_expressions.len()
+            || interaction.expression_count as usize != interaction.option_expressions.len()
+        {
+            return Err(
+                self.invariant_at_origin(origin, "nested theme expression cardinality diverged")
+            );
+        }
+        self.validate_interaction_expression_graphs(id, scope, interaction.expression_count, span)?;
+        let mut expression_index = 0usize;
         let preset = match preset {
-            ThemePreset::Default => ResolvedThemePreset::Default,
-            ThemePreset::App => ResolvedThemePreset::App,
-            ThemePreset::BuiltIn(name) => ResolvedThemePreset::BuiltIn(name.clone()),
-            ThemePreset::Factory(factory) => ResolvedThemePreset::Factory(ResolvedThemeFactory {
-                function: self.theme_factory_id(&factory.function).ok_or_else(|| {
-                    self.invariant(
-                        span,
-                        format!("unknown checked theme factory `{}`", factory.function),
-                    )
-                })?,
-                arguments: factory.args.clone(),
-                origin,
-            }),
+            ThemePreset::Default if checked.factory.is_none() => ResolvedThemePreset::Default,
+            ThemePreset::App if checked.factory.is_none() => ResolvedThemePreset::App,
+            ThemePreset::BuiltIn(name) if checked.factory.is_none() => {
+                ResolvedThemePreset::BuiltIn(name.clone())
+            }
+            ThemePreset::Factory(factory) => {
+                let function = checked.factory.ok_or_else(|| {
+                    self.invariant_at_origin(origin, "nested theme factory identity disappeared")
+                })?;
+                let declaration = self
+                    .declarations
+                    .try_extern_decl(function)
+                    .filter(|declaration| {
+                        declaration.kind == ExternKind::Theme
+                            && declaration.name == factory.function
+                            && declaration.params.len() == factory.args.len()
+                            && declaration.borrowed.len() == factory.args.len()
+                    })
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.invariant_at_origin(
+                            origin,
+                            "nested theme factory declaration contract diverged",
+                        )
+                    })?;
+                self.origins
+                    .try_get(declaration.declaration.origin)
+                    .ok_or_else(|| {
+                        self.invariant_at_origin(
+                            origin,
+                            "nested theme factory declaration origin is invalid",
+                        )
+                    })?;
+                let arguments = self.lower_extern_view_arguments(
+                    id,
+                    origin,
+                    &interaction,
+                    &declaration,
+                    &mut expression_index,
+                )?;
+                let factory_origin = self.push_origin(span, Some(origin));
+                ResolvedThemePreset::Factory(ResolvedThemeFactory {
+                    function: self.resolved_extern_view_function(&declaration),
+                    arguments,
+                    origin: factory_origin,
+                })
+            }
+            _ => {
+                return Err(self.invariant_at_origin(
+                    origin,
+                    "nested theme preset and factory identity diverged",
+                ));
+            }
         };
         let text = text
             .as_ref()
@@ -1360,52 +1400,96 @@ impl Lowerer {
             .transpose()?;
         let background = background
             .as_ref()
-            .map(|value| self.resolve_background(value, span))
+            .map(|value| {
+                self.resolve_nested_theme_background(
+                    value,
+                    id,
+                    origin,
+                    &interaction,
+                    &mut expression_index,
+                    span,
+                )
+            })
             .transpose()?;
-        let index = self.styles.nested_themes.len();
-        let site = CallSite {
-            line: span.line,
-            column: span.column,
-        };
-        if self
-            .styles
-            .nested_themes_by_site
-            .insert(site, index)
-            .is_some()
-        {
-            return Err(self.invariant(span, "nested theme source identity is not unique"));
+        if expression_index != interaction.option_expressions.len() {
+            return Err(self
+                .invariant_at_origin(origin, "nested theme left checked expressions unconsumed"));
         }
-        self.styles.nested_themes.push(ResolvedNestedTheme {
+        let resolved = ResolvedNestedTheme {
+            id,
             preset,
             text,
             background,
             origin,
-        });
+        };
+        if self.styles.nested_themes.insert(id, resolved).is_some() {
+            return Err(self.invariant_at_origin(origin, "nested theme was lowered more than once"));
+        }
         Ok(())
     }
 
-    fn resolve_background(
+    fn resolve_nested_theme_background(
         &self,
         value: &BackgroundValue,
+        id: ViewId,
+        origin: OriginId,
+        interaction: &CheckedInteraction,
+        expression_index: &mut usize,
         span: &Span,
     ) -> Result<ResolvedBackground, Error> {
         Ok(match value {
             BackgroundValue::Color(color) => {
                 ResolvedBackground::Color(self.resolve_theme_color(color, span)?)
             }
-            BackgroundValue::Linear { angle, stops } => ResolvedBackground::Linear {
-                angle: angle.clone(),
+            BackgroundValue::Linear { stops, .. } => ResolvedBackground::Linear {
+                angle: self.nested_theme_expression(
+                    id,
+                    origin,
+                    interaction,
+                    expression_index,
+                    "nested theme gradient angle",
+                )?,
                 stops: stops
                     .iter()
                     .map(|stop| {
-                        Ok((
-                            self.resolve_theme_color(&stop.color, span)?,
-                            stop.offset.clone(),
-                        ))
+                        Ok(ResolvedGradientStop {
+                            color: self.resolve_theme_color(&stop.color, span)?,
+                            offset: self.nested_theme_expression(
+                                id,
+                                origin,
+                                interaction,
+                                expression_index,
+                                "nested theme gradient stop",
+                            )?,
+                        })
                     })
                     .collect::<Result<Vec<_>, Error>>()?,
             },
         })
+    }
+
+    fn nested_theme_expression(
+        &self,
+        id: ViewId,
+        origin: OriginId,
+        interaction: &CheckedInteraction,
+        expression_index: &mut usize,
+        label: &str,
+    ) -> Result<CheckedExprUseId, Error> {
+        let retained = self.extern_view_expression(
+            id,
+            origin,
+            interaction,
+            *expression_index,
+            Some(&Type::F64),
+            label,
+        )?;
+        let expression = interaction.option_expressions[*expression_index];
+        *expression_index += 1;
+        if retained.source != Type::F64 || retained.destination != Type::F64 {
+            return Err(self.invariant_at_origin(origin, format!("{label} type contract diverged")));
+        }
+        Ok(expression)
     }
 }
 

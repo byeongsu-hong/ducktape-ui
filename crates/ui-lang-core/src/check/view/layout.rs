@@ -17,6 +17,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let layout_analysis_guard = expr::HandlerAnalysisGuard::start();
             if let Some(columns) = &options.columns {
                 require_type(&expr_type(columns, env, document, span)?, &Type::I64, span)?;
                 if matches!(columns, Expr::I64(value) if *value <= 0) {
@@ -149,6 +150,7 @@ pub(in crate::check) fn infer_layout_group(
                 check_scroll_styles(&scroll.styles, env, document)?;
             }
             check_styles(styles, document, span, StyleTarget::Layout(*kind, options))?;
+            retain_layout_analyses(span, layout_analysis_guard.finish())?;
             for child in children {
                 infer_view(child, env, document, signatures, ids)?;
             }
@@ -161,6 +163,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let container_analysis_guard = expr::HandlerAnalysisGuard::start();
             for length in [&options.width, &options.height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "box size")?;
             }
@@ -231,6 +234,7 @@ pub(in crate::check) fn infer_layout_group(
             check_container_style_options(&options.style, env, document, span, "E184")?;
             check_border_dash(options, env, document, span)?;
             check_styles(styles, document, span, StyleTarget::Container(options))?;
+            retain_container_analyses(span, container_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
         }
         ViewNode::Overlay {
@@ -241,6 +245,7 @@ pub(in crate::check) fn infer_layout_group(
             span,
         } => {
             check_id(id, env, document, ids, span)?;
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             require_type(
                 &expr_type(&options.visible, env, document, span)?,
                 &Type::Bool,
@@ -257,6 +262,7 @@ pub(in crate::check) fn infer_layout_group(
             if let Some(dismiss) = &options.dismiss {
                 infer_route(dismiss, None, env, document, signatures)?;
             }
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
             infer_view(content, env, document, signatures, ids)?;
             infer_view(layer, env, document, signatures, ids)?;
         }

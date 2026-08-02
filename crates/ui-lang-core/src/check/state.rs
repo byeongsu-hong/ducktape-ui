@@ -13,6 +13,12 @@ pub(crate) struct ControlledEditorBinding {
     pub action: Option<String>,
 }
 
+#[derive(Default)]
+struct ControlledOutput {
+    bindings: Vec<ControlledEditorBinding>,
+    by_name: HashMap<String, usize>,
+}
+
 pub(crate) fn controlled_state_bindings(
     document: &Document,
     editors: bool,
@@ -39,7 +45,7 @@ fn controlled_bindings(
         editors: bool,
         env: &HashMap<String, ControlledBinding>,
         components: &mut HashSet<String>,
-        output: &mut Vec<ControlledEditorBinding>,
+        output: &mut ControlledOutput,
     ) -> Result<(), Error> {
         let binding = match node {
             ViewNode::Input { binding, span, .. } if !editors => {
@@ -64,7 +70,11 @@ fn controlled_bindings(
         if let Some((binding, widget, span, action)) = binding {
             match env.get(binding) {
                 Some(ControlledBinding::App(state)) => {
-                    if let Some(existing) = output.iter().find(|binding| binding.name == *state) {
+                    if let Some(existing) = output
+                        .by_name
+                        .get(state)
+                        .and_then(|index| output.bindings.get(*index))
+                    {
                         if existing.action != action {
                             return Err(Error::new(
                                 "E139",
@@ -75,7 +85,9 @@ fn controlled_bindings(
                             ));
                         }
                     } else {
-                        output.push(ControlledEditorBinding {
+                        let index = output.bindings.len();
+                        output.by_name.insert(state.clone(), index);
+                        output.bindings.push(ControlledEditorBinding {
                             name: state.clone(),
                             action,
                         });
@@ -321,7 +333,7 @@ fn controlled_bindings(
             )
         })
         .collect();
-    let mut output = Vec::new();
+    let mut output = ControlledOutput::default();
     collect(
         &document.view,
         document,
@@ -370,7 +382,7 @@ fn controlled_bindings(
             &mut output,
         )?;
     }
-    Ok(output)
+    Ok(output.bindings)
 }
 
 pub(in crate::check) fn pane_grid_span(node: &ViewNode) -> Option<&Span> {
