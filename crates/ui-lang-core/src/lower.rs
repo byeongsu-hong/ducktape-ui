@@ -3235,16 +3235,14 @@ impl LoweredProgram {
         })?;
         let checked = self.facts.view(id);
         if checked.id != id {
-            return Err(Error::new(
-                "E196",
-                span,
+            return Err(self.invariant_at_origin(
+                checked.origin,
                 "lazy reached code generation with a mismatched checked view ID",
             ));
         }
         self.lazy_views.get(&id).ok_or_else(|| {
-            Error::new(
-                "E196",
-                span,
+            self.invariant_at_origin(
+                checked.origin,
                 "lazy reached code generation without normalized HIR",
             )
         })
@@ -11001,7 +10999,7 @@ view
     }
 
     #[test]
-    fn imported_lazy_keeps_hir_origin_and_generated_source_marker() {
+    fn imported_lazy_keeps_hir_origin_source_marker_and_diagnostic() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -11024,7 +11022,7 @@ view
         )
         .unwrap();
 
-        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let lazy = program
             .lazy_views
             .values()
@@ -11037,6 +11035,12 @@ view
         let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
         let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
         assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+
+        program.lazy_views.clear();
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 2);
 
         fs::remove_dir_all(directory).unwrap();
     }
