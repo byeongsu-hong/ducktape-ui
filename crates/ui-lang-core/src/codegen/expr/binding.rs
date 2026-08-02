@@ -267,14 +267,6 @@ pub(in crate::codegen) fn checked_state_env(
     env
 }
 
-pub(in crate::codegen) fn env_types(env: &dyn BindingEnvironment) -> HashMap<String, Type> {
-    let mut types = HashMap::new();
-    env.visit(&mut |name, binding| {
-        types.insert(name.to_owned(), binding.ty.clone());
-    });
-    types
-}
-
 pub(in crate::codegen) fn native_field_type(ty: &Type, field: &str) -> Option<Type> {
     match ty {
         Type::KeyPress => match field {

@@ -3,14 +3,15 @@ use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedBooleanControl, CheckedCallArgument,
     CheckedCallTarget, CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget,
     CheckedComboBox, CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind,
-    CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion, CheckedInput, CheckedInteraction,
-    CheckedInteractionKind, CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown,
-    CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
-    CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
-    CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
-    CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
-    CheckedProjectionKind, CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator,
-    CheckedValueRef, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    CheckedExprOwner, CheckedExprUse, CheckedExternViewAdapter, CheckedFacts,
+    CheckedInitializerCoercion, CheckedInput, CheckedInteraction, CheckedInteractionKind,
+    CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown, CheckedMatchPattern,
+    CheckedMedia, CheckedPaneAxis, CheckedPaneBackground, CheckedPaneConfiguration,
+    CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength, CheckedPanePadding,
+    CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface, CheckedPaneTemplate,
+    CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList, CheckedProjectionKind,
+    CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
+    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
     ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
@@ -39,6 +40,7 @@ mod container;
 mod content_primitives;
 mod editor;
 mod extern_component;
+mod extern_view_adapter;
 mod float;
 mod input;
 mod interaction;
@@ -69,6 +71,7 @@ pub(crate) use container::*;
 pub(crate) use content_primitives::*;
 pub(crate) use editor::*;
 pub(crate) use extern_component::*;
+pub(crate) use extern_view_adapter::*;
 pub(crate) use float::*;
 pub(crate) use input::*;
 pub(crate) use interaction::*;
@@ -1520,6 +1523,8 @@ pub(crate) struct LoweredProgram {
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
     markdowns: HashMap<ViewId, ResolvedMarkdown>,
     extern_components: HashMap<ViewId, ResolvedExternComponent>,
+    themers: HashMap<ViewId, ResolvedThemer>,
+    shaders: HashMap<ViewId, ResolvedShader>,
     boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
@@ -3127,6 +3132,24 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn themer(&self, id: ViewId) -> Option<&ResolvedThemer> {
+        self.themers.get(&id)
+    }
+
+    pub(crate) fn themers(&self) -> impl Iterator<Item = &ResolvedThemer> {
+        self.themers.values()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shader(&self, id: ViewId) -> Option<&ResolvedShader> {
+        self.shaders.get(&id)
+    }
+
+    pub(crate) fn shaders(&self) -> impl Iterator<Item = &ResolvedShader> {
+        self.shaders.values()
+    }
+
+    #[cfg(test)]
     pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&ResolvedBooleanControl> {
         self.boolean_controls.get(&id)
     }
@@ -3486,6 +3509,56 @@ impl LoweredProgram {
             ));
         }
         Ok(component)
+    }
+
+    pub(crate) fn resolved_themer_for(&self, node: &ViewNode) -> Result<&ResolvedThemer, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "themer reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        let themer = self.themers.get(&id).ok_or_else(|| {
+            self.invariant_at_origin(
+                checked.origin,
+                "themer reached code generation without normalized HIR",
+            )
+        })?;
+        if checked.id != id || themer.id != id {
+            return Err(self.invariant_at_origin(
+                themer.origin,
+                "themer reached code generation with a mismatched checked view ID",
+            ));
+        }
+        Ok(themer)
+    }
+
+    pub(crate) fn resolved_shader_for(&self, node: &ViewNode) -> Result<&ResolvedShader, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "shader reached code generation without a shared view ID",
+            )
+        })?;
+        let checked = self.facts.view(id);
+        let shader = self.shaders.get(&id).ok_or_else(|| {
+            self.invariant_at_origin(
+                checked.origin,
+                "shader reached code generation without normalized HIR",
+            )
+        })?;
+        if checked.id != id || shader.id != id {
+            return Err(self.invariant_at_origin(
+                shader.origin,
+                "shader reached code generation with a mismatched checked view ID",
+            ));
+        }
+        Ok(shader)
     }
 
     pub(crate) fn resolved_boolean_control_for(
@@ -4494,6 +4567,8 @@ pub(crate) struct Lowerer {
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
     markdowns: HashMap<ViewId, ResolvedMarkdown>,
     extern_components: HashMap<ViewId, ResolvedExternComponent>,
+    themers: HashMap<ViewId, ResolvedThemer>,
+    shaders: HashMap<ViewId, ResolvedShader>,
     boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
@@ -5252,6 +5327,8 @@ impl Lowerer {
             text_editors: HashMap::new(),
             markdowns: HashMap::new(),
             extern_components: HashMap::new(),
+            themers: HashMap::new(),
+            shaders: HashMap::new(),
             boolean_controls: HashMap::new(),
             pick_lists: HashMap::new(),
             combo_boxes: HashMap::new(),
@@ -5419,6 +5496,8 @@ impl Lowerer {
             text_editors: self.text_editors,
             markdowns: self.markdowns,
             extern_components: self.extern_components,
+            themers: self.themers,
+            shaders: self.shaders,
             boolean_controls: self.boolean_controls,
             pick_lists: self.pick_lists,
             combo_boxes: self.combo_boxes,
@@ -9382,6 +9461,26 @@ impl Lowerer {
                 ..
             } => {
                 self.lower_extern_component(function, args, route, span, outer_component)?;
+            }
+            ViewNode::Themer {
+                function,
+                args,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_themer(function, args, route, span, outer_component)?;
+            }
+            ViewNode::Shader {
+                function,
+                args,
+                width,
+                height,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_shader(function, args, width, height, route, span, outer_component)?;
             }
             ViewNode::Checkbox {
                 id,
@@ -14366,6 +14465,427 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized extern components lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_complete_themer_and_shader_contracts() {
+        let source = format!(
+            "app ExternViewsHir\nextern crate::backend\n  themer alternate_surface(label:str, active:bool, choice:bool?) -> bool\n  shader shader_surface(label:str, active:bool, choice:bool?) -> bool\n  themer passive_theme() -> unit\n  shader passive_shader() -> unit\n{THEME}state\n  label = \"Native\"\n  active = false\n  fixed_length:length = length.fixed(48.0)\non themed(next)\non shaded(next)\nview\n  col\n    themer alternate_surface(label, active, none) -> themed _\n    shader shader_surface(label, active, none) w=fill(3) h=64.0 -> shaded _\n    themer passive_theme()\n    shader passive_shader() w=shrink h=fixed_length\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let themer = program.themer(ViewId(1)).unwrap();
+        let shader = program.shader(ViewId(2)).unwrap();
+
+        assert_eq!(themer.id, ViewId(1));
+        assert_eq!(themer.adapter.function.id, ExternFnId(0));
+        assert_eq!(themer.adapter.function.name, "alternate_surface");
+        assert_eq!(
+            themer.adapter.function.rust_path,
+            "crate::backend::alternate_surface"
+        );
+        assert_eq!(themer.adapter.arguments.len(), 3);
+        assert_eq!(
+            themer.adapter.arguments[0].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(
+            themer.adapter.arguments[1].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(
+            themer.adapter.arguments[2].ty,
+            Type::Option(Box::new(Type::Bool))
+        );
+        assert_eq!(
+            themer.adapter.arguments[2].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(themer.adapter.output, Type::Bool);
+        assert_eq!(
+            themer.adapter.route.as_ref().unwrap().source_payloads,
+            vec![Type::Bool]
+        );
+
+        assert_eq!(shader.id, ViewId(2));
+        assert_eq!(shader.adapter.function.id, ExternFnId(1));
+        assert_eq!(shader.adapter.function.name, "shader_surface");
+        assert_eq!(shader.adapter.arguments.len(), 3);
+        assert_eq!(
+            shader.adapter.arguments[0].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(
+            shader.adapter.arguments[1].mode,
+            ResolvedExternViewArgumentMode::Owned
+        );
+        assert_eq!(
+            shader.adapter.arguments[2].ty,
+            Type::Option(Box::new(Type::Bool))
+        );
+        assert!(matches!(
+            shader.width,
+            Some(ResolvedContainerLength::FillPortion(3))
+        ));
+        assert!(matches!(
+            shader.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
+        assert_eq!(
+            shader.adapter.route.as_ref().unwrap().source_payloads,
+            vec![Type::Bool]
+        );
+
+        let passive_themer = program.themer(ViewId(3)).unwrap();
+        let passive_shader = program.shader(ViewId(4)).unwrap();
+        assert!(passive_themer.adapter.route.is_none());
+        assert_eq!(passive_themer.adapter.output, Type::Unit);
+        assert!(passive_shader.adapter.route.is_none());
+        assert!(matches!(
+            passive_shader.width,
+            Some(ResolvedContainerLength::Shrink)
+        ));
+        assert!(matches!(
+            passive_shader.height,
+            Some(ResolvedContainerLength::FixedLength(_))
+        ));
+
+        let generated = crate::codegen::generate(&program, "extern-views-hir.ice").unwrap();
+        assert!(generated.contains("crate::backend::alternate_surface("));
+        assert!(generated.contains("crate::backend::shader_surface("));
+        assert!(!generated.contains("::std::convert::AsRef::as_ref"));
+        assert!(!generated.contains("::std::borrow::Borrow::borrow"));
+        assert!(generated.contains(".width(::iced::Length::FillPortion(3)).height(64.0 as f32)"));
+        assert!(generated.contains(".width(::iced::Shrink).height(self.fixed_length)"));
+        assert!(generated.contains("__ExternViewsHirMessage::Themed(__value)"));
+        assert!(generated.contains("__ExternViewsHirMessage::Shaded(__value)"));
+        assert!(generated.contains("__ExternNoop"));
+    }
+
+    #[test]
+    fn themer_and_shader_route_component_handlers_and_outputs() {
+        let source = format!(
+            "app ExternViewRoutes\nextern crate::backend\n  themer alternate_surface(active:bool) -> bool\n  shader shader_surface(active:bool) -> bool\n{THEME}state\n  active = false\ncomponent Adapter(active:bool) -> bool\n  col\n    themer alternate_surface(active) -> emit(_)\n    shader shader_surface(active) -> emit(_)\non changed(next)\nview\n  Adapter active=active -> changed _\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let themer = program.themers().next().unwrap();
+        let shader = program.shaders().next().unwrap();
+        assert!(matches!(
+            themer.adapter.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::OutputCallback {
+                output: Type::Bool,
+                ..
+            }
+        ));
+        assert!(matches!(
+            shader.adapter.route.as_ref().unwrap().target,
+            ResolvedInteractionRouteTarget::OutputCallback {
+                output: Type::Bool,
+                ..
+            }
+        ));
+        let generated = crate::codegen::generate(&program, "extern-view-routes.ice").unwrap();
+        assert!(generated.contains("crate::backend::alternate_surface("));
+        assert!(generated.contains("crate::backend::shader_surface("));
+        assert!(generated.contains("__ExternViewRoutesMessage::Changed(__value)"));
+    }
+
+    #[test]
+    fn themer_and_shader_post_check_and_post_lowering_raw_poison_is_contained() {
+        let source = format!(
+            "app ExternViewPoison\nextern crate::backend\n  themer primary_theme(label:str) -> bool\n  themer poisoned_theme(label:str) -> bool\n  shader primary_shader(label:str) -> bool\n  shader poisoned_shader(label:str) -> bool\n{THEME}state\n  label = \"Original\"\non themed(next)\non shaded(next)\nview\n  col\n    themer primary_theme(label) -> themed _\n    shader primary_shader(label) w=32.0 -> shaded _\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Themer { args, .. } = &mut children[0] else {
+            panic!("first child must be a themer");
+        };
+        args[0] = Expr::Str("POISONED_THEMER_ARG".into());
+        let ViewNode::Shader { args, width, .. } = &mut children[1] else {
+            panic!("second child must be a shader");
+        };
+        args[0] = Expr::Str("POISONED_SHADER_ARG".into());
+        *width = Some(LengthValue::Fixed(Expr::F64(999.0)));
+        let mut program = lower(checked).unwrap();
+        let expected = crate::codegen::generate(&program, "extern-view-poison.ice").unwrap();
+        assert!(expected.contains("self.label"));
+        assert!(expected.contains(".width(32.0 as f32)"));
+        assert!(!expected.contains("POISONED"));
+        assert!(!expected.contains("999.0"));
+
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Themer {
+            function,
+            args,
+            route,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a themer");
+        };
+        *function = "poisoned_theme".into();
+        *args = vec![Expr::Str("POST_LOWER_THEMER".into())];
+        *route = None;
+        let ViewNode::Shader {
+            function,
+            args,
+            width,
+            route,
+            ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a shader");
+        };
+        *function = "poisoned_shader".into();
+        *args = vec![Expr::Str("POST_LOWER_SHADER".into())];
+        *width = Some(LengthValue::Fill);
+        *route = None;
+
+        let actual = crate::codegen::generate(&program, "extern-view-poison.ice").unwrap();
+        assert_eq!(actual, expected);
+
+        let mut static_poison = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut static_poison.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Shader { width, .. } = &mut children[1] else {
+            panic!("second child must be a shader");
+        };
+        *width = Some(LengthValue::Fill);
+        let error = lower(static_poison).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("topology diverged"));
+    }
+
+    #[test]
+    fn themer_and_shader_reject_cross_owner_and_invalid_identity_corruption() {
+        let source = format!(
+            "app ExternViewIdentity\nextern crate::backend\n  themer first_theme(active:bool) -> bool\n  themer second_theme(active:bool) -> bool\n  shader first_shader(active:bool) -> bool\n  shader second_shader(active:bool) -> bool\n{THEME}state\n  active = false\non first(next)\non second(next)\nview\n  col\n    themer first_theme(active) -> first _\n    themer second_theme(active) -> second _\n    shader first_shader(active) -> first _\n    shader second_shader(active) -> second _\n"
+        );
+        let first_themer = ViewId(1);
+        let second_themer = ViewId(2);
+        let first_shader = ViewId(3);
+        let second_shader = ViewId(4);
+
+        let mut swapped_themer = analyze(&source).unwrap();
+        swapped_themer
+            .facts
+            .transplant_interaction_option_expression(first_themer, 0, second_themer, 0);
+        let error = lower(swapped_themer).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut swapped_shader = analyze(&source).unwrap();
+        swapped_shader
+            .facts
+            .transplant_interaction_option_expression(first_shader, 0, second_shader, 0);
+        let error = lower(swapped_shader).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("argument 0 contract diverged"));
+
+        let mut corrupt_themer_function = analyze(&source).unwrap();
+        corrupt_themer_function
+            .facts
+            .corrupt_themer_function(first_themer, ExternFnId(1));
+        let error = lower(corrupt_themer_function).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut corrupt_shader_function = analyze(&source).unwrap();
+        corrupt_shader_function
+            .facts
+            .corrupt_shader_function(first_shader, ExternFnId(3));
+        let error = lower(corrupt_shader_function).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut corrupt_themer_output = analyze(&source).unwrap();
+        corrupt_themer_output
+            .facts
+            .corrupt_themer_output(first_themer, Type::Unit);
+        let error = lower(corrupt_themer_output).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut corrupt_shader_output = analyze(&source).unwrap();
+        corrupt_shader_output
+            .facts
+            .corrupt_shader_output(first_shader, Type::Unit);
+        let error = lower(corrupt_shader_output).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("declaration contract diverged"));
+
+        let mut swapped_routes = analyze(&source).unwrap();
+        swapped_routes
+            .facts
+            .swap_interaction_routes(first_themer, second_themer);
+        let error = lower(swapped_routes).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut corrupt_themer_id = analyze(&source).unwrap();
+        corrupt_themer_id
+            .facts
+            .corrupt_themer_id(first_themer, u32::MAX);
+        let error = lower(corrupt_themer_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let mut corrupt_shader_id = analyze(&source).unwrap();
+        corrupt_shader_id
+            .facts
+            .corrupt_shader_id(first_shader, u32::MAX);
+        let error = lower(corrupt_shader_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+    }
+
+    #[test]
+    fn imported_themer_and_shader_keep_origins_markers_and_e196_paths() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-extern-view-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("native.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedExternViews\nuse \"native.ice\"\n{THEME}state\n  label = \"Imported\"\non changed(next)\nview\n  ImportedAdapters label=label -> changed _\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "extern crate::backend\n  themer imported_theme(label:str) -> bool\n  shader imported_shader(label:str) -> bool\ncomponent ImportedAdapters(label:str) -> bool\n  col\n    themer imported_theme(label) -> emit(_)\n    shader imported_shader(label) w=fill h=32.0 -> emit(_)\n",
+        )
+        .unwrap();
+
+        let mut program = lower(analyze_file(&root).unwrap()).unwrap();
+        let themer = program.themers().next().unwrap();
+        let shader = program.shaders().next().unwrap();
+        let themer_id = themer.id;
+        for (origin, line) in [(themer.origin, 6), (shader.origin, 7)] {
+            let origin = program.origin(origin);
+            assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
+            assert_eq!(origin.line, line);
+        }
+        assert_eq!(
+            program
+                .origin(themer.adapter.function.declaration_origin)
+                .path
+                .as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(
+            program
+                .origin(themer.adapter.function.declaration_origin)
+                .line,
+            2
+        );
+        assert_eq!(
+            program
+                .origin(shader.adapter.function.declaration_origin)
+                .path
+                .as_deref(),
+            Some(imported.as_path())
+        );
+        assert_eq!(
+            program
+                .origin(shader.adapter.function.declaration_origin)
+                .line,
+            3
+        );
+        assert_eq!(
+            program.origin(themer.adapter.arguments[0].origin).parent,
+            Some(themer.origin)
+        );
+        assert_eq!(
+            program
+                .origin(themer.adapter.route.as_ref().unwrap().origin)
+                .parent,
+            Some(themer.origin)
+        );
+        assert_eq!(
+            program.origin(shader.adapter.arguments[0].origin).parent,
+            Some(shader.origin)
+        );
+        assert_eq!(
+            program
+                .origin(shader.adapter.route.as_ref().unwrap().origin)
+                .parent,
+            Some(shader.origin)
+        );
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 2 1 {encoded_import}")));
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+        assert!(generated.contains(&format!("// __ICE_SOURCE 6 1 {encoded_import}")));
+        assert!(generated.contains(&format!("// __ICE_SOURCE 7 1 {encoded_import}")));
+
+        program.themers.get_mut(&themer_id).unwrap().id = ViewId(u32::MAX);
+        let error = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 6);
+
+        let mut corrupt_checked = analyze_file(&root).unwrap();
+        let ViewNode::Layout { children, .. } = &corrupt_checked.document.components[0].root else {
+            panic!("imported component root must be a layout");
+        };
+        let themer_id = corrupt_checked
+            .declarations
+            .view_id(children[0].span())
+            .unwrap();
+        corrupt_checked
+            .facts
+            .corrupt_themer_function(themer_id, ExternFnId(u32::MAX));
+        let error = lower(corrupt_checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 6);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized Themer and Shader lowering and emission performance contract"]
+    fn performance_contract_four_thousand_themers_and_shaders_lower_and_emit_under_two_seconds() {
+        const EACH: usize = 2_000;
+        let mut source = format!(
+            "app ExternViewScale\nextern crate::backend\n  themer native_theme(index:i64) -> unit\n  shader native_shader(index:i64) -> unit\n{THEME}state\n  index = 7\nview\n  col\n"
+        );
+        for _ in 0..EACH {
+            writeln!(source, "    themer native_theme(index)").unwrap();
+            writeln!(source, "    shader native_shader(index) w=fill h=32.0").unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "extern-view-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.themers.len(), EACH);
+        assert_eq!(program.shaders.len(), EACH);
+        assert_eq!(generated.matches("::iced::widget::themer(").count(), EACH);
+        assert_eq!(
+            generated.matches("::iced::widget::Shader::new(").count(),
+            EACH + 1
+        );
+        eprintln!("4k normalized Themer/Shader nodes lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized Themer/Shader nodes lowered and emitted in {elapsed:?}"
         );
     }
 

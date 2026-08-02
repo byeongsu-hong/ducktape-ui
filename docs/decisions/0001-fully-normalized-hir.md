@@ -120,7 +120,8 @@ The remaining expression-backed native styles/colors and widget options outside
 Media, Tooltip, MouseArea, ResizeHandle, Sensor, Overlay, Container, Layout,
 Text, RichText, Input, Button, TextEditor, PickList, ComboBox, Slider, Progress,
 Rule, QrCode, Space, Float, Pin, Responsive, Lazy, KeyedColumn, Table, PaneGrid,
-If, For, and Match therefore remain open implementation slices; this status
+ExternComponent, Themer, Shader, If, For, and Match therefore remain open
+implementation slices; this status
 does not satisfy the migration-complete criteria below.
 Migrated handler and application-setting generation uses the shared origin arena
 directly for imported and root source markers.
@@ -530,6 +531,17 @@ routes cannot affect output after lowering. Direct, component-local, output,
 and unit routes; raw poisoning; cross-owner and corrupt-ID failures; imported
 source markers and diagnostics; native generation; and a 4,000-node lower+emit
 budget provide the executable evidence.
+
+Themer and Shader now extend the extern-view-adapter HIR boundary. Their stable
+checked records own exact extern identity, typed argument slots, output routes,
+and origins; lowering fixes Rust paths and call modes before emission. Shader
+dimensions are canonical length variants rather than raw expressions requiring
+backend type inference. Both remain owned-argument surfaces under the existing
+grammar, while ExternComponent retains its explicit borrowed modes. Their
+production renderers and noop discovery do not reread extern names, arguments,
+route presence, or Shader dimensions from the source AST. Imported diagnostics,
+raw poisoning, identity corruption, the lexical ratchet, and explicit
+4,000-node budgets guard the boundary without adding Core syntax.
 
 Match is a completed control-flow slice. Its checked flow owns the stable value
 expression, exhaustive patterns, typed payload locals, and arm origins.

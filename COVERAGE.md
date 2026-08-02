@@ -814,6 +814,22 @@ output, and unit delivery; raw-poisoning; cross-owner and corrupt-ID attacks;
 imported source markers and source-mapped `E196`; native output; the lexical
 ratchet; and an ignored 4,000-component lower+emit contract cover the boundary.
 
+Themer and Shader have complete private HIR boundaries. Shared checked
+interaction records retain exact `ExternFnId`s, deterministic argument and
+route partitions, declared output types, static dimension topology, and
+parented physical origins. Their accepted parameters are owned-only; lowering
+nevertheless records the exact argument mode rather than letting the backend
+infer a Rust calling convention. `ResolvedThemer` fixes the alternate-theme
+factory and mapped output, while `ResolvedShader` additionally distinguishes
+fill, fill-portion, shrink, checked `f64`, and checked native `length`
+dimensions. Production emission and noop discovery consume these records and
+never inspect raw extern names, arguments, dimensions, or routes. Structural
+HIR assertions, cross-owner and same-kind extern corruption, malformed IDs,
+post-check dynamic/static mutation, post-lowering full raw poisoning, imported
+origin/source-marker and source-mapped `E196` evidence, native output, the
+lexical boundary ratchet, and an ignored mixed 4,000-node lower+emit contract
+cover the boundary.
+
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse
 normal presets, components, checked IDs, expressions, handlers, subscriptions,
 and real Rust externs. All semantic operations lower through the public,

@@ -345,6 +345,40 @@ pub(crate) fn extern_component_semantic_key(
     )
 }
 
+pub(crate) fn themer_semantic_key(function: &str, args: &[Expr], route: &Option<Route>) -> String {
+    format!(
+        "themer|function={function}|arguments={}|route={}",
+        args.len(),
+        route.is_some()
+    )
+}
+
+fn extern_view_length_semantic_key(length: &Option<LengthValue>) -> String {
+    match length {
+        None => "none".into(),
+        Some(LengthValue::Fill) => "fill".into(),
+        Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
+        Some(LengthValue::Shrink) => "shrink".into(),
+        Some(LengthValue::Fixed(_)) => "fixed".into(),
+    }
+}
+
+pub(crate) fn shader_semantic_key(
+    function: &str,
+    args: &[Expr],
+    width: &Option<LengthValue>,
+    height: &Option<LengthValue>,
+    route: &Option<Route>,
+) -> String {
+    format!(
+        "shader|function={function}|arguments={}|width={}|height={}|route={}",
+        args.len(),
+        extern_view_length_semantic_key(width),
+        extern_view_length_semantic_key(height),
+        route.is_some()
+    )
+}
+
 impl ViewNode {
     pub fn span(&self) -> &Span {
         match self {

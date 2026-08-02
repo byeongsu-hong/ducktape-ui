@@ -1,41 +1,5 @@
 use super::*;
 
-pub(in crate::codegen) fn length_code(
-    length: &LengthValue,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    Ok(match length {
-        LengthValue::Fill => "::iced::Fill".into(),
-        LengthValue::FillPortion(portion) => {
-            format!("::iced::Length::FillPortion({portion})")
-        }
-        LengthValue::Shrink => "::iced::Shrink".into(),
-        LengthValue::Fixed(value) => {
-            let code = expr_code(value, env, document, ValueMode::Owned)?;
-            if expr_type(value, &env_types(env), document, &Span::line(1))? == Type::Length {
-                code
-            } else {
-                format!("{code} as f32")
-            }
-        }
-    })
-}
-
-pub(in crate::codegen) fn append_dimensions(
-    code: &mut String,
-    dimensions: [&Option<LengthValue>; 2],
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<(), Error> {
-    for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
-        if let Some(length) = length {
-            write!(code, ".{method}({})", length_code(length, env, document)?).unwrap();
-        }
-    }
-    Ok(())
-}
-
 pub(in crate::codegen) fn append_container_utility_overrides(
     code: &mut String,
     style: &ResolvedStyle,

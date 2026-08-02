@@ -507,6 +507,21 @@ component-local, output, and unit delivery, corruption and raw poisoning,
 imported diagnostics/source markers, native generation, and 4,000-node
 performance contracts cover the boundary.
 
+Themer and Shader are completed extern-view-adapter HIR slices. Their checked
+interaction records freeze exact extern IDs, ordered owned argument types,
+declared output payloads, optional routes, and physical origins. Themer and
+Shader parameters remain owned-only under the existing Core grammar; borrowed
+parameters are still exclusive to extern components. Lowering resolves function
+paths, argument expression owners, route targets, and Shader width/height into
+`ResolvedThemer` and `ResolvedShader`, including distinct fill, fill-portion,
+shrink, numeric-fixed, and native-length-fixed variants. Generation consumes
+only those records and checked expression IDs. It does not re-resolve raw extern
+names, re-type arguments or dimensions, or inspect raw route presence for noop
+discovery. Cross-owner and invalid-ID corruption, post-check and post-lowering
+raw poisoning, imported origins and diagnostics, native Rust fragments, the
+lexical HIR ratchet, and a mixed 4,000-node lower+emit budget provide the
+executable evidence.
+
 The Rust adapter is one manifest-relative include:
 
 ```rust

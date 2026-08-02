@@ -929,6 +929,13 @@ pub(crate) struct CheckedExternComponent {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedExternViewAdapter {
+    pub(crate) id: ViewId,
+    pub(crate) function: ExternFnId,
+    pub(crate) output: Type,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedBooleanControl {
     pub(crate) id: ViewId,
     pub(crate) style: Option<ExternFnId>,
@@ -1008,6 +1015,8 @@ pub(crate) enum CheckedInteractionKind {
     TextEditor,
     Markdown,
     ExternComponent,
+    Themer,
+    Shader,
     PickList,
     ComboBox,
     Slider,
@@ -1107,6 +1116,8 @@ pub(crate) struct CheckedFacts {
     text_editors: HashMap<ViewId, CheckedTextEditor>,
     markdowns: HashMap<ViewId, CheckedMarkdown>,
     extern_components: HashMap<ViewId, CheckedExternComponent>,
+    themers: HashMap<ViewId, CheckedExternViewAdapter>,
+    shaders: HashMap<ViewId, CheckedExternViewAdapter>,
     boolean_controls: HashMap<ViewId, CheckedBooleanControl>,
     pick_lists: HashMap<ViewId, CheckedPickList>,
     combo_boxes: HashMap<ViewId, CheckedComboBox>,
@@ -1339,6 +1350,36 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_extern_component_id(&mut self, view: ViewId, raw: u32) {
         self.extern_components.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_themer_function(&mut self, view: ViewId, function: ExternFnId) {
+        self.themers.get_mut(&view).unwrap().function = function;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_themer_output(&mut self, view: ViewId, output: Type) {
+        self.themers.get_mut(&view).unwrap().output = output;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_themer_id(&mut self, view: ViewId, raw: u32) {
+        self.themers.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_shader_function(&mut self, view: ViewId, function: ExternFnId) {
+        self.shaders.get_mut(&view).unwrap().function = function;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_shader_output(&mut self, view: ViewId, output: Type) {
+        self.shaders.get_mut(&view).unwrap().output = output;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_shader_id(&mut self, view: ViewId, raw: u32) {
+        self.shaders.get_mut(&view).unwrap().id = ViewId(raw);
     }
 
     #[cfg(test)]
@@ -1627,6 +1668,14 @@ impl CheckedFacts {
         self.extern_components
             .get(&id)
             .filter(|component| component.id == id)
+    }
+
+    pub(crate) fn themer(&self, id: ViewId) -> Option<&CheckedExternViewAdapter> {
+        self.themers.get(&id).filter(|themer| themer.id == id)
+    }
+
+    pub(crate) fn shader(&self, id: ViewId) -> Option<&CheckedExternViewAdapter> {
+        self.shaders.get(&id).filter(|shader| shader.id == id)
     }
 
     pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&CheckedBooleanControl> {
@@ -4234,6 +4283,123 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "extern component facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_extern_view_adapter_facts(
+        &mut self,
+        view: ViewId,
+        interaction_kind: CheckedInteractionKind,
+        extern_kind: ExternKind,
+        semantic_key: String,
+        function: &str,
+        args: &[Expr],
+        trailing_expressions: Vec<&Expr>,
+        route: &Option<Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<CheckedExternViewAdapter, Error> {
+        let declaration = self
+            .declarations
+            .extern_decl_by_name(function)
+            .filter(|declaration| declaration.kind == extern_kind)
+            .cloned()
+            .ok_or_else(|| self.invariant(span, "extern view adapter declaration disappeared"))?;
+        if declaration.params.len() != args.len()
+            || declaration.borrowed.len() != args.len()
+            || declaration.borrowed.iter().any(|borrowed| *borrowed)
+        {
+            return Err(self.invariant(span, "extern view adapter argument contract diverged"));
+        }
+        let mut expressions = args
+            .iter()
+            .zip(&declaration.params)
+            .map(|(argument, (_, destination))| (argument, Some(destination.clone())))
+            .collect::<Vec<_>>();
+        expressions.extend(
+            trailing_expressions
+                .into_iter()
+                .map(|expression| (expression, None)),
+        );
+        self.lower_interaction_facts(
+            view,
+            interaction_kind,
+            semantic_key,
+            expressions,
+            route.iter().collect(),
+            env,
+            span,
+        )?;
+        Ok(CheckedExternViewAdapter {
+            id: view,
+            function: declaration.declaration.id,
+            output: declaration.output,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_themer_facts(
+        &mut self,
+        view: ViewId,
+        function: &str,
+        args: &[Expr],
+        route: &Option<Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let checked = self.lower_extern_view_adapter_facts(
+            view,
+            CheckedInteractionKind::Themer,
+            ExternKind::Themer,
+            crate::ast::themer_semantic_key(function, args, route),
+            function,
+            args,
+            Vec::new(),
+            route,
+            env,
+            span,
+        )?;
+        if self.facts.themers.insert(view, checked).is_some() {
+            return Err(self.invariant(span, "themer facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_shader_facts(
+        &mut self,
+        view: ViewId,
+        function: &str,
+        args: &[Expr],
+        width: &Option<LengthValue>,
+        height: &Option<LengthValue>,
+        route: &Option<Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let dimensions = [width, height]
+            .into_iter()
+            .filter_map(|length| match length {
+                Some(LengthValue::Fixed(expression)) => Some(expression),
+                _ => None,
+            })
+            .collect();
+        let checked = self.lower_extern_view_adapter_facts(
+            view,
+            CheckedInteractionKind::Shader,
+            ExternKind::Shader,
+            crate::ast::shader_semantic_key(function, args, width, height, route),
+            function,
+            args,
+            dimensions,
+            route,
+            env,
+            span,
+        )?;
+        if self.facts.shaders.insert(view, checked).is_some() {
+            return Err(self.invariant(span, "shader facts were produced more than once"));
         }
         Ok(())
     }
@@ -9662,6 +9828,28 @@ impl<'a> FactsBuilder<'a> {
                 ..
             } => {
                 self.lower_extern_component_facts(view, function, args, route, env, span)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Themer {
+                function,
+                args,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_themer_facts(view, function, args, route, env, span)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Shader {
+                function,
+                args,
+                width,
+                height,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_shader_facts(view, function, args, width, height, route, env, span)?;
                 CheckedViewFlow::None
             }
             _ => {

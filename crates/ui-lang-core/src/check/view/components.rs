@@ -310,6 +310,7 @@ pub(in crate::check) fn infer_components_group(
             route,
             span,
         } => {
+            let themer_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             let themer = extern_function(document, function, ExternKind::Themer, span)?;
             check_call_args(themer, args, env, document, span)?;
@@ -333,6 +334,7 @@ pub(in crate::check) fn infer_components_group(
                     ));
                 }
             }
+            retain_interaction_analyses(span, themer_analysis_guard.finish())?;
         }
         ViewNode::Shader {
             function,
@@ -343,6 +345,7 @@ pub(in crate::check) fn infer_components_group(
             route,
             span,
         } => {
+            let shader_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             let shader = extern_function(document, function, ExternKind::Shader, span)?;
             check_call_args(shader, args, env, document, span)?;
@@ -369,6 +372,7 @@ pub(in crate::check) fn infer_components_group(
                     ));
                 }
             }
+            retain_interaction_analyses(span, shader_analysis_guard.finish())?;
         }
         _ => return Ok(false),
     };

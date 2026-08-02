@@ -213,6 +213,7 @@ mod selection;
 mod structure;
 mod table;
 mod text;
+mod themer_shader;
 
 pub(super) use boolean::*;
 pub(super) use button::*;
@@ -234,3 +235,4 @@ pub(super) use selection::*;
 pub(super) use structure::*;
 pub(super) use table::*;
 pub(super) use text::*;
+pub(super) use themer_shader::*;

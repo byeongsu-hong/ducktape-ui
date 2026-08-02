@@ -298,53 +298,18 @@ pub(in crate::codegen) fn render_content(
             message,
             env,
         ),
-        ViewNode::Themer {
-            function,
-            args,
-            route,
-            span,
-            ..
-        } => {
-            let themer =
-                find_extern_function(document, function, ExternKind::Themer).ok_or_else(|| {
-                    Error::new("E130", span, format!("unknown extern themer `{function}`"))
-                })?;
-            let args = expr_list_code(args, env, document)?;
-            let mapped = if let Some(route) = route {
-                route_callback_code(route, "__value", "__value", env, document, message)?
-            } else {
-                format!("move |__value| {message}::__ExternNoop")
-            };
-            Ok(format!(
-                "{{ let (__theme, __content, __text_color, __background) = {}({args}); let mut __themer = ::iced::widget::themer(__theme, __content); if let ::std::option::Option::Some(__text_color) = __text_color {{ __themer = __themer.text_color(__text_color); }} if let ::std::option::Option::Some(__background) = __background {{ __themer = __themer.background(__background); }} let __themed: __IceElement<'_, {}> = __themer.into(); __themed.map({mapped}).into() }}",
-                themer.rust_path,
-                themer.output.rust(&document.structs)
-            ))
-        }
-        ViewNode::Shader {
-            function,
-            args,
-            width,
-            height,
-            route,
-            span,
-            ..
-        } => {
-            let shader = find_extern_function(document, function, ExternKind::Shader)
-                .ok_or_else(|| Error::new("E191", span, format!("unknown shader `{function}`")))?;
-            let args = expr_list_code(args, env, document)?;
-            let mut code = format!("::iced::widget::Shader::new({}({args}))", shader.rust_path);
-            append_dimensions(&mut code, [width, height], env, document)?;
-            let output = shader.output.rust(&document.structs);
-            let mapped = if let Some(route) = route {
-                route_callback_code(route, "__value", "__value", env, document, message)?
-            } else {
-                format!("move |__value| {message}::__ExternNoop")
-            };
-            Ok(format!(
-                "{{ let __shader: __IceElement<'_, {output}> = {code}.into(); __shader.map({mapped}).into() }}"
-            ))
-        }
+        ViewNode::Themer { .. } => render_themer(
+            document.program().resolved_themer_for(node)?,
+            document,
+            message,
+            env,
+        ),
+        ViewNode::Shader { .. } => render_shader(
+            document.program().resolved_shader_for(node)?,
+            document,
+            message,
+            env,
+        ),
         _ => return Ok(None),
     }?;
     let rendered = identify_rendered(rendered, id, message, env, document, scope)?;
