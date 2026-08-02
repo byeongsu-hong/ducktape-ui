@@ -1398,6 +1398,11 @@ impl CheckedFacts {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_interaction_expression_count(&mut self, view: ViewId, count: u32) {
+        self.interactions.get_mut(&view).unwrap().expression_count = count;
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_boolean_style(&mut self, view: ViewId, style: ExternFnId) {
         self.boolean_controls.get_mut(&view).unwrap().style = Some(style);
     }

@@ -81,6 +81,7 @@ impl Lowerer {
         )?;
         if interaction.option_expressions.len() != args.len()
             || interaction.routes.len() != usize::from(route.is_some())
+            || interaction.expression_count as usize != extern_view_expression_count(&interaction)
         {
             return Err(
                 self.invariant_at_origin(origin, "themer expression or route cardinality diverged")
@@ -153,6 +154,7 @@ impl Lowerer {
             .count();
         if interaction.option_expressions.len() != args.len() + fixed_dimensions
             || interaction.routes.len() != usize::from(route.is_some())
+            || interaction.expression_count as usize != extern_view_expression_count(&interaction)
         {
             return Err(
                 self.invariant_at_origin(origin, "shader expression or route cardinality diverged")
@@ -401,4 +403,14 @@ impl Lowerer {
         }
         Ok(resolved)
     }
+}
+
+fn extern_view_expression_count(interaction: &CheckedInteraction) -> usize {
+    interaction.option_expressions.len()
+        + interaction
+            .routes
+            .iter()
+            .flat_map(|route| &route.args)
+            .filter(|argument| matches!(argument, CheckedCanvasRouteArg::Expression(_)))
+            .count()
 }
