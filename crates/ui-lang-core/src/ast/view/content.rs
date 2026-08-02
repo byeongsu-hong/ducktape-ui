@@ -1075,6 +1075,59 @@ pub struct BoolControlOptions {
     pub icon_shaping: Option<TextShaping>,
 }
 
+fn push_bool_control_background_roots<'a>(
+    roots: &mut Vec<&'a Expr>,
+    background: &'a Option<BackgroundValue>,
+) {
+    if let Some(BackgroundValue::Linear { angle, stops }) = background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+}
+
+fn push_bool_control_option_roots<'a>(
+    roots: &mut Vec<&'a Expr>,
+    options: &'a BoolControlOptions,
+    include_accessibility: bool,
+) {
+    if include_accessibility {
+        roots.extend(
+            [
+                &options.accessibility.label,
+                &options.accessibility.description,
+            ]
+            .into_iter()
+            .flatten(),
+        );
+    }
+    roots.extend(options.size.as_ref());
+    push_input_length_root(roots, &options.width);
+    roots.extend(
+        [
+            &options.spacing,
+            &options.text_size,
+            &options.line_height,
+            &options.icon_size,
+            &options.icon_line_height,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+}
+
+fn bool_control_semantic_key(
+    kind: &str,
+    leading: impl std::fmt::Debug,
+    disabled: &Option<Expr>,
+    options: &BoolControlOptions,
+    style: impl std::fmt::Debug,
+    route: &Route,
+) -> String {
+    format!(
+        "{kind}|leading={leading:?}|disabled={disabled:?}|options={options:?}|style={style:?}|route={route:?}"
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CheckboxStyleSet {
     pub preset: CheckboxStylePreset,
@@ -1111,6 +1164,78 @@ pub struct CheckboxStatusStyle {
     pub span: Option<Span>,
 }
 
+pub(crate) fn checkbox_expression_roots<'a>(
+    id: &'a Option<Id>,
+    label: &'a Expr,
+    checked: &'a Expr,
+    disabled: &'a Option<Expr>,
+    options: &'a BoolControlOptions,
+    style: &'a CheckboxStyleSet,
+) -> Vec<&'a Expr> {
+    let mut roots = id
+        .as_ref()
+        .and_then(|id| id.key.as_ref())
+        .into_iter()
+        .collect::<Vec<_>>();
+    roots.extend([label, checked]);
+    roots.extend(disabled);
+    push_bool_control_option_roots(&mut roots, options, true);
+    if let Some(custom) = &style.custom {
+        roots.extend(&custom.args);
+    }
+    for status in [
+        &style.active_checked,
+        &style.active_unchecked,
+        &style.hovered_checked,
+        &style.hovered_unchecked,
+        &style.disabled_checked,
+        &style.disabled_unchecked,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.extend(checkbox_status_expression_roots(status));
+    }
+    roots
+}
+
+pub(crate) fn checkbox_status_expression_roots(status: &CheckboxStatusStyle) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    push_bool_control_background_roots(&mut roots, &status.background);
+    roots.extend(
+        [
+            &status.border_width,
+            &status.radius,
+            &status.radius_top_left,
+            &status.radius_top_right,
+            &status.radius_bottom_right,
+            &status.radius_bottom_left,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn checkbox_semantic_key(
+    id: &Option<Id>,
+    label: &Expr,
+    checked: &Expr,
+    disabled: &Option<Expr>,
+    options: &BoolControlOptions,
+    style: &CheckboxStyleSet,
+    route: &Route,
+) -> String {
+    bool_control_semantic_key(
+        "checkbox",
+        (id, label, checked),
+        disabled,
+        options,
+        style,
+        route,
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TogglerStyleSet {
     pub custom: Option<ExternCall>,
@@ -1140,6 +1265,81 @@ pub struct TogglerStatusStyle {
     pub span: Option<Span>,
 }
 
+pub(crate) fn toggler_expression_roots<'a>(
+    id: &'a Option<Id>,
+    label: &'a Expr,
+    checked: &'a Expr,
+    disabled: &'a Option<Expr>,
+    options: &'a BoolControlOptions,
+    style: &'a TogglerStyleSet,
+) -> Vec<&'a Expr> {
+    let mut roots = id
+        .as_ref()
+        .and_then(|id| id.key.as_ref())
+        .into_iter()
+        .collect::<Vec<_>>();
+    roots.extend([label, checked]);
+    roots.extend(disabled);
+    push_bool_control_option_roots(&mut roots, options, true);
+    if let Some(custom) = &style.custom {
+        roots.extend(&custom.args);
+    }
+    for status in [
+        &style.active_checked,
+        &style.active_unchecked,
+        &style.hovered_checked,
+        &style.hovered_unchecked,
+        &style.disabled_checked,
+        &style.disabled_unchecked,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.extend(toggler_status_expression_roots(status));
+    }
+    roots
+}
+
+pub(crate) fn toggler_status_expression_roots(status: &TogglerStatusStyle) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    push_bool_control_background_roots(&mut roots, &status.background);
+    roots.extend(status.background_border_width.as_ref());
+    push_bool_control_background_roots(&mut roots, &status.foreground);
+    roots.extend(status.foreground_border_width.as_ref());
+    roots.extend(
+        [
+            &status.radius,
+            &status.radius_top_left,
+            &status.radius_top_right,
+            &status.radius_bottom_right,
+            &status.radius_bottom_left,
+            &status.padding_ratio,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    roots
+}
+
+pub(crate) fn toggler_semantic_key(
+    id: &Option<Id>,
+    label: &Expr,
+    checked: &Expr,
+    disabled: &Option<Expr>,
+    options: &BoolControlOptions,
+    style: &TogglerStyleSet,
+    route: &Route,
+) -> String {
+    bool_control_semantic_key(
+        "toggler",
+        (id, label, checked),
+        disabled,
+        options,
+        style,
+        route,
+    )
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct RadioStyleSet {
     pub custom: Option<ExternCall>,
@@ -1157,6 +1357,64 @@ pub struct RadioStatusStyle {
     pub border_width: Option<Expr>,
     pub text_color: Option<String>,
     pub span: Option<Span>,
+}
+
+pub(crate) fn radio_expression_roots<'a>(
+    id: &'a Option<Id>,
+    label: &'a Expr,
+    value: &'a Expr,
+    selected: &'a Expr,
+    options: &'a BoolControlOptions,
+    style: &'a RadioStyleSet,
+) -> Vec<&'a Expr> {
+    let mut roots = id
+        .as_ref()
+        .and_then(|id| id.key.as_ref())
+        .into_iter()
+        .collect::<Vec<_>>();
+    roots.extend([label, value, selected]);
+    push_bool_control_option_roots(&mut roots, options, false);
+    if let Some(custom) = &style.custom {
+        roots.extend(&custom.args);
+    }
+    for status in [
+        &style.active_selected,
+        &style.active_unselected,
+        &style.hovered_selected,
+        &style.hovered_unselected,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        roots.extend(radio_status_expression_roots(status));
+    }
+    roots
+}
+
+pub(crate) fn radio_status_expression_roots(status: &RadioStatusStyle) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    push_bool_control_background_roots(&mut roots, &status.background);
+    roots.extend(status.border_width.as_ref());
+    roots
+}
+
+pub(crate) fn radio_semantic_key(
+    id: &Option<Id>,
+    label: &Expr,
+    value: &Expr,
+    selected: &Expr,
+    options: &BoolControlOptions,
+    style: &RadioStyleSet,
+    route: &Route,
+) -> String {
+    bool_control_semantic_key(
+        "radio",
+        (id, label, value, selected),
+        &None,
+        options,
+        style,
+        route,
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

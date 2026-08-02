@@ -913,6 +913,15 @@ pub(crate) struct CheckedTextEditor {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CheckedBooleanControl {
+    pub(crate) id: ViewId,
+    pub(crate) style: Option<ExternFnId>,
+    pub(crate) style_origin: Option<OriginId>,
+    pub(crate) font_origin: Option<OriginId>,
+    pub(crate) status_origins: Vec<OriginId>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CheckedPickList {
     pub(crate) id: ViewId,
     pub(crate) style: Option<ExternFnId>,
@@ -969,6 +978,9 @@ pub(crate) enum CheckedInteractionKind {
     ComboBox,
     Slider,
     Progress,
+    Checkbox,
+    Toggler,
+    Radio,
     MouseArea,
     ResizeHandle,
     Sensor,
@@ -1056,6 +1068,7 @@ pub(crate) struct CheckedFacts {
     inputs: HashMap<ViewId, CheckedInput>,
     buttons: HashMap<ViewId, CheckedButton>,
     text_editors: HashMap<ViewId, CheckedTextEditor>,
+    boolean_controls: HashMap<ViewId, CheckedBooleanControl>,
     pick_lists: HashMap<ViewId, CheckedPickList>,
     combo_boxes: HashMap<ViewId, CheckedComboBox>,
     sliders: HashMap<ViewId, CheckedSlider>,
@@ -1229,6 +1242,24 @@ impl CheckedFacts {
     #[cfg(test)]
     pub(crate) fn corrupt_text_editor_binding(&mut self, view: ViewId, binding: CheckedValueRef) {
         self.text_editors.get_mut(&view).unwrap().binding = binding;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_boolean_style(&mut self, view: ViewId, style: ExternFnId) {
+        self.boolean_controls.get_mut(&view).unwrap().style = Some(style);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_boolean_control_id(&mut self, view: ViewId, raw: u32) {
+        self.boolean_controls.get_mut(&view).unwrap().id = ViewId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn swap_interaction_routes(&mut self, view: ViewId, other: ViewId) {
+        let first = self.interactions.get(&view).unwrap().routes[0].clone();
+        let second = self.interactions.get(&other).unwrap().routes[0].clone();
+        self.interactions.get_mut(&view).unwrap().routes[0] = second;
+        self.interactions.get_mut(&other).unwrap().routes[0] = first;
     }
 
     #[cfg(test)]
@@ -1454,6 +1485,12 @@ impl CheckedFacts {
 
     pub(crate) fn text_editor(&self, id: ViewId) -> Option<&CheckedTextEditor> {
         self.text_editors.get(&id).filter(|editor| editor.id == id)
+    }
+
+    pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&CheckedBooleanControl> {
+        self.boolean_controls
+            .get(&id)
+            .filter(|control| control.id == id)
     }
 
     pub(crate) fn pick_list(&self, id: ViewId) -> Option<&CheckedPickList> {
@@ -2430,6 +2467,16 @@ struct LayeredFactEnv<'a> {
     base: &'a dyn FactEnvironment,
     name: String,
     value: (CheckedPathRoot, Type),
+}
+
+struct BooleanControlFactSource<'a> {
+    kind: CheckedInteractionKind,
+    semantic_key: String,
+    expressions: Vec<&'a Expr>,
+    statuses: Vec<(&'a Span, Vec<&'a Expr>)>,
+    style: Option<(&'a str, ExternKind)>,
+    has_font: bool,
+    route: &'a Route,
 }
 
 impl FactEnvironment for LayeredFactEnv<'_> {
@@ -3881,6 +3928,123 @@ impl<'a> FactsBuilder<'a> {
             .is_some()
         {
             return Err(self.invariant(span, "text editor facts were produced more than once"));
+        }
+        Ok(())
+    }
+
+    fn lower_boolean_control_facts(
+        &mut self,
+        control: ViewId,
+        source: BooleanControlFactSource<'_>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let parent = self.declarations.view(control).origin;
+        let mut status_origins = Vec::with_capacity(source.statuses.len());
+        let mut expression_parents = HashMap::new();
+        for (status_span, expressions) in source.statuses {
+            let origin = self.origins.push(status_span, Some(parent));
+            status_origins.push(origin);
+            for expression in expressions {
+                expression_parents
+                    .insert(std::ptr::from_ref(expression).addr(), (status_span, origin));
+            }
+        }
+
+        let mut expression_count = 0u32;
+        let option_expressions = source
+            .expressions
+            .into_iter()
+            .map(|expression| {
+                let (expression_span, expression_parent) = expression_parents
+                    .get(&std::ptr::from_ref(expression).addr())
+                    .copied()
+                    .unwrap_or((span, parent));
+                self.push_interaction_expression(
+                    control,
+                    &mut expression_count,
+                    expression,
+                    None,
+                    env,
+                    expression_span,
+                    expression_parent,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let route = self.lower_interaction_route(
+            control,
+            0,
+            source.route,
+            env,
+            &mut expression_count,
+            parent,
+        )?;
+        let remaining_expressions = self
+            .analyses
+            .interaction_entries
+            .keys()
+            .filter(|(owner, _)| *owner == control)
+            .count();
+        let remaining_routes = self
+            .analyses
+            .interaction_route_inputs
+            .keys()
+            .filter(|(owner, _)| *owner == control)
+            .count();
+        if remaining_expressions != 0 || remaining_routes != 0 {
+            return Err(self.invariant(
+                span,
+                "boolean control left authoritative expression or route analyses unconsumed",
+            ));
+        }
+        let style = source
+            .style
+            .map(|(name, kind)| {
+                self.declarations
+                    .extern_decl_by_name(name)
+                    .filter(|function| function.kind == kind)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| self.invariant(span, "boolean style extern disappeared"))
+            })
+            .transpose()?;
+        let style_origin = style.map(|_| self.origins.push(span, Some(parent)));
+        let font_origin = source
+            .has_font
+            .then(|| self.origins.push(span, Some(parent)));
+        if self
+            .facts
+            .interactions
+            .insert(
+                control,
+                CheckedInteraction {
+                    id: control,
+                    kind: source.kind,
+                    semantic_key: source.semantic_key,
+                    expression_count,
+                    option_expressions,
+                    routes: vec![route],
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "boolean interaction facts were produced twice"));
+        }
+        if self
+            .facts
+            .boolean_controls
+            .insert(
+                control,
+                CheckedBooleanControl {
+                    id: control,
+                    style,
+                    style_origin,
+                    font_origin,
+                    status_origins,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.invariant(span, "boolean control facts were produced twice"));
         }
         Ok(())
     }
@@ -8536,6 +8700,157 @@ impl<'a> FactsBuilder<'a> {
                 ..
             } => {
                 self.lower_text_editor_facts(view, binding, disabled, options, env, span)?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Checkbox {
+                label,
+                id,
+                checked,
+                disabled,
+                options,
+                style,
+                route,
+                span,
+                ..
+            } => {
+                let statuses = [
+                    &style.active_checked,
+                    &style.active_unchecked,
+                    &style.hovered_checked,
+                    &style.hovered_unchecked,
+                    &style.disabled_checked,
+                    &style.disabled_unchecked,
+                ]
+                .into_iter()
+                .flatten()
+                .map(|status| {
+                    (
+                        status.span.as_ref().unwrap_or(span),
+                        crate::ast::checkbox_status_expression_roots(status),
+                    )
+                })
+                .collect();
+                self.lower_boolean_control_facts(
+                    view,
+                    BooleanControlFactSource {
+                        kind: CheckedInteractionKind::Checkbox,
+                        semantic_key: crate::ast::checkbox_semantic_key(
+                            id, label, checked, disabled, options, style, route,
+                        ),
+                        expressions: crate::ast::checkbox_expression_roots(
+                            id, label, checked, disabled, options, style,
+                        ),
+                        statuses,
+                        style: style
+                            .custom
+                            .as_ref()
+                            .map(|call| (call.function.as_str(), ExternKind::CheckboxStyle)),
+                        has_font: options.font.is_some(),
+                        route,
+                    },
+                    env,
+                    span,
+                )?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Toggler {
+                label,
+                id,
+                checked,
+                disabled,
+                options,
+                style,
+                route,
+                span,
+                ..
+            } => {
+                let statuses = [
+                    &style.active_checked,
+                    &style.active_unchecked,
+                    &style.hovered_checked,
+                    &style.hovered_unchecked,
+                    &style.disabled_checked,
+                    &style.disabled_unchecked,
+                ]
+                .into_iter()
+                .flatten()
+                .map(|status| {
+                    (
+                        status.span.as_ref().unwrap_or(span),
+                        crate::ast::toggler_status_expression_roots(status),
+                    )
+                })
+                .collect();
+                self.lower_boolean_control_facts(
+                    view,
+                    BooleanControlFactSource {
+                        kind: CheckedInteractionKind::Toggler,
+                        semantic_key: crate::ast::toggler_semantic_key(
+                            id, label, checked, disabled, options, style, route,
+                        ),
+                        expressions: crate::ast::toggler_expression_roots(
+                            id, label, checked, disabled, options, style,
+                        ),
+                        statuses,
+                        style: style
+                            .custom
+                            .as_ref()
+                            .map(|call| (call.function.as_str(), ExternKind::TogglerStyle)),
+                        has_font: options.font.is_some(),
+                        route,
+                    },
+                    env,
+                    span,
+                )?;
+                CheckedViewFlow::None
+            }
+            ViewNode::Radio {
+                label,
+                id,
+                value,
+                selected,
+                options,
+                style,
+                route,
+                span,
+                ..
+            } => {
+                let statuses = [
+                    &style.active_selected,
+                    &style.active_unselected,
+                    &style.hovered_selected,
+                    &style.hovered_unselected,
+                ]
+                .into_iter()
+                .flatten()
+                .map(|status| {
+                    (
+                        status.span.as_ref().unwrap_or(span),
+                        crate::ast::radio_status_expression_roots(status),
+                    )
+                })
+                .collect();
+                self.lower_boolean_control_facts(
+                    view,
+                    BooleanControlFactSource {
+                        kind: CheckedInteractionKind::Radio,
+                        semantic_key: crate::ast::radio_semantic_key(
+                            id, label, value, selected, options, style, route,
+                        ),
+                        expressions: crate::ast::radio_expression_roots(
+                            id, label, value, selected, options, style,
+                        ),
+                        statuses,
+                        style: style
+                            .custom
+                            .as_ref()
+                            .map(|call| (call.function.as_str(), ExternKind::RadioStyle)),
+                        has_font: options.font.is_some(),
+                        route,
+                    },
+                    env,
+                    span,
+                )?;
                 CheckedViewFlow::None
             }
             ViewNode::PickList {

@@ -1,17 +1,17 @@
 use crate::ast::*;
 use crate::check::{
-    BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
-    CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComboBox,
-    CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts,
-    CheckedInitializerCoercion, CheckedInput, CheckedInteraction, CheckedInteractionKind,
-    CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern, CheckedMedia,
-    CheckedPaneAxis, CheckedPaneBackground, CheckedPaneConfiguration, CheckedPaneGrid,
-    CheckedPaneGridStyle, CheckedPaneLength, CheckedPanePadding, CheckedPaneRadius,
-    CheckedPaneStyleSite, CheckedPaneSurface, CheckedPaneTemplate, CheckedPaneTitle,
-    CheckedPaneView, CheckedPathRoot, CheckedPickList, CheckedProjectionKind, CheckedTableLength,
-    CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole,
-    CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin,
-    canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
+    BuiltinArgumentContext, CheckedBinaryOperator, CheckedBooleanControl, CheckedCallArgument,
+    CheckedCallTarget, CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget,
+    CheckedComboBox, CheckedComponentArgumentSource, CheckedExprId, CheckedExprKind,
+    CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion, CheckedInput, CheckedInteraction,
+    CheckedInteractionKind, CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMatchPattern,
+    CheckedMedia, CheckedPaneAxis, CheckedPaneBackground, CheckedPaneConfiguration,
+    CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength, CheckedPanePadding,
+    CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface, CheckedPaneTemplate,
+    CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList, CheckedProjectionKind,
+    CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
+    CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
@@ -31,6 +31,7 @@ use crate::{CheckedControlledEditor, CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+mod boolean;
 mod button;
 mod canvas;
 mod conditional;
@@ -57,6 +58,7 @@ mod testing;
 mod text;
 mod tooltip;
 
+pub(crate) use boolean::*;
 pub(crate) use button::*;
 pub(crate) use canvas::*;
 pub(crate) use conditional::*;
@@ -1510,6 +1512,7 @@ pub(crate) struct LoweredProgram {
     buttons: HashMap<ViewId, ResolvedButton>,
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
+    boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
     sliders: HashMap<ViewId, ResolvedSlider>,
@@ -3099,6 +3102,11 @@ impl LoweredProgram {
     }
 
     #[cfg(test)]
+    pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&ResolvedBooleanControl> {
+        self.boolean_controls.get(&id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn pick_list(&self, id: ViewId) -> Option<&ResolvedPickList> {
         self.pick_lists.get(&id)
     }
@@ -3380,6 +3388,48 @@ impl LoweredProgram {
                 "text editor reached code generation without normalized HIR",
             )
         })
+    }
+
+    pub(crate) fn resolved_boolean_control_for(
+        &self,
+        node: &ViewNode,
+    ) -> Result<&ResolvedBooleanControl, Error> {
+        let span = node.span();
+        let id = self.declarations.view_id(span).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "boolean control reached code generation without a shared view ID",
+            )
+        })?;
+        let expected_kind = match node {
+            ViewNode::Checkbox { .. } => ResolvedBooleanKind::Checkbox,
+            ViewNode::Toggler { .. } => ResolvedBooleanKind::Toggler,
+            ViewNode::Radio { .. } => ResolvedBooleanKind::Radio,
+            _ => {
+                return Err(Error::new(
+                    "E196",
+                    span,
+                    "non-boolean node requested boolean HIR",
+                ));
+            }
+        };
+        let checked = self.facts.view(id);
+        let control = self.boolean_controls.get(&id).ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "boolean control reached code generation without normalized HIR",
+            )
+        })?;
+        if checked.id != id || control.id != id || control.kind != expected_kind {
+            return Err(Error::new(
+                "E196",
+                span,
+                "boolean control HIR identity or kind diverged",
+            ));
+        }
+        Ok(control)
     }
 
     pub(crate) fn resolved_pick_list_for(
@@ -4058,6 +4108,18 @@ impl LoweredProgram {
         self.components.get(id.0 as usize)
     }
 
+    pub(crate) fn component_event_matches(
+        &self,
+        id: ComponentEventId,
+        name: &str,
+        payloads: &[Type],
+    ) -> bool {
+        self.components
+            .get(id.component.0 as usize)
+            .and_then(|component| component.events.get(id.index as usize))
+            .is_some_and(|event| event.id == id && event.name == name && event.payloads == payloads)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn handlers(&self) -> &[ResolvedHandler] {
         &self.handlers
@@ -4250,6 +4312,7 @@ pub(crate) struct Lowerer {
     buttons: HashMap<ViewId, ResolvedButton>,
     inputs: HashMap<ViewId, ResolvedInput>,
     text_editors: HashMap<ViewId, ResolvedTextEditor>,
+    boolean_controls: HashMap<ViewId, ResolvedBooleanControl>,
     pick_lists: HashMap<ViewId, ResolvedPickList>,
     combo_boxes: HashMap<ViewId, ResolvedComboBox>,
     sliders: HashMap<ViewId, ResolvedSlider>,
@@ -5002,6 +5065,7 @@ impl Lowerer {
             buttons: HashMap::new(),
             inputs: HashMap::new(),
             text_editors: HashMap::new(),
+            boolean_controls: HashMap::new(),
             pick_lists: HashMap::new(),
             combo_boxes: HashMap::new(),
             sliders: HashMap::new(),
@@ -5163,6 +5227,7 @@ impl Lowerer {
             buttons: self.buttons,
             inputs: self.inputs,
             text_editors: self.text_editors,
+            boolean_controls: self.boolean_controls,
             pick_lists: self.pick_lists,
             combo_boxes: self.combo_boxes,
             sliders: self.sliders,
@@ -9104,6 +9169,81 @@ impl Lowerer {
                 ..
             } => {
                 self.lower_text_editor(binding, disabled, options, span, outer_component)?;
+            }
+            ViewNode::Checkbox {
+                id,
+                label,
+                checked,
+                disabled,
+                options,
+                style,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_checkbox(
+                    CheckboxSource {
+                        id,
+                        label,
+                        checked,
+                        disabled,
+                        options,
+                        style,
+                        route,
+                        span,
+                    },
+                    outer_component,
+                )?;
+            }
+            ViewNode::Toggler {
+                id,
+                label,
+                checked,
+                disabled,
+                options,
+                style,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_toggler(
+                    TogglerSource {
+                        id,
+                        label,
+                        checked,
+                        disabled,
+                        options,
+                        style,
+                        route,
+                        span,
+                    },
+                    outer_component,
+                )?;
+            }
+            ViewNode::Radio {
+                id,
+                label,
+                value,
+                selected,
+                options,
+                style,
+                route,
+                span,
+                ..
+            } => {
+                self.lower_radio(
+                    RadioSource {
+                        id,
+                        label,
+                        value,
+                        selected,
+                        options,
+                        style,
+                        route,
+                        span,
+                    },
+                    outer_component,
+                )?;
             }
             ViewNode::Button {
                 label,
@@ -13387,6 +13527,320 @@ view
         assert!(
             elapsed.as_secs_f64() < 2.0,
             "4k normalized buttons lowered and emitted in {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn normalizes_complete_boolean_control_contracts_and_radio_value_routing() {
+        let source = r#"app BooleanHir
+extern crate::backend
+  checkbox-style checkbox_surface(active:bool)
+  toggler-style toggler_surface(active:bool)
+  radio-style radio_surface(active:bool)
+font ui family=sans
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  enabled = false
+  choice = "first"
+on enabled_changed(next)
+  enabled = next
+on choice_changed(next)
+  choice = next
+view
+  col
+    checkbox "Checkbox" checked=enabled disabled=false label="Accessible checkbox" description="Checked state" style=checkbox_surface(enabled) size=20.0 w=fill gap=8.0 text-size=14.0 line-h=1.2 shape=advanced wrap=word-or-glyph font=ui icon="✓" icon-size=12.0 icon-line-h=1.0 icon-shape=basic -> enabled_changed _
+      active checked bg=linear(1.57, primary@0.0, bg@1.0) icon=fg text=fg border=primary border-w=1.0 r=4.0
+    toggler "Toggler" checked=enabled style=toggler_surface(enabled) size=20.0 gap=8.0 align=right -> enabled_changed _
+      active checked bg=bg bg-border=primary bg-border-w=1.0 fg=fg fg-border=primary fg-border-w=2.0 text=fg r=7.0 p-ratio=0.125
+    radio "First" value="first" selected=(choice == "first") style=radio_surface(enabled) size=20.0 gap=8.0 -> choice_changed _
+      active selected bg=bg dot=fg border=primary border-w=2.0 text=fg
+"#;
+        let program = lower(analyze(source).unwrap()).unwrap();
+        let checkbox = program.boolean_control(ViewId(1)).unwrap();
+        assert_eq!(checkbox.kind, ResolvedBooleanKind::Checkbox);
+        assert!(checkbox.disabled.is_some());
+        assert!(checkbox.options.accessibility_label.is_some());
+        assert!(checkbox.options.accessibility_description.is_some());
+        assert!(matches!(
+            checkbox.options.width,
+            Some(ResolvedContainerLength::Fill)
+        ));
+        assert!(matches!(
+            checkbox.options.font,
+            Some(ResolvedTextFont::Named(_))
+        ));
+        assert!(checkbox.options.font_origin.is_some());
+        assert!(checkbox.options.icon.is_some());
+        let ResolvedBooleanStyle::Checkbox(styles) = &checkbox.style else {
+            panic!("checkbox style must be normalized");
+        };
+        assert!(styles.custom.is_some());
+        let active = styles.active_checked.as_ref().unwrap();
+        assert!(active.background.is_some());
+        assert!(active.icon_color.is_some());
+        assert!(active.text_color.is_some());
+        assert!(active.border_color.is_some());
+        assert!(active.border_width.is_some());
+        assert!(active.radius.all.is_some());
+
+        let toggler = program.boolean_control(ViewId(2)).unwrap();
+        assert_eq!(toggler.kind, ResolvedBooleanKind::Toggler);
+        assert_eq!(
+            toggler.options.alignment,
+            Some(ResolvedTextAlignment::Right)
+        );
+        let ResolvedBooleanStyle::Toggler(styles) = &toggler.style else {
+            panic!("toggler style must be normalized");
+        };
+        assert!(styles.active_checked.as_ref().unwrap().foreground.is_some());
+
+        let radio = program.boolean_control(ViewId(3)).unwrap();
+        assert_eq!(radio.kind, ResolvedBooleanKind::Radio);
+        assert!(radio.value.is_some());
+        assert!(radio.disabled.is_none());
+        let ResolvedBooleanStyle::Radio(styles) = &radio.style else {
+            panic!("radio style must be normalized");
+        };
+        assert!(styles.active_selected.is_some());
+
+        let generated = crate::codegen::generate(&program, "boolean-hir.ice").unwrap();
+        assert!(
+            generated.contains("move |_| __BooleanHirMessage::ChoiceChanged(\"first\".to_owned())")
+        );
+        assert!(!generated.contains("move |__value| __BooleanHirMessage::ChoiceChanged(__value)"));
+    }
+
+    #[test]
+    fn boolean_codegen_ignores_raw_semantics_after_lowering() {
+        let source = format!(
+            "app LoweredBoolean\n{THEME}state\n  enabled = false\n  choice = \"first\"\non changed(next)\n  enabled = next\non selected(next)\n  choice = next\nview\n  col\n    checkbox \"Checkbox\" #check checked=enabled size=20.0 gap=8.0 -> changed _\n    toggler \"Toggler\" #toggle(choice) checked=enabled size=20.0 gap=8.0 -> changed _\n    radio \"First\" #radio value=\"first\" selected=(choice == \"first\") size=20.0 gap=8.0 -> selected _\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "lowered-boolean.ice").unwrap();
+        let ViewNode::Layout { children, .. } = &mut program.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Checkbox {
+            id,
+            label,
+            checked,
+            options,
+            style,
+            route,
+            ..
+        } = &mut children[0]
+        else {
+            panic!("first child must be a checkbox");
+        };
+        *label = Expr::Str("POISONED CHECKBOX".into());
+        *checked = Expr::Bool(true);
+        *options = BoolControlOptions::default();
+        **style = CheckboxStyleSet::default();
+        id.as_mut().unwrap().name = "poisoned-check".into();
+        route.handler = "poisoned".into();
+        let ViewNode::Toggler {
+            id, options, route, ..
+        } = &mut children[1]
+        else {
+            panic!("second child must be a toggler");
+        };
+        *options = BoolControlOptions::default();
+        id.as_mut().unwrap().name = "poisoned-toggle".into();
+        id.as_mut().unwrap().key = Some(Expr::Str("POISONED KEY".into()));
+        route.handler = "poisoned".into();
+        let ViewNode::Radio {
+            id,
+            value,
+            selected,
+            options,
+            route,
+            ..
+        } = &mut children[2]
+        else {
+            panic!("third child must be a radio");
+        };
+        *value = Expr::Str("POISONED RADIO".into());
+        *selected = Expr::Bool(true);
+        *options = BoolControlOptions::default();
+        id.as_mut().unwrap().name = "poisoned-radio".into();
+        route.handler = "poisoned".into();
+
+        let actual = crate::codegen::generate(&program, "lowered-boolean.ice").unwrap();
+        assert_eq!(actual, expected);
+        assert!(!actual.contains("POISONED"));
+        assert!(!actual.contains("poisoned"));
+    }
+
+    #[test]
+    fn boolean_lowering_rejects_same_type_slot_route_extern_and_id_swaps() {
+        let source = format!(
+            "app BooleanIdentity\nextern crate::backend\n  checkbox-style first(active:bool)\n  checkbox-style second(active:bool)\n{THEME}state\n  enabled = false\non changed(next)\n  enabled = next\nview\n  checkbox \"Checkbox\" checked=enabled style=first(enabled) size=20.0 gap=8.0 -> changed _\n"
+        );
+        let mut swapped_slots = analyze(&source).unwrap();
+        swapped_slots
+            .facts
+            .swap_interaction_option_expressions(ViewId(0), 2, 3);
+        let error = lower(swapped_slots).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("expression contract diverged"));
+
+        let mut swapped_extern = analyze(&source).unwrap();
+        swapped_extern
+            .facts
+            .corrupt_boolean_style(ViewId(0), ExternFnId(1));
+        let error = lower(swapped_extern).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("extern contract diverged"));
+
+        let mut corrupt_id = analyze(&source).unwrap();
+        corrupt_id
+            .facts
+            .corrupt_boolean_control_id(ViewId(0), u32::MAX);
+        let error = lower(corrupt_id).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("no checked HIR facts"));
+
+        let routes = format!(
+            "app BooleanRouteIdentity\n{THEME}state\n  enabled = false\non first(next)\n  enabled = next\non second(next)\n  enabled = next\nview\n  col\n    checkbox \"First\" checked=enabled -> first _\n    checkbox \"Second\" checked=enabled -> second _\n"
+        );
+        let mut swapped_routes = analyze(&routes).unwrap();
+        swapped_routes
+            .facts
+            .swap_interaction_routes(ViewId(1), ViewId(2));
+        let error = lower(swapped_routes).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+
+        let mut corrupt_route = analyze(&source).unwrap();
+        corrupt_route
+            .facts
+            .corrupt_interaction_route_id(ViewId(0), 0, u32::MAX);
+        let error = lower(corrupt_route).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("route ID diverged"));
+    }
+
+    #[test]
+    fn imported_boolean_control_keeps_exact_expression_route_extern_font_theme_and_status_origins()
+    {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ui-lang-boolean-hir-origins-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let root = directory.join("app.ice");
+        let imported = directory.join("toggle.ice");
+        fs::write(
+            &root,
+            format!(
+                "app ImportedBooleanApp\nuse \"toggle.ice\"\nextern crate::backend\n  checkbox-style imported_style(active:bool)\nfont ui family=sans\n{THEME}state\n  enabled = false\nview\n  ImportedToggle value<->enabled\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &imported,
+            "component ImportedToggle(bind value:bool)\n  on changed(next)\n  checkbox \"Imported\" checked=value font=ui style=imported_style(value) size=20.0 -> changed _\n    active checked bg=bg icon=fg text=fg border=primary border-w=1.0\n",
+        )
+        .unwrap();
+
+        let program = lower(analyze_file(&root).unwrap()).unwrap();
+        let control = program.boolean_controls.values().next().unwrap();
+        let control_origin = program.origin(control.origin);
+        assert_eq!(control_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(control_origin.line, 3);
+        let expression_origin =
+            program.origin(program.checked_facts().expression_use(control.label).origin);
+        assert_eq!(expression_origin.parent, Some(control.origin));
+        assert_eq!(expression_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(expression_origin.line, 3);
+        let route_origin = program.origin(control.route.origin);
+        assert_eq!(route_origin.parent, Some(control.origin));
+        assert_eq!(route_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(route_origin.line, 3);
+        let ResolvedBooleanStyle::Checkbox(styles) = &control.style else {
+            panic!("imported control must be a checkbox");
+        };
+        let custom_origin = program.origin(styles.custom.as_ref().unwrap().origin);
+        assert_eq!(custom_origin.parent, Some(control.origin));
+        assert_eq!(custom_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(custom_origin.line, 3);
+        let font_origin = program.origin(control.options.font_origin.unwrap());
+        assert_eq!(font_origin.parent, Some(control.origin));
+        assert_eq!(font_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(font_origin.line, 3);
+        let status = styles.active_checked.as_ref().unwrap();
+        let status_origin = program.origin(status.origin);
+        assert_eq!(status_origin.parent, Some(control.origin));
+        assert_eq!(status_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(status_origin.line, 4);
+        for color in [
+            status.icon_color.as_ref(),
+            status.text_color.as_ref(),
+            status.border_color.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert_eq!(color.origin, status.origin);
+        }
+        assert_eq!(status.background.as_ref().unwrap().origin, status.origin);
+        let metric_origin = program.origin(
+            program
+                .checked_facts()
+                .expression_use(status.border_width.unwrap())
+                .origin,
+        );
+        assert_eq!(metric_origin.parent, Some(status.origin));
+        assert_eq!(metric_origin.path.as_deref(), Some(imported.as_path()));
+        assert_eq!(metric_origin.line, 4);
+
+        let generated = crate::codegen::generate(&program, root.to_str().unwrap()).unwrap();
+        let encoded_import = crate::codegen::encode_source_path(&imported.display().to_string());
+        assert!(generated.contains(&format!("// __ICE_SOURCE 3 1 {encoded_import}")));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "large normalized boolean-control lowering and emission performance contract"]
+    fn performance_contract_four_thousand_boolean_controls_lower_and_emit_under_two_seconds() {
+        const CONTROLS: usize = 4_000;
+        let mut source = format!(
+            "app BooleanScale\n{THEME}state\n  enabled = false\non changed(next)\n  enabled = next\nview\n  col\n"
+        );
+        for index in 0..CONTROLS {
+            writeln!(
+                source,
+                "    checkbox \"Control {index}\" checked=enabled size=20.0 gap=8.0 -> changed _"
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let started = Instant::now();
+        let program = lower(checked).unwrap();
+        let generated = crate::codegen::generate(&program, "boolean-scale.ice").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(program.boolean_controls.len(), CONTROLS);
+        assert_eq!(
+            generated.matches("::iced::widget::checkbox(").count(),
+            CONTROLS
+        );
+        eprintln!("4k normalized boolean controls lowered and emitted in {elapsed:?}");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "4k normalized boolean controls lowered and emitted in {elapsed:?}"
         );
     }
 

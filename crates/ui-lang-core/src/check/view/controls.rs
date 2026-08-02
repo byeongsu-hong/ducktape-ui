@@ -82,6 +82,7 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             require_type(&expr_type(checked, env, document, span)?, &Type::Bool, span)?;
@@ -102,6 +103,7 @@ pub(in crate::check) fn infer_controls_group(
             check_checkbox_styles(style, env, document, span)?;
             infer_route(route, Some(Type::Bool), env, document, signatures)?;
             check_styles(styles, document, span, StyleTarget::Checkbox)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Toggler {
             label,
@@ -114,6 +116,7 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             require_type(&expr_type(checked, env, document, span)?, &Type::Bool, span)?;
@@ -134,6 +137,7 @@ pub(in crate::check) fn infer_controls_group(
             check_toggler_styles(style, env, document, span)?;
             infer_route(route, Some(Type::Bool), env, document, signatures)?;
             check_styles(styles, document, span, StyleTarget::Toggler)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::Slider {
             value,
@@ -296,6 +300,7 @@ pub(in crate::check) fn infer_controls_group(
             route,
             span,
         } => {
+            let interaction_analysis_guard = expr::HandlerAnalysisGuard::start();
             check_id(id, env, document, ids, span)?;
             require_type(&expr_type(label, env, document, span)?, &Type::Str, span)?;
             let value_type = expr_type(value, env, document, span)?;
@@ -323,6 +328,7 @@ pub(in crate::check) fn infer_controls_group(
             check_radio_styles(style, env, document, span)?;
             infer_route(route, Some(value_type), env, document, signatures)?;
             check_styles(styles, document, span, StyleTarget::Radio)?;
+            retain_interaction_analyses(span, interaction_analysis_guard.finish())?;
         }
         ViewNode::PickList {
             options,

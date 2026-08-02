@@ -1,32 +1,10 @@
 use super::*;
 
-pub(in crate::codegen) fn custom_style_call_code(
-    style: &ExternCall,
-    kind: ExternKind,
-    leading_args: &str,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    let function = find_extern_function(document, &style.function, kind)
-        .expect("checker validates custom style");
-    let args = expr_args_suffix_code(&style.args, env, document)?;
-    Ok(format!("{}({leading_args}{args})", function.rust_path))
-}
-
 pub(in crate::codegen) fn text_shaping_code(shaping: TextShaping) -> &'static str {
     match shaping {
         TextShaping::Auto => "Auto",
         TextShaping::Basic => "Basic",
         TextShaping::Advanced => "Advanced",
-    }
-}
-
-pub(in crate::codegen) fn text_wrapping_code(wrapping: TextWrapping) -> &'static str {
-    match wrapping {
-        TextWrapping::None => "None",
-        TextWrapping::Word => "Word",
-        TextWrapping::Glyph => "Glyph",
-        TextWrapping::WordOrGlyph => "WordOrGlyph",
     }
 }
 
@@ -205,26 +183,4 @@ pub(in crate::codegen) fn accessibility_key_code(
         },
         |id| id_code(id, scope, env, document),
     )
-}
-
-pub(in crate::codegen) fn accessibility_code(
-    options: &AccessibilityOptions,
-    default_label: impl FnOnce() -> String,
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<(String, String), Error> {
-    let label = options
-        .label
-        .as_ref()
-        .map(|value| expr_code(value, env, document, ValueMode::Owned))
-        .transpose()?
-        .unwrap_or_else(default_label);
-    let description = options
-        .description
-        .as_ref()
-        .map(|value| expr_code(value, env, document, ValueMode::Owned))
-        .transpose()?
-        .map(|value| format!(".description({value})"))
-        .unwrap_or_default();
-    Ok((label, description))
 }

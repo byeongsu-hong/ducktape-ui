@@ -131,10 +131,15 @@ pub(in crate::codegen) fn resolved_interaction_route_code(
             }
         }
         ResolvedInteractionRouteTarget::OutputCallback { component, .. } => {
-            let output = component_output(env).ok_or_else(|| {
-                invariant("interaction component output route has no output callback")
+            let contract = program.try_component(*component).ok_or_else(|| {
+                invariant("interaction component output route has no component contract")
             })?;
-            if program.try_component(*component).is_none() || args.len() != 1 {
+            let output = env
+                .get(&component_output_key(&contract.name))
+                .ok_or_else(|| {
+                    invariant("interaction component output route has no output callback")
+                })?;
+            if args.len() != 1 {
                 return Err(invariant(
                     "interaction component output route contract diverged",
                 ));
@@ -142,14 +147,17 @@ pub(in crate::codegen) fn resolved_interaction_route_code(
             Ok(format!("({})({})", output.code, args[0]))
         }
         ResolvedInteractionRouteTarget::NamedEvent {
-            event: _,
+            event,
             name,
             payloads: expected,
         } => {
-            let (component, _) = component_context(env).ok_or_else(|| {
-                invariant("interaction named event route has no component context")
+            let contract = program.try_component(event.component).ok_or_else(|| {
+                invariant("interaction named event route has no component contract")
             })?;
-            let callback = component_event(env, component, name).ok_or_else(|| {
+            if !program.component_event_matches(*event, name, expected) {
+                return Err(invariant("interaction named event route contract diverged"));
+            }
+            let callback = component_event(env, &contract.name, name).ok_or_else(|| {
                 invariant("interaction named event route has no normalized callback")
             })?;
             if args.len() != expected.len() {
@@ -379,10 +387,8 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
                 }
             }
         }
-        ResolvedInteractionRouteTarget::OutputCallback { component, .. } => {
-            (Some(*component), false)
-        }
-        ResolvedInteractionRouteTarget::NamedEvent { event, .. } => (Some(event.component), false),
+        ResolvedInteractionRouteTarget::OutputCallback { .. }
+        | ResolvedInteractionRouteTarget::NamedEvent { .. } => (None, false),
     };
     let component_context = component
         .map(|component| {

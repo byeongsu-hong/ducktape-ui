@@ -193,6 +193,7 @@ pub(in crate::codegen) fn render_node(
     ))
 }
 
+mod boolean;
 mod button;
 mod container;
 mod content;
@@ -210,6 +211,7 @@ mod structure;
 mod table;
 mod text;
 
+pub(super) use boolean::*;
 pub(super) use button::*;
 pub(super) use container::*;
 pub(super) use content::*;

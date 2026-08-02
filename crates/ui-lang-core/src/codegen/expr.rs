@@ -573,19 +573,6 @@ pub(in crate::codegen) fn expr_list_code(
         .join(", "))
 }
 
-pub(in crate::codegen) fn expr_args_suffix_code(
-    values: &[Expr],
-    env: &dyn BindingEnvironment,
-    document: &Document,
-) -> Result<String, Error> {
-    let args = expr_list_code(values, env, document)?;
-    Ok(if args.is_empty() {
-        args
-    } else {
-        format!(", {args}")
-    })
-}
-
 pub(in crate::codegen) fn expr_code(
     expr: &Expr,
     env: &dyn BindingEnvironment,
