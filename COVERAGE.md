@@ -631,11 +631,16 @@ Match has a complete private HIR boundary. Its checked flow owns the stable
 value expression, exhaustive patterns, typed payload locals, and arm origins.
 Lowering revalidates the expression owner mapping and DAG, scope and value type,
 Option/Result/enum/palette pattern contracts, payload local types and owner
-roles, enum/palette declarations, and arm-origin parentage before publishing
-`ResolvedMatch`. Normal-layout and flex-layout emission consume resolved Rust
-owner/variant names and never reopen checker facts or declaration IDs. Malformed
-expression/local/enum IDs fail at the source-mapped arm during lowering;
-post-check and post-lowering AST poisoning, all typed pattern families, and an
+roles, enum/palette declarations, checked duplicate/missing/wildcard coverage,
+arm-origin parent/source identity, and each arm's ordered child view IDs before
+publishing `ResolvedMatch`. Normal-layout and flex-layout emission consume
+resolved Rust owner/variant names and the resolved payload binding type; they do
+not reopen checked Match flow/local types or pattern declaration IDs. Source arm
+nodes supply only child subtrees; their spans are mapped to stable view IDs and
+rejected if those IDs move between arms.
+Malformed expression/local/enum IDs fail at the source-mapped arm during
+lowering; post-check and post-lowering AST poisoning, checked coverage and arm
+partition corruption, all typed pattern families, imported diagnostics, and an
 ignored 4,000-node lower+emit contract cover the boundary.
 
 First-class Ice tests are native in 2.0. Top-level `test` declarations reuse

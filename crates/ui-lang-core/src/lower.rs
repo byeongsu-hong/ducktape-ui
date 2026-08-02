@@ -3,7 +3,7 @@ use crate::check::{
     BuiltinArgumentContext, CheckedBinaryOperator, CheckedCallArgument, CheckedCallTarget,
     CheckedCanvas, CheckedCanvasRouteArg, CheckedCanvasRouteTarget, CheckedComponentArgumentSource,
     CheckedExprId, CheckedExprKind, CheckedExprOwner, CheckedFacts, CheckedInitializerCoercion,
-    CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner,
+    CheckedInteraction, CheckedInteractionKind, CheckedLocalId, CheckedLocalOwner, CheckedMatchArm,
     CheckedMatchPattern, CheckedMedia, CheckedPathRoot, CheckedProjectionKind, CheckedTooltip,
     CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole, CheckedViewFlow,
     CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin, canonical_builtin_type, field_type,
@@ -11512,7 +11512,114 @@ view
             ResolvedMatchPattern::None
         ));
         assert!(resolved.arms[1].binding.is_none());
+        assert_eq!(resolved.arms[0].children, vec![ViewId(1)]);
+        assert_eq!(resolved.arms[1].children, vec![ViewId(2)]);
         assert_ne!(resolved.arms[0].origin, resolved.arms[1].origin);
+    }
+
+    #[test]
+    fn match_lowering_rejects_checked_pattern_coverage_drift() {
+        let enum_source = format!(
+            "app MatchCoverage\n{THEME}enum Status\n  ready\n  done\nstate\n  status:Status = Status.ready\nview\n  match status\n    Status.ready\n      text \"ready\"\n    Status.done\n      text \"done\"\n"
+        );
+        let mut checked = analyze(&enum_source).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        let ready = checked
+            .declarations
+            .enum_decl_by_name("Status")
+            .unwrap()
+            .variants[0]
+            .declaration
+            .id;
+        checked
+            .facts
+            .corrupt_match_pattern(view, 1, CheckedMatchPattern::Enum(ready));
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("duplicate case"));
+
+        let option_source = format!(
+            "app MatchWildcard\n{THEME}state\n  choice:str? = none\nview\n  match choice\n    some(label)\n      text label\n    none\n      text \"none\"\n"
+        );
+        let mut checked = analyze(&option_source).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        checked
+            .facts
+            .corrupt_match_pattern(view, 0, CheckedMatchPattern::Wildcard);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("wildcard topology"));
+
+        let mut checked = analyze(&option_source).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        checked.facts.remove_match_arm(view, 1);
+        let ViewNode::Match { arms, .. } = &mut checked.document.view else {
+            panic!("fixture root must be match");
+        };
+        arms.remove(1);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("not exhaustive"));
+    }
+
+    #[test]
+    fn match_lowering_rejects_raw_arm_child_reassignment() {
+        let source = format!(
+            "app MatchTopology\n{THEME}state\n  choice:str? = none\nview\n  col\n    match choice\n      some(label)\n        text \"first\"\n        text \"second\"\n      none\n        text \"none\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        let ViewNode::Layout { children, .. } = &mut checked.document.view else {
+            panic!("fixture root must be a layout");
+        };
+        let ViewNode::Match { arms, .. } = &mut children[0] else {
+            panic!("fixture child must be match");
+        };
+        let moved = arms[0].children.pop().unwrap();
+        arms[1].children.insert(0, moved);
+
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("checked arm topology"));
+    }
+
+    #[test]
+    fn normal_and_flex_match_codegen_reject_raw_arm_child_reassignment() {
+        for layout in ["col", "flex dir=column"] {
+            let source = format!(
+                "app MatchTopology\n{THEME}state\n  choice:str? = none\nview\n  {layout}\n    match choice\n      some(label)\n        text \"first\"\n        text \"second\"\n      none\n        text \"none\"\n"
+            );
+            let mut program = lower(analyze(&source).unwrap()).unwrap();
+            let ViewNode::Layout { children, .. } = &mut program.document.view else {
+                panic!("fixture root must be a layout");
+            };
+            let ViewNode::Match { arms, .. } = &mut children[0] else {
+                panic!("fixture child must be match");
+            };
+            let moved = arms[0].children.pop().unwrap();
+            arms[1].children.insert(0, moved);
+
+            let error = crate::codegen::generate(&program, "match-topology.ice").unwrap_err();
+            assert_eq!(error.code, "E196");
+            assert!(error.message.contains("normalized HIR topology"));
+        }
     }
 
     #[test]
@@ -11578,6 +11685,24 @@ view
     }
 
     #[test]
+    fn match_codegen_consumes_the_resolved_binding_type() {
+        let source = format!(
+            "app ResolvedMatchBinding\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  col\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let expected = crate::codegen::generate(&program, "resolved-match-binding.ice").unwrap();
+        let local = program.match_views.values().next().unwrap().arms[0]
+            .binding
+            .as_ref()
+            .unwrap()
+            .local;
+        program.facts.corrupt_local_type(local, Type::Bool);
+
+        let actual = crate::codegen::generate(&program, "resolved-match-binding.ice").unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn imported_match_keeps_hir_origins_source_marker_and_diagnostics() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -11600,6 +11725,24 @@ view
             "component ChoiceCard()\n  state\n    choice:str? = some(\"ready\")\n  col\n    match choice\n      some(label)\n        text label\n      none\n        text \"none\"\n",
         )
         .unwrap();
+
+        let mut checked = analyze_file(&root).unwrap();
+        let view = checked
+            .facts
+            .views()
+            .iter()
+            .find(|view| matches!(view.flow, CheckedViewFlow::Match { .. }))
+            .unwrap()
+            .id;
+        let match_origin = checked.facts.view(view).origin;
+        checked
+            .facts
+            .corrupt_match_arm_origin(view, 1, match_origin);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.path.as_deref(), Some(imported.to_str().unwrap()));
+        assert_eq!(error.line, 8);
+        assert!(error.message.contains("checked parent or source"));
 
         let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let resolved = program

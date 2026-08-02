@@ -339,9 +339,13 @@ identity, checked flow, or checked local facts.
 
 Match is a completed control-flow HIR slice. Its value expression, value type,
 exhaustive Option/Result/enum/palette/wildcard patterns, typed payload locals,
-resolved Rust owner and variant names, and arm origins are published as
-`ResolvedMatch`. Normal and flex layout generation consume that record and do
-not reread source patterns, checked flow/facts, or enum and palette declarations.
+resolved Rust owner and variant names, arm origins, and the checked child-view
+identity of every arm are published as `ResolvedMatch`. Lowering revalidates the
+checked pattern coverage, arm origin parent/source, and per-arm child topology.
+Normal and flex layout generation consume the resolved binding payload and do
+not reread source patterns, checked Match flow or payload-local types, or enum
+and palette declarations; source nodes provide only child subtrees whose IDs
+must still match their resolved arm.
 
 The Rust adapter is one manifest-relative include:
 

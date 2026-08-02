@@ -635,7 +635,12 @@ fn render_flex_children(
                 let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
                     item_name.clone(),
-                    checked_local_binding(program, iteration.item.local, item_name.clone(), false),
+                    checked_local_binding(
+                        LocalBindingTypeSource::Checked(program),
+                        iteration.item.local,
+                        item_name.clone(),
+                        false,
+                    ),
                 );
                 child_env.insert(
                     RECONCILIATION_SCOPE_BINDING.into(),
@@ -659,6 +664,7 @@ fn render_flex_children(
                     checked_expr_use_code(program, resolved.value, env, ValueMode::Borrowed)?;
                 write!(out, " match &({value}) {{").unwrap();
                 for (arm, resolved_arm) in arms.iter().zip(&resolved.arms) {
+                    program.validate_match_arm_children(arm, resolved_arm)?;
                     write!(
                         out,
                         " {} => {{",
@@ -666,11 +672,16 @@ fn render_flex_children(
                     )
                     .unwrap();
                     let mut child_env = ScopedBindingEnv::new(env);
-                    if let Some(binding) = &resolved_arm.binding {
-                        let name = binding.name.clone();
+                    if let Some(payload) = &resolved_arm.binding {
+                        let name = payload.name.clone();
                         child_env.insert(
                             name.clone(),
-                            checked_local_binding(program, binding.local, name, false),
+                            checked_local_binding(
+                                LocalBindingTypeSource::Hir(payload),
+                                payload.local,
+                                name,
+                                false,
+                            ),
                         );
                     }
                     render_flex_children(
