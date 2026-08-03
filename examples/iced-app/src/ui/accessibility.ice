@@ -36,7 +36,7 @@ view
         disabled=empty(trim(name))
     button #help label="Open help" description="Show keyboard and screen-reader help" -> submit
       text "?"
-    image "assets/demo.ppm"
+    image "../../assets/checker.ppm"
       with
         label="Ice accessibility example"
         description="A decorative sample promoted into the accessibility tree"

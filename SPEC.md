@@ -2561,7 +2561,12 @@ type because it is no longer a built-in literal constructor.
 Store `encoded` and `rgba` handles in state so they are created when state
 changes instead of on every view pass. Literal RGBA data is checked to contain
 exactly `width × height × 4` bytes. Image widgets accept either a path string or
-an `image` handle:
+an `image` handle. A literal relative path — for `image`, `viewer`, `svg`, and
+the canvas `image` and `svg` commands, exactly like `font` and `icon-rgba` — is
+resolved at compile time against the directory of the Ice source that declares
+it, so the process working directory never changes which file is loaded.
+Absolute literals and computed path expressions are passed through unchanged and
+still resolve at run time:
 
 ```ice
 state

@@ -115,11 +115,7 @@ pub(in crate::parser) fn parse_app_settings(line: &Line) -> Result<AppSettings, 
             "renderer" => set!(renderer, rust_path(value, item)?),
             "font" => {
                 let path = string_literal(value, item)?;
-                if path.is_empty()
-                    || path.contains('\\')
-                    || crate::has_windows_drive_prefix(&path)
-                    || std::path::Path::new(&path).is_absolute()
-                {
+                if !crate::is_relative_asset_path(&path) {
                     return Err(error(
                         "E015",
                         item,
@@ -475,11 +471,7 @@ pub(in crate::parser) fn config_window_icon(
         ));
     }
     let path = string_literal(&parts[0], line)?;
-    if path.is_empty()
-        || path.contains('\\')
-        || crate::has_windows_drive_prefix(&path)
-        || std::path::Path::new(&path).is_absolute()
-    {
+    if !crate::is_relative_asset_path(&path) {
         return Err(error(
             "E015",
             line,
