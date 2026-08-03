@@ -11,6 +11,8 @@ const SOURCE_MARKER: &str = "// __ICE_SOURCE ";
 const SOURCE_MARKER_END: &str = "// __ICE_SOURCE_END";
 const RENDER_SOURCE_MARKER: &str = "__ICE_RENDER_SOURCE_";
 const RENDER_SOURCE_MARKER_END: &str = "__";
+const ASSET_PATH_MARKER: &str = "__ICE_ASSET_PATH_";
+const ASSET_PATH_MARKER_END: &str = "__";
 
 fn source_marker(span: &Span) -> String {
     format!("{SOURCE_MARKER}{} {}", span.line, span.column)
@@ -75,6 +77,51 @@ pub(crate) fn encode_source_path(path: &str) -> String {
         .collect()
 }
 
+fn decode_source_path(encoded: &str) -> Option<String> {
+    let bytes = (0..encoded.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(encoded.get(index..index + 2)?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// Defers a relative asset literal until [`generate`] knows the Ice source path.
+///
+/// Runtime handles resolve paths against the process working directory, which
+/// is not where the Ice source lives, so the literal is rewritten to sit beside
+/// its `.ice` file exactly like `font` and `icon-rgba` assets already do.
+pub(in crate::codegen) fn asset_path_marker(path: &str) -> String {
+    format!(
+        "{ASSET_PATH_MARKER}{}{ASSET_PATH_MARKER_END}",
+        encode_source_path(path)
+    )
+}
+
+fn resolve_asset_path_markers(line: &str, source_path: &str) -> String {
+    let parent = Path::new(source_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let mut output = String::with_capacity(line.len());
+    let mut remaining = line;
+    while let Some(start) = remaining.find(ASSET_PATH_MARKER) {
+        output.push_str(&remaining[..start]);
+        let marker = &remaining[start + ASSET_PATH_MARKER.len()..];
+        let Some(end) = marker.find(ASSET_PATH_MARKER_END) else {
+            output.push_str(&remaining[start..]);
+            return output;
+        };
+        let Some(path) = decode_source_path(&marker[..end]) else {
+            output.push_str(&remaining[start..start + ASSET_PATH_MARKER.len() + end]);
+            remaining = &marker[end..];
+            continue;
+        };
+        output.push_str(&rust_string(&parent.join(path).display().to_string()));
+        remaining = &marker[end + ASSET_PATH_MARKER_END.len()..];
+    }
+    output.push_str(remaining);
+    output
+}
+
 fn resolve_source_markers(
     generated: String,
     document: &LoweredProgram,
@@ -100,7 +147,7 @@ fn resolve_source_markers(
             })
             .unwrap_or_else(|| line.to_owned());
         let resolved = resolve_render_source_markers(&resolved_marker, document, source_path);
-        output.push_str(&resolved);
+        output.push_str(&resolve_asset_path_markers(&resolved, source_path));
         output.push('\n');
     }
     output

@@ -2281,6 +2281,27 @@ pub(in crate::codegen) fn resolved_expr_use_code(
     })
 }
 
+/// Emits an owned media path, rebased onto the declaring Ice source directory.
+///
+/// Only literal relative paths are rebased; absolute literals and dynamic
+/// expressions are emitted verbatim and keep resolving against the process
+/// working directory.
+pub(in crate::codegen) fn resolved_asset_path_code(
+    program: &LoweredProgram,
+    expression_use: ResolvedExpressionId,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let expressions = program.expressions();
+    let resolved = expressions.expression_use(expression_use);
+    if matches!(resolved.coercion, ResolvedInitializerCoercion::None)
+        && let ResolvedExpressionKind::Str(path) = &expressions.expression(resolved.root).kind
+        && crate::is_relative_asset_path(path)
+    {
+        return Ok(format!("{}.to_owned()", asset_path_marker(path)));
+    }
+    resolved_expr_use_code(program, expression_use, env, ValueMode::Owned)
+}
+
 pub(in crate::codegen) fn resolved_expr_node_code(
     program: &LoweredProgram,
     expression_use: ResolvedExpressionId,

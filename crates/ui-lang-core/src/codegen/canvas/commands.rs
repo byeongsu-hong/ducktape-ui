@@ -160,11 +160,11 @@ pub(in crate::codegen) fn canvas_commands_code(
                 source_type,
                 ..
             } => {
-                let source = resolved_expr_use_code(program, *source, env, ValueMode::Owned)?;
                 let handle = if *source_type == Type::Str {
-                    format!("::iced::widget::image::Handle::from_path({source})")
+                    let path = resolved_asset_path_code(program, *source, env)?;
+                    format!("::iced::widget::image::Handle::from_path({path})")
                 } else {
-                    source
+                    resolved_expr_use_code(program, *source, env, ValueMode::Owned)?
                 };
                 let filter = match filter {
                     ImageFilter::Linear => "Linear",
@@ -195,7 +195,11 @@ pub(in crate::codegen) fn canvas_commands_code(
                 source_type,
                 ..
             } => {
-                let source = resolved_expr_use_code(program, *source, env, ValueMode::Owned)?;
+                let source = if *memory {
+                    resolved_expr_use_code(program, *source, env, ValueMode::Owned)?
+                } else {
+                    resolved_asset_path_code(program, *source, env)?
+                };
                 let handle = if *memory && *source_type == Type::Bytes {
                     format!("::iced::advanced::svg::Handle::from_memory({source})")
                 } else if *memory {

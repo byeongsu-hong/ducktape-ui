@@ -808,6 +808,13 @@ view
             clip=false
             wrap-gap=8.0
             wrap-align=start
+          image "../../assets/checker.ppm"
+            with
+              w=48.0
+              h=48.0
+              fit=cover
+              filter=nearest
+              r=8.0
           image encoded_image
             with
               w=24.0
@@ -835,7 +842,7 @@ view
               min-scale=0.5
               max-scale=8.0
               scale-step=0.25
-          svg "examples/iced-app/assets/ice.svg"
+          svg "../../assets/ice.svg"
             with
               w=48.0
               h=48.0

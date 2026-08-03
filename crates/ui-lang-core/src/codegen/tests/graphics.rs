@@ -322,3 +322,45 @@ view
     assert!(generated.contains("svg::Handle::from_memory((\"<svg/>\").as_bytes().to_vec())"));
     assert!(!generated.contains(".into_bytes()"));
 }
+
+#[test]
+fn resolves_relative_media_paths_against_the_ice_source_directory() {
+    let source = r#"app Assets
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  dynamic_path = "runtime/photo.ppm"
+view
+  col
+    image "assets/photo.ppm"
+    image dynamic_path
+    image "/opt/share/photo.ppm"
+    viewer "assets/photo.ppm"
+    svg "assets/icon.svg"
+    canvas w=fill h=64.0
+      image "assets/photo.ppm" x=0.0 y=0.0 w=16.0 h=16.0
+      svg "assets/icon.svg" x=16.0 y=0.0 w=16.0 h=16.0
+"#;
+
+    let generated = compile(source, "src/ui/assets.ice").unwrap();
+    for expected in [
+        "::iced::widget::image(\"src/ui/assets/photo.ppm\".to_owned())",
+        "::iced::widget::image::viewer(::iced::widget::image::Handle::from_path(\"src/ui/assets/photo.ppm\".to_owned()))",
+        "::iced::widget::svg(\"src/ui/assets/icon.svg\".to_owned())",
+        "::iced::widget::image::Handle::from_path(\"src/ui/assets/photo.ppm\".to_owned())",
+        "::iced::advanced::svg::Handle::from_path(\"src/ui/assets/icon.svg\".to_owned())",
+    ] {
+        assert!(generated.contains(expected), "missing {expected}");
+    }
+    assert!(generated.contains("::iced::widget::image(self.dynamic_path.to_owned())"));
+    assert!(generated.contains("::iced::widget::image(\"/opt/share/photo.ppm\".to_owned())"));
+    assert!(!generated.contains("__ICE_ASSET_PATH_"));
+}
