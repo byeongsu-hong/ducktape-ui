@@ -9,8 +9,6 @@ input, selection, clipboard bindings, scrolling, and resize propagation.
 cargo run -p terminal-example
 ```
 
-![Codex running inside the Ice terminal example](screenshots/codex.png)
-
 `ssh`, `claude`, and `codex` are discovered on `PATH`. The SSH field accepts
 either `user@host` or a quoted command such as
 `ssh -p 2222 "user@host"`; arguments are parsed and passed directly without a

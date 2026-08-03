@@ -81,7 +81,7 @@ test music_interactions
   expect text "Liquid Light"
   click sign_in
   expect signed_in
-  expect profile_name == "Eddy Kim"
+  expect profile_name == "Demo User"
   click pause
   expect !playing
   expect play.focused

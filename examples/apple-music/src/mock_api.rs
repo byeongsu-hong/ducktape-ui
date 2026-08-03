@@ -69,7 +69,7 @@ pub async fn load_home() -> Result<HomeFeed, ApiError> {
 
 pub async fn authenticate() -> Result<Session, ApiError> {
     Ok(Session {
-        name: "Eddy Kim".into(),
+        name: "Demo User".into(),
     })
 }
 
