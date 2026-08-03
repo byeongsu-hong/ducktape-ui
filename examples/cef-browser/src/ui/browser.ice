@@ -153,7 +153,7 @@ view
             w=40.0
             h=40.0
             p=0.0
-            disabled=!attached || !runtime_active
+            disabled=(!attached || !runtime_active)
           text "↻"
             with
               size=19.0

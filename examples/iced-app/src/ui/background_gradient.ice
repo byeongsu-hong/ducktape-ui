@@ -94,6 +94,31 @@ on inspect
   missing_gradient = color_background.gradient
   backgrounds_equal = from_linear_background == returned_background
 
+test inspect_background_gradient
+  dispatch inspect
+  expect default_stop == color_stop(0.0, color.default())
+  expect stop_color == color.rgba(0.1, 0.2, 0.3, 0.4)
+  expect stops_equal
+  expect radians_linear == linear(radians(0.75))
+  expect ignored_linear == linear(0.5)
+  expect scaled_linear == linear.scale_alpha(added_linear, 0.5)
+  expect linear_angle == radians(0.5)
+  expect linear_stops == [some(color_stop(0.0, color.black())), some(color_stop(1.0, color.white())), none, none, none, none, none, none]
+  expect linears_equal
+  expect scaled_gradient == gradient.scale_alpha(direct_gradient, 0.5)
+  expect returned_gradient == converted_gradient
+  expect extracted_linear == added_linear
+  expect gradients_equal
+  expect from_color_background == background.color(color.white())
+  expect from_gradient_background == background.gradient(converted_gradient)
+  expect scaled_color_background == background.scale_alpha(color_background, 0.5)
+  expect scaled_gradient_background == background.scale_alpha(gradient_background, 0.5)
+  expect background_color == some(color.rgba(0.2, 0.4, 0.6, 0.8))
+  expect missing_color == none
+  expect background_gradient == some(direct_gradient)
+  expect missing_gradient == none
+  expect backgrounds_equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

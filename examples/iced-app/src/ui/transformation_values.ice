@@ -5,12 +5,9 @@ use "extern/transformation_values.ice"
 use "themes/slate.ice"
 
 state
-  identity:transformation = transform.identity()
-  projection:transformation = transform.orthographic(640, 480)
-  maybe_projection:transformation? = transform.try_orthographic(640, 480)
-  invalid_projection:transformation? = transform.try_orthographic(-1, 480)
+  maybe_projection:transformation? = none
+  invalid_projection:transformation? = none
   combined:transformation = transform.compose(transform.translate(10.0, 20.0), transform.scale(2.0))
-  inverse:transformation = transform.inverse(transform.compose(transform.translate(10.0, 20.0), transform.scale(2.0)))
   translation:vector = vector(0.0, 0.0)
   scale_factor = 0.0
   matrix:[f64] = []
@@ -24,6 +21,10 @@ state
   identity_equal = false
 
 on inspect
+  let identity = transform.identity()
+  let inverse = transform.inverse(combined)
+  maybe_projection = transform.try_orthographic(640, 480)
+  invalid_projection = transform.try_orthographic(-1, 480)
   combined = transformation_round_trip(combined, vector_value, size_value)
   translation = combined.translation
   scale_factor = combined.scale_factor
@@ -36,6 +37,22 @@ on inspect
   click = transform.click(mouse.click(point(1.0, 2.0), mouse.button("left"), none), combined)
   recovered = transform.point(point_value, inverse)
   identity_equal = identity == transform.identity()
+
+test inspect_transformation_values
+  dispatch inspect
+  expect maybe_projection == some(transform.orthographic(640, 480))
+  expect invalid_projection == none
+  expect translation == vector(10.0, 20.0)
+  expect scale_factor == 2.0
+  expect len(matrix) == 16
+  expect point_value == point(12.0, 24.0)
+  expect vector_value == vector(2.0, 4.0)
+  expect size_value == size(6.0, 8.0)
+  expect bounds == rectangle(12.0, 24.0, 6.0, 8.0)
+  expect mouse.cursor_position(cursor) == some(point(12.0, 24.0))
+  expect click.position == point(12.0, 24.0)
+  expect recovered == point(1.0, 2.0)
+  expect identity_equal
 
 view
   col gap=8.0 p=16.0

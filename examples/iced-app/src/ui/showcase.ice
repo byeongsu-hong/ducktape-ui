@@ -157,6 +157,7 @@ on mode_hovered(next)
   hovered_mode = next
 
 on reset_search_modes
+  display_modes = ["List", "Board", "Timeline", "Compact"]
   searchable_modes = ["List", "Board", "Timeline", "Compact"]
 
 on add_search_mode
@@ -173,8 +174,6 @@ on panel_hidden
 on copy_draft
   return if empty(normalized_draft)
   task clipboard write draft
-
-on copied
 
 on copy_primary
   task clipboard write-primary draft
@@ -443,6 +442,79 @@ subscribe
   keyboard release -> key_released _
   keyboard modifiers -> key_modifiers_changed _
   system theme -> system_theme_changed _
+
+test showcase_behavior
+  timeout 10s
+  key-down "q"
+  key-down "q" repeat=true
+  key-up "q"
+  expect key_repeat
+  modifiers control logo
+  expect command_down
+  dispatch draft_pasted("Ship it")
+  dispatch copy_draft
+  dispatch read_clipboard
+  expect clipboard_text == some("Ship it")
+  dispatch copy_primary
+  dispatch read_primary
+  expect primary_text == some("Ship it")
+  dispatch draft_cursor_front
+  dispatch draft_cursor_end
+  dispatch draft_cursor
+  dispatch draft_select_all
+  dispatch draft_select_range
+  dispatch previous_focus
+  dispatch next_focus
+  dispatch task_list_snap
+  dispatch task_list_snap_end
+  dispatch task_list_scroll_to
+  dispatch task_list_scroll_by
+  dispatch window_close
+  dispatch window_drag
+  dispatch window_drag_resize
+  dispatch window_resizable
+  dispatch window_min_size
+  dispatch window_clear_min_size
+  dispatch window_max_size
+  dispatch window_resize_increments
+  dispatch window_maximize
+  dispatch window_minimize
+  dispatch window_fullscreen
+  dispatch window_toggle_decorations
+  dispatch window_attention
+  dispatch window_clear_attention
+  dispatch window_level
+  dispatch window_system_menu
+  dispatch window_mouse_passthrough
+  dispatch window_automatic_tabbing
+  dispatch window_resize
+  dispatch window_read_size
+  expect window_width ~= 960.0
+  expect window_height ~= 720.0
+  dispatch window_move
+  dispatch window_read_position
+  expect window_x == some(40.0)
+  expect window_y == some(40.0)
+  dispatch window_read_monitor
+  expect monitor_width == some(960.0)
+  expect monitor_height == some(720.0)
+  dispatch window_read_maximized
+  expect !window_maximized
+  dispatch window_read_minimized
+  expect window_minimized == none
+  dispatch window_read_scale
+  expect window_scale ~= 1.0
+  dispatch window_read_mode
+  expect window_mode == "windowed"
+  dispatch task_list_scrolled(12.0, 24.0, 0.0, 0.0, 0.25, 0.5, 0.0, 0.0, 640.0, 480.0, 0.0, 0.0, 640.0, 1200.0)
+  expect scroll_x == 12.0
+  expect scroll_y == 24.0
+  expect scroll_relative_x == 0.25
+  expect scroll_relative_y == 0.5
+  dispatch native_scroll(8.0, 16.0, true)
+  expect scroll_pixels
+  dispatch native_move(120.0, 48.0)
+  expect pointer_y == 48.0
 
 view
   col
@@ -736,13 +808,6 @@ view
             clip=false
             wrap-gap=8.0
             wrap-align=start
-          image "examples/iced-app/assets/checker.ppm"
-            with
-              w=48.0
-              h=48.0
-              fit=cover
-              filter=nearest
-              r=8.0
           image encoded_image
             with
               w=24.0
@@ -913,7 +978,7 @@ view
           disabled bg=bg border=border border-w=1.0 r=6.0 icon=muted placeholder=muted value=muted selection=primary
           menu text=fg selected-text=fg selected-bg=linear(1.57, primary@0.0, surface@1.0) bg=surface border=border border-w=1.0 r=6.0 shadow=black/50 shadow-y=4.0 shadow-blur=12.0
           icon code="⌕" font=ui size=14.0 gap=6.0 side=right
-        button "Reset search options" -> reset_search_modes
+        button "Reset mode options" -> reset_search_modes
         button "Add search option" -> add_search_mode
         if picker_open
           text "Picker is open" size=12.0 @text-muted

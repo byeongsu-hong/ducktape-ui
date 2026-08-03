@@ -24,6 +24,12 @@ on inspect
   values_equal = returned == at
   values_ordered = (next_frame < at) && (at < wait)
 
+test inspect_redraw_request
+  dispatch inspect
+  expect scheduled == at.instant
+  expect values_equal
+  expect values_ordered
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

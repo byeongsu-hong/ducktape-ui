@@ -5,13 +5,6 @@ mod keyboard_values {
     #[test]
     fn preserves_native_keyboard_values() {
         let (mut app, _) = KeyboardValues::__boot();
-        assert_eq!(
-            app.dynamic_native,
-            Some(iced::keyboard::key::Physical::Unidentified(
-                iced::keyboard::key::NativeCode::Xkb(42)
-            ))
-        );
-        assert_eq!(app.platform_command, iced::keyboard::Modifiers::COMMAND);
         let event = __IceKeyPress {
             key: iced::keyboard::Key::Character("с".into()),
             modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
@@ -23,6 +16,13 @@ mod keyboard_values {
         };
         let _ = app.__update(__KeyboardValuesMessage::Pressed(event));
 
+        assert_eq!(
+            app.dynamic_native,
+            Some(iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Xkb(42)
+            ))
+        );
+        assert_eq!(app.platform_command, iced::keyboard::Modifiers::COMMAND);
         assert_eq!(app.latin.as_deref(), Some("c"));
         assert_eq!(app.kind, "character");
         assert_eq!(app.named.as_deref(), Some("Enter"));

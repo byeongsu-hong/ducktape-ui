@@ -68,6 +68,11 @@ on themed(next)
 on collected_results(next)
   results = next
 
+test task_flow_behavior
+  dispatch start
+  expect values == [2, 4, 6]
+  expect len(results) == 1
+
 view
   col
     button "Run task flows" -> start

@@ -42,6 +42,15 @@ on inspect
   vertical_kind = to_vertical.kind
   equal = from_horizontal == end
 
+test inspect_alignment
+  dispatch inspect
+  expect left.kind == "left"
+  expect horizontal_center.kind == "center"
+  expect top.kind == "top"
+  expect vertical_center.kind == "center"
+  expect from_vertical.kind == "end"
+  expect equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

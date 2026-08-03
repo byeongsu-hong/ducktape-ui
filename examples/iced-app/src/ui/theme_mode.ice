@@ -18,6 +18,12 @@ on inspect
   kind = returned.kind
   values_equal = returned == theme_mode.dark()
 
+test inspect_theme_mode
+  dispatch inspect
+  expect default_mode == theme_mode.default()
+  expect modes == [theme_mode.none(), theme_mode.light(), theme_mode.dark()]
+  expect values_equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

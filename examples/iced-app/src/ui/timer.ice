@@ -5,10 +5,8 @@ app TimerEvents
 use "themes/monochrome.ice"
 
 state
-  auto_refresh = true
   last:instant? = none
   refreshes = 0
-  generation = 7
   pointer = ""
   frame_allowed = false
 
@@ -28,9 +26,9 @@ on frame(allowed)
   frame_allowed = allowed
 
 subscribe
-  every 250ms when auto_refresh -> tick _
-  repeat refresh_time() every 1s with=generation filter=even_refresh when auto_refresh -> refreshed _ _
-  mouse moved with=generation filter=visible_pointer -> pointer_moved _ _
+  every 250ms -> tick _
+  repeat refresh_time() every 1s with=7 filter=even_refresh -> refreshed _ _
+  mouse moved with=7 filter=visible_pointer -> pointer_moved _ _
   window frame filter=allow_frame -> frame _
 
 view
@@ -38,3 +36,7 @@ view
     button "Read time" -> start
     text refreshes
     text pointer
+    if last != none
+      text "Time read"
+    if frame_allowed
+      text "Frames allowed"

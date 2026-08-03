@@ -4,17 +4,16 @@ use "themes/slate.ice"
 
 state
   timer:debug-span? = none
-  label = "interaction"
-  value = 41
   measured = 0
 
 on begin
-  debug start label -> timer
+  debug start "interaction" -> timer
 
 on finish
   debug finish timer
 
 on compute
+  let value = 41
   measured = debug.time_with("compute", value + 1)
 
 view

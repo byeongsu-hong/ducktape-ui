@@ -28,6 +28,8 @@ on start
   expanded = true
   progress = 1.0
   custom_motion = motion(1.0)
+  entrance = 1.0
+  linger = 1.0
 
 on request_rewind
   task time now -> rewind _
@@ -50,5 +52,11 @@ view
     text animation.project(progress, value, value * 100.0)
     text animation.project(custom_motion, value, value.value)
     text animation.remaining(expanded)
+    text animation.value(entrance)
+    text animation.value(linger)
     if animation.animating(progress)
       text "Animating"
+    if maybe_progress != none
+      text "Sampled progress"
+    if maybe_visibility != none
+      text "Sampled visibility"

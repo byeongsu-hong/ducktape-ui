@@ -26,6 +26,14 @@ on inspect
   kind = returned.kind
   values_equal = returned == captured
 
+test inspect_event_status
+  dispatch inspect
+  expect ignored_then_ignored == event_status.ignored()
+  expect ignored_then_captured == event_status.captured()
+  expect captured_then_ignored == event_status.captured()
+  expect captured_then_captured == event_status.captured()
+  expect values_equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

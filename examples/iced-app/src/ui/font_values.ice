@@ -70,6 +70,29 @@ on inspect
   style_kind = returned_style.kind
   fonts_equal = custom_font == returned_font
 
+test inspect_font_values
+  dispatch inspect
+  expect default_font == font.sans()
+  expect sans_font == font.new(family.sans_serif(), weight.normal(), stretch.normal(), font_style.normal())
+  expect monospace_font == font.new(family.monospace(), weight.normal(), stretch.normal(), font_style.normal())
+  expect named_font == font.new(family.named("Inter"), weight.normal(), stretch.normal(), font_style.normal())
+  expect families_primary == [family.sans_serif(), family.named("Inter"), family.serif(), family.sans_serif()]
+  expect families_secondary == [family.cursive(), family.fantasy(), family.monospace()]
+  expect weights_light == [weight.normal(), weight.thin(), weight.extra_light(), weight.light(), weight.normal()]
+  expect weights_heavy == [weight.medium(), weight.semibold(), weight.bold(), weight.extra_bold(), weight.black()]
+  expect stretches_tight == [stretch.normal(), stretch.ultra_condensed(), stretch.extra_condensed()]
+  expect stretches_condensed == [stretch.condensed(), stretch.semi_condensed()]
+  expect stretches_wide == [stretch.normal(), stretch.semi_expanded(), stretch.expanded()]
+  expect stretches_expanded == [stretch.extra_expanded(), stretch.ultra_expanded()]
+  expect styles == [font_style.normal(), font_style.normal(), font_style.italic(), font_style.oblique()]
+  expect projected_family == family.named("Display")
+  expect projected_weight == weight.bold()
+  expect projected_stretch == stretch.expanded()
+  expect projected_style == font_style.italic()
+  expect family_name == some("Inter")
+  expect missing_name == none
+  expect fonts_equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

@@ -2,11 +2,8 @@ app FontEvents
 
 use "themes/monochrome.ice"
 
-state
-  font_bytes:bytes = bytes(00 01)
-
 on load
-  task font load font_bytes -> loaded _
+  task font load bytes(00 01) -> loaded _
 
 on loaded(_result)
 

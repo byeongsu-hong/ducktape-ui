@@ -60,6 +60,25 @@ on inspect
   absolute_pixels = line_height.to_absolute(relative_height, pixels(20.0))
   values_equal = returned_alignment == text_alignment.right()
 
+test inspect_text_values
+  dispatch inspect
+  expect default_alignment.kind == "default"
+  expect alignments == [text_alignment.left(), text_alignment.center(), text_alignment.right(), text_alignment.justified()]
+  expect from_horizontal == text_alignment.center()
+  expect from_alignment == text_alignment.right()
+  expect horizontal.kind == "left"
+  expect default_shaping == text_shaping.default()
+  expect shapings == [text_shaping.auto(), text_shaping.basic(), text_shaping.advanced()]
+  expect default_wrapping == text_wrapping.word()
+  expect wrappings == [text_wrapping.none(), text_wrapping.word(), text_wrapping.glyph(), text_wrapping.word_or_glyph()]
+  expect default_line_height == line_height.relative(1.3)
+  expect from_f64 == line_height.relative(1.25)
+  expect from_pixels == line_height.absolute(pixels(30.0))
+  expect relative_value == some(1.5)
+  expect absolute_value == some(pixels(24.0))
+  expect absolute_pixels == pixels(30.0)
+  expect values_equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

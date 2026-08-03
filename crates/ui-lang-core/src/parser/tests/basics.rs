@@ -227,7 +227,7 @@ view
 fn parses_all_native_time_operations() {
     let source = example!("timer.ice");
     let document = parse(source).unwrap();
-    assert_eq!(document.states[1].ty, Type::Option(Box::new(Type::Instant)));
+    assert_eq!(document.states[0].ty, Type::Option(Box::new(Type::Instant)));
     assert!(matches!(
         &document.handlers[0].statements[0],
         Statement::Run { function, .. } if function == "__ice_time_now"
@@ -249,7 +249,7 @@ fn parses_all_native_time_operations() {
     );
     assert!(matches!(
         document.subscriptions[1].context,
-        Some(Expr::Path(ref path)) if path == &["generation"]
+        Some(Expr::I64(7))
     ));
     assert_eq!(
         document.subscriptions[2].filter.as_deref(),
