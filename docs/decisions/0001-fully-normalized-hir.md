@@ -676,6 +676,14 @@ source node, checker reference, checked-fact escape, or declaration-index
 escape. The empty boundary inventory and a semantic review of indirect module
 paths jointly enforce this claim.
 
+The HIR type surface itself is also source-AST-free. AST-facing declaration
+indexing and traversal (declaration-index construction, handler-operation
+contracts, view-kind and child walks) live in the dedicated `hir::from_ast`
+bridge, which is the only file in the `hir` module tree allowed to read the
+source AST. `src/hir.rs` is included in the scanned lexical boundary
+inventory, so a reintroduced AST reference in the HIR type surface fails the
+same reviewed-inventory test as a codegen escape.
+
 The migration is complete when:
 
 - the code-generation module has no source-AST or checker dependency;
