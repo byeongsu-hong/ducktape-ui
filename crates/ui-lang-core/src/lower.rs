@@ -12,7 +12,7 @@ use crate::check::{
     CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
     CheckedProjectionKind, CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator,
     CheckedValueRef, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
-    ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, resolve_erased_type,
+    ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, unify_type_evidence,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
@@ -5686,7 +5686,12 @@ impl Lowerer {
                         ),
                     )
                 })?;
-        if resolve_erased_type(&canonical) != *output {
+        // The canonical contract is recomputed without the surrounding context, so type
+        // parameters the call site never constrains (`ok`'s error side, `err`'s output side)
+        // stay unknown here. Instantiating those slots from the checked output keeps the
+        // concrete parts of the contract authoritative while accepting the context the
+        // checker resolved them with.
+        if unify_type_evidence(&canonical, output) != *output {
             return Err(self.invariant(
                 policy.span(),
                 "checked builtin output type is inconsistent with its canonical contract",
@@ -20558,6 +20563,76 @@ test stable_flow
                 "raw AST poison `{poison}` leaked"
             );
         }
+    }
+
+    #[test]
+    fn lowers_result_literals_against_the_type_of_the_compared_operand() {
+        const RESULT_APP: &str = "state\n  outcome:result[str,str] = ok(\"done\")\nview\n  col #root\n    match outcome\n      ok(value)\n        text value\n      err(error)\n        text error\n";
+
+        for (literal, constructor) in [
+            ("ok(\"done\")", "::std::result::Result::Ok"),
+            ("err(\"failed\")", "::std::result::Result::Err"),
+        ] {
+            let source = format!(
+                "app ResultCompare\n{THEME}{RESULT_APP}test compares\n  target root = #root\n  expect outcome == {literal}\n"
+            );
+            let checked = analyze(&source).unwrap();
+            assert!(
+                checked
+                    .facts
+                    .structural_snapshot()
+                    .contains("Result(Str, Str)"),
+                "the compared literal must adopt the operand's `result[str,str]` type"
+            );
+            let program = lower(checked).unwrap();
+            let generated = crate::codegen::generate(&program, "result-compare.ice").unwrap();
+            assert!(
+                generated.contains(&format!("let __right = {constructor}(")),
+                "`{literal}` must lower as the compared operand's result type"
+            );
+        }
+
+        // An unconstrained literal keeps the documented erasure: both sides stay `unknown`
+        // on the error side, so the checked operand type erases to `unit`.
+        let unconstrained = format!(
+            "app ResultErasure\n{THEME}state\n  flag = false\nview\n  col #root\n    if flag\n      text \"yes\"\ntest compares\n  target root = #root\n  expect ok(\"a\") == ok(\"a\")\n"
+        );
+        let checked = analyze(&unconstrained).unwrap();
+        assert!(
+            checked
+                .facts
+                .structural_snapshot()
+                .contains("Result(Str, Unit)"),
+            "an unconstrained result literal must erase its error side to `unit`"
+        );
+        lower(checked).unwrap();
+
+        // Types the comparison blocklist bans keep rejecting inside a result literal.
+        for (fixture, message) in [
+            (
+                format!(
+                    "app ResultEnum\n{THEME}enum Surface\n  idle\n  ready(str)\nstate\n  outcome:result[Surface,str] = ok(Surface.idle)\nview\n  col #root\n    match outcome\n      ok(value)\n        match value\n          Surface.idle\n            text \"idle\"\n          Surface.ready(inner)\n            text inner\n      err(error)\n        text error\ntest compares\n  target root = #root\n  expect outcome == ok(Surface.idle)\n"
+                ),
+                "payload-carrying UI enum values use exhaustive match",
+            ),
+            (
+                format!(
+                    "app ResultTarget\n{THEME}state\n  flag = false\nview\n  col #root\n    if flag\n      text \"yes\"\ntest compares\n  target root = #root\n  expect ok(root) == ok(root)\n"
+                ),
+                "target values do not support comparisons",
+            ),
+        ] {
+            let error = analyze(&fixture).unwrap_err();
+            assert_eq!(error.code, "E153");
+            assert!(error.message.contains(message), "{}", error.message);
+        }
+
+        // A payload the compared operand cannot accept still fails type checking.
+        let mismatched = format!(
+            "app ResultMismatch\n{THEME}{RESULT_APP}test compares\n  target root = #root\n  expect outcome == ok(1)\n"
+        );
+        let error = analyze(&mismatched).unwrap_err();
+        assert_eq!(error.code, "E101");
     }
 
     #[test]

@@ -893,7 +893,7 @@ use view::*;
 use widgets::*;
 
 pub(crate) use expr::fields::field_type;
-pub(crate) use expr::signature::{BuiltinArgumentContext, ContextualBuiltin, resolve_erased_type};
+pub(crate) use expr::signature::{BuiltinArgumentContext, ContextualBuiltin, unify_type_evidence};
 pub(crate) use expr::{ExprTypeEnv, ScopedTypeEnv, canonical_builtin_type, expr_type};
 use expr::{check_length_value, contains_ui_enum};
 #[cfg(test)]
