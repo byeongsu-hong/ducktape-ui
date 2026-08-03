@@ -15,6 +15,7 @@ struct StateSites {
     component: Option<String>,
     name: String,
     span: Span,
+    image_handle: bool,
     reads: BTreeSet<(usize, usize)>,
     writes: BTreeSet<(usize, usize)>,
 }
@@ -60,6 +61,7 @@ impl UsageSession {
                     component: None,
                     name: state.name.clone(),
                     span: state.span.clone(),
+                    image_handle: matches!(state.ty, Type::Image),
                     reads: BTreeSet::new(),
                     writes: BTreeSet::new(),
                 },
@@ -77,6 +79,7 @@ impl UsageSession {
                         component: Some(component.name.clone()),
                         name: state.name.clone(),
                         span: state.span.clone(),
+                        image_handle: matches!(state.ty, Type::Image),
                         reads: BTreeSet::new(),
                         writes: BTreeSet::new(),
                     },
@@ -211,6 +214,12 @@ impl UsageSession {
                         "remove the state or connect it to reachable view behavior",
                     ))
                 } else if state.writes.is_empty() {
+                    if state.image_handle {
+                        // Init-only image handles are the documented pattern: SPEC requires
+                        // storing `encoded`/`rgba` handles in state so a handle is not minted
+                        // on every view pass.
+                        return None;
+                    }
                     Some(
                         Warning::new(
                             "W003",
