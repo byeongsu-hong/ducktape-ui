@@ -318,3 +318,5 @@ test renders_every_node
   expect text "If child" within root
   expect text "Match child" within root
   expect text "Two" within root
+  click button
+  expect outcome == ok("Draft value")
