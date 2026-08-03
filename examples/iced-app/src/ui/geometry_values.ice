@@ -5,14 +5,12 @@ use "extern/geometry_values.ice"
 use "themes/slate.ice"
 
 state
-  origin:point = point.origin()
   point_value:point = point(0.0, 0.0)
   point_difference:vector = vector.zero()
   point_distance = 0.0
   snapped_point:point-u32 = point.snap(point(3.25, 4.75))
   snapped_x = 0
   snapped_y = 0
-  exact_bounds:rectangle-u32 = exact_rectangle()
   exact_x = 0
   exact_y = 0
   exact_width = 0
@@ -21,9 +19,6 @@ state
   point_display = ""
   vector_value:vector = vector.zero()
   vector_values:[f64] = []
-  size_zero:size = size.zero()
-  size_unit:size = size.unit()
-  size_infinite:size = size.infinite()
   size_min:size = size.zero()
   size_max:size = size.zero()
   size_expanded:size = size.zero()
@@ -35,8 +30,6 @@ state
   invalid_size:size? = none
   size_vector:vector = vector.zero()
   size_values:[f64] = []
-  rectangle_zero:rectangle = rectangle.zero()
-  rectangle_infinite:rectangle = rectangle.infinite()
   bounds:rectangle = rectangle.zero()
   sized_bounds:rectangle = rectangle.zero()
   radius_bounds:rectangle = rectangle.zero()
@@ -66,6 +59,7 @@ state
   area = 0.0
 
 on inspect
+  let exact_bounds = exact_rectangle()
   point_value = (point.origin() + vector(3.25, 4.75)) - vector.zero()
   point_difference = point_value - point.origin()
   point_distance = point.distance(point.origin(), point(3.0, 4.0))
@@ -119,6 +113,60 @@ on inspect
   position = bounds.position
   bounds_size = bounds.size
   area = bounds.area
+
+test inspect_geometry_values
+  dispatch inspect
+  expect point.origin() == point(0.0, 0.0)
+  expect point_value == point(3.25, 4.75)
+  expect point_difference == vector(3.25, 4.75)
+  expect point_distance == 5.0
+  expect snapped_x == 3
+  expect snapped_y == 5
+  expect exact_x == 1
+  expect exact_y == 2
+  expect exact_width == 3
+  expect exact_height == 4
+  expect point_values == [3.25, 4.75]
+  expect point_display == "Point { x: 3.25, y: 4.75 }"
+  expect vector_values == [3.0, 3.0]
+  expect size.zero() == size(0.0, 0.0)
+  expect size.unit() == size(1.0, 1.0)
+  expect size.infinite() == size.infinite()
+  expect size_expanded == size(13.0, 10.0)
+  expect size_rotated == size.rotate(size(2.0, 4.0), 0.5)
+  expect size_ratio == size(50.0, 50.0)
+  expect size_from_u32 == size(640.0, 480.0)
+  expect maybe_size == some(size(640.0, 480.0))
+  expect invalid_size == none
+  expect size_vector == vector(14.0, 27.0)
+  expect size_values == [14.0, 27.0]
+  expect rectangle.zero() == rectangle(0.0, 0.0, 0.0, 0.0)
+  expect rectangle.infinite() == rectangle.infinite()
+  expect sized_bounds == rectangle(0.0, 0.0, 5.0, 6.0)
+  expect radius_bounds == rectangle(-3.0, -3.0, 6.0, 6.0)
+  expect vertex_bounds == rectangle.with_vertices(point(0.0, 0.0), point(0.0, 4.0), point(-3.0, 0.0))
+  expect vertex_rotation ~= 1.5707963
+  expect contains_point
+  expect point_to_bounds == 5.0
+  expect bounds_offset == vector(2.0, 2.0)
+  expect within_bounds
+  expect intersection == some(rectangle(5.0, 5.0, 5.0, 5.0))
+  expect intersects_bounds
+  expect union_bounds == rectangle(0.0, 0.0, 15.0, 15.0)
+  expect snapped_bounds == rectangle.snap(rectangle(1.2, 2.7, 3.6, 4.1))
+  expect expanded_bounds == rectangle(6.0, 19.0, 46.0, 64.0)
+  expect shrunk_bounds == rectangle(14.0, 21.0, 34.0, 56.0)
+  expect rotated_bounds == rectangle.rotate(rectangle(10.0, 20.0, 40.0, 60.0), 0.5)
+  expect zoomed_bounds == rectangle(-10.0, -10.0, 80.0, 120.0)
+  expect anchor == point(40.0, 60.0)
+  expect converted_bounds == rectangle(1.0, 2.0, 3.0, 4.0)
+  expect moved_bounds == rectangle(11.0, 22.0, 40.0, 60.0)
+  expect scaled_bounds == rectangle(20.0, 40.0, 80.0, 120.0)
+  expect center == point(30.0, 50.0)
+  expect center_x == 30.0
+  expect center_y == 50.0
+  expect position == point(10.0, 20.0)
+  expect bounds_size == size(40.0, 60.0)
 
 view
   col gap=8.0 p=16.0
