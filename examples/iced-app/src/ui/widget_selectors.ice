@@ -41,6 +41,21 @@ on found_many(value)
 on found_kinds(value)
   kinds = value
 
+test widget_selectors_behavior
+  expect found_x == none
+  dispatch find_id
+  dispatch find_focused
+  expect found_kind == none
+  dispatch find_point
+  dispatch find_text
+  expect found.kind == some("text")
+  expect found_kind == some("text")
+  expect found_x != none
+  dispatch find_all_text
+  expect len(found_all) == 2
+  dispatch find_custom
+  expect kinds == ["text", "text"]
+
 view
   col #root
     input "Search" #field <-> value

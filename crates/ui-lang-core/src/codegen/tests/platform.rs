@@ -137,19 +137,18 @@ fn lowers_native_timer_subscription() {
     let source = example!("timer.ice");
     let generated = compile(source, "timer.ice").unwrap();
     assert!(generated.contains("::iced::time::every(::std::time::Duration::from_millis(250))"));
-    assert!(generated.contains("if self.auto_refresh { ::iced::Subscription::batch(["));
-    assert!(generated.contains("]) } else { ::iced::Subscription::none() }"));
+    assert!(generated.contains("::iced::Subscription::batch(["));
     assert!(generated.contains("::iced::time::now().map"));
     assert!(generated.contains("__TimerEventsMessage::Tick(__value)"));
     assert!(generated.contains(
             "::iced::time::repeat(crate::backend::refresh_time, ::std::time::Duration::from_millis(1000))"
         ));
+    assert!(
+        generated.contains(".filter_map(|__value| crate::backend::even_refresh(__value)).with(7)")
+    );
     assert!(generated.contains(
-        ".filter_map(|__value| crate::backend::even_refresh(__value)).with(self.generation)"
+        ".filter_map(|__value| crate::backend::visible_pointer(__value.0, __value.1)).with(7)"
     ));
-    assert!(generated.contains(
-            ".filter_map(|__value| crate::backend::visible_pointer(__value.0, __value.1)).with(self.generation)"
-        ));
     assert!(generated.contains(".filter_map(|_| crate::backend::allow_frame())"));
     assert!(generated.contains("__TimerEventsMessage::Refreshed(__value.0, __value.1)"));
 }
@@ -276,7 +275,7 @@ fn lowers_typed_pointer_values() {
         "::iced::mouse::Cursor::Available",
         "::iced::mouse::Button::Other(9u16)",
         "::iced::touch::Finger(18446744073709551615u64)",
-        ".position_over(self.bounds)",
+        ".position_over(bounds)",
         "fn __ui_lang_check_sync_pointer_click",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
@@ -288,7 +287,7 @@ fn lowers_native_transformations() {
     let source = example!("transformation_values.ice");
     let generated = compile(source, "transformation_values.ice").unwrap();
     for expected in [
-        "identity: ::iced::Transformation",
+        "combined: ::iced::Transformation",
         "translation: ::iced::Vector",
         "size_value: ::iced::Size",
         "::iced::Transformation::orthographic(640u32, 480u32)",
@@ -309,7 +308,7 @@ fn lowers_native_geometry_values() {
     let generated = compile(source, "geometry_values.ice").unwrap();
     for expected in [
         "snapped_point: ::iced::Point<u32>",
-        "exact_bounds: ::iced::Rectangle<u32>",
+        "let exact_bounds =",
         "snapped_bounds: ::std::option::Option<::iced::Rectangle<u32>>",
         "::iced::Point::ORIGIN",
         ".distance(::iced::Point::new",

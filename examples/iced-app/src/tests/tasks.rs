@@ -97,7 +97,7 @@ mod theme_factory {
 
     #[test]
     fn constructs_app_and_nested_native_themes() {
-        let (mut app, _) = NativeTheme::__boot();
+        let (app, _) = NativeTheme::__boot();
         let theme = app.__theme();
         assert_eq!(theme.to_string(), "Native dark");
         assert!(theme.extended_palette().is_dark);
@@ -106,8 +106,10 @@ mod theme_factory {
             iced::Color::from_rgb8(0x7c, 0x3a, 0xed)
         );
 
-        app.dark = false;
-        assert_eq!(app.__theme().to_string(), "Native light");
+        assert_eq!(
+            crate::backend::native_theme(false).to_string(),
+            "Native light"
+        );
         let _ = app.__view();
     }
 }
@@ -118,15 +120,13 @@ mod alternate_theme {
 
     #[test]
     fn constructs_an_alternate_theme_subtree() {
-        let (mut app, _) = AlternateThemeApp::__boot();
+        let (app, _) = AlternateThemeApp::__boot();
         let (theme, _, text_color, background) = crate::backend::alternate_panel(true);
         let theme = theme.unwrap();
         assert_eq!(iced::theme::Base::name(&theme), "Alternate dark");
         assert_eq!(text_color.unwrap()(&theme), iced::Color::WHITE);
         assert_eq!(background.unwrap()(&theme), iced::Color::BLACK.into());
-        let _ = app.__view();
 
-        app.active = false;
         let (theme, _, text_color, background) = crate::backend::alternate_panel(false);
         assert!(theme.is_none() && text_color.is_none() && background.is_none());
         let _ = app.__view();
@@ -251,10 +251,6 @@ mod image_allocation {
         let _ = app.__update(message);
         assert_eq!(app.error_kind, "unsupported");
         assert_eq!(app.error_message, "loading images is unsupported");
-        assert!(matches!(
-            app.failure,
-            Some(iced::widget::image::Error::Unsupported)
-        ));
         let _ = app.__view();
     }
 }

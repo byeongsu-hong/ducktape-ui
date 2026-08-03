@@ -5283,7 +5283,11 @@ another root imports but does not mount it. `W005` starts at the app view,
 subscriptions, preset boot statements, the implicit `mount` handler, test
 mounts, and test dispatches, then follows every routed effect. Component-local
 handlers use their reachable component view as the root. State reads and writes
-inside unreachable handlers do not suppress `W002` or `W003`. The CLI and LSP
+inside unreachable handlers do not suppress `W002` or `W003`. An init-only
+`image` state read without ever being written does not report `W003`: storing
+`encoded`/`rgba` handles in never-rewritten state is the documented pattern
+that keeps a handle from being minted on every view pass. `W002` still applies
+to an `image` state nothing reads. The CLI and LSP
 union reachable component and handler definitions over every discovered or open
 app root before reporting graph warnings.
 

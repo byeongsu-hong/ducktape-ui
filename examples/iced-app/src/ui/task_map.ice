@@ -43,6 +43,13 @@ on mapped_fallible(value)
 on failed(reason)
   error = reason.message
 
+test task_map_behavior
+  dispatch start
+  expect mapped == 5
+  expect mapped_optional == some(2)
+  expect mapped_result == 8
+  expect error == "task failed"
+
 view
   col
     text mapped

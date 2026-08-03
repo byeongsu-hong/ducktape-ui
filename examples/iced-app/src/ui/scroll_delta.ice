@@ -28,6 +28,14 @@ on inspect
   pixel_y = pixels.y
   values_equal = returned == pixels
 
+test inspect_scroll_delta
+  dispatch inspect
+  expect line_x == 1.5
+  expect line_y == -2.25
+  expect pixel_x == -3.75
+  expect pixel_y == 4.5
+  expect values_equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

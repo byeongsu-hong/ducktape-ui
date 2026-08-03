@@ -319,12 +319,18 @@ fn checks_typed_pointer_values() {
 fn checks_native_transformations() {
     let source = example!("transformation_values.ice");
     let document = analyze(source).unwrap();
-    assert_eq!(
-        document.source_document().states[0].ty,
-        Type::Transformation
-    );
-    assert_eq!(document.source_document().states[6].ty, Type::Vector);
-    assert_eq!(document.source_document().states[11].ty, Type::Size);
+    let state_type = |name: &str| {
+        document
+            .source_document()
+            .states
+            .iter()
+            .find(|state| state.name == name)
+            .map(|state| state.ty.clone())
+            .unwrap()
+    };
+    assert_eq!(state_type("combined"), Type::Transformation);
+    assert_eq!(state_type("translation"), Type::Vector);
+    assert_eq!(state_type("size_value"), Type::Size);
 
     for (from, to, code, message) in [
         (

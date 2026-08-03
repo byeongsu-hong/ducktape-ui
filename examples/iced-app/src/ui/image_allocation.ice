@@ -5,9 +5,6 @@ use "themes/slate.ice"
 state
   handle:image = rgba(1, 1, bytes(ff 00 ff ff))
   allocation:image-allocation? = none
-  retained:image-memory? = none
-  recovered:image-allocation? = none
-  failure:image-error? = none
   width = 0
   height = 0
   error_kind = ""
@@ -20,14 +17,11 @@ on ready(value)
   handle = value.handle
   width = value.size.width
   height = value.size.height
-  retained = some(image.downgrade(value))
-  recovered = image.upgrade(image.downgrade(value))
-  allocation = some(value)
+  allocation = image.upgrade(image.downgrade(value))
 
 on failed(error)
   error_kind = error.kind
   error_message = error.message
-  failure = some(error)
 
 on allocate_flow
   flow
@@ -48,6 +42,8 @@ view
     image handle w=64.0 h=64.0
     button "Allocate" -> allocate
     button "Allocate flow" -> allocate_flow
+    if allocation != none
+      text "Allocated"
     text width
     text height
     text error_kind

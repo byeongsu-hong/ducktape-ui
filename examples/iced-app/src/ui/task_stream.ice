@@ -7,9 +7,6 @@ use "themes/monochrome.ice"
 state
   last = 0
   error = ""
-  start = 10
-  limit = 3
-  event_identity = 1
   runtime_event = ""
 
 on start
@@ -30,13 +27,14 @@ on runtime_event_received(event)
 
 subscribe
   run fallible_stream() -> observed _
-  run count_stream(limit) -> counted _
-  run range_stream(start, limit) -> counted _
-  recipe counter_recipe(start) -> counted _
-  events event_identity using=raw_event -> runtime_event_received _
+  run count_stream(3) -> counted _
+  run range_stream(10, 3) -> counted _
+  recipe counter_recipe(10) -> counted _
+  events 1 using=raw_event -> runtime_event_received _
 
 view
   col
     button "Run streams" -> start
     text last
     text error
+    text runtime_event

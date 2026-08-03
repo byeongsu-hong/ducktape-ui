@@ -42,6 +42,20 @@ on inspect
   levels_equal = returned_level == window_level.always_on_top()
   modes_equal = returned_mode == window_mode.fullscreen()
 
+test inspect_native_window_values
+  dispatch inspect
+  expect len(cardinal) == 4
+  expect len(diagonal_north) == 2
+  expect len(diagonal_south) == 2
+  expect default_levels == [window_level.default(), window_level.normal()]
+  expect stacked_levels == [window_level.always_on_bottom(), window_level.always_on_top()]
+  expect modes == [window_mode.windowed(), window_mode.fullscreen(), window_mode.hidden()]
+  expect len(attentions) == 2
+  expect direction_kind == "south-west"
+  expect attention_kind == "informational"
+  expect levels_equal
+  expect modes_equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

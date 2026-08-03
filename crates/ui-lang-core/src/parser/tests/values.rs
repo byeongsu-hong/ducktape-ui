@@ -33,10 +33,15 @@ fn parses_first_class_native_border_and_radius() {
     assert_eq!(document.functions[1].output, Type::Radius);
     assert_eq!(document.states[0].ty, Type::Border);
     assert_eq!(document.states[9].ty, Type::Radius);
-    assert!(matches!(
-        &document.handlers[0].statements[1],
-        Statement::Assign { value: Expr::Call { name, .. }, .. } if name == "border.new"
-    ));
+    assert!(
+        document.handlers[0]
+            .statements
+            .iter()
+            .any(|statement| matches!(
+                statement,
+                Statement::Assign { value: Expr::Call { name, .. }, .. } if name == "border.new"
+            ))
+    );
 }
 
 #[test]
@@ -238,13 +243,18 @@ fn parses_first_class_native_window_screenshot() {
     assert_eq!(document.functions[1].output, Type::WindowScreenshot);
     assert_eq!(document.states[0].ty, Type::WindowScreenshot);
     assert_eq!(
-        document.states[3].ty,
+        document.states[2].ty,
         Type::Option(Box::new(Type::WindowScreenshot))
     );
-    assert!(matches!(
-        &document.handlers[0].statements[1],
-        Statement::Assign { value: Expr::Call { name, .. }, .. } if name == "screenshot.new"
-    ));
+    assert!(
+        document.handlers[0]
+            .statements
+            .iter()
+            .any(|statement| matches!(
+                statement,
+                Statement::Assign { value: Expr::Call { name, .. }, .. } if name == "screenshot.new"
+            ))
+    );
 }
 
 #[test]
@@ -285,10 +295,15 @@ fn parses_first_class_native_color() {
             .ty,
         Type::Option(Box::new(Type::Color))
     );
-    assert!(matches!(
-        &document.handlers[0].statements[4],
-        Statement::Assign { value: Expr::Call { name, .. }, .. } if name == "color.rgb"
-    ));
+    assert!(
+        document.handlers[0]
+            .statements
+            .iter()
+            .any(|statement| matches!(
+                statement,
+                Statement::Assign { value: Expr::Call { name, .. }, .. } if name == "color.rgb"
+            ))
+    );
 }
 
 #[test]
@@ -344,14 +359,6 @@ fn parses_native_image_allocation_types_and_task() {
         document.states[1].ty,
         Type::Option(Box::new(Type::ImageAllocation))
     );
-    assert_eq!(
-        document.states[2].ty,
-        Type::Option(Box::new(Type::ImageMemory))
-    );
-    assert_eq!(
-        document.states[4].ty,
-        Type::Option(Box::new(Type::ImageError))
-    );
     assert!(matches!(
         &document.handlers[0].statements[0],
         Statement::Run { function, args, error: Some(_), .. }
@@ -381,68 +388,108 @@ fn parses_native_animation_configuration_and_explicit_time() {
 fn parses_typed_keyboard_values() {
     let source = example!("keyboard_values.ice");
     let document = parse(source).unwrap();
-    assert_eq!(document.states[0].ty, Type::Key);
-    assert_eq!(document.states[1].ty, Type::PhysicalKey);
+    let state_type = |name: &str| {
+        document
+            .states
+            .iter()
+            .find(|state| state.name == name)
+            .map(|state| state.ty.clone())
+            .unwrap()
+    };
+    assert_eq!(state_type("logical"), Type::Key);
+    assert_eq!(state_type("physical"), Type::PhysicalKey);
     assert_eq!(
-        document.states[3].ty,
+        state_type("dynamic_native"),
         Type::Option(Box::new(Type::PhysicalKey))
     );
-    assert_eq!(document.states[4].ty, Type::KeyLocation);
-    assert_eq!(document.states[5].ty, Type::KeyModifiers);
+    assert_eq!(state_type("location"), Type::KeyLocation);
+    assert_eq!(state_type("modifiers"), Type::KeyModifiers);
     assert!(matches!(
         &document.states[0].initial,
         Expr::Call { name, args } if name == "key.unidentified" && args.is_empty()
     ));
-    assert!(matches!(
-        &document.handlers[0].statements[4],
-        Statement::Assign {
-            value: Expr::Call { name, args },
-            ..
-        } if name == "key.latin" && args.len() == 2
-    ));
+    assert!(document.handlers[0].statements.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::Assign {
+                target,
+                value: Expr::Call { name, args },
+                ..
+            } if target == "latin" && name == "key.latin" && args.len() == 2
+        )
+    }));
 }
 
 #[test]
 fn parses_typed_pointer_values() {
     let source = example!("pointer_values.ice");
     let document = parse(source).unwrap();
-    assert_eq!(document.states[0].ty, Type::Point);
-    assert_eq!(document.states[1].ty, Type::Rectangle);
-    assert_eq!(document.states[2].ty, Type::MouseButton);
-    assert_eq!(document.states[5].ty, Type::MouseCursor);
-    assert_eq!(document.states[7].ty, Type::MouseClick);
-    assert_eq!(document.states[8].ty, Type::TouchFinger);
+    let state = |name: &str| {
+        document
+            .states
+            .iter()
+            .find(|state| state.name == name)
+            .unwrap()
+    };
+    assert_eq!(state("click_position").ty, Type::Point);
+    assert_eq!(state("button").ty, Type::MouseButton);
+    assert_eq!(state("cursor").ty, Type::MouseCursor);
+    assert_eq!(state("click").ty, Type::MouseClick);
+    assert_eq!(state("finger").ty, Type::TouchFinger);
     assert!(matches!(
-        &document.states[7].initial,
+        &state("click").initial,
         Expr::Call { name, args } if name == "mouse.click" && args.len() == 3
     ));
-    assert!(matches!(
-        &document.handlers[0].statements[0],
-        Statement::Assign {
-            value: Expr::Call { name, args },
-            ..
-        } if name == "mouse.cursor_position" && args.len() == 1
-    ));
+    assert!(document.handlers[0].statements.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::Let {
+                name,
+                value: Expr::Call { name: call, args },
+                ..
+            } if name == "bounds" && call == "rectangle" && args.len() == 4
+        )
+    }));
+    assert!(document.handlers[0].statements.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::Assign {
+                target,
+                value: Expr::Call { name, args },
+                ..
+            } if target == "cursor_position" && name == "mouse.cursor_position" && args.len() == 1
+        )
+    }));
 }
 
 #[test]
 fn parses_native_transformations() {
     let source = example!("transformation_values.ice");
     let document = parse(source).unwrap();
-    assert_eq!(document.states[0].ty, Type::Transformation);
-    assert_eq!(document.states[6].ty, Type::Vector);
-    assert_eq!(document.states[11].ty, Type::Size);
+    let state = |name: &str| {
+        document
+            .states
+            .iter()
+            .find(|state| state.name == name)
+            .unwrap()
+    };
+    assert_eq!(state("combined").ty, Type::Transformation);
+    assert_eq!(state("translation").ty, Type::Vector);
+    assert_eq!(state("size_value").ty, Type::Size);
     assert!(matches!(
-        &document.states[4].initial,
+        &state("combined").initial,
         Expr::Call { name, args } if name == "transform.compose" && args.len() == 2
     ));
-    assert!(matches!(
-        &document.handlers[0].statements[4],
-        Statement::Assign {
-            value: Expr::Call { name, args },
-            ..
-        } if name == "transform.point" && args.len() == 2
-    ));
+    assert!(document.handlers[0].statements.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::Assign {
+                target,
+                value: Expr::Call { name, args },
+                ..
+            } if target == "point_value" && name == "transform.point" && args.len() == 2
+        )
+    }));
 }
 
 #[test]
@@ -457,9 +504,8 @@ fn parses_native_geometry_values() {
             .map(|state| state.ty.clone())
             .unwrap()
     };
-    assert_eq!(state_type("origin"), Type::Point);
+    assert_eq!(state_type("point_value"), Type::Point);
     assert_eq!(state_type("snapped_point"), Type::PointU32);
-    assert_eq!(state_type("exact_bounds"), Type::RectangleU32);
     assert_eq!(
         state_type("snapped_bounds"),
         Type::Option(Box::new(Type::RectangleU32))

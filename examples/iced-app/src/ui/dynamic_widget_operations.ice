@@ -3,12 +3,14 @@ app DynamicOperations
 use "themes/slate.ice"
 
 state
-  ids = [1, 2]
-  names = ["first", "second"]
   selected = 1
   selected_name = "first"
   value = ""
   focused = false
+
+on select(id, name)
+  selected = id
+  selected_name = name
 
 on focus
   task widget focus #field(selected)
@@ -49,11 +51,29 @@ on scroll_to
 on scroll_by
   task widget scroll-by #list(selected) -4.0 8.0
 
+test dynamic_widget_operations_behavior
+  dispatch select(2, "second")
+  expect selected == 2
+  expect selected_name == "second"
+  dispatch focus
+  dispatch check
+  expect focused
+  dispatch focus_named
+  dispatch front
+  dispatch end
+  dispatch cursor
+  dispatch all
+  dispatch range
+  dispatch snap
+  dispatch snap_end
+  dispatch scroll_to
+  dispatch scroll_by
+
 view
   col
-    for id in ids
+    for id in [1, 2]
       input "Value" #field(id) <-> value
       scroll #list(id)
         text id
-    for name in names
+    for name in ["first", "second"]
       input "Named value" #named-field(name) <-> value

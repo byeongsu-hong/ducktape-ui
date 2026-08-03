@@ -5,13 +5,11 @@ use "extern/padding_angles.ice"
 use "themes/slate.ice"
 
 state
-  zero_pixels:pixels = pixels.zero()
   pixel_value:pixels = pixels(0.0)
-  u32_pixels:pixels = pixels.from_u32(4294967295)
+  u32_pixels:pixels = pixels.zero()
   maybe_pixels:pixels? = none
   invalid_pixels:pixels? = none
   pixel_ordered = false
-  zero_padding:padding = padding.zero()
   direct_padding:padding = padding(1.0, 2.0, 3.0, 4.0)
   all_padding:padding = padding.zero()
   pixel_padding:padding = padding.zero()
@@ -54,6 +52,7 @@ state
 
 on inspect
   pixel_value = ((((pixels(4.0) + pixels(2.0)) + 2.0) * pixels(2.0)) * 0.5 / pixels(2.0)) / 0.5
+  u32_pixels = pixels.from_u32(4294967295)
   maybe_pixels = pixels.try_from_u32(42)
   invalid_pixels = pixels.try_from_u32(-1)
   pixel_ordered = pixels.zero() < pixel_value
@@ -96,6 +95,54 @@ on inspect
   rotated_size = size.rotate(size(10.0, 20.0), radians_value)
   rotated_bounds = rectangle.rotate(rectangle(0.0, 0.0, 10.0, 20.0), radians_value)
   vertices_angle = rectangle.vertices_angle(point(0.0, 0.0), point(0.0, 4.0), point(-3.0, 0.0))
+
+test inspect_padding_angles
+  dispatch inspect
+  expect pixel_value == pixels(8.0)
+  expect u32_pixels == pixels.from_u32(4294967295)
+  expect maybe_pixels == some(pixels(42.0))
+  expect invalid_pixels == none
+  expect pixel_ordered
+  expect all_padding == padding(5.0, 5.0, 5.0, 5.0)
+  expect pixel_padding == padding(6.0, 6.0, 6.0, 6.0)
+  expect top_padding == padding(1.0, 0.0, 0.0, 0.0)
+  expect right_padding == padding(0.0, 2.0, 0.0, 0.0)
+  expect bottom_padding == padding(0.0, 0.0, 3.0, 0.0)
+  expect left_padding == padding(0.0, 0.0, 0.0, 4.0)
+  expect horizontal_padding == padding(0.0, 5.0, 0.0, 5.0)
+  expect vertical_padding == padding(6.0, 0.0, 6.0, 0.0)
+  expect axes_padding == padding(7.0, 8.0, 7.0, 8.0)
+  expect changed_padding == padding(6.0, 5.0, 6.0, 5.0)
+  expect fitted_padding == padding(3.0, 0.0, 0.0, 2.0)
+  expect padding_size == size(6.0, 4.0)
+  expect expanded_bounds == rectangle(6.0, 19.0, 36.0, 44.0)
+  expect shrunk_bounds == rectangle(14.0, 21.0, 24.0, 36.0)
+  expect direct_padding == padding(1.0, 2.0, 3.0, 4.0)
+  expect padding_x == 6.0
+  expect padding_y == 4.0
+  expect padding_equal
+  expect degree_value == degrees(90.0)
+  expect degree_start == degrees.range_start()
+  expect degree_end == degrees.range_end()
+  expect degree_in_range
+  expect !degree_out_of_range
+  expect degree_ordered
+  expect radians_start == radians.range_start()
+  expect radians_end == radians.range_end()
+  expect radians_pi == radians.pi()
+  expect radians_from_degrees == radians.from_degrees(degrees(180.0))
+  expect radians_math.value ~= 4.1415927
+  expect radians_reverse == radians(3.0)
+  expect radians_in_range
+  expect radians_equal_scalar
+  expect radians_display == "1 rad"
+  expect distance_start.x ~= 50.0
+  expect distance_start.y ~= 50.0
+  expect distance_end.x ~= 50.0
+  expect distance_end.y ~= 0.0
+  expect rotated_size == size.rotate(size(10.0, 20.0), radians(1.0))
+  expect rotated_bounds == rectangle.rotate(rectangle(0.0, 0.0, 10.0, 20.0), radians(1.0))
+  expect vertices_angle.value ~= 1.5707963
 
 view
   col gap=8.0 p=16.0

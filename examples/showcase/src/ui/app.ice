@@ -104,7 +104,7 @@ view
                   notifications=notifications
                   volume=volume
                   density=density
-                  native_select_frameworks=native_select_frameworks
+                  native_select_frameworks=["Ice", "iced", "Rust"]
                   native_select_framework=native_select_framework
                   combobox_frameworks=combobox_frameworks
                   searched_framework=searched_framework

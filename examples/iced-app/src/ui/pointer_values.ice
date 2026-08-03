@@ -5,16 +5,10 @@ use "extern/pointer_values.ice"
 use "themes/slate.ice"
 
 state
-  position:point = point(12.0, 24.0)
-  bounds:rectangle = rectangle(10.0, 20.0, 40.0, 60.0)
   button:mouse-button = mouse.button("left")
-  other:mouse-button = mouse.other_button(9)
-  maybe_other:mouse-button? = mouse.try_other_button(9)
   cursor:mouse-cursor = mouse.cursor(point(12.0, 24.0))
-  unavailable:mouse-cursor = mouse.unavailable()
   click:mouse-click = mouse.click(point(12.0, 24.0), mouse.button("left"), none)
   finger:touch-finger = touch.finger("18446744073709551615")
-  maybe_finger:touch-finger? = touch.try_finger("42")
   cursor_position:point? = none
   cursor_over:point? = none
   cursor_in:point? = none
@@ -32,6 +26,8 @@ state
   width = 0.0
 
 on inspect
+  let position = point(12.0, 24.0)
+  let bounds = rectangle(10.0, 20.0, 40.0, 60.0)
   cursor_position = mouse.cursor_position(cursor)
   cursor_over = mouse.cursor_over(cursor, bounds)
   cursor_in = mouse.cursor_in(cursor, bounds)
@@ -62,6 +58,35 @@ on touched(value, next_x, next_y)
 subscribe
   mouse pressed -> pressed _
   touch pressed -> touched _ _ _
+
+test inspect_pointer_values
+  dispatch inspect
+  expect mouse.cursor_position(mouse.unavailable()) == none
+  expect mouse.try_other_button(9) == some(mouse.other_button(9))
+  expect touch.try_finger("42") == some(touch.finger("42"))
+  expect cursor_position == some(point(12.0, 24.0))
+  expect cursor_over == some(point(12.0, 24.0))
+  expect cursor_in == some(point(2.0, 4.0))
+  expect cursor_from == some(point(0.0, 0.0))
+  expect cursor_kind == "available"
+  expect cursor_levitating
+  expect over
+  expect mouse.cursor_position(cursor) == some(point(13.0, 26.0))
+  expect click_kind == "single"
+  expect click_position == point(12.0, 24.0)
+  expect x == 12.0
+  expect y == 24.0
+  expect width == 40.0
+  dispatch pressed(mouse.other_button(9))
+  expect button == mouse.other_button(9)
+  expect button_kind == "other"
+  expect button_number == some(9)
+  expect click_kind == "single"
+  dispatch touched(touch.finger("18446744073709551615"), 7.0, 8.0)
+  expect finger == touch.finger("18446744073709551615")
+  expect finger_id == "18446744073709551615"
+  expect x == 7.0
+  expect y == 8.0
 
 view
   col gap=8.0 p=16.0

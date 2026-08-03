@@ -212,7 +212,6 @@ component InteractionContract()
     toggled = false
     level = 25.0
     mode = 0
-    choices = ["Alpha option", "Beta option"]
     choice:str? = none
     mouse_presses = 0
     resize_x = 0.0
@@ -281,7 +280,7 @@ component InteractionContract()
         w=200.0
         h=24.0
     radio "Radio" #radio value=1 selected=(mode == 1) -> mode_changed _
-    pick choices choice #pick -> choice_changed _
+    pick ["Alpha option", "Beta option"] choice #pick -> choice_changed _
       with
         hint="Pick"
         w=fill

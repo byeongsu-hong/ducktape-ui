@@ -12,14 +12,11 @@ state
   toggled = true
   level = 40.0
   selected = 0
-  choices = ["One", "Two"]
   choice:str? = none
   search:combo[str] = ["One", "Two"]
   draft = "Draft value"
   notes:editor = "Rendered editor"
   docs:markdown = "# Rendered markdown"
-  items = ["One", "Two"]
-  keys = [1, 2]
   memory_image = rgba(1, 1, bytes(ff 00 ff ff))
   overlay_open = true
   external_active = false
@@ -35,6 +32,13 @@ component Slotted()
     slot
 
 on clicked
+  markdown docs append draft
+  combo search push draft
+  outcome = ok(draft)
+  surface_state = SurfaceState.ready(draft)
+
+on overlay_dismissed
+  overlay_open = false
 
 on checked_changed(next)
   checked = next
@@ -88,7 +92,7 @@ view
     slider level #slider min=0.0 max=100.0 -> level_changed _
     progress level #progress
     radio "Radio" #radio value=1 selected=(selected == 1) -> selected_changed _
-    pick choices choice #pick -> choice_changed _
+    pick ["One", "Two"] choice #pick -> choice_changed _
     combo search choice "Search" #combo -> search_changed _
     rule horizontal #rule
     qr "https://example.com/render" #qr
@@ -121,18 +125,18 @@ view
     scroll #scroll w=fill h=40.0
       col h=80.0
         text "Scroll child"
-    overlay #overlay when=overlay_open
+    overlay #overlay when=overlay_open dismiss=overlay_dismissed
       content
         text "Overlay content"
       layer
         text "Overlay layer"
-    keyed item in keys by=(item + 0) #keyed w=fill gap=2.0
+    keyed item in [1, 2] by=(item + 0) #keyed w=fill gap=2.0
       text item
     lazy draft as cached #lazy
       text cached
     markdown docs #markdown -> link_opened _
     editor #editor <-> notes h=48.0
-    table item in items #table w=fill
+    table item in ["One", "Two"] #table w=fill
       col w=fill
         header
           text "Table header"
@@ -202,7 +206,7 @@ view
         text "Enum child"
       SurfaceState.ready(value)
         text value
-    for item in items
+    for item in ["One", "Two"]
       text item #for-item(item)
       Slotted #repeated(item)
         text item #repeated-text

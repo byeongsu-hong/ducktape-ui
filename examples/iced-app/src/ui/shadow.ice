@@ -22,6 +22,11 @@ on inspect
   blur = value.blur
   equal = value == round_trip
 
+test inspect_shadow
+  dispatch inspect
+  expect default_shadow == shadow.default()
+  expect equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

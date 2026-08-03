@@ -22,6 +22,9 @@ on framework_changed(next)
 on searched_framework_changed(next)
   searched_framework = some(next)
 
+on framework_registered(name)
+  combo combobox_frameworks push name
+
 on otp_changed(next)
   otp = next
 

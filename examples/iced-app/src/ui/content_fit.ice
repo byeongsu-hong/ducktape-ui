@@ -31,6 +31,11 @@ on inspect
   display = scale_down_fit.display
   equal = default_fit == contain_fit
 
+test inspect_content_fit
+  dispatch inspect
+  expect none_fit == fit.none()
+  expect equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

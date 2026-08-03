@@ -21,6 +21,20 @@ component Frame()
   col
     slot
 
+on mount
+  run list_tasks() -> loaded _ | failed _
+
+on loaded(next)
+  tasks = next
+
+on failed(_cause)
+  tasks = []
+
+on select(id, row, column)
+  selected = id
+  row_index = row
+  column_index = column
+
 on focus_component
   task widget focus #outer(selected)/inner/field
 
@@ -41,6 +55,17 @@ on focus_cell
 
 on snap_pane
   task widget snap #workspace/details/list 0.0 1.0
+
+test scoped_widget_operations_behavior
+  dispatch select(2, 0, 0)
+  expect selected == 2
+  dispatch focus_component
+  dispatch focus_default
+  dispatch focus_slot
+  dispatch focus_keyed
+  dispatch focus_header
+  dispatch focus_cell
+  dispatch snap_pane
 
 view
   col

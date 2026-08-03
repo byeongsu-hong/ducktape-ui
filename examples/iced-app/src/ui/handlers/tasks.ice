@@ -92,3 +92,13 @@ on inspect_adjacent
   pane #workspace adjacent tasks right -> pane_observed _
 
 on pane_observed(_name)
+
+on appearance_changed(title, theme, bg, fg, scale)
+  window_title = title
+  app_theme = theme
+  app_background = bg
+  app_text = fg
+  ui_scale = scale
+
+on palette_switched
+  active_palette = AppTheme.app

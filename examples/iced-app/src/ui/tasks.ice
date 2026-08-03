@@ -50,6 +50,20 @@ preset seeded
   boot
     run list_tasks() -> loaded _ | failed _
 
+test workspace_pane_operations
+  dispatch resize_workspace
+  dispatch drop_details
+  dispatch inspect_workspace
+  dispatch close_details
+  dispatch appearance_changed("Renamed", "dark", "#123456", "#abcdef", 1.5)
+  dispatch palette_switched
+  expect child_window == none
+  expect window_title == "Renamed"
+  expect app_theme == "dark"
+  expect app_background == "#123456"
+  expect app_text == "#abcdef"
+  expect ui_scale == 1.5
+
 view
   overlay
     with

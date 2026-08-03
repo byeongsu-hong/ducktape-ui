@@ -324,7 +324,7 @@ fn checks_native_window_screenshot_values_and_routes() {
 
     let error = analyze(&source.replace(
         "    button \"Inspect\" -> inspect",
-        "    lazy sample as cached\n      text cached.debug",
+        "    lazy returned as cached\n      text cached.debug",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E139");
@@ -442,7 +442,8 @@ fn checks_owned_native_debug_timing_boundaries() {
     assert_eq!(error.code, "E101");
     assert!(error.message.contains("debug-span?"));
 
-    let error = analyze(&source.replace("label = \"interaction\"", "label = 1")).unwrap_err();
+    let error =
+        analyze(&source.replace("debug start \"interaction\"", "debug start 1")).unwrap_err();
     assert_eq!(error.code, "E101");
     assert!(error.message.contains("expected `str`"));
 
@@ -637,11 +638,8 @@ fn checks_native_timer_subscription() {
         Type::Bool
     );
 
-    let error = analyze(&source.replace(
-        "every 250ms when auto_refresh -> tick _",
-        "every 250ms when auto_refresh -> tick",
-    ))
-    .unwrap_err();
+    let error =
+        analyze(&source.replace("every 250ms -> tick _", "every 250ms -> tick")).unwrap_err();
     assert_eq!(error.code, "E133");
     assert!(error.message.contains("expects 1 arguments, got 0"));
 
@@ -654,13 +652,14 @@ fn checks_native_timer_subscription() {
         assert_eq!(error.code, "E084");
     }
 
-    let error = analyze(&source.replace("when auto_refresh", "when 1")).unwrap_err();
+    let error = analyze(&source.replace("every 250ms -> tick _", "every 250ms when 1 -> tick _"))
+        .unwrap_err();
     assert_eq!(error.code, "E101");
     assert!(error.message.contains("expected `bool`"));
 
     let error = analyze(&source.replace(
-        "every 250ms when auto_refresh",
-        "every 250ms status=captured when auto_refresh",
+        "every 250ms -> tick _",
+        "every 250ms status=captured -> tick _",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E084");
@@ -686,7 +685,7 @@ fn checks_native_timer_subscription() {
     assert_eq!(error.code, "E142");
     assert!(error.message.contains("must return an optional value"));
 
-    let error = analyze(&source.replace("with=generation", "with=1.5")).unwrap_err();
+    let error = analyze(&source.replace("with=7", "with=1.5")).unwrap_err();
     assert_eq!(error.code, "E129");
     assert!(error.message.contains("context must be hashable"));
 }

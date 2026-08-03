@@ -602,6 +602,31 @@ view
 }
 
 #[test]
+fn init_only_image_handle_state_does_not_warn() {
+    let document = analyze(
+        "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  pixel:image = rgba(1, 1, bytes(ff 00 ff ff))\n  logo = encoded(bytes(50 36 0a 31 20 31 0a 32 35 35 0a ff 00 ff))\n  caption = \"static\"\nview\n  col\n    image pixel\n    image logo\n    text caption\n",
+    )
+    .unwrap();
+    let warnings = document
+        .warnings()
+        .iter()
+        .map(|warning| (warning.code, warning.message.as_str()))
+        .collect::<Vec<_>>();
+    assert!(
+        !warnings
+            .iter()
+            .any(|(_, message)| message.contains("`pixel`") || message.contains("`logo`")),
+        "init-only image handles are the documented storage pattern: {warnings:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|(code, message)| *code == "W003" && message.contains("state `caption`")),
+        "non-image init-only state must still warn: {warnings:?}"
+    );
+}
+
+#[test]
 fn warns_for_state_without_readers_or_writers() {
     let document = analyze(
         "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  read_only = 0\n  write_only = 0\n  healthy = 0\n  unused = 0\non mutate\n  write_only = 1\n  healthy = healthy + 1\nview\n  col\n    text read_only\n    text healthy\n    button \"Mutate\" -> mutate\n",

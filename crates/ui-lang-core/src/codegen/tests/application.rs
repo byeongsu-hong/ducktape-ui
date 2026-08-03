@@ -216,9 +216,9 @@ fn lowers_every_native_border_and_radius_operation() {
         "::iced::border::Radius::from(10u8)",
         "::iced::border::Radius::from(11u32)",
         "::iced::border::Radius::from(((-3)) as i32)",
-        "<u8>::try_from((self.unsigned_input) as i64)",
-        "<u32>::try_from((self.unsigned_input) as i64)",
-        "<i32>::try_from((self.signed_input) as i64)",
+        "<u8>::try_from((unsigned_input) as i64)",
+        "<u32>::try_from((unsigned_input) as i64)",
+        "<i32>::try_from((signed_input) as i64)",
         "crate::backend::radius_round_trip(self.built_radius)",
         "self.uniform_radius * (2.0) as f32",
         "::std::convert::Into::<[f32; 4]>::into(self.built_radius)",
@@ -552,8 +552,8 @@ fn lowers_every_native_window_screenshot_operation() {
     let generated = compile(source, "window_screenshot.ice").unwrap();
     for expected in [
         "::iced::window::Screenshot::new(",
-        "crate::backend::screenshot_round_trip(self.sample.clone())",
-        "::ui_lang_runtime::crop_screenshot(&(self.sample), crate::backend::screenshot_crop_region()).ok()",
+        "crate::backend::screenshot_round_trip(sample.clone()",
+        "::ui_lang_runtime::crop_screenshot(&(sample), crate::backend::screenshot_crop_region()).ok()",
         "::iced::window::screenshot(__window).map(move |value| __NativeWindowScreenshotMessage::NativeCaptured(value))",
         "::iced::window::screenshot::CropError::Zero",
         "::iced::window::screenshot::CropError::OutOfBounds",
@@ -581,8 +581,8 @@ fn lowers_every_native_length_operation() {
         "::iced::Length::from((64.0) as f32)",
         "::iced::Length::from(::iced::Pixels((72.0) as f32))",
         "::iced::Length::from(96u32)",
-        "<u16>::try_from(self.portion_input)",
-        "<u32>::try_from(self.units_input)",
+        "<u16>::try_from(3)",
+        "<u32>::try_from(96)",
         ".fluid()",
         ".enclose(",
         ".fill_factor() as i64",
@@ -609,9 +609,9 @@ fn lowers_every_native_color_operation() {
         "::iced::Color::from_rgba(((self.red) as f32).max(0.0).min(1.0), ((self.green) as f32).max(0.0).min(1.0), ((self.blue) as f32).max(0.0).min(1.0), ((self.alpha) as f32).max(0.0).min(1.0))",
         "::iced::Color::from_rgb8(12u8, 34u8, 56u8)",
         "::iced::Color::from_rgba8(12u8, 34u8, 56u8,",
-        "<u8>::try_from(self.red8)",
-        "<u8>::try_from(self.green8)",
-        "<u8>::try_from(self.blue8)",
+        "<u8>::try_from(red8)",
+        "<u8>::try_from(green8)",
+        "<u8>::try_from(blue8)",
         "if (0.0..=1.0).contains(&__alpha)",
         "::iced::Color::from_linear_rgba(",
         "::iced::Color::from([",
@@ -675,10 +675,10 @@ fn lowers_native_debug_spans_and_timed_values() {
     let generated = compile(source, "debug_timing.ice").unwrap();
     for expected in [
         "::std::option::Option<::iced::debug::Span>",
-        "::iced::debug::time(self.label.to_owned())",
+        "::iced::debug::time(\"interaction\".to_owned())",
         "__span.finish()",
         "(self.timer).is_some()",
-        "::iced::debug::time_with(\"compute\".to_owned(), || (self.value + 1))",
+        "::iced::debug::time_with(\"compute\".to_owned(), || (value + 1))",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
@@ -691,7 +691,6 @@ fn lowers_native_image_allocation_and_retention() {
     for expected in [
         "::iced::widget::image::allocate(self.handle.clone())",
         "::iced::widget::image::Allocation",
-        "::std::sync::Weak<::iced::advanced::image::Memory>",
         ".handle().clone()",
         ".size()",
         ".downgrade()",

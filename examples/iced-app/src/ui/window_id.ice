@@ -20,6 +20,13 @@ on inspect
   values_differ = first != second
   values_ordered = first < second
 
+test inspect_window_id
+  dispatch inspect
+  expect returned == first
+  expect first_display == first.display
+  expect values_differ
+  expect values_ordered
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

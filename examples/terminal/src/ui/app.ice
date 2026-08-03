@@ -1,6 +1,6 @@
 app TerminalWorkspace
   title "Ice Terminal"
-  palette active_palette
+  palette AppTheme.terminal
   id "dev.ducktape.ice.terminal"
   text-size 14
   antialiasing true
@@ -17,7 +17,6 @@ font strong family=sans weight=semibold
 font code family=mono
 
 state
-  active_palette:palette[AppTheme] = AppTheme.terminal
   environment:Environment = detect_environment()
   session:Session = idle_session()
   kind = "shell"
@@ -35,6 +34,7 @@ derived
   has_error = !empty(error)
 
 on mount
+  environment = detect_environment()
   directory = environment.directory
 
 on kind_changed(next)

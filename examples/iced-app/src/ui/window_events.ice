@@ -22,8 +22,10 @@ on close_requested(_id)
 
 on focused(id)
   last_window = some(id)
+  listen_frames = true
 
 on unfocused(_id)
+  listen_frames = false
 
 on file_hovered(_id, _path)
 
@@ -44,6 +46,10 @@ subscribe
   window file-hovered with-id -> file_hovered _ _
   window file-dropped with-id -> file_dropped _ _
   window files-hovered-left with-id -> files_hovered_left _
+
+test boot_defaults
+  expect listen_frames
+  expect last_window == none
 
 view
   text "Window events compile fixture"

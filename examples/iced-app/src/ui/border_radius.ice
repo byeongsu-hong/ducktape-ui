@@ -46,10 +46,10 @@ state
   bottom_right_value = 0.0
   bottom_left_value = 0.0
   radii_equal = false
-  unsigned_input = 12
-  signed_input:i64 = -4
 
 on inspect
+  let unsigned_input = 12
+  let signed_input = -4
   default_border = border.default()
   constructed_border = border.new(color.rgba(0.1, 0.2, 0.3, 0.4), pixels(2.0), radius(3.0))
   color_border = border.color(color.black())
@@ -101,6 +101,49 @@ on inspect
   bottom_right_value = built_radius.bottom_right
   bottom_left_value = built_radius.bottom_left
   radii_equal = built_radius == returned_radius
+
+test inspect_border_radius
+  dispatch inspect
+  expect default_border == border.new(color.transparent(), pixels(0.0), radius(0.0))
+  expect constructed_border == border.new(color.rgba(0.1, 0.2, 0.3, 0.4), pixels(2.0), radius(3.0))
+  expect color_border == border.new(color.black(), pixels(0.0), radius(0.0))
+  expect width_border == border.new(color.transparent(), pixels(4.0), radius(0.0))
+  expect rounded_border == border.new(color.transparent(), pixels(0.0), radius(5.0))
+  expect built_border == border.new(color.white(), pixels(6.0), radius(7.0))
+  expect returned_border == built_border
+  expect border_color == color.white()
+  expect border_width == 6.0
+  expect border_radius == radius(7.0)
+  expect borders_equal
+  expect default_radius == radius(0.0)
+  expect uniform_radius == radius(2.0)
+  expect new_radius == radius(3.0)
+  expect top_left_radius == radius.with_top_left(default_radius, 1.0)
+  expect top_right_radius == radius.with_top_right(default_radius, 2.0)
+  expect bottom_right_radius == radius.with_bottom_right(default_radius, 3.0)
+  expect bottom_left_radius == radius.with_bottom_left(default_radius, 4.0)
+  expect top_radius == radius.with_top(default_radius, 5.0)
+  expect bottom_radius == radius.with_bottom(default_radius, 6.0)
+  expect left_radius == radius.with_left(default_radius, 7.0)
+  expect right_radius == radius.with_right(default_radius, 8.0)
+  expect f64_radius == radius(9.0)
+  expect u8_radius == radius(10.0)
+  expect u32_radius == radius(11.0)
+  expect i32_radius == radius(-3.0)
+  expect maybe_u8_radius == some(radius(12.0))
+  expect maybe_u32_radius == some(radius(12.0))
+  expect maybe_i32_radius == some(radius(-4.0))
+  expect rejected_u8_radius == none
+  expect rejected_u32_radius == none
+  expect rejected_i32_radius == none
+  expect returned_radius == built_radius
+  expect scaled_radius == radius(4.0)
+  expect radius_values == [7.0, 8.0, 8.0, 7.0]
+  expect top_left_value == 7.0
+  expect top_right_value == 8.0
+  expect bottom_right_value == 8.0
+  expect bottom_left_value == 7.0
+  expect radii_equal
 
 view
   col gap=8.0 p=16.0

@@ -1,8 +1,8 @@
 app Music
   title "Music"
-  theme app_theme
-  bg app_background
-  fg app_text
+  theme "app"
+  bg "#00000000"
+  fg "#21191d"
   id "dev.ducktape.ice.music"
   font "../../../showcase/assets/fonts/Geist-Regular.ttf"
   font "../../../showcase/assets/fonts/Geist-Bold.ttf"

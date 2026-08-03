@@ -4,8 +4,5 @@ app NativeOverlay
 
 use "themes/monochrome.ice"
 
-state
-  index = 42.0
-
 view
-  extern native_overlay(index)
+  extern native_overlay(42.0)

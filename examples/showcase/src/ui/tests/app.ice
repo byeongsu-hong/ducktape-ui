@@ -71,7 +71,7 @@ test generated_control_accessibility
           checked=accepted
       slider volume #slider min=0.0 max=100.0 -> volume_changed _
       progress volume #progress
-      pick native_select_frameworks native_select_framework #pick -> framework_changed _
+      pick ["Ice", "iced", "Rust"] native_select_framework #pick -> framework_changed _
         with
           hint="Framework"
       combo combobox_frameworks searched_framework "Framework search" #combo -> searched_framework_changed _
@@ -108,6 +108,7 @@ test generated_control_accessibility
   expect a11y pick value "iced"
   expect a11y pick action focus
   dispatch searched_framework_changed("Rust")
+  dispatch framework_registered("wgpu-next")
   expect a11y combo role "combo-box"
   expect a11y combo name "Framework search"
   expect a11y combo value "Rust"

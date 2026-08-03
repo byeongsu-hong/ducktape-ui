@@ -21,11 +21,6 @@ state
   inverted:color = color.default()
   scaled:color = color.default()
   round_trip:color = color.default()
-  red8 = 12
-  green8 = 34
-  blue8 = 56
-  rgba8_alpha = 0.5
-  bad8 = 256
   dynamic_rgb8:color? = none
   dynamic_rgba8:color? = none
   dynamic_invalid:color? = none
@@ -49,6 +44,11 @@ state
   equal = false
 
 on inspect
+  let red8 = 12
+  let green8 = 34
+  let blue8 = 56
+  let rgba8_alpha = 0.5
+  let bad8 = 256
   default_color = color.default()
   black = color.black()
   white = color.white()
@@ -86,6 +86,33 @@ on inspect
   readable = color.readable(white, black)
   display = rgba8.display
   equal = rgb == from3
+
+test inspect_color
+  dispatch inspect
+  dispatch inspect
+  expect default_color == transparent
+  expect transparent == color.rgba(0.0, 0.0, 0.0, 0.0)
+  expect dynamic == rgba
+  expect linear == color.linear_rgba(0.1, 0.2, 0.3, 0.4)
+  expect from4 == rgba
+  expect inverse == color.rgb(0.75, 0.5, 0.25)
+  expect inverted == inverse
+  expect scaled == color.rgba(0.1, 0.2, 0.3, 0.4)
+  expect round_trip == rgba8
+  expect dynamic_rgb8 == some(rgb8)
+  expect dynamic_rgba8 == some(rgba8)
+  expect dynamic_invalid == none
+  expect parsed3 == color.parse("#ABC")
+  expect parsed4 == color.parse("#ABCD")
+  expect parsed6 == some(rgb8)
+  expect parsed == color.parse("#0C223880")
+  expect invalid == none
+  expect invalid_digits == none
+  expect rgba8_values == [12, 34, 56, 128]
+  expect linear_values == rgba.linear
+  expect field_luminance == luminance
+  expect readable
+  expect equal
 
 view
   col gap=8.0 p=16.0

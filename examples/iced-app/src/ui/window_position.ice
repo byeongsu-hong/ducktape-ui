@@ -30,6 +30,11 @@ on inspect
   specific_kind = returned.kind
   responsive_kind = responsive.kind
 
+test inspect_window_position
+  dispatch inspect
+  expect returned_point == some(point(24.0, -12.0))
+  expect missing_point == none
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

@@ -23,7 +23,11 @@ subscribe
   event filter=event_label status=any -> labeled _
   event with-id status=ignored -> identified _ _
   event raw status=captured -> received _
-  event raw with-id -> identified _ _
+  event raw with-id status=captured -> identified _ _
+
+test boot_defaults
+  expect last == "none"
+  expect last_window == none
 
 view
   text last

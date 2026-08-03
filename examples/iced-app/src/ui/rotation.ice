@@ -29,6 +29,12 @@ on inspect
   kind = solid_rotation.kind
   equal = default_rotation == rotation.floating(radians(0.0))
 
+test inspect_rotation
+  dispatch inspect
+  expect round_trip == rotation.from(0.2)
+  expect applied_size == rotation.apply(solid_rotation, size(10.0, 20.0))
+  expect equal
+
 view
   col gap=8.0 p=16.0
     button "Inspect" -> inspect

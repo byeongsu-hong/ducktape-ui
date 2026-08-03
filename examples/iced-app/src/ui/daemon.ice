@@ -40,6 +40,9 @@ component AgentWindow(id:window-id)
     button "Quit" style=danger -> emit(quit)
 
 view
-  AgentWindow id=window
-    events
-      quit -> quit
+  col
+    if dashboard == some(window)
+      text "Dashboard window"
+    AgentWindow id=window
+      events
+        quit -> quit
