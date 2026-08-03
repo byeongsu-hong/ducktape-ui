@@ -18,7 +18,7 @@ fn codegen_semantic_backdoors_are_an_explicit_reviewed_inventory() {
     assert_eq!(
         actual,
         EXPECTED_INVENTORY.trim_end(),
-        "the selected codegen AST/checker lexical boundary inventory changed; occurrence growth is forbidden and every fingerprint change requires review"
+        "the selected codegen/hir AST/checker lexical boundary inventory changed; occurrence growth is forbidden and every fingerprint change requires review"
     );
 }
 
@@ -315,7 +315,7 @@ fn production_filter_excludes_both_test_module_shapes() {
 }
 
 fn production_codegen_sources(manifest: &Path) -> Vec<SourceFile> {
-    let mut paths = vec![manifest.join("src/codegen.rs")];
+    let mut paths = vec![manifest.join("src/codegen.rs"), manifest.join("src/hir.rs")];
     collect_rust_files(&manifest.join("src/codegen"), &mut paths);
     paths.retain(|path| {
         path.strip_prefix(manifest)
