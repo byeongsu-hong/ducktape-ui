@@ -263,8 +263,8 @@ view
                       close
                     text detail_mode x=16.0 y=136.0 color=fg size=14.0 font=default
                     text hits x=112.0 y=136.0 color=primary size=14.0 font=default
-                    image "examples/iced-app/assets/checker.ppm" x=256.0 y=16.0 w=48.0 h=48.0 filter=nearest opacity=0.9 snap=true r=6.0
-                    svg "examples/iced-app/assets/ice.svg" x=312.0 y=16.0 w=48.0 h=48.0 color=primary opacity=0.9
+                    image "../../assets/checker.ppm" x=256.0 y=16.0 w=48.0 h=48.0 filter=nearest opacity=0.9 snap=true r=6.0
+                    svg "../../assets/ice.svg" x=312.0 y=16.0 w=48.0 h=48.0 color=primary opacity=0.9
                   shader status_shader(1.0) w=fill h=32.0 -> shader_hovered _
                   row wrap gap=8.0
                     radio "Summary" -> detail_mode_changed _

@@ -121,6 +121,15 @@ fn has_windows_drive_prefix(path: &str) -> bool {
     bytes.get(1) == Some(&b':') && bytes[0].is_ascii_alphabetic()
 }
 
+/// Reports whether an asset literal is a portable `/` path resolved against the
+/// directory of the Ice source that declares it.
+fn is_relative_asset_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains('\\')
+        && !has_windows_drive_prefix(path)
+        && !std::path::Path::new(path).is_absolute()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceRange {
     pub path: Option<PathBuf>,

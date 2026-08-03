@@ -412,7 +412,11 @@ fn render_resolved_media(
     } else {
         ValueMode::Owned
     };
-    let source = resolved_expr_use_code(program, media.source, env, source_mode)?;
+    let source = if media.source_type == Type::Str && matches!(source_mode, ValueMode::Owned) {
+        resolved_asset_path_code(program, media.source, env)?
+    } else {
+        resolved_expr_use_code(program, media.source, env, source_mode)?
+    };
     let mut code = match media.kind {
         ResolvedMediaKind::Image => format!("::iced::widget::image({source})"),
         ResolvedMediaKind::Viewer if media.source_type == Type::Str => format!(

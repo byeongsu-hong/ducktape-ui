@@ -148,7 +148,7 @@ view
     themer alternate_panel(true) #themer
     shader status_shader(1.0) #shader w=fill h=24.0 -> shader_changed _
     image memory_image #image w=32.0 h=32.0
-    svg "examples/iced-app/assets/ice.svg" #svg w=32.0 h=32.0
+    svg "../../assets/ice.svg" #svg w=32.0 h=32.0
     viewer memory_image #viewer w=64.0 h=48.0
     tooltip #tooltip delay=0
       text "Tooltip content"
