@@ -6,7 +6,6 @@ state
   notifications = true
   volume = 58.0
   density = "comfortable"
-  native_select_frameworks = ["Ice", "iced", "Rust"]
   native_select_framework:str? = none
   combobox_frameworks:combo[str] = ["Ice", "iced", "Rust", "wgpu"]
   searched_framework:str? = none

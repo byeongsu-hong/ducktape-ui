@@ -599,3 +599,10 @@ component Dialog.Actions()
       gap=8.0
       align=end
     slot
+
+test unmounted_component_coverage
+  mount
+    col gap=8.0
+      Avatar.Agent initials="AI"
+      Typography content="Body copy"
+      Typography.Machine content="MONO-7"

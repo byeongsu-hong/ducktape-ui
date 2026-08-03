@@ -9,9 +9,6 @@ enum MusicSection
   search
 
 state
-  app_theme = "app"
-  app_background = "#00000000"
-  app_text = "#21191d"
   section:MusicSection = MusicSection.home
   query = ""
   loading = false

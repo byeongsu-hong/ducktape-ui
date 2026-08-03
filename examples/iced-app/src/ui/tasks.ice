@@ -50,6 +50,12 @@ preset seeded
   boot
     run list_tasks() -> loaded _ | failed _
 
+test workspace_pane_operations
+  dispatch resize_workspace
+  dispatch drop_details
+  dispatch inspect_workspace
+  dispatch close_details
+
 view
   overlay
     with
