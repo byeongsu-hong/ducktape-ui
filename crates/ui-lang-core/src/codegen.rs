@@ -87,9 +87,10 @@ fn decode_source_path(encoded: &str) -> Option<String> {
 
 /// Defers a relative asset literal until [`generate`] knows the Ice source path.
 ///
-/// Runtime handles resolve paths against the process working directory, which
-/// is not where the Ice source lives, so the literal is rewritten to sit beside
-/// its `.ice` file exactly like `font` and `icon-rgba` assets already do.
+/// The marker expands to a build-time path literal beside the `.ice` file,
+/// which `include_bytes!` then embeds exactly like `font` and `icon-rgba`
+/// assets already do, so neither the working directory nor the source tree
+/// decides what a compiled binary loads.
 pub(in crate::codegen) fn asset_path_marker(path: &str) -> String {
     format!(
         "{ASSET_PATH_MARKER}{}{ASSET_PATH_MARKER_END}",

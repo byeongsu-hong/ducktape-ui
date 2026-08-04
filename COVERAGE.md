@@ -43,7 +43,8 @@ an overlay close returns to disk, byte-identical content is reused, and
 transitive reverse edges are retained. They also prove notification-free import
 edits, same-length timestamp-preserving and atomic replacements, source and
 asset symlink retargeting, stable overlay close across a root-symlink retarget,
-font deletion/recreation, and invalid icon-byte changes are observed.
+font deletion/recreation, media-file edits, and invalid icon-byte changes are
+observed.
 Watcher-validated source batches reuse the unchanged parsed closure. A focused
 fixture asserts one leaf edit loads, hashes, and import-scans exactly one file,
 checks only its affected root, and leaves an independent root as a cache hit.
@@ -194,7 +195,8 @@ byte equality plus a zero JSON diff before a tag can publish. This is tooling
 evidence over the existing Core contract, not a new syntax or LSP capability.
 
 `cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
-the selected Ice import graph, embedded fonts and icons, participating project
+the selected Ice import graph, embedded fonts, icons, and media files,
+participating project
 Rust packages, Cargo manifests and lock/config/toolchain files, rustc dep-info,
 and build-script `rerun-if-changed` inputs. Native notification tests prove that
 a source edit wakes the runner while an idle wait performs no snapshot poll.
@@ -698,7 +700,7 @@ public behavior has direct documented Ice syntax and tests.
 | `box` | native | native one-child container with ID, complete concrete layout API, every concrete Style field including linear background, text, per-corner border, shadow and pixel snap, plus typed theme-aware runtime callbacks covering the default Theme's advanced classes; `border-dash=` is composed rather than native — `iced::Border` has no dash style, so it lowers to a radius-tracing canvas stroke stacked over the surface in place of the solid border |
 | `float` | native | one child, positive scale, all original-bounds and viewport geometry exposed as scoped f64 translation inputs, and every concrete Style field through checked shadow color/offset/blur and per-corner shadow radius |
 | `grid` | native | dynamic children, pixel spacing/width, fixed columns, CSS-like minimum-cell wrapping, native maximum-cell wrapping, and aspect-ratio or all `Length` height modes |
-| `image` | native | path, encoded-memory and RGBA handles; all four iced length variants, fit, filter, floating/solid rotation, opacity, scale, expand, per-corner radius and crop cover the complete concrete widget API |
+| `image` | native | path, encoded-memory and RGBA handles; a literal relative path is a checked, tracked, compile-time asset embedded into the binary, while absolute literals and computed paths load from the process filesystem; all four iced length variants, fit, filter, floating/solid rotation, opacity, scale, expand, per-corner radius and crop cover the complete concrete widget API |
 | `image::Viewer` | native | path or memory/RGBA handle, all length and fit modes, both filters, padding, minimum/maximum scale and scale step cover the complete public builder API |
 | `keyed` | native | typed list template with bool/i64/f64 identity keys, automatic keyed child scopes, spacing/per-side padding/all `Length` bounds, max width and alignment |
 | `lazy` | native | hash-keyed rebuilds with bool/i64/str, `Hash + Clone` extern values, recursive list/optional dependencies, a dependency-only scope and statically enforced owned `Element<'static>` subtrees |
@@ -720,7 +722,7 @@ public behavior has direct documented Ice syntax and tests.
 | `slider` | native | direct checked ID; native f64 or arbitrary typed extern numeric values with Rust-verified iced Slider bounds; complete default/normal+shift step, sizing and change/release behavior; every concrete Style field across active/hovered/dragged including solid/linear rail and handle backgrounds, border/per-corner radius and circle/rectangle handles; typed theme/status-aware runtime callbacks cover advanced classes |
 | `space` | native | optional fixed/fill/fill-portion/shrink width and height cover the complete widget API |
 | `stack` | native | ordered children, all `Length` widths/heights, clipping and `push_under` base-layer behavior via `under=N` |
-| `svg` | native | native path or UTF-8/raw byte memory source, all four iced length variants, fit, rotation, opacity, complete idle/hovered color style, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
+| `svg` | native | native path or UTF-8/raw byte memory source, with literal relative paths checked, tracked, and embedded exactly like `image`; all four iced length variants, fit, rotation, opacity, complete idle/hovered color style, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `table` | native | typed cloned rows, arbitrary header/cell subtrees, automatic row/column identity scopes, all table width/padding/separator setters and all column width/alignment setters |
 | `text` | native | direct checked ID on text and rich text; untracked plain text supports mouse selection across wrapped lines with platform copy/select-all shortcuts; native string/numeric text plus structured rich spans; complete Text/Rich bounds, size, relative/absolute line height, font, alignment, wrapping and color, plus Text shaping and Rich str link events; every concrete Span field including solid/linear highlight background, border/per-corner radius/padding/underline/strike; typed theme-aware runtime callbacks cover the default Theme's advanced classes; `tracking=` is composed rather than native — iced carries no letter spacing, so a non-selectable tracked run lowers to one text widget per grapheme in a spaced row while retaining the complete accessibility value |
 | `text_editor` | native | app-owned direct or explicit `bind` component-prop content, generated or typed adapter action application, pure cursor/line/selection inspection, every concrete builder setter, all five built-in themes, typed arbitrary native Highlighter adapters, complete native key bindings with custom routed payloads, every concrete Style field across all statuses, and typed Theme/Status callbacks covering advanced classes |

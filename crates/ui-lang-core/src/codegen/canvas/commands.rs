@@ -160,11 +160,16 @@ pub(in crate::codegen) fn canvas_commands_code(
                 source_type,
                 ..
             } => {
-                let handle = if *source_type == Type::Str {
-                    let path = resolved_asset_path_code(program, *source, env)?;
-                    format!("::iced::widget::image::Handle::from_path({path})")
-                } else {
-                    resolved_expr_use_code(program, *source, env, ValueMode::Owned)?
+                let embedded = (*source_type == Type::Str)
+                    .then(|| embedded_asset_bytes_code(program, *source))
+                    .flatten();
+                let handle = match embedded {
+                    Some(bytes) => format!("::iced::widget::image::Handle::from_bytes({bytes})"),
+                    None if *source_type == Type::Str => format!(
+                        "::iced::widget::image::Handle::from_path({})",
+                        resolved_expr_use_code(program, *source, env, ValueMode::Owned)?
+                    ),
+                    None => resolved_expr_use_code(program, *source, env, ValueMode::Owned)?,
                 };
                 let filter = match filter {
                     ImageFilter::Linear => "Linear",
@@ -195,17 +200,24 @@ pub(in crate::codegen) fn canvas_commands_code(
                 source_type,
                 ..
             } => {
-                let source = if *memory {
-                    resolved_expr_use_code(program, *source, env, ValueMode::Owned)?
-                } else {
-                    resolved_asset_path_code(program, *source, env)?
-                };
-                let handle = if *memory && *source_type == Type::Bytes {
-                    format!("::iced::advanced::svg::Handle::from_memory({source})")
-                } else if *memory {
-                    format!("::iced::advanced::svg::Handle::from_memory(({source}).into_bytes())")
-                } else {
-                    format!("::iced::advanced::svg::Handle::from_path({source})")
+                let embedded = (!*memory)
+                    .then(|| embedded_asset_bytes_code(program, *source))
+                    .flatten();
+                let handle = match embedded {
+                    Some(bytes) => format!("::iced::advanced::svg::Handle::from_memory({bytes})"),
+                    None => {
+                        let source =
+                            resolved_expr_use_code(program, *source, env, ValueMode::Owned)?;
+                        if *memory && *source_type == Type::Bytes {
+                            format!("::iced::advanced::svg::Handle::from_memory({source})")
+                        } else if *memory {
+                            format!(
+                                "::iced::advanced::svg::Handle::from_memory(({source}).into_bytes())"
+                            )
+                        } else {
+                            format!("::iced::advanced::svg::Handle::from_path({source})")
+                        }
+                    }
                 };
                 let color = color.as_ref().map_or_else(
                     || "::std::option::Option::None".into(),

@@ -188,7 +188,9 @@ view
       text "Tip"
 "#;
     let generated = compile(source, "media.ice").unwrap();
-    assert!(generated.contains("::iced::widget::image(\"photo.ppm\".to_owned())"));
+    assert!(generated.contains(
+        "::iced::widget::image(::iced::widget::image::Handle::from_bytes(include_bytes!(\"photo.ppm\").as_slice()))"
+    ));
     assert!(
         generated.contains(".rotation(::iced::Rotation::Solid(::iced::Radians((0.5) as f32)))")
     );
@@ -205,10 +207,14 @@ view
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
-    assert!(generated.contains("::iced::widget::image::viewer(::iced::widget::image::Handle::from_path(\"photo.ppm\".to_owned()))"));
+    assert!(generated.contains(
+        "::iced::widget::image::viewer(::iced::widget::image::Handle::from_bytes(include_bytes!(\"photo.ppm\").as_slice()))"
+    ));
     assert!(generated.contains(".crop(::iced::Rectangle { x: (1).clamp(0, u32::MAX as i64) as u32, y: (2).clamp(0, u32::MAX as i64) as u32, width: (30).clamp(0, u32::MAX as i64) as u32, height: (40).clamp(0, u32::MAX as i64) as u32 })"));
     assert!(generated.contains(".filter_method(::iced::widget::image::FilterMethod::Nearest)"));
-    assert!(generated.contains("::iced::widget::svg(\"icon.svg\".to_owned())"));
+    assert!(generated.contains(
+        "::iced::widget::svg(::iced::widget::svg::Handle::from_memory(include_bytes!(\"icon.svg\").as_slice()))"
+    ));
     assert!(generated.contains("svg::Handle::from_memory((\"<svg/>\").as_bytes().to_vec())"));
     assert!(generated.contains(
         "svg::Handle::from_memory(::std::vec![0x3cu8, 0x73u8, 0x76u8, 0x67u8, 0x2fu8, 0x3eu8])"
@@ -324,7 +330,7 @@ view
 }
 
 #[test]
-fn resolves_relative_media_paths_against_the_ice_source_directory() {
+fn embeds_relative_media_files_from_the_ice_source_directory() {
     let source = r#"app Assets
 theme contract AppTheme
   bg
@@ -344,7 +350,9 @@ view
     image dynamic_path
     image "/opt/share/photo.ppm"
     viewer "assets/photo.ppm"
+    viewer "/opt/share/photo.ppm"
     svg "assets/icon.svg"
+    svg "/opt/share/icon.svg"
     canvas w=fill h=64.0
       image "assets/photo.ppm" x=0.0 y=0.0 w=16.0 h=16.0
       svg "assets/icon.svg" x=16.0 y=0.0 w=16.0 h=16.0
@@ -352,15 +360,22 @@ view
 
     let generated = compile(source, "src/ui/assets.ice").unwrap();
     for expected in [
-        "::iced::widget::image(\"src/ui/assets/photo.ppm\".to_owned())",
-        "::iced::widget::image::viewer(::iced::widget::image::Handle::from_path(\"src/ui/assets/photo.ppm\".to_owned()))",
-        "::iced::widget::svg(\"src/ui/assets/icon.svg\".to_owned())",
-        "::iced::widget::image::Handle::from_path(\"src/ui/assets/photo.ppm\".to_owned())",
-        "::iced::advanced::svg::Handle::from_path(\"src/ui/assets/icon.svg\".to_owned())",
+        "::iced::widget::image(::iced::widget::image::Handle::from_bytes(include_bytes!(\"src/ui/assets/photo.ppm\").as_slice()))",
+        "::iced::widget::image::viewer(::iced::widget::image::Handle::from_bytes(include_bytes!(\"src/ui/assets/photo.ppm\").as_slice()))",
+        "::iced::widget::svg(::iced::widget::svg::Handle::from_memory(include_bytes!(\"src/ui/assets/icon.svg\").as_slice()))",
+        "::iced::widget::image::Handle::from_bytes(include_bytes!(\"src/ui/assets/photo.ppm\").as_slice())",
+        "::iced::advanced::svg::Handle::from_memory(include_bytes!(\"src/ui/assets/icon.svg\").as_slice())",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
-    assert!(generated.contains("::iced::widget::image(self.dynamic_path.to_owned())"));
-    assert!(generated.contains("::iced::widget::image(\"/opt/share/photo.ppm\".to_owned())"));
+    for runtime in [
+        "::iced::widget::image(self.dynamic_path.to_owned())",
+        "::iced::widget::image(\"/opt/share/photo.ppm\".to_owned())",
+        "::iced::widget::image::viewer(::iced::widget::image::Handle::from_path(\"/opt/share/photo.ppm\".to_owned()))",
+        "::iced::widget::svg(\"/opt/share/icon.svg\".to_owned())",
+    ] {
+        assert!(generated.contains(runtime), "missing {runtime}");
+    }
     assert!(!generated.contains("__ICE_ASSET_PATH_"));
+    assert!(!generated.contains("from_path(\"src/ui/assets"));
 }

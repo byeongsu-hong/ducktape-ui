@@ -412,13 +412,24 @@ fn render_resolved_media(
     } else {
         ValueMode::Owned
     };
-    let source = if media.source_type == Type::Str && matches!(source_mode, ValueMode::Owned) {
-        resolved_asset_path_code(program, media.source, env)?
+    let embedded = if media.source_type == Type::Str && matches!(source_mode, ValueMode::Owned) {
+        embedded_asset_bytes_code(program, media.source)
     } else {
-        resolved_expr_use_code(program, media.source, env, source_mode)?
+        None
+    };
+    let is_embedded = embedded.is_some();
+    let source = match embedded {
+        Some(bytes) => bytes,
+        None => resolved_expr_use_code(program, media.source, env, source_mode)?,
     };
     let mut code = match media.kind {
+        ResolvedMediaKind::Image if is_embedded => {
+            format!("::iced::widget::image(::iced::widget::image::Handle::from_bytes({source}))")
+        }
         ResolvedMediaKind::Image => format!("::iced::widget::image({source})"),
+        ResolvedMediaKind::Viewer if is_embedded => format!(
+            "::iced::widget::image::viewer(::iced::widget::image::Handle::from_bytes({source}))"
+        ),
         ResolvedMediaKind::Viewer if media.source_type == Type::Str => format!(
             "::iced::widget::image::viewer(::iced::widget::image::Handle::from_path({source}))"
         ),
@@ -429,6 +440,9 @@ fn render_resolved_media(
         ResolvedMediaKind::Svg if options.svg_memory => format!(
             "::iced::widget::svg(::iced::widget::svg::Handle::from_memory(({source}).as_bytes().to_vec()))"
         ),
+        ResolvedMediaKind::Svg if is_embedded => {
+            format!("::iced::widget::svg(::iced::widget::svg::Handle::from_memory({source}))")
+        }
         ResolvedMediaKind::Svg => format!("::iced::widget::svg({source})"),
     };
     append_resolved_media_dimensions(&mut code, [&options.width, &options.height], program, env)?;
