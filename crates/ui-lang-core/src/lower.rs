@@ -635,12 +635,11 @@ fn resolved_subscription_supports_window_id(source: &CheckedSubscriptionSource) 
         )
 }
 
-/// A view route addresses its own component's handlers, or the app's when it
-/// sits in a `lazy` body, which drops the component context the checker
-/// resolves against.
+/// A view route addresses its own component's handlers; app and test views
+/// address app handlers.
 fn route_handler_owner_is_reachable(owner: HandlerOwner, scope: CheckedViewScope) -> bool {
     match (owner, scope) {
-        (HandlerOwner::App, _) => true,
+        (HandlerOwner::App, CheckedViewScope::App | CheckedViewScope::Test(_)) => true,
         (HandlerOwner::Component(handler), CheckedViewScope::Component(view)) => handler == view,
         _ => false,
     }
@@ -3432,6 +3431,16 @@ impl LoweredProgram {
 
     pub(crate) fn components(&self) -> &[ComponentContract] {
         &self.components
+    }
+
+    pub(crate) fn component_event_names<'a>(
+        &'a self,
+        component: &'a str,
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        self.components
+            .iter()
+            .filter(move |contract| contract.name == component)
+            .flat_map(|contract| contract.events.iter().map(|event| event.name.as_str()))
     }
 
     pub(crate) fn component(&self, id: ComponentId) -> &ComponentContract {

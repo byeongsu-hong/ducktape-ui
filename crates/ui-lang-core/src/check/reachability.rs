@@ -30,12 +30,16 @@ pub(in crate::check) fn reachable_handlers(
         .map(|handler| handler.name.as_str())
         .collect::<HashSet<_>>();
     let mut app = HashSet::new();
-    let mut queue = VecDeque::new();
+    let mut view_routes = Vec::new();
 
-    collect_view_routes(&document.view, &mut queue);
+    collect_view_routes(&document.view, &mut view_routes);
     for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
-        collect_view_routes(mount, &mut queue);
+        collect_view_routes(mount, &mut view_routes);
     }
+    let mut queue: VecDeque<&str> = view_routes
+        .iter()
+        .map(|route| route.handler.as_str())
+        .collect();
     for subscription in &document.subscriptions {
         queue.push_back(subscription.route.handler.as_str());
     }
@@ -77,8 +81,9 @@ pub(in crate::check) fn reachable_handlers(
             .map(|handler| handler.name.as_str())
             .collect::<HashSet<_>>();
         let mut reachable = HashSet::new();
-        let mut queue = VecDeque::new();
-        collect_view_routes(&component.root, &mut queue);
+        let mut routes = Vec::new();
+        collect_view_routes(&component.root, &mut routes);
+        let mut queue: VecDeque<&str> = routes.iter().map(|route| route.handler.as_str()).collect();
         while let Some(name) = queue.pop_front() {
             if !names.contains(name) || !reachable.insert(name.to_owned()) {
                 continue;
@@ -207,22 +212,22 @@ pub(in crate::check) fn collect_statement_routes<'a>(
     }
 }
 
-fn push_route<'a>(route: Option<&'a Route>, output: &mut VecDeque<&'a str>) {
+fn push_route<'a>(route: Option<&'a Route>, output: &mut Vec<&'a Route>) {
     if let Some(route) = route {
-        output.push_back(&route.handler);
+        output.push(route);
     }
 }
 
 fn push_routes<'a>(
     routes: impl IntoIterator<Item = Option<&'a Route>>,
-    output: &mut VecDeque<&'a str>,
+    output: &mut Vec<&'a Route>,
 ) {
     for route in routes {
         push_route(route, output);
     }
 }
 
-fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut VecDeque<&'a str>) {
+pub(in crate::check) fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut Vec<&'a Route>) {
     match node {
         ViewNode::Layout {
             options, children, ..
@@ -280,7 +285,7 @@ fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut VecDeque<&'a str>) {
             output,
         ),
         ViewNode::Button { content, route, .. } => {
-            output.push_back(&route.handler);
+            output.push(route);
             if let Some(content) = content {
                 collect_view_routes(content, output);
             }
@@ -288,9 +293,9 @@ fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut VecDeque<&'a str>) {
         ViewNode::Checkbox { route, .. }
         | ViewNode::Toggler { route, .. }
         | ViewNode::Radio { route, .. }
-        | ViewNode::Markdown { route, .. } => output.push_back(&route.handler),
+        | ViewNode::Markdown { route, .. } => output.push(route),
         ViewNode::Slider { route, release, .. } => {
-            output.push_back(&route.handler);
+            output.push(route);
             push_route(release.as_ref(), output);
         }
         ViewNode::PickList {
@@ -298,14 +303,14 @@ fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut VecDeque<&'a str>) {
             route,
             ..
         } => {
-            output.push_back(&route.handler);
+            output.push(route);
             push_routes(
                 [options_config.open.as_ref(), options_config.close.as_ref()],
                 output,
             );
         }
         ViewNode::ComboBox { options, route, .. } => {
-            output.push_back(&route.handler);
+            output.push(route);
             push_routes(
                 [
                     options.input.as_ref(),
@@ -408,7 +413,7 @@ fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut VecDeque<&'a str>) {
             );
             for event in events {
                 if let Some(CanvasEventAction::Route(route)) = &event.action {
-                    output.push_back(&route.handler);
+                    output.push(route);
                 }
             }
         }

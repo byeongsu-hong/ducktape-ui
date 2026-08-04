@@ -1,2 +1,2 @@
 E132
-unknown handler `missing`
+component `Board` cannot reference app handler `missing`

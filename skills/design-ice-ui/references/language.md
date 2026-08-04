@@ -564,7 +564,9 @@ match request
 ```
 
 `for` renders a checked list. `keyed` provides stable reconciliation identity.
-`lazy dependency as name` rebuilds only when its hashable dependency changes.
+`lazy dependency as name` rebuilds only when its hashable dependency changes;
+it exposes only the dependency alias as a value but keeps the enclosing
+component's routing context (local handlers, `forward`, `emit`).
 
 IDs are scoped through components and dynamic structures:
 

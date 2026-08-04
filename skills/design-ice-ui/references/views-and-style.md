@@ -299,6 +299,10 @@ lazy loading as busy
 
 Use `lazy` only around a measurably expensive subtree. Do not use it as React
 `useMemo`; it changes Iced widget construction and has hashability constraints.
+Inside `lazy` only the dependency alias is visible as a value, but the
+enclosing component's routing context is preserved: local handlers, `forward`,
+and `emit` work exactly as outside. A component event delivered from inside a
+`lazy` subtree accepts only `_` payloads at its call sites.
 
 ## Theme tokens and colors
 

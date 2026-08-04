@@ -994,9 +994,7 @@ impl RoutePayloads<'_> {
 }
 
 /// The signature key of the component handler a route targets, or `None` when
-/// the route resolves against app handlers. A `lazy` body has no component
-/// context, so routes written there address app handlers even inside a
-/// component view.
+/// the route resolves against app handlers.
 fn component_handler_signature_key(
     route: &Route,
     env: &dyn ExprTypeEnv,
@@ -1024,7 +1022,6 @@ fn infer_route_with_payloads(
         super::expr::CapturedRouteInputs {
             payloads: captured_payloads,
             ordered: captured_ordered,
-            component_scoped: local_key.is_some(),
         },
     );
     if route.handler == "emit"
@@ -1220,7 +1217,6 @@ pub(in crate::check) fn infer_ordered_payload_route(
         super::expr::CapturedRouteInputs {
             payloads: payloads.to_vec(),
             ordered: true,
-            component_scoped: local_key.is_some(),
         },
     );
     let key = local_key.unwrap_or_else(|| route.handler.clone());

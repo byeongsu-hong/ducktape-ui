@@ -153,6 +153,7 @@ pub(in crate::codegen) fn render_structure(
                     false,
                 ),
             );
+            let hoisted = hoist_lazy_component_context(node, program, env, &mut child_env);
             let child = render_node(
                 *child,
                 document,
@@ -162,15 +163,89 @@ pub(in crate::codegen) fn render_structure(
                 None,
             )?;
             let dependency_rust = rust_type_code(program, &lazy.binding.ty);
-            Ok(format!(
+            let lazy_code = format!(
                 "::iced::widget::lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
-            ))
+            );
+            Ok(if hoisted.is_empty() {
+                lazy_code
+            } else {
+                format!("{{ {hoisted}{lazy_code} }}")
+            })
         }
         _ => return Ok(None),
     }?;
     Ok(Some(identify_rendered(
         rendered, identity, message, env, document, scope,
     )?))
+}
+
+/// A lazy closure rebuilds its subtree from owned data only, but routes and
+/// forwards inside it still address the enclosing component. Hoist the
+/// component's routing bindings — the reconciliation scope, the output
+/// callback, and the call-site event callbacks — into owned locals declared
+/// before the closure, and rebind the child environment to those locals so
+/// the closure captures them by move. Unused locals are simply not captured.
+fn hoist_lazy_component_context(
+    node: ViewId,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    child_env: &mut HashMap<String, Binding>,
+) -> String {
+    let Some((component, context)) = component_context(env) else {
+        return String::new();
+    };
+    let component = component.to_owned();
+    let mut hoisted = String::new();
+    let context_local = format!("__ice_lazy_context_{}", node.0);
+    write!(
+        hoisted,
+        "let {context_local} = ({}).to_owned(); ",
+        context.code
+    )
+    .unwrap();
+    if let Some(output) = env.get(&component_output_key(&component)) {
+        let output_local = format!("__ice_lazy_output_{}", node.0);
+        write!(hoisted, "let {output_local} = {}; ", output.code).unwrap();
+        child_env.insert(
+            component_output_key(&component),
+            Binding {
+                code: output_local,
+                ty: output.ty.clone(),
+                local: true,
+                state: None,
+                owner: None,
+            },
+        );
+    }
+    for (index, event) in program.component_event_names(&component).enumerate() {
+        let Some(callback) = component_event(env, &component, event) else {
+            continue;
+        };
+        let event_local = format!("__ice_lazy_event_{}_{index}", node.0);
+        write!(hoisted, "let {event_local} = {}; ", callback.code).unwrap();
+        child_env.insert(
+            component_event_key(&component, event),
+            Binding {
+                code: event_local,
+                ty: callback.ty.clone(),
+                local: true,
+                state: None,
+                owner: None,
+            },
+        );
+    }
+    insert_component_context(
+        child_env,
+        &component,
+        Binding {
+            code: context_local,
+            ty: Type::Unit,
+            local: true,
+            state: None,
+            owner: None,
+        },
+    );
+    hoisted
 }
 
 fn render_resolved_float(

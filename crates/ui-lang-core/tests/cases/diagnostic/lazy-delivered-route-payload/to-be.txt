@@ -1,0 +1,2 @@
+E139
+event `entered` of `Board` is delivered from a `lazy` subtree, so its route accepts only `_` payloads
