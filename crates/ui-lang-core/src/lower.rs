@@ -16689,6 +16689,7 @@ view
             "component ImportedRemainingControls(bind modes:combo[str], selected:str?)\n  on chosen(next)\n  on moved(x, y)\n  on resized(dx, dy)\n  on shown(width, height)\n  col\n    combo modes selected \"Search\" -> chosen _\n    image \"photo.png\"\n    tooltip position=cursor\n      text \"Hover\"\n      text \"Tip\"\n    mouse move=moved cursor=pointer\n      text \"Pointer\"\n    resize-handle drag=resized cursor=resize-horizontal\n      text \"Resize\"\n    sensor show=shown key=true anticipate=0.0 delay=0\n      text \"Observed\"\n",
         )
         .unwrap();
+        fs::write(directory.join("photo.png"), "png bytes").unwrap();
 
         let mut program = lower(analyze_file(&root).unwrap()).unwrap();
         let combo_id = program.combo_boxes.values().next().unwrap().id;

@@ -730,7 +730,7 @@ impl AnalysisDb {
             && cached.fingerprint == graph.fingerprint
         {
             let cached_analysis = Arc::clone(&cached.analysis);
-            check_assets(cached_analysis.document.source_document(), &graph.loaded)
+            check_assets(&cached_analysis.document, &graph.loaded)
                 .map_err(|error| crate::source::remap_error(error, &graph.loaded))?;
             let (source_stamps, asset_stamps) = self.analysis_stamps(&cached_analysis);
             let now = Instant::now();
@@ -757,9 +757,9 @@ impl AnalysisDb {
         let document = analyze_loaded_without_assets(&graph.loaded);
         self.metrics.elapsed.check += started.elapsed();
         let document = document?;
-        let asset_dependencies = asset_dependencies(document.source_document(), &graph.loaded);
+        let asset_dependencies = asset_dependencies(&document, &graph.loaded);
         self.replace_root_assets(root.clone(), asset_dependencies.iter().cloned().collect());
-        check_assets(document.source_document(), &graph.loaded)
+        check_assets(&document, &graph.loaded)
             .map_err(|error| crate::source::remap_error(error, &graph.loaded))?;
         self.metrics.symbols_indexed += document.symbols().len();
         let mut dependencies = graph.loaded.dependencies.clone();
@@ -2121,6 +2121,29 @@ mod tests {
 
         fixture.write("Brand.ttf", "replacement font bytes");
         db.query_root(&root).unwrap();
+    }
+
+    #[test]
+    fn media_asset_edit_invalidates_the_root_that_embeds_it() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  image \"photo.ppm\"\n",
+        );
+        fixture.write("photo.ppm", "P6 1 1 255 pixels");
+        let root = fixture.path("app.ice");
+        let asset = fixture.path("photo.ppm");
+        let mut db = AnalysisDb::default();
+
+        let first = db.query_root(&root).unwrap();
+        assert_eq!(first.asset_dependencies, std::slice::from_ref(&asset));
+
+        fixture.write("photo.ppm", "P6 1 1 255 repainted");
+        let invalidation = db.refresh_input(&asset).unwrap();
+        let second = db.query_root(&root).unwrap();
+
+        assert!(invalidation.changed);
+        assert!(!Arc::ptr_eq(&first, &second));
     }
 
     #[test]

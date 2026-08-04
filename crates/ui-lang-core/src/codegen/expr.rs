@@ -2281,25 +2281,27 @@ pub(in crate::codegen) fn resolved_expr_use_code(
     })
 }
 
-/// Emits an owned media path, rebased onto the declaring Ice source directory.
+/// Embeds a literal relative media file, resolved against the Ice source
+/// directory, so the compiled binary carries its own assets.
 ///
-/// Only literal relative paths are rebased; absolute literals and dynamic
-/// expressions are emitted verbatim and keep resolving against the process
-/// working directory.
-pub(in crate::codegen) fn resolved_asset_path_code(
+/// Absolute literals and dynamic expressions have no compile-time file to
+/// embed; they keep loading from the process filesystem at run time.
+pub(in crate::codegen) fn embedded_asset_bytes_code(
     program: &LoweredProgram,
     expression_use: ResolvedExpressionId,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
+) -> Option<String> {
     let expressions = program.expressions();
     let resolved = expressions.expression_use(expression_use);
     if matches!(resolved.coercion, ResolvedInitializerCoercion::None)
         && let ResolvedExpressionKind::Str(path) = &expressions.expression(resolved.root).kind
         && crate::is_relative_asset_path(path)
     {
-        return Ok(format!("{}.to_owned()", asset_path_marker(path)));
+        return Some(format!(
+            "include_bytes!({}).as_slice()",
+            asset_path_marker(path)
+        ));
     }
-    resolved_expr_use_code(program, expression_use, env, ValueMode::Owned)
+    None
 }
 
 pub(in crate::codegen) fn resolved_expr_node_code(

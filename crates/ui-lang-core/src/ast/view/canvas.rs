@@ -260,6 +260,38 @@ pub(crate) fn canvas_command_spans(commands: &[CanvasCommand]) -> Vec<&Span> {
     spans
 }
 
+/// Returns literal media paths drawn by `image` and `svg` canvas commands.
+///
+/// Memory SVG sources hold markup instead of a path, and dynamic sources are
+/// only known at run time, so neither becomes a compile-time asset.
+pub(crate) fn canvas_media_path_literals(commands: &[CanvasCommand]) -> Vec<(&str, &Span)> {
+    fn collect<'a>(commands: &'a [CanvasCommand], paths: &mut Vec<(&'a str, &'a Span)>) {
+        for command in commands {
+            match command {
+                CanvasCommand::Image {
+                    source: Expr::Str(path),
+                    span,
+                    ..
+                }
+                | CanvasCommand::Svg {
+                    source: Expr::Str(path),
+                    memory: false,
+                    span,
+                    ..
+                } => paths.push((path, span)),
+                CanvasCommand::Group { commands, .. }
+                | CanvasCommand::If { commands, .. }
+                | CanvasCommand::For { commands, .. } => collect(commands, paths),
+                _ => {}
+            }
+        }
+    }
+
+    let mut paths = Vec::new();
+    collect(commands, &mut paths);
+    paths
+}
+
 pub(crate) fn canvas_command_span(command: &CanvasCommand) -> &Span {
     match command {
         CanvasCommand::Rectangle { span, .. }
