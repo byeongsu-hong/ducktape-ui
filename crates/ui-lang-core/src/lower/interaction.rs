@@ -469,11 +469,9 @@ impl Lowerer {
                 let declaration = self.declarations.try_handler(*handler).ok_or_else(|| {
                     self.invariant(&source.span, "interaction route handler is invalid")
                 })?;
-                let expected_owner = match scope {
-                    CheckedViewScope::Component(component) => HandlerOwner::Component(component),
-                    CheckedViewScope::App | CheckedViewScope::Test(_) => HandlerOwner::App,
-                };
-                if declaration.owner != expected_owner || declaration.name != source.handler {
+                if !route_handler_owner_is_reachable(declaration.owner, scope)
+                    || declaration.name != source.handler
+                {
                     return Err(
                         self.invariant(&source.span, "interaction route handler contract diverged")
                     );

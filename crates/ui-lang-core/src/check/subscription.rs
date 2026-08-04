@@ -993,6 +993,20 @@ impl RoutePayloads<'_> {
     }
 }
 
+/// The signature key of the component handler a route targets, or `None` when
+/// the route resolves against app handlers. A `lazy` body has no component
+/// context, so routes written there address app handlers even inside a
+/// component view.
+fn component_handler_signature_key(
+    route: &Route,
+    env: &dyn ExprTypeEnv,
+    signatures: &HashMap<String, Vec<Option<Type>>>,
+) -> Option<String> {
+    component_context(env)
+        .map(|component| component_handler_key(component, &route.handler))
+        .filter(|key| signatures.contains_key(key))
+}
+
 fn infer_route_with_payloads(
     route: &Route,
     payloads: RoutePayloads<'_>,
@@ -1004,7 +1018,15 @@ fn infer_route_with_payloads(
         RoutePayloads::Single(payload) => (payload.cloned().into_iter().collect(), false),
         RoutePayloads::Ordered(payloads) => (payloads.to_vec(), true),
     };
-    super::expr::capture_handler_route_inputs(route, captured_payloads, captured_ordered);
+    let local_key = component_handler_signature_key(route, env, signatures);
+    super::expr::capture_handler_route_inputs(
+        route,
+        super::expr::CapturedRouteInputs {
+            payloads: captured_payloads,
+            ordered: captured_ordered,
+            component_scoped: local_key.is_some(),
+        },
+    );
     if route.handler == "emit"
         && let Some(output) = component_output(env)
     {
@@ -1095,9 +1117,6 @@ fn infer_route_with_payloads(
             "`mount` is initialization-only and cannot receive events",
         ));
     }
-    let local_key = component_context(env)
-        .map(|component| component_handler_key(component, &route.handler))
-        .filter(|key| signatures.contains_key(key));
     if let Some(component) = component_context(env)
         && local_key.is_none()
     {
@@ -1195,11 +1214,16 @@ pub(in crate::check) fn infer_ordered_payload_route(
         return infer_route(route, payloads.first().cloned(), env, document, signatures);
     }
     infer_route(route, Some(Type::Unknown), env, document, signatures)?;
-    super::expr::capture_handler_route_inputs(route, payloads.to_vec(), true);
-    let key = component_context(env)
-        .map(|component| component_handler_key(component, &route.handler))
-        .filter(|key| signatures.contains_key(key))
-        .unwrap_or_else(|| route.handler.clone());
+    let local_key = component_handler_signature_key(route, env, signatures);
+    super::expr::capture_handler_route_inputs(
+        route,
+        super::expr::CapturedRouteInputs {
+            payloads: payloads.to_vec(),
+            ordered: true,
+            component_scoped: local_key.is_some(),
+        },
+    );
+    let key = local_key.unwrap_or_else(|| route.handler.clone());
     let signature = signatures.get_mut(&key).expect("route signature");
     for (slot, ty) in signature.iter_mut().zip(payloads) {
         if let Some(existing) = slot {

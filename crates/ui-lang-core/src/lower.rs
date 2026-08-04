@@ -635,6 +635,17 @@ fn resolved_subscription_supports_window_id(source: &CheckedSubscriptionSource) 
         )
 }
 
+/// A view route addresses its own component's handlers, or the app's when it
+/// sits in a `lazy` body, which drops the component context the checker
+/// resolves against.
+fn route_handler_owner_is_reachable(owner: HandlerOwner, scope: CheckedViewScope) -> bool {
+    match (owner, scope) {
+        (HandlerOwner::App, _) => true,
+        (HandlerOwner::Component(handler), CheckedViewScope::Component(view)) => handler == view,
+        _ => false,
+    }
+}
+
 fn resolved_subscription_supports_status(source: &CheckedSubscriptionSource) -> bool {
     matches!(
         source,

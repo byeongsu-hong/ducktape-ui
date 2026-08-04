@@ -6196,17 +6196,12 @@ impl<'a> FactsBuilder<'a> {
                 }
             }
             scope => {
-                let target_owner = match scope {
-                    CheckedViewScope::Component(component) => {
-                        crate::hir::HandlerOwner::Component(component)
-                    }
-                    CheckedViewScope::App | CheckedViewScope::Test(_) => {
-                        crate::hir::HandlerOwner::App
-                    }
-                };
                 let handler = self
                     .declarations
-                    .handler_id(target_owner, &route.handler)
+                    .handler_id(
+                        route_handler_owner(scope, inputs.component_scoped),
+                        &route.handler,
+                    )
                     .ok_or_else(|| {
                         self.invariant(&route.span, "interaction route target disappeared")
                     })?;
@@ -7430,17 +7425,12 @@ impl<'a> FactsBuilder<'a> {
                 }
             }
             scope => {
-                let target_owner = match scope {
-                    CheckedViewScope::Component(component) => {
-                        crate::hir::HandlerOwner::Component(component)
-                    }
-                    CheckedViewScope::App | CheckedViewScope::Test(_) => {
-                        crate::hir::HandlerOwner::App
-                    }
-                };
                 let handler = self
                     .declarations
-                    .handler_id(target_owner, &route.handler)
+                    .handler_id(
+                        route_handler_owner(scope, inputs.component_scoped),
+                        &route.handler,
+                    )
                     .ok_or_else(|| {
                         self.invariant(&route.span, "canvas route target disappeared")
                     })?;
@@ -11443,6 +11433,22 @@ impl<'a> FactsBuilder<'a> {
 
     fn invariant(&self, span: &Span, message: impl Into<String>) -> Error {
         Error::new("E196", span, message)
+    }
+}
+
+/// The handler namespace a view route resolved against. Component views own
+/// their handlers, but a `lazy` body has no component context, so routes
+/// written there address app handlers; the checker records which namespace it
+/// used because the view scope alone cannot tell them apart.
+fn route_handler_owner(
+    scope: CheckedViewScope,
+    component_scoped: bool,
+) -> crate::hir::HandlerOwner {
+    match scope {
+        CheckedViewScope::Component(component) if component_scoped => {
+            crate::hir::HandlerOwner::Component(component)
+        }
+        _ => crate::hir::HandlerOwner::App,
     }
 }
 

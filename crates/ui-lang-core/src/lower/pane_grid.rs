@@ -796,11 +796,7 @@ impl Lowerer {
                 let declaration = self.declarations.try_handler(*handler).ok_or_else(|| {
                     self.invariant(span, "pane route handler ID is outside its arena")
                 })?;
-                let owner = match scope {
-                    CheckedViewScope::Component(component) => HandlerOwner::Component(component),
-                    CheckedViewScope::App | CheckedViewScope::Test(_) => HandlerOwner::App,
-                };
-                if declaration.owner != owner {
+                if !route_handler_owner_is_reachable(declaration.owner, scope) {
                     return Err(self.invariant(span, "pane route handler scope diverged"));
                 }
                 ResolvedInteractionRouteTarget::TargetHandler(*handler)

@@ -1931,7 +1931,9 @@ the owned `cached` alias is visible inside the subtree, which statically enforce
 iced's `Element<'static>` contract. Input, combo, named QR data, and a slot from
 an enclosing component are rejected because those forms borrow app-owned data.
 Components and structured children remain usable when their complete expanded
-tree satisfies the same static rule.
+tree satisfies the same static rule. Because the enclosing component context is
+not visible either, `forward` and `emit` are unavailable inside the subtree; a
+component call there routes its events to app handlers by name.
 
 Markdown content is parsed into owned iced state instead of being reparsed by
 the view. A literal initializes it directly, `markdown(source)` replaces it,
@@ -3574,7 +3576,10 @@ measured `f64` width and height through the component contract.
 
 A component route resolves only local component handlers and declared event
 emissions. Direct references to app-global handlers are errors, so reusable
-component dependencies remain explicit. The `component ... -> Type` and
+component dependencies remain explicit. A `lazy` subtree is the one exception:
+only its `cached` alias is in scope, so it carries no component context and its
+routes resolve app handlers by name, including where a component handler shares
+that name. The `component ... -> Type` and
 call-site `-> route` pair remains the canonical default-event shorthand and may
 coexist with named events.
 
