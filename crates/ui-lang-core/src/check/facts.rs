@@ -918,6 +918,13 @@ pub(crate) struct CheckedContainer {
     pub(crate) style: Option<ExternFnId>,
 }
 
+/// A literal relative media path, resolved and checked like a font asset.
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedMediaAsset {
+    pub(crate) path: String,
+    pub(crate) span: Span,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedLayout {
     pub(crate) id: ViewId,
@@ -1167,6 +1174,7 @@ pub(crate) struct CheckedFacts {
     component_slots_by_view: HashMap<ViewId, ComponentSlotId>,
     canvases: HashMap<ViewId, CheckedCanvas>,
     media: HashMap<ViewId, CheckedMedia>,
+    media_assets: Vec<CheckedMediaAsset>,
     containers: HashMap<ViewId, CheckedContainer>,
     layouts: HashMap<ViewId, CheckedLayout>,
     texts: HashMap<ViewId, CheckedText>,
@@ -2099,6 +2107,23 @@ impl CheckedFacts {
 
     pub(crate) fn media(&self, id: ViewId) -> Option<&CheckedMedia> {
         self.media.get(&id).filter(|media| media.id == id)
+    }
+
+    pub(crate) fn media_assets(&self) -> &[CheckedMediaAsset] {
+        &self.media_assets
+    }
+
+    /// Retains a literal media path so it is checked and watched like a font.
+    ///
+    /// Absolute literals stay runtime filesystem references, so only portable
+    /// relative literals become compile-time assets.
+    fn record_media_asset(&mut self, path: &str, span: &Span) {
+        if crate::is_relative_asset_path(path) {
+            self.media_assets.push(CheckedMediaAsset {
+                path: path.to_owned(),
+                span: span.clone(),
+            });
+        }
     }
 
     pub(crate) fn container(&self, id: ViewId) -> Option<&CheckedContainer> {
@@ -5645,6 +5670,11 @@ impl<'a> FactsBuilder<'a> {
         {
             return Err(self.invariant(span, "media facts were produced more than once"));
         }
+        if let Expr::Str(path) = source
+            && !(kind == MediaKind::Svg && options.svg_memory)
+        {
+            self.facts.record_media_asset(path, span);
+        }
         Ok(())
     }
 
@@ -7033,6 +7063,9 @@ impl<'a> FactsBuilder<'a> {
             || declaration.routes.len() != crate::ast::canvas_routes(options, events).len()
         {
             return Err(self.invariant(span, "canvas declaration topology changed"));
+        }
+        for (path, span) in crate::ast::canvas_media_path_literals(commands) {
+            self.facts.record_media_asset(path, span);
         }
 
         let mut counters = CanvasFactCounters::default();

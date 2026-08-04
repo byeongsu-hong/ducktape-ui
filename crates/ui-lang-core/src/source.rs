@@ -50,8 +50,7 @@ pub fn analyze_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
 pub(crate) fn analyze_interface_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
     let loaded = load_interface(path.as_ref())?;
     let document = analyze_interface_loaded(&loaded)?;
-    check_assets(document.source_document(), &loaded)
-        .map_err(|error| remap_error(error, &loaded))?;
+    check_assets(&document, &loaded).map_err(|error| remap_error(error, &loaded))?;
     Ok(document)
 }
 
@@ -85,11 +84,11 @@ pub fn discover_file_dependencies(path: impl AsRef<Path>) -> Result<Vec<PathBuf>
 /// Returns host assets referenced by an otherwise valid Ice source graph.
 ///
 /// Asset existence is deliberately not checked, allowing a watcher to recover
-/// when a missing font or window icon is created.
+/// when a missing font, window icon, or media file is created.
 pub fn discover_file_asset_dependencies(path: impl AsRef<Path>) -> Result<Vec<PathBuf>, Error> {
     let loaded = load(path.as_ref())?;
     let document = analyze_loaded_without_assets(&loaded)?;
-    Ok(asset_dependencies(document.source_document(), &loaded))
+    Ok(asset_dependencies(&document, &loaded))
 }
 
 /// Analyze an unsaved root buffer while resolving its `use` graph from disk.
@@ -164,36 +163,62 @@ fn analyze_interface_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Er
         ))
 }
 
-pub(crate) fn asset_dependencies(document: &Document, loaded: &LoadedSource) -> Vec<PathBuf> {
-    let root = loaded
-        .dependencies
-        .first()
-        .expect("a loaded source always has a root");
-    let parent = root.parent().unwrap_or_else(|| Path::new("."));
-    let mut dependencies = document
+pub(crate) fn asset_dependencies(
+    document: &CheckedDocument,
+    loaded: &LoadedSource,
+) -> Vec<PathBuf> {
+    let parent = asset_base(loaded);
+    let source = document.source_document();
+    let mut dependencies = source
         .settings
         .fonts
         .iter()
         .map(|font| parent.join(&font.path))
         .chain(
-            document
-                .settings
-                .window
-                .iter()
-                .chain(
-                    document
-                        .settings
-                        .windows
-                        .iter()
-                        .map(|window| &window.settings),
-                )
-                .filter_map(|window| window.icon.as_ref())
+            window_icons(source)
+                .into_iter()
                 .map(|icon| parent.join(&icon.path)),
+        )
+        .chain(
+            document
+                .facts
+                .media_assets()
+                .iter()
+                .map(|asset| parent.join(&asset.path)),
         )
         .collect::<Vec<_>>();
     dependencies.sort();
     dependencies.dedup();
     dependencies
+}
+
+/// Returns the directory literal asset paths are resolved against.
+///
+/// Code generation rebases every literal asset onto the root's directory, so
+/// analysis has to look for the same files.
+fn asset_base(loaded: &LoadedSource) -> &Path {
+    loaded
+        .dependencies
+        .first()
+        .expect("a loaded source always has a root")
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn window_icons(document: &Document) -> Vec<&crate::WindowIcon> {
+    document
+        .settings
+        .window
+        .iter()
+        .chain(
+            document
+                .settings
+                .windows
+                .iter()
+                .map(|window| &window.settings),
+        )
+        .filter_map(|window| window.icon.as_ref())
+        .collect()
 }
 
 fn remap_symbols(
@@ -218,13 +243,10 @@ fn remap_symbols(
     symbols
 }
 
-pub(crate) fn check_assets(document: &Document, loaded: &LoadedSource) -> Result<(), Error> {
-    let root = loaded
-        .dependencies
-        .first()
-        .expect("a loaded source always has a root");
-    let parent = root.parent().unwrap_or_else(|| Path::new("."));
-    for font in &document.settings.fonts {
+pub(crate) fn check_assets(document: &CheckedDocument, loaded: &LoadedSource) -> Result<(), Error> {
+    let parent = asset_base(loaded);
+    let source = document.source_document();
+    for font in &source.settings.fonts {
         let path = parent.join(&font.path);
         if !path.is_file() {
             return Err(Error::new(
@@ -234,19 +256,7 @@ pub(crate) fn check_assets(document: &Document, loaded: &LoadedSource) -> Result
             ));
         }
     }
-    for icon in document
-        .settings
-        .window
-        .iter()
-        .chain(
-            document
-                .settings
-                .windows
-                .iter()
-                .map(|window| &window.settings),
-        )
-        .filter_map(|window| window.icon.as_ref())
-    {
+    for icon in window_icons(source) {
         let path = parent.join(&icon.path);
         if !path.is_file() {
             return Err(Error::new(
@@ -278,6 +288,16 @@ pub(crate) fn check_assets(document: &Document, loaded: &LoadedSource) -> Result
                     icon.width,
                     icon.height
                 ),
+            ));
+        }
+    }
+    for asset in document.facts.media_assets() {
+        let path = parent.join(&asset.path);
+        if !path.is_file() {
+            return Err(Error::new(
+                "E192",
+                &asset.span,
+                format!("cannot read media file `{}`", path.display()),
             ));
         }
     }
@@ -1504,6 +1524,75 @@ mod tests {
         assert_eq!(error.code, "E193");
         assert_eq!(error.line, 3);
         assert!(error.message.contains("has 4 RGBA bytes; expected 8"));
+    }
+
+    #[test]
+    fn checks_and_tracks_relative_media_files_beside_the_root() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            concat!(
+                "app Demo\n",
+                "use \"part.ice\"\n",
+                "theme contract AppTheme\n",
+                "  bg\n",
+                "  fg\n",
+                "  primary\n",
+                "  danger\n",
+                "palette app for AppTheme\n",
+                "  bg #000000\n",
+                "  fg #ffffff\n",
+                "  primary #333333\n",
+                "  danger #ff0000\n",
+                "state\n",
+                "  dynamic_path = \"assets/dynamic.ppm\"\n",
+                "view\n",
+                "  col\n",
+                "    image \"assets/photo.ppm\"\n",
+                "    image dynamic_path\n",
+                "    image \"/opt/share/photo.ppm\"\n",
+                "    svg \"<svg/>\" memory\n",
+                "    Badge\n",
+                "    canvas w=fill h=32.0\n",
+                "      svg \"assets/icon.svg\" x=0.0 y=0.0 w=16.0 h=16.0\n",
+            ),
+        );
+        fixture.write(
+            "part.ice",
+            "component Badge()\n  viewer \"assets/photo.ppm\"\n",
+        );
+        fixture.write("assets/photo.ppm", "P6 1 1 255 pixels");
+        fixture.write("assets/icon.svg", "<svg/>");
+
+        let analysis = analyze_file_graph(fixture.path("app.ice")).unwrap();
+
+        assert_eq!(
+            analysis.asset_dependencies,
+            [
+                fixture.path("assets/icon.svg"),
+                fixture.path("assets/photo.ppm")
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_a_missing_media_file_at_its_widget() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  image \"assets/missing.ppm\"\n",
+        );
+
+        let error = compile_file(fixture.path("app.ice")).unwrap_err();
+
+        assert_eq!(error.code, "E192");
+        assert_eq!(error.line, 13);
+        assert!(error.path.as_deref().unwrap().ends_with("app.ice"));
+        assert!(error.message.contains("cannot read media file"));
+        assert!(error.message.contains("assets/missing.ppm"));
+
+        fixture.write("assets/missing.ppm", "P6 1 1 255 pixels");
+        compile_file(fixture.path("app.ice")).unwrap();
     }
 
     #[test]
