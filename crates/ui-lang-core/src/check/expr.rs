@@ -187,11 +187,6 @@ pub(super) struct HandlerAnalyses {
 pub(super) struct CapturedRouteInputs {
     pub(super) payloads: Vec<Type>,
     pub(super) ordered: bool,
-    /// The route resolved against the enclosing component's handler namespace.
-    /// A `lazy` body drops the component context from the type environment, so
-    /// routes written there resolve against app handlers even though the view
-    /// they sit in still belongs to a component.
-    pub(super) component_scoped: bool,
 }
 
 pub(super) fn capture_handler_route_inputs(route: &Route, inputs: CapturedRouteInputs) {

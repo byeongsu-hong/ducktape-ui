@@ -1927,13 +1927,18 @@ child fill factors are bounded against the rendered item count so the native
 `lazy dependency as cached` rebuilds its one child subtree only when the
 dependency hash changes. The dependency may be bool, i64, str, an extern type
 implementing Rust `Hash + Clone`, or a recursive list/optional of those. Only
-the owned `cached` alias is visible inside the subtree, which statically enforces
-iced's `Element<'static>` contract. Input, combo, named QR data, and a slot from
-an enclosing component are rejected because those forms borrow app-owned data.
-Components and structured children remain usable when their complete expanded
-tree satisfies the same static rule. Because the enclosing component context is
-not visible either, `forward` and `emit` are unavailable inside the subtree; a
-component call there routes its events to app handlers by name.
+the owned `cached` alias is visible inside the subtree as a value, which
+statically enforces iced's `Element<'static>` contract. Input, combo, named QR
+data, and a slot from an enclosing component are rejected because those forms
+borrow app-owned data. Components and structured children remain usable when
+their complete expanded tree satisfies the same static rule. The enclosing
+component's routing context is preserved: routes inside the subtree resolve
+the component's own handlers, and `forward` and `emit` deliver component
+events and outputs exactly as they do outside `lazy`. A component event or
+output delivered from inside a `lazy` subtree is captured by the closure as an
+owned callback, so every call-site route for it — through any `forward` or
+`emit` chain — accepts only `_` payloads; an expression there would freeze a
+stale value or borrow view state.
 
 Markdown content is parsed into owned iced state instead of being reparsed by
 the view. A literal initializes it directly, `markdown(source)` replaces it,
@@ -3576,10 +3581,9 @@ measured `f64` width and height through the component contract.
 
 A component route resolves only local component handlers and declared event
 emissions. Direct references to app-global handlers are errors, so reusable
-component dependencies remain explicit. A `lazy` subtree is the one exception:
-only its `cached` alias is in scope, so it carries no component context and its
-routes resolve app handlers by name, including where a component handler shares
-that name. The `component ... -> Type` and
+component dependencies remain explicit. A `lazy` subtree is no exception: only
+its `cached` alias is in scope as a value, but the component's handlers,
+events, and output remain routable there. The `component ... -> Type` and
 call-site `-> route` pair remains the canonical default-event shorthand and may
 coexist with named events.
 

@@ -14,11 +14,6 @@ state
   items = [1, 2]
 on entered(value)
   seq = value
-component Frame(pending:bool)
-  stack #root
-    slot
-    if pending
-      space w=1.0 h=1.0
 component Card(value:i64)
   emits
     entered(i64)
@@ -26,24 +21,13 @@ component Card(value:i64)
 component Board(items:[i64])
   emits
     entered(i64)
-  state
-    last = 0
-  on entered(value)
-    last = value
   col #root
-    text last
     for item in items
-      Card value=item
-        forward
-          entered
-      button "local" -> entered item
       lazy item as cached
-        stack #row
-          Frame pending=false
-            Card value=cached
-              events
-                entered -> entered _
+        Card value=cached
+          forward
+            entered
 view
   Board items=items
     events
-      entered -> entered _
+      entered -> entered seq

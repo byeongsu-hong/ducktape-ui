@@ -362,6 +362,7 @@ fn check(
             infer_view(&component.root, &env, document, &mut signatures, &mut ids)
         })?;
     }
+    check_lazy_delivered_routes(document)?;
     infer_tests(document, &view_states, &mut signatures)?;
     let mut pane_grids = static_pane_grids(&document.view, &view_states, document)?;
     let mut operation_ids = widget_operation_ids(&document.view, &view_states, document)?;
@@ -860,6 +861,7 @@ mod declarations;
 mod expr;
 mod facts;
 mod handler;
+mod lazy_delivery;
 mod lifecycle;
 mod options;
 mod reachability;
@@ -877,6 +879,7 @@ use canvas::*;
 use cycles::*;
 use declarations::*;
 use handler::*;
+use lazy_delivery::*;
 use lifecycle::*;
 use options::*;
 use reachability::*;

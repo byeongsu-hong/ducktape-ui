@@ -15,6 +15,8 @@ mod event_status;
 #[cfg(test)]
 mod font_values;
 #[cfg(test)]
+mod lazy_context;
+#[cfg(test)]
 mod length;
 #[cfg(test)]
 mod mouse_interaction;

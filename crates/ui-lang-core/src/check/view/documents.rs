@@ -164,7 +164,14 @@ pub(in crate::check) fn infer_documents_group(
                 .hint("use bool, i64, str, an extern type with Hash + Clone, or a list/optional of those"));
             }
             check_lazy_subtree(child, document, &mut HashSet::new(), false)?;
-            let child_env = HashMap::from([(binding.clone(), dependency_type)]);
+            let mut child_env = HashMap::from([(binding.clone(), dependency_type)]);
+            if let Some(component) = component_context(env).map(str::to_owned) {
+                child_env.insert(component_context_key(&component), Type::Unit);
+                if let Some(output) = env.get_type(&component_output_key(&component)) {
+                    child_env.insert(component_output_key(&component), output.clone());
+                }
+                child_env.insert(COMPONENT_CONTEXT_INDEX.into(), Type::Named(component));
+            }
             let mut child_ids = HashSet::new();
             infer_view(child, &child_env, document, signatures, &mut child_ids)?;
         }

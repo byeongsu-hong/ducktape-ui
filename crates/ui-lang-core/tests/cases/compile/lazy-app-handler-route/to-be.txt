@@ -1,4 +1,0 @@
-let __activate = __DemoMessage::__BoardHandleEntered((__ice_component_board_scope_47).clone(), item);
-let __activate = (move |__event_0| __DemoMessage::Entered(__event_0))(item);
-let __activate = (move |__event_0| __DemoMessage::Entered(__event_0))(cached);
-let cached: i64 = __dependency.0.clone();
