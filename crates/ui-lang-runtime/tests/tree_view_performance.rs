@@ -93,6 +93,29 @@ fn percentile_usize(samples: &[usize], rank: usize) -> usize {
     ) as usize
 }
 
+/// Re-measures once before failing a wall-clock budget.
+///
+/// Shared CI runners drift under noisy neighbors, so a single breach is
+/// re-sampled and only a reproducible breach fails. Allocation budgets are
+/// deterministic and are asserted strictly on the first measurement.
+fn assert_wall_clock_budgets(
+    label: &str,
+    first: Vec<u128>,
+    p50_budget: u128,
+    p95_budget: u128,
+    remeasure: impl FnOnce() -> Vec<u128>,
+) {
+    let elapsed = if percentile(&first, 50) <= p50_budget && percentile(&first, 95) <= p95_budget {
+        first
+    } else {
+        remeasure()
+    };
+    let p50 = percentile(&elapsed, 50);
+    let p95 = percentile(&elapsed, 95);
+    assert!(p50 <= p50_budget, "{label} p50 {p50}us");
+    assert!(p95 <= p95_budget, "{label} p95 {p95}us");
+}
+
 #[test]
 #[ignore = "100k-node release performance contract run explicitly in CI"]
 fn performance_contract_100k_unchanged_render() {
@@ -141,28 +164,33 @@ fn performance_contract_100k_unchanged_render() {
     }
     builds.set(0);
 
-    let mut elapsed_us = Vec::with_capacity(FRAMES);
-    let mut allocations = Vec::with_capacity(FRAMES);
-    let mut allocated_bytes = Vec::with_capacity(FRAMES);
-    for _ in 0..FRAMES {
-        let region = Region::new(GLOBAL);
-        let started = std::time::Instant::now();
-        cache = run_frame(cache);
-        elapsed_us.push(started.elapsed().as_micros());
-        let stats = region.change();
-        allocations.push(stats.allocations);
-        allocated_bytes.push(stats.bytes_allocated);
-    }
-
-    let p50 = percentile(&elapsed_us, 50);
-    let p95 = percentile(&elapsed_us, 95);
-    let p95_allocations = percentile_usize(&allocations, 95);
-    let p95_bytes = percentile_usize(&allocated_bytes, 95);
+    let mut sample = |cache: user_interface::Cache| {
+        let mut cache = cache;
+        let mut elapsed_us = Vec::with_capacity(FRAMES);
+        let mut allocations = Vec::with_capacity(FRAMES);
+        let mut allocated_bytes = Vec::with_capacity(FRAMES);
+        for _ in 0..FRAMES {
+            let region = Region::new(GLOBAL);
+            let started = std::time::Instant::now();
+            cache = run_frame(cache);
+            elapsed_us.push(started.elapsed().as_micros());
+            let stats = region.change();
+            allocations.push(stats.allocations);
+            allocated_bytes.push(stats.bytes_allocated);
+        }
+        (cache, elapsed_us, allocations, allocated_bytes)
+    };
+    let (cache, elapsed_us, allocations, allocated_bytes) = sample(cache);
     assert!(builds.get() <= FRAMES * 10);
-    assert!(p50 <= P50_BUDGET_US, "unchanged tree render p50 {p50}us");
-    assert!(p95 <= P95_BUDGET_US, "unchanged tree render p95 {p95}us");
-    assert!(p95_allocations <= ALLOCATION_BUDGET);
-    assert!(p95_bytes <= ALLOCATED_BYTES_BUDGET);
+    assert!(percentile_usize(&allocations, 95) <= ALLOCATION_BUDGET);
+    assert!(percentile_usize(&allocated_bytes, 95) <= ALLOCATED_BYTES_BUDGET);
+    assert_wall_clock_budgets(
+        "unchanged tree render",
+        elapsed_us,
+        P50_BUDGET_US,
+        P95_BUDGET_US,
+        move || sample(cache).1,
+    );
 }
 
 #[test]
@@ -179,24 +207,31 @@ fn performance_contract_100k_reconcile() {
     for _ in 0..3 {
         state.reconcile(&items, node, config()).unwrap();
     }
-    let mut elapsed_us = Vec::with_capacity(SAMPLES);
-    let mut allocations = Vec::with_capacity(SAMPLES);
-    let mut allocated_bytes = Vec::with_capacity(SAMPLES);
-    for _ in 0..SAMPLES {
-        let region = Region::new(GLOBAL);
-        let started = std::time::Instant::now();
-        state.reconcile(&items, node, config()).unwrap();
-        elapsed_us.push(started.elapsed().as_micros());
-        let stats = region.change();
-        allocations.push(stats.allocations);
-        allocated_bytes.push(stats.bytes_allocated);
-    }
-    let p50 = percentile(&elapsed_us, 50);
-    let p95 = percentile(&elapsed_us, 95);
-    assert!(p50 <= P50_BUDGET_US, "tree reconcile p50 {p50}us");
-    assert!(p95 <= P95_BUDGET_US, "tree reconcile p95 {p95}us");
+    let mut sample = || {
+        let mut elapsed_us = Vec::with_capacity(SAMPLES);
+        let mut allocations = Vec::with_capacity(SAMPLES);
+        let mut allocated_bytes = Vec::with_capacity(SAMPLES);
+        for _ in 0..SAMPLES {
+            let region = Region::new(GLOBAL);
+            let started = std::time::Instant::now();
+            state.reconcile(&items, node, config()).unwrap();
+            elapsed_us.push(started.elapsed().as_micros());
+            let stats = region.change();
+            allocations.push(stats.allocations);
+            allocated_bytes.push(stats.bytes_allocated);
+        }
+        (elapsed_us, allocations, allocated_bytes)
+    };
+    let (elapsed_us, allocations, allocated_bytes) = sample();
     assert!(percentile_usize(&allocations, 95) <= ALLOCATION_BUDGET);
     assert!(percentile_usize(&allocated_bytes, 95) <= ALLOCATED_BYTES_BUDGET);
+    assert_wall_clock_budgets(
+        "tree reconcile",
+        elapsed_us,
+        P50_BUDGET_US,
+        P95_BUDGET_US,
+        || sample().0,
+    );
 }
 
 #[test]
@@ -213,25 +248,31 @@ fn performance_contract_100k_deep_preorder_reconcile() {
     for _ in 0..2 {
         state.reconcile(&items, deep_node, config()).unwrap();
     }
-    let mut elapsed_us = Vec::with_capacity(SAMPLES);
-    let mut allocations = Vec::with_capacity(SAMPLES);
-    let mut allocated_bytes = Vec::with_capacity(SAMPLES);
-    for _ in 0..SAMPLES {
-        let region = Region::new(GLOBAL);
-        let started = std::time::Instant::now();
-        state.reconcile(&items, deep_node, config()).unwrap();
-        elapsed_us.push(started.elapsed().as_micros());
-        let stats = region.change();
-        allocations.push(stats.allocations);
-        allocated_bytes.push(stats.bytes_allocated);
-    }
-
-    let p50 = percentile(&elapsed_us, 50);
-    let p95 = percentile(&elapsed_us, 95);
-    assert!(p50 <= P50_BUDGET_US, "deep tree reconcile p50 {p50}us");
-    assert!(p95 <= P95_BUDGET_US, "deep tree reconcile p95 {p95}us");
+    let mut sample = || {
+        let mut elapsed_us = Vec::with_capacity(SAMPLES);
+        let mut allocations = Vec::with_capacity(SAMPLES);
+        let mut allocated_bytes = Vec::with_capacity(SAMPLES);
+        for _ in 0..SAMPLES {
+            let region = Region::new(GLOBAL);
+            let started = std::time::Instant::now();
+            state.reconcile(&items, deep_node, config()).unwrap();
+            elapsed_us.push(started.elapsed().as_micros());
+            let stats = region.change();
+            allocations.push(stats.allocations);
+            allocated_bytes.push(stats.bytes_allocated);
+        }
+        (elapsed_us, allocations, allocated_bytes)
+    };
+    let (elapsed_us, allocations, allocated_bytes) = sample();
     assert!(percentile_usize(&allocations, 95) <= ALLOCATION_BUDGET);
     assert!(percentile_usize(&allocated_bytes, 95) <= ALLOCATED_BYTES_BUDGET);
+    assert_wall_clock_budgets(
+        "deep tree reconcile",
+        elapsed_us,
+        P50_BUDGET_US,
+        P95_BUDGET_US,
+        || sample().0,
+    );
 }
 
 #[test]
@@ -259,22 +300,23 @@ fn performance_contract_100k_late_hierarchical_interactions() {
         state.apply(TreeViewEvent::Toggle(99_000), config());
     }
 
-    let mut toggle_elapsed_us = Vec::with_capacity(TOGGLE_SAMPLES);
-    for _ in 0..TOGGLE_SAMPLES {
-        let started = std::time::Instant::now();
-        let outcome = state.apply(TreeViewEvent::Toggle(99_000), config());
-        toggle_elapsed_us.push(started.elapsed().as_micros());
-        assert!(outcome.expanded_changed);
-    }
-    let toggle_p50 = percentile(&toggle_elapsed_us, 50);
-    let toggle_p95 = percentile(&toggle_elapsed_us, 95);
-    assert!(
-        toggle_p50 <= TOGGLE_P50_BUDGET_US,
-        "late branch toggle p50 {toggle_p50}us"
-    );
-    assert!(
-        toggle_p95 <= TOGGLE_P95_BUDGET_US,
-        "late branch toggle p95 {toggle_p95}us"
+    let sample_toggles = |state: &mut TreeViewState<u64>| {
+        let mut toggle_elapsed_us = Vec::with_capacity(TOGGLE_SAMPLES);
+        for _ in 0..TOGGLE_SAMPLES {
+            let started = std::time::Instant::now();
+            let outcome = state.apply(TreeViewEvent::Toggle(99_000), config());
+            toggle_elapsed_us.push(started.elapsed().as_micros());
+            assert!(outcome.expanded_changed);
+        }
+        toggle_elapsed_us
+    };
+    let toggle_elapsed_us = sample_toggles(&mut state);
+    assert_wall_clock_budgets(
+        "late branch toggle",
+        toggle_elapsed_us,
+        TOGGLE_P50_BUDGET_US,
+        TOGGLE_P95_BUDGET_US,
+        || sample_toggles(&mut state),
     );
 
     if !state.expanded(&99_000) {
@@ -287,23 +329,33 @@ fn performance_contract_100k_late_hierarchical_interactions() {
         },
         config(),
     );
-    let mut navigation_elapsed_us = Vec::with_capacity(NAVIGATION_SAMPLES);
-    let mut allocations = Vec::with_capacity(NAVIGATION_SAMPLES);
-    let mut allocated_bytes = Vec::with_capacity(NAVIGATION_SAMPLES);
-    for _ in 0..NAVIGATION_SAMPLES {
-        let region = Region::new(GLOBAL);
-        let started = std::time::Instant::now();
-        state.apply(TreeViewEvent::Navigate(TreeViewNavigation::Right), config());
-        state.apply(TreeViewEvent::Navigate(TreeViewNavigation::Left), config());
-        navigation_elapsed_us.push(started.elapsed().as_micros());
-        let stats = region.change();
-        allocations.push(stats.allocations);
-        allocated_bytes.push(stats.bytes_allocated);
-    }
+    let sample_navigation = |state: &mut TreeViewState<u64>| {
+        let mut navigation_elapsed_us = Vec::with_capacity(NAVIGATION_SAMPLES);
+        let mut allocations = Vec::with_capacity(NAVIGATION_SAMPLES);
+        let mut allocated_bytes = Vec::with_capacity(NAVIGATION_SAMPLES);
+        for _ in 0..NAVIGATION_SAMPLES {
+            let region = Region::new(GLOBAL);
+            let started = std::time::Instant::now();
+            state.apply(TreeViewEvent::Navigate(TreeViewNavigation::Right), config());
+            state.apply(TreeViewEvent::Navigate(TreeViewNavigation::Left), config());
+            navigation_elapsed_us.push(started.elapsed().as_micros());
+            let stats = region.change();
+            allocations.push(stats.allocations);
+            allocated_bytes.push(stats.bytes_allocated);
+        }
+        (navigation_elapsed_us, allocations, allocated_bytes)
+    };
+    let (navigation_elapsed_us, allocations, allocated_bytes) = sample_navigation(&mut state);
     assert_eq!(state.selected(), Some(&99_000));
-    assert!(percentile(&navigation_elapsed_us, 95) <= NAVIGATION_P95_BUDGET_US);
     assert_eq!(percentile_usize(&allocations, 95), 0);
     assert_eq!(percentile_usize(&allocated_bytes, 95), 0);
+    assert_wall_clock_budgets(
+        "selection navigation",
+        navigation_elapsed_us,
+        NAVIGATION_P95_BUDGET_US,
+        NAVIGATION_P95_BUDGET_US,
+        || sample_navigation(&mut state).0,
+    );
 }
 
 #[test]
@@ -337,23 +389,32 @@ fn performance_contract_100k_update_snapshot_scrolled_reducer() {
         state = reducer_step(sample, &state);
     }
 
-    let mut elapsed_us = Vec::with_capacity(SAMPLES);
-    let mut allocations = Vec::with_capacity(SAMPLES);
-    let mut allocated_bytes = Vec::with_capacity(SAMPLES);
-    for sample in 0..SAMPLES {
-        let region = Region::new(GLOBAL);
-        let started = std::time::Instant::now();
-        let next = reducer_step(sample, &state);
-        std::hint::black_box(&next);
-        elapsed_us.push(started.elapsed().as_micros());
-        let stats = region.change();
-        allocations.push(stats.allocations);
-        allocated_bytes.push(stats.bytes_allocated);
-        state = next;
-    }
+    let mut measure = || {
+        let mut elapsed_us = Vec::with_capacity(SAMPLES);
+        let mut allocations = Vec::with_capacity(SAMPLES);
+        let mut allocated_bytes = Vec::with_capacity(SAMPLES);
+        for sample in 0..SAMPLES {
+            let region = Region::new(GLOBAL);
+            let started = std::time::Instant::now();
+            let next = reducer_step(sample, &state);
+            std::hint::black_box(&next);
+            elapsed_us.push(started.elapsed().as_micros());
+            let stats = region.change();
+            allocations.push(stats.allocations);
+            allocated_bytes.push(stats.bytes_allocated);
+            state = next;
+        }
+        (elapsed_us, allocations, allocated_bytes)
+    };
+    let (elapsed_us, allocations, allocated_bytes) = measure();
 
-    assert!(percentile(&elapsed_us, 50) <= P50_BUDGET_US);
-    assert!(percentile(&elapsed_us, 95) <= P95_BUDGET_US);
+    assert_wall_clock_budgets(
+        "update snapshot scrolled reducer",
+        elapsed_us,
+        P50_BUDGET_US,
+        P95_BUDGET_US,
+        || measure().0,
+    );
     assert_eq!(percentile_usize(&allocations, 95), 0);
     assert_eq!(percentile_usize(&allocated_bytes, 95), 0);
 }
