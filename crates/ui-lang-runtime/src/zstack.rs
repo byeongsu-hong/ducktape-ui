@@ -29,17 +29,38 @@ where
     Renderer: iced::advanced::Renderer,
 {
     let children: Vec<_> = children.into_iter().collect();
-    // Report Fill in a dimension when any layer fills it, so parents lay the
-    // stack out as a filler rather than a shrink box.
+    // The stack's reported length per axis comes from the layers that DON'T
+    // fill it: a fill layer is an overlay over the content, not a sizing
+    // vote — reporting Fill for it made every parent column treat the stack
+    // as fluid and hand it the leftover space, which in a shrink column is
+    // ZERO (a full-height bar beside a paragraph collapsed the whole stack).
+    // Only when every layer fills an axis does the stack itself fill it, so
+    // a stack of fill layers still stretches like a popover backdrop.
     let mut width = Length::Shrink;
     let mut height = Length::Shrink;
+    let mut sized_width = false;
+    let mut sized_height = false;
+    let mut any_layer = false;
     for child in &children {
         let hint = child.as_widget().size_hint();
         if hint.is_void() {
             continue;
         }
-        width = width.enclose(hint.width);
-        height = height.enclose(hint.height);
+        any_layer = true;
+        if !hint.width.is_fill() {
+            width = width.enclose(hint.width);
+            sized_width = true;
+        }
+        if !hint.height.is_fill() {
+            height = height.enclose(hint.height);
+            sized_height = true;
+        }
+    }
+    if !sized_width && any_layer {
+        width = Length::Fill;
+    }
+    if !sized_height && any_layer {
+        height = Length::Fill;
     }
     ZStack {
         width,
@@ -409,5 +430,41 @@ mod tests {
         );
         let bar_height = node.children()[1].size().height;
         assert!((bar_height - 40.0).abs() < 0.01, "bar: {bar_height}");
+    }
+
+    /// The stack must not REPORT Fill just because an overlay layer fills it:
+    /// a shrink parent column treats a Fill child as fluid and hands it the
+    /// leftover space — zero — collapsing the stack. The content layer sizes
+    /// the stack; the bar is an overlay.
+    #[test]
+    fn overlay_fill_layer_does_not_make_the_stack_fluid() {
+        let mut renderer = renderer();
+        let content: Element<'_, (), Theme, TestRenderer> =
+            container(Space::new().width(100.0).height(40.0)).into();
+        let bar: Element<'_, (), Theme, TestRenderer> = container(Space::new())
+            .width(3.0)
+            .height(Length::Fill)
+            .into();
+        let stack = zstack([content, bar]).width(Length::Fill);
+        assert!(
+            !Widget::<(), Theme, TestRenderer>::size(&stack)
+                .height
+                .is_fill(),
+            "stack must stay content-sized on the unfilled axis"
+        );
+
+        // Through a shrink column — the real chat-stream nesting.
+        let mut column: Element<'_, (), Theme, TestRenderer> =
+            iced::widget::column![Element::from(stack)].into();
+        let mut tree = Tree::new(&column);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(500.0, f32::INFINITY));
+        let node = column
+            .as_widget_mut()
+            .layout(&mut tree, &mut renderer, &limits);
+        let stack_height = node.children()[0].size().height;
+        assert!(
+            (stack_height - 40.0).abs() < 0.01,
+            "stack in column: {stack_height}"
+        );
     }
 }
