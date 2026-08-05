@@ -185,6 +185,62 @@ view
 }
 
 #[test]
+fn lowers_mouse_press_at_to_a_press_observer() {
+    // `press-at=` reports the local press position once per left press — even
+    // when a child captured it — so a menu can anchor at the cursor without
+    // streaming `move=` into state on every pixel.
+    let source = r#"app Pressed
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  press_y = 0.0
+on pointer_pressed(x, y)
+  press_y = y
+view
+  mouse press-at=pointer_pressed
+    text "Stream"
+"#;
+    let generated = compile(source, "pressed.ice").unwrap();
+    assert!(generated.contains("::ui_lang_runtime::press_area("));
+    assert!(generated.contains(".on_press_at("));
+    // Alone, the observer wraps the content directly — no stock mouse area.
+    assert!(!generated.contains("::iced::widget::mouse_area("));
+
+    // Combined with another mouse route, the observer wraps the finished
+    // mouse-area chain so the stock handlers keep working.
+    let combined = source
+        .replace(
+            "on pointer_pressed(x, y)",
+            "on row_entered\non pointer_pressed(x, y)",
+        )
+        .replace(
+            "mouse press-at=pointer_pressed",
+            "mouse enter=row_entered press-at=pointer_pressed",
+        );
+    let generated = compile(&combined, "pressed.ice").unwrap();
+    assert!(generated.contains("::iced::widget::mouse_area("));
+    assert!(generated.contains(".on_enter("));
+    assert!(generated.contains("::ui_lang_runtime::press_area(__press_content).on_press_at("));
+
+    // The route carries two f64 payloads; the wrong arity is rejected.
+    assert!(
+        compile(
+            &source.replace("on pointer_pressed(x, y)", "on pointer_pressed(x)"),
+            "pressed.ice",
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn lowers_complex_native_controls() {
     let source = r#"app Controls
 extern crate::backend

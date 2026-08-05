@@ -365,6 +365,7 @@ pub(in crate::check) fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut
             push_routes(
                 [
                     options.press.as_ref(),
+                    options.press_at.as_ref(),
                     options.release.as_ref(),
                     options.double_click.as_ref(),
                     options.right_press.as_ref(),

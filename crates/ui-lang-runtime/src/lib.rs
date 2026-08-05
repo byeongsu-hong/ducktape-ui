@@ -11,6 +11,7 @@ mod fixed_virtualization;
 mod flex;
 #[cfg(feature = "virtual-list")]
 mod log_timeline;
+mod press_area;
 mod qr;
 mod resize_handle;
 #[cfg(feature = "full-runtime")]
@@ -35,6 +36,7 @@ pub use dynamic_themer::*;
 pub use flex::*;
 #[cfg(feature = "virtual-list")]
 pub use log_timeline::*;
+pub use press_area::*;
 pub use qr::*;
 pub use resize_handle::*;
 #[cfg(feature = "full-runtime")]

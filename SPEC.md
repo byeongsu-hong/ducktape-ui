@@ -1200,9 +1200,10 @@ tooltip_property
                  | "shadow-x=" | "shadow-y=" | "shadow-blur=") expr
                | "px-snap=" expr
 mouse_area     = "mouse" id? mouse_property+ INDENT node
-mouse_property = ("press=" | "release=" | "double=" | "right_press="
-               | "right_release=" | "middle_press=" | "middle_release="
-               | "enter=" | "move=" | "scroll=" | "exit=") route
+mouse_property = ("press=" | "press-at=" | "release=" | "double="
+               | "right_press=" | "right_release=" | "middle_press="
+               | "middle_release=" | "enter=" | "move=" | "scroll="
+               | "exit=") route
                | "cursor=" mouse_cursor
 resize_handle  = "resize-handle" id? "drag=" route
                  (("press=" | "release=") route)*
@@ -1524,9 +1525,14 @@ names in kebab case: `none`, `hidden`, `idle`, `context-menu`, `help`,
 `resize-column`, `resize-row`, `all-scroll`, `zoom-in`, and `zoom-out`.
 
 The mouse `move=` route is the exception and receives `(x:f64, y:f64)` in
-local widget coordinates. `scroll=` receives `(x:f64, y:f64, pixels:bool)`;
-`pixels=false` identifies iced line units. Bare handler names receive these
-payloads automatically.
+local widget coordinates. `press-at=` receives the same `(x:f64, y:f64)` local
+position once per left press — and, unlike every other mouse route, fires even
+when a child widget captured the press, so a click on a nested button still
+reports where it landed. Prefer it over streaming `move=` into state when the
+position is only read at interaction time: `move=` republishes on every cursor
+pixel and rebuilds the view each time. `scroll=` receives
+`(x:f64, y:f64, pixels:bool)`; `pixels=false` identifies iced line units. Bare
+handler names receive these payloads automatically.
 
 `scroll` accepts every native direction, all four iced length variants, visible
 or hidden scrollbars, scrollbar dimensions/spacing, axis anchors, and bool
