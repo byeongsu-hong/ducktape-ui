@@ -17643,7 +17643,7 @@ view
         let elapsed = started.elapsed();
         assert_eq!(program.lazy_views.len(), LAZY_VIEWS);
         assert_eq!(
-            generated.matches("::iced::widget::lazy(").count(),
+            generated.matches("::ui_lang_runtime::memo_lazy(").count(),
             LAZY_VIEWS
         );
         eprintln!("4k normalized lazy views lowered and emitted in {elapsed:?}");
