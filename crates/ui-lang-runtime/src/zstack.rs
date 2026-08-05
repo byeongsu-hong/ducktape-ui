@@ -103,19 +103,70 @@ where
 
         // Lay out every layer against the full limits and union their sizes, so
         // the smallest layer can never shrink-wrap the tallest one away.
-        let nodes: Vec<layout::Node> = self
+        //
+        // EXCEPT layers that fill an axis the limits leave UNBOUNDED (a stack
+        // inside a vertical scroll has infinite max height): resolving those
+        // against the raw limits yields an infinite node that degenerates the
+        // whole stack. Such layers are deferred and laid out against the size
+        // the CONTENT layers resolved — a full-height bar beside a paragraph
+        // fills the paragraph, never the void.
+        let max = limits.max();
+        let deferred: Vec<bool> = self
+            .children
+            .iter()
+            .map(|child| {
+                let hint = child.as_widget().size();
+                (max.width.is_infinite() && hint.width.is_fill())
+                    || (max.height.is_infinite() && hint.height.is_fill())
+            })
+            .collect();
+
+        let mut nodes: Vec<Option<layout::Node>> = self
             .children
             .iter_mut()
             .zip(tree.children.iter_mut())
-            .map(|(child, state)| child.as_widget_mut().layout(state, renderer, &limits))
+            .zip(deferred.iter())
+            .map(|((child, state), deferred)| {
+                if *deferred {
+                    None
+                } else {
+                    Some(child.as_widget_mut().layout(state, renderer, &limits))
+                }
+            })
             .collect();
 
-        let intrinsic = nodes.iter().fold(Size::ZERO, |acc, node| {
+        let intrinsic = nodes.iter().flatten().fold(Size::ZERO, |acc, node| {
             let size = node.size();
             Size::new(acc.width.max(size.width), acc.height.max(size.height))
         });
 
-        let size = limits.resolve(self.width, self.height, intrinsic);
+        // The same unbounded-axis guard for the stack's OWN length: a fill
+        // layer makes the constructor report Fill, and resolving Fill against
+        // an infinite max is the degenerate node this method just avoided.
+        let resolve_width = if max.width.is_infinite() && self.width.is_fill() {
+            Length::Shrink
+        } else {
+            self.width
+        };
+        let resolve_height = if max.height.is_infinite() && self.height.is_fill() {
+            Length::Shrink
+        } else {
+            self.height
+        };
+        let size = limits.resolve(resolve_width, resolve_height, intrinsic);
+
+        let bounded = layout::Limits::new(Size::ZERO, size);
+        for ((child, state), node) in self
+            .children
+            .iter_mut()
+            .zip(tree.children.iter_mut())
+            .zip(nodes.iter_mut())
+        {
+            if node.is_none() {
+                *node = Some(child.as_widget_mut().layout(state, renderer, &bounded));
+            }
+        }
+        let nodes: Vec<layout::Node> = nodes.into_iter().flatten().collect();
 
         layout::Node::with_children(size, nodes)
     }
@@ -307,5 +358,56 @@ where
 {
     fn from(stack: ZStack<'a, Message, Theme, Renderer>) -> Self {
         Self::new(stack)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::Theme;
+    use iced::advanced::renderer::Headless;
+    use iced::advanced::widget::Tree;
+    use iced::widget::{Space, container};
+
+    type TestRenderer = iced_test::renderer::Renderer;
+
+    fn renderer() -> TestRenderer {
+        iced_test::futures::futures::executor::block_on(<TestRenderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(14.0),
+            None,
+        ))
+        .expect("headless renderer")
+    }
+
+    /// A fill-height layer inside an unbounded-height context (a vertical
+    /// scroll) must fill the CONTENT layers' resolved height, not resolve
+    /// against infinity and degenerate the whole stack.
+    #[test]
+    fn fill_layer_fills_the_content_height_under_unbounded_limits() {
+        let mut renderer = renderer();
+        let content: Element<'_, (), Theme, TestRenderer> =
+            container(Space::new().width(100.0).height(40.0)).into();
+        let bar: Element<'_, (), Theme, TestRenderer> = container(Space::new())
+            .width(3.0)
+            .height(Length::Fill)
+            .into();
+        let mut stack: Element<'_, (), Theme, TestRenderer> =
+            zstack([content, bar]).width(Length::Fill).into();
+        let mut tree = Tree::new(&stack);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(500.0, f32::INFINITY));
+
+        let node = stack
+            .as_widget_mut()
+            .layout(&mut tree, &mut renderer, &limits);
+
+        assert!(node.size().height.is_finite(), "stack degenerated");
+        assert!(
+            (node.size().height - 40.0).abs() < 0.01,
+            "{:?}",
+            node.size()
+        );
+        let bar_height = node.children()[1].size().height;
+        assert!((bar_height - 40.0).abs() < 0.01, "bar: {bar_height}");
     }
 }
