@@ -742,7 +742,7 @@ view
 "#;
     let generated = compile(source, "lazy.ice").unwrap();
     assert!(generated.contains(
-        "::iced::widget::lazy((self.title.to_owned(), (\"LazyDemo\").to_owned(), __ice_palette.name)"
+        "::ui_lang_runtime::memo_lazy((self.title.to_owned(), (\"LazyDemo\").to_owned(), __ice_palette.name)"
     ));
     assert!(generated.contains("let cached: ::std::string::String = __dependency.0.clone()"));
     assert!(generated.contains("let __lazy_content: __IceElement<'static,"));
