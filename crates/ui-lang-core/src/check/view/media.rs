@@ -270,6 +270,16 @@ pub(in crate::check) fn infer_media_group(
                     "mouse move",
                 )?;
             }
+            if let Some(route) = &options.press_at {
+                infer_ordered_payload_route(
+                    route,
+                    &[Type::F64, Type::F64],
+                    env,
+                    document,
+                    signatures,
+                    "mouse press-at",
+                )?;
+            }
             if let Some(route) = &options.scroll {
                 infer_ordered_payload_route(
                     route,

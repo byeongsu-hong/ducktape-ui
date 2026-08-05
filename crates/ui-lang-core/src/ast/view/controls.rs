@@ -1070,6 +1070,9 @@ pub enum TooltipPosition {
 #[derive(Clone, Debug, Default)]
 pub struct MouseAreaOptions {
     pub press: Option<Route>,
+    /// Payload route receiving the `(x, y)` local position of a left press.
+    /// Unlike `press`, it fires even when a child captured the press.
+    pub press_at: Option<Route>,
     pub release: Option<Route>,
     pub double_click: Option<Route>,
     pub right_press: Option<Route>,
@@ -1108,6 +1111,7 @@ pub(crate) fn mouse_area_routes(options: &MouseAreaOptions) -> Vec<&Route> {
         &options.enter,
         &options.exit,
         &options.move_route,
+        &options.press_at,
         &options.scroll,
     ]
     .into_iter()

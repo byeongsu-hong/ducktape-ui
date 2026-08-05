@@ -49,6 +49,32 @@ fn render_resolved_mouse_area(
     env: &dyn BindingEnvironment,
     content: String,
 ) -> Result<String, Error> {
+    let press_at = match &mouse.press_at {
+        Some(route) => {
+            let callback = resolved_interaction_route_callback_code(
+                route,
+                "__point",
+                &["__point.x as f64", "__point.y as f64"],
+                env,
+                program,
+                message,
+            )?;
+            Some(format!(
+                "::ui_lang_runtime::press_area({{inner}}).on_press_at({callback})"
+            ))
+        }
+        None => None,
+    };
+    // `press-at=` alone needs no stock mouse area at all: the press observer
+    // wraps the content directly.
+    if let Some(press_at) = &press_at
+        && mouse_area_is_press_at_only(mouse)
+    {
+        let wrapped = press_at.replace("{inner}", "__mouse_content");
+        return Ok(format!(
+            "{{ let __mouse_content: __IceElement<'_, {message}> = {content}; {wrapped}.into() }}"
+        ));
+    }
     let mut code = format!(
         "{{ let __mouse_content: __IceElement<'_, {message}> = {content}; ::iced::widget::mouse_area(__mouse_content)"
     );
@@ -126,7 +152,31 @@ fn render_resolved_mouse_area(
         )
         .unwrap();
     }
+    // The press observer wraps the finished mouse area, so its callback fires
+    // after the content — captured or not — has processed the press.
+    if let Some(press_at) = press_at {
+        let wrapped = press_at.replace("{inner}", "__press_content");
+        return Ok(format!(
+            "{{ let __press_content: __IceElement<'_, {message}> = {code}.into() }}; {wrapped}.into() }}"
+        ));
+    }
     Ok(format!("{code}.into() }}"))
+}
+
+fn mouse_area_is_press_at_only(mouse: &ResolvedMouseArea) -> bool {
+    mouse.press.is_none()
+        && mouse.release.is_none()
+        && mouse.double_click.is_none()
+        && mouse.right_press.is_none()
+        && mouse.right_release.is_none()
+        && mouse.middle_press.is_none()
+        && mouse.middle_release.is_none()
+        && mouse.enter.is_none()
+        && mouse.exit.is_none()
+        && mouse.move_route.is_none()
+        && mouse.scroll.is_none()
+        && mouse.interaction.is_none()
+        && mouse.interaction_expression.is_none()
 }
 
 fn render_resolved_resize_handle(

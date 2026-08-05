@@ -343,6 +343,8 @@ pub(in crate::parser) fn parse_mouse_area(
             parse_unique_id(part, &mut id, line, "E087", "mouse")?;
         } else if let Some(value) = part.strip_prefix("press=") {
             options.press = Some(route(value)?);
+        } else if let Some(value) = part.strip_prefix("press-at=") {
+            options.press_at = Some(parse_payload_route(value, line, 2)?);
         } else if let Some(value) = part.strip_prefix("release=") {
             options.release = Some(route(value)?);
         } else if let Some(value) = part.strip_prefix("double=") {
@@ -381,6 +383,7 @@ pub(in crate::parser) fn parse_mouse_area(
         }
     }
     if options.press.is_none()
+        && options.press_at.is_none()
         && options.release.is_none()
         && options.double_click.is_none()
         && options.right_press.is_none()
