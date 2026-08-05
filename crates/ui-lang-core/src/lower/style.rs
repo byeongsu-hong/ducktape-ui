@@ -1239,7 +1239,7 @@ impl Lowerer {
                         Layout::Column => ResolvedStyleTargetKind::Column,
                         Layout::Row => ResolvedStyleTargetKind::Row,
                         Layout::Grid => ResolvedStyleTargetKind::Grid,
-                        Layout::Stack => ResolvedStyleTargetKind::Stack,
+                        Layout::Stack | Layout::Hover => ResolvedStyleTargetKind::Stack,
                         Layout::Scroll => ResolvedStyleTargetKind::Scroll,
                     }
                 };

@@ -255,7 +255,7 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
     let span = Span::line(line.number);
 
     match kind {
-        "col" | "row" | "flex" | "scroll" | "grid" | "stack" => {
+        "col" | "row" | "flex" | "scroll" | "grid" | "stack" | "hover" => {
             let id = parts
                 .get(1)
                 .filter(|part| part.starts_with('#'))
@@ -303,12 +303,20 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
                     .map(parse_view)
                     .collect::<Result<_, _>>()?
             };
+            if layout_kind == "hover" && children.len() != 2 {
+                return Err(error(
+                    "E062",
+                    line,
+                    "hover takes exactly two children: the base, then the reveal",
+                ));
+            }
             Ok(ViewNode::Layout {
                 kind: match layout_kind {
                     "col" => Layout::Column,
                     "row" => Layout::Row,
                     "scroll" => Layout::Scroll,
                     "grid" => Layout::Grid,
+                    "hover" => Layout::Hover,
                     _ => Layout::Stack,
                 },
                 options: Box::new(options),

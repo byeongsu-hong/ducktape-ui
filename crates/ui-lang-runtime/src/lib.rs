@@ -9,6 +9,7 @@ mod dynamic_themer;
 #[cfg(feature = "virtual-list")]
 mod fixed_virtualization;
 mod flex;
+mod hover_reveal;
 #[cfg(feature = "virtual-list")]
 mod log_timeline;
 mod memo_lazy;
@@ -35,6 +36,7 @@ pub use dashed_border::*;
 pub use data_grid::*;
 pub use dynamic_themer::*;
 pub use flex::*;
+pub use hover_reveal::*;
 #[cfg(feature = "virtual-list")]
 pub use log_timeline::*;
 pub use memo_lazy::*;

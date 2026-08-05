@@ -2,6 +2,10 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
+    /// A draw-time hover container: exactly two children — the base and a
+    /// reveal drawn only under the cursor — with `bg=` as the hover tint.
+    /// No application state, no routes: hovering dispatches nothing.
+    Hover,
     Column,
     Row,
     Scroll,
@@ -11,6 +15,10 @@ pub enum Layout {
 
 #[derive(Clone, Debug, Default)]
 pub struct LayoutOptions {
+    /// `hover` only: the tint painted under the children while hovered.
+    pub hover_tint: Option<String>,
+    /// `hover` only: the tint's corner radius (a literal, like plate radii).
+    pub hover_radius: Option<f64>,
     pub columns: Option<Expr>,
     pub clip: Option<Expr>,
     pub width: Option<LengthValue>,

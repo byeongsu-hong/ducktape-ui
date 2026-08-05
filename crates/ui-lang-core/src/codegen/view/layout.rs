@@ -28,7 +28,8 @@ pub(in crate::codegen) fn render_layout(
         ),
         ResolvedLayoutMode::Linear(_)
         | ResolvedLayoutMode::Grid(_)
-        | ResolvedLayoutMode::Stack(_) => render_resolved_regular_layout(
+        | ResolvedLayoutMode::Stack(_)
+        | ResolvedLayoutMode::Hover(_) => render_resolved_regular_layout(
             layout, identity, children, document, message, env, scope, slot,
         ),
     }
@@ -67,7 +68,7 @@ fn render_resolved_regular_layout(
             !linear.wrap || linear.spacing.is_some() || linear.wrap_spacing.is_some()
         }
         ResolvedLayoutMode::Grid(grid) => grid.spacing.is_some(),
-        ResolvedLayoutMode::Stack(_) => false,
+        ResolvedLayoutMode::Stack(_) | ResolvedLayoutMode::Hover(_) => false,
         ResolvedLayoutMode::Flex(_) | ResolvedLayoutMode::Scroll(_) => unreachable!(),
     };
     if needs_child_count {
@@ -105,6 +106,16 @@ fn render_resolved_regular_layout(
         }
         ResolvedLayoutMode::Stack(_) => {
             body.push_str(" let __layout = ::ui_lang_runtime::zstack(__children)");
+        }
+        ResolvedLayoutMode::Hover(hover) => {
+            // Exactly two children (the parser enforces it): base, reveal.
+            body.push_str(" let __reveal = __children.pop().expect(\"hover reveal\"); let __base = __children.pop().expect(\"hover base\"); let __layout = ::ui_lang_runtime::hover_reveal(__base, __reveal)");
+            if let Some(tint) = &hover.tint {
+                write!(body, ".tint({})", resolved_theme_color(tint)).unwrap();
+            }
+            if hover.radius > 0.0 {
+                write!(body, ".radius({} as f32)", hover.radius).unwrap();
+            }
         }
         ResolvedLayoutMode::Linear(linear) => {
             let constructor = if linear.axis == ResolvedLinearAxis::Column {

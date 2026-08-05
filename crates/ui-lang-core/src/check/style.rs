@@ -173,6 +173,7 @@ fn style_target_name(target: StyleTarget<'_>) -> &'static str {
         StyleTarget::Layout(Layout::Scroll, _) => "scroll",
         StyleTarget::Layout(Layout::Grid, _) => "grid",
         StyleTarget::Layout(Layout::Stack, _) => "stack",
+        StyleTarget::Layout(Layout::Hover, _) => "hover",
         StyleTarget::Container(_) => "box",
         StyleTarget::PaneContent(_) => "pane",
         StyleTarget::PaneTitle(_) => "pane title",
@@ -566,7 +567,7 @@ fn check_style_ownership(
             )?;
             match kind {
                 Layout::Scroll | Layout::Column | Layout::Row | Layout::Grid => {}
-                Layout::Stack => {
+                Layout::Stack | Layout::Hover => {
                     reject_stack_size_overlap(
                         span,
                         options.width.is_some(),

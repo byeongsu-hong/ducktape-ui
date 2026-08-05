@@ -112,7 +112,21 @@ pub(in crate::parser) fn parse_layout_options(
         options.scroll = Some(ScrollOptions::default());
     }
     for part in parts {
-        if let Some(value) = part.strip_prefix("cols=") {
+        if kind == "hover"
+            && let Some(value) = part.strip_prefix("tint=")
+        {
+            if options.hover_tint.is_some() {
+                return Err(error("E062", line, "duplicate hover tint"));
+            }
+            options.hover_tint = Some(value.to_owned());
+        } else if kind == "hover"
+            && let Some(value) = part.strip_prefix("r=")
+        {
+            let Expr::F64(radius) = parse_expr(value, line)? else {
+                return Err(error("E062", line, "hover r= takes a number literal"));
+            };
+            options.hover_radius = Some(radius);
+        } else if let Some(value) = part.strip_prefix("cols=") {
             if kind != "grid" || options.columns.is_some() {
                 return Err(error(
                     "E074",

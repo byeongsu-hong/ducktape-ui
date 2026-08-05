@@ -59,6 +59,7 @@ pub(in crate::check) fn infer_layout_group(
                 Layout::Column => "column metric",
                 Layout::Row => "row metric",
                 Layout::Stack => "stack size",
+                Layout::Hover => "hover size",
                 Layout::Scroll => "scroll metric",
                 Layout::Grid => "grid metric",
             };

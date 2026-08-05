@@ -169,8 +169,16 @@ pub(crate) enum ResolvedLayoutMode {
     Linear(ResolvedLinearLayout),
     Grid(ResolvedGridLayout),
     Stack(ResolvedStackLayout),
+    Hover(ResolvedHoverLayout),
     Flex(ResolvedFlexLayout),
     Scroll(Box<ResolvedScrollLayout>),
+}
+
+/// The draw-time hover container: base + reveal, an optional hover tint.
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedHoverLayout {
+    pub(crate) tint: Option<ResolvedThemeColor>,
+    pub(crate) radius: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -430,6 +438,14 @@ impl Lowerer {
                     clip,
                     width,
                     height,
+                }),
+                Layout::Hover => ResolvedLayoutMode::Hover(ResolvedHoverLayout {
+                    tint: options
+                        .hover_tint
+                        .as_deref()
+                        .map(|tint| self.resolve_theme_color(tint, span))
+                        .transpose()?,
+                    radius: options.hover_radius.unwrap_or(0.0),
                 }),
                 Layout::Scroll => {
                     let mut scroll = scroll

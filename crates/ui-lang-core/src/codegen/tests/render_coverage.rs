@@ -149,6 +149,7 @@ fn normalized_render_kind(
             },
             ResolvedLayoutMode::Grid(_) => "grid",
             ResolvedLayoutMode::Stack(_) => "stack",
+            ResolvedLayoutMode::Hover(_) => "hover",
             ResolvedLayoutMode::Flex(_) => "flex",
             ResolvedLayoutMode::Scroll(_) => "scroll",
         },

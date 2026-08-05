@@ -299,6 +299,7 @@ fn is_node(name: &str) -> bool {
             | "viewer"
             | "tooltip"
             | "mouse"
+            | "hover"
             | "resize-handle"
             | "canvas"
             | "theme"

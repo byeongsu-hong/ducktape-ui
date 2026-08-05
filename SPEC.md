@@ -1199,6 +1199,8 @@ tooltip_property
                  | "r-tr=" | "r-br=" | "r-bl="
                  | "shadow-x=" | "shadow-y=" | "shadow-blur=") expr
                | "px-snap=" expr
+hover_area     = "hover" id? ("tint=" name ("/" u8)?)? ("r=" number)?
+                 INDENT node node
 mouse_area     = "mouse" id? mouse_property+ INDENT node
 mouse_property = ("press=" | "press-at=" | "release=" | "double="
                | "right_press=" | "right_release=" | "middle_press="
@@ -1523,6 +1525,14 @@ names in kebab case: `none`, `hidden`, `idle`, `context-menu`, `help`,
 `move`, `no-drop`, `not-allowed`, `grab`, `grabbing`, `resize-horizontal`,
 `resize-vertical`, `resize-diagonal-up`, `resize-diagonal-down`,
 `resize-column`, `resize-row`, `all-scroll`, `zoom-in`, and `zoom-out`.
+
+`hover` is the DRAW-TIME hover container: exactly two children — the base,
+then a reveal drawn (and interactive) only while the cursor is over the
+widget — with `tint=` painted under both while hovered. No application state
+is involved: hovering dispatches no messages and rebuilds nothing, so a
+cached `lazy` row keeps a hover toolbar at native latency. Prefer it over
+`mouse enter=`/`exit=` routes whenever the hover only changes what is DRAWN;
+the routes remain for hover state the application itself must know.
 
 The mouse `move=` route is the exception and receives `(x:f64, y:f64)` in
 local widget coordinates. `press-at=` receives the same `(x:f64, y:f64)` local
