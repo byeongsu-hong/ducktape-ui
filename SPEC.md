@@ -1941,7 +1941,11 @@ child fill factors are bounded against the rendered item count so the native
 `u16` sum cannot overflow.
 
 `lazy dependency as cached` rebuilds its one child subtree only when the
-dependency hash changes. The dependency may be bool, i64, str, an extern type
+dependency hash changes. The subtree also survives unmounting: when a `match`
+arm switch or a trimmed list tears the mount down, the built widget state is
+parked, and a later remount with an unchanged dependency rehydrates it instead
+of rebuilding and re-shaping — a screen switch pays only for content that
+actually changed. The dependency may be bool, i64, str, an extern type
 implementing Rust `Hash + Clone`, or a recursive list/optional of those. Only
 the owned `cached` alias is visible inside the subtree as a value, which
 statically enforces iced's `Element<'static>` contract. Input, combo, named QR

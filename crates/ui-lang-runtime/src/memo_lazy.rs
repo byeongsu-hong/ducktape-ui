@@ -1,4 +1,4 @@
-//! [`iced::widget::Lazy`] with LAYOUT memoization.
+//! [`iced::widget::Lazy`] with LAYOUT memoization and unmount PARKING.
 //!
 //! iced's `Lazy` caches the built element while its dependency hash is
 //! unchanged — but every layout pass still re-walks the cached subtree. In a
@@ -10,14 +10,26 @@
 //! unchanged, `layout()` returns a clone of the stored node without touching
 //! the subtree.
 //!
+//! Both caches used to die with the widget tree: a `match` arm switch tears
+//! down the inactive screen, and re-entering rebuilt and re-shaped every lazy
+//! row from nothing (~10ms per chat row, on the UI thread, in one frame). To
+//! survive unmounting, the child's widget [`Tree`] lives inside this widget's
+//! state rather than in `Tree::children`, and dropping that state parks the
+//! whole subtree — element, memoized layout, widget state — in a
+//! thread-local lot keyed by `(codegen site, dependency hash)`. A remount
+//! with the same key reclaims it wholesale: no `view` call, no layout, no
+//! re-shaping. A row whose content changed while unmounted simply misses and
+//! cold-builds; a 64-bit hash collision is the same accepted risk as `Lazy`'s
+//! rebuild skip, scoped per site so distinct `lazy` expressions never share
+//! entries.
+//!
 //! Soundness rides on the contract `Lazy` already imposes: the content is a
 //! pure function of the dependency, so anything that changes what the subtree
 //! would lay out must change the dependency hash. Widget-internal state that
 //! affects layout (a text editor's wrapped lines, say) would already be stale
 //! under `Lazy`'s ELEMENT caching — such widgets don't belong under a lazy
 //! boundary, memoized or not. Bounds changes arrive as different `Limits` and
-//! recompute; a renderer swap cannot outlive the widget tree that owns the
-//! cache.
+//! recompute.
 //!
 //! Everything else is a verbatim fork of `iced_widget::lazy` (0.14.2),
 //! ouroboros overlay machinery included.
@@ -31,23 +43,92 @@ use iced::advanced::{self, Clipboard, Shell, overlay};
 use iced::{Element, Event, Length, Rectangle, Size, Vector, mouse};
 
 use ouroboros::self_referencing;
-use rustc_hash::FxHasher;
+use rustc_hash::{FxHashMap, FxHasher};
+use std::any::Any;
 use std::cell::RefCell;
 use std::hash::{Hash, Hasher as _};
 use std::rc::Rc;
 
+/// One unmounted lazy subtree, waiting under `(site, dependency hash)` for a
+/// same-content remount to reclaim it.
+struct Parked<Message: 'static, Theme: 'static, Renderer: 'static> {
+    element: Element<'static, Message, Theme, Renderer>,
+    layout: Option<(layout::Limits, layout::Node)>,
+    tree: Tree,
+}
+
+struct Parking {
+    entries: FxHashMap<(u64, u64), (u64, Box<dyn Any>)>,
+    clock: u64,
+}
+
+// ponytail: flat cap + O(n) oldest scan on insert; revisit if parking churn
+// ever shows in profiles.
+const PARKING_CAP: usize = 1024;
+
+thread_local! {
+    static PARKING: RefCell<Parking> = RefCell::new(Parking {
+        entries: FxHashMap::default(),
+        clock: 0,
+    });
+}
+
+/// `try_with` because thread teardown drops parked subtrees whose nested lazy
+/// state parks again; both here and in [`park`] any dropping of foreign
+/// subtrees happens OUTSIDE the borrow, since those drops re-enter the lot.
+fn reclaim(site: u64, hash: u64) -> Option<Box<dyn Any>> {
+    PARKING
+        .try_with(|parking| parking.borrow_mut().entries.remove(&(site, hash)))
+        .ok()
+        .flatten()
+        .map(|(_, subtree)| subtree)
+}
+
+fn park(site: u64, hash: u64, subtree: Box<dyn Any>) {
+    let evicted = PARKING
+        .try_with(|parking| {
+            let mut parking = parking.borrow_mut();
+            parking.clock += 1;
+            let stamp = parking.clock;
+            let evicted = if parking.entries.len() >= PARKING_CAP
+                && !parking.entries.contains_key(&(site, hash))
+            {
+                let oldest = parking
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, (stamp, _))| *stamp)
+                    .map(|(key, _)| *key);
+                oldest.and_then(|key| parking.entries.remove(&key))
+            } else {
+                None
+            };
+            parking.entries.insert((site, hash), (stamp, subtree));
+            evicted
+        })
+        .ok()
+        .flatten();
+    drop(evicted);
+}
+
 /// A widget that only rebuilds — and only re-lays — its contents when
-/// necessary.
+/// necessary, and whose subtree survives unmounting via the parking lot.
 pub struct MemoLazy<'a, Message, Theme, Renderer, Dependency, View> {
     dependency: Dependency,
+    site: u64,
     view: Box<dyn Fn(&Dependency) -> View + 'a>,
     element: RefCell<Option<Rc<RefCell<Option<Element<'static, Message, Theme, Renderer>>>>>>,
 }
 
 /// Creates a [`MemoLazy`] widget with the given dependency and view builder.
+///
+/// `site` identifies the `lazy` expression that produced this widget (the
+/// codegen emits its view-node id); parked subtrees are keyed by it so two
+/// sites whose dependencies happen to hash alike can never reclaim each
+/// other's state.
 pub fn memo_lazy<'a, Message, Theme, Renderer, Dependency, View>(
     dependency: Dependency,
     view: impl Fn(&Dependency) -> View + 'a,
+    site: u64,
 ) -> MemoLazy<'a, Message, Theme, Renderer, Dependency, View>
 where
     Dependency: Hash + 'a,
@@ -55,6 +136,7 @@ where
 {
     MemoLazy {
         dependency,
+        site,
         view: Box::new(view),
         element: RefCell::new(None),
     }
@@ -92,12 +174,36 @@ where
     }
 }
 
-struct Internal<Message, Theme, Renderer> {
+struct Internal<Message: 'static, Theme: 'static, Renderer: 'static> {
     element: Rc<RefCell<Option<Element<'static, Message, Theme, Renderer>>>>,
     hash: u64,
+    site: u64,
     /// The memoized layout for the current `hash`: the `Limits` the node was
     /// computed under and the node itself. `None` after a rebuild.
     layout: Option<(layout::Limits, layout::Node)>,
+    /// The child's widget state. Owned here — not in `Tree::children` — so an
+    /// unmount can park it wholesale and a remount can bring it back.
+    tree: Tree,
+}
+
+impl<Message, Theme, Renderer> Drop for Internal<Message, Theme, Renderer> {
+    fn drop(&mut self) {
+        // Dropping the state IS unmounting: park the subtree so a
+        // same-content remount rehydrates instead of re-shaping. An element
+        // already taken (overlay teardown edge) just skips parking.
+        let Some(element) = self.element.borrow_mut().take() else {
+            return;
+        };
+        park(
+            self.site,
+            self.hash,
+            Box::new(Parked {
+                element,
+                layout: self.layout.take(),
+                tree: std::mem::replace(&mut self.tree, Tree::empty()),
+            }),
+        );
+    }
 }
 
 impl<'a, Message, Theme, Renderer, Dependency, View> Widget<Message, Theme, Renderer>
@@ -122,19 +228,45 @@ where
             hasher.finish()
         };
 
+        if let Some(parked) = reclaim(self.site, hash)
+            && let Ok(parked) = parked.downcast::<Parked<Message, Theme, Renderer>>()
+        {
+            let Parked {
+                element,
+                layout,
+                tree,
+            } = *parked;
+            let element = Rc::new(RefCell::new(Some(element)));
+            (*self.element.borrow_mut()) = Some(element.clone());
+
+            return tree::State::new(Internal::<Message, Theme, Renderer> {
+                element,
+                hash,
+                site: self.site,
+                layout,
+                tree,
+            });
+        }
+
         let element = Rc::new(RefCell::new(Some((self.view)(&self.dependency).into())));
+        let tree = {
+            let element = element.borrow();
+            Tree::new(element.as_ref().unwrap().as_widget())
+        };
 
         (*self.element.borrow_mut()) = Some(element.clone());
 
         tree::State::new(Internal::<Message, Theme, Renderer> {
             element,
             hash,
+            site: self.site,
             layout: None,
+            tree,
         })
     }
 
     fn children(&self) -> Vec<Tree> {
-        self.with_element(|element| vec![Tree::new(element.as_widget())])
+        Vec::new()
     }
 
     fn diff(&self, tree: &mut Tree) {
@@ -153,16 +285,13 @@ where
             current.hash = new_hash;
             current.layout = None;
 
-            let element = (self.view)(&self.dependency).into();
+            let element: Element<'static, Message, Theme, Renderer> =
+                (self.view)(&self.dependency).into();
+            current.tree.diff(element.as_widget());
             current.element = Rc::new(RefCell::new(Some(element)));
-
-            (*self.element.borrow_mut()) = Some(current.element.clone());
-            self.with_element(|element| {
-                tree.diff_children(std::slice::from_ref(&element.as_widget()));
-            });
-        } else {
-            (*self.element.borrow_mut()) = Some(current.element.clone());
         }
+
+        (*self.element.borrow_mut()) = Some(current.element.clone());
     }
 
     fn size(&self) -> Size<Length> {
@@ -182,15 +311,9 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let (state, children) = {
-            let Tree {
-                state, children, ..
-            } = tree;
-            (
-                state.downcast_mut::<Internal<Message, Theme, Renderer>>(),
-                children,
-            )
-        };
+        let state = tree
+            .state
+            .downcast_mut::<Internal<Message, Theme, Renderer>>();
 
         if let Some((cached_limits, node)) = &state.layout
             && cached_limits == limits
@@ -201,7 +324,7 @@ where
         let node = self.with_element_mut(|element| {
             element
                 .as_widget_mut()
-                .layout(&mut children[0], renderer, limits)
+                .layout(&mut state.tree, renderer, limits)
         });
         state.layout = Some((*limits, node.clone()));
         node
@@ -214,10 +337,13 @@ where
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
+        let state = tree
+            .state
+            .downcast_mut::<Internal<Message, Theme, Renderer>>();
         self.with_element_mut(|element| {
             element
                 .as_widget_mut()
-                .operate(&mut tree.children[0], layout, renderer, operation);
+                .operate(&mut state.tree, layout, renderer, operation);
         });
     }
 
@@ -232,9 +358,12 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        let state = tree
+            .state
+            .downcast_mut::<Internal<Message, Theme, Renderer>>();
         self.with_element_mut(|element| {
             element.as_widget_mut().update(
-                &mut tree.children[0],
+                &mut state.tree,
                 event,
                 layout,
                 cursor,
@@ -254,14 +383,13 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
+        let state = tree
+            .state
+            .downcast_ref::<Internal<Message, Theme, Renderer>>();
         self.with_element(|element| {
-            element.as_widget().mouse_interaction(
-                &tree.children[0],
-                layout,
-                cursor,
-                viewport,
-                renderer,
-            )
+            element
+                .as_widget()
+                .mouse_interaction(&state.tree, layout, cursor, viewport, renderer)
         })
     }
 
@@ -275,9 +403,12 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        let state = tree
+            .state
+            .downcast_ref::<Internal<Message, Theme, Renderer>>();
         self.with_element(|element| {
             element.as_widget().draw(
-                &tree.children[0],
+                &state.tree,
                 renderer,
                 theme,
                 style,
@@ -296,6 +427,9 @@ where
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        let state = tree
+            .state
+            .downcast_mut::<Internal<Message, Theme, Renderer>>();
         let overlay = InnerBuilder {
             cell: self.element.borrow().as_ref().unwrap().clone(),
             element: self
@@ -306,7 +440,7 @@ where
                 .borrow_mut()
                 .take()
                 .unwrap(),
-            tree: &mut tree.children[0],
+            tree: &mut state.tree,
             layout,
             overlay_builder: |element, tree, layout| {
                 element
@@ -439,6 +573,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     type TestLazy<'a> = MemoLazy<
         'a,
@@ -449,10 +584,23 @@ mod tests {
         Element<'static, (), iced::Theme, iced::Renderer>,
     >;
 
-    fn widget(dependency: i32) -> TestLazy<'static> {
-        memo_lazy(dependency, |value: &i32| {
-            Element::from(iced::widget::text(value.to_string()))
-        })
+    fn widget(dependency: i32, site: u64) -> TestLazy<'static> {
+        memo_lazy(
+            dependency,
+            |value: &i32| Element::from(iced::widget::text(value.to_string())),
+            site,
+        )
+    }
+
+    fn counting_widget(dependency: i32, site: u64, builds: Rc<Cell<u32>>) -> TestLazy<'static> {
+        memo_lazy(
+            dependency,
+            move |value: &i32| {
+                builds.set(builds.get() + 1);
+                Element::from(iced::widget::text(value.to_string()))
+            },
+            site,
+        )
     }
 
     fn internal(tree: &mut Tree) -> &mut Internal<(), iced::Theme, iced::Renderer> {
@@ -464,12 +612,12 @@ mod tests {
     /// any kept node stale).
     #[test]
     fn diff_keeps_the_layout_memo_only_while_the_dependency_holds() {
-        let same = widget(7);
+        let same = widget(7, 0);
         let mut tree = Tree::new(&same as &dyn Widget<(), iced::Theme, iced::Renderer>);
         assert!(internal(&mut tree).layout.is_none());
 
-        let parked = layout::Node::new(Size::new(10.0, 10.0));
-        internal(&mut tree).layout = Some((layout::Limits::NONE, parked.clone()));
+        let memoized = layout::Node::new(Size::new(10.0, 10.0));
+        internal(&mut tree).layout = Some((layout::Limits::NONE, memoized.clone()));
 
         same.diff(&mut tree);
         assert!(
@@ -477,11 +625,93 @@ mod tests {
             "an unchanged dependency must keep the memoized layout"
         );
 
-        let changed = widget(8);
+        let changed = widget(8, 0);
         changed.diff(&mut tree);
         assert!(
             internal(&mut tree).layout.is_none(),
             "a changed dependency rebuilds the element — a kept node would be stale"
         );
+    }
+
+    /// The parking contract: unmounting (dropping the state tree) parks the
+    /// subtree, and a remount with the same site and dependency reclaims it —
+    /// no `view` call, memoized layout intact.
+    #[test]
+    fn a_matching_remount_reclaims_the_parked_subtree_without_rebuilding() {
+        let builds = Rc::new(Cell::new(0));
+
+        let first = counting_widget(7, 800, builds.clone());
+        let mut tree = Tree::new(&first as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        assert_eq!(builds.get(), 1);
+        internal(&mut tree).layout = Some((
+            layout::Limits::NONE,
+            layout::Node::new(Size::new(10.0, 10.0)),
+        ));
+        drop(tree);
+
+        let second = counting_widget(7, 800, builds.clone());
+        let mut tree = Tree::new(&second as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        assert_eq!(
+            builds.get(),
+            1,
+            "a same-content remount must reclaim the parked element, not rebuild it"
+        );
+        assert!(
+            internal(&mut tree).layout.is_some(),
+            "the memoized layout must survive the unmount"
+        );
+    }
+
+    /// A row whose content changed while unmounted misses the lot and
+    /// cold-builds — a reclaimed subtree would show stale content.
+    #[test]
+    fn a_changed_dependency_remount_cold_builds() {
+        let builds = Rc::new(Cell::new(0));
+
+        let first = counting_widget(7, 810, builds.clone());
+        let mut tree = Tree::new(&first as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        internal(&mut tree).layout = Some((
+            layout::Limits::NONE,
+            layout::Node::new(Size::new(10.0, 10.0)),
+        ));
+        drop(tree);
+
+        let second = counting_widget(8, 810, builds.clone());
+        let mut tree = Tree::new(&second as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        assert_eq!(
+            builds.get(),
+            2,
+            "changed content must miss the lot and rebuild"
+        );
+        assert!(internal(&mut tree).layout.is_none());
+    }
+
+    /// Evicting a parked subtree drops nested lazy state, which parks itself
+    /// — that drop must happen outside the lot's borrow or it panics on
+    /// re-entry.
+    #[test]
+    fn evicting_a_parked_subtree_reparks_its_nested_lazy_state() {
+        let outer: TestLazy<'static> = memo_lazy(
+            1,
+            |value: &i32| {
+                let inner: TestLazy<'static> = memo_lazy(
+                    *value,
+                    |value: &i32| Element::from(iced::widget::text(value.to_string())),
+                    901,
+                );
+                Element::from(inner)
+            },
+            900,
+        );
+        drop(Tree::new(
+            &outer as &dyn Widget<(), iced::Theme, iced::Renderer>,
+        ));
+
+        for index in 0..(PARKING_CAP as i32 + 8) {
+            let filler = widget(index, 902);
+            drop(Tree::new(
+                &filler as &dyn Widget<(), iced::Theme, iced::Renderer>,
+            ));
+        }
     }
 }

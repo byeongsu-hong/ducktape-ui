@@ -163,11 +163,14 @@ pub(in crate::codegen) fn render_structure(
                 None,
             )?;
             let dependency_rust = rust_type_code(program, &lazy.binding.ty);
-            // memo_lazy is iced's Lazy plus LAYOUT memoization: a cached row
-            // also skips the per-pass layout walk, which dominated profiles
-            // (each cached chat row cost ~150µs of layout per keystroke).
+            // memo_lazy is iced's Lazy plus LAYOUT memoization (a cached row
+            // also skips the per-pass layout walk) plus unmount parking: the
+            // trailing site id — this lazy expression's view-node id — keys
+            // the parked subtree so a torn-down mount (a `match` arm switch)
+            // rehydrates on re-entry instead of re-shaping every row.
+            let site = node.0;
             let lazy_code = format!(
-                "::ui_lang_runtime::memo_lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}).into()"
+                "::ui_lang_runtime::memo_lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}, {site}u64).into()"
             );
             Ok(if hoisted.is_empty() {
                 lazy_code
