@@ -406,7 +406,7 @@ mod tests {
     /// against infinity and degenerate the whole stack.
     #[test]
     fn fill_layer_fills_the_content_height_under_unbounded_limits() {
-        let mut renderer = renderer();
+        let renderer = renderer();
         let content: Element<'_, (), Theme, TestRenderer> =
             container(Space::new().width(100.0).height(40.0)).into();
         let bar: Element<'_, (), Theme, TestRenderer> = container(Space::new())
@@ -418,9 +418,7 @@ mod tests {
         let mut tree = Tree::new(&stack);
         let limits = layout::Limits::new(Size::ZERO, Size::new(500.0, f32::INFINITY));
 
-        let node = stack
-            .as_widget_mut()
-            .layout(&mut tree, &mut renderer, &limits);
+        let node = stack.as_widget_mut().layout(&mut tree, &renderer, &limits);
 
         assert!(node.size().height.is_finite(), "stack degenerated");
         assert!(
@@ -438,7 +436,7 @@ mod tests {
     /// the stack; the bar is an overlay.
     #[test]
     fn overlay_fill_layer_does_not_make_the_stack_fluid() {
-        let mut renderer = renderer();
+        let renderer = renderer();
         let content: Element<'_, (), Theme, TestRenderer> =
             container(Space::new().width(100.0).height(40.0)).into();
         let bar: Element<'_, (), Theme, TestRenderer> = container(Space::new())
@@ -458,9 +456,7 @@ mod tests {
             iced::widget::column![Element::from(stack)].into();
         let mut tree = Tree::new(&column);
         let limits = layout::Limits::new(Size::ZERO, Size::new(500.0, f32::INFINITY));
-        let node = column
-            .as_widget_mut()
-            .layout(&mut tree, &mut renderer, &limits);
+        let node = column.as_widget_mut().layout(&mut tree, &renderer, &limits);
         let stack_height = node.children()[0].size().height;
         assert!(
             (stack_height - 40.0).abs() < 0.01,
