@@ -24,6 +24,9 @@ use iced::advanced::widget::{Tree, tree};
 use iced::advanced::{Shell, Widget, mouse, renderer};
 use iced::{Event, Length, Rectangle, Size, window};
 
+/// The paint callback: renderer, the surface's bounds, the viewport.
+type PaintFn<'a, Renderer> = Box<dyn Fn(&mut Renderer, Rectangle, &Rectangle) + 'a>;
+
 /// A [`LiveSurface`]'s callbacks: how tall it is, when its shape changed,
 /// whether it is live, and how to paint it.
 pub struct LiveSurface<'a, Renderer> {
@@ -37,8 +40,8 @@ pub struct LiveSurface<'a, Renderer> {
     /// Whether the next beat should be scheduled. When this goes false the
     /// clock parks; the next app-driven redraw of the window re-arms it.
     active: Box<dyn Fn() -> bool + 'a>,
-    /// Paints the surface: renderer, the surface's bounds, the viewport.
-    paint: Box<dyn Fn(&mut Renderer, Rectangle, &Rectangle) + 'a>,
+    /// Paints the surface — see [`PaintFn`].
+    paint: PaintFn<'a, Renderer>,
 }
 
 /// Creates a [`LiveSurface`] from its cadence and callbacks.
