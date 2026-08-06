@@ -439,7 +439,37 @@ pub(in crate::codegen) fn render_overlay(
     let program = document;
     let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
-    let layer = render_node(layer, document, message, env, &child_scope, slot)?;
+    let noop = format!("{message}::__ExternNoop");
+    let press_guard = |target: &str| {
+        format!(
+            "::iced::widget::mouse_area({target}).on_press({noop}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop})"
+        )
+    };
+    // The press guard must wrap what the user SEES as the panel. A floated
+    // layer is re-hosted at its translated position in a nested overlay
+    // (iced `float` captures nothing at its layout slot), so a guard wrapped
+    // around the float would sit at the UNTRANSLATED layout position: the
+    // drawn panel would dismiss on any press its widgets don't capture, and
+    // the empty layout slot would eat clicks meant for the base. When the
+    // layer's root is a float, the guard rides inside it instead. (A float
+    // nested deeper than the layer root still escapes its guard — keep the
+    // float outermost in the layer.)
+    let layer_view = document.resolved_view(layer)?;
+    let (layer, panel) = if let ResolvedViewKind::Float { content: floated } = &layer_view.kind {
+        let floated = render_node(*floated, document, message, env, &child_scope, slot)?;
+        let guarded = format!(
+            "{{ let __overlay_floated: __IceElement<'_, {message}> = {floated}; {}.into() }}",
+            press_guard("__overlay_floated")
+        );
+        let float = program.resolved_float(layer)?;
+        let rendered = structure::render_resolved_float(float, program, message, env, guarded)?;
+        let rendered =
+            source_mapped_expression_origin(rendered, document, layer_view.origin, message, false);
+        (rendered, "__overlay_layer".to_string())
+    } else {
+        let rendered = render_node(layer, document, message, env, &child_scope, slot)?;
+        (rendered, press_guard("__overlay_layer"))
+    };
     let visible = resolved_expr_use_code(program, overlay.visible, env, ValueMode::Owned)?;
     let padding = resolved_expr_use_code(program, overlay.padding, env, ValueMode::Owned)?;
     let backdrop = resolved_theme_color(&overlay.backdrop);
@@ -457,9 +487,8 @@ pub(in crate::codegen) fn render_overlay(
         ResolvedOverlayAlignment::Center => "Center",
         ResolvedOverlayAlignment::End => "Bottom",
     };
-    let noop = format!("{message}::__ExternNoop");
     let rendered = format!(
-        "{{ let __overlay_base: __IceElement<'_, {message}> = {content}; let __overlay_stack = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_base); if {visible} {{ let __overlay_layer: __IceElement<'_, {message}> = {layer}; let __overlay_backdrop = ::iced::widget::container(::iced::widget::space()).width(::iced::Fill).height(::iced::Fill).style(move |_| ::iced::widget::container::Style {{ background: ::std::option::Option::Some(::iced::Background::Color({backdrop})), ..::iced::widget::container::Style::default() }}); let __overlay_backdrop: __IceElement<'_, {message}> = ::iced::widget::mouse_area(__overlay_backdrop).on_press({dismiss}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop}).into(); let __overlay_panel = ::iced::widget::mouse_area(__overlay_layer).on_press({noop}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop}); let __overlay_panel: __IceElement<'_, {message}> = ::iced::widget::container(__overlay_panel).width(::iced::Fill).height(::iced::Fill).padding({padding} as f32).align_x(::iced::alignment::Horizontal::{align_x}).align_y(::iced::alignment::Vertical::{align_y}).into(); let __overlay_surface: __IceElement<'_, {message}> = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_backdrop).push(__overlay_panel).into(); __overlay_stack.push(::iced::widget::float(__overlay_surface).translate(|_, _| ::iced::Vector::new(::core::f32::EPSILON, 0.0))).into() }} else {{ __overlay_stack.into() }} }}"
+        "{{ let __overlay_base: __IceElement<'_, {message}> = {content}; let __overlay_stack = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_base); if {visible} {{ let __overlay_layer: __IceElement<'_, {message}> = {layer}; let __overlay_backdrop = ::iced::widget::container(::iced::widget::space()).width(::iced::Fill).height(::iced::Fill).style(move |_| ::iced::widget::container::Style {{ background: ::std::option::Option::Some(::iced::Background::Color({backdrop})), ..::iced::widget::container::Style::default() }}); let __overlay_backdrop: __IceElement<'_, {message}> = ::iced::widget::mouse_area(__overlay_backdrop).on_press({dismiss}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop}).into(); let __overlay_panel = {panel}; let __overlay_panel: __IceElement<'_, {message}> = ::iced::widget::container(__overlay_panel).width(::iced::Fill).height(::iced::Fill).padding({padding} as f32).align_x(::iced::alignment::Horizontal::{align_x}).align_y(::iced::alignment::Vertical::{align_y}).into(); let __overlay_surface: __IceElement<'_, {message}> = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_backdrop).push(__overlay_panel).into(); __overlay_stack.push(::iced::widget::float(__overlay_surface).translate(|_, _| ::iced::Vector::new(::core::f32::EPSILON, 0.0))).into() }} else {{ __overlay_stack.into() }} }}"
     );
     identify_rendered(rendered, identity, message, env, document, scope)
 }

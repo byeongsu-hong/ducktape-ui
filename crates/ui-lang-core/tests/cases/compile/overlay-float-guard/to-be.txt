@@ -1,0 +1,2 @@
+mouse_area(__overlay_floated)
+let __overlay_panel = __overlay_layer;

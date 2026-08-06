@@ -346,7 +346,7 @@ fn hoist_lazy_component_context(
     (hoisted, params)
 }
 
-fn render_resolved_float(
+pub(in crate::codegen) fn render_resolved_float(
     float: &ResolvedFloat,
     program: &LoweredProgram,
     message: &str,
