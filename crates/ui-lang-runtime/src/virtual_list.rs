@@ -14,7 +14,7 @@
 //! supported. Scrolling ancestors that translate or clip the list on either
 //! hit-test axis require a future explicit scroll-context contract.
 
-use crate::fixed_virtualization::{FixedRowScroll, FixedRows, KeyedRows};
+use crate::virtualization::{KeyedRows, MeasuredHeights, RowScroll, Rows};
 use crate::{StableId, accessible};
 use iced::advanced::text;
 use iced::advanced::widget::operation::{self, Focusable};
@@ -172,12 +172,8 @@ impl VirtualListConfig {
         self.overscan
     }
 
-    const fn rows(self) -> FixedRows {
-        FixedRows::new(self.row_height, self.overscan)
-    }
-
     fn rows_per_page(self, viewport_height: f32) -> usize {
-        self.rows().rows_per_page(viewport_height)
+        (viewport_height / self.row_height).floor().max(1.0) as usize
     }
 }
 
@@ -242,7 +238,8 @@ pub struct VirtualListState<Key> {
     id: VirtualListId,
     selected: Option<Key>,
     selected_index: Option<usize>,
-    scroll: FixedRowScroll,
+    scroll: RowScroll,
+    measured: MeasuredHeights,
     keyed_rows: KeyedRows<Key>,
 }
 
@@ -282,6 +279,7 @@ where
             selected: self.selected.clone(),
             selected_index: self.selected_index,
             scroll: self.scroll,
+            measured: self.measured.clone(),
             keyed_rows: self.keyed_rows.snapshot(),
         }
     }
@@ -313,7 +311,8 @@ where
             id,
             selected: None,
             selected_index: None,
-            scroll: FixedRowScroll::default(),
+            scroll: RowScroll::default(),
+            measured: MeasuredHeights::default(),
             keyed_rows: KeyedRows::new(2),
         }
     }
@@ -338,18 +337,31 @@ where
         self.scroll.viewport_height()
     }
 
+    /// Row geometry for the caller's item count and configuration, combined
+    /// with this list's measured corrections. Queries stay pure functions of
+    /// the passed arguments, exactly as when geometry was closed-form
+    /// fixed-height math.
+    fn rows(&self, item_count: usize, config: VirtualListConfig) -> Rows {
+        Rows::new(
+            config.row_height(),
+            config.overscan_rows(),
+            item_count,
+            &self.measured,
+        )
+    }
+
     /// Returns the logical rows intersecting the viewport for the current offset.
     pub fn visible_range(&self, item_count: usize, config: VirtualListConfig) -> Range<usize> {
-        self.scroll.visible_range(item_count, config.rows())
+        self.scroll.visible_range(&self.rows(item_count, config))
     }
 
     /// Returns the exact range mounted by [`virtual_list`], including overscan.
     pub fn mounted_range(&self, item_count: usize, config: VirtualListConfig) -> Range<usize> {
-        self.scroll.mounted_range(item_count, config.rows())
+        self.scroll.mounted_range(&self.rows(item_count, config))
     }
 
     pub fn inspect(&self, item_count: usize, config: VirtualListConfig) -> VirtualListInspection {
-        let window = self.scroll.window(item_count, config.rows());
+        let window = self.scroll.window(&self.rows(item_count, config));
         let visible_range = window.visible;
         let mounted_range = window.mounted;
         let mounted_rows = mounted_range.len();
@@ -384,7 +396,8 @@ where
         if self.selected_index.is_none() {
             self.selected = None;
         }
-        self.scroll.reconcile(items.len(), config.rows());
+        let rows = self.rows(items.len(), config);
+        self.scroll.reconcile(&rows);
         Ok(())
     }
 
@@ -411,9 +424,10 @@ where
             self.selected = None;
         }
         self.selected_index = retained_index;
-        self.scroll.reconcile(items.len(), config.rows());
+        let rows = self.rows(items.len(), config);
+        self.scroll.reconcile(&rows);
         if let Some(index) = retained_index {
-            self.scroll.reveal(index, items.len(), config.rows());
+            self.scroll.reveal(index, &rows);
         }
         Ok(())
     }
@@ -432,12 +446,12 @@ where
 
         match event {
             VirtualListEvent::ViewportChanged { height } => {
-                self.scroll
-                    .set_viewport_height(height, items.len(), config.rows());
+                let rows = self.rows(items.len(), config);
+                self.scroll.set_viewport_height(height, &rows);
             }
             VirtualListEvent::Scrolled { offset_y } => {
-                self.scroll
-                    .set_native_offset(offset_y, items.len(), config.rows());
+                let rows = self.rows(items.len(), config);
+                self.scroll.set_native_offset(offset_y, &rows);
             }
             VirtualListEvent::Select {
                 index,
@@ -451,7 +465,8 @@ where
                 if let Some(index) = resolved {
                     self.selected = Some(selected);
                     self.selected_index = Some(index);
-                    self.scroll.reveal(index, items.len(), config.rows());
+                    let rows = self.rows(items.len(), config);
+                    self.scroll.reveal(index, &rows);
                 }
             }
             VirtualListEvent::Navigate(navigation) => {
@@ -463,7 +478,8 @@ where
                 ) {
                     self.selected = items.get(index).map(&key);
                     self.selected_index = self.selected.as_ref().map(|_| index);
-                    self.scroll.reveal(index, items.len(), config.rows());
+                    let rows = self.rows(items.len(), config);
+                    self.scroll.reveal(index, &rows);
                 }
             }
         }
@@ -483,7 +499,8 @@ where
         item_count: usize,
         config: VirtualListConfig,
     ) -> bool {
-        self.scroll.scroll_to_item(index, item_count, config.rows())
+        let rows = self.rows(item_count, config);
+        self.scroll.scroll_to_item(index, &rows)
     }
 
     /// Scrolls to the exact live edge of the collection.
@@ -491,7 +508,8 @@ where
     /// Unlike revealing the last item, this reaches the maximum native offset
     /// even when the viewport is shorter than one fixed row.
     pub fn scroll_to_end(&mut self, item_count: usize, config: VirtualListConfig) -> bool {
-        self.scroll.scroll_to_end(item_count, config.rows())
+        let rows = self.rows(item_count, config);
+        self.scroll.scroll_to_end(&rows)
     }
 
     /// Scrolls a stable key into view and returns whether the offset changed.
@@ -659,7 +677,7 @@ where
     Theme: container::Catalog + scrollable::Catalog + 'a,
     Renderer: text::Renderer + iced::advanced::Renderer + 'a,
 {
-    let window = state.scroll.window(items.len(), config.rows());
+    let window = state.scroll.window(&state.rows(items.len(), config));
     let scroll_offset = window.offset;
     let range = window.mounted.clone();
     let top = window.top_spacer;
@@ -673,7 +691,7 @@ where
         let selected = state.selected.as_ref() == Some(&item_key);
         let row = container(view(index, item, selected))
             .width(Length::Fill)
-            .height(config.rows().row_height());
+            .height(config.row_height());
         let semantic_key = state
             .keyed_rows
             .local_id(&item_key)
@@ -1463,8 +1481,8 @@ where
         shell: &mut Shell<'_, Message>,
     ) {
         let local_y = position.y - bounds.y;
-        let index = ((self.native_scroll_offset.get() + local_y) / self.config.rows().row_height())
-            .floor() as usize;
+        let index = ((self.native_scroll_offset.get() + local_y) / self.config.row_height()).floor()
+            as usize;
         if let Some((index, key)) = self.mounted.iter().find(|(mounted, _)| *mounted == index) {
             shell.publish((self.on_event)(VirtualListEvent::Select {
                 index: *index,

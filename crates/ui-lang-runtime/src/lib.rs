@@ -6,8 +6,6 @@ mod data_grid;
 #[doc(hidden)]
 pub mod dev;
 mod dynamic_themer;
-#[cfg(feature = "virtual-list")]
-mod fixed_virtualization;
 mod flex;
 mod hover_reveal;
 mod live_surface;
@@ -31,6 +29,8 @@ pub mod testing;
 mod tree_view;
 #[cfg(feature = "virtual-list")]
 mod virtual_list;
+#[cfg(feature = "virtual-list")]
+mod virtualization;
 mod zstack;
 
 pub use dashed_border::*;
