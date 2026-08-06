@@ -230,10 +230,13 @@ fn split_metadata(source: &str) -> Option<(String, Vec<String>)> {
     if !wrappable_node(source) {
         return None;
     }
+    let component = head.chars().next().is_some_and(char::is_uppercase);
     let mut inline = vec![head.clone()];
     let mut metadata = Vec::new();
     for part in &parts[1..] {
-        if property(part) && !(head == "keyed" && part.starts_with("by=")) {
+        if (property(part) && !(head == "keyed" && part.starts_with("by=")))
+            || (component && crate::valid_identifier(part))
+        {
             metadata.push(part.to_string());
         } else {
             inline.push(part.to_string());

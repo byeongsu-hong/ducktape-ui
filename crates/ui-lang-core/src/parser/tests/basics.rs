@@ -34,6 +34,33 @@ fn parses_semantic_style_recipes() {
 }
 
 #[test]
+fn parses_component_prop_shorthand() {
+    let document = parse(
+        "app Demo\ncomponent Card(title:str, count:i64)\n  text title\nview\n  Card title count\n",
+    )
+    .unwrap();
+    let ViewNode::Component { args, .. } = &document.view else {
+        panic!("expected component call");
+    };
+    assert_eq!(args.len(), 2);
+    assert!(matches!(
+        &args[0],
+        ComponentArg { name, value: Expr::Path(path), bind: false } if name == "title" && *path == ["title"]
+    ));
+    assert!(matches!(
+        &args[1],
+        ComponentArg { name, value: Expr::Path(path), bind: false } if name == "count" && *path == ["count"]
+    ));
+}
+
+#[test]
+fn rejects_malformed_component_props() {
+    let error =
+        parse("app Demo\ncomponent Card(title:str)\n  text title\nview\n  Card 42\n").unwrap_err();
+    assert_eq!(error.code, "E040");
+}
+
+#[test]
 fn parses_component_prop_defaults() {
     let document = parse(
         "app Demo\ncomponent Badge(count:i64, label:str=\"Untitled\", selected:bool=false)\n  text label\nview\n  Badge count=1\n",

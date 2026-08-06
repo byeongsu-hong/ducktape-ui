@@ -17,11 +17,14 @@ pub(in crate::parser) fn parse_component_call(
         let (prop, value, bind) = split_top_marker(part, "<->")
             .map(|(prop, value)| (prop, value, true))
             .or_else(|| split_top_once(part, '=').map(|(prop, value)| (prop, value, false)))
+            .or_else(|| {
+                crate::valid_identifier(part).then_some((part.as_str(), part.as_str(), false))
+            })
             .ok_or_else(|| {
                 error(
                     "E040",
                     line,
-                    "component props use `name=value` or `name<->state`",
+                    "component props use `name=value`, `name<->state`, or bare `name` for `name=name`",
                 )
             })?;
         args.push(ComponentArg {

@@ -1291,10 +1291,11 @@ theme_property = "fg=" color_ref | "bg=" background_value
 component_name = PascalName ("." PascalName)*
 component_call = component_name component_item* ("->" route)?
                  (INDENT (component_route_block | node | named_slot+ | component_call+))?
-component_item = named_prop | id
+component_item = named_prop | bound_prop | name | id
 component_route_block = "events" INDENT component_route+
 component_route = name "->" route
 named_prop     = name "=" expr
+bound_prop     = name "<->" name
 named_slot     = name ":" INDENT node
 slot           = "slot" name?
 extern_component_call
@@ -3420,7 +3421,8 @@ Panel title="Tasks" #tasks-panel
         TaskRow task=task loading=loading #task(task.id)
 ```
 
-A component call uses checked named props in any order, as above. Unknown,
+A component call uses checked named props in any order, as above. A bare
+`name` item is shorthand for the passthrough `name=name`. Unknown,
 missing, duplicate, and incorrectly typed props are compile-time errors.
 Ordinary props are read-only. A component that writes through a prop declares
 that capability with `bind`, and every caller uses `<->` explicitly:
