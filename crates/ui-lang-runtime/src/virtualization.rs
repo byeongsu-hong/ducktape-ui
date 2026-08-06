@@ -40,13 +40,6 @@ impl MeasuredHeights {
     /// Rebuilds the correction table from `(index, measured height)` pairs,
     /// which must be sorted by index with each height finite and
     /// non-negative. Rows not mentioned stay at the estimate.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "measured-mode write path lands with the timeline widget"
-        )
-    )]
     pub(crate) fn rebuild(estimate: f32, measured: impl IntoIterator<Item = (usize, f32)>) -> Self {
         let mut entries = Vec::new();
         let mut cumulative = 0.0;
@@ -146,6 +139,19 @@ impl Rows {
 
     pub(crate) fn total_height(&self) -> f32 {
         self.row_top(self.item_count)
+    }
+
+    /// The row containing content-space `y` (top edge inclusive), or `None`
+    /// past the end of the content — a press below the last row must not
+    /// select it.
+    pub(crate) fn index_at(&self, y: f32) -> Option<usize> {
+        if self.item_count == 0 || y >= self.total_height() {
+            return None;
+        }
+        Some(
+            self.partition_tops(self.item_count, |top| top <= f64::from(y.max(0.0)))
+                .saturating_sub(1),
+        )
     }
 
     pub(crate) fn max_offset(&self, viewport_height: f32) -> f32 {
@@ -398,6 +404,12 @@ impl RowScroll {
 
     pub(crate) fn scroll_to_end(&mut self, rows: &Rows) -> bool {
         self.set_offset(rows.max_offset(self.viewport_height), rows, true)
+    }
+
+    /// Programmatically restores an offset after geometry shifted under it
+    /// (anchor correction), synchronizing the native scrollable.
+    pub(crate) fn restore_offset(&mut self, offset: f32, rows: &Rows) -> bool {
+        self.set_offset(offset, rows, true)
     }
 
     fn set_offset(&mut self, offset: f32, rows: &Rows, synchronize_native: bool) -> bool {

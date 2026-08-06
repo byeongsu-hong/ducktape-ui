@@ -23,7 +23,7 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, r
 use iced::keyboard;
 use iced::widget::{column, container, scrollable, space};
 use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write as _;
@@ -135,11 +135,13 @@ fn push_escaped_selector_component(escaped: &mut String, value: &str) {
     }
 }
 
-/// Validated fixed-row geometry for a virtual list.
+/// Validated row geometry for a virtual list: a fixed per-row height, or a
+/// measured mode where the height is an estimate for not-yet-measured rows.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VirtualListConfig {
     row_height: f32,
     overscan: usize,
+    measured: bool,
 }
 
 impl VirtualListConfig {
@@ -154,7 +156,24 @@ impl VirtualListConfig {
         Ok(Self {
             row_height,
             overscan: 2,
+            measured: false,
         })
+    }
+
+    /// Creates measured-row geometry for variable-height rows.
+    ///
+    /// Rows mount at their natural height; the list measures them as they
+    /// render and reports [`VirtualListEvent::RowsMeasured`], which the
+    /// reducer folds into per-row corrections. `estimate` sizes rows that
+    /// have never been measured.
+    pub fn measured(estimate: f32) -> Result<Self, VirtualListConfigError> {
+        let mut config = Self::new(estimate)?;
+        config.measured = true;
+        Ok(config)
+    }
+
+    pub(crate) const fn is_measured(self) -> bool {
+        self.measured
     }
 
     /// Sets the number of extra rows mounted on each side of the viewport.
@@ -207,10 +226,21 @@ pub enum VirtualListNavigation {
 /// A strongly typed interaction emitted by [`virtual_list`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum VirtualListEvent<Key> {
-    ViewportChanged { height: f32 },
-    Scrolled { offset_y: f32 },
-    Select { index: usize, key: Key },
+    ViewportChanged {
+        height: f32,
+    },
+    Scrolled {
+        offset_y: f32,
+    },
+    Select {
+        index: usize,
+        key: Key,
+    },
     Navigate(VirtualListNavigation),
+    /// Natural layout heights observed for mounted rows in measured mode.
+    RowsMeasured {
+        heights: Vec<(Key, f32)>,
+    },
 }
 
 /// Result of applying a virtual-list interaction to caller-owned state.
@@ -240,6 +270,7 @@ pub struct VirtualListState<Key> {
     selected_index: Option<usize>,
     scroll: RowScroll,
     measured: MeasuredHeights,
+    measured_heights: HashMap<Key, f32>,
     keyed_rows: KeyedRows<Key>,
 }
 
@@ -280,6 +311,7 @@ where
             selected_index: self.selected_index,
             scroll: self.scroll,
             measured: self.measured.clone(),
+            measured_heights: self.measured_heights.clone(),
             keyed_rows: self.keyed_rows.snapshot(),
         }
     }
@@ -313,6 +345,7 @@ where
             selected_index: None,
             scroll: RowScroll::default(),
             measured: MeasuredHeights::default(),
+            measured_heights: HashMap::new(),
             keyed_rows: KeyedRows::new(2),
         }
     }
@@ -348,6 +381,27 @@ where
             item_count,
             &self.measured,
         )
+    }
+
+    /// Rebuilds the sparse correction table from recorded measurements in
+    /// item order. A list that never measured anything skips all of it.
+    fn rebuild_measured<T>(
+        &mut self,
+        items: &[T],
+        key: &impl Fn(&T) -> Key,
+        config: VirtualListConfig,
+    ) {
+        if self.measured_heights.is_empty() {
+            return;
+        }
+        self.measured = MeasuredHeights::rebuild(
+            config.row_height(),
+            items.iter().enumerate().filter_map(|(index, item)| {
+                self.measured_heights
+                    .get(&key(item))
+                    .map(|height| (index, *height))
+            }),
+        );
     }
 
     /// Returns the logical rows intersecting the viewport for the current offset.
@@ -388,7 +442,7 @@ where
             .keyed_rows
             .reconcile(
                 items,
-                key,
+                &key,
                 self.selected.as_ref(),
                 "virtual-list semantic identity exhausted",
             )
@@ -396,6 +450,12 @@ where
         if self.selected_index.is_none() {
             self.selected = None;
         }
+        if !self.measured_heights.is_empty() {
+            let keyed_rows = &self.keyed_rows;
+            self.measured_heights
+                .retain(|key, _| keyed_rows.local_id(key).is_some());
+        }
+        self.rebuild_measured(items, &key, config);
         let rows = self.rows(items.len(), config);
         self.scroll.reconcile(&rows);
         Ok(())
@@ -424,6 +484,7 @@ where
             self.selected = None;
         }
         self.selected_index = retained_index;
+        self.rebuild_measured(items, &key, config);
         let rows = self.rows(items.len(), config);
         self.scroll.reconcile(&rows);
         if let Some(index) = retained_index {
@@ -467,6 +528,27 @@ where
                     self.selected_index = Some(index);
                     let rows = self.rows(items.len(), config);
                     self.scroll.reveal(index, &rows);
+                }
+            }
+            VirtualListEvent::RowsMeasured { heights } => {
+                if config.is_measured() && !heights.is_empty() {
+                    // Keep the first visible row visually anchored while
+                    // corrections shift everything around it; a list stuck to
+                    // its live edge stays stuck.
+                    let rows = self.rows(items.len(), config);
+                    let viewport = self.scroll.viewport_height();
+                    let bottom_stuck = self.scroll.offset() >= rows.max_offset(viewport) - 0.5;
+                    let anchor = self.scroll.visible_range(&rows).start;
+                    let anchor_gap = self.scroll.offset() - rows.row_top(anchor);
+                    self.measured_heights.extend(heights);
+                    self.rebuild_measured(items, &key, config);
+                    let rows = self.rows(items.len(), config);
+                    if bottom_stuck {
+                        self.scroll.scroll_to_end(&rows);
+                    } else {
+                        self.scroll
+                            .restore_offset(rows.row_top(anchor) + anchor_gap, &rows);
+                    }
                 }
             }
             VirtualListEvent::Navigate(navigation) => {
@@ -677,7 +759,8 @@ where
     Theme: container::Catalog + scrollable::Catalog + 'a,
     Renderer: text::Renderer + iced::advanced::Renderer + 'a,
 {
-    let window = state.scroll.window(&state.rows(items.len(), config));
+    let rows = state.rows(items.len(), config);
+    let window = state.scroll.window(&rows);
     let scroll_offset = window.offset;
     let range = window.mounted.clone();
     let top = window.top_spacer;
@@ -691,7 +774,11 @@ where
         let selected = state.selected.as_ref() == Some(&item_key);
         let row = container(view(index, item, selected))
             .width(Length::Fill)
-            .height(config.row_height());
+            .height(if config.is_measured() {
+                Length::Shrink
+            } else {
+                Length::Fixed(config.row_height())
+            });
         let semantic_key = state
             .keyed_rows
             .local_id(&item_key)
@@ -721,12 +808,14 @@ where
     let touch_claim = Rc::new(Cell::new(TouchClaim::None));
     let native_scroll_offset = Rc::new(Cell::new(scroll_offset));
     let scrolled_offset = Rc::clone(&native_scroll_offset);
+    let realized_heights = Rc::new(RefCell::new(Vec::new()));
     let (mounted_keys, mounted_children) = children.into_iter().unzip();
     let mounted_rows: Element<'a, Message, Theme, Renderer> = Element::new(MountedRows {
         keys: mounted_keys,
         children: mounted_children,
         touch_claim: Rc::clone(&touch_claim),
         scroll_offset: Rc::clone(&native_scroll_offset),
+        realized_heights: Rc::clone(&realized_heights),
         draw_probe,
     });
     let content = scrollable(
@@ -771,6 +860,8 @@ where
         mounted,
         mounted_semantic_ids,
         config,
+        rows,
+        realized_heights,
         total_height: window.total_height,
         scroll_offset,
         viewport_height: state.scroll.viewport_height(),
@@ -806,6 +897,8 @@ where
     mounted: Vec<(usize, Key)>,
     mounted_semantic_ids: Vec<u32>,
     config: VirtualListConfig,
+    rows: Rows,
+    realized_heights: Rc<RefCell<Vec<f32>>>,
     total_height: f32,
     scroll_offset: f32,
     viewport_height: f32,
@@ -838,6 +931,7 @@ where
     children: Vec<Element<'a, Message, Theme, Renderer>>,
     touch_claim: Rc<Cell<TouchClaim>>,
     scroll_offset: Rc<Cell<f32>>,
+    realized_heights: Rc<RefCell<Vec<f32>>>,
     draw_probe: &'static str,
 }
 
@@ -902,7 +996,7 @@ where
         limits: &layout::Limits,
     ) -> layout::Node {
         let limits = limits.width(Length::Fill).height(Length::Shrink);
-        layout::flex::resolve(
+        let node = layout::flex::resolve(
             layout::flex::Axis::Vertical,
             renderer,
             &limits,
@@ -913,7 +1007,11 @@ where
             iced::Alignment::Start,
             &mut self.children,
             &mut tree.children,
-        )
+        );
+        let mut realized = self.realized_heights.borrow_mut();
+        realized.clear();
+        realized.extend(node.children().iter().map(|child| child.size().height));
+        node
     }
 
     fn operate(
@@ -1064,6 +1162,7 @@ struct State {
     focus_visible: bool,
     measured_viewport_height: f32,
     reported_viewport_height: Option<f32>,
+    reported_row_heights: Vec<(usize, f32)>,
     applied_scroll_revision: Option<u64>,
     touch: Option<TouchGesture>,
 }
@@ -1077,6 +1176,7 @@ impl State {
             focus_visible: false,
             measured_viewport_height: 0.0,
             reported_viewport_height: None,
+            reported_row_heights: Vec::new(),
             applied_scroll_revision: None,
             touch: None,
         }
@@ -1253,6 +1353,31 @@ where
                 shell.publish((self.on_event)(VirtualListEvent::ViewportChanged {
                     height: state.measured_viewport_height,
                 }));
+            }
+        }
+
+        if self.config.is_measured() {
+            let realized = self.realized_heights.borrow();
+            let current: Vec<(usize, f32)> = self
+                .mounted
+                .iter()
+                .zip(realized.iter())
+                .map(|((index, _), height)| (*index, *height))
+                .collect();
+            if state.reported_row_heights != current {
+                let heights: Vec<(Key, f32)> = self
+                    .mounted
+                    .iter()
+                    .zip(realized.iter())
+                    .filter(|((index, _), height)| {
+                        (self.rows.row_height(*index) - **height).abs() > 0.01
+                    })
+                    .map(|((_, key), height)| (key.clone(), *height))
+                    .collect();
+                state.reported_row_heights = current;
+                if !heights.is_empty() {
+                    shell.publish((self.on_event)(VirtualListEvent::RowsMeasured { heights }));
+                }
             }
         }
 
@@ -1481,8 +1606,12 @@ where
         shell: &mut Shell<'_, Message>,
     ) {
         let local_y = position.y - bounds.y;
-        let index = ((self.native_scroll_offset.get() + local_y) / self.config.row_height()).floor()
-            as usize;
+        let Some(index) = self
+            .rows
+            .index_at(self.native_scroll_offset.get() + local_y)
+        else {
+            return;
+        };
         if let Some((index, key)) = self.mounted.iter().find(|(mounted, _)| *mounted == index) {
             shell.publish((self.on_event)(VirtualListEvent::Select {
                 index: *index,
@@ -3501,6 +3630,7 @@ mod tests {
             children: Vec::new(),
             touch_claim: Rc::clone(&claim),
             scroll_offset: Rc::new(Cell::new(0.0)),
+            realized_heights: Rc::new(RefCell::new(Vec::new())),
             draw_probe: "mounted-rows-test",
         };
         let mut empty_tree = WidgetTree::new(&empty as &dyn Widget<Message, (), RecordingRenderer>);
@@ -3522,6 +3652,7 @@ mod tests {
             children: vec![Element::new(FocusLeaf)],
             touch_claim: claim,
             scroll_offset: Rc::new(Cell::new(0.0)),
+            realized_heights: Rc::new(RefCell::new(Vec::new())),
             draw_probe: "mounted-rows-test",
         };
         let mut mounted_tree =
@@ -3551,6 +3682,9 @@ mod tests {
             mounted: Vec::<(usize, u64)>::new(),
             mounted_semantic_ids: Vec::new(),
             config: config(),
+            rows: VirtualListState::<u64>::new(VirtualListId::new("visible-list-rows"))
+                .rows(0, config()),
+            realized_heights: Rc::new(RefCell::new(Vec::new())),
             total_height: 40.0,
             scroll_offset: 0.0,
             viewport_height: 40.0,
@@ -3586,5 +3720,176 @@ mod tests {
         assert_eq!(renderer.quads.len(), 1);
         assert_eq!(renderer.quads[0].border.width, 2.0);
         assert_eq!(renderer.quads[0].border.color, iced::Color::WHITE);
+    }
+
+    #[test]
+    fn measured_rows_fold_into_geometry_and_keep_the_anchor() {
+        let measured = VirtualListConfig::measured(20.0).unwrap();
+        let items: Vec<u64> = (0..20).collect();
+        let mut state = VirtualListState::new(VirtualListId::new("measured-anchor"));
+        state.reconcile(&items, |key| *key, measured).unwrap();
+        state.apply(
+            VirtualListEvent::ViewportChanged { height: 100.0 },
+            &items,
+            |key| *key,
+            measured,
+        );
+        state.apply(
+            VirtualListEvent::Scrolled { offset_y: 200.0 },
+            &items,
+            |key| *key,
+            measured,
+        );
+        assert_eq!(state.visible_range(items.len(), measured), 10..15);
+
+        // A correction above the viewport shifts the offset so the anchor row
+        // does not visually move.
+        state.apply(
+            VirtualListEvent::RowsMeasured {
+                heights: vec![(2, 60.0)],
+            },
+            &items,
+            |key| *key,
+            measured,
+        );
+        assert_eq!(state.scroll_offset(), 240.0);
+        assert_eq!(state.visible_range(items.len(), measured), 10..15);
+
+        // A correction below the viewport moves nothing.
+        state.apply(
+            VirtualListEvent::RowsMeasured {
+                heights: vec![(18, 90.0)],
+            },
+            &items,
+            |key| *key,
+            measured,
+        );
+        assert_eq!(state.scroll_offset(), 240.0);
+
+        // A list stuck to its live edge stays stuck through corrections.
+        assert!(state.scroll_to_end(items.len(), measured));
+        assert_eq!(state.scroll_offset(), 410.0);
+        state.apply(
+            VirtualListEvent::RowsMeasured {
+                heights: vec![(0, 30.0)],
+            },
+            &items,
+            |key| *key,
+            measured,
+        );
+        assert_eq!(state.scroll_offset(), 420.0);
+
+        // Reconciling away a measured row prunes its correction.
+        let shorter: Vec<u64> = (1..20).collect();
+        state.reconcile(&shorter, |key| *key, measured).unwrap();
+        let total_without_row_zero = 19.0 * 20.0 + 40.0 + 70.0;
+        let rows = state.rows(shorter.len(), measured);
+        assert_eq!(rows.total_height(), total_without_row_zero);
+
+        // Fixed-geometry lists ignore measurement reports entirely.
+        let fixed = config();
+        let mut uniform = VirtualListState::new(VirtualListId::new("measured-ignored"));
+        uniform.reconcile(&items, |key| *key, fixed).unwrap();
+        let outcome = uniform.apply(
+            VirtualListEvent::RowsMeasured {
+                heights: vec![(2, 60.0)],
+            },
+            &items,
+            |key| *key,
+            fixed,
+        );
+        assert!(!outcome.scroll_changed && !outcome.visible_range_changed);
+        assert_eq!(uniform.rows(items.len(), fixed).total_height(), 20.0 * 20.0);
+    }
+
+    #[test]
+    fn measured_mode_reports_natural_row_heights_and_stabilizes() {
+        let measured = VirtualListConfig::measured(20.0).unwrap();
+        let items: Vec<u64> = (0..40).collect();
+        let mut state = VirtualListState::new(VirtualListId::new("measured-report"));
+        state.reconcile(&items, |key| *key, measured).unwrap();
+        state.apply(
+            VirtualListEvent::ViewportChanged { height: 100.0 },
+            &items,
+            |key| *key,
+            measured,
+        );
+        let mut renderer = renderer();
+
+        let view_rows = |index: usize,
+                         _: &u64,
+                         _: bool|
+         -> Element<'_, Message, Theme, iced_test::renderer::Renderer> {
+            iced::widget::container(iced::widget::text(index))
+                .width(Length::Fill)
+                .height(if index.is_multiple_of(2) { 30.0 } else { 50.0 })
+                .into()
+        };
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            measured,
+            "Measured heights",
+            |key| *key,
+            |key| format!("Item {key}"),
+            view_rows,
+            Message::List,
+        );
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut messages = Vec::new();
+        let _ = ui.update(
+            &[redraw()],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        let cache = ui.into_cache();
+        let reported = messages
+            .iter()
+            .find_map(|message| match message {
+                Message::List(VirtualListEvent::RowsMeasured { heights }) => Some(heights.clone()),
+                _ => None,
+            })
+            .expect("mounted rows must report their natural heights");
+        assert!(reported.contains(&(0, 30.0)) && reported.contains(&(1, 50.0)));
+        for message in messages.drain(..) {
+            if let Message::List(event) = message {
+                state.apply(event, &items, |key| *key, measured);
+            }
+        }
+        // Alternating 30/50 rows average 40px: a 100px viewport sees three.
+        assert_eq!(state.visible_range(items.len(), measured), 0..3);
+
+        let element: Element<'_, Message, Theme, iced_test::renderer::Renderer> = virtual_list(
+            &state,
+            &items,
+            measured,
+            "Measured heights",
+            |key| *key,
+            |key| format!("Item {key}"),
+            view_rows,
+            Message::List,
+        );
+        let mut ui = UserInterface::build(element, Size::new(240.0, 100.0), cache, &mut renderer);
+        let _ = ui.update(
+            &[redraw()],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert!(
+            !messages.iter().any(|message| matches!(
+                message,
+                Message::List(VirtualListEvent::RowsMeasured { .. })
+            )),
+            "applied measurements must not be re-reported: {messages:?}"
+        );
     }
 }

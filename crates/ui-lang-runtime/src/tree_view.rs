@@ -821,6 +821,9 @@ where
                         VirtualListNavigation::PageDown => TreeViewNavigation::PageDown,
                     })
                 }
+                VirtualListEvent::RowsMeasured { .. } => {
+                    unreachable!("fixed-row collections never measure rows")
+                }
             })
         },
         move |key| {
