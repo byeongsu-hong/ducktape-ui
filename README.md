@@ -814,6 +814,49 @@ The `format`, `diagnostic`, `warning`, and `compile` suites are auto-discovered,
 case needs no Rust test function. Focused AST and edge-case assertions remain
 next to their parser, checker, or code generator module.
 
+## Fast dev loop for applications
+
+Ice ships the compile-speed machinery by default; an application workspace
+adds two Cargo stanzas to collect it. Measured on the ducktape app (a 9.9 MB
+generated program): a real one-character `.ice` edit went from 12.6 s
+`cargo check` / ~50 s `cargo build` to **3.0 s / ~6 s**.
+
+What the toolchain does on its own:
+
+- **Per-fragment output splitting.** Generated code is written as one file
+  per source fragment (plus a small root), because rustc hashes spans into
+  its incremental fingerprints: with a single merged file, an edit shifts
+  every span after it and re-typechecks/re-codegens everything positioned
+  below the edit point. Split, an edit re-checks only its own fragment.
+- **Small render frames + `grow_stack`.** Component uses outline into
+  per-use methods, body-identical uses fold together, and lazy bodies become
+  associated functions; every outlined call rides a `stacker` red zone.
+- **A generated stack contract.** Every app gets
+  `__ice_view_fits_default_stack`: boot (and every preset) must render inside
+  a 4 MiB thread. Single-window apps exercise full view depth; a daemon's
+  `match`-on-window view renders its windowless arm here, so daemon apps
+  should keep one app-side test that seeds real window state before calling
+  `__view` per window.
+
+What the application workspace adds (workspace-root `Cargo.toml`):
+
+```toml
+# The Ice compiler runs as your build script on every .ice edit; build
+# scripts default to opt-level 0 (ducktape measured 1.3 s -> 0.3 s per edit).
+[profile.dev.build-override]
+opt-level = 2
+```
+
+Keep the app crate itself at the default `opt-level = 0`: per-build fixed
+costs at opt-1 (whole-crate monomorphization collection and MIR work)
+dominate an otherwise-localized edit loop — ducktape measured 31 s -> 6.2 s
+going back to opt-0 — and the generated stack contract is the gate that
+keeps opt-0 safe. Do NOT reach for `-Zincremental-ignore-spans` to get the
+same effect: on rustc 1.96 it deterministically corrupts the incremental
+dep graph after a few edits (the split makes it unnecessary anyway). A fast
+linker (mold, scoped per-target in `.cargo/config.toml`) trims the run loop
+further on Linux.
+
 ## Status
 
 Ice 2.0 Preview is an executable language candidate, not an attempt to replace iced.

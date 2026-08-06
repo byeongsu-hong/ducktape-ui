@@ -103,11 +103,47 @@ pub(in crate::codegen) fn generate_tests(
         rust_string(source_path),
     )
     .unwrap();
+    generate_stack_contract(out, program);
     for test in program.tests() {
         generate_test(out, program, message, source_path, test)?;
     }
     writeln!(out, "}}").unwrap();
     Ok(())
+}
+
+/// Emits the default stack contract: booting and rendering the view (and
+/// every preset's view) must fit a 4 MiB thread. This is what makes opt-0
+/// dev builds safe by default — render frames must stay small enough for the
+/// `grow_stack` red zone to catch depth, and a single oversized frame jumps
+/// the guard page before stacker can grow. Single-window apps get full view
+/// depth here; a daemon's `match`-on-window view renders its windowless arm,
+/// so daemon apps should keep an app-side test that seeds real window state
+/// (the ducktape app's `full_view_fits_a_four_mib_stack` is the template).
+fn generate_stack_contract(out: &mut String, program: &LoweredProgram) {
+    let app_name = program.app_name();
+    let window_argument = if program.settings().kind == ProgramKind::Daemon {
+        "::iced::window::Id::unique()"
+    } else {
+        ""
+    };
+    writeln!(
+        out,
+        "#[test]\nfn __ice_view_fits_default_stack() {{\n::std::thread::Builder::new().stack_size(4 * 1024 * 1024).spawn(|| {{"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "let (__app, _) = {app_name}::__boot();\nlet _ = __app.__view({window_argument});"
+    )
+    .unwrap();
+    for (index, _) in program.preset_handlers().enumerate() {
+        writeln!(
+            out,
+            "let (__app, _) = {app_name}::__preset_{index}();\nlet _ = __app.__view({window_argument});"
+        )
+        .unwrap();
+    }
+    writeln!(out, "}}).unwrap().join().unwrap();\n}}").unwrap();
 }
 
 fn generate_test(

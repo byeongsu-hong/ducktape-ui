@@ -36,6 +36,19 @@ ui-lang-runtime = "=0.1.0"
 ui-lang-build = "=0.1.0"
 ```
 
+An external copy is its own workspace, so also add the dev-loop stanza to the
+workspace-root `Cargo.toml` (see "Fast dev loop for applications" in the
+repository README — the Ice compiler runs as your build script on every
+`.ice` edit and build scripts default to opt-level 0):
+
+```toml
+[profile.dev.build-override]
+opt-level = 2
+```
+
+Leave the app crate at the default `opt-level = 0`; the generated
+`__ice_view_fits_default_stack` contract is the gate that keeps that safe.
+
 Those registry coordinates are the release layout, not a claim that `0.1.0` is
 already published. `tests/downstream-app` remains the release gate: CI extracts
 the actual `.crate` archives and builds that fixture outside this workspace.
