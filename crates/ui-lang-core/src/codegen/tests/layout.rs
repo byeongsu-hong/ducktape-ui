@@ -1045,7 +1045,8 @@ view
         generated
             .contains(".delay(::std::time::Duration::from_millis(u64::try_from(10).unwrap_or(0)))")
     );
-    assert!(generated.contains("::iced::widget::responsive(move |__size|"));
+    assert!(generated.contains("::iced::widget::responsive({ let __ice_responsive_scope = ("));
+    assert!(generated.contains("move |__size|"));
     assert!(
         generated.contains("if __size.width < ((600.0) as f32).max(f32::EPSILON).min(f32::MAX)")
     );

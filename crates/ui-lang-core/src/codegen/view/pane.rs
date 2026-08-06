@@ -24,12 +24,21 @@ pub(in crate::codegen) fn render_pane_grid(
         key: None,
     };
     let pane_grid_scope = resolved_view_identity_code(&identity, scope, env, document)?;
+    // The pane-body `move` closure must own its scope chain: interpolating a
+    // shared scope local (a component's scope binding) would move it out of
+    // the enclosing render and break sibling uses. Both locals below are
+    // bound right before the closure and moved into it.
+    let pane_outer_scope = reconciliation_scope(scope, env).to_owned();
     let pane_type = (!pane_grid.templates.is_empty()).then(|| pane_type(&pane_grid.name));
     let mut arms = panes
         .iter()
         .zip(&pane_grid.panes)
         .map(|(pane, resolved)| {
             let mut pane_env = ScopedBindingEnv::new(env);
+            pane_env.insert(
+                RECONCILIATION_SCOPE_BINDING.into(),
+                reconciliation_scope_binding("__ice_pane_outer_scope.clone()".into()),
+            );
             if let Some(binding) = &resolved.maximized {
                 pane_env.insert(
                     binding.name.clone(),
@@ -41,7 +50,7 @@ pub(in crate::codegen) fn render_pane_grid(
                     ),
                 );
             }
-            let pane_scope = format!("format!(\"{{}}/{}\", {pane_grid_scope})", resolved.name);
+            let pane_scope = format!("format!(\"{{}}/{}\", __ice_pane_grid_scope)", resolved.name);
             let pattern = pane_type.as_ref().map_or_else(
                 || rust_string(&resolved.name),
                 |pane_type| format!("{pane_type}::__Static({})", rust_string(&resolved.name)),
@@ -65,6 +74,10 @@ pub(in crate::codegen) fn render_pane_grid(
         let item = &resolved.item.name;
         let mut template_env = ScopedBindingEnv::new(env);
         template_env.insert(
+            RECONCILIATION_SCOPE_BINDING.into(),
+            reconciliation_scope_binding("__ice_pane_outer_scope.clone()".into()),
+        );
+        template_env.insert(
             item.clone(),
             resolved_local_binding(
                 LocalBindingTypeSource::Resolved(program),
@@ -86,7 +99,7 @@ pub(in crate::codegen) fn render_pane_grid(
         }
         let key = resolved_expr_use_code(program, resolved.key, &template_env, ValueMode::Owned)?;
         let pane_scope = format!(
-            "format!(\"{{}}/{}({{}})\", {pane_grid_scope}, __pane_key)",
+            "format!(\"{{}}/{}({{}})\", __ice_pane_grid_scope, __pane_key)",
             item
         );
         let content = render_pane_content(
@@ -184,7 +197,9 @@ pub(in crate::codegen) fn render_pane_grid(
     }
     append_pane_grid_style(&mut code, pane_grid, env, document)?;
     identify_rendered(
-        format!("{code}.into()"),
+        format!(
+            "{{ let __ice_pane_outer_scope = ({pane_outer_scope}).to_owned(); let __ice_pane_grid_scope = ({pane_grid_scope}).to_owned(); let _ = &__ice_pane_outer_scope; {code}.into() }}"
+        ),
         Some(&identity),
         message,
         env,

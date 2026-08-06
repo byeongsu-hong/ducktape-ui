@@ -2,7 +2,6 @@ use super::*;
 use crate::lower::ExternFnId;
 use crate::unqualified_name;
 
-#[cfg(test)]
 use std::cell::Cell;
 
 pub(in crate::codegen) trait BindingEnvironment {
@@ -28,6 +27,82 @@ pub(in crate::codegen) trait BindingEnvironment {
 
     fn component_context(&self) -> Option<(&str, &Binding)> {
         None
+    }
+}
+
+/// Wraps an environment to observe whether any resolved binding could
+/// reference a render-site local. Only app state and derived values compile
+/// to `self`-rooted code; everything else — loop items, lazy dependencies,
+/// component params/state, contexts, outputs, reconciliation scopes — may
+/// capture a local of the enclosing render function, so any such lookup
+/// (or any prefix/visit/context access, conservatively) marks the site as
+/// capturing and the component use renders inline instead of outlining.
+pub(in crate::codegen) struct RecordingEnv<'a> {
+    base: &'a dyn BindingEnvironment,
+    site_capture: Cell<bool>,
+}
+
+impl<'a> RecordingEnv<'a> {
+    pub(in crate::codegen) fn new(base: &'a dyn BindingEnvironment) -> Self {
+        Self {
+            base,
+            site_capture: Cell::new(false),
+        }
+    }
+
+    pub(in crate::codegen) fn site_capturing(&self) -> bool {
+        self.site_capture.get()
+    }
+
+    fn record(&self, binding: &Binding) {
+        let self_backed = matches!(
+            binding.owner,
+            Some(BindingOwner::Value(
+                ResolvedValueRef::AppState(_) | ResolvedValueRef::Derived(_)
+            ))
+        );
+        if !self_backed {
+            self.site_capture.set(true);
+        }
+    }
+}
+
+impl BindingEnvironment for RecordingEnv<'_> {
+    fn get(&self, name: &str) -> Option<&Binding> {
+        let binding = self.base.get(name);
+        if let Some(binding) = binding {
+            self.record(binding);
+        }
+        binding
+    }
+
+    fn visit(&self, visitor: &mut dyn FnMut(&str, &Binding)) {
+        // Route callbacks visit the whole environment to collect component
+        // state scopes (`component_state_scopes`); those scopes get captured
+        // into the emitted callback, so only they mark the site as capturing
+        // — a visit that finds none references nothing site-local.
+        self.base.visit(&mut |name, binding| {
+            if matches!(binding.state, Some(StateBinding::Component { .. })) {
+                self.site_capture.set(true);
+            }
+            visitor(name, binding);
+        });
+    }
+
+    fn binding_with_prefix(&self, prefix: &str) -> Option<&Binding> {
+        let binding = self.base.binding_with_prefix(prefix);
+        if let Some(binding) = binding {
+            self.record(binding);
+        }
+        binding
+    }
+
+    fn component_context(&self) -> Option<(&str, &Binding)> {
+        let context = self.base.component_context();
+        if context.is_some() {
+            self.site_capture.set(true);
+        }
+        context
     }
 }
 

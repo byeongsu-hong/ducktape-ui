@@ -615,6 +615,54 @@ view
     assert!(generated.contains("::iced::widget::Column::new().into()"));
 }
 
+/// Component uses whose arguments resolve only self-backed bindings outline
+/// into per-use methods — one item per use keeps rustc's per-function
+/// typeck/borrowck cost linear in view size. Uses that capture render-site
+/// locals (a loop item) or sit inside a `'static` lazy closure stay inline.
+#[test]
+fn outlines_self_backed_component_uses_but_not_local_captures() {
+    let source = r#"app Composition
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  title = "hello"
+  rows = ["a", "b"]
+component Card(label: str)
+  text label
+view
+  col
+    Card label=title
+    for row in rows
+      Card label=row
+    lazy title as cached
+      Card label=cached
+"#;
+    let generated = compile(source, "outline.ice").unwrap();
+
+    assert!(
+        generated.contains("self.__ice_component_use_0(__ice_palette,"),
+        "a self-backed use must call its outlined method"
+    );
+    assert!(
+        generated.contains(
+            "fn __ice_component_use_0(&self, __ice_palette: __IcePalette, __ice_component_"
+        ),
+        "the outlined method must take the palette and the scope value"
+    );
+    assert!(
+        !generated.contains("__ice_component_use_1"),
+        "the loop-item use and the lazy use must stay inline: {generated}"
+    );
+}
+
 #[test]
 fn preserves_component_and_slot_stack_boundaries() {
     let source = r#"app Composition
@@ -637,8 +685,8 @@ view
 "#;
     let generated = compile(source, "composition.ice").unwrap();
 
-    assert!(generated.contains("(|| { let __component_content: __IceElement<'_,"));
-    assert!(generated.contains("; __component_content })()"));
+    assert!(generated.contains("let __component_content: __IceElement<'_,"));
+    assert!(generated.contains("; __component_content }"));
     assert!(generated.contains("(|| { let __slot_content: __IceElement<'_,"));
     assert!(generated.contains("; __slot_content })()"));
 }
@@ -1231,4 +1279,42 @@ view
     assert!(generated.contains("SearchBoxLatest0"));
     assert!(generated.contains("::iced::widget::keyed_column(__children)"));
     assert!(generated.contains("format!(\"{}/key({})\""));
+}
+/// Routes to app handlers capture no component state at the top level, so an
+/// events-only use still outlines (the route-callback path visits the whole
+/// env to collect state scopes — an empty collection must not count as a
+/// site capture).
+#[test]
+fn outlines_uses_whose_events_route_to_app_handlers() {
+    let source = r#"app Composition
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  title = "hello"
+on bump
+component Card(label: str)
+  emits
+    pressed
+  col
+    text label
+    button "go" -> emit(pressed)
+view
+  col
+    Card label=title
+      events
+        pressed -> bump
+"#;
+    let generated = compile(source, "outline-events.ice").unwrap();
+    assert!(
+        generated.contains("self.__ice_component_use_0(__ice_palette,"),
+        "an events-only use must still outline"
+    );
 }

@@ -27,14 +27,23 @@ pub(in crate::codegen) fn render_table(
             true,
         ),
     );
+    // The per-column `move` closure must own its scope chain: interpolating a
+    // shared scope local (a component's scope binding) would move it out of
+    // the enclosing render and break sibling uses.
+    cell_env.insert(
+        RECONCILIATION_SCOPE_BINDING.into(),
+        reconciliation_scope_binding("__ice_table_recon.clone()".into()),
+    );
+    let table_recon = reconciliation_scope(scope, env).to_owned();
     let mut column_codes = Vec::with_capacity(columns.len());
     for (index, (column, resolved)) in columns.iter().zip(&table.columns).enumerate() {
         let header_scope = format!("format!(\"{{}}/header({index})\", {scope})");
-        let cell_scope = format!("format!(\"{{}}/row({{}})/col({index})\", {scope}, __row)");
+        let cell_scope =
+            format!("format!(\"{{}}/row({{}})/col({index})\", __ice_table_scope, __row)");
         let header = render_node(column.header, document, message, env, &header_scope, slot)?;
         let cell = render_node(column.cell, document, message, &cell_env, &cell_scope, slot)?;
         let mut code = format!(
-            "{{ let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item_name}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let _ = &{item_name}; let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
+            "{{ let __ice_table_scope = ({scope}).to_owned(); let __ice_table_recon = ({table_recon}).to_owned(); let _ = (&__ice_table_scope, &__ice_table_recon); let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item_name}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let _ = &{item_name}; let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
         );
         if let Some(width) = &resolved.width {
             write!(

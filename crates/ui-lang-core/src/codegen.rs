@@ -792,7 +792,12 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_presets(&mut out, program, &message)?;
     generate_update(&mut out, program, &message)?;
     generate_subscription(&mut out, program, &message)?;
+    let outline_guard = outline::enable_for_view();
     generate_view(&mut out, program, &message)?;
+    for method in outline::drain_outlined_methods() {
+        writeln!(out, "{method}").unwrap();
+    }
+    drop(outline_guard);
     generate_test_mounts(&mut out, program, &message, source_path)?;
     writeln!(out, "}}").unwrap();
     generate_tests(&mut out, program, &message, source_path)?;

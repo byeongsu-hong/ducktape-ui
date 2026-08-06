@@ -61,10 +61,33 @@ pub(in crate::codegen) fn render_structure(
                         resolved_expr_use_code(program, *breakpoint, env, ValueMode::Owned)?;
                     let breakpoint =
                         format!("(({breakpoint}) as f32).max(f32::EPSILON).min(f32::MAX)");
-                    let narrow = render_node(*narrow, document, message, env, &child_scope, slot)?;
-                    let wide = render_node(*wide, document, message, env, &child_scope, slot)?;
+                    // The `move` closure would move a shared scope local out
+                    // of the enclosing render (a component's scope binding);
+                    // rebind the chain to a closure-owned string instead.
+                    let mut child_env = ScopedBindingEnv::new(env);
+                    child_env.insert(
+                        RECONCILIATION_SCOPE_BINDING.into(),
+                        reconciliation_scope_binding("__ice_responsive_recon.clone()".into()),
+                    );
+                    let responsive_recon = reconciliation_scope(&child_scope, env).to_owned();
+                    let narrow = render_node(
+                        *narrow,
+                        document,
+                        message,
+                        &child_env,
+                        "__ice_responsive_scope.clone()",
+                        slot,
+                    )?;
+                    let wide = render_node(
+                        *wide,
+                        document,
+                        message,
+                        &child_env,
+                        "__ice_responsive_scope.clone()",
+                        slot,
+                    )?;
                     format!(
-                        "move |__size| {{ let __responsive: __IceElement<'_, {message}> = if __size.width < {breakpoint} {{ {narrow} }} else {{ {wide} }}; __responsive }}"
+                        "{{ let __ice_responsive_scope = ({child_scope}).to_owned(); let __ice_responsive_recon = ({responsive_recon}).to_owned(); let _ = (&__ice_responsive_scope, &__ice_responsive_recon); move |__size| {{ let __responsive: __IceElement<'_, {message}> = if __size.width < {breakpoint} {{ {narrow} }} else {{ {wide} }}; __responsive }} }}"
                     )
                 }
                 _ => {
@@ -115,9 +138,22 @@ pub(in crate::codegen) fn render_structure(
                     true,
                 ),
             );
-            let content = render_node(*content, document, message, &child_env, &child_scope, slot)?;
+            // See the breakpoint arm: the `move` closure must own its scope.
+            child_env.insert(
+                RECONCILIATION_SCOPE_BINDING.into(),
+                reconciliation_scope_binding("__ice_responsive_recon.clone()".into()),
+            );
+            let responsive_recon = reconciliation_scope(&child_scope, env).to_owned();
+            let content = render_node(
+                *content,
+                document,
+                message,
+                &child_env,
+                "__ice_responsive_scope.clone()",
+                slot,
+            )?;
             let builder = format!(
-                "move |__size| {{ let __responsive: __IceElement<'_, {message}> = {content}; __responsive }}"
+                "{{ let __ice_responsive_scope = ({child_scope}).to_owned(); let __ice_responsive_recon = ({responsive_recon}).to_owned(); let _ = (&__ice_responsive_scope, &__ice_responsive_recon); move |__size| {{ let __responsive: __IceElement<'_, {message}> = {content}; __responsive }} }}"
             );
             let mut code = format!("::iced::widget::responsive({builder})");
             for (method, length) in [("width", &responsive.width), ("height", &responsive.height)] {
@@ -154,6 +190,9 @@ pub(in crate::codegen) fn render_structure(
                 ),
             );
             let hoisted = hoist_lazy_component_context(node, program, env, &mut child_env);
+            // The lazy closure is `'static`, so component uses inside it must
+            // never outline into `&self` methods.
+            let _lazy_guard = outline::enter_lazy_render();
             let child = render_node(
                 *child,
                 document,
@@ -162,6 +201,7 @@ pub(in crate::codegen) fn render_structure(
                 "__lazy_scope.clone()",
                 None,
             )?;
+            drop(_lazy_guard);
             let dependency_rust = rust_type_code(program, &lazy.binding.ty);
             // memo_lazy is iced's Lazy plus LAYOUT memoization (a cached row
             // also skips the per-pass layout walk) plus unmount parking: the

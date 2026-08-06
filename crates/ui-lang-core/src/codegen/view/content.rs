@@ -26,19 +26,27 @@ pub(in crate::codegen) fn render_content(
             let call = document.component_call_by_id(*call)?;
             let component = document.component(call.component);
             let name = &component.name;
+            // Records whether any argument, route, or slot resolution touched
+            // a binding that could reference a render-site local. Scope
+            // expressions are deliberately resolved against the RAW `env`
+            // below: the scope value is evaluated at the call site either
+            // way, so its locality never blocks outlining.
+            let recording = RecordingEnv::new(env);
+            let scope_binding = component_scope_binding(name, call.binding_site);
             let mut component_env = HashMap::new();
             let default_env = HashMap::new();
             for argument in &call.arguments {
-                let value_env = if argument.uses_definition_scope() {
+                let value_env: &dyn BindingEnvironment = if argument.uses_definition_scope() {
                     &default_env
                 } else {
-                    env
+                    &recording
                 };
                 let state = argument
                     .writable
                     .as_ref()
                     .map(|state| {
-                        env.get(state.name())
+                        recording
+                            .get(state.name())
                             .and_then(|binding| binding.state.clone())
                             .ok_or_else(|| {
                                 document.invariant_at_origin(
@@ -77,7 +85,7 @@ pub(in crate::codegen) fn render_content(
                             route,
                             "__value",
                             &["__value"],
-                            env,
+                            &recording,
                             document,
                             message,
                         )?,
@@ -100,7 +108,7 @@ pub(in crate::codegen) fn render_content(
                             route,
                             &payloads.join(", "),
                             &payload_refs,
-                            env,
+                            &recording,
                             document,
                             message,
                         )?
@@ -141,7 +149,7 @@ pub(in crate::codegen) fn render_content(
                                     ),
                                 )
                             })?;
-                        component_event(env, &outer.name, outer_event_name)
+                        component_event(&recording, &outer.name, outer_event_name)
                             .ok_or_else(|| {
                                 program.invariant_at_origin(
                                     *origin,
@@ -166,7 +174,7 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            let component_slots = component_slot_context(&call.slots, document, env, slot)?;
+            let component_slots = component_slot_context(&call.slots, document, &recording, slot)?;
             for component_slot in component_slots
                 .iter()
                 .flat_map(|slots| slots.entries.iter())
@@ -199,8 +207,7 @@ pub(in crate::codegen) fn render_content(
                     document,
                 )?,
             };
-            set_reconciliation_scope(&mut component_env, component_scope.clone());
-            let scope_binding = component_scope_binding(name, call.binding_site);
+            set_reconciliation_scope(&mut component_env, format!("{scope_binding}.clone()"));
             if call.storage != ComponentStorage::Stateless {
                 let field = component_state_field(name);
                 let states = match call.storage {
@@ -248,7 +255,7 @@ pub(in crate::codegen) fn render_content(
                     &mut component_env,
                     name,
                     Binding {
-                        code: component_scope.clone(),
+                        code: format!("{scope_binding}.clone()"),
                         ty: Type::Unit,
                         local: true,
                         state: None,
@@ -256,11 +263,7 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            let render_scope = if call.storage == ComponentStorage::Stateless {
-                component_scope.clone()
-            } else {
-                format!("{scope_binding}.clone()")
-            };
+            let render_scope = format!("{scope_binding}.clone()");
             let rendered = render_node(
                 component.root,
                 document,
@@ -269,21 +272,32 @@ pub(in crate::codegen) fn render_content(
                 &render_scope,
                 component_slots.as_ref(),
             )?;
-            let rendered = if call.storage == ComponentStorage::Stateless {
-                rendered
-            } else {
-                let mount = (call.storage == ComponentStorage::Mounted).then(|| {
-                    let field = component_state_field(name);
-                    format!("self.{field}.mount({scope_binding}.clone());")
-                });
-                format!(
-                    "{{ let {scope_binding} = {component_scope}; {} {rendered} }}",
-                    mount.as_deref().unwrap_or("")
-                )
-            };
-            Ok(format!(
-                "(|| {{ let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content }})()"
-            ))
+            let mount = (call.storage == ComponentStorage::Mounted).then(|| {
+                let field = component_state_field(name);
+                format!("self.{field}.mount({scope_binding}.clone()); ")
+            });
+            let body = format!(
+                "{}let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content",
+                mount.as_deref().unwrap_or("")
+            );
+            // A use whose arguments, routes, and slots resolved only
+            // self-backed bindings captures nothing from this render site:
+            // move its body to a method so rustc checks it as its own item
+            // instead of growing `__view` (typeck/borrowck are superlinear in
+            // function size). The scope expression stays here as the call
+            // argument, so scopes chained through loop keys still evaluate in
+            // the loop.
+            Ok(
+                if outline::outlining_active()
+                    && !recording.site_capturing()
+                    && call.slots.is_empty()
+                {
+                    let method = outline::push_outlined_method(message, &scope_binding, &body);
+                    format!("self.{method}(__ice_palette, {component_scope})")
+                } else {
+                    format!("{{ let {scope_binding} = {component_scope}; {body} }}")
+                },
+            )
         }
         ResolvedViewKind::Slot {
             slot: slot_id,

@@ -237,6 +237,8 @@ pub(in crate::codegen) fn render_node(
     ))
 }
 
+pub(in crate::codegen) mod outline;
+
 mod boolean;
 mod button;
 mod container;
