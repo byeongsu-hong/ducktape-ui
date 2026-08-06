@@ -259,7 +259,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes at-spi2-core dbus-x11
+          sudo apt-get install --yes at-spi2-core dbus-x11 gcc-mingw-w64-x86-64
           rustup target add x86_64-pc-windows-gnu
       - run: scripts/a11y-smoke.sh
       - run: scripts/a11y-windows-check.sh
