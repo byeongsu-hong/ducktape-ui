@@ -172,6 +172,52 @@ pub(in crate::codegen) fn push_outlined_method(
     })
 }
 
+/// Stores an outlined lazy BODY as an associated fn (no `self`: the lazy
+/// closure is `'static`) over the memoized dependency tuple plus the hoisted
+/// routing context, and returns the fn name. Bodies fold through the same
+/// dedup map as component methods after per-site hoist locals are rewritten
+/// to positional names.
+pub(in crate::codegen) fn push_lazy_body(
+    message: &str,
+    dependency_tuple: &str,
+    context_params: &[(String, String)],
+    body: &str,
+) -> String {
+    let mut renames: Vec<(String, String)> = context_params
+        .iter()
+        .enumerate()
+        .map(|(index, (local, _))| (local.clone(), format!("__ice_lazy_p{index}")))
+        .collect();
+    renames.sort_by_key(|(from, _)| std::cmp::Reverse(from.len()));
+    let mut normalized = body.to_owned();
+    for (from, to) in &renames {
+        normalized = replace_ident(&normalized, from, to);
+    }
+    let params = context_params
+        .iter()
+        .enumerate()
+        .map(|(index, (_, ty))| format!(", __ice_lazy_p{index}: {ty}"))
+        .collect::<String>();
+    let key = format!(
+        "(__ice_palette: __IcePalette, __dependency: &{dependency_tuple}{params}) -> __IceElement<'static, {message}> {{ {normalized} }}"
+    );
+    OUTLINE.with_borrow_mut(|state| {
+        if let Some(existing) = state.dedup.get(&key) {
+            return existing.clone();
+        }
+        let name = format!("__ice_lazy_body_{}", state.counter);
+        state.counter += 1;
+        let cfg = if state.test_mode {
+            "#[cfg(test)]\n"
+        } else {
+            ""
+        };
+        state.methods.push(format!("{cfg}fn {name}{key}"));
+        state.dedup.insert(key, name.clone());
+        name
+    })
+}
+
 /// Replaces whole-identifier occurrences of `from` with `to`: a scope name
 /// must never rewrite inside a longer identifier that merely contains it
 /// (`..._scope_2` inside `..._scope_21`).

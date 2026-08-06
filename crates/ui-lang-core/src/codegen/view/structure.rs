@@ -189,7 +189,8 @@ pub(in crate::codegen) fn render_structure(
                     false,
                 ),
             );
-            let hoisted = hoist_lazy_component_context(node, program, env, &mut child_env);
+            let (hoisted, hoist_params) =
+                hoist_lazy_component_context(node, program, env, &mut child_env, message);
             // The lazy closure is `'static`, so component uses inside it must
             // never outline into `&self` methods.
             let _lazy_guard = outline::enter_lazy_render();
@@ -209,8 +210,31 @@ pub(in crate::codegen) fn render_structure(
             // the parked subtree so a torn-down mount (a `match` arm switch)
             // rehydrates on re-entry instead of re-shaping every row.
             let site = node.0;
+            let lazy_body = format!(
+                "let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
+            );
+            // The lazy body is `'static` by contract, so it can live as an
+            // associated fn over the dependency tuple plus the hoisted
+            // routing context — moving the row subtree out of the enclosing
+            // render function. Falls back to the inline closure when a
+            // hoisted callback has no signature marker.
+            let builder = if outline::outlining_active()
+                && let Some(params) = hoist_params
+            {
+                let tuple = format!("({dependency_rust}, ::std::string::String, &'static str)");
+                let body_fn = outline::push_lazy_body(message, &tuple, &params, &lazy_body);
+                let arguments = params
+                    .iter()
+                    .map(|(local, _)| format!(", ({local}).clone()"))
+                    .collect::<String>();
+                format!(
+                    "move |__dependency| Self::{body_fn}(__ice_palette, __dependency{arguments})"
+                )
+            } else {
+                format!("move |__dependency| {{ {lazy_body} }}")
+            };
             let lazy_code = format!(
-                "::ui_lang_runtime::memo_lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), move |__dependency| {{ let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content }}, {site}u64).into()"
+                "::ui_lang_runtime::memo_lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64).into()"
             );
             Ok(if hoisted.is_empty() {
                 lazy_code
@@ -231,17 +255,22 @@ pub(in crate::codegen) fn render_structure(
 /// callback, and the call-site event callbacks — into owned locals declared
 /// before the closure, and rebind the child environment to those locals so
 /// the closure captures them by move. Unused locals are simply not captured.
+/// Returns the hoist prelude and, when every hoisted binding has a
+/// parameter type (`Some`), the `(local, type)` manifest that lets the lazy
+/// body outline as an associated fn taking the context as arguments.
 fn hoist_lazy_component_context(
     node: ViewId,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
     child_env: &mut HashMap<String, Binding>,
-) -> String {
+    message: &str,
+) -> (String, Option<Vec<(String, String)>>) {
     let Some((component, context)) = component_context(env) else {
-        return String::new();
+        return (String::new(), Some(Vec::new()));
     };
     let component = component.to_owned();
     let mut hoisted = String::new();
+    let mut params: Option<Vec<(String, String)>> = Some(Vec::new());
     let context_local = format!("__ice_lazy_context_{}", node.0);
     write!(
         hoisted,
@@ -249,9 +278,24 @@ fn hoist_lazy_component_context(
         context.code
     )
     .unwrap();
+    if let Some(params) = params.as_mut() {
+        params.push((context_local.clone(), "::std::string::String".into()));
+    }
     if let Some(output) = env.get(&component_output_key(&component)) {
         let output_local = format!("__ice_lazy_output_{}", node.0);
         write!(hoisted, "let {output_local} = {}; ", output.code).unwrap();
+        match env.get(&callback_sig_key(&component_output_key(&component))) {
+            Some(sig) => {
+                if let Some(params) = params.as_mut() {
+                    params.push((output_local.clone(), sig.code.clone()));
+                }
+            }
+            None => {
+                let _ = rust_type_code;
+                params = None;
+            }
+        }
+        let _ = message;
         child_env.insert(
             component_output_key(&component),
             Binding {
@@ -269,6 +313,14 @@ fn hoist_lazy_component_context(
         };
         let event_local = format!("__ice_lazy_event_{}_{index}", node.0);
         write!(hoisted, "let {event_local} = {}; ", callback.code).unwrap();
+        match env.get(&callback_sig_key(&component_event_key(&component, event))) {
+            Some(sig) => {
+                if let Some(params) = params.as_mut() {
+                    params.push((event_local.clone(), sig.code.clone()));
+                }
+            }
+            None => params = None,
+        }
         child_env.insert(
             component_event_key(&component, event),
             Binding {
@@ -291,7 +343,7 @@ fn hoist_lazy_component_context(
             owner: None,
         },
     );
-    hoisted
+    (hoisted, params)
 }
 
 fn render_resolved_float(
