@@ -60,12 +60,16 @@ pub(in crate::codegen) fn render_content(
             let scope_binding = component_scope_binding(name, call.binding_site);
             let mut component_env = HashMap::new();
             let default_env = HashMap::new();
-            for argument in &call.arguments {
-                // A per-argument recorder (stacked on the arm's, so hits
-                // propagate to both) decides whether this argument's baked
-                // expression is itself self-backed — nested uses inside the
-                // component body consult the marker to outline in turn.
-                let arg_recording = RecordingEnv::new(&recording);
+            // Arguments whose expressions reference render-site local VALUES
+            // (loop items, a window id) become by-value parameters of the
+            // outlined method: (ident, rust type, owned call-site code).
+            let mut value_params: Vec<(String, String, String)> = Vec::new();
+            for (argument_index, argument) in call.arguments.iter().enumerate() {
+                // A per-argument recorder (independent of the arm's — its
+                // findings are absorbed below so locals covered by a value
+                // parameter never block the enclosing decision) decides how
+                // this argument's baked expression travels.
+                let arg_recording = RecordingEnv::new(&aliased_env);
                 let value_env: &dyn BindingEnvironment = if argument.uses_definition_scope() {
                     &default_env
                 } else {
@@ -89,15 +93,53 @@ pub(in crate::codegen) fn render_content(
                             })
                     })
                     .transpose()?;
+                let baked = resolved_expr_use_code(
+                    document,
+                    argument.expression,
+                    value_env,
+                    ValueMode::Borrowed,
+                )?;
+                let parameterize = outline::outlining_active()
+                    && !arg_recording.site_capturing()
+                    && arg_recording.touched_local_values()
+                    && state.is_none();
+                let code = if parameterize {
+                    let ident = format!("__ice_arg_{argument_index}");
+                    let owned = resolved_expr_use_code(
+                        document,
+                        argument.expression,
+                        env,
+                        ValueMode::Owned,
+                    )?;
+                    value_params.push((
+                        ident.clone(),
+                        rust_type_code(document, &argument.ty),
+                        owned,
+                    ));
+                    component_env.insert(
+                        value_param_key(&argument.name),
+                        Binding {
+                            code: String::new(),
+                            ty: Type::Bool,
+                            local: true,
+                            state: None,
+                            owner: None,
+                        },
+                    );
+                    ident
+                } else {
+                    // Locals baked verbatim (a writable prop, or while the
+                    // use is bound to render inline) must block outlining.
+                    if arg_recording.touched_local_values() {
+                        recording.absorb_locals(&arg_recording);
+                    }
+                    baked
+                };
+                recording.absorb_non_locals(&arg_recording);
                 component_env.insert(
                     argument.name.clone(),
                     Binding {
-                        code: resolved_expr_use_code(
-                            document,
-                            argument.expression,
-                            value_env,
-                            ValueMode::Borrowed,
-                        )?,
+                        code,
                         ty: argument.ty.clone(),
                         local: false,
                         state,
@@ -106,7 +148,7 @@ pub(in crate::codegen) fn render_content(
                         ))),
                     },
                 );
-                if !arg_recording.site_capturing() {
+                if !arg_recording.site_capturing() && !arg_recording.touched_local_values() {
                     let locals = arg_recording.scope_locals();
                     component_env.insert(
                         self_backed_param_key(&argument.name),
@@ -376,6 +418,7 @@ pub(in crate::codegen) fn render_content(
             Ok(
                 if outline::outlining_active()
                     && !recording.site_capturing()
+                    && !recording.touched_local_values()
                     && call.slots.is_empty()
                     && let Some(callback_params) = callback_params
                 {
@@ -386,6 +429,7 @@ pub(in crate::codegen) fn render_content(
                         &scope_binding,
                         &scope_locals,
                         &callback_params,
+                        &value_params,
                         &body,
                     );
                     let arguments = scope_locals
@@ -399,18 +443,30 @@ pub(in crate::codegen) fn render_content(
                         .iter()
                         .map(|(_, _, orig)| format!(", ({orig}).clone()"))
                         .collect::<String>();
+                    let value_arguments = value_params
+                        .iter()
+                        .map(|(_, _, owned)| format!(", {owned}"))
+                        .collect::<String>();
                     // grow_stack keeps deep outlined chains from exhausting
                     // small thread stacks at debug opt levels — see
                     // ui_lang_runtime::stack_relief.
                     format!(
-                        "::ui_lang_runtime::grow_stack(|| self.{method}(__ice_palette, {component_scope}{arguments}{callback_arguments}))"
+                        "::ui_lang_runtime::grow_stack(|| self.{method}(__ice_palette, {component_scope}{arguments}{callback_arguments}{value_arguments}))"
                     )
                 } else {
                     let callback_lets = used_callbacks
                         .iter()
                         .map(|(ident, _, orig)| format!("let {ident} = ({orig}).clone(); "))
                         .collect::<String>();
-                    format!("{{ let {scope_binding} = {component_scope}; {callback_lets}{body} }}")
+                    // The inline fallback still binds any value-parameterized
+                    // argument idents the body was baked with.
+                    let value_lets = value_params
+                        .iter()
+                        .map(|(ident, _, owned)| format!("let {ident} = {owned}; "))
+                        .collect::<String>();
+                    format!(
+                        "{{ let {scope_binding} = {component_scope}; {callback_lets}{value_lets}{body} }}"
+                    )
                 },
             )
         }

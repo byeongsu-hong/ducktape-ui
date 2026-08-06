@@ -48,6 +48,7 @@ pub(in crate::codegen) struct RecordingEnv<'a> {
     hard_capture: Cell<bool>,
     scope_locals: RefCell<BTreeSet<String>>,
     callback_uses: RefCell<BTreeSet<String>>,
+    local_values: RefCell<BTreeSet<String>>,
 }
 
 impl<'a> RecordingEnv<'a> {
@@ -57,6 +58,7 @@ impl<'a> RecordingEnv<'a> {
             hard_capture: Cell::new(false),
             scope_locals: RefCell::new(BTreeSet::new()),
             callback_uses: RefCell::new(BTreeSet::new()),
+            local_values: RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -72,6 +74,31 @@ impl<'a> RecordingEnv<'a> {
         self.callback_uses.borrow().clone()
     }
 
+    pub(in crate::codegen) fn touched_local_values(&self) -> bool {
+        !self.local_values.borrow().is_empty()
+    }
+
+    pub(in crate::codegen) fn absorb_locals(&self, other: &RecordingEnv<'_>) {
+        self.local_values
+            .borrow_mut()
+            .extend(other.local_values.borrow().iter().cloned());
+    }
+
+    /// Merges another recorder's findings into this one, EXCEPT its local
+    /// values: an argument whose locals became value parameters covers them
+    /// at the call site, so they must not block the enclosing decision.
+    pub(in crate::codegen) fn absorb_non_locals(&self, other: &RecordingEnv<'_>) {
+        if other.hard_capture.get() {
+            self.hard_capture.set(true);
+        }
+        self.scope_locals
+            .borrow_mut()
+            .extend(other.scope_locals.borrow().iter().cloned());
+        self.callback_uses
+            .borrow_mut()
+            .extend(other.callback_uses.borrow().iter().cloned());
+    }
+
     fn record(&self, name: &str, binding: &Binding) {
         // The context index holds the active component NAME, and self-backed
         // markers are stacked-recorder metadata — neither reaches emitted
@@ -79,6 +106,7 @@ impl<'a> RecordingEnv<'a> {
         if is_component_context_index_key(name)
             || is_self_backed_param_key(name)
             || is_callback_sig_key(name)
+            || is_value_param_key(name)
         {
             return;
         }
@@ -106,7 +134,20 @@ impl<'a> RecordingEnv<'a> {
             Some(BindingOwner::Value(
                 ResolvedValueRef::AppState(_) | ResolvedValueRef::Derived(_),
             )) => {}
+            Some(BindingOwner::Local(_)) => {
+                // A render-site local VALUE (loop item, window id): an
+                // argument built from it can become a by-value parameter of
+                // the outlined method; anything else that bakes it (a route
+                // payload) blocks outlining via `touched_local_values`.
+                self.local_values.borrow_mut().insert(binding.code.clone());
+            }
             Some(BindingOwner::Value(ResolvedValueRef::ComponentParam(_))) => {
+                if self.base.contains_key(&value_param_key(name)) {
+                    // The prop is a value parameter of the enclosing method
+                    // — a local value of THIS render site.
+                    self.local_values.borrow_mut().insert(binding.code.clone());
+                    return;
+                }
                 match self.base.get(&self_backed_param_key(name)) {
                     // The marker's code lists the scope locals the baked
                     // argument expression itself references.

@@ -620,11 +620,11 @@ view
 }
 
 /// Component uses whose arguments resolve only self-backed bindings outline
-/// into per-use methods — one item per use keeps rustc's per-function
-/// typeck/borrowck cost linear in view size. Uses that capture render-site
-/// locals (a loop item) or sit inside a `'static` lazy closure stay inline.
+/// into per-use methods, and a loop-item argument becomes a by-value typed
+/// parameter with the owned expression evaluated at the call site. Only the
+/// `'static` lazy closure keeps its use inline.
 #[test]
-fn outlines_self_backed_component_uses_but_not_local_captures() {
+fn outlines_self_backed_and_loop_item_uses_but_not_lazy_content() {
     let source = r#"app Composition
 theme contract AppTheme
   bg
@@ -661,9 +661,18 @@ view
         ),
         "the outlined method must take the palette and the scope value"
     );
+    assert_eq!(
+        generated.matches("fn __ice_component_use_").count(),
+        2,
+        "the loop-item use outlines too; only the lazy use stays inline"
+    );
     assert!(
-        !generated.contains("__ice_component_use_1"),
-        "the loop-item use and the lazy use must stay inline: {generated}"
+        generated.contains(", __ice_arg_0: ::std::string::String) -> __IceElement"),
+        "the loop item must become a by-value typed parameter"
+    );
+    assert!(
+        generated.contains(", row.to_owned()))"),
+        "the call site must pass the owned loop item"
     );
 }
 

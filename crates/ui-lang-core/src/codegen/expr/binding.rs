@@ -84,6 +84,20 @@ pub(in crate::codegen) fn is_self_backed_param_key(name: &str) -> bool {
 /// callback binding (`impl Fn(payloads) -> Message + Clone + 'static`),
 /// inserted beside the callback itself so a nested use can take the callback
 /// as a typed parameter instead of hard-capturing its caller-built closure.
+/// The reserved key that marks a component argument as a VALUE parameter of
+/// the enclosing outlined method: its expression referenced render-site
+/// locals (loop items, a daemon window id), so the baked binding code is the
+/// method parameter's identifier rather than the original expression. A
+/// nested use reading such a prop treats it like a local value of its own
+/// render site and can parameterize it onward.
+pub(in crate::codegen) fn value_param_key(name: &str) -> String {
+    format!("\0value-param:{name}")
+}
+
+pub(in crate::codegen) fn is_value_param_key(name: &str) -> bool {
+    name.starts_with("\0value-param:")
+}
+
 pub(in crate::codegen) fn callback_sig_key(callback_key: &str) -> String {
     format!("\0cb-sig:{callback_key}")
 }
