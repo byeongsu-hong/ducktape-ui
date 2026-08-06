@@ -172,7 +172,8 @@ impl VirtualListConfig {
         Ok(config)
     }
 
-    pub(crate) const fn is_measured(self) -> bool {
+    /// Whether rows mount at natural height and report measurements.
+    pub const fn is_measured(self) -> bool {
         self.measured
     }
 

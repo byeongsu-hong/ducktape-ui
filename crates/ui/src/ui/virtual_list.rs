@@ -43,7 +43,11 @@ where
         move |index, item, selected| {
             container(view(index, item, selected))
                 .width(Length::Fill)
-                .height(Length::Fill)
+                .height(if config.is_measured() {
+                    Length::Shrink
+                } else {
+                    Length::Fill
+                })
                 .padding([0.0, theme.spacing.md])
                 .style(move |_| row_style(&theme, selected))
                 .into()
