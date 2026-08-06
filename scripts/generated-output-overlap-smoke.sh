@@ -94,7 +94,7 @@ if len(matching) < 2:
     )
 
 for manifest_path, document in matching:
-    if document.get("schemaVersion") != 2:
+    if document.get("schemaVersion") != 3:
         raise SystemExit(f"unexpected generated manifest schema in {manifest_path}")
     directory = manifest_path.parent
     for output, entry in document["outputs"].items():
