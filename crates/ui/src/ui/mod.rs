@@ -22,6 +22,8 @@ pub mod button;
 pub mod button_group;
 #[cfg(feature = "calendar")]
 pub mod calendar;
+#[cfg(feature = "candle-chart")]
+pub mod candle_chart;
 #[cfg(feature = "card")]
 pub mod card;
 #[cfg(feature = "carousel")]

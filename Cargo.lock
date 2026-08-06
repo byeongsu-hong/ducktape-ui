@@ -860,6 +860,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "candles-example"
+version = "0.1.0"
+dependencies = [
+ "ducktape-ui",
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "cargo-ice"
 version = "0.1.0"
 dependencies = [
