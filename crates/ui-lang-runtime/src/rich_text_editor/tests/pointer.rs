@@ -458,3 +458,129 @@ fn only_a_rendered_link_hit_can_reach_an_outer_release_handler() {
         assert!(messages.is_empty());
     }
 }
+
+/// The dismissal contract of the anchored menu: a press outside the widget, a
+/// window blur, or (for a mouse-opened line menu) the pointer straying past
+/// the grace ring must all publish `Dismiss` — never leave the menu stranded.
+mod menu_isolation {
+    use super::*;
+    use iced::advanced::clipboard;
+    use iced::advanced::renderer::Headless;
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum Msg {
+        Act(Action),
+        Menu(MenuEvent),
+    }
+
+    fn menu(anchor: MenuAnchor) -> EditorMenu {
+        EditorMenu {
+            anchor,
+            items: vec![
+                MenuItem {
+                    tag: "one".into(),
+                    label: "One".into(),
+                },
+                MenuItem {
+                    tag: "two".into(),
+                    label: "Two".into(),
+                },
+            ],
+            selected: 0,
+        }
+    }
+
+    fn drive(anchor: MenuAnchor, event: Event, cursor: mouse::Cursor) -> Vec<Msg> {
+        let content = Content::with_text("alpha\nbeta\ngamma");
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(300.0))
+            .padding(16.0)
+            .on_action(Msg::Act)
+            .menu(Some(menu(anchor)))
+            .on_menu(Msg::Menu);
+        let renderer = iced_test::futures::futures::executor::block_on(
+            <iced::Renderer as Headless>::new(Font::DEFAULT, Pixels(16.0), Some("tiny-skia")),
+        )
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(400.0, 300.0));
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        let viewport = Rectangle::with_size(Size::new(400.0, 300.0));
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        editor.update(
+            &mut tree,
+            &event,
+            Layout::new(&node),
+            cursor,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        messages
+    }
+
+    #[test]
+    fn a_press_outside_the_widget_dismisses_the_menu() {
+        let messages = drive(
+            MenuAnchor::Line(1),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            mouse::Cursor::Available(Point::new(-30.0, -30.0)),
+        );
+        assert_eq!(messages, [Msg::Menu(MenuEvent::Dismiss)]);
+    }
+
+    #[test]
+    fn a_window_blur_dismisses_the_menu() {
+        let messages = drive(
+            MenuAnchor::Line(1),
+            Event::Window(window::Event::Unfocused),
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(messages, [Msg::Menu(MenuEvent::Dismiss)]);
+    }
+
+    #[test]
+    fn a_pointer_straying_from_a_line_menu_dismisses_it() {
+        let strayed = drive(
+            MenuAnchor::Line(1),
+            Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(390.0, 295.0),
+            }),
+            mouse::Cursor::Available(Point::new(390.0, 295.0)),
+        );
+        assert_eq!(strayed, [Msg::Menu(MenuEvent::Dismiss)]);
+    }
+
+    #[test]
+    fn a_pointer_near_the_panel_keeps_the_menu_and_hover_selects() {
+        // Just under the anchor line, inside the panel: the move selects a
+        // row rather than dismissing.
+        let messages = drive(
+            MenuAnchor::Line(1),
+            Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(60.0, 90.0),
+            }),
+            mouse::Cursor::Available(Point::new(60.0, 90.0)),
+        );
+        assert!(
+            !messages.contains(&Msg::Menu(MenuEvent::Dismiss)),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn the_caret_palette_never_follows_the_mouse() {
+        let messages = drive(
+            MenuAnchor::Caret,
+            Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(390.0, 295.0),
+            }),
+            mouse::Cursor::Available(Point::new(390.0, 295.0)),
+        );
+        assert_eq!(messages, []);
+    }
+}

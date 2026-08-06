@@ -84,6 +84,34 @@ pub(super) fn draw_line_highlights(
     });
 }
 
+/// The full-width rules of divider-style lines, one centered stripe per line
+/// carrying a [`Format::line_rule`].
+pub(super) fn draw_line_rules(
+    renderer: &mut iced::Renderer,
+    document: &DocumentLayout,
+    clip: Rectangle,
+    origin: Point,
+) {
+    for line in &document.lines {
+        let Some(color) = line.signature.line_rule else {
+            continue;
+        };
+        let rule = Rectangle::new(
+            Point::new(clip.x, origin.y + line.top + line.height / 2.0 - 0.5),
+            Size::new(clip.width, 1.0),
+        );
+        if let Some(rule) = clip.intersection(&rule) {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: rule,
+                    ..renderer::Quad::default()
+                },
+                color,
+            );
+        }
+    }
+}
+
 pub(super) fn draw_span_highlights(
     renderer: &mut iced::Renderer,
     document: &DocumentLayout,

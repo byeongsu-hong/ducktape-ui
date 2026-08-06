@@ -64,11 +64,71 @@ pub(super) const MENU_PADDING: f32 = 5.0;
 const MENU_GAP: f32 = 4.0;
 const MENU_LABEL_SIZE: f32 = 13.5;
 
+/// How far the pointer may wander from a mouse-opened (line-anchored) menu's
+/// panel before the menu follows it away — i.e. dismisses instead of being
+/// left stranded over the document.
+pub(super) const MENU_POINTER_GRACE: f32 = 48.0;
+
 const BUTTON_SIZE: f32 = 18.0;
 const BUTTON_GAP: f32 = 2.0;
 const GUTTER_INSET: f32 = 6.0;
 /// The left padding a host must reserve for the gutter to fit.
 pub const GUTTER_WIDTH: f32 = GUTTER_INSET + BUTTON_SIZE * 2.0 + BUTTON_GAP + 2.0;
+
+const MARK_SIZE: f32 = 18.0;
+const MARGIN_INSET: f32 = 8.0;
+/// The right padding a host must reserve for margin marks to fit.
+pub const MARGIN_WIDTH: f32 = MARGIN_INSET + MARK_SIZE + 2.0;
+
+/// The margin-mark square beside a line whose first row is `row` — mirrored
+/// off the gutter: right-aligned past the text edge, centered on the row.
+pub(super) fn margin_mark_bounds(text_bounds: Rectangle, row: Rectangle) -> Rectangle {
+    let center = row.y + row.height / 2.0;
+    Rectangle::new(
+        Point::new(
+            text_bounds.x + text_bounds.width + MARGIN_INSET,
+            center - MARK_SIZE / 2.0,
+        ),
+        Size::new(MARK_SIZE, MARK_SIZE),
+    )
+}
+
+/// Paint one margin mark — a comment chip: a rounded plate with three dots,
+/// bare quads like the gutter so it renders identically on every platform.
+pub(super) fn draw_margin_mark(renderer: &mut iced::Renderer, bounds: Rectangle, color: Color) {
+    let plate = Rectangle::new(
+        Point::new(bounds.x + 1.0, bounds.y + 3.0),
+        Size::new(bounds.width - 2.0, bounds.height - 6.0),
+    );
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: plate,
+            border: border::rounded(5.0).color(color).width(1.2),
+            ..renderer::Quad::default()
+        },
+        Color {
+            a: color.a * 0.14,
+            ..color
+        },
+    );
+    let dot = 2.0;
+    let step = 3.6;
+    let left = plate.center_x() - step - dot / 2.0;
+    let top = plate.center_y() - dot / 2.0;
+    for column in 0..3 {
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle::new(
+                    Point::new(left + step * column as f32, top),
+                    Size::new(dot, dot),
+                ),
+                border: border::rounded(dot / 2.0),
+                ..renderer::Quad::default()
+            },
+            color,
+        );
+    }
+}
 
 /// The two gutter buttons beside a line whose first row is `row` (the
 /// column-0 caret rectangle, already translated to absolute coordinates).

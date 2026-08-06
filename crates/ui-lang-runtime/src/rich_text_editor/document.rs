@@ -26,6 +26,9 @@ pub struct Format {
     pub line_highlight: Option<text::Highlight>,
     /// Layout padding inside [`Self::line_highlight`].
     pub line_padding: Padding,
+    /// A full-width horizontal rule painted across the line's vertical center
+    /// — what a markdown divider renders as when its `---` glyphs are hidden.
+    pub line_rule: Option<Color>,
     /// Strikethrough color.
     pub strikethrough: Option<Color>,
     /// Extra paint-only padding around [`Self::highlight`].
@@ -42,6 +45,7 @@ impl Default for Format {
             highlight: None,
             line_highlight: None,
             line_padding: Padding::ZERO,
+            line_rule: None,
             strikethrough: None,
             padding: Padding::ZERO,
         }
@@ -62,6 +66,7 @@ impl Format {
             } else {
                 overlay.line_padding
             },
+            line_rule: overlay.line_rule.or(self.line_rule),
             strikethrough: overlay.strikethrough.or(self.strikethrough),
             padding: if overlay.padding == Padding::ZERO {
                 self.padding
@@ -96,6 +101,7 @@ pub(super) struct StyledLine {
     pub(super) empty_format: Format,
     pub(super) line_highlight: Option<text::Highlight>,
     pub(super) line_padding: Padding,
+    pub(super) line_rule: Option<Color>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -104,6 +110,7 @@ struct StyledLineFormat {
     empty_format: Format,
     line_highlight: Option<text::Highlight>,
     line_padding: Padding,
+    line_rule: Option<Color>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -574,6 +581,7 @@ impl StyledLine {
             && self.empty_format == format.empty_format
             && self.line_highlight == format.line_highlight
             && self.line_padding == format.line_padding
+            && self.line_rule == format.line_rule
     }
 }
 
@@ -585,6 +593,7 @@ impl StyledLineFormat {
             empty_format: self.empty_format,
             line_highlight: self.line_highlight,
             line_padding: self.line_padding,
+            line_rule: self.line_rule,
         }
     }
 }
@@ -685,12 +694,17 @@ where
         .map_or((None, Padding::ZERO), |(highlight, padding)| {
             (Some(highlight), padding)
         });
+    let line_rule = highlights
+        .iter()
+        .filter_map(|(_, format)| format.line_rule)
+        .next_back();
 
     StyledLineFormat {
         segments,
         empty_format,
         line_highlight,
         line_padding,
+        line_rule,
     }
 }
 

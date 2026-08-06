@@ -32,10 +32,13 @@ use std::ops::Range;
 #[path = "rich_text_editor/affordance.rs"]
 mod affordance;
 use affordance::{
-    DRAG_THRESHOLD, GutterDrag, MenuColors, draw_drop_indicator, draw_gutter, draw_menu,
-    gutter_buttons, menu_panel, menu_row_at, snap_boundary,
+    DRAG_THRESHOLD, GutterDrag, MENU_POINTER_GRACE, MenuColors, draw_drop_indicator, draw_gutter,
+    draw_margin_mark, draw_menu, gutter_buttons, margin_mark_bounds, menu_panel, menu_row_at,
+    snap_boundary,
 };
-pub use affordance::{EditorMenu, GUTTER_WIDTH, GutterButton, MenuAnchor, MenuEvent, MenuItem};
+pub use affordance::{
+    EditorMenu, GUTTER_WIDTH, GutterButton, MARGIN_WIDTH, MenuAnchor, MenuEvent, MenuItem,
+};
 #[path = "rich_text_editor/keyboard.rs"]
 mod keyboard_input;
 use keyboard_input::*;
@@ -163,6 +166,9 @@ type GutterDropFn<'a, Message> = dyn Fn(usize, usize) -> Option<Message> + 'a;
 /// The anchored-menu route.
 type MenuFn<'a, Message> = dyn Fn(MenuEvent) -> Message + 'a;
 
+/// The right-margin mark route — the source line whose mark was pressed.
+type MarginPressFn<'a, Message> = dyn Fn(usize) -> Message + 'a;
+
 /// An editable rich-text surface.
 ///
 /// Unlike [`iced::widget::TextEditor`], this widget shapes each highlighted
@@ -191,6 +197,8 @@ where
     on_gutter: Option<Box<GutterFn<'a, Message>>>,
     drop_boundaries: Vec<usize>,
     on_gutter_drop: Option<Box<GutterDropFn<'a, Message>>>,
+    margin_marks: Vec<usize>,
+    on_margin_press: Option<Box<MarginPressFn<'a, Message>>>,
     menu: Option<EditorMenu>,
     on_menu: Option<Box<MenuFn<'a, Message>>>,
     focus_enabled: bool,
@@ -229,6 +237,8 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             on_gutter: None,
             drop_boundaries: Vec::new(),
             on_gutter_drop: None,
+            margin_marks: Vec::new(),
+            on_margin_press: None,
             menu: None,
             on_menu: None,
             style: Box::new(text_editor::default),
@@ -371,6 +381,8 @@ where
             on_gutter: self.on_gutter,
             drop_boundaries: self.drop_boundaries,
             on_gutter_drop: self.on_gutter_drop,
+            margin_marks: self.margin_marks,
+            on_margin_press: self.on_margin_press,
             menu: self.menu,
             on_menu: self.on_menu,
             style: self.style,
@@ -412,6 +424,20 @@ where
     ) -> Self {
         self.drop_boundaries = boundaries;
         self.on_gutter_drop = Some(Box::new(on_drop));
+        self
+    }
+
+    /// Marks source lines with a right-margin chip (a comment badge) and maps
+    /// a press on one to a message. A mark press is its own gesture — no caret
+    /// move, no focus steal. The host must reserve [`MARGIN_WIDTH`] of right
+    /// padding for the mark column.
+    pub fn margin_marks(
+        mut self,
+        marks: Vec<usize>,
+        press: impl Fn(usize) -> Message + 'a,
+    ) -> Self {
+        self.margin_marks = marks;
+        self.on_margin_press = Some(Box::new(press));
         self
     }
 
@@ -939,6 +965,17 @@ where
                 if let Some(focus) = state.focus.as_mut() {
                     focus.is_window_focused = false;
                 }
+                // Losing the window closes any anchored menu — Escape and
+                // click-away are gone with the focus, and the menu must not
+                // sit stranded until the window returns.
+                if self
+                    .menu_panel_in(state, bounds.shrink(self.padding))
+                    .is_some()
+                {
+                    let on_menu = self.on_menu.as_deref().expect("panel implies route");
+                    shell.publish(on_menu(MenuEvent::Dismiss));
+                    shell.request_redraw();
+                }
             }
             Event::Window(window::Event::Focused) => {
                 if let Some(focus) = state.focus.as_mut() {
@@ -1020,6 +1057,23 @@ where
                             return;
                         }
                     }
+                    // A margin-mark press is navigation, not editing: it
+                    // consumes the press without a caret move or focus steal.
+                    if let Some(on_margin) = self.on_margin_press.as_deref()
+                        && state.composition.is_none()
+                        && point.x > self.padding.left + text_bounds.width
+                    {
+                        let pressed = self.margin_marks.iter().copied().find(|&line| {
+                            let row = self.gutter_row(state, text_bounds, line);
+                            margin_mark_bounds(text_bounds, row).contains(absolute)
+                        });
+                        if let Some(line) = pressed {
+                            shell.publish(on_margin(line));
+                            shell.capture_event();
+                            shell.request_redraw();
+                            return;
+                        }
+                    }
                     let local = local_point(point, self.padding, state.scroll);
                     // A consumed line press is its own gesture: no caret move,
                     // no focus steal — a checkbox tick must not also relocate
@@ -1053,14 +1107,27 @@ where
                     shell.publish(on_action(Action::MoveTo(next)));
                     shell.capture_event();
                     shell.request_redraw();
-                } else if state.focus.is_some() {
-                    state.focus = None;
-                    if state.replace_preedit(None) {
-                        shell.invalidate_layout();
+                } else {
+                    // The press landed outside the editor: whatever it acted
+                    // on, the anchored menu must not be left floating here —
+                    // this is the click-away an overlay backdrop would catch.
+                    if self
+                        .menu_panel_in(state, bounds.shrink(self.padding))
+                        .is_some()
+                    {
+                        let on_menu = self.on_menu.as_deref().expect("panel implies route");
+                        shell.publish(on_menu(MenuEvent::Dismiss));
+                        shell.request_redraw();
                     }
-                    state.pending_ime_commit.clear();
-                    state.pointer.clear();
-                    shell.request_redraw();
+                    if state.focus.is_some() {
+                        state.focus = None;
+                        if state.replace_preedit(None) {
+                            shell.invalidate_layout();
+                        }
+                        state.pending_ime_commit.clear();
+                        state.pointer.clear();
+                        shell.request_redraw();
+                    }
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -1111,18 +1178,36 @@ where
                     state.hover_line = hovered;
                     shell.request_redraw();
                 }
-                // Hovering a menu row highlights it.
+                // Hovering a menu row highlights it — and a mouse-opened
+                // (line-anchored) menu LIVES with the pointer: once it strays
+                // past the grace ring around the panel the menu dismisses
+                // instead of being left stranded over the document. The
+                // caret-anchored slash palette is keyboard-driven and never
+                // follows the mouse.
                 if let Some(point) = cursor.position() {
                     let text_bounds = bounds.shrink(self.padding);
                     if let Some(panel) = self.menu_panel_in(state, text_bounds) {
                         let menu = self.menu.as_ref().expect("panel implies menu");
                         let on_menu = self.on_menu.as_deref().expect("panel implies route");
-                        if let Some(row) = menu_row_at(panel, menu.items.len(), point)
+                        let strayed = matches!(menu.anchor, MenuAnchor::Line(_))
+                            && !panel.expand(MENU_POINTER_GRACE).contains(point);
+                        if strayed {
+                            shell.publish(on_menu(MenuEvent::Dismiss));
+                            shell.request_redraw();
+                        } else if let Some(row) = menu_row_at(panel, menu.items.len(), point)
                             && row != menu.selected
                         {
                             shell.publish(on_menu(MenuEvent::Select(row)));
                         }
                     }
+                }
+            }
+            Event::Mouse(mouse::Event::CursorLeft) => {
+                // The pointer left the window: the hover gutter has no line to
+                // ride any more.
+                if state.hover_line.is_some() {
+                    state.hover_line = None;
+                    shell.request_redraw();
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
@@ -1373,6 +1458,7 @@ where
         let origin = text_bounds.position() - Vector::new(0.0, state.scroll);
 
         draw_line_highlights(renderer, &state.document, text_bounds, origin);
+        draw_line_rules(renderer, &state.document, text_bounds, origin);
         draw_span_highlights(renderer, &state.document, text_bounds, origin);
 
         if state.focus.is_some() && state.composition.is_none() {
@@ -1470,6 +1556,21 @@ where
             });
         }
 
+        // The margin marks ride their lines whenever the host declared them —
+        // persistent indicators, not hover affordances.
+        if self.on_margin_press.is_some() && !self.margin_marks.is_empty() {
+            let accent = theme.extended_palette().primary.base.color;
+            renderer.with_layer(bounds, |renderer| {
+                for &line in &self.margin_marks {
+                    let row = self.gutter_row(state, text_bounds, line);
+                    let mark = margin_mark_bounds(text_bounds, row);
+                    if bounds.intersection(&mark).is_some() {
+                        draw_margin_mark(renderer, mark, accent);
+                    }
+                }
+            });
+        }
+
         // Mid-drag, the accent line marks where the grabbed block would land.
         if let Some(drag) = state.gutter_drag.as_ref()
             && drag.moved
@@ -1541,6 +1642,18 @@ where
                     .iter()
                     .any(|(_, button_bounds)| button_bounds.contains(absolute));
                 if over_button {
+                    return mouse::Interaction::Pointer;
+                }
+            }
+            if self.on_margin_press.is_some()
+                && state.composition.is_none()
+                && point.x > self.padding.left + text_bounds.width
+            {
+                let over_mark = self.margin_marks.iter().any(|&line| {
+                    let row = self.gutter_row(state, text_bounds, line);
+                    margin_mark_bounds(text_bounds, row).contains(absolute)
+                });
+                if over_mark {
                     return mouse::Interaction::Pointer;
                 }
             }
