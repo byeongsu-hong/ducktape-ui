@@ -47,6 +47,7 @@ pub(in crate::codegen) struct RecordingEnv<'a> {
     base: &'a dyn BindingEnvironment,
     hard_capture: Cell<bool>,
     scope_locals: RefCell<BTreeSet<String>>,
+    callback_uses: RefCell<BTreeSet<String>>,
 }
 
 impl<'a> RecordingEnv<'a> {
@@ -55,6 +56,7 @@ impl<'a> RecordingEnv<'a> {
             base,
             hard_capture: Cell::new(false),
             scope_locals: RefCell::new(BTreeSet::new()),
+            callback_uses: RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -66,11 +68,18 @@ impl<'a> RecordingEnv<'a> {
         self.scope_locals.borrow().clone()
     }
 
+    pub(in crate::codegen) fn callback_uses(&self) -> BTreeSet<String> {
+        self.callback_uses.borrow().clone()
+    }
+
     fn record(&self, name: &str, binding: &Binding) {
         // The context index holds the active component NAME, and self-backed
         // markers are stacked-recorder metadata — neither reaches emitted
         // code.
-        if is_component_context_index_key(name) || is_self_backed_param_key(name) {
+        if is_component_context_index_key(name)
+            || is_self_backed_param_key(name)
+            || is_callback_sig_key(name)
+        {
             return;
         }
         if is_component_context_key(name) {
@@ -80,10 +89,17 @@ impl<'a> RecordingEnv<'a> {
             return;
         }
         if is_component_callback_key(name) {
-            if std::env::var_os("ICE_OUTLINE_DEBUG").is_some() {
-                eprintln!("HARD callback key: {name}");
+            // An aliased callback (`__ice_cb_N`) can become a typed method
+            // parameter; a raw caller-built closure cannot move out of its
+            // frame.
+            if binding.code.starts_with("__ice_cb_") {
+                self.callback_uses.borrow_mut().insert(binding.code.clone());
+            } else {
+                if std::env::var_os("ICE_OUTLINE_DEBUG").is_some() {
+                    eprintln!("HARD callback key: {name}");
+                }
+                self.hard_capture.set(true);
             }
-            self.hard_capture.set(true);
             return;
         }
         match &binding.owner {
@@ -138,6 +154,13 @@ impl BindingEnvironment for RecordingEnv<'_> {
         self.base.visit(&mut |name, binding| {
             if let Some(StateBinding::Component { scope, .. }) = &binding.state {
                 self.scope_locals.borrow_mut().insert(scope.clone());
+            }
+            // Snapshots (slot contexts, route capture environments) copy
+            // aliased callback bindings whose consumption happens outside
+            // this recorder — collect them here so the binding `let`s /
+            // method parameters always materialize.
+            if is_component_callback_key(name) && binding.code.starts_with("__ice_cb_") {
+                self.callback_uses.borrow_mut().insert(binding.code.clone());
             }
             visitor(name, binding);
         });

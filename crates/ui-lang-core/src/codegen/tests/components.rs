@@ -151,9 +151,13 @@ view
       resized -> resized _ _
 "#;
     let generated = compile(source, "sensor-events.ice").unwrap();
-    assert!(generated.contains(".on_show(move |__size|"));
-    assert!(generated.contains(".on_resize(move |__size|"));
-    assert!(generated.contains(")(__size.width as f64, __size.height as f64)"));
+    // Sensor emit routes hoist the named-event callback out of the `move`
+    // closure so an outlined method's callback parameter is borrowed, not
+    // moved.
+    assert!(generated.contains(".on_show({ let __route_callback = ("));
+    assert!(generated.contains(".on_resize({ let __route_callback = ("));
+    assert!(generated.contains("move |__size|"));
+    assert!(generated.contains("(__route_callback)(__size.width as f64, __size.height as f64)"));
     assert!(
         generated
             .contains("move |__event_0, __event_1| __DemoMessage::Shown(__event_0, __event_1)")
@@ -1413,5 +1417,60 @@ view
         generated.matches("fn __ice_component_use_").count(),
         1,
         "only the outer use may outline — the inner use's route captures a loop item"
+    );
+}
+
+/// A nested use that FORWARDS an event to its caller's caller outlines too:
+/// the enclosing environment's callback binding is aliased to a stable
+/// identifier, the outlined method takes it as an `impl Fn` parameter typed
+/// from the event declaration, and the call site passes the original
+/// caller-built closure.
+#[test]
+fn outlines_forwarding_uses_with_callback_parameters() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  title = "x"
+on picked(value)
+component Leaf(label: str)
+  emits
+    picked(str)
+  button "go" -> emit(picked, label)
+component Shell(label: str)
+  emits
+    picked(str)
+  col
+    Leaf label=label
+      forward
+        picked
+view
+  Shell label=title
+    events
+      picked -> picked _
+"#;
+    let generated = compile(source, "forward-outline.ice").unwrap();
+    assert_eq!(
+        generated.matches("fn __ice_component_use_").count(),
+        2,
+        "both the Shell use and the forwarding Leaf use must outline"
+    );
+    assert!(
+        generated.contains(
+            "__ice_cb_0: impl Fn(::std::string::String) -> __DemoMessage + Clone + 'static"
+        ),
+        "the forwarded callback must become a typed method parameter"
+    );
+    assert!(
+        generated.contains(", (move |__event_0| __DemoMessage::Picked(__event_0)).clone()))"),
+        "the Leaf call site must pass a clone of the caller-built closure"
     );
 }

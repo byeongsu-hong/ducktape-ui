@@ -2,6 +2,7 @@ let __ice_lazy_context_
 let __ice_lazy_event_
 let __activate = __DemoMessage::__BoardHandleEntered((__ice_component_board_scope_
 let __activate = __DemoMessage::__BoardHandleEntered((__ice_lazy_context_
-let __activate = (move |__event_0| __DemoMessage::Entered(__event_0))(item);
+let __ice_cb_0 = (move |__event_0| __DemoMessage::Entered(__event_0)).clone()
+let __activate = (__ice_cb_0)(item);
 let __activate = (__ice_lazy_event_
 let cached: i64 = __dependency.0.clone();

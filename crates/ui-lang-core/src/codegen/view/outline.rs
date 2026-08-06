@@ -109,6 +109,7 @@ pub(in crate::codegen) fn push_outlined_method(
     message: &str,
     scope_binding: &str,
     scope_locals: &std::collections::BTreeSet<String>,
+    callback_params: &[(String, String, String)],
     body: &str,
 ) -> String {
     OUTLINE.with_borrow_mut(|state| {
@@ -118,13 +119,17 @@ pub(in crate::codegen) fn push_outlined_method(
             .iter()
             .map(|local| format!(", {local}: ::std::string::String"))
             .collect::<String>();
+        let callbacks = callback_params
+            .iter()
+            .map(|(ident, sig, _)| format!(", {ident}: {sig}"))
+            .collect::<String>();
         let cfg = if state.test_mode {
             "#[cfg(test)]\n"
         } else {
             ""
         };
         state.methods.push(format!(
-            "{cfg}fn {name}(&self, __ice_palette: __IcePalette, {scope_binding}: ::std::string::String{locals}) -> __IceElement<'_, {message}> {{ {body} }}"
+            "{cfg}fn {name}(&self, __ice_palette: __IcePalette, {scope_binding}: ::std::string::String{locals}{callbacks}) -> __IceElement<'_, {message}> {{ {body} }}"
         ));
         name
     })

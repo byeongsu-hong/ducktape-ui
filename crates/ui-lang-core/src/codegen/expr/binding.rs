@@ -80,6 +80,18 @@ pub(in crate::codegen) fn is_self_backed_param_key(name: &str) -> bool {
     name.starts_with("\0self-backed:")
 }
 
+/// The reserved key that carries an outlined-method parameter type for a
+/// callback binding (`impl Fn(payloads) -> Message + Clone + 'static`),
+/// inserted beside the callback itself so a nested use can take the callback
+/// as a typed parameter instead of hard-capturing its caller-built closure.
+pub(in crate::codegen) fn callback_sig_key(callback_key: &str) -> String {
+    format!("\0cb-sig:{callback_key}")
+}
+
+pub(in crate::codegen) fn is_callback_sig_key(name: &str) -> bool {
+    name.starts_with("\0cb-sig:")
+}
+
 pub(in crate::codegen) fn is_component_context_index_key(name: &str) -> bool {
     name == COMPONENT_CONTEXT_INDEX
 }

@@ -296,13 +296,13 @@ view
 "#;
     let generated = compile(source, "interaction-components.ice").unwrap();
     assert!(generated.contains("__InteractionComponentsMessage::Changed(__value))(self.active)"));
+    // Named-event consumptions go through the hoisted callback alias so a
+    // `move` closure never moves an outlined method's callback parameter.
     assert!(generated.contains(
-        "__InteractionComponentsMessage::Moved(__event_0, __event_1))(__point.x as f64, __point.y as f64)"
+        "let __route_callback = (move |__event_0, __event_1| __InteractionComponentsMessage::Moved(__event_0, __event_1)).clone()"
     ));
-    assert!(
-        generated
-            .contains("__InteractionComponentsMessage::Moved(__event_0, __event_1))(__dx, __dy)")
-    );
+    assert!(generated.contains("(__route_callback)(__point.x as f64, __point.y as f64)"));
+    assert!(generated.contains("(__route_callback)(__dx, __dy)"));
 }
 
 #[test]

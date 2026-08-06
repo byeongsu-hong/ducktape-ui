@@ -26,12 +26,37 @@ pub(in crate::codegen) fn render_content(
             let call = document.component_call_by_id(*call)?;
             let component = document.component(call.component);
             let name = &component.name;
+            // Alias the enclosing environment's callback bindings (an outer
+            // component's output/event callbacks — caller-built closures) to
+            // stable identifiers: an outlined method can then take each used
+            // callback as a typed parameter, with the original closure
+            // expression evaluated at the call site. Sorted for a
+            // deterministic numbering; skipped inside lazy closures where
+            // nothing outlines anyway.
+            let mut callback_aliases: Vec<(String, String, String)> = Vec::new();
+            let mut aliased_env = ScopedBindingEnv::new(env);
+            if outline::outlining_active() {
+                let mut sources: Vec<(String, Binding)> = Vec::new();
+                env.visit(&mut |binding_name, binding| {
+                    if is_component_callback_key(binding_name) {
+                        sources.push((binding_name.to_owned(), binding.clone()));
+                    }
+                });
+                sources.sort_by(|left, right| left.0.cmp(&right.0));
+                for (index, (key, binding)) in sources.into_iter().enumerate() {
+                    let ident = format!("__ice_cb_{index}");
+                    let mut alias = binding.clone();
+                    alias.code = ident.clone();
+                    callback_aliases.push((ident, key.clone(), binding.code));
+                    aliased_env.insert(key, alias);
+                }
+            }
             // Records whether any argument, route, or slot resolution touched
             // a binding that could reference a render-site local. Scope
             // expressions are deliberately resolved against the RAW `env`
             // below: the scope value is evaluated at the call site either
             // way, so its locality never blocks outlining.
-            let recording = RecordingEnv::new(env);
+            let recording = RecordingEnv::new(&aliased_env);
             let scope_binding = component_scope_binding(name, call.binding_site);
             let mut component_env = HashMap::new();
             let default_env = HashMap::new();
@@ -113,6 +138,19 @@ pub(in crate::codegen) fn render_content(
                         owner: None,
                     },
                 );
+                component_env.insert(
+                    callback_sig_key(&component_output_key(name)),
+                    Binding {
+                        code: format!(
+                            "impl Fn({}) -> {message} + Clone + 'static",
+                            rust_type_code(document, output)
+                        ),
+                        ty: Type::Unit,
+                        local: true,
+                        state: None,
+                        owner: None,
+                    },
+                );
             }
             for (event_index, event) in call.events.iter().enumerate() {
                 document.validate_component_call_event_contract(call, event_index)?;
@@ -185,6 +223,22 @@ pub(in crate::codegen) fn render_content(
                     component_event_key(name, event.name()),
                     Binding {
                         code,
+                        ty: Type::Unit,
+                        local: true,
+                        state: None,
+                        owner: None,
+                    },
+                );
+                let payload_types = event
+                    .payloads()
+                    .iter()
+                    .map(|ty| rust_type_code(document, ty))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                component_env.insert(
+                    callback_sig_key(&component_event_key(name, event.name())),
+                    Binding {
+                        code: format!("impl Fn({payload_types}) -> {message} + Clone + 'static"),
                         ty: Type::Unit,
                         local: true,
                         state: None,
@@ -305,10 +359,25 @@ pub(in crate::codegen) fn render_content(
             // function size). The scope expression stays here as the call
             // argument, so scopes chained through loop keys still evaluate in
             // the loop.
+            let used_callbacks: Vec<&(String, String, String)> = callback_aliases
+                .iter()
+                .filter(|(ident, _, _)| recording.callback_uses().contains(ident))
+                .collect();
+            // Every used callback needs its parameter type from the sig
+            // marker its inserting arm left beside it; a missing marker
+            // falls back to inline rendering.
+            let callback_params: Option<Vec<(String, String, String)>> = used_callbacks
+                .iter()
+                .map(|(ident, key, orig)| {
+                    env.get(&callback_sig_key(key))
+                        .map(|sig| (ident.clone(), sig.code.clone(), orig.clone()))
+                })
+                .collect();
             Ok(
                 if outline::outlining_active()
                     && !recording.site_capturing()
                     && call.slots.is_empty()
+                    && let Some(callback_params) = callback_params
                 {
                     let mut scope_locals = recording.scope_locals();
                     scope_locals.remove(&scope_binding);
@@ -316,20 +385,32 @@ pub(in crate::codegen) fn render_content(
                         message,
                         &scope_binding,
                         &scope_locals,
+                        &callback_params,
                         &body,
                     );
                     let arguments = scope_locals
                         .iter()
                         .map(|local| format!(", {local}.clone()"))
                         .collect::<String>();
+                    // Cloned, not moved: the original may itself be an
+                    // enclosing method's callback parameter consumed inside
+                    // a loop.
+                    let callback_arguments = callback_params
+                        .iter()
+                        .map(|(_, _, orig)| format!(", ({orig}).clone()"))
+                        .collect::<String>();
                     // grow_stack keeps deep outlined chains from exhausting
                     // small thread stacks at debug opt levels — see
                     // ui_lang_runtime::stack_relief.
                     format!(
-                        "::ui_lang_runtime::grow_stack(|| self.{method}(__ice_palette, {component_scope}{arguments}))"
+                        "::ui_lang_runtime::grow_stack(|| self.{method}(__ice_palette, {component_scope}{arguments}{callback_arguments}))"
                     )
                 } else {
-                    format!("{{ let {scope_binding} = {component_scope}; {body} }}")
+                    let callback_lets = used_callbacks
+                        .iter()
+                        .map(|(ident, _, orig)| format!("let {ident} = ({orig}).clone(); "))
+                        .collect::<String>();
+                    format!("{{ let {scope_binding} = {component_scope}; {callback_lets}{body} }}")
                 },
             )
         }

@@ -221,7 +221,29 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
             captures.push((scope, format!("__route_state_scope_{}", captures.len())));
         }
     }
-    if captures.is_empty() {
+    // A route that calls a component callback hoists it out of the `move`
+    // closure: the callback may be an outlined method's parameter, and a
+    // `move` closure would move the parameter itself out of the render —
+    // `(cb).clone()` outside the closure borrows instead, and the closure
+    // moves its private clone.
+    let route_callback = match &route.target {
+        ResolvedInteractionRouteTarget::OutputCallback { component, .. } => {
+            let contract = program.try_component(*component).ok_or_else(|| {
+                invariant("interaction callback output route has no component contract")
+            })?;
+            Some(component_output_key(&contract.name))
+        }
+        ResolvedInteractionRouteTarget::NamedEvent { event, name, .. } => {
+            let contract = program.try_component(event.component).ok_or_else(|| {
+                invariant("interaction callback event route has no component contract")
+            })?;
+            Some(component_event_key(&contract.name, name))
+        }
+        ResolvedInteractionRouteTarget::TargetHandler(_) => None,
+    };
+    let route_callback =
+        route_callback.and_then(|key| env.get(&key).map(|cb| (key, cb.code.clone())));
+    if captures.is_empty() && route_callback.is_none() {
         let body = render(env)?;
         return Ok(format!("move |{pattern}| {body}"));
     }
@@ -262,12 +284,21 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
         context.code = "__route_scope".into();
         callback_env.insert(key, context);
     }
-    let body = render(&callback_env)?;
-    let captures = captures
+    let mut hoists = captures
         .iter()
         .map(|(scope, alias)| format!("let {alias} = ({scope}).clone();"))
         .collect::<String>();
-    Ok(format!("{{ {captures} move |{pattern}| {body} }}"))
+    if let Some((key, code)) = &route_callback {
+        let mut callback = snapshot
+            .get(key)
+            .ok_or_else(|| invariant("interaction route callback binding vanished"))?
+            .clone();
+        callback.code = "__route_callback".into();
+        callback_env.insert(key.clone(), callback);
+        hoists.push_str(&format!("let __route_callback = ({code}).clone();"));
+    }
+    let body = render(&callback_env)?;
+    Ok(format!("{{ {hoists} move |{pattern}| {body} }}"))
 }
 
 pub(in crate::codegen) fn resolved_interaction_route_callback_code(
