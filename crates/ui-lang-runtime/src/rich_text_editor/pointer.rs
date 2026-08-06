@@ -113,6 +113,20 @@ pub(super) fn clamped_local_point(
     local_point(point, padding, scroll)
 }
 
+/// The SOURCE line and position under `point`, for press interception —
+/// the same resolve `interaction_at` performs for the pointer shape.
+pub(super) fn source_line_at(
+    content: &Content,
+    document: &DocumentLayout,
+    composition: Option<&CompositionLayout>,
+    point: Point,
+) -> Option<(String, Position)> {
+    let position = document.hit_test(point)?;
+    let position = display_to_source(composition, position);
+    let line = content.line(position.line)?;
+    Some((line.text.into_owned(), position))
+}
+
 pub(super) fn interaction_at(
     content: &Content,
     document: &DocumentLayout,

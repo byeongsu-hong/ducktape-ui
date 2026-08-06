@@ -143,6 +143,10 @@ pub enum Action {
     MoveTo(Cursor),
 }
 
+/// A press interceptor over a rich-layout source position — `Some` consumes
+/// the press.
+type LinePressFn<'a, Message> = dyn Fn(&str, Position) -> Option<Message> + 'a;
+
 /// An editable rich-text surface.
 ///
 /// Unlike [`iced::widget::TextEditor`], this widget shapes each highlighted
@@ -167,6 +171,7 @@ where
     padding: Padding,
     wrapping: text::Wrapping,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
+    on_line_press: Option<Box<LinePressFn<'a, Message>>>,
     focus_enabled: bool,
     highlighter_settings: Highlighter::Settings,
     format: Box<FormatFn<'a, Highlighter>>,
@@ -199,6 +204,7 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             format: Box::new(|_| Format::default()),
             format_key: 0,
             mouse_interaction: None,
+            on_line_press: None,
             style: Box::new(text_editor::default),
         }
     }
@@ -335,8 +341,18 @@ where
             format: Box::new(format),
             format_key,
             mouse_interaction: self.mouse_interaction,
+            on_line_press: self.on_line_press,
             style: self.style,
         }
+    }
+
+    /// Intercepts a left press on a rich-layout source position. Returning a
+    /// message CONSUMES the press — no caret move, no focus change — which is
+    /// what a checkbox tick or a link open wants; `None` falls through to the
+    /// ordinary click.
+    pub fn on_line_press(mut self, press: impl Fn(&str, Position) -> Option<Message> + 'a) -> Self {
+        self.on_line_press = Some(Box::new(press));
+        self
     }
 
     /// Selects the pointer shown over a rich-layout source position.
@@ -808,6 +824,23 @@ where
                 state.pending_ime_commit.clear();
                 if let Some(point) = cursor.position_in(bounds) {
                     let local = local_point(point, self.padding, state.scroll);
+                    // A consumed line press is its own gesture: no caret move,
+                    // no focus steal — a checkbox tick must not also relocate
+                    // the cursor into the line it ticked.
+                    if let Some(on_line_press) = self.on_line_press.as_deref()
+                        && let Some((line, position)) = pointer::source_line_at(
+                            self.content,
+                            &state.document,
+                            state.composition.as_ref(),
+                            local,
+                        )
+                        && let Some(message) = on_line_press(&line, position)
+                    {
+                        shell.publish(message);
+                        shell.capture_event();
+                        shell.request_redraw();
+                        return;
+                    }
                     let over_link =
                         self.interaction_at(state, local) == mouse::Interaction::Pointer;
                     let next = state.pointer.press(
@@ -1073,62 +1106,70 @@ where
             );
         }
 
-        if state.source.is_empty() && state.composition.is_none() {
-            if let Some(placeholder) = self.placeholder.as_ref() {
-                renderer.fill_text(
-                    Text {
-                        content: placeholder.clone(),
-                        bounds: text_bounds.size(),
-                        size: state.text_size,
-                        line_height: state.line_height,
-                        font: state.font,
-                        align_x: text::Alignment::Default,
-                        align_y: alignment::Vertical::Top,
-                        shaping: text::Shaping::Advanced,
-                        wrapping: state.wrapping,
-                    },
-                    text_bounds.position(),
-                    style.placeholder,
-                    text_bounds,
-                );
-            }
-        } else {
-            state
-                .document
-                .draw_text(renderer, origin, style.value, text_bounds);
-        }
-
-        draw_strikethroughs(renderer, &state.document, text_bounds, origin);
-
-        if let Some(focus) = state.focus.as_ref() {
-            if let Some(composition) = state.composition.as_ref() {
-                draw_composition(
-                    renderer,
-                    &state.document,
-                    composition,
-                    text_bounds,
-                    origin,
-                    style.value,
-                    focus.is_cursor_visible(),
-                );
-                return;
+        // THE GLYPH PASS LIVES IN ITS OWN LAYER, above every plate. Within one
+        // renderer layer the backends batch by primitive kind, not by call
+        // order, so an OPAQUE `line_highlight` quad could land over the very
+        // glyphs it highlights (translucent washes only ever dimmed them —
+        // which is how the bug hid). A pushed layer renders strictly after
+        // the current one, restoring the order the draw code always meant.
+        renderer.with_layer(bounds, |renderer| {
+            if state.source.is_empty() && state.composition.is_none() {
+                if let Some(placeholder) = self.placeholder.as_ref() {
+                    renderer.fill_text(
+                        Text {
+                            content: placeholder.clone(),
+                            bounds: text_bounds.size(),
+                            size: state.text_size,
+                            line_height: state.line_height,
+                            font: state.font,
+                            align_x: text::Alignment::Default,
+                            align_y: alignment::Vertical::Top,
+                            shaping: text::Shaping::Advanced,
+                            wrapping: state.wrapping,
+                        },
+                        text_bounds.position(),
+                        style.placeholder,
+                        text_bounds,
+                    );
+                }
+            } else {
+                state
+                    .document
+                    .draw_text(renderer, origin, style.value, text_bounds);
             }
 
-            let cursor_position = self.content.cursor().position;
-            let caret = state.document.caret(cursor_position) + (origin - Point::ORIGIN);
+            draw_strikethroughs(renderer, &state.document, text_bounds, origin);
 
-            if focus.is_cursor_visible()
-                && let Some(caret) = text_bounds.intersection(&caret)
-            {
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: caret,
-                        ..renderer::Quad::default()
-                    },
-                    style.value,
-                );
+            if let Some(focus) = state.focus.as_ref() {
+                if let Some(composition) = state.composition.as_ref() {
+                    draw_composition(
+                        renderer,
+                        &state.document,
+                        composition,
+                        text_bounds,
+                        origin,
+                        style.value,
+                        focus.is_cursor_visible(),
+                    );
+                    return;
+                }
+
+                let cursor_position = self.content.cursor().position;
+                let caret = state.document.caret(cursor_position) + (origin - Point::ORIGIN);
+
+                if focus.is_cursor_visible()
+                    && let Some(caret) = text_bounds.intersection(&caret)
+                {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: caret,
+                            ..renderer::Quad::default()
+                        },
+                        style.value,
+                    );
+                }
             }
-        }
+        });
     }
 
     fn mouse_interaction(
