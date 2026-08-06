@@ -31,8 +31,11 @@ use std::ops::Range;
 
 #[path = "rich_text_editor/affordance.rs"]
 mod affordance;
+use affordance::{
+    DRAG_THRESHOLD, GutterDrag, MenuColors, draw_drop_indicator, draw_gutter, draw_menu,
+    gutter_buttons, menu_panel, menu_row_at, snap_boundary,
+};
 pub use affordance::{EditorMenu, GUTTER_WIDTH, GutterButton, MenuAnchor, MenuEvent, MenuItem};
-use affordance::{MenuColors, draw_gutter, draw_menu, gutter_buttons, menu_panel, menu_row_at};
 #[path = "rich_text_editor/keyboard.rs"]
 mod keyboard_input;
 use keyboard_input::*;
@@ -154,6 +157,9 @@ type LinePressFn<'a, Message> = dyn Fn(&str, Position) -> Option<Message> + 'a;
 /// The hover-gutter route — `None` hides the gutter for that line.
 type GutterFn<'a, Message> = dyn Fn(usize, GutterButton) -> Option<Message> + 'a;
 
+/// The handle-drag drop route: (grabbed line, boundary line to land before).
+type GutterDropFn<'a, Message> = dyn Fn(usize, usize) -> Option<Message> + 'a;
+
 /// The anchored-menu route.
 type MenuFn<'a, Message> = dyn Fn(MenuEvent) -> Message + 'a;
 
@@ -183,6 +189,8 @@ where
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
     on_line_press: Option<Box<LinePressFn<'a, Message>>>,
     on_gutter: Option<Box<GutterFn<'a, Message>>>,
+    drop_boundaries: Vec<usize>,
+    on_gutter_drop: Option<Box<GutterDropFn<'a, Message>>>,
     menu: Option<EditorMenu>,
     on_menu: Option<Box<MenuFn<'a, Message>>>,
     focus_enabled: bool,
@@ -219,6 +227,8 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             mouse_interaction: None,
             on_line_press: None,
             on_gutter: None,
+            drop_boundaries: Vec::new(),
+            on_gutter_drop: None,
             menu: None,
             on_menu: None,
             style: Box::new(text_editor::default),
@@ -359,6 +369,8 @@ where
             mouse_interaction: self.mouse_interaction,
             on_line_press: self.on_line_press,
             on_gutter: self.on_gutter,
+            drop_boundaries: self.drop_boundaries,
+            on_gutter_drop: self.on_gutter_drop,
             menu: self.menu,
             on_menu: self.on_menu,
             style: self.style,
@@ -384,6 +396,22 @@ where
         gutter: impl Fn(usize, GutterButton) -> Option<Message> + 'a,
     ) -> Self {
         self.on_gutter = Some(Box::new(gutter));
+        self
+    }
+
+    /// Enables drag-to-reorder on the handle: `boundaries` are the source
+    /// lines a dragged block may land BEFORE (append the line count for the
+    /// end of the document), and the closure maps (grabbed line, boundary) to
+    /// the drop message. A handle press becomes a drag once the pointer
+    /// moves past a threshold; released without movement it is the ordinary
+    /// handle press.
+    pub fn on_gutter_drop(
+        mut self,
+        boundaries: Vec<usize>,
+        on_drop: impl Fn(usize, usize) -> Option<Message> + 'a,
+    ) -> Self {
+        self.drop_boundaries = boundaries;
+        self.on_gutter_drop = Some(Box::new(on_drop));
         self
     }
 
@@ -505,6 +533,34 @@ where
         state.document.caret(Position { line, column: 0 })
             + (text_bounds.position() - Point::ORIGIN - Vector::new(0.0, state.scroll))
     }
+
+    /// The absolute y of a drop boundary — the top of that line, or the
+    /// bottom of the document for the past-the-end boundary.
+    fn boundary_y(
+        &self,
+        state: &State<Highlighter>,
+        boundary: usize,
+        text_bounds: Rectangle,
+    ) -> f32 {
+        let document_y = state
+            .document
+            .lines
+            .get(boundary)
+            .map_or(state.document.height, |line| line.top);
+        text_bounds.y - state.scroll + document_y
+    }
+
+    /// Every drop boundary as a `(boundary, absolute y)` snap candidate.
+    fn drop_candidates(
+        &self,
+        state: &State<Highlighter>,
+        text_bounds: Rectangle,
+    ) -> Vec<(usize, f32)> {
+        self.drop_boundaries
+            .iter()
+            .map(|&boundary| (boundary, self.boundary_y(state, boundary, text_bounds)))
+            .collect()
+    }
 }
 
 struct State<Highlighter>
@@ -519,6 +575,7 @@ where
     pending_ime_commit: PendingImeCommit,
     pointer: PointerState,
     hover_line: Option<usize>,
+    gutter_drag: Option<GutterDrag>,
     highlighter: Highlighter,
     settings: Highlighter::Settings,
     source: String,
@@ -606,6 +663,7 @@ where
         self.preedit = None;
         self.pending_ime_commit.clear();
         self.pointer.clear();
+        self.gutter_drag = None;
     }
 }
 
@@ -630,6 +688,7 @@ where
             pending_ime_commit: PendingImeCommit::default(),
             pointer: PointerState::default(),
             hover_line: None,
+            gutter_drag: None,
             highlighter: Highlighter::new(&self.highlighter_settings),
             settings: self.highlighter_settings.clone(),
             source: String::new(),
@@ -940,7 +999,21 @@ where
                             .find(|(_, button_bounds)| button_bounds.contains(absolute))
                             && let Some(message) = on_gutter(line, *button)
                         {
-                            shell.publish(message);
+                            // With drop wired, a handle press might be the
+                            // start of a drag — its click message waits for
+                            // the release to prove it stayed a click.
+                            let handle_may_drag =
+                                *button == GutterButton::Handle && self.on_gutter_drop.is_some();
+                            if handle_may_drag {
+                                state.gutter_drag = Some(GutterDrag {
+                                    from: line,
+                                    boundary: None,
+                                    moved: false,
+                                    grab_y: absolute.y,
+                                });
+                            } else {
+                                shell.publish(message);
+                            }
                             state.focus = Some(Focus::now());
                             shell.capture_event();
                             shell.request_redraw();
@@ -991,6 +1064,25 @@ where
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(mut drag) = state.gutter_drag {
+                    if let Some(point) = cursor.position() {
+                        let text_bounds = bounds.shrink(self.padding);
+                        let candidates = self.drop_candidates(state, text_bounds);
+                        if !drag.moved && (point.y - drag.grab_y).abs() > DRAG_THRESHOLD {
+                            drag.moved = true;
+                        }
+                        if drag.moved {
+                            let snapped = snap_boundary(&candidates, point.y);
+                            if snapped != drag.boundary {
+                                drag.boundary = snapped;
+                                shell.request_redraw();
+                            }
+                        }
+                        state.gutter_drag = Some(drag);
+                        shell.capture_event();
+                    }
+                    return;
+                }
                 if state.pointer.is_dragging() {
                     if let Some(point) = cursor.position() {
                         let local = clamped_local_point(point, bounds, self.padding, state.scroll);
@@ -1034,6 +1126,29 @@ where
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let Some(drag) = state.gutter_drag.take() {
+                    match drag.moved {
+                        // It stayed a click — the deferred handle press.
+                        false => {
+                            if let Some(on_gutter) = self.on_gutter.as_deref()
+                                && let Some(message) = on_gutter(drag.from, GutterButton::Handle)
+                            {
+                                shell.publish(message);
+                            }
+                        }
+                        true => {
+                            if let Some(on_drop) = self.on_gutter_drop.as_deref()
+                                && let Some(boundary) = drag.boundary
+                                && let Some(message) = on_drop(drag.from, boundary)
+                            {
+                                shell.publish(message);
+                            }
+                        }
+                    }
+                    shell.capture_event();
+                    shell.request_redraw();
+                    return;
+                }
                 let release_over_pointer = cursor.position_in(bounds).is_some_and(|point| {
                     let local = local_point(point, self.padding, state.scroll);
                     self.interaction_at(state, local) == mouse::Interaction::Pointer
@@ -1344,6 +1459,7 @@ where
         // Plus doubles as its visibility switch for the line.
         if let Some(on_gutter) = self.on_gutter.as_deref()
             && !state.pointer.is_dragging()
+            && state.gutter_drag.is_none()
             && let Some(line) = state.hover_line
             && on_gutter(line, GutterButton::Plus).is_some()
         {
@@ -1351,6 +1467,18 @@ where
             let buttons = gutter_buttons(text_bounds, row);
             renderer.with_layer(bounds, |renderer| {
                 draw_gutter(renderer, &buttons, style.placeholder);
+            });
+        }
+
+        // Mid-drag, the accent line marks where the grabbed block would land.
+        if let Some(drag) = state.gutter_drag.as_ref()
+            && drag.moved
+            && let Some(boundary) = drag.boundary
+        {
+            let y = self.boundary_y(state, boundary, text_bounds);
+            let accent = theme.extended_palette().primary.base.color;
+            renderer.with_layer(bounds, |renderer| {
+                draw_drop_indicator(renderer, text_bounds, y, accent);
             });
         }
 
@@ -1383,6 +1511,15 @@ where
         let bounds = layout.bounds();
         if self.on_action.is_none() && cursor.is_over(bounds) {
             return mouse::Interaction::NotAllowed;
+        }
+
+        let dragging_handle = tree
+            .state
+            .downcast_ref::<State<Highlighter>>()
+            .gutter_drag
+            .is_some();
+        if dragging_handle {
+            return mouse::Interaction::Grabbing;
         }
 
         if let Some(point) = cursor.position_in(bounds) {

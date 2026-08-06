@@ -129,6 +129,47 @@ pub(super) fn menu_row_at(panel: Rectangle, item_count: usize, point: Point) -> 
     (row < item_count).then_some(row)
 }
 
+/// A live handle drag: the grabbed source line, and the boundary the block
+/// would land before once the pointer has actually moved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct GutterDrag {
+    pub(super) from: usize,
+    pub(super) boundary: Option<usize>,
+    pub(super) moved: bool,
+    pub(super) grab_y: f32,
+}
+
+/// Movement below this many pixels stays a click.
+pub(super) const DRAG_THRESHOLD: f32 = 4.0;
+
+/// The drop boundary nearest `y`, from `(boundary, absolute y)` candidates.
+pub(super) fn snap_boundary(candidates: &[(usize, f32)], y: f32) -> Option<usize> {
+    candidates
+        .iter()
+        .min_by(|left, right| (left.1 - y).abs().total_cmp(&(right.1 - y).abs()))
+        .map(|(boundary, _)| *boundary)
+}
+
+/// The accent line marking where a dragged block would land.
+pub(super) fn draw_drop_indicator(
+    renderer: &mut iced::Renderer,
+    text_bounds: Rectangle,
+    y: f32,
+    color: Color,
+) {
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: Rectangle::new(
+                Point::new(text_bounds.x, y - 1.0),
+                Size::new(text_bounds.width, 2.0),
+            ),
+            border: border::rounded(1.0),
+            ..renderer::Quad::default()
+        },
+        color,
+    );
+}
+
 pub(super) struct MenuColors {
     pub(super) panel: Color,
     pub(super) outline: Color,
@@ -297,6 +338,15 @@ mod tests {
         let right = Rectangle::new(Point::new(690.0, 60.0), Size::new(1.0, 20.0));
         let clamped = menu_panel(right, 4, bounds());
         assert_eq!(clamped.x + clamped.width, 700.0);
+    }
+
+    #[test]
+    fn the_drop_snaps_to_the_nearest_boundary() {
+        let candidates = [(1, 100.0), (4, 160.0), (7, 240.0)];
+        assert_eq!(snap_boundary(&candidates, 96.0), Some(1));
+        assert_eq!(snap_boundary(&candidates, 131.0), Some(4));
+        assert_eq!(snap_boundary(&candidates, 500.0), Some(7));
+        assert_eq!(snap_boundary(&[], 100.0), None);
     }
 
     #[test]
