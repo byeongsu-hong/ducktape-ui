@@ -18893,7 +18893,13 @@ view
                 .count(),
             CALLS
         );
-        assert_eq!(generated.matches("let __component_content").count(), CALLS);
+        // Body-identical component calls fold into one outlined definition;
+        // every call site still routes through it with its own use scope.
+        assert_eq!(generated.matches("let __component_content").count(), 1);
+        assert_eq!(
+            generated.matches("self.__ice_component_use_0(").count(),
+            CALLS
+        );
         eprintln!("4k normalized component-call routes lowered and emitted in {elapsed:?}");
         assert!(
             elapsed.as_secs_f64() < 2.0,
