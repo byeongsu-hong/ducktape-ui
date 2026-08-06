@@ -29,6 +29,10 @@ use iced::widget::text_editor::Motion;
 #[cfg(test)]
 use std::ops::Range;
 
+#[path = "rich_text_editor/affordance.rs"]
+mod affordance;
+pub use affordance::{EditorMenu, GUTTER_WIDTH, GutterButton, MenuAnchor, MenuEvent, MenuItem};
+use affordance::{MenuColors, draw_gutter, draw_menu, gutter_buttons, menu_panel, menu_row_at};
 #[path = "rich_text_editor/keyboard.rs"]
 mod keyboard_input;
 use keyboard_input::*;
@@ -147,6 +151,12 @@ pub enum Action {
 /// the press.
 type LinePressFn<'a, Message> = dyn Fn(&str, Position) -> Option<Message> + 'a;
 
+/// The hover-gutter route — `None` hides the gutter for that line.
+type GutterFn<'a, Message> = dyn Fn(usize, GutterButton) -> Option<Message> + 'a;
+
+/// The anchored-menu route.
+type MenuFn<'a, Message> = dyn Fn(MenuEvent) -> Message + 'a;
+
 /// An editable rich-text surface.
 ///
 /// Unlike [`iced::widget::TextEditor`], this widget shapes each highlighted
@@ -172,6 +182,9 @@ where
     wrapping: text::Wrapping,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
     on_line_press: Option<Box<LinePressFn<'a, Message>>>,
+    on_gutter: Option<Box<GutterFn<'a, Message>>>,
+    menu: Option<EditorMenu>,
+    on_menu: Option<Box<MenuFn<'a, Message>>>,
     focus_enabled: bool,
     highlighter_settings: Highlighter::Settings,
     format: Box<FormatFn<'a, Highlighter>>,
@@ -205,6 +218,9 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             format_key: 0,
             mouse_interaction: None,
             on_line_press: None,
+            on_gutter: None,
+            menu: None,
+            on_menu: None,
             style: Box::new(text_editor::default),
         }
     }
@@ -342,6 +358,9 @@ where
             format_key,
             mouse_interaction: self.mouse_interaction,
             on_line_press: self.on_line_press,
+            on_gutter: self.on_gutter,
+            menu: self.menu,
+            on_menu: self.on_menu,
             style: self.style,
         }
     }
@@ -352,6 +371,33 @@ where
     /// ordinary click.
     pub fn on_line_press(mut self, press: impl Fn(&str, Position) -> Option<Message> + 'a) -> Self {
         self.on_line_press = Some(Box::new(press));
+        self
+    }
+
+    /// Shows the hover gutter — "+" and the dots handle beside the hovered
+    /// line. The closure decides per line: `None` hides the gutter there
+    /// (a title line), `Some` is the message a press publishes. A gutter
+    /// press consumes the press like a line press — no caret move, no focus
+    /// steal. The host must reserve [`GUTTER_WIDTH`] of left padding.
+    pub fn on_gutter(
+        mut self,
+        gutter: impl Fn(usize, GutterButton) -> Option<Message> + 'a,
+    ) -> Self {
+        self.on_gutter = Some(Box::new(gutter));
+        self
+    }
+
+    /// Shows an anchored dropdown described by the application each frame.
+    /// While one is up (and [`Self::on_menu`] is set) the editor intercepts
+    /// Up/Down/Enter/Tab/Escape for it instead of editing.
+    pub fn menu(mut self, menu: Option<EditorMenu>) -> Self {
+        self.menu = menu.filter(|menu| !menu.items.is_empty());
+        self
+    }
+
+    /// Maps anchored-menu events to application messages.
+    pub fn on_menu(mut self, on_menu: impl Fn(MenuEvent) -> Message + 'a) -> Self {
+        self.on_menu = Some(Box::new(on_menu));
         self
     }
 
@@ -428,6 +474,37 @@ where
             preedit: None,
         }
     }
+
+    /// The anchored menu's absolute panel rectangle, when one is up. The
+    /// menu waits out an IME composition — its keys belong to the IME.
+    fn menu_panel_in(
+        &self,
+        state: &State<Highlighter>,
+        text_bounds: Rectangle,
+    ) -> Option<Rectangle> {
+        let menu = self.menu.as_ref()?;
+        if state.composition.is_some() || self.on_menu.is_none() {
+            return None;
+        }
+        let position = match menu.anchor {
+            MenuAnchor::Caret => self.content.cursor().position,
+            MenuAnchor::Line(line) => Position { line, column: 0 },
+        };
+        let anchor = state.document.caret(position)
+            + (text_bounds.position() - Point::ORIGIN - Vector::new(0.0, state.scroll));
+        Some(menu_panel(anchor, menu.items.len(), text_bounds))
+    }
+
+    /// The absolute column-0 caret row of `line` — what the gutter centers on.
+    fn gutter_row(
+        &self,
+        state: &State<Highlighter>,
+        text_bounds: Rectangle,
+        line: usize,
+    ) -> Rectangle {
+        state.document.caret(Position { line, column: 0 })
+            + (text_bounds.position() - Point::ORIGIN - Vector::new(0.0, state.scroll))
+    }
 }
 
 struct State<Highlighter>
@@ -441,6 +518,7 @@ where
     document: DocumentLayout,
     pending_ime_commit: PendingImeCommit,
     pointer: PointerState,
+    hover_line: Option<usize>,
     highlighter: Highlighter,
     settings: Highlighter::Settings,
     source: String,
@@ -551,6 +629,7 @@ where
             document: DocumentLayout::default(),
             pending_ime_commit: PendingImeCommit::default(),
             pointer: PointerState::default(),
+            hover_line: None,
             highlighter: Highlighter::new(&self.highlighter_settings),
             settings: self.highlighter_settings.clone(),
             source: String::new(),
@@ -823,6 +902,46 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 state.pending_ime_commit.clear();
                 if let Some(point) = cursor.position_in(bounds) {
+                    let absolute = Point::new(bounds.x + point.x, bounds.y + point.y);
+                    let text_bounds = bounds.shrink(self.padding);
+                    // The anchored menu owns presses over its panel; a press
+                    // anywhere else dismisses it and then lands normally.
+                    if let Some(panel) = self.menu_panel_in(state, text_bounds) {
+                        let menu = self.menu.as_ref().expect("panel implies menu");
+                        let on_menu = self.on_menu.as_deref().expect("panel implies route");
+                        if panel.contains(absolute) {
+                            if let Some(row) = menu_row_at(panel, menu.items.len(), absolute)
+                                && let Some(item) = menu.items.get(row)
+                            {
+                                shell.publish(on_menu(MenuEvent::Pick(item.tag.clone())));
+                            }
+                            shell.capture_event();
+                            shell.request_redraw();
+                            return;
+                        }
+                        shell.publish(on_menu(MenuEvent::Dismiss));
+                        shell.request_redraw();
+                    }
+                    // A gutter press is its own gesture, like a line press:
+                    // no caret move, no focus steal.
+                    if let Some(on_gutter) = self.on_gutter.as_deref()
+                        && state.composition.is_none()
+                        && let Some(line) = state.hover_line
+                        && point.x < self.padding.left
+                    {
+                        let row = self.gutter_row(state, text_bounds, line);
+                        let buttons = gutter_buttons(text_bounds, row);
+                        if let Some((button, _)) = buttons
+                            .iter()
+                            .find(|(_, button_bounds)| button_bounds.contains(absolute))
+                            && let Some(message) = on_gutter(line, *button)
+                        {
+                            shell.publish(message);
+                            shell.capture_event();
+                            shell.request_redraw();
+                            return;
+                        }
+                    }
                     let local = local_point(point, self.padding, state.scroll);
                     // A consumed line press is its own gesture: no caret move,
                     // no focus steal — a checkbox tick must not also relocate
@@ -867,17 +986,45 @@ where
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if state.pointer.is_dragging()
-                    && let Some(point) = cursor.position()
-                {
-                    let local = clamped_local_point(point, bounds, self.padding, state.scroll);
-                    if let Some(cursor) =
-                        state
-                            .pointer
-                            .drag(&state.document, state.composition.as_ref(), local)
-                    {
-                        shell.publish(on_action(Action::MoveTo(cursor)));
-                        shell.capture_event();
+                if state.pointer.is_dragging() {
+                    if let Some(point) = cursor.position() {
+                        let local = clamped_local_point(point, bounds, self.padding, state.scroll);
+                        if let Some(cursor) =
+                            state
+                                .pointer
+                                .drag(&state.document, state.composition.as_ref(), local)
+                        {
+                            shell.publish(on_action(Action::MoveTo(cursor)));
+                            shell.capture_event();
+                        }
+                    }
+                    return;
+                }
+                // The hovered source line the gutter rides on.
+                let hovered = self
+                    .on_gutter
+                    .as_ref()
+                    .filter(|_| state.composition.is_none())
+                    .and_then(|_| cursor.position_in(bounds))
+                    .and_then(|point| {
+                        let local = local_point(point, self.padding, state.scroll);
+                        state.document.line_at_y(local.y)
+                    });
+                if hovered != state.hover_line {
+                    state.hover_line = hovered;
+                    shell.request_redraw();
+                }
+                // Hovering a menu row highlights it.
+                if let Some(point) = cursor.position() {
+                    let text_bounds = bounds.shrink(self.padding);
+                    if let Some(panel) = self.menu_panel_in(state, text_bounds) {
+                        let menu = self.menu.as_ref().expect("panel implies menu");
+                        let on_menu = self.on_menu.as_deref().expect("panel implies route");
+                        if let Some(row) = menu_row_at(panel, menu.items.len(), point)
+                            && row != menu.selected
+                        {
+                            shell.publish(on_menu(MenuEvent::Select(row)));
+                        }
                     }
                 }
             }
@@ -1020,6 +1167,19 @@ where
                         }
                         ImeBoundary::Missing(_) | ImeBoundary::Unrelated => {}
                     }
+                }
+
+                // While a menu is up its navigation keys belong to the menu,
+                // not the buffer — Enter picks instead of splitting the line.
+                if let Some(menu) = self.menu.as_ref()
+                    && state.composition.is_none()
+                    && let Some(on_menu) = self.on_menu.as_deref()
+                    && let Some(menu_event) = menu_key(key, menu)
+                {
+                    shell.publish(on_menu(menu_event));
+                    shell.capture_event();
+                    shell.request_redraw();
+                    return;
                 }
 
                 let status = self.status(state, cursor.is_over(bounds));
@@ -1170,6 +1330,41 @@ where
                 }
             }
         });
+
+        if self.on_action.is_none() || state.composition.is_some() {
+            return;
+        }
+
+        // The hover gutter rides the hovered line; the closure's verdict on
+        // Plus doubles as its visibility switch for the line.
+        if let Some(on_gutter) = self.on_gutter.as_deref()
+            && !state.pointer.is_dragging()
+            && let Some(line) = state.hover_line
+            && on_gutter(line, GutterButton::Plus).is_some()
+        {
+            let row = self.gutter_row(state, text_bounds, line);
+            let buttons = gutter_buttons(text_bounds, row);
+            renderer.with_layer(bounds, |renderer| {
+                draw_gutter(renderer, &buttons, style.placeholder);
+            });
+        }
+
+        // The anchored menu draws last, above everything, in its own layer —
+        // expanded so its shadow is not clipped at the panel edge.
+        if let Some(panel) = self.menu_panel_in(state, text_bounds) {
+            let menu = self.menu.as_ref().expect("panel implies menu");
+            let palette = theme.extended_palette();
+            let colors = MenuColors {
+                panel: palette.background.base.color,
+                outline: palette.background.strong.color,
+                selected: palette.background.weak.color,
+                label: palette.background.base.text,
+            };
+            let selected = menu.selected.min(menu.items.len().saturating_sub(1));
+            renderer.with_layer(panel.expand(24.0), |renderer| {
+                draw_menu(renderer, panel, &menu.items, selected, state.font, &colors);
+            });
+        }
     }
 
     fn mouse_interaction(
@@ -1187,6 +1382,26 @@ where
 
         if let Some(point) = cursor.position_in(bounds) {
             let state = tree.state.downcast_ref::<State<Highlighter>>();
+            let absolute = Point::new(bounds.x + point.x, bounds.y + point.y);
+            let text_bounds = bounds.shrink(self.padding);
+            if let Some(panel) = self.menu_panel_in(state, text_bounds)
+                && panel.contains(absolute)
+            {
+                return mouse::Interaction::Pointer;
+            }
+            if self.on_gutter.is_some()
+                && state.composition.is_none()
+                && let Some(line) = state.hover_line
+                && point.x < self.padding.left
+            {
+                let row = self.gutter_row(state, text_bounds, line);
+                let over_button = gutter_buttons(text_bounds, row)
+                    .iter()
+                    .any(|(_, button_bounds)| button_bounds.contains(absolute));
+                if over_button {
+                    return mouse::Interaction::Pointer;
+                }
+            }
             let point = point - Vector::new(self.padding.left, self.padding.top)
                 + Vector::new(0.0, state.scroll);
             return self.interaction_at(state, point);
@@ -1218,6 +1433,29 @@ where
 {
     fn from(editor: RichTextEditor<'a, Highlighter, Message>) -> Self {
         Self::new(editor)
+    }
+}
+
+/// The menu's verdict on a key press, if the key is one it owns.
+fn menu_key(key: &keyboard::Key, menu: &EditorMenu) -> Option<MenuEvent> {
+    use keyboard::key::Named;
+    let count = menu.items.len();
+    let selected = menu.selected.min(count.saturating_sub(1));
+    let keyboard::Key::Named(named) = key else {
+        return None;
+    };
+    match named {
+        Named::ArrowUp => Some(MenuEvent::Select(
+            selected.checked_sub(1).unwrap_or(count.saturating_sub(1)),
+        )),
+        Named::ArrowDown => Some(MenuEvent::Select((selected + 1) % count.max(1))),
+        Named::Enter | Named::Tab => Some(
+            menu.items
+                .get(selected)
+                .map_or(MenuEvent::Dismiss, |item| MenuEvent::Pick(item.tag.clone())),
+        ),
+        Named::Escape => Some(MenuEvent::Dismiss),
+        _ => None,
     }
 }
 

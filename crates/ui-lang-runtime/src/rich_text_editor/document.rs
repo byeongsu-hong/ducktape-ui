@@ -368,6 +368,17 @@ impl DocumentLayout {
         }
     }
 
+    /// The display line whose vertical band contains `y`, if any.
+    pub(super) fn line_at_y(&self, y: f32) -> Option<usize> {
+        if y < 0.0 || y >= self.height {
+            return None;
+        }
+        let index = self
+            .lines
+            .partition_point(|line| line.top + line.height <= y);
+        (index < self.lines.len()).then_some(index)
+    }
+
     pub(super) fn hit_test(&self, point: Point) -> Option<Position> {
         if point.y < 0.0 || point.y >= self.height {
             return None;
