@@ -798,7 +798,12 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         writeln!(out, "{method}").unwrap();
     }
     drop(outline_guard);
+    let outline_guard = outline::enable_for_test_mounts();
     generate_test_mounts(&mut out, program, &message, source_path)?;
+    for method in outline::drain_outlined_methods() {
+        writeln!(out, "{method}").unwrap();
+    }
+    drop(outline_guard);
     writeln!(out, "}}").unwrap();
     generate_tests(&mut out, program, &message, source_path)?;
     writeln!(out, "}}").unwrap();

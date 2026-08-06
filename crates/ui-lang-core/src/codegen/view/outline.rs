@@ -23,6 +23,11 @@ use std::cell::RefCell;
 #[derive(Default)]
 struct OutlineState {
     enabled: bool,
+    /// Methods emitted while generating test mounts re-render the same view
+    /// nodes under `#[cfg(test)]`, so they must carry the attribute — a
+    /// method only reachable from a test mount would otherwise typecheck
+    /// (and warn as dead code) in non-test builds.
+    test_mode: bool,
     lazy_depth: usize,
     counter: usize,
     methods: Vec<String>,
@@ -33,7 +38,8 @@ thread_local! {
 }
 
 /// Enables outlining for the duration of the guard — held around `__view`
-/// generation only. Dropping it clears all state, so an errored generation
+/// generation and (in test mode, continuing the same counter) around test
+/// mount generation. Dropping it clears all state, so an errored generation
 /// cannot leak methods into the next one.
 pub(in crate::codegen) struct OutlineViewGuard;
 
@@ -47,9 +53,30 @@ pub(in crate::codegen) fn enable_for_view() -> OutlineViewGuard {
     OutlineViewGuard
 }
 
+/// Continues outlining for test mounts: methods gain `#[cfg(test)]`, and the
+/// use counter keeps advancing so names never collide with the view's.
+pub(in crate::codegen) fn enable_for_test_mounts() -> OutlineViewGuard {
+    OUTLINE.with_borrow_mut(|state| {
+        let counter = state.counter;
+        *state = OutlineState {
+            enabled: true,
+            test_mode: true,
+            counter,
+            ..OutlineState::default()
+        };
+    });
+    OutlineViewGuard
+}
+
 impl Drop for OutlineViewGuard {
     fn drop(&mut self) {
-        OUTLINE.with_borrow_mut(|state| *state = OutlineState::default());
+        OUTLINE.with_borrow_mut(|state| {
+            let counter = state.counter;
+            *state = OutlineState {
+                counter,
+                ..OutlineState::default()
+            };
+        });
     }
 }
 
@@ -91,8 +118,13 @@ pub(in crate::codegen) fn push_outlined_method(
             .iter()
             .map(|local| format!(", {local}: ::std::string::String"))
             .collect::<String>();
+        let cfg = if state.test_mode {
+            "#[cfg(test)]\n"
+        } else {
+            ""
+        };
         state.methods.push(format!(
-            "fn {name}(&self, __ice_palette: __IcePalette, {scope_binding}: ::std::string::String{locals}) -> __IceElement<'_, {message}> {{ {body} }}"
+            "{cfg}fn {name}(&self, __ice_palette: __IcePalette, {scope_binding}: ::std::string::String{locals}) -> __IceElement<'_, {message}> {{ {body} }}"
         ));
         name
     })
