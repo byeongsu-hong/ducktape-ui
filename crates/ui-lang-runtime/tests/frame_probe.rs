@@ -15,6 +15,9 @@ use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use std::alloc::System;
 use std::sync::Arc;
 use ui_lang_runtime::memo_lazy;
+use ui_lang_runtime::{
+    VirtualListConfig, VirtualListEvent, VirtualListId, VirtualListState, virtual_list,
+};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -23,6 +26,11 @@ const ROWS: usize = 150;
 const WINDOW: Size = Size::new(1280.0, 800.0);
 const WARMUP_FRAMES: usize = 8;
 const FRAMES: usize = 60;
+
+#[derive(Debug, Clone)]
+enum TimelineMessage {
+    List(VirtualListEvent<u64>),
+}
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -259,6 +267,79 @@ fn chat_frame_phase_costs() {
         });
     }
 
+    // The measured virtual list mounting the same content shape at 1000
+    // rows: a cold channel open only builds and shapes the viewport window,
+    // not the whole stream. One sample = the full settle — build, measure,
+    // apply reported events, rebuild.
+    const TIMELINE_ROWS: usize = 1_000;
+    let timeline_bodies: Vec<String> = (0..TIMELINE_ROWS)
+        .map(|index| {
+            format!(
+                "message {index}: the quick brown fox jumps over the lazy dog \
+                 while the review bot files another finding about wrapping \
+                 behavior in long chat lines that span two rendered rows"
+            )
+        })
+        .collect();
+    let timeline_config = VirtualListConfig::measured(48.0).unwrap();
+    let mut timeline_phase = Phase::new("virtual timeline cold open");
+    for round in 0..8 {
+        timeline_phase.sample(|| {
+            let mut state: VirtualListState<u64> =
+                VirtualListState::new(VirtualListId::new(format!("probe-timeline-{round}")));
+            let items: Vec<u64> = (0..TIMELINE_ROWS as u64).collect();
+            state
+                .reconcile(&items, |key| *key, timeline_config)
+                .unwrap();
+            state.apply(
+                VirtualListEvent::ViewportChanged {
+                    height: WINDOW.height,
+                },
+                &items,
+                |key| *key,
+                timeline_config,
+            );
+            state.scroll_to_end(items.len(), timeline_config);
+            let mut timeline_cache = user_interface::Cache::default();
+            let mut messages: Vec<TimelineMessage> = Vec::new();
+            for _ in 0..2 {
+                let element: Element<'_, TimelineMessage, Theme, iced_test::renderer::Renderer> =
+                    virtual_list(
+                        &state,
+                        &items,
+                        timeline_config,
+                        "Probe timeline",
+                        |key| *key,
+                        |key| format!("Item {key}"),
+                        |index, _, _| {
+                            column![
+                                text(format!("user-{}", index % 7)),
+                                text(timeline_bodies[index].clone()).size(14),
+                            ]
+                            .into()
+                        },
+                        TimelineMessage::List,
+                    );
+                let mut ui = UserInterface::build(element, WINDOW, timeline_cache, &mut renderer);
+                ui.update(
+                    &[Event::Window(iced::window::Event::RedrawRequested(
+                        iced::time::Instant::now(),
+                    ))],
+                    mouse::Cursor::Unavailable,
+                    &mut renderer,
+                    &mut clipboard,
+                    &mut messages,
+                );
+                timeline_cache = ui.into_cache();
+                for message in messages.drain(..) {
+                    let TimelineMessage::List(event) = message;
+                    state.apply(event, &items, |key| *key, timeline_config);
+                }
+            }
+            std::hint::black_box(&state);
+        });
+    }
+
     eprintln!(
         "chat frame probe: {ROWS} lazy rows, {}x{}",
         WINDOW.width, WINDOW.height
@@ -271,4 +352,5 @@ fn chat_frame_phase_costs() {
     switch_phase.report();
     all_deps_phase.report();
     cold_phase.report();
+    timeline_phase.report();
 }
