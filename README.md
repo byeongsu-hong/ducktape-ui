@@ -132,6 +132,7 @@ cargo run -p markdown-example  # native Markdown editor (see examples/markdown-e
 cargo run -p terminal-example  # native PTY terminal component (see examples/terminal)
 cargo run -p showcase          # the ducktape-ui component catalog (crates/ui)
 cargo run -p ice-starter       # the minimal copyable build/include/test path
+cargo run -p candles-example   # native lightweight financial chart (see examples/candles)
 ```
 
 `showcase` also exercises the 100k-row collection widgets behind typed extern

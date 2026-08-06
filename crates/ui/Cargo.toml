@@ -28,6 +28,7 @@ full = [
     "button",
     "button-group",
     "calendar",
+    "candle-chart",
     "card",
     "carousel",
     "chart",
@@ -151,6 +152,7 @@ alert-dialog = ["modal", "dialog", "direction", "focus-control", "button", "them
 sonner = ["theme", "focus-control"]
 command = ["theme", "focus-control", "input", "scroll-area"]
 chart = ["theme", "iced/canvas", "iced/svg"]
+candle-chart = ["theme", "iced/canvas"]
 popover = ["theme"]
 navigation-menu = ["direction", "focus-control", "menu", "popover", "tooltip", "theme"]
 tooltip = ["focus-control", "popover", "theme"]
