@@ -36,16 +36,21 @@ pub(in crate::codegen) fn render_content(
             let mut component_env = HashMap::new();
             let default_env = HashMap::new();
             for argument in &call.arguments {
+                // A per-argument recorder (stacked on the arm's, so hits
+                // propagate to both) decides whether this argument's baked
+                // expression is itself self-backed — nested uses inside the
+                // component body consult the marker to outline in turn.
+                let arg_recording = RecordingEnv::new(&recording);
                 let value_env: &dyn BindingEnvironment = if argument.uses_definition_scope() {
                     &default_env
                 } else {
-                    &recording
+                    &arg_recording
                 };
                 let state = argument
                     .writable
                     .as_ref()
                     .map(|state| {
-                        recording
+                        arg_recording
                             .get(state.name())
                             .and_then(|binding| binding.state.clone())
                             .ok_or_else(|| {
@@ -76,6 +81,19 @@ pub(in crate::codegen) fn render_content(
                         ))),
                     },
                 );
+                if !arg_recording.site_capturing() {
+                    let locals = arg_recording.scope_locals();
+                    component_env.insert(
+                        self_backed_param_key(&argument.name),
+                        Binding {
+                            code: locals.into_iter().collect::<Vec<_>>().join(","),
+                            ty: Type::Bool,
+                            local: true,
+                            state: None,
+                            owner: None,
+                        },
+                    );
+                }
             }
             if let ComponentOutputRoute::Direct { output, route, .. } = &call.output {
                 component_env.insert(
@@ -255,7 +273,7 @@ pub(in crate::codegen) fn render_content(
                     &mut component_env,
                     name,
                     Binding {
-                        code: format!("{scope_binding}.clone()"),
+                        code: scope_binding.clone(),
                         ty: Type::Unit,
                         local: true,
                         state: None,
@@ -292,8 +310,19 @@ pub(in crate::codegen) fn render_content(
                     && !recording.site_capturing()
                     && call.slots.is_empty()
                 {
-                    let method = outline::push_outlined_method(message, &scope_binding, &body);
-                    format!("self.{method}(__ice_palette, {component_scope})")
+                    let mut scope_locals = recording.scope_locals();
+                    scope_locals.remove(&scope_binding);
+                    let method = outline::push_outlined_method(
+                        message,
+                        &scope_binding,
+                        &scope_locals,
+                        &body,
+                    );
+                    let arguments = scope_locals
+                        .iter()
+                        .map(|local| format!(", {local}.clone()"))
+                        .collect::<String>();
+                    format!("self.{method}(__ice_palette, {component_scope}{arguments})")
                 } else {
                     format!("{{ let {scope_binding} = {component_scope}; {body} }}")
                 },

@@ -1318,3 +1318,100 @@ view
         "an events-only use must still outline"
     );
 }
+/// A nested use inside a component body outlines too: self-backed prop
+/// chains propagate through per-argument markers, and routes to the
+/// enclosing component's handlers only need its scope locals, which become
+/// extra `String` parameters cloned at the call site.
+#[test]
+fn outlines_nested_uses_passing_enclosing_scope_locals_as_parameters() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  title = "hello"
+component Inner(label: str)
+  emits
+    tapped
+  button "go" -> emit(tapped)
+component Outer(label: str)
+  state
+    open = false
+  on toggle
+    open = !open
+  col
+    text label
+    Inner label=label
+      events
+        tapped -> toggle
+view
+  Outer label=title
+"#;
+    let generated = compile(source, "nested-events.ice").unwrap();
+    assert_eq!(
+        generated.matches("fn __ice_component_use_").count(),
+        2,
+        "both the outer use and the nested Inner use must outline"
+    );
+    assert!(
+        generated.contains(
+            "fn __ice_component_use_0(&self, __ice_palette: __IcePalette, __ice_component_inner_scope_25: ::std::string::String, __ice_component_outer_scope_29: ::std::string::String)"
+        ),
+        "the nested method must take the enclosing scope local as a parameter"
+    );
+    assert!(
+        generated.contains("self.__ice_component_use_0(__ice_palette, format!(\"{}/Inner@25\", __ice_component_outer_scope_29.clone()), __ice_component_outer_scope_29.clone())"),
+        "the call site must pass the enclosing scope local by clone"
+    );
+}
+
+/// The capture-aliasing route path must not hide render-site locals from the
+/// outlining recorder: a route payload expression referencing a loop item
+/// keeps the use inline even when the enclosing component's state forces the
+/// aliased-callback environment.
+#[test]
+fn keeps_uses_inline_when_route_payloads_reference_loop_items() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  items = ["a", "b"]
+component Inner()
+  emits
+    tapped
+  button "go" -> emit(tapped)
+component Outer(items: [str])
+  state
+    open = false
+  on pick(value)
+    open = !open
+  col
+    for item in items
+      Inner
+        events
+          tapped -> pick item
+view
+  Outer items=items
+"#;
+    let generated = compile(source, "route-payload-locals.ice").unwrap();
+    assert_eq!(
+        generated.matches("fn __ice_component_use_").count(),
+        1,
+        "only the outer use may outline — the inner use's route captures a loop item"
+    );
+}

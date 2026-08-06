@@ -67,6 +67,31 @@ pub(in crate::codegen) fn component_context_key(component: &str) -> String {
     format!("{COMPONENT_CONTEXT_PREFIX}{component}")
 }
 
+/// The reserved key that marks a component argument binding as self-backed:
+/// its use-site expression resolved only `self`-rooted bindings, plus the
+/// scope-local identifiers listed (comma-joined) in the marker's `code`.
+/// [`RecordingEnv`] reads it to decide whether a nested component use can
+/// outline. [`RecordingEnv`]: super::RecordingEnv
+pub(in crate::codegen) fn self_backed_param_key(name: &str) -> String {
+    format!("\0self-backed:{name}")
+}
+
+pub(in crate::codegen) fn is_self_backed_param_key(name: &str) -> bool {
+    name.starts_with("\0self-backed:")
+}
+
+pub(in crate::codegen) fn is_component_context_index_key(name: &str) -> bool {
+    name == COMPONENT_CONTEXT_INDEX
+}
+
+pub(in crate::codegen) fn is_component_context_key(name: &str) -> bool {
+    name.starts_with(COMPONENT_CONTEXT_PREFIX)
+}
+
+pub(in crate::codegen) fn is_component_callback_key(name: &str) -> bool {
+    name.starts_with(COMPONENT_OUTPUT_PREFIX) || name.starts_with(COMPONENT_EVENT_PREFIX)
+}
+
 pub(in crate::codegen) fn component_context(
     env: &dyn BindingEnvironment,
 ) -> Option<(&str, &Binding)> {

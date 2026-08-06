@@ -2,7 +2,8 @@ use super::*;
 use crate::lower::ExternFnId;
 use crate::unqualified_name;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 
 pub(in crate::codegen) trait BindingEnvironment {
     fn get(&self, name: &str) -> Option<&Binding>;
@@ -30,39 +31,92 @@ pub(in crate::codegen) trait BindingEnvironment {
     }
 }
 
-/// Wraps an environment to observe whether any resolved binding could
-/// reference a render-site local. Only app state and derived values compile
-/// to `self`-rooted code; everything else — loop items, lazy dependencies,
-/// component params/state, contexts, outputs, reconciliation scopes — may
-/// capture a local of the enclosing render function, so any such lookup
-/// (or any prefix/visit/context access, conservatively) marks the site as
-/// capturing and the component use renders inline instead of outlining.
+/// Wraps an environment to observe what a component use's rendering resolves
+/// from its render site, deciding between three outcomes:
+///
+/// - **Self-backed** lookups (app state, derived values, and component
+///   params marked via [`self_backed_param_key`]) compile to `self`-rooted
+///   code — they cost nothing to move into an outlined `&self` method.
+/// - **Scope locals** — an enclosing component's context/state scopes, which
+///   are always `String` locals holding reconciliation scopes — are
+///   collected by identifier; an outlined method can take each as an extra
+///   `String` parameter cloned at the call site.
+/// - Everything else (loop items, lazy dependencies, callback bindings,
+///   slot-provided flags) is a **hard capture**: the use renders inline.
 pub(in crate::codegen) struct RecordingEnv<'a> {
     base: &'a dyn BindingEnvironment,
-    site_capture: Cell<bool>,
+    hard_capture: Cell<bool>,
+    scope_locals: RefCell<BTreeSet<String>>,
 }
 
 impl<'a> RecordingEnv<'a> {
     pub(in crate::codegen) fn new(base: &'a dyn BindingEnvironment) -> Self {
         Self {
             base,
-            site_capture: Cell::new(false),
+            hard_capture: Cell::new(false),
+            scope_locals: RefCell::new(BTreeSet::new()),
         }
     }
 
     pub(in crate::codegen) fn site_capturing(&self) -> bool {
-        self.site_capture.get()
+        self.hard_capture.get()
     }
 
-    fn record(&self, binding: &Binding) {
-        let self_backed = matches!(
-            binding.owner,
+    pub(in crate::codegen) fn scope_locals(&self) -> BTreeSet<String> {
+        self.scope_locals.borrow().clone()
+    }
+
+    fn record(&self, name: &str, binding: &Binding) {
+        // The context index holds the active component NAME, and self-backed
+        // markers are stacked-recorder metadata — neither reaches emitted
+        // code.
+        if is_component_context_index_key(name) || is_self_backed_param_key(name) {
+            return;
+        }
+        if is_component_context_key(name) {
+            // The context binding's code is the enclosing scope-local
+            // identifier (route callbacks clone it into their captures).
+            self.scope_locals.borrow_mut().insert(binding.code.clone());
+            return;
+        }
+        if is_component_callback_key(name) {
+            if std::env::var_os("ICE_OUTLINE_DEBUG").is_some() {
+                eprintln!("HARD callback key: {name}");
+            }
+            self.hard_capture.set(true);
+            return;
+        }
+        match &binding.owner {
             Some(BindingOwner::Value(
-                ResolvedValueRef::AppState(_) | ResolvedValueRef::Derived(_)
-            ))
-        );
-        if !self_backed {
-            self.site_capture.set(true);
+                ResolvedValueRef::AppState(_) | ResolvedValueRef::Derived(_),
+            )) => {}
+            Some(BindingOwner::Value(ResolvedValueRef::ComponentParam(_))) => {
+                match self.base.get(&self_backed_param_key(name)) {
+                    // The marker's code lists the scope locals the baked
+                    // argument expression itself references.
+                    Some(marker) => {
+                        let mut locals = self.scope_locals.borrow_mut();
+                        for ident in marker.code.split(',').filter(|ident| !ident.is_empty()) {
+                            locals.insert(ident.to_owned());
+                        }
+                    }
+                    None => self.hard_capture.set(true),
+                }
+            }
+            Some(BindingOwner::Value(ResolvedValueRef::ComponentState(_))) => {
+                // State reads compile to `self.<field>.get(&<scope local>)`.
+                if let Some(StateBinding::Component { scope, .. }) = &binding.state {
+                    self.scope_locals.borrow_mut().insert(scope.clone());
+                } else {
+                    self.hard_capture.set(true);
+                }
+            }
+            _ => {
+                if std::env::var_os("ICE_OUTLINE_DEBUG").is_some() {
+                    eprintln!("HARD get: {name}");
+                }
+                self.hard_capture.set(true);
+            }
         }
     }
 }
@@ -71,36 +125,43 @@ impl BindingEnvironment for RecordingEnv<'_> {
     fn get(&self, name: &str) -> Option<&Binding> {
         let binding = self.base.get(name);
         if let Some(binding) = binding {
-            self.record(binding);
+            self.record(name, binding);
         }
         binding
     }
 
     fn visit(&self, visitor: &mut dyn FnMut(&str, &Binding)) {
         // Route callbacks visit the whole environment to collect component
-        // state scopes (`component_state_scopes`); those scopes get captured
-        // into the emitted callback, so only they mark the site as capturing
-        // — a visit that finds none references nothing site-local.
+        // state scopes (`component_state_scopes`); each collected scope gets
+        // captured by identifier into the emitted callback, so each becomes
+        // a required scope-local parameter of an outlined method.
         self.base.visit(&mut |name, binding| {
-            if matches!(binding.state, Some(StateBinding::Component { .. })) {
-                self.site_capture.set(true);
+            if let Some(StateBinding::Component { scope, .. }) = &binding.state {
+                self.scope_locals.borrow_mut().insert(scope.clone());
             }
             visitor(name, binding);
         });
     }
 
     fn binding_with_prefix(&self, prefix: &str) -> Option<&Binding> {
+        // Prefix lookups resolve output/event callback bindings, whose codes
+        // are caller-built closures — always a hard capture.
         let binding = self.base.binding_with_prefix(prefix);
-        if let Some(binding) = binding {
-            self.record(binding);
+        if binding.is_some() {
+            if std::env::var_os("ICE_OUTLINE_DEBUG").is_some() {
+                eprintln!("HARD prefix: {prefix:?}");
+            }
+            self.hard_capture.set(true);
         }
         binding
     }
 
     fn component_context(&self) -> Option<(&str, &Binding)> {
         let context = self.base.component_context();
-        if context.is_some() {
-            self.site_capture.set(true);
+        if let Some((_, binding)) = &context {
+            // The context binding's code is the enclosing scope-local
+            // identifier — passable as an outlined method parameter.
+            self.scope_locals.borrow_mut().insert(binding.code.clone());
         }
         context
     }

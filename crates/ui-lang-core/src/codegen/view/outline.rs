@@ -75,16 +75,24 @@ pub(in crate::codegen) fn outlining_active() -> bool {
 }
 
 /// Stores an outlined method body and returns the method name to call.
+/// `scope_locals` are enclosing scope-local identifiers the body references
+/// (an enclosing component's context or state scopes); each becomes an owned
+/// `String` parameter under its original name, cloned at the call site.
 pub(in crate::codegen) fn push_outlined_method(
     message: &str,
     scope_binding: &str,
+    scope_locals: &std::collections::BTreeSet<String>,
     body: &str,
 ) -> String {
     OUTLINE.with_borrow_mut(|state| {
         let name = format!("__ice_component_use_{}", state.counter);
         state.counter += 1;
+        let locals = scope_locals
+            .iter()
+            .map(|local| format!(", {local}: ::std::string::String"))
+            .collect::<String>();
         state.methods.push(format!(
-            "fn {name}(&self, __ice_palette: __IcePalette, {scope_binding}: ::std::string::String) -> __IceElement<'_, {message}> {{ {body} }}"
+            "fn {name}(&self, __ice_palette: __IcePalette, {scope_binding}: ::std::string::String{locals}) -> __IceElement<'_, {message}> {{ {body} }}"
         ));
         name
     })

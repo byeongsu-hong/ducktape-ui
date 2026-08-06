@@ -225,24 +225,42 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
         let body = render(env)?;
         return Ok(format!("move |{pattern}| {body}"));
     }
-    let mut callback_env = env.snapshot();
-    if let Some((component, _)) = &local {
-        callback_env
-            .get_mut(&component_context_key(component))
-            .ok_or_else(|| invariant("interaction callback lost its component context binding"))?
-            .code = "__route_scope".into();
-    }
-    for entry in callback_env.values_mut() {
+    // Overlay only the bindings the capture aliasing actually rewrites, and
+    // let every other lookup fall through to `env`: a recording environment
+    // must keep observing what the route arguments resolve, and the aliased
+    // codes themselves are callback-internal (`__route_scope`/`__route_state_
+    // scope_*` are bound right before the closure).
+    let snapshot = env.snapshot();
+    let mut callback_env = ScopedBindingEnv::new(env);
+    for (name, entry) in &snapshot {
+        let mut rewritten = entry.clone();
+        let mut changed = false;
         for (scope, alias) in &captures {
-            entry.code = entry.code.replace(scope, alias);
+            if rewritten.code.contains(scope.as_str()) {
+                rewritten.code = rewritten.code.replace(scope.as_str(), alias);
+                changed = true;
+            }
             if let Some(StateBinding::Component {
                 scope: state_scope, ..
-            }) = &mut entry.state
+            }) = &mut rewritten.state
                 && state_scope == scope
             {
                 *state_scope = alias.clone();
+                changed = true;
             }
         }
+        if changed {
+            callback_env.insert(name.clone(), rewritten);
+        }
+    }
+    if let Some((component, _)) = &local {
+        let key = component_context_key(component);
+        let mut context = snapshot
+            .get(&key)
+            .ok_or_else(|| invariant("interaction callback lost its component context binding"))?
+            .clone();
+        context.code = "__route_scope".into();
+        callback_env.insert(key, context);
     }
     let body = render(&callback_env)?;
     let captures = captures
