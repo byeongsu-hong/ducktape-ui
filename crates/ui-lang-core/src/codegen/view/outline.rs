@@ -31,6 +31,13 @@ struct OutlineState {
     lazy_depth: usize,
     counter: usize,
     methods: Vec<String>,
+    /// Body-identical methods fold into one definition: the key is the
+    /// normalized signature+body text (per-use identifiers rewritten to
+    /// positional names), the value is the method that already carries it.
+    /// Kept across the view → test-mount passes so a mount can reuse a
+    /// non-test method (the reverse cannot happen — the view pass runs
+    /// first).
+    dedup: std::collections::HashMap<String, String>,
 }
 
 thread_local! {
@@ -58,10 +65,12 @@ pub(in crate::codegen) fn enable_for_view() -> OutlineViewGuard {
 pub(in crate::codegen) fn enable_for_test_mounts() -> OutlineViewGuard {
     OUTLINE.with_borrow_mut(|state| {
         let counter = state.counter;
+        let dedup = std::mem::take(&mut state.dedup);
         *state = OutlineState {
             enabled: true,
             test_mode: true,
             counter,
+            dedup,
             ..OutlineState::default()
         };
     });
@@ -104,7 +113,13 @@ pub(in crate::codegen) fn outlining_active() -> bool {
 /// Stores an outlined method body and returns the method name to call.
 /// `scope_locals` are enclosing scope-local identifiers the body references
 /// (an enclosing component's context or state scopes); each becomes an owned
-/// `String` parameter under its original name, cloned at the call site.
+/// `String` parameter, cloned at the call site in sorted order.
+///
+/// Per-use identifiers — the component scope binding (which embeds the call
+/// line) and the enclosing scope-local names — are rewritten to positional
+/// names first, so uses of the same component whose bodies differ only by
+/// those spellings fold into ONE method definition: a component used N times
+/// with parameterized arguments costs one typecheck, not N.
 pub(in crate::codegen) fn push_outlined_method(
     message: &str,
     scope_binding: &str,
@@ -113,31 +128,71 @@ pub(in crate::codegen) fn push_outlined_method(
     value_params: &[(String, String, String)],
     body: &str,
 ) -> String {
+    // Longest identifier first: one scope name must never rewrite inside a
+    // longer one that merely contains it.
+    let mut renames: Vec<(String, String)> = scope_locals
+        .iter()
+        .enumerate()
+        .map(|(index, local)| (local.clone(), format!("__ice_ctx_{index}")))
+        .collect();
+    renames.push((scope_binding.to_owned(), "__ice_use_scope".into()));
+    renames.sort_by_key(|(from, _)| std::cmp::Reverse(from.len()));
+    let mut normalized = body.to_owned();
+    for (from, to) in &renames {
+        normalized = replace_ident(&normalized, from, to);
+    }
+    let locals = (0..scope_locals.len())
+        .map(|index| format!(", __ice_ctx_{index}: ::std::string::String"))
+        .collect::<String>();
+    let callbacks = callback_params
+        .iter()
+        .map(|(ident, sig, _)| format!(", {ident}: {sig}"))
+        .collect::<String>();
+    let values = value_params
+        .iter()
+        .map(|(ident, ty, _)| format!(", {ident}: {ty}"))
+        .collect::<String>();
+    let key = format!(
+        "(&self, __ice_palette: __IcePalette, __ice_use_scope: ::std::string::String{locals}{callbacks}{values}) -> __IceElement<'_, {message}> {{ {normalized} }}"
+    );
     OUTLINE.with_borrow_mut(|state| {
+        if let Some(existing) = state.dedup.get(&key) {
+            return existing.clone();
+        }
         let name = format!("__ice_component_use_{}", state.counter);
         state.counter += 1;
-        let locals = scope_locals
-            .iter()
-            .map(|local| format!(", {local}: ::std::string::String"))
-            .collect::<String>();
-        let callbacks = callback_params
-            .iter()
-            .map(|(ident, sig, _)| format!(", {ident}: {sig}"))
-            .collect::<String>();
-        let values = value_params
-            .iter()
-            .map(|(ident, ty, _)| format!(", {ident}: {ty}"))
-            .collect::<String>();
         let cfg = if state.test_mode {
             "#[cfg(test)]\n"
         } else {
             ""
         };
-        state.methods.push(format!(
-            "{cfg}fn {name}(&self, __ice_palette: __IcePalette, {scope_binding}: ::std::string::String{locals}{callbacks}{values}) -> __IceElement<'_, {message}> {{ {body} }}"
-        ));
+        state.methods.push(format!("{cfg}fn {name}{key}"));
+        state.dedup.insert(key, name.clone());
         name
     })
+}
+
+/// Replaces whole-identifier occurrences of `from` with `to`: a scope name
+/// must never rewrite inside a longer identifier that merely contains it
+/// (`..._scope_2` inside `..._scope_21`).
+fn replace_ident(text: &str, from: &str, to: &str) -> String {
+    let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric();
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(position) = rest.find(from) {
+        let end = position + from.len();
+        let before_ok = position == 0 || !is_ident(rest.as_bytes()[position - 1]);
+        let after_ok = end >= rest.len() || !is_ident(rest.as_bytes()[end]);
+        out.push_str(&rest[..position]);
+        if before_ok && after_ok {
+            out.push_str(to);
+        } else {
+            out.push_str(&rest[position..end]);
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Drains the methods collected while generating `__view`.

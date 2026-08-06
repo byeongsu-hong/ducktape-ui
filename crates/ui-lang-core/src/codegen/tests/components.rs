@@ -657,9 +657,9 @@ view
     );
     assert!(
         generated.contains(
-            "fn __ice_component_use_0(&self, __ice_palette: __IcePalette, __ice_component_"
+            "fn __ice_component_use_0(&self, __ice_palette: __IcePalette, __ice_use_scope: ::std::string::String"
         ),
-        "the outlined method must take the palette and the scope value"
+        "the outlined method must take the palette and the normalized scope"
     );
     assert_eq!(
         generated.matches("fn __ice_component_use_").count(),
@@ -1113,7 +1113,9 @@ view
     assert!(generated.contains("__CounterBindDraft(::std::string::String, ::std::string::String)"));
     assert!(generated.contains("self.__ice_component_counter.entry(__scope.clone()).or_default()"));
     assert!(generated.contains("__local.count = (__local.count + 1)"));
-    assert!(generated.contains("self.__ice_component_counter.get(&__ice_component_counter_scope_"));
+    // Inside an outlined method the scope binding is the normalized
+    // `__ice_use_scope` parameter.
+    assert!(generated.contains("self.__ice_component_counter.get(&__ice_use_scope)"));
 }
 
 #[test]
@@ -1375,13 +1377,13 @@ view
     );
     assert!(
         generated.contains(
-            "fn __ice_component_use_0(&self, __ice_palette: __IcePalette, __ice_component_inner_scope_25: ::std::string::String, __ice_component_outer_scope_29: ::std::string::String)"
+            "fn __ice_component_use_0(&self, __ice_palette: __IcePalette, __ice_use_scope: ::std::string::String, __ice_ctx_0: ::std::string::String)"
         ),
-        "the nested method must take the enclosing scope local as a parameter"
+        "the nested method must take the enclosing scope local as a positional parameter"
     );
     assert!(
-        generated.contains("self.__ice_component_use_0(__ice_palette, format!(\"{}/Inner@25\", __ice_component_outer_scope_29.clone()), __ice_component_outer_scope_29.clone())"),
-        "the call site must pass the enclosing scope local by clone"
+        generated.contains("self.__ice_component_use_0(__ice_palette, format!(\"{}/Inner@25\", __ice_use_scope.clone()), __ice_use_scope.clone())"),
+        "the nested call inside the outer method passes the outer's normalized scope"
     );
 }
 
@@ -1481,5 +1483,45 @@ view
     assert!(
         generated.contains(", (move |__event_0| __DemoMessage::Picked(__event_0)).clone()))"),
         "the Leaf call site must pass a clone of the caller-built closure"
+    );
+}
+
+/// Body-identical uses fold into one method: the same component used twice
+/// with parameterized arguments emits ONE definition and two calls.
+#[test]
+fn folds_body_identical_uses_into_one_method() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  items = ["a", "b"]
+  extra = ["c"]
+component Chip(label: str)
+  text label
+view
+  col
+    for item in items
+      Chip label=item
+    for other in extra
+      Chip label=other
+"#;
+    let generated = compile(source, "dedup.ice").unwrap();
+    assert_eq!(
+        generated.matches("fn __ice_component_use_").count(),
+        1,
+        "two loop uses of the same component must share one outlined method"
+    );
+    assert_eq!(
+        generated.matches("self.__ice_component_use_0(").count(),
+        2,
+        "both call sites must call the shared method"
     );
 }
