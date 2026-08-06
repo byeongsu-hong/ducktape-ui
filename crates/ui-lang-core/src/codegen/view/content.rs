@@ -322,7 +322,12 @@ pub(in crate::codegen) fn render_content(
                         .iter()
                         .map(|local| format!(", {local}.clone()"))
                         .collect::<String>();
-                    format!("self.{method}(__ice_palette, {component_scope}{arguments})")
+                    // grow_stack keeps deep outlined chains from exhausting
+                    // small thread stacks at debug opt levels — see
+                    // ui_lang_runtime::stack_relief.
+                    format!(
+                        "::ui_lang_runtime::grow_stack(|| self.{method}(__ice_palette, {component_scope}{arguments}))"
+                    )
                 } else {
                     format!("{{ let {scope_binding} = {component_scope}; {body} }}")
                 },

@@ -123,13 +123,8 @@ pub(in crate::codegen) fn push_outlined_method(
         } else {
             ""
         };
-        // `#[inline(always)]` folds the frames back together at LLVM time
-        // (the always-inliner runs even at opt-level 0): outlining exists for
-        // rustc's per-item front-end costs, which inlining does not undo, but
-        // stacked debug-build call frames tripled the view's runtime stack
-        // peak and blew the app's 4 MiB full-view stack contract.
         state.methods.push(format!(
-            "{cfg}#[inline(always)]\nfn {name}(&self, __ice_palette: __IcePalette, {scope_binding}: ::std::string::String{locals}) -> __IceElement<'_, {message}> {{ {body} }}"
+            "{cfg}fn {name}(&self, __ice_palette: __IcePalette, {scope_binding}: ::std::string::String{locals}) -> __IceElement<'_, {message}> {{ {body} }}"
         ));
         name
     })
