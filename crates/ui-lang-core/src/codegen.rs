@@ -2,7 +2,7 @@ use crate::hir::{ExternFnId, HandlerId, RunSiteId, canonical_rust_type_name};
 use crate::lower::*;
 use crate::semantic::*;
 use crate::{Error, canonical_snake};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
 
@@ -13,6 +13,14 @@ const RENDER_SOURCE_MARKER: &str = "__ICE_RENDER_SOURCE_";
 const RENDER_SOURCE_MARKER_END: &str = "__";
 const ASSET_PATH_MARKER: &str = "__ICE_ASSET_PATH_";
 const ASSET_PATH_MARKER_END: &str = "__";
+/// Fences around each per-fragment `mod` of outlined methods. The fenced
+/// region is valid Rust where it stands (the monofile still compiles as-is);
+/// ui-lang-build additionally splits every region into its own OUT_DIR file
+/// and replaces it with an `include!`, so an edit to one source fragment
+/// leaves every other fragment's spans — and therefore rustc's incremental
+/// fingerprints — byte-identical.
+pub const GROUP_MARKER_BEGIN: &str = "// __ICE_GROUP_BEGIN ";
+pub const GROUP_MARKER_END: &str = "// __ICE_GROUP_END";
 
 fn source_marker(span: &Span) -> String {
     format!("{SOURCE_MARKER}{} {}", span.line, span.column)
@@ -33,6 +41,49 @@ fn source_marker_origin(program: &LoweredProgram, origin: crate::hir::OriginId) 
 
 fn source_marker_for_origin(program: &LoweredProgram, origin: crate::hir::OriginId) -> String {
     source_marker_origin(program, origin)
+}
+
+/// Slug of the source fragment an origin points into: the file stem plus a
+/// short stable hash of the full path (stems repeat — `chat.ice` lives under
+/// screens/, components/, and handlers/ in the ducktape app). Origins inside
+/// the root document itself collapse to "root".
+fn origin_fragment_slug(program: &LoweredProgram, origin: crate::hir::OriginId) -> String {
+    let origin = program.origin(origin);
+    let path = origin.path.clone().or_else(|| {
+        program
+            .source_origin(origin.line)
+            .map(|(path, _)| path.to_owned())
+    });
+    let Some(path) = path else {
+        return "root".to_owned();
+    };
+    let text = path.display().to_string();
+    let stem: String = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "fragment".to_owned())
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("{stem}_{:08x}", fnv1a(text.as_bytes()) as u32)
+}
+
+/// FNV-1a rather than std's DefaultHasher: the latter is documented as
+/// unstable across releases, and slug stability decides whether generated
+/// file names (and their incremental caches) survive a toolchain bump.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash
 }
 
 fn source_mapped_expression_origin(
@@ -794,20 +845,43 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_subscription(&mut out, program, &message)?;
     let outline_guard = outline::enable_for_view();
     generate_view(&mut out, program, &message)?;
-    for method in outline::drain_outlined_methods() {
-        writeln!(out, "{method}").unwrap();
-    }
+    let mut outlined = outline::drain_outlined_methods();
     drop(outline_guard);
     let outline_guard = outline::enable_for_test_mounts();
     generate_test_mounts(&mut out, program, &message, source_path)?;
-    for method in outline::drain_outlined_methods() {
-        writeln!(out, "{method}").unwrap();
-    }
+    outlined.extend(outline::drain_outlined_methods());
     drop(outline_guard);
     writeln!(out, "}}").unwrap();
+    generate_outlined_groups(&mut out, app_name, outlined);
     generate_tests(&mut out, program, &message, source_path)?;
     writeln!(out, "}}").unwrap();
     Ok(resolve_source_markers(out, program, source_path))
+}
+
+/// Emits the outlined methods grouped into one fenced `mod` per source
+/// fragment. Each region is self-contained — `use super::*` re-imports the
+/// include-site scope and the inherent impl re-targets the app type — so the
+/// region compiles identically in place or split into its own file by
+/// ui-lang-build (which swaps the region for an `include!`). Splitting is
+/// what keeps one fragment's edit from shifting every other fragment's spans,
+/// which rustc hashes into incremental fingerprints.
+fn generate_outlined_groups(out: &mut String, app_name: &str, outlined: Vec<(String, String)>) {
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (slug, item) in outlined {
+        groups.entry(slug).or_default().push(item);
+    }
+    for (slug, items) in groups {
+        writeln!(out, "{GROUP_MARKER_BEGIN}{slug}").unwrap();
+        writeln!(
+            out,
+            "#[allow(warnings, clippy::all)]\nmod __ice_group_{slug} {{\nuse super::*;\nimpl super::{app_name} {{"
+        )
+        .unwrap();
+        for item in items {
+            writeln!(out, "{item}").unwrap();
+        }
+        writeln!(out, "}}\n}}\n{GROUP_MARKER_END}").unwrap();
+    }
 }
 
 mod application;

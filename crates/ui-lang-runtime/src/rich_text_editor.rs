@@ -915,6 +915,8 @@ where
                             {
                                 shell.publish(on_menu(MenuEvent::Pick(item.tag.clone())));
                             }
+                            // Typing continues where the pick landed.
+                            state.focus = Some(Focus::now());
                             shell.capture_event();
                             shell.request_redraw();
                             return;
@@ -922,8 +924,10 @@ where
                         shell.publish(on_menu(MenuEvent::Dismiss));
                         shell.request_redraw();
                     }
-                    // A gutter press is its own gesture, like a line press:
-                    // no caret move, no focus steal.
+                    // A gutter press is its own gesture — no caret move — but
+                    // unlike a line press it FOCUSES the editor: "+" leaves a
+                    // fresh caret to type into, the handle opens a menu whose
+                    // keys the (focus-gated) keyboard route must reach.
                     if let Some(on_gutter) = self.on_gutter.as_deref()
                         && state.composition.is_none()
                         && let Some(line) = state.hover_line
@@ -937,6 +941,7 @@ where
                             && let Some(message) = on_gutter(line, *button)
                         {
                             shell.publish(message);
+                            state.focus = Some(Focus::now());
                             shell.capture_event();
                             shell.request_redraw();
                             return;

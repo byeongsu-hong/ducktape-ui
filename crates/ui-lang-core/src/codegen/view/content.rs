@@ -424,8 +424,16 @@ pub(in crate::codegen) fn render_content(
                 {
                     let mut scope_locals = recording.scope_locals();
                     scope_locals.remove(&scope_binding);
+                    // Group by the component DEFINITION's fragment: the body
+                    // text derives from the definition, so its methods land in
+                    // one file that only changes when that fragment does.
+                    let group = origin_fragment_slug(
+                        document,
+                        document.resolved_view(component.root)?.origin,
+                    );
                     let method = outline::push_outlined_method(
                         message,
+                        &group,
                         &scope_binding,
                         &scope_locals,
                         &callback_params,

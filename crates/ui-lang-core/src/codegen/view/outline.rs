@@ -30,7 +30,14 @@ struct OutlineState {
     test_mode: bool,
     lazy_depth: usize,
     counter: usize,
-    methods: Vec<String>,
+    /// Outlined items paired with the fragment slug of the component (or
+    /// lazy block) they were generated from. The slug groups methods into
+    /// per-fragment `mod` wrappers that ui-lang-build splits into separate
+    /// files: rustc hashes spans into incremental fingerprints, so an edit
+    /// in one fragment must not shift the spans of every other fragment's
+    /// methods (measured on the ducktape app: a 1-character edit re-checked
+    /// everything positioned after it — 12.6 s instead of ~2 s).
+    methods: Vec<(String, String)>,
     /// Body-identical methods fold into one definition: the key is the
     /// normalized signature+body text (per-use identifiers rewritten to
     /// positional names), the value is the method that already carries it.
@@ -122,6 +129,7 @@ pub(in crate::codegen) fn outlining_active() -> bool {
 /// with parameterized arguments costs one typecheck, not N.
 pub(in crate::codegen) fn push_outlined_method(
     message: &str,
+    group: &str,
     scope_binding: &str,
     scope_locals: &std::collections::BTreeSet<String>,
     callback_params: &[(String, String, String)],
@@ -166,7 +174,12 @@ pub(in crate::codegen) fn push_outlined_method(
         } else {
             ""
         };
-        state.methods.push(format!("{cfg}fn {name}{key}"));
+        // pub(super): the method lives inside a per-fragment `mod` and is
+        // called from the include-site module (`__view`) and from sibling
+        // fragment mods (nested outlined uses).
+        state
+            .methods
+            .push((group.to_owned(), format!("{cfg}pub(super) fn {name}{key}")));
         state.dedup.insert(key, name.clone());
         name
     })
@@ -179,6 +192,7 @@ pub(in crate::codegen) fn push_outlined_method(
 /// to positional names.
 pub(in crate::codegen) fn push_lazy_body(
     message: &str,
+    group: &str,
     dependency_tuple: &str,
     context_params: &[(String, String)],
     body: &str,
@@ -212,7 +226,9 @@ pub(in crate::codegen) fn push_lazy_body(
         } else {
             ""
         };
-        state.methods.push(format!("{cfg}fn {name}{key}"));
+        state
+            .methods
+            .push((group.to_owned(), format!("{cfg}pub(super) fn {name}{key}")));
         state.dedup.insert(key, name.clone());
         name
     })
@@ -241,7 +257,8 @@ fn replace_ident(text: &str, from: &str, to: &str) -> String {
     out
 }
 
-/// Drains the methods collected while generating `__view`.
-pub(in crate::codegen) fn drain_outlined_methods() -> Vec<String> {
+/// Drains the `(fragment slug, item text)` pairs collected while generating
+/// `__view` (or test mounts), in emission order.
+pub(in crate::codegen) fn drain_outlined_methods() -> Vec<(String, String)> {
     OUTLINE.with_borrow_mut(|state| std::mem::take(&mut state.methods))
 }

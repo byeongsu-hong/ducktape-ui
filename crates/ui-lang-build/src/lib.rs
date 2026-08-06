@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const GENERATED_DIRECTORY: &str = "ui-lang-generated";
 const GENERATED_MANIFEST: &str = "manifest.json";
-const GENERATED_MANIFEST_SCHEMA: u32 = 2;
+const GENERATED_MANIFEST_SCHEMA: u32 = 3;
 const GENERATION_LOCK: &str = ".generation.lock";
 const TRANSACTION_DIRECTORY_PREFIX: &str = ".ui-lang-transaction-";
 const ATOMIC_WRITE_DIRECTORY_PREFIX: &str = ".atomicwrite";
@@ -71,6 +71,31 @@ impl GeneratedManifest {
         Ok(output)
     }
 
+    fn record_group(
+        &mut self,
+        relative: &str,
+        slug: &str,
+        contents: &str,
+    ) -> Result<String, Error> {
+        let output = generated_group_file_name(relative, slug);
+        self.insert(
+            output.clone(),
+            GeneratedManifestEntry {
+                source: relative.to_owned(),
+                content_sha256: content_digest(contents.as_bytes()),
+            },
+        )?;
+        Ok(output)
+    }
+
+    /// Drops this source's entries that the current compilation no longer
+    /// produced — a renamed or deleted fragment must take its group file
+    /// with it (commit removes files absent from the manifest).
+    fn retain_source_outputs(&mut self, source: &str, produced: &BTreeSet<String>) {
+        self.outputs
+            .retain(|output, entry| entry.source != source || produced.contains(output));
+    }
+
     fn insert(&mut self, output: String, entry: GeneratedManifestEntry) -> Result<(), Error> {
         if let Some(existing) = self.outputs.get(&output)
             && existing.source != entry.source
@@ -94,9 +119,11 @@ impl GeneratedManifest {
         for (output, entry) in &self.outputs {
             let normalized = normalized_relative(Path::new(&entry.source))?;
             let expected = generated_file_name(&normalized);
-            if entry.source != normalized || output != &expected {
+            let is_root = output == &expected;
+            let is_group = is_group_output_of(output, &normalized);
+            if entry.source != normalized || (!is_root && !is_group) {
                 return Err(Error(format!(
-                    "ui-lang-build: invalid generated manifest mapping {output} -> {}; expected {expected} -> {normalized}",
+                    "ui-lang-build: invalid generated manifest mapping {output} -> {}; expected {expected} (or a {expected}-prefixed group) -> {normalized}",
                     entry.source
                 )));
             }
@@ -162,6 +189,29 @@ fn generated_file_name(relative: &str) -> String {
     let mut encoded = content_digest(relative.as_bytes());
     encoded.push_str(".rs");
     encoded
+}
+
+/// File name of one fenced fragment group split out of a root's generated
+/// Rust: the root's digest plus the fragment slug. Same directory as the
+/// root, which `include!`s it by this bare name (include! resolves relative
+/// to the including file).
+fn generated_group_file_name(relative: &str, slug: &str) -> String {
+    format!("{}__{slug}.rs", content_digest(relative.as_bytes()))
+}
+
+/// Recognizes `<digest of source>__<slug>.rs` for manifest validation.
+fn is_group_output_of(output: &str, source: &str) -> bool {
+    let digest = content_digest(source.as_bytes());
+    output
+        .strip_prefix(digest.as_str())
+        .and_then(|rest| rest.strip_prefix("__"))
+        .and_then(|rest| rest.strip_suffix(".rs"))
+        .is_some_and(|slug| {
+            !slug.is_empty()
+                && slug
+                    .bytes()
+                    .all(|byte| byte == b'_' || byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
 }
 
 fn content_digest(contents: &[u8]) -> String {
@@ -244,10 +294,15 @@ fn compile_dir_at(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<()
     }
     let mut analysis_db = ui_lang_core::AnalysisDb::default();
     let mut transaction = GenerationTransaction::begin(out_dir)?;
-    let generated = roots
-        .iter()
-        .map(|root| compile_one(&mut analysis_db, manifest, root, &mut transaction))
-        .collect::<Result<HashSet<_>, _>>()?;
+    let mut generated = HashSet::new();
+    for root in &roots {
+        generated.extend(compile_one(
+            &mut analysis_db,
+            manifest,
+            root,
+            &mut transaction,
+        )?);
+    }
     prune_generated(&relative, &generated, &mut transaction.manifest);
     transaction.commit()
 }
@@ -286,7 +341,7 @@ fn compile_one(
     manifest: &Path,
     relative: &Path,
     transaction: &mut GenerationTransaction,
-) -> Result<String, Error> {
+) -> Result<BTreeSet<String>, Error> {
     let relative = normalized_relative(relative)?;
     let source = manifest.join(Path::new(&relative));
     let compilation = analysis_db
@@ -295,7 +350,77 @@ fn compile_one(
     for directive in rerun_directives(&compilation.dependencies, &compilation.asset_dependencies) {
         println!("{directive}");
     }
-    transaction.stage_output(&relative, &compilation.rust)
+    // Split each fenced fragment group into its own file: spans are
+    // per-file, so an edit to one fragment leaves every other group's
+    // rustc incremental fingerprints byte-identical. The root keeps an
+    // `include!` where the region stood.
+    let (root, groups) = split_generated_groups(&relative, &compilation.rust)?;
+    let mut produced = BTreeSet::new();
+    for (slug, contents) in &groups {
+        produced.insert(transaction.stage_group_output(&relative, slug, contents)?);
+    }
+    produced.insert(transaction.stage_output(&relative, &root)?);
+    transaction
+        .manifest
+        .retain_source_outputs(&relative, &produced);
+    Ok(produced)
+}
+
+/// Cuts the `GROUP_MARKER` fenced regions out of generated Rust. Returns the
+/// root text and the `(slug, contents)` regions in order of appearance. The
+/// `include!` lines for the regions go at the END of the root — after the
+/// lint-boundary macro invocation the regions were fenced inside, whose
+/// per-item `#[allow]` would be an unused attribute on an `include!` item
+/// (attributes do not reach included items; each group mod carries its own).
+fn split_generated_groups(
+    relative: &str,
+    rust: &str,
+) -> Result<(String, Vec<(String, String)>), Error> {
+    let mut root = String::with_capacity(rust.len());
+    let mut groups: Vec<(String, String)> = Vec::new();
+    let mut current: Option<(String, String)> = None;
+    for line in rust.lines() {
+        if let Some(slug) = line.strip_prefix(ui_lang_core::GROUP_MARKER_BEGIN) {
+            if current.is_some() {
+                return Err(Error(format!(
+                    "ui-lang-build: nested generated group fence for {relative}"
+                )));
+            }
+            current = Some((slug.trim().to_owned(), String::new()));
+            continue;
+        }
+        if line.trim_end() == ui_lang_core::GROUP_MARKER_END {
+            let (slug, contents) = current.take().ok_or_else(|| {
+                Error(format!(
+                    "ui-lang-build: unopened generated group fence for {relative}"
+                ))
+            })?;
+            groups.push((slug, contents));
+            continue;
+        }
+        match &mut current {
+            Some((_, contents)) => {
+                contents.push_str(line);
+                contents.push('\n');
+            }
+            None => {
+                root.push_str(line);
+                root.push('\n');
+            }
+        }
+    }
+    if current.is_some() {
+        return Err(Error(format!(
+            "ui-lang-build: unclosed generated group fence for {relative}"
+        )));
+    }
+    for (slug, _) in &groups {
+        root.push_str(&format!(
+            "include!({:?});\n",
+            generated_group_file_name(relative, slug)
+        ));
+    }
+    Ok((root, groups))
 }
 
 fn rerun_directives(sources: &[PathBuf], assets: &[PathBuf]) -> Vec<String> {
@@ -361,6 +486,20 @@ impl GenerationTransaction {
 
     fn stage_output(&mut self, relative: &str, contents: &str) -> Result<String, Error> {
         let output = self.manifest.record(relative, contents)?;
+        self.stage_named(output, contents)
+    }
+
+    fn stage_group_output(
+        &mut self,
+        relative: &str,
+        slug: &str,
+        contents: &str,
+    ) -> Result<String, Error> {
+        let output = self.manifest.record_group(relative, slug, contents)?;
+        self.stage_named(output, contents)
+    }
+
+    fn stage_named(&mut self, output: String, contents: &str) -> Result<String, Error> {
         let destination = self.directory.join(&output);
         if file_contents_equal(&destination, contents.as_bytes()) {
             return Ok(output);

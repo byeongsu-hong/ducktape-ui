@@ -19,6 +19,7 @@ pub use analysis_db::{
 };
 pub use api::*;
 pub use ast::*;
+pub use codegen::{GROUP_MARKER_BEGIN, GROUP_MARKER_END};
 pub use editor::{
     CursorContext, STYLE_STATUS_NAMES, SourcePosition, cursor_context, editor_ancestor_lines,
     editor_block_end, editor_component_name, editor_first_word, editor_indentation,

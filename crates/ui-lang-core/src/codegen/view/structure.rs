@@ -222,7 +222,10 @@ pub(in crate::codegen) fn render_structure(
                 && let Some(params) = hoist_params
             {
                 let tuple = format!("({dependency_rust}, ::std::string::String, &'static str)");
-                let body_fn = outline::push_lazy_body(message, &tuple, &params, &lazy_body);
+                // Group by the fragment holding the `lazy` block — the body
+                // is written there, so its file changes only with it.
+                let group = origin_fragment_slug(program, view.origin);
+                let body_fn = outline::push_lazy_body(message, &group, &tuple, &params, &lazy_body);
                 let arguments = params
                     .iter()
                     .map(|(local, _)| format!(", ({local}).clone()"))
