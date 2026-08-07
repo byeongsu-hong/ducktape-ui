@@ -161,8 +161,8 @@ fn performance_contract_100k_unchanged_render() {
 #[ignore = "100k-node release performance contract run explicitly in CI"]
 fn performance_contract_100k_reconcile() {
     const SAMPLES: usize = 30;
-    const P50_BUDGET_US: u128 = 40_000;
-    const P95_BUDGET_US: u128 = 80_000;
+    const P50_BUDGET_US: u128 = 30_000;
+    const P95_BUDGET_US: u128 = 60_000;
     const ALLOCATION_BUDGET: usize = 80;
     const ALLOCATED_BYTES_BUDGET: usize = 64 * 1024 * 1024;
 
