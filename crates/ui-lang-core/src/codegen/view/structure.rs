@@ -286,7 +286,10 @@ fn hoist_lazy_component_context(
     }
     if let Some(output) = env.get(&component_output_key(&component)) {
         let output_local = format!("__ice_lazy_output_{}", node.0);
-        write!(hoisted, "let {output_local} = {}; ", output.code).unwrap();
+        // Cloned, not moved: the enclosing render can run more than once per
+        // frame — a `lazy` inside a `for` hoists this on every iteration — and
+        // a moved callback leaves the second one with nothing to bind.
+        write!(hoisted, "let {output_local} = ({}).clone(); ", output.code).unwrap();
         match env.get(&callback_sig_key(&component_output_key(&component))) {
             Some(sig) => {
                 if let Some(params) = params.as_mut() {
@@ -315,7 +318,7 @@ fn hoist_lazy_component_context(
             continue;
         };
         let event_local = format!("__ice_lazy_event_{}_{index}", node.0);
-        write!(hoisted, "let {event_local} = {}; ", callback.code).unwrap();
+        write!(hoisted, "let {event_local} = ({}).clone(); ", callback.code).unwrap();
         match env.get(&callback_sig_key(&component_event_key(&component, event))) {
             Some(sig) => {
                 if let Some(params) = params.as_mut() {
