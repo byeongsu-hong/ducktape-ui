@@ -254,6 +254,62 @@ impl DocumentLayout {
         };
         let truncate_at = highlight_until.max(text_region_end).min(new_len);
 
+        // When the line count is unchanged every new index maps to the same
+        // old index, so there is nothing to re-thread: the pass can edit the
+        // lines where they sit. The general path below drains all of
+        // `self.lines` into a fresh vector and moves every DocumentLine twice
+        // even when one character changed — O(document) memcpy per keystroke,
+        // per preedit, and per format key, which are exactly the equal-length
+        // cases. A geometry change still rebuilds every line, so it keeps to
+        // the general path.
+        if !geometry_changed && old_len == new_len {
+            let mut rebuilt = 0;
+            let mut highlighted = 0;
+            let mut styled_signature_comparisons = 0;
+            let mut newly_owned_styled_texts = 0;
+            let mut newly_owned_styled_text_bytes = 0;
+
+            for index in scan_start..truncate_at {
+                let text = texts.get(index);
+                highlighted += 1;
+                let styled_format = styled_line_format(text, highlighter, format);
+                styled_signature_comparisons += 1;
+                if self.lines[index].signature.matches(text, &styled_format) {
+                    continue;
+                }
+                rebuilt += 1;
+                let owned = if self.lines[index].signature.text == text {
+                    std::mem::take(&mut self.lines[index].signature.text)
+                } else {
+                    newly_owned_styled_texts += 1;
+                    newly_owned_styled_text_bytes += text.len();
+                    text.to_owned()
+                };
+                self.lines[index] = DocumentLine::new(styled_format.with_text(owned), style);
+            }
+
+            let mut top = 0.0;
+            for line in &mut self.lines {
+                line.top = top;
+                top += line.height;
+            }
+            self.height = top.max(style.line_height.to_absolute(style.text_size).0);
+
+            return LayoutUpdate {
+                mapping_line_comparisons,
+                styled_signature_comparisons,
+                newly_owned_styled_texts,
+                newly_owned_styled_text_bytes,
+                line_vector_slots_prepared: 0,
+                rebuilt_lines: rebuilt,
+                shaped_paragraphs: rebuilt,
+                highlighted_lines: highlighted,
+                change_hint_used,
+                change_hint_rejected,
+                highlight_valid_until: truncate_at,
+            };
+        }
+
         let mut old = std::mem::take(&mut self.lines)
             .into_iter()
             .map(Some)

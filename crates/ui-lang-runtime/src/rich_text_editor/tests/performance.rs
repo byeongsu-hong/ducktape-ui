@@ -338,7 +338,9 @@ fn widget_change_hint_separates_materialization_diff_and_shaping_metrics() {
     assert_eq!(state.metrics.styled_signature_comparisons, 2);
     assert_eq!(state.metrics.newly_owned_styled_texts, 1);
     assert_eq!(state.metrics.newly_owned_styled_text_bytes, "seXcond".len());
-    assert_eq!(state.metrics.line_vector_slots_prepared, 6);
+    // Editing a line without adding or removing one touches the lines where
+    // they sit; no slot vector is prepared at all.
+    assert_eq!(state.metrics.line_vector_slots_prepared, 0);
     assert_eq!(state.metrics.rebuilt_lines, 1);
     assert_eq!(state.metrics.shaped_paragraphs, 1);
     assert_eq!(state.metrics.highlighted_lines, 2);
@@ -616,7 +618,9 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
         state.metrics.newly_owned_styled_text_bytes,
         "linex 50000".len()
     );
-    assert_eq!(state.metrics.line_vector_slots_prepared, 200_002);
+    // No slot vector is prepared: the line count is unchanged, so the pass
+    // edits the lines where they sit instead of rebuilding the vector.
+    assert_eq!(state.metrics.line_vector_slots_prepared, 0);
     assert_eq!(state.metrics.rebuilt_lines, 1);
     assert_eq!(state.metrics.shaped_paragraphs, 1);
     assert_eq!(state.metrics.highlighted_lines, 46_936);
@@ -626,7 +630,7 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
         "one_char_insertion",
         1,
         elapsed,
-        Duration::from_secs(5),
+        Duration::from_millis(500),
         &state.metrics,
     ));
     assert_performance_budgets(&budget_failures);
@@ -825,7 +829,7 @@ fn performance_contract_100k_hangul_ime_sequence() {
     assert!(state.metrics.mapping_line_comparisons > 0);
     assert_eq!(state.metrics.styled_signature_comparisons, 99);
     assert_eq!(state.metrics.newly_owned_styled_texts, 3);
-    assert_eq!(state.metrics.line_vector_slots_prepared, 600_006);
+    assert_eq!(state.metrics.line_vector_slots_prepared, 0);
     assert_eq!(state.metrics.rebuilt_lines, 3);
     assert_eq!(state.metrics.shaped_paragraphs, 3);
     assert_eq!(state.metrics.highlighted_lines, 99);
@@ -834,7 +838,7 @@ fn performance_contract_100k_hangul_ime_sequence() {
         "hangul_ime_sequence",
         3,
         elapsed,
-        Duration::from_secs(15),
+        Duration::from_secs(1),
         &state.metrics,
     )
     .into_iter()
@@ -884,7 +888,7 @@ fn performance_contract_100k_format_key_only_layout() {
     assert_eq!(state.metrics.styled_signature_comparisons, 61);
     assert_eq!(state.metrics.newly_owned_styled_texts, 0);
     assert_eq!(state.metrics.newly_owned_styled_text_bytes, 0);
-    assert_eq!(state.metrics.line_vector_slots_prepared, 200_002);
+    assert_eq!(state.metrics.line_vector_slots_prepared, 0);
     assert_eq!(state.metrics.rebuilt_lines, 61);
     assert_eq!(state.metrics.shaped_paragraphs, 61);
     assert_eq!(state.metrics.highlighted_lines, 61);
@@ -892,7 +896,7 @@ fn performance_contract_100k_format_key_only_layout() {
         "format_key_only",
         1,
         elapsed,
-        Duration::from_secs(1),
+        Duration::from_millis(200),
         &state.metrics,
     )
     .into_iter()
