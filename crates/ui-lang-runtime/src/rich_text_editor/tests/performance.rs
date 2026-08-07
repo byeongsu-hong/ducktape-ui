@@ -915,14 +915,18 @@ fn performance_contract_100k_viewport_resize() {
     assert_eq!(state.metrics.styled_signature_comparisons, 0);
     assert_eq!(state.metrics.newly_owned_styled_texts, 0);
     assert_eq!(state.metrics.line_vector_slots_prepared, 200_002);
-    assert_eq!(state.metrics.rebuilt_lines, 100_001);
-    assert_eq!(state.metrics.shaped_paragraphs, 100_001);
+    // This editor has wrapping off, so narrowing it cannot reflow a single
+    // line and nothing needs re-shaping. This used to re-shape all 100_001
+    // paragraphs — ~8.7s of work with no observable difference — and the
+    // contract asserted that count, pinning the waste in place.
+    assert_eq!(state.metrics.rebuilt_lines, 0);
+    assert_eq!(state.metrics.shaped_paragraphs, 0);
     assert_eq!(state.metrics.highlighted_lines, 0);
     let budget_failures = record_performance_metrics(
         "viewport_resize",
         1,
         elapsed,
-        Duration::from_secs(30),
+        Duration::from_secs(2),
         &state.metrics,
     )
     .into_iter()
