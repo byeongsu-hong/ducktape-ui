@@ -10,11 +10,14 @@ use ui_lang_runtime::{Role, StableId, accessible};
 
 pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
 
-const TICK: Duration = Duration::from_millis(250);
+/// Exchange-thread tick cadence; the chart's live beat matches it.
+const TICK: Duration = Duration::from_millis(100);
+/// Header readout sampling cadence (the only per-update app work).
+const NOTICE: Duration = Duration::from_millis(500);
 const HISTORY_CAP: usize = 100_000;
 const EVICT_CHUNK: usize = 4_096;
-const NEW_CANDLE_ODDS: f64 = 1.0 / 16.0;
-const OUTAGE_TICKS: u32 = 16; // 4s of dropout at the 250ms tick rate
+const NEW_CANDLE_ODDS: f64 = 1.0 / 64.0;
+const OUTAGE_TICKS: u32 = 40; // 4s of dropout at the 100ms tick rate
 const START_TS: i64 = 1_735_689_600; // 2025-01-01T00:00:00Z
 
 fn next(state: &mut u64) -> f64 {
@@ -68,9 +71,27 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// "REST backfill": builds `history` candles of deterministic random walk,
-/// seeded from the symbol so each symbol has its own tape.
+/// "REST backfill" plus the "exchange": a detached thread pushes ticks into
+/// the shared tape on its own clock, like a WebSocket task would — no app
+/// message is involved in moving the market.
 pub fn market_connect(symbol: String, interval_secs: i64, history: i64) -> MarketFeed {
+    let feed = connect(symbol, interval_secs, history);
+    let tape = Arc::downgrade(&feed.tape);
+    let generator = Arc::downgrade(&feed.generator);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(TICK);
+            let (Some(tape), Some(generator)) = (tape.upgrade(), generator.upgrade()) else {
+                return;
+            };
+            apply_tick(&MarketFeed { tape, generator });
+        }
+    });
+    feed
+}
+
+/// The backfill alone, thread-free; tests drive `apply_tick` deterministically.
+fn connect(symbol: String, interval_secs: i64, history: i64) -> MarketFeed {
     let mut seed = symbol.bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
     });
@@ -203,12 +224,21 @@ fn apply_tick(feed: &MarketFeed) -> Tick {
     }
 }
 
-/// The "WebSocket": a timer-driven subscription that advances the shared
-/// tape and emits a notice per tick.
+/// Samples the tape for the header readout; the market itself moves on the
+/// exchange thread and renders through the chart's live beat, so this is the
+/// only recurring app-state work and it runs at a relaxed cadence.
 pub fn market_events(feed: MarketFeed) -> Subscription<Tick> {
-    iced::time::every(TICK)
-        .with(feed)
-        .map(|(feed, _)| apply_tick(&feed))
+    iced::time::every(NOTICE).with(feed).map(|(feed, _)| {
+        let generator = lock(&feed.generator);
+        let tape = lock(&feed.tape);
+        let last = tape.last().copied();
+        Tick {
+            revision: generator.revision,
+            last: last.map_or(0.0, |candle| candle.close),
+            up: last.is_none_or(|candle| candle.close >= candle.open),
+            connected: generator.outage_left == 0,
+        }
+    })
 }
 
 pub fn fmt_price(value: f64) -> String {
@@ -223,6 +253,7 @@ pub fn chart(feed: &MarketFeed) -> Element<'static, Option<CandleHit>> {
     let chart = candle_chart_shared(feed.tape.clone(), &theme::DARK)
         .height(Length::Fill)
         .moving_averages([20, 60])
+        .live(TICK)
         .on_hover(|hit| hit);
     accessible(chart, StableId::new("candles-chart"), Role::Image)
         .label("Mock market candlestick chart")
@@ -236,7 +267,7 @@ mod tests {
 
     #[test]
     fn ticks_mutate_in_place_and_evict_at_cap() {
-        let feed = market_connect("TEST".into(), 60, 100);
+        let feed = connect("TEST".into(), 60, 100);
         let before_ptr = Arc::as_ptr(&feed.tape);
         let len_before = lock(&feed.tape).len();
         let tick = apply_tick(&feed);
@@ -265,7 +296,7 @@ mod tests {
 
     #[test]
     fn outage_freezes_the_tape_then_backfills_continuously() {
-        let feed = market_connect("TEST".into(), 60, 100);
+        let feed = connect("TEST".into(), 60, 100);
         // Fast-forward to the scheduled outage deterministically.
         let mut guard_ticks = 0;
         loop {
@@ -303,9 +334,9 @@ mod tests {
 
     #[test]
     fn symbols_get_distinct_deterministic_tapes() {
-        let first = market_connect("DUCK-USD".into(), 60, 50);
-        let second = market_connect("DUCK-USD".into(), 60, 50);
-        let other = market_connect("TAPE-KRW".into(), 60, 50);
+        let first = connect("DUCK-USD".into(), 60, 50);
+        let second = connect("DUCK-USD".into(), 60, 50);
+        let other = connect("TAPE-KRW".into(), 60, 50);
         assert_eq!(*lock(&first.tape), *lock(&second.tape));
         assert_ne!(*lock(&first.tape), *lock(&other.tape));
     }
