@@ -698,6 +698,53 @@ view
 }
 
 #[test]
+fn an_active_state_block_does_not_re_enable_a_disabled_buttons_colors() {
+    // `active` is the base for EVERY status, not just `Status::Active`, so a
+    // utility's disabled treatment has to be written after it. Emitted before,
+    // the `active` assignment restored the colour at full strength and a
+    // disabled button rendered as an enabled one.
+    let source = r#"app Actions
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+recipe quiet for button
+  @bg-primary text-fg disabled:opacity-50
+on pressed
+view
+  button "Save" @quiet -> pressed
+    active bg=primary text=fg
+    hovered bg=fg text=bg
+"#;
+    let generated = compile(source, "actions.ice").unwrap();
+
+    let dim = generated
+        .find("__style.text_color.a *= 0.5;")
+        .expect("the utility's disabled treatment is emitted");
+    let active = generated
+        .find("__style.text_color = __ice_palette.colors[1];")
+        .expect("the active block assigns the text colour");
+    assert!(
+        active < dim,
+        "the disabled pass must come after every state block, or it is overwritten"
+    );
+    // An explicit `disabled` block owns the status outright — the utility pass
+    // is then skipped rather than fighting it.
+    let explicit = compile(
+        &source.replace("    hovered bg=fg text=bg", "    disabled bg=bg text=bg"),
+        "actions.ice",
+    )
+    .unwrap();
+    assert!(!explicit.contains("__style.text_color.a *= 0.5;"));
+}
+
+#[test]
 fn cascades_active_style_into_interaction_states() {
     let source = r#"app Styles
 theme contract AppTheme

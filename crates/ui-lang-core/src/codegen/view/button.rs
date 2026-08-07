@@ -214,6 +214,7 @@ fn resolved_button_style_code(
     let base =
         custom.unwrap_or_else(|| format!("::iced::widget::button::{preset}(__theme, __status)"));
     let mut code = format!(".style(move |__theme, __status| {{ let mut __style = {base};");
+    let mut utilities_disable = false;
     if has_utilities {
         let normal = utilities.background.as_ref().map(resolved_theme_color);
         let hover = utilities
@@ -271,36 +272,14 @@ fn resolved_button_style_code(
             )
             .unwrap();
         }
-        if utilities.background.is_some()
+        // NOT emitted here — see the disabled pass below. A recipe's disabled
+        // treatment has to be the LAST thing written, because the `active`
+        // block that may follow is applied for every status.
+        utilities_disable = utilities.background.is_some()
             || utilities.text_color.is_some()
             || utilities.disabled_opacity.is_some()
             || utilities.disabled_background.is_some()
-            || utilities.disabled_text_color.is_some()
-        {
-            let disabled = utilities.disabled_opacity.unwrap_or(0.5);
-            code.push_str(" if matches!(__status, ::iced::widget::button::Status::Disabled) {");
-            if let Some(background) = &utilities.disabled_background {
-                write!(
-                    code,
-                    " __style.background = Some({}.into());",
-                    resolved_theme_color(background)
-                )
-                .unwrap();
-            } else if utilities.background.is_some() || utilities.disabled_opacity.is_some() {
-                write!(code, " if let Some(::iced::Background::Color(mut __color)) = __style.background {{ __color.a *= {disabled}; __style.background = Some(::iced::Background::Color(__color)); }}").unwrap();
-            }
-            if let Some(text) = &utilities.disabled_text_color {
-                write!(
-                    code,
-                    " __style.text_color = {};",
-                    resolved_theme_color(text)
-                )
-                .unwrap();
-            } else if utilities.text_color.is_some() || utilities.disabled_opacity.is_some() {
-                write!(code, " __style.text_color.a *= {disabled};").unwrap();
-            }
-            code.push_str(" }");
-        }
+            || utilities.disabled_text_color.is_some();
     }
     if let Some(active) = &button.styles.active {
         append_resolved_button_status(&mut code, active, program, env)?;
@@ -319,6 +298,38 @@ fn resolved_button_style_code(
             code.push_str(" }");
         }
         code.push_str(" _ => {} }");
+    }
+    // THE DISABLED PASS RUNS LAST. `active` is the base for every status, not
+    // just `Status::Active`, so writing it after a recipe's `disabled:opacity`
+    // restored the colour at full strength: a disabled button that declared any
+    // `active` state block came out looking enabled — brighter, in the app that
+    // found this, than the panel title beside it. An explicit `disabled` block
+    // still wins, because it is applied in the match above and the recipe then
+    // has nothing left to say.
+    if utilities_disable && button.styles.disabled.is_none() {
+        let disabled = utilities.disabled_opacity.unwrap_or(0.5);
+        code.push_str(" if matches!(__status, ::iced::widget::button::Status::Disabled) {");
+        if let Some(background) = &utilities.disabled_background {
+            write!(
+                code,
+                " __style.background = Some({}.into());",
+                resolved_theme_color(background)
+            )
+            .unwrap();
+        } else if utilities.background.is_some() || utilities.disabled_opacity.is_some() {
+            write!(code, " if let Some(::iced::Background::Color(mut __color)) = __style.background {{ __color.a *= {disabled}; __style.background = Some(::iced::Background::Color(__color)); }}").unwrap();
+        }
+        if let Some(text) = &utilities.disabled_text_color {
+            write!(
+                code,
+                " __style.text_color = {};",
+                resolved_theme_color(text)
+            )
+            .unwrap();
+        } else if utilities.text_color.is_some() || utilities.disabled_opacity.is_some() {
+            write!(code, " __style.text_color.a *= {disabled};").unwrap();
+        }
+        code.push_str(" }");
     }
     code.push_str(" __style })");
     Ok(code)
