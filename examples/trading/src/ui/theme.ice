@@ -12,6 +12,8 @@ theme contract TerminalTheme
   down
   up_soft
   down_soft
+  up_flash
+  down_flash
   fg_invert
 
 palette instrument for TerminalTheme
@@ -28,4 +30,6 @@ palette instrument for TerminalTheme
   down #d0645a
   up_soft #5fae7e26
   down_soft #d0645a26
+  up_flash #5fae7e66
+  down_flash #d0645a66
   fg_invert #14120f

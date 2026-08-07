@@ -30,11 +30,15 @@ state
   account:Account? = none
   positions:[Position] = []
   fills:[Fill] = []
-  history:[Fill] = []
   orders:[Order] = []
   book:Book? = none
   hover:CandleHit? = none
   status = ""
+  feeds:task-handle? = none
+  latency = 0
+  flashing = false
+  loading_history = false
+  lower_height = 232.0
 
 derived
   watching = !gate && !empty(address)
@@ -265,57 +269,87 @@ component OrderRow(order:Order)
         @text-faint
 
 component FillRow(fill:Fill)
-  row #root
-    with
-      w=fill
-      h=26.0
-      pl=14.0
-      pr=18.0
-      gap=6.0
-      align=center
-    text fmt_time(fill.ts)
-      with
-        size=11.0
-        w=52.0
-        font=digits
-        @text-faint
-    text fill.coin
-      with
-        size=11.0
-        w=46.0
-        @text-muted
-    Delta
-      with
-        value=fmt_px(fill.price)
-        up=fill.buy
-        size=11.0
-        width=78.0
-    space w=fill
-    col w=72.0
-      if fill.closed_pnl > 0.0
-        text fmt_pnl(fill.closed_pnl)
+  stack #root w=fill h=26.0
+    row w=fill h=26.0
+      if fill.heat > 1 && fill.buy
+        box
           with
-            size=11.0
             w=fill
-            align-x=right
-            font=digits
-            @text-up
-      if fill.closed_pnl < 0.0
-        text fmt_pnl(fill.closed_pnl)
+            h=26.0
+            bg=up_flash
+          space w=fill h=fill
+      if fill.heat > 1 && !fill.buy
+        box
           with
-            size=11.0
             w=fill
-            align-x=right
-            font=digits
-            @text-down
-      if fill.closed_pnl == 0.0
-        text fmt_size(fill.size)
+            h=26.0
+            bg=down_flash
+          space w=fill h=fill
+      if fill.heat == 1 && fill.buy
+        box
           with
-            size=11.0
             w=fill
-            align-x=right
-            font=digits
-            @text-faint
+            h=26.0
+            bg=up_soft
+          space w=fill h=fill
+      if fill.heat == 1 && !fill.buy
+        box
+          with
+            w=fill
+            h=26.0
+            bg=down_soft
+          space w=fill h=fill
+    row
+      with
+        w=fill
+        h=26.0
+        pl=14.0
+        pr=18.0
+        gap=6.0
+        align=center
+      text fmt_time(fill.ts)
+        with
+          size=11.0
+          w=52.0
+          font=digits
+          @text-faint
+      text fill.coin
+        with
+          size=11.0
+          w=46.0
+          @text-muted
+      Delta
+        with
+          value=fmt_px(fill.price)
+          up=fill.buy
+          size=11.0
+          width=78.0
+      space w=fill
+      col w=72.0
+        if fill.closed_pnl > 0.0
+          text fmt_pnl(fill.closed_pnl)
+            with
+              size=11.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-up
+        if fill.closed_pnl < 0.0
+          text fmt_pnl(fill.closed_pnl)
+            with
+              size=11.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-down
+        if fill.closed_pnl == 0.0
+          text fmt_size(fill.size)
+            with
+              size=11.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-faint
 
 component PositionRow(held:Position)
   row #root
@@ -414,10 +448,12 @@ on connect
   parallel
     run hl_symbols() -> symbols_loaded _ | failed _
     run hl_candles(tape, coin, interval) -> candles_loaded _ | failed _
-    run hl_book(coin) -> book_loaded _ | failed _
     run hl_account(trim(draft)) -> account_loaded _ | failed _
-    run hl_fills(trim(draft)) -> fills_loaded _ | failed _
     run hl_orders(trim(draft)) -> orders_loaded _ | failed _
+    abortable feeds abort-on-drop
+      parallel
+        stream hl_market_feed(tape) -> market_ticked _ | failed _
+        stream hl_fill_feed(trim(draft)) -> fills_streamed _ | failed _
 
 on browse
   address = ""
@@ -427,11 +463,13 @@ on browse
   parallel
     run hl_symbols() -> symbols_loaded _ | failed _
     run hl_candles(tape, coin, interval) -> candles_loaded _ | failed _
-    run hl_book(coin) -> book_loaded _ | failed _
+    abortable feeds abort-on-drop
+      stream hl_market_feed(tape) -> market_ticked _ | failed _
 
 on reopen
   draft = address
   gate = true
+  abort feeds
 
 on pick_symbol(name)
   coin = name
@@ -440,33 +478,31 @@ on pick_symbol(name)
   status = "Loading candles"
   tape = tape_focus(tape, name, interval)
   book = none
-  parallel
-    run hl_candles(tape, name, interval) -> candles_loaded _ | failed _
-    run hl_book(name) -> book_loaded _ | failed _
+  loading_history = false
+  run hl_candles(tape, name, interval) -> candles_loaded _ | failed _
 
 on pick_interval(next)
   interval = next
   hover = none
   status = "Loading candles"
   tape = tape_focus(tape, coin, next)
+  loading_history = false
   run hl_candles(tape, coin, next) -> candles_loaded _ | failed _
 
 on search(typed)
   visible = filter_symbols(symbols, typed)
 
-on tick
-  parallel
-    run hl_symbols() -> symbols_loaded _ | failed _
-    run hl_candles(tape, coin, interval) -> candles_loaded _ | failed _
-    run hl_book(coin) -> book_loaded _ | failed _
+on tick_universe
+  run hl_symbols() -> symbols_loaded _ | failed _
 
 on tick_account
   parallel
     run hl_account(address) -> account_loaded _ | failed _
     run hl_orders(address) -> orders_loaded _ | failed _
 
-on tick_fills
-  run hl_fills(address) -> fills_loaded _ | failed _
+on cool_flash
+  fills = cool_fills(fills)
+  flashing = any_hot(fills)
 
 on symbols_loaded(rows)
   symbols = rows
@@ -481,26 +517,45 @@ on account_loaded(next)
   account = some(next)
   positions = next.positions
 
-on fills_loaded(rows)
-  fills = rows
-  history = recent_fills(rows, 120)
+on fills_streamed(rows)
+  fills = push_fills(fills, rows, 200)
+  flashing = any_hot(fills)
 
 on orders_loaded(rows)
   orders = rows
 
-on book_loaded(next)
-  book = some(next)
+on market_ticked(tick)
+  book = tick.book
+  latency = tick.latency
+  symbols = apply_feed(symbols, tick)
+  visible = filter_symbols(symbols, query)
+  focus = symbol_row(symbols, coin)
 
 on failed(error)
   status = error.message
+  loading_history = false
 
-on candle_hovered(next)
-  hover = next
+on chart_signalled(signal)
+  hover = signal.hover
+  return if !signal.older
+  return if loading_history
+  loading_history = true
+  status = "Loading history"
+  run hl_history(tape, coin, interval) -> history_loaded _ | failed _
+
+on history_loaded(_count)
+  loading_history = false
+  status = ""
+
+on lower_resized(_dx, dy)
+  return if dy > 0.0 && lower_height - dy < 120.0
+  return if dy < 0.0 && lower_height - dy > 560.0
+  lower_height = lower_height - dy
 
 subscribe
-  every 3s when !gate -> tick
+  every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
-  every 30s when !gate && !empty(address) -> tick_fills
+  every 700ms when flashing -> cool_flash
 
 view
   overlay
@@ -607,6 +662,8 @@ view
                     Stat name="FREE" value=fmt_compact_usd(held.withdrawable)
                 none
                   Label value="READ ONLY"
+              rule vertical thickness=1.0 color=edge
+              Stat name="FEED" value=fmt_latency(latency)
           rule horizontal thickness=1.0 color=edge
           row w=fill h=fill
             box #markets
@@ -669,12 +726,18 @@ view
                   w=fill
                   h=fill
                   p=6.0
-                extern chart(tape, fills, positions, orders, coin) #chart -> candle_hovered _
-              rule horizontal thickness=1.0 color=edge
+                extern chart(tape, fills, positions, orders, coin) #chart -> chart_signalled _
+              resize-handle #split drag=lower_resized cursor=resize-vertical
+                box
+                  with
+                    w=fill
+                    h=5.0
+                    bg=edge
+                  space w=fill h=fill
               box #lower
                 with
                   w=fill
-                  h=232.0
+                  h=lower_height
                   bg=panel
                 row w=fill h=fill
                   col #positions w=fill h=fill
@@ -813,7 +876,7 @@ view
                         align=center
                       Label value="RECENT FILLS"
                       space w=fill
-                      Label value=fmt_count(len(history))
+                      Label value=fmt_count(len(fills))
                     row
                       with
                         w=fill
@@ -856,7 +919,7 @@ view
                         y-rail bg=panel
                         y-scroller bg=faint r=3.0
                       col w=fill
-                        if empty(history)
+                        if empty(fills)
                           box
                             with
                               w=fill
@@ -864,7 +927,7 @@ view
                               align-x=center
                               align-y=center
                             text "No fills on this account yet." size=12.0 @text-faint
-                        for fill in history
+                        for fill in fills
                           FillRow fill=fill
             rule vertical thickness=1.0 color=edge
             box #book

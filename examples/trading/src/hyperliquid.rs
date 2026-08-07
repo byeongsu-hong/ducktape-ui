@@ -1,10 +1,14 @@
-//! The Hyperliquid `info` API behind one blocking POST, moved off the UI
-//! thread with `smol::unblock`. Every response is read as a `Value` and
-//! mapped by hand: the exchange sends all numbers as JSON strings, so a
-//! derive would need a custom deserializer per field anyway.
+//! The Hyperliquid API behind two shapes: the `info` endpoint as one blocking
+//! POST moved off the UI thread with `smol::unblock`, and the websocket as a
+//! thread per feed pushing into a channel Ice reads as a stream. Every
+//! response is read as a `Value` and mapped by hand: the exchange sends all
+//! numbers as JSON strings, so a derive would need a custom deserializer per
+//! field anyway.
 
+use std::collections::{HashMap, HashSet};
+use std::net::TcpStream;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ducktape_ui::ui::candle_chart::{
     ChartMarker, MarkerShape, PriceLine, SharedCandles, candle_chart_shared, format_price,
@@ -13,15 +17,34 @@ use ducktape_ui::ui::candle_chart::{
 use ducktape_ui::ui::theme;
 use iced::{Color, Element, Font, Length};
 use serde_json::{Value, json};
+use smol::channel::{Receiver, Sender};
+use tungstenite::stream::MaybeTlsStream;
 use ui_lang_runtime::{Role, StableId, accessible};
 
 pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
 
 const INFO_URL: &str = "https://api.hyperliquid.xyz/info";
+const WS_URL: &str = "wss://api.hyperliquid.xyz/ws";
 const TIMEOUT: Duration = Duration::from_secs(15);
-/// Candles fetched when a market is opened, and on every poll after that.
+/// Candles fetched when a market is opened, and when the chart is panned back
+/// past the oldest one it holds.
 const BACKFILL_BARS: i64 = 500;
 const REFRESH_BARS: i64 = 3;
+/// The exchange closes a socket that goes quiet for a minute. The pong that
+/// answers each ping is also the only honest latency reading available: a
+/// round trip needs no agreement between our clock and theirs.
+const PING: Duration = Duration::from_secs(15);
+/// How long a read blocks before the loop looks at the clock and at which
+/// market the app is showing.
+const POLL: Duration = Duration::from_millis(200);
+/// Feed traffic coalesces into at most one app message per beat. The book of
+/// a busy market reprints far faster than a screen can show it, and the chart
+/// repaints off the shared tape on this same beat without any message at all.
+const BEAT: Duration = Duration::from_millis(100);
+/// Pause before a dropped socket is reopened.
+const RETRY: Duration = Duration::from_secs(2);
+/// Decay steps a freshly printed fill flashes for.
+const FLASH_STEPS: i64 = 2;
 /// Book levels shown per side, and the pixel width of a full depth bar.
 const BOOK_DEPTH: usize = 10;
 const BOOK_BAR_WIDTH: f64 = 196.0;
@@ -152,6 +175,9 @@ pub struct SymbolRow {
     pub leverage: f64,
     pub open_interest: f64,
     pub oracle: f64,
+    /// Yesterday's close, kept so a streamed mid price can be turned back
+    /// into a 24h change without another request.
+    pub prev: f64,
 }
 
 /// One open position, shaped the way the official app reads it out.
@@ -197,6 +223,12 @@ pub struct Fill {
     pub closed_pnl: f64,
     pub action: String,
     pub fee: f64,
+    /// Decay steps left on the highlight a just-printed fill wears, counted
+    /// down to zero by the app. Fills already on the books arrive cold.
+    pub heat: i64,
+    /// The exchange's trade id, which is how a fill pushed by the feed is
+    /// recognised as one the snapshot already listed.
+    tid: i64,
 }
 
 /// One resting order, listed and drawn on the chart as a level.
@@ -248,6 +280,16 @@ fn focus_key(coin: &str, interval: &str) -> String {
     format!("{coin}:{interval}")
 }
 
+impl Tape {
+    /// The market and interval the tape is currently holding, which is what
+    /// the feed subscribes to. Empty until the app opens one.
+    fn focus(&self) -> Option<(String, String)> {
+        let focus = lock(&self.focus);
+        let (coin, interval) = focus.split_once(':')?;
+        Some((coin.to_owned(), interval.to_owned()))
+    }
+}
+
 pub fn tape_new() -> Tape {
     Tape {
         candles: Arc::new(Mutex::new(Vec::new())),
@@ -264,21 +306,25 @@ pub fn tape_focus(tape: Tape, coin: String, interval: String) -> Tape {
     tape
 }
 
+fn parse_candle(value: &Value) -> Candle {
+    Candle {
+        // Hyperliquid timestamps are milliseconds; the chart wants seconds.
+        ts: value_i64(value, "t") / 1_000,
+        open: num(value, "o"),
+        high: num(value, "h"),
+        low: num(value, "l"),
+        close: num(value, "c"),
+        volume: num(value, "v"),
+    }
+}
+
 fn parse_candles(value: &Value) -> Vec<Candle> {
     value
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default()
         .iter()
-        .map(|candle| Candle {
-            // Hyperliquid timestamps are milliseconds; the chart wants seconds.
-            ts: value_i64(candle, "t") / 1_000,
-            open: num(candle, "o"),
-            high: num(candle, "h"),
-            low: num(candle, "l"),
-            close: num(candle, "c"),
-            volume: num(candle, "v"),
-        })
+        .map(parse_candle)
         .collect()
 }
 
@@ -328,6 +374,40 @@ pub async fn hl_candles(tape: Tape, coin: String, interval: String) -> Result<i6
     Ok(candles.len() as i64)
 }
 
+/// Loads the window of candles that ends where the tape currently begins, so
+/// a chart panned back to its oldest bar can keep going. Returns the tape
+/// length, which is unchanged when the exchange has nothing older to give.
+pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
+    let key = focus_key(&coin, &interval);
+    let end = { lock(&tape.candles).first().map(|candle| candle.ts * 1_000) };
+    let Some(end) = end else {
+        return Ok(0);
+    };
+    let start = end - BACKFILL_BARS * interval_secs(&interval) * 1_000;
+    let response = info(json!({
+        "type": "candleSnapshot",
+        "req": { "coin": coin, "interval": interval, "startTime": start, "endTime": end },
+    }))
+    .await?;
+
+    let mut candles = lock(&tape.candles);
+    if *lock(&tape.focus) != key {
+        // The user moved on while this was in flight.
+        return Ok(candles.len() as i64);
+    }
+    merge(&mut candles, parse_candles(&response));
+    Ok(candles.len() as i64)
+}
+
+/// A market's move against yesterday's close, as a percentage.
+fn change_pct(price: f64, previous: f64) -> f64 {
+    if previous > 0.0 {
+        (price - previous) / previous * 100.0
+    } else {
+        0.0
+    }
+}
+
 fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
     let Some(pair) = value.as_array() else {
         return Vec::new();
@@ -346,30 +426,36 @@ fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
         })
-        .map(|(asset, context)| {
-            let price = num(context, "markPx");
-            let previous = num(context, "prevDayPx");
-            SymbolRow {
-                name: text(asset, "name"),
-                price,
-                change_pct: if previous > 0.0 {
-                    (price - previous) / previous * 100.0
-                } else {
-                    0.0
-                },
-                volume: num(context, "dayNtlVlm"),
-                funding_pct: num(context, "funding") * 100.0,
-                leverage: asset
-                    .get("maxLeverage")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0),
-                open_interest: num(context, "openInterest"),
-                oracle: num(context, "oraclePx"),
-            }
+        .map(|(asset, context)| SymbolRow {
+            leverage: asset
+                .get("maxLeverage")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+            ..parse_context(text(asset, "name"), context)
         })
         .collect();
     rows.sort_by(|left, right| right.volume.total_cmp(&left.volume));
     rows
+}
+
+/// One market's context, which the universe lists once and the feed
+/// republishes for whichever market is on screen. `maxLeverage` is not part
+/// of it — it belongs to the asset, not to the day — so it reads as zero here
+/// and the merge keeps whatever the universe said.
+fn parse_context(name: String, context: &Value) -> SymbolRow {
+    let price = num(context, "markPx");
+    let previous = num(context, "prevDayPx");
+    SymbolRow {
+        name,
+        price,
+        change_pct: change_pct(price, previous),
+        volume: num(context, "dayNtlVlm"),
+        funding_pct: num(context, "funding") * 100.0,
+        leverage: 0.0,
+        open_interest: num(context, "openInterest"),
+        oracle: num(context, "oraclePx"),
+        prev: previous,
+    }
 }
 
 pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
@@ -445,7 +531,10 @@ pub async fn hl_account(address: String) -> Result<Account, HlError> {
     ))
 }
 
-fn parse_fills(value: &Value) -> Vec<Fill> {
+/// The account's fills. `heat` is what the list flashes with, so the
+/// snapshot the feed opens with reads cold and everything pushed after it
+/// arrives lit.
+fn parse_fills(value: &Value, heat: i64) -> Vec<Fill> {
     value
         .as_array()
         .map(Vec::as_slice)
@@ -461,6 +550,8 @@ fn parse_fills(value: &Value) -> Vec<Fill> {
             closed_pnl: num(fill, "closedPnl"),
             action: text(fill, "dir"),
             fee: num(fill, "fee"),
+            heat,
+            tid: value_i64(fill, "tid"),
         })
         .collect()
 }
@@ -544,18 +635,312 @@ pub async fn hl_orders(address: String) -> Result<Vec<Order>, HlError> {
     ))
 }
 
-/// The book renders newest-first from the top, so the asks are reversed here
-/// and the view just walks both lists.
-pub async fn hl_book(coin: String) -> Result<Book, HlError> {
-    let mut book = parse_book(&info(json!({ "type": "l2Book", "coin": coin })).await?);
-    book.asks.reverse();
-    Ok(book)
+/// One websocket connection, plus the set of subscriptions it is currently
+/// holding open.
+struct Socket {
+    ws: tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
+    open: Vec<Value>,
 }
 
-pub async fn hl_fills(address: String) -> Result<Vec<Fill>, HlError> {
-    Ok(parse_fills(
-        &info(json!({ "type": "userFills", "user": address })).await?,
-    ))
+impl Socket {
+    fn connect() -> Result<Self, HlError> {
+        let (ws, _) = tungstenite::connect(WS_URL)
+            .map_err(|error| HlError::new(format!("Hyperliquid feed unreachable: {error}")))?;
+        // Reads have to time out, or the loop could never look at the clock
+        // to ping, or at the app to see that it changed markets.
+        let stream = match ws.get_ref() {
+            MaybeTlsStream::Plain(stream) => stream,
+            MaybeTlsStream::Rustls(tls) => tls.get_ref(),
+            _ => return Err(HlError::new("Unknown Hyperliquid transport".to_owned())),
+        };
+        stream
+            .set_read_timeout(Some(POLL))
+            .map_err(|error| HlError::new(format!("Hyperliquid feed unreadable: {error}")))?;
+        Ok(Self {
+            ws,
+            open: Vec::new(),
+        })
+    }
+
+    fn send(&mut self, request: &Value) -> Result<(), HlError> {
+        self.ws
+            .send(tungstenite::Message::Text(request.to_string().into()))
+            .map_err(|error| HlError::new(format!("Hyperliquid feed refused: {error}")))
+    }
+
+    /// Holds exactly `wanted` open, sending only the difference. Switching
+    /// markets therefore costs two frames rather than a new connection, and
+    /// asking for what is already open costs nothing.
+    fn want(&mut self, wanted: Vec<Value>) -> Result<(), HlError> {
+        let gone: Vec<Value> = self
+            .open
+            .iter()
+            .filter(|held| !wanted.contains(held))
+            .cloned()
+            .collect();
+        let fresh: Vec<Value> = wanted
+            .iter()
+            .filter(|want| !self.open.contains(want))
+            .cloned()
+            .collect();
+        for subscription in gone {
+            self.send(&json!({ "method": "unsubscribe", "subscription": subscription }))?;
+        }
+        for subscription in fresh {
+            self.send(&json!({ "method": "subscribe", "subscription": subscription }))?;
+        }
+        self.open = wanted;
+        Ok(())
+    }
+}
+
+/// What a feed's reader is handed. `Beat` is the coalescing tick: a reader
+/// that folds fast traffic into one update returns it there, and one with
+/// nothing to fold ignores it.
+enum Event<'a> {
+    Payload(&'a str, &'a Value),
+    /// Round trip to the exchange in milliseconds.
+    Pong(i64),
+    Beat,
+}
+
+/// One websocket on its own thread, pumping what `read` makes of it into a
+/// channel that Ice consumes as a stream.
+///
+/// `subscribe` is asked what to hold open on every beat rather than once at
+/// connect, so a feed follows the app's market by re-subscribing instead of
+/// reconnecting. The thread reconnects through an error and stops when the
+/// receiver is dropped, which is what aborting the stream does.
+fn feed<T, S, R>(mut subscribe: S, mut read: R) -> Receiver<Result<T, HlError>>
+where
+    T: Send + 'static,
+    S: FnMut() -> Vec<Value> + Send + 'static,
+    R: FnMut(Event<'_>) -> Option<T> + Send + 'static,
+{
+    let (sender, receiver) = smol::channel::unbounded();
+    std::thread::spawn(move || {
+        while !sender.is_closed() {
+            let Err(error) = pump(&mut subscribe, &mut read, &sender) else {
+                return;
+            };
+            if sender.send_blocking(Err(error)).is_err() {
+                return;
+            }
+            std::thread::sleep(RETRY);
+        }
+    });
+    receiver
+}
+
+/// One connection's lifetime. Returns `Ok` only when the app has stopped
+/// listening; anything else is an error the caller reconnects through.
+fn pump<T, S, R>(
+    subscribe: &mut S,
+    read: &mut R,
+    sender: &Sender<Result<T, HlError>>,
+) -> Result<(), HlError>
+where
+    S: FnMut() -> Vec<Value>,
+    R: FnMut(Event<'_>) -> Option<T>,
+{
+    let mut socket = Socket::connect()?;
+    let mut beat = Instant::now();
+    let mut ping = Instant::now();
+    let mut sent: Option<Instant> = None;
+    loop {
+        if sender.is_closed() {
+            return Ok(());
+        }
+        // Before the blocking read, so the first pass subscribes rather than
+        // waiting out a timeout first.
+        let now = Instant::now();
+        if now >= beat {
+            beat = now + BEAT;
+            socket.want(subscribe())?;
+            if let Some(item) = read(Event::Beat)
+                && sender.send_blocking(Ok(item)).is_err()
+            {
+                return Ok(());
+            }
+        }
+        if now >= ping {
+            ping = now + PING;
+            sent = Some(now);
+            socket.send(&json!({ "method": "ping" }))?;
+        }
+        match socket.ws.read() {
+            Ok(tungstenite::Message::Text(body)) => {
+                let message: Value = serde_json::from_str(&body)
+                    .map_err(|error| HlError::new(format!("Hyperliquid sent bad JSON: {error}")))?;
+                let channel = text(&message, "channel");
+                if channel == "error" {
+                    // A rejected subscription is silence otherwise, and
+                    // silence is indistinguishable from a quiet market.
+                    return Err(HlError::new(format!(
+                        "Hyperliquid feed rejected a request: {}",
+                        text(&message, "data")
+                    )));
+                }
+                let item = if channel == "pong" {
+                    let round_trip = sent.take().map_or(0, |at| at.elapsed().as_millis() as i64);
+                    read(Event::Pong(round_trip))
+                } else {
+                    match message.get("data") {
+                        Some(data) => read(Event::Payload(&channel, data)),
+                        None => None,
+                    }
+                };
+                if let Some(item) = item
+                    && sender.send_blocking(Ok(item)).is_err()
+                {
+                    return Ok(());
+                }
+            }
+            Ok(_) => {}
+            // A read that found nothing before its timeout, which is the
+            // normal way out of the blocking read below the beat rate.
+            Err(tungstenite::Error::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) => {
+                return Err(HlError::new(format!("Hyperliquid feed dropped: {error}")));
+            }
+        }
+    }
+}
+
+/// What one beat of the market feed carries. Every beat holds the latest of
+/// everything rather than only what changed, so the app assigns it without
+/// having to ask which kind of update this was.
+#[derive(Clone, Default, PartialEq)]
+pub struct MarketTick {
+    /// The book, or none until the first one lands.
+    pub book: Option<Book>,
+    /// Round trip to the exchange in milliseconds.
+    pub latency: i64,
+    /// Every mid price the exchange last published, by market.
+    mids: HashMap<String, f64>,
+    /// The charted market's republished context, when it arrived.
+    context: Option<SymbolRow>,
+}
+
+/// The market data feed: every mid price on the exchange, and the book,
+/// candles, and context of whatever market the tape is pointed at. Candles
+/// are merged into the tape in place, so the chart follows them on its own
+/// repaint beat without an app message per tick.
+pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
+    let subscriptions = tape.clone();
+    let mut tick = MarketTick::default();
+    let mut changed = false;
+    feed(
+        move || {
+            let mut wanted = vec![json!({ "type": "allMids" })];
+            if let Some((coin, interval)) = subscriptions.focus() {
+                wanted.push(json!({ "type": "l2Book", "coin": coin }));
+                wanted.push(json!({ "type": "activeAssetCtx", "coin": coin }));
+                wanted.push(json!({ "type": "candle", "coin": coin, "interval": interval }));
+            }
+            wanted
+        },
+        move |event| match event {
+            Event::Payload("allMids", data) => {
+                tick.mids = data
+                    .get("mids")
+                    .and_then(Value::as_object)?
+                    .iter()
+                    .filter_map(|(coin, price)| Some((coin.clone(), price.as_str()?.parse().ok()?)))
+                    .collect();
+                changed = true;
+                None
+            }
+            Event::Payload("l2Book", data) => {
+                let mut book = parse_book(data);
+                // The book renders from the top down, so the asks are
+                // reversed here and the view just walks both lists.
+                book.asks.reverse();
+                changed |= tick.book.as_ref() != Some(&book);
+                tick.book = Some(book);
+                None
+            }
+            Event::Payload("activeAssetCtx", data) => {
+                let context = parse_context(text(data, "coin"), data.get("ctx")?);
+                changed |= tick.context.as_ref() != Some(&context);
+                tick.context = Some(context);
+                None
+            }
+            Event::Payload("candle", data) => {
+                // A candle for the market the app just left would corrupt
+                // the tape it is drawing now.
+                let held = tape.focus()?;
+                if held != (text(data, "s"), text(data, "i")) {
+                    return None;
+                }
+                merge(&mut lock(&tape.candles), vec![parse_candle(data)]);
+                None
+            }
+            Event::Payload(..) => None,
+            Event::Pong(round_trip) => {
+                changed |= tick.latency != round_trip;
+                tick.latency = round_trip;
+                None
+            }
+            Event::Beat => {
+                let ready = changed;
+                changed = false;
+                // Nothing moved: an unchanged message would rebuild the view
+                // for no reason.
+                ready.then(|| MarketTick {
+                    mids: std::mem::take(&mut tick.mids),
+                    ..tick.clone()
+                })
+            }
+        },
+    )
+}
+
+/// This account's fills as they print. The exchange opens with a snapshot of
+/// the recent ones and pushes each new one after that; only the pushed ones
+/// are lit, so the list flashes what just happened rather than its history.
+pub fn hl_fill_feed(address: String) -> Receiver<Result<Vec<Fill>, HlError>> {
+    feed(
+        move || vec![json!({ "type": "userFills", "user": address })],
+        move |event| {
+            let Event::Payload("userFills", data) = event else {
+                return None;
+            };
+            let snapshot = data
+                .get("isSnapshot")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let fills = parse_fills(data.get("fills")?, if snapshot { 0 } else { FLASH_STEPS });
+            (!fills.is_empty()).then_some(fills)
+        },
+    )
+}
+
+/// Folds one beat of the feed into the market list: the charted market's
+/// republished context first, then every mid price the beat carried, which is
+/// the fresher of the two. A ticker and its maximum leverage belong to the
+/// asset rather than the day, so they stay whatever the universe said.
+pub fn apply_feed(rows: Vec<SymbolRow>, tick: MarketTick) -> Vec<SymbolRow> {
+    let mut rows = rows;
+    if let Some(context) = tick.context
+        && let Some(row) = rows.iter_mut().find(|row| row.name == context.name)
+    {
+        *row = SymbolRow {
+            leverage: row.leverage,
+            ..context
+        };
+    }
+    for row in &mut rows {
+        if let Some(price) = tick.mids.get(&row.name) {
+            row.price = *price;
+            row.change_pct = change_pct(*price, row.prev);
+        }
+    }
+    rows
 }
 
 /// Price decimals that suit the instrument: a four-figure coin and a
@@ -612,6 +997,15 @@ pub fn fmt_leverage(value: f64) -> String {
     format!("{value:.0}x")
 }
 
+/// The round trip to the exchange, as the feed's own readout. A dash until
+/// the first pong comes back, so an empty reading never reads as instant.
+pub fn fmt_latency(millis: i64) -> String {
+    if millis <= 0 {
+        return "—".to_owned();
+    }
+    format!("{millis}ms")
+}
+
 /// Large money in a narrow column: "-$3.3M" rather than eleven digits.
 pub fn fmt_compact_usd(value: f64) -> String {
     if value == 0.0 {
@@ -659,13 +1053,36 @@ pub fn symbol_row(rows: Vec<SymbolRow>, coin: String) -> Option<SymbolRow> {
     rows.into_iter().find(|row| row.name == coin)
 }
 
-/// The newest fills across every market, capped so the list builds a bounded
-/// number of rows however long the account's history is.
-pub fn recent_fills(rows: Vec<Fill>, limit: i64) -> Vec<Fill> {
-    let mut rows = rows;
+/// Puts the fills the feed just pushed on top of the ones already listed,
+/// newest first, ignoring any the opening snapshot had already shown, and
+/// capped so the list builds a bounded number of rows however long the
+/// account trades for.
+pub fn push_fills(history: Vec<Fill>, incoming: Vec<Fill>, limit: i64) -> Vec<Fill> {
+    let held: HashSet<i64> = history.iter().map(|fill| fill.tid).collect();
+    let mut rows: Vec<Fill> = incoming
+        .into_iter()
+        .filter(|fill| !held.contains(&fill.tid))
+        .chain(history)
+        .collect();
     rows.sort_by_key(|fill| std::cmp::Reverse(fill.ts));
     rows.truncate(limit.max(0) as usize);
     rows
+}
+
+/// One step of the highlight decay on the newest fills.
+pub fn cool_fills(rows: Vec<Fill>) -> Vec<Fill> {
+    rows.into_iter()
+        .map(|fill| Fill {
+            heat: (fill.heat - 1).max(0),
+            ..fill
+        })
+        .collect()
+}
+
+/// Whether anything in the list is still lit, which is the only reason to
+/// run the decay timer at all.
+pub fn any_hot(rows: Vec<Fill>) -> bool {
+    rows.iter().any(|fill| fill.heat > 0)
 }
 
 /// This account's fills on one market, as chart glyphs: a buy points up out
@@ -730,22 +1147,36 @@ fn order_lines(orders: &[Order], coin: &str) -> Vec<PriceLine> {
         .collect()
 }
 
+/// What the chart reports back: the candle under the cursor, and whether the
+/// view has been taken back to the oldest candle the tape holds.
+#[derive(Clone, Copy, PartialEq)]
+pub struct ChartSignal {
+    pub hover: Option<CandleHit>,
+    pub older: bool,
+}
+
 /// The chart for the selected market, with this account's fills marked on it
-/// and its levels drawn across it.
+/// and its levels drawn across it. It repaints on its own beat, so candles
+/// the feed merges into the tape show without an app message per tick.
 pub fn chart(
     tape: &Tape,
     fills: &[Fill],
     positions: &[Position],
     orders: &[Order],
     coin: &str,
-) -> Element<'static, Option<CandleHit>> {
+) -> Element<'static, ChartSignal> {
     let chart = candle_chart_shared(tape.candles.clone(), &chart_theme())
         .height(Length::Fill)
+        .live(BEAT)
         .moving_averages([20, 60])
         .price_lines(position_lines(positions, coin))
         .price_lines(order_lines(orders, coin))
         .markers(fill_markers(fills, coin))
-        .on_hover(|hit| hit);
+        .on_hover(|hover| ChartSignal {
+            hover,
+            older: false,
+        })
+        .on_reach_start(|hover| ChartSignal { hover, older: true });
     accessible(chart, StableId::new("trading-chart"), Role::Image)
         .label("Hyperliquid candlestick chart with this account's fills marked")
         .logical_id("trading-chart")
@@ -823,15 +1254,19 @@ mod tests {
 
     #[test]
     fn fills_carry_a_side_and_second_precision_time() {
-        let fills = parse_fills(&json!([
-            { "coin": "BTC", "px": "64000.0", "sz": "0.1", "side": "B", "time": 1_786_092_480_123i64, "closedPnl": "0.0", "dir": "Open Long" },
-            { "coin": "BTC", "px": "64500.0", "sz": "0.1", "side": "A", "time": 1_786_092_540_000i64, "closedPnl": "50.0", "dir": "Close Long" },
-        ]));
+        let fills = parse_fills(
+            &json!([
+                { "coin": "BTC", "px": "64000.0", "sz": "0.1", "side": "B", "time": 1_786_092_480_123i64, "closedPnl": "0.0", "dir": "Open Long", "tid": 1 },
+                { "coin": "BTC", "px": "64500.0", "sz": "0.1", "side": "A", "time": 1_786_092_540_000i64, "closedPnl": "50.0", "dir": "Close Long", "tid": 2 },
+            ]),
+            FLASH_STEPS,
+        );
 
         assert!(fills[0].buy);
         assert_eq!(fills[0].ts, 1_786_092_480, "chart timestamps are seconds");
         assert!(!fills[1].buy);
         assert_eq!(fills[1].closed_pnl, 50.0);
+        assert_eq!(fills[1].heat, FLASH_STEPS, "a pushed fill arrives lit");
     }
 
     #[test]
@@ -884,6 +1319,8 @@ mod tests {
                 closed_pnl: 0.0,
                 action: "Open Long".into(),
                 fee: 0.0,
+                heat: 0,
+                tid: 1,
             },
             Fill {
                 coin: "ETH".into(),
@@ -894,6 +1331,8 @@ mod tests {
                 closed_pnl: 0.0,
                 action: "Open Long".into(),
                 fee: 0.0,
+                heat: 0,
+                tid: 2,
             },
             Fill {
                 coin: "BTC".into(),
@@ -904,6 +1343,8 @@ mod tests {
                 closed_pnl: 250.0,
                 action: "Close Long".into(),
                 fee: 1.0,
+                heat: 0,
+                tid: 3,
             },
         ];
 
@@ -1037,9 +1478,8 @@ mod tests {
         assert_eq!(lines[0].price, 60_000.0);
     }
 
-    #[test]
-    fn the_fills_list_is_newest_first_and_bounded() {
-        let fill = |ts: i64| Fill {
+    fn fill(ts: i64, tid: i64, heat: i64) -> Fill {
+        Fill {
             coin: "BTC".into(),
             ts,
             price: 1.0,
@@ -1048,11 +1488,36 @@ mod tests {
             closed_pnl: 0.0,
             action: String::new(),
             fee: 0.0,
-        };
-        let rows = recent_fills(vec![fill(10), fill(30), fill(20)], 2);
-        assert_eq!(rows.len(), 2, "the list is capped");
-        assert_eq!(rows[0].ts, 30, "newest first");
-        assert_eq!(rows[1].ts, 20);
+            heat,
+            tid,
+        }
+    }
+
+    #[test]
+    fn pushed_fills_stack_newest_first_without_repeating_the_snapshot() {
+        let snapshot = push_fills(Vec::new(), vec![fill(10, 1, 0), fill(30, 3, 0)], 4);
+        assert_eq!(snapshot[0].ts, 30, "newest first");
+
+        // The feed re-sends a fill the snapshot already showed alongside a
+        // new one; only the new one lands, and only it is lit.
+        let pushed = push_fills(
+            snapshot,
+            vec![fill(30, 3, FLASH_STEPS), fill(40, 4, FLASH_STEPS)],
+            4,
+        );
+        assert_eq!(pushed.len(), 3, "the repeat is dropped");
+        assert_eq!(pushed[0].ts, 40);
+        assert_eq!(pushed[0].heat, FLASH_STEPS);
+        assert_eq!(pushed[1].heat, 0, "the fill it already held stays cold");
+        assert!(any_hot(pushed.clone()), "the list is flashing");
+
+        let capped = push_fills(pushed, vec![fill(50, 5, FLASH_STEPS)], 2);
+        assert_eq!(capped.len(), 2, "the list is capped");
+        assert_eq!(capped[0].ts, 50);
+
+        // Two beats of decay put the highlight out.
+        let cooled = cool_fills(cool_fills(capped));
+        assert!(!any_hot(cooled), "nothing stays lit");
     }
 
     #[test]
@@ -1103,22 +1568,70 @@ mod tests {
                 );
             }
 
-            let book = hl_book("BTC".into()).await.expect("order book");
-            assert!(!book.bids.is_empty() && !book.asks.is_empty());
-            assert!(book.spread > 0.0, "a live book has a spread");
-            assert!(
-                book.asks
-                    .last()
-                    .is_some_and(|best| best.price > book.bids[0].price),
-                "the asks are reversed so the best ask sits against the spread"
-            );
-
             // A vault address: reachable, and its summary parses.
             let account = hl_account("0xdfc24b077bc1425ad1dea75bcb6f8158e10df303".into())
                 .await
                 .expect("clearinghouse state");
             assert!(account.value > 0.0, "the HLP vault holds a balance");
         });
+    }
+
+    /// The other half of the boundary: the websocket. Also opt-in, and also
+    /// the only place the subscription names, the payload shapes, and the
+    /// ping round trip are checked against the exchange rather than against
+    /// a recording.
+    #[test]
+    #[ignore = "hits the live Hyperliquid API"]
+    fn the_live_feed_fills_the_tape_and_the_book() {
+        let tape = tape_focus(tape_new(), "BTC".into(), "1m".into());
+        let feed = hl_market_feed(tape.clone());
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let mut ticks = Vec::new();
+
+        smol::block_on(async {
+            // Long enough for a book, a context, and one ping round trip.
+            while Instant::now() < deadline && ticks.len() < 60 {
+                match feed.recv().await {
+                    Ok(Ok(tick)) => ticks.push(tick),
+                    Ok(Err(error)) => panic!("feed reported {}", error.message),
+                    Err(_) => break,
+                }
+            }
+        });
+
+        assert!(!ticks.is_empty(), "the feed said nothing in 45s");
+        let book = ticks
+            .iter()
+            .rev()
+            .find_map(|tick| tick.book.clone())
+            .expect("a book arrived");
+        assert!(!book.bids.is_empty() && !book.asks.is_empty());
+        assert!(book.spread > 0.0, "a live book has a spread");
+        assert!(
+            book.asks
+                .last()
+                .is_some_and(|best| best.price > book.bids[0].price),
+            "the asks are reversed so the best ask sits against the spread"
+        );
+        assert!(
+            ticks.iter().any(|tick| tick.mids.contains_key("BTC")),
+            "allMids carries the market this app lists"
+        );
+        assert!(
+            ticks.iter().any(|tick| tick
+                .context
+                .as_ref()
+                .is_some_and(|context| context.name == "BTC" && context.prev > 0.0)),
+            "activeAssetCtx carries the header's figures"
+        );
+        assert!(
+            ticks.iter().any(|tick| tick.latency > 0),
+            "the ping round trip is the latency readout"
+        );
+        assert!(
+            !lock(&tape.candles).is_empty(),
+            "candles are merged into the tape rather than sent through Ice"
+        );
     }
 
     #[test]
@@ -1133,6 +1646,7 @@ mod tests {
                 leverage: 40.0,
                 open_interest: 0.0,
                 oracle: 1.0,
+                prev: 1.0,
             },
             SymbolRow {
                 name: "ETH".into(),
@@ -1143,6 +1657,7 @@ mod tests {
                 leverage: 25.0,
                 open_interest: 0.0,
                 oracle: 1.0,
+                prev: 1.0,
             },
         ];
         assert_eq!(filter_symbols(rows.clone(), " et ".into()).len(), 1);
