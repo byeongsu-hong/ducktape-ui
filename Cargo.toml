@@ -36,5 +36,11 @@ ui-lang-runtime = { path = "crates/ui-lang-runtime", version = "=0.1.0" }
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
+# Debug info stays complete but lives beside the binary instead of inside it.
+# Copying it in was the larger half of every dev link: showcase relinks 0.6s
+# faster and its binary drops from 443MB to 158MB.
+[profile.dev]
+split-debuginfo = "unpacked"
+
 [profile.dev.package.music-example]
 debug = 0

@@ -360,3 +360,38 @@ environment) so slot content parameterizes the way arguments already do. It is
 a change to capture analysis, where a mistake miscompiles rather than fails, so
 it wants its own pass with the workspace suite as the oracle — that suite is
 what caught the unsound version.
+
+### The floor, and what is under it
+
+Once the dirtied module is small the front end is no longer the cost. Splitting
+a 3.0s rebuild (`showcase`, editing `components/navigation.ice`) with
+`-Ztime-passes`:
+
+| pass | time |
+|---|---|
+| `link` / `run_linker` | **1.45s** |
+| `codegen_crate` | 0.54s |
+| `LLVM_passes` | 0.57s |
+| `serialize_dep_graph` | 0.18s |
+| `type_check_crate` | not in the top 14 |
+
+Half the floor was the linker, and most of that was not the linker's own work:
+the dev profile wrote full debug info *into* the binary on every link.
+`split-debuginfo = "unpacked"` leaves it complete but beside the binary:
+
+| | rebuild | binary |
+|---|---|---|
+| packed (was the default) | 3.14s | 443 MB |
+| unpacked | **2.55s** | **158 MB** |
+| unpacked + `line-tables-only` | 2.51s | 135 MB |
+
+`line-tables-only` buys almost nothing more and costs variable inspection, so
+only the split is taken. An earlier pass measured this same setting at 0.92x
+and dismissed it — that measurement bundled it with `line-tables-only` on the
+6.5s worst case, where the same ~0.6s is a smaller fraction. The absolute win
+was always there.
+
+Two other link levers were measured and are not taken. `rust-lld` is already
+the default on this target. Pointing the final link at `mold`
+(`-Clink-arg=-fuse-ld=mold`) moved 3.00s to 2.81s — 6%, for a toolchain
+dependency every contributor would have to install.
