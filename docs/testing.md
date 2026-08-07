@@ -98,3 +98,39 @@ manifests and their PNGs outside the runtime. `cargo ice review` runs selected
 first-class Ice tests and packages their captures, diagnostics, accessibility
 inventory, baseline diffs, and source-mapped changes into one JSON/HTML
 evidence bundle — see [tooling.md](tooling.md) for their flags and policies.
+
+## Performance contracts
+
+Performance tests are `#[ignore]`d so an ordinary `cargo test` stays fast, which
+means **a performance test only runs if CI names it**. The `Run remaining
+performance contracts` step in `.github/workflows/ci.yml` selects them two ways:
+by the name filter `performance_contract`, or by an explicit `--test <file>` for
+an integration target. A test named anything else, in a file no line mentions,
+never runs anywhere and is decoration. Three had gone dead that way before this
+was written down. When adding one, add its CI line in the same change, and audit
+with:
+
+```sh
+grep -rn -A2 '#\[ignore' crates/*/src crates/*/tests | grep 'fn '
+```
+
+Two shapes of assertion, and the choice matters:
+
+- **Metric counts** — the layout metrics a widget records (paragraphs shaped,
+  lines highlighted, allocations, line-vector slots). These are exact,
+  machine-independent, and say *why* something got slower, so prefer them.
+- **Wall-clock budgets** — keep them, but only as a backstop, and size them to
+  the work rather than to the machine. A budget left far above the real cost
+  cannot fail: contracts here once asserted a 30-second budget against 8.7
+  seconds of pure waste.
+
+Absolute microsecond budgets do not survive a shared runner. Where timing is the
+point, assert a **ratio between two measurements taken in the same run** — a busy
+machine slows both, so the comparison holds. `tests/frame_probe.rs` does this to
+guard virtualization: it requires a measured virtual timeline to beat a plain
+lazy column by >5x at equal row count, and 6.7x the rows to cost <2.5x the time.
+
+A contract that asserts today's number pins today's behaviour, including its
+waste. When a fix makes a metric drop, the contract asserting the old value is
+part of the fix — update it, and bring its budget down with it, or the next
+regression has nowhere to land.
