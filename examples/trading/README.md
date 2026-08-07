@@ -117,6 +117,13 @@ an EIP-712 order, which is not a thing an example should ask for. The boundary
 is the interesting part: everything up to the signature is arithmetic worth
 having, and the signature is where a real client starts.
 
+The one figure in that arithmetic that is not arithmetic is the maintenance
+requirement, and it belongs to the venue: Hyperliquid holds half the margin at
+a market's maximum leverage, and another exchange holds something else. So the
+market carries it and the ticket reads it, rather than the shared math knowing
+one exchange's rule. It is stated once, next to the parser that knows whose
+rule it is.
+
 ## What talks to the exchange
 
 Everything the exchange pushes arrives on a websocket; everything it only

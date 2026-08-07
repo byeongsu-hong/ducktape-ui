@@ -177,6 +177,11 @@ pub struct SymbolRow {
     /// Yesterday's close, kept so a streamed mid price can be turned back
     /// into a 24h change without another request.
     pub prev: f64,
+    /// The share of a position's value the margin engine holds against it.
+    /// The only figure in the ticket's arithmetic that belongs to a venue
+    /// rather than to arithmetic, so the venue publishes it per market and
+    /// the shared math never learns one exchange's rule.
+    pub maintenance: f64,
 }
 
 /// One open position, shaped the way the official app reads it out.
@@ -418,6 +423,15 @@ pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i6
 }
 
 /// A market's move against yesterday's close, as a percentage.
+/// Hyperliquid holds half the margin at the market's maximum leverage, so a
+/// 40x market maintains at 1/80th of a position's value.
+fn maintenance_fraction(max_leverage: f64) -> f64 {
+    if max_leverage <= 0.0 {
+        return 0.0;
+    }
+    1.0 / (2.0 * max_leverage)
+}
+
 fn change_pct(price: f64, previous: f64) -> f64 {
     if previous > 0.0 {
         (price - previous) / previous * 100.0
@@ -445,10 +459,8 @@ fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
                 .unwrap_or(false)
         })
         .map(|(asset, context)| SymbolRow {
-            leverage: asset
-                .get("maxLeverage")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0),
+            leverage: max_leverage(asset),
+            maintenance: maintenance_fraction(max_leverage(asset)),
             ..parse_context(text(asset, "name"), context)
         })
         .collect();
@@ -469,10 +481,20 @@ fn parse_context(name: String, context: &Value) -> SymbolRow {
         change_pct: change_pct(price, previous),
         volume: num(context, "dayNtlVlm"),
         funding_pct: num(context, "funding") * 100.0,
+        // The streamed context does not restate the asset's maximum, so the
+        // universe's reading of both is kept by the caller.
         leverage: 0.0,
+        maintenance: 0.0,
         open_interest: num(context, "openInterest"),
         prev: previous,
     }
+}
+
+fn max_leverage(asset: &Value) -> f64 {
+    asset
+        .get("maxLeverage")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
 }
 
 pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
@@ -502,15 +524,6 @@ pub struct Ticket {
     pub ready: bool,
 }
 
-/// Hyperliquid holds a maintenance requirement of half the margin at the
-/// market's maximum leverage, so a 40x market maintains at 1/80th of notional.
-fn maintenance_fraction(max_leverage: f64) -> f64 {
-    if max_leverage <= 0.0 {
-        return 0.0;
-    }
-    1.0 / (2.0 * max_leverage)
-}
-
 /// Liquidation for a position opened at `price` with `leverage`, isolated.
 ///
 /// Equity is the margin posted plus what the position has made; the engine
@@ -525,11 +538,10 @@ fn maintenance_fraction(max_leverage: f64) -> f64 {
 /// with `m` the maintenance fraction. A cross position is not this — it dies
 /// against the whole account's equity, which is what the header's rail reads —
 /// so this is the isolated case and the ticket says so.
-fn ticket_liquidation(price: f64, leverage: f64, max_leverage: f64, buy: bool) -> f64 {
+fn ticket_liquidation(price: f64, leverage: f64, maintenance: f64, buy: bool) -> f64 {
     if price <= 0.0 || leverage <= 0.0 {
         return 0.0;
     }
-    let maintenance = maintenance_fraction(max_leverage);
     let liquidation = if buy {
         price * (1.0 - 1.0 / leverage) / (1.0 - maintenance)
     } else {
@@ -578,7 +590,8 @@ pub fn price_ticket(
     market: Option<SymbolRow>,
     buy: bool,
 ) -> Ticket {
-    let max_leverage = market.map_or(0.0, |row| row.leverage);
+    let (max_leverage, maintenance) =
+        market.map_or((0.0, 0.0), |row| (row.leverage, row.maintenance));
     let price = amount(&price).max(0.0);
     let size = amount(&size).abs();
     let ceiling = if max_leverage > 0.0 {
@@ -593,7 +606,7 @@ pub fn price_ticket(
         notional,
         margin: if ready { notional / leverage } else { 0.0 },
         liquidation: if ready {
-            ticket_liquidation(price, leverage, max_leverage, buy)
+            ticket_liquidation(price, leverage, maintenance, buy)
         } else {
             0.0
         },
@@ -1145,7 +1158,10 @@ pub fn apply_feed(rows: Vec<SymbolRow>, tick: MarketTick) -> Vec<SymbolRow> {
         && let Some(row) = rows.iter_mut().find(|row| row.name == context.name)
     {
         *row = SymbolRow {
+            // Both belong to the asset rather than to the day, and the
+            // streamed context does not carry them.
             leverage: row.leverage,
+            maintenance: row.maintenance,
             ..context
         };
     }
@@ -2009,6 +2025,47 @@ mod tests {
     }
 
     #[test]
+    fn a_beat_repices_a_row_without_forgetting_what_the_asset_is() {
+        let held = SymbolRow {
+            name: "BTC".into(),
+            price: 100.0,
+            change_pct: 0.0,
+            volume: 1.0,
+            funding_pct: 0.0,
+            leverage: 40.0,
+            open_interest: 0.0,
+            prev: 100.0,
+            maintenance: 1.0 / 80.0,
+        };
+        // `activeAssetCtx` restates the day's figures and not the asset's, so
+        // it arrives with no maximum leverage and no maintenance rule. Taking
+        // it wholesale would leave the ticket pricing against a zero.
+        let context = parse_context(
+            "BTC".into(),
+            &json!({ "markPx": "110.0", "prevDayPx": "100.0", "dayNtlVlm": "9.0",
+                     "funding": "0.0000125", "openInterest": "5.0" }),
+        );
+        assert_eq!(context.maintenance, 0.0, "the stream does not carry it");
+
+        let beat = MarketTick {
+            context: Some(context),
+            mids: [("BTC".to_owned(), 120.0)].into_iter().collect(),
+            ..MarketTick::default()
+        };
+        let rows = apply_feed(vec![held], beat);
+
+        assert_eq!(rows[0].leverage, 40.0, "the asset's maximum survives");
+        assert_eq!(rows[0].maintenance, 1.0 / 80.0, "and so does its rule");
+        assert_eq!(rows[0].volume, 9.0, "the day's figures are the beat's");
+        assert_eq!(rows[0].price, 120.0, "a mid is fresher than a context");
+        assert_eq!(rows[0].change_pct, 20.0, "re-derived from the close");
+
+        // A beat that names nothing leaves the row exactly as it was.
+        let quiet = apply_feed(rows.clone(), MarketTick::default());
+        assert!(quiet == rows, "a silent beat restates nothing");
+    }
+
+    #[test]
     fn the_ticket_prices_an_order_it_will_never_send() {
         let market = |max_leverage: f64| SymbolRow {
             name: "BTC".into(),
@@ -2017,6 +2074,7 @@ mod tests {
             volume: 0.0,
             funding_pct: 0.0,
             leverage: max_leverage,
+            maintenance: 1.0 / (2.0 * max_leverage),
             open_interest: 0.0,
             prev: 100.0,
         };
@@ -2087,6 +2145,19 @@ mod tests {
         // A market with no published maximum still prices; it just has no
         // maintenance requirement to hold against.
         assert!(price_ticket("100".into(), "2".into(), "10".into(), None, true).ready);
+
+        // The requirement is the venue's to publish, not this arithmetic's to
+        // know. A market that maintains at twice the rate liquidates sooner,
+        // and nothing here had to learn whose rule produced either number.
+        let strict = SymbolRow {
+            maintenance: 1.0 / 40.0,
+            ..market(40.0)
+        };
+        let quoted_strict = price_ticket("100".into(), "2".into(), "10".into(), Some(strict), true);
+        assert!(
+            quoted_strict.liquidation > quoted("100", "2", "10", true).liquidation,
+            "a heavier requirement moves the cliff toward the entry"
+        );
     }
 
     #[test]
@@ -2105,6 +2176,7 @@ mod tests {
             volume: 0.0,
             funding_pct: 0.0,
             leverage: 40.0,
+            maintenance: 1.0 / (2.0 * 40.0),
             open_interest: 0.0,
             prev: 0.0,
         };
@@ -2517,6 +2589,7 @@ mod tests {
                 volume: 0.0,
                 funding_pct: 0.0,
                 leverage: 40.0,
+                maintenance: 1.0 / (2.0 * 40.0),
                 open_interest: 0.0,
                 prev: 1.0,
             },
@@ -2527,6 +2600,7 @@ mod tests {
                 volume: 0.0,
                 funding_pct: 0.0,
                 leverage: 25.0,
+                maintenance: 1.0 / (2.0 * 25.0),
                 open_interest: 0.0,
                 prev: 1.0,
             },
