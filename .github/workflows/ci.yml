@@ -18,6 +18,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   ICED_TEST_BACKEND: tiny-skia
+  # One content-keyed compiler cache for every job on every platform: the six
+  # jobs that build overlapping dependency graphs stop paying for them twice.
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+  CARGO_NET_RETRY: "10"
+  RUSTUP_MAX_RETRIES: "10"
 
 jobs:
   validate:
@@ -28,9 +34,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/cargo-cache
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          scope: workspace
+          shared-key: workspace
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo ice fmt --check
       - run: cargo ice clippy
       - name: Check public Ice API baseline
@@ -87,9 +95,6 @@ jobs:
           rustc --edition=2024 -D warnings --test scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke-tests
           target/native-wgpu-smoke-tests
       - run: cargo test --workspace --locked
-      - name: Drop workspace artifacts before the cache is saved
-        if: always()
-        uses: ./.github/actions/trim-cargo-cache
 
   performance:
     name: Performance contracts
@@ -97,9 +102,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/cargo-cache
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          scope: workspace
+          shared-key: workspace
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run RichTextEditor performance contracts
         run: scripts/editor-performance-contracts.sh target/performance/rich-text-editor.jsonl
       - name: Upload RichTextEditor performance evidence
@@ -122,9 +129,6 @@ jobs:
           cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
           cargo test --locked -p cargo-ice qualification_snapshot_cost -- --ignored --nocapture --test-threads=1
           cargo test --locked -p ui-lang-core lowering_wide_component_calls_scales -- --ignored --nocapture --test-threads=1
-      - name: Drop workspace artifacts before the cache is saved
-        if: always()
-        uses: ./.github/actions/trim-cargo-cache
 
   review:
     name: Review bundles and packaging
@@ -132,9 +136,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/cargo-cache
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          scope: workspace
+          shared-key: workspace
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Verify full and selected review bundles
         run: |
           # A restored target cache can still hold the previous run's bundles,
@@ -253,9 +259,6 @@ jobs:
       - run: cargo ice compat
       - run: scripts/package-smoke.sh
       - run: scripts/downstream-package-smoke.sh
-      - name: Drop workspace artifacts before the cache is saved
-        if: always()
-        uses: ./.github/actions/trim-cargo-cache
 
   msrv:
     name: MSRV (1.88)
@@ -263,12 +266,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/cargo-cache
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - run: rustup toolchain install 1.88.0 --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # This job builds with a pinned toolchain, not the runner's default.
+          key: "1.88.0"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo +1.88.0 check --workspace --locked
-      - name: Drop workspace artifacts before the cache is saved
-        if: always()
-        uses: ./.github/actions/trim-cargo-cache
 
   platforms:
     name: Workspace (${{ matrix.runner }})
@@ -280,7 +285,10 @@ jobs:
         runner: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/cargo-cache
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --locked
       - name: Test native editor interactions
         run: |
@@ -293,9 +301,6 @@ jobs:
             --package showcase \
             --test generated_control_accessibility \
             --output target/platform-review
-      - name: Drop workspace artifacts before the cache is saved
-        if: always()
-        uses: ./.github/actions/trim-cargo-cache
 
   accessibility:
     name: Accessibility (Linux and Windows)
@@ -303,7 +308,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/cargo-cache
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -311,9 +319,6 @@ jobs:
           rustup target add x86_64-pc-windows-gnu
       - run: scripts/a11y-smoke.sh
       - run: scripts/a11y-windows-check.sh
-      - name: Drop workspace artifacts before the cache is saved
-        if: always()
-        uses: ./.github/actions/trim-cargo-cache
 
   native-wgpu:
     name: Native WGPU (${{ matrix.label }})
@@ -349,7 +354,10 @@ jobs:
       ICE_DEV_REQUIRED_DRAW: ${{ matrix.required_draw }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/cargo-cache
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux display and Vulkan dependencies
         if: matrix.label == 'Linux'
         run: |
@@ -370,6 +378,3 @@ jobs:
         if: matrix.label != 'Linux'
         shell: bash
         run: '"${{ matrix.helper }}" "${{ matrix.executable }}"'
-      - name: Drop workspace artifacts before the cache is saved
-        if: always()
-        uses: ./.github/actions/trim-cargo-cache
