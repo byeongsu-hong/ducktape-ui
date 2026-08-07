@@ -800,10 +800,18 @@ where
         }
 
         let preedit_changed = state.shaped_preedit != state.preedit;
+        // A line's shaped glyph run consults the available width only through
+        // wrapping: every line is built with `align_x: Default`, so with
+        // wrapping off, bounds width cannot move a glyph. A pure width change
+        // then invalidates nothing — not the shaping, and not the line vector
+        // either, so it must not even open a shaping pass. Turning wrapping
+        // itself on or off is caught by the `wrapping` term below.
+        let width_reflows = self.wrapping != text::Wrapping::None;
+        let width_changed = width_reflows && state.width != inner_width;
         let needs_shape = source_changed
             || preedit_changed
             || settings_updated
-            || state.width != inner_width
+            || width_changed
             || state.font != font
             || state.text_size != text_size
             || state.line_height != self.line_height
@@ -832,14 +840,7 @@ where
                 .map_or(state.source_lines.as_slice(), |composition| {
                     composition.lines.as_slice()
                 });
-            // A line's shaped glyph run consults the available width only
-            // through wrapping: every line is built with `align_x: Default`,
-            // so with wrapping off, bounds width cannot move a glyph. A pure
-            // width change then invalidates nothing, and re-shaping the whole
-            // document for it costs O(lines) for no observable difference.
-            // Turning wrapping on or off is itself caught below.
-            let width_reflows = self.wrapping != text::Wrapping::None;
-            let geometry_changed = (width_reflows && state.width != inner_width)
+            let geometry_changed = width_changed
                 || state.font != font
                 || state.text_size != text_size
                 || state.line_height != self.line_height

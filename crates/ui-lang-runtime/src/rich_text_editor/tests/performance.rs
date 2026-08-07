@@ -914,11 +914,12 @@ fn performance_contract_100k_viewport_resize() {
     assert_eq!(state.metrics.mapping_line_comparisons, 0);
     assert_eq!(state.metrics.styled_signature_comparisons, 0);
     assert_eq!(state.metrics.newly_owned_styled_texts, 0);
-    assert_eq!(state.metrics.line_vector_slots_prepared, 200_002);
     // This editor has wrapping off, so narrowing it cannot reflow a single
-    // line and nothing needs re-shaping. This used to re-shape all 100_001
-    // paragraphs — ~8.7s of work with no observable difference — and the
-    // contract asserted that count, pinning the waste in place.
+    // line: nothing needs re-shaping, and no shaping pass should open at all.
+    // This used to re-shape all 100_001 paragraphs — ~8.7s of work with no
+    // observable difference — and the contract asserted that count, pinning
+    // the waste in place.
+    assert_eq!(state.metrics.line_vector_slots_prepared, 0);
     assert_eq!(state.metrics.rebuilt_lines, 0);
     assert_eq!(state.metrics.shaped_paragraphs, 0);
     assert_eq!(state.metrics.highlighted_lines, 0);
@@ -926,7 +927,7 @@ fn performance_contract_100k_viewport_resize() {
         "viewport_resize",
         1,
         elapsed,
-        Duration::from_secs(2),
+        Duration::from_millis(100),
         &state.metrics,
     )
     .into_iter()
