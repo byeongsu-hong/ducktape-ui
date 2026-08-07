@@ -2989,6 +2989,16 @@ content growing above the viewport carries the offset with it and the visible
 rows stay put. Scrolling forward is unaffected either way, because rows enter
 from the end and correct only what is already below.
 
+Whichever child holds keyboard focus keeps being laid out wherever it drifts
+to, so it still answers key presses and still moves focus correctly when the
+reader tabs on. Accessibility is not covered the same way: publishing a child's
+semantics requires laying it out, which is the cost being avoided, so a screen
+reader sees only the visible slice and the column publishes no set metadata to
+say how much it is not seeing. `.ice` tests read that same snapshot, so `click`
+and `expect a11y` cannot reach an offscreen child. Use `virtual-row=` for long,
+read-mostly content such as a message history; a collection that has to read
+correctly to assistive tech needs a real list widget instead.
+
 An `overlay` keeps the two trees explicit instead of relying on child order.
 When its bool condition is true, `layer` floats over `content`; the backdrop
 blocks button and scroll input and an optional `dismiss=` route handles a left

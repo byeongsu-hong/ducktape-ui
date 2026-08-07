@@ -14,6 +14,7 @@
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
+use std::time::Duration;
 
 use super::theme::{Theme as UiTheme, alpha};
 use iced::advanced::text::Alignment as TextAlignment;
@@ -22,6 +23,7 @@ use iced::keyboard::{self, key::Named};
 use iced::mouse;
 use iced::widget::Canvas;
 use iced::widget::canvas::{self, Path};
+use iced::window;
 use iced::{Color, Element, Length, Pixels, Point, Rectangle, Size};
 
 const DEFAULT_HEIGHT: f32 = 320.0;
@@ -199,13 +201,12 @@ impl PriceScale {
     }
 }
 
-fn autoscale(candles: &[Candle], range: Range<usize>) -> PriceScale {
-    let mut lo = f64::INFINITY;
-    let mut hi = f64::NEG_INFINITY;
-    for candle in &candles[range] {
-        lo = lo.min(candle.low);
-        hi = hi.max(candle.high);
-    }
+fn autoscale(pyramid: &Pyramid, candles: &[Candle], range: Range<usize>) -> PriceScale {
+    let (lo, hi) = if range.is_empty() {
+        (f64::INFINITY, f64::NEG_INFINITY)
+    } else {
+        pyramid.extremes(candles, range)
+    };
     if !lo.is_finite() || !hi.is_finite() {
         return PriceScale { lo: 0.0, hi: 1.0 };
     }
@@ -242,73 +243,215 @@ fn aggregate_columns(
     range: Range<usize>,
     viewport: Viewport,
     chrome: Chrome,
+    pyramid: &Pyramid,
 ) -> Option<Vec<Option<ColumnAgg>>> {
     let plot = chrome.plot;
     let bar_width = plot.width / viewport.span() as f32;
     if bar_width >= 1.0 || plot.width < 1.0 {
         return None;
     }
-    let mut columns: Vec<Option<ColumnAgg>> = vec![None; plot.width.ceil() as usize];
-    for index in range {
-        let candle = &candles[index];
-        let column = (chrome.x(viewport, index as f64) - plot.x).floor();
-        if column < 0.0 || column >= columns.len() as f32 {
+    let width = plot.width.ceil() as usize;
+    let mut columns: Vec<Option<ColumnAgg>> = vec![None; width];
+    let column_of = |index: usize| (chrome.x(viewport, index as f64) - plot.x).floor() as i64;
+    let mut cursor = range.start;
+    while cursor < range.end {
+        let column = column_of(cursor);
+        if column >= width as i64 {
+            break;
+        }
+        if column < 0 {
+            cursor += 1;
             continue;
         }
-        match &mut columns[column as usize] {
-            Some(agg) => {
-                agg.high = agg.high.max(candle.high);
-                agg.low = agg.low.min(candle.low);
-                agg.close = candle.close;
-                agg.volume += candle.volume;
-                agg.last_index = index;
-            }
-            slot => {
-                *slot = Some(ColumnAgg {
-                    open: candle.open,
-                    high: candle.high,
-                    low: candle.low,
-                    close: candle.close,
-                    volume: candle.volume,
-                    last_index: index,
-                });
-            }
+        // Analytic guess for where the next column starts, corrected by at
+        // most a step or two of float error; columns are monotone in index.
+        let guess = viewport.from + (column + 1) as f64 * viewport.span() / f64::from(plot.width);
+        let mut next = (guess.ceil() as i64).clamp(cursor as i64 + 1, range.end as i64) as usize;
+        while next > cursor + 1 && column_of(next - 1) > column {
+            next -= 1;
         }
+        while next < range.end && column_of(next) <= column {
+            next += 1;
+        }
+        let (low, high) = pyramid.extremes(candles, cursor..next);
+        columns[column as usize] = Some(ColumnAgg {
+            open: candles[cursor].open,
+            high,
+            low,
+            close: candles[next - 1].close,
+            volume: pyramid.volume_sum(cursor..next),
+            last_index: next - 1,
+        });
+        cursor = next;
     }
     Some(columns)
 }
 
+/// Mipmap-style block size for the tape summaries.
+const PYRAMID_BLOCK: usize = 64;
+
+/// Incrementally maintained summaries over the tape: block min/max levels for
+/// O(log) range extremes and prefix sums for O(1) close/volume range sums, so
+/// a rebuild costs O(plot width * log candles) instead of O(visible candles).
+/// Memory is ~2 f64 per candle (prefixes) plus ~2/64th for the levels.
+struct Pyramid {
+    first_ts: i64,
+    last: Option<Candle>,
+    /// level k summarizes blocks of PYRAMID_BLOCK^(k+1) candles.
+    low_min: Vec<Vec<f64>>,
+    high_max: Vec<Vec<f64>>,
+    close_prefix: Vec<f64>,
+    volume_prefix: Vec<f64>,
+}
+
+impl Pyramid {
+    fn empty() -> Self {
+        Self {
+            first_ts: 0,
+            last: None,
+            low_min: Vec::new(),
+            high_max: Vec::new(),
+            close_prefix: vec![0.0],
+            volume_prefix: vec![0.0],
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.close_prefix.len() - 1
+    }
+
+    /// Brings the summaries in line with `candles`: appends extend, a changed
+    /// last candle updates its block path, an evicted front rebuilds.
+    fn sync(&mut self, candles: &[Candle]) {
+        let same_front = candles
+            .first()
+            .is_some_and(|first| first.ts == self.first_ts);
+        if candles.len() < self.len() || (!candles.is_empty() && !same_front) {
+            *self = Self::empty();
+        }
+        if candles.is_empty() {
+            *self = Self::empty();
+            return;
+        }
+        self.first_ts = candles[0].ts;
+        // A tick rewrote the last known candle in place.
+        let known = self.len();
+        if known > 0 && self.last != Some(candles[known - 1]) {
+            let candle = candles[known - 1];
+            let close_base = self.close_prefix[known - 1];
+            let volume_base = self.volume_prefix[known - 1];
+            self.close_prefix[known] = close_base + candle.close;
+            self.volume_prefix[known] = volume_base + candle.volume;
+            self.refresh_blocks(candles, known - 1);
+        }
+        // Appended candles extend the prefixes and their block paths.
+        for index in known..candles.len() {
+            let candle = candles[index];
+            self.close_prefix
+                .push(self.close_prefix[index] + candle.close);
+            self.volume_prefix
+                .push(self.volume_prefix[index] + candle.volume);
+            self.refresh_blocks(candles, index);
+        }
+        self.last = candles.last().copied();
+    }
+
+    /// Recomputes every level block containing `index` from the level below.
+    fn refresh_blocks(&mut self, candles: &[Candle], index: usize) {
+        let mut block = index / PYRAMID_BLOCK;
+        for level in 0.. {
+            if self.low_min.len() == level {
+                self.low_min.push(Vec::new());
+                self.high_max.push(Vec::new());
+            }
+            let (lows, highs) = (&mut self.low_min[level], &mut self.high_max[level]);
+            if lows.len() <= block {
+                lows.resize(block + 1, f64::INFINITY);
+                highs.resize(block + 1, f64::NEG_INFINITY);
+            }
+            let (mut low, mut high) = (f64::INFINITY, f64::NEG_INFINITY);
+            if level == 0 {
+                let start = block * PYRAMID_BLOCK;
+                let end = ((block + 1) * PYRAMID_BLOCK).min(candles.len());
+                for candle in &candles[start..end] {
+                    low = low.min(candle.low);
+                    high = high.max(candle.high);
+                }
+            } else {
+                let start = block * PYRAMID_BLOCK;
+                let end = ((block + 1) * PYRAMID_BLOCK).min(self.low_min[level - 1].len());
+                for child in start..end {
+                    low = low.min(self.low_min[level - 1][child]);
+                    high = high.max(self.high_max[level - 1][child]);
+                }
+            }
+            self.low_min[level][block] = low;
+            self.high_max[level][block] = high;
+            // Keep going until a single root block exists, so upper levels
+            // are never left as stale placeholders when the tape grows.
+            if self.low_min[level].len() <= 1 {
+                break;
+            }
+            block /= PYRAMID_BLOCK;
+        }
+    }
+
+    /// Min low and max high over `range`: partial edges scan directly and
+    /// aligned interiors consume whole summary blocks, level by level.
+    fn extremes(&self, candles: &[Candle], range: Range<usize>) -> (f64, f64) {
+        let mut low = f64::INFINITY;
+        let mut high = f64::NEG_INFINITY;
+        let mut start = range.start;
+        let mut end = range.end;
+
+        let aligned_start = start.next_multiple_of(PYRAMID_BLOCK).min(end);
+        let aligned_end = (end / PYRAMID_BLOCK * PYRAMID_BLOCK).max(aligned_start);
+        for candle in candles[start..aligned_start]
+            .iter()
+            .chain(&candles[aligned_end..end])
+        {
+            low = low.min(candle.low);
+            high = high.max(candle.high);
+        }
+        start = aligned_start / PYRAMID_BLOCK;
+        end = aligned_end / PYRAMID_BLOCK;
+
+        for level in 0..self.low_min.len() {
+            if start >= end {
+                break;
+            }
+            let aligned_start = start.next_multiple_of(PYRAMID_BLOCK).min(end);
+            let aligned_end = (end / PYRAMID_BLOCK * PYRAMID_BLOCK).max(aligned_start);
+            let is_top = level + 1 >= self.low_min.len() || aligned_start >= aligned_end;
+            let blocks = if is_top {
+                (start..end).chain(0..0)
+            } else {
+                (start..aligned_start).chain(aligned_end..end)
+            };
+            for block in blocks {
+                low = low.min(self.low_min[level][block]);
+                high = high.max(self.high_max[level][block]);
+            }
+            if is_top {
+                break;
+            }
+            start = aligned_start / PYRAMID_BLOCK;
+            end = aligned_end / PYRAMID_BLOCK;
+        }
+        (low, high)
+    }
+
+    fn close_sum(&self, range: Range<usize>) -> f64 {
+        self.close_prefix[range.end] - self.close_prefix[range.start]
+    }
+
+    fn volume_sum(&self, range: Range<usize>) -> f64 {
+        self.volume_prefix[range.end] - self.volume_prefix[range.start]
+    }
+}
+
 /// Overlay line colors rotate through these theme roles per moving average.
 const MA_STROKE_WIDTH: f32 = 1.5;
-
-/// Prefix sums of closes over `window`, for O(1) SMA lookups inside it.
-struct ClosePrefix {
-    start: usize,
-    sums: Vec<f64>,
-}
-
-impl ClosePrefix {
-    fn new(candles: &[Candle], window: Range<usize>) -> Self {
-        let start = window.start;
-        let mut sums = Vec::with_capacity(window.len() + 1);
-        sums.push(0.0);
-        let mut total = 0.0;
-        for candle in &candles[window] {
-            total += candle.close;
-            sums.push(total);
-        }
-        Self { start, sums }
-    }
-
-    /// Mean close of the `period` candles ending at `index`, or None while
-    /// the window has too little history before `index`.
-    fn sma(&self, index: usize, period: usize) -> Option<f64> {
-        let end = index.checked_sub(self.start)? + 1;
-        let begin = end.checked_sub(period)?;
-        let span = &self.sums;
-        (end < span.len()).then(|| (span[end] - span[begin]) / period as f64)
-    }
-}
 
 /// Plot area: the canvas minus the price axis strip on the right and the
 /// time axis strip at the bottom.
@@ -361,18 +504,24 @@ struct FrameCtx<'a> {
     viewport: Viewport,
     scale: PriceScale,
     axes: &'a Axes,
+    pyramid: &'a Pyramid,
 }
 
-/// Median spacing between the candles in `range`, for time-label granularity.
+/// Median spacing between the candles in `range`, for time-label
+/// granularity. Wide ranges are stride-sampled (a median over an even sample
+/// is the same label-granularity signal) so this stays O(1)-bounded.
 fn time_step_secs(candles: &[Candle], range: Range<usize>) -> i64 {
+    const SAMPLE_CAP: usize = 1_024;
     let candles = &candles[range];
-    let mut deltas: Vec<i64> = candles
-        .windows(2)
-        .map(|pair| (pair[1].ts - pair[0].ts).max(1))
-        .collect();
-    if deltas.is_empty() {
+    if candles.len() < 2 {
         return 86_400;
     }
+    let pairs = candles.len() - 1;
+    let stride = pairs.div_ceil(SAMPLE_CAP).max(1);
+    let mut deltas: Vec<i64> = (0..pairs)
+        .step_by(stride)
+        .map(|i| (candles[i + 1].ts - candles[i].ts).max(1))
+        .collect();
     let middle = deltas.len() / 2;
     *deltas.select_nth_unstable(middle).1
 }
@@ -934,6 +1083,7 @@ pub struct CandleChart<'a, Message> {
     time_offset_secs: i64,
     moving_averages: Vec<usize>,
     overlays: Vec<Box<dyn ChartOverlay + 'a>>,
+    live: Option<Duration>,
 }
 
 pub fn candle_chart<'a, Message>(
@@ -965,6 +1115,7 @@ fn with_data<'a, Message>(data: Data<'a>, theme: &UiTheme) -> CandleChart<'a, Me
         time_offset_secs: 0,
         moving_averages: Vec::new(),
         overlays: Vec::new(),
+        live: None,
     }
 }
 
@@ -1036,6 +1187,15 @@ impl<'a, Message> CandleChart<'a, Message> {
     pub fn price_lines(self, lines: impl IntoIterator<Item = PriceLine>) -> Self {
         self.overlay(PriceLines::new(lines))
     }
+    /// Repaints on its own beat so a live feed renders without any app
+    /// message or view rebuild: shared-tape mutations are picked up by the
+    /// data fingerprint on each beat (the LiveSurface scheduling idea,
+    /// expressed inside the canvas program).
+    #[must_use]
+    pub fn live(mut self, interval: Duration) -> Self {
+        self.live = Some(interval);
+        self
+    }
 }
 
 impl<'a, Message> From<CandleChart<'a, Message>> for Element<'a, Message>
@@ -1055,6 +1215,7 @@ where
                 time_offset_secs: chart.time_offset_secs,
                 moving_averages: chart.moving_averages,
                 overlays: chart.overlays,
+                live: chart.live,
             })
             .width(width)
             .height(height),
@@ -1087,6 +1248,7 @@ pub struct CandleState {
     hovered: Option<usize>,
     layers: canvas::Cache,
     derived: RefCell<Option<DerivedFrame>>,
+    pyramid: RefCell<Pyramid>,
 }
 
 impl Default for CandleState {
@@ -1099,6 +1261,7 @@ impl Default for CandleState {
             hovered: None,
             layers: canvas::Cache::new(),
             derived: RefCell::new(None),
+            pyramid: RefCell::new(Pyramid::empty()),
         }
     }
 }
@@ -1112,6 +1275,7 @@ struct CandleProgram<'a, Message> {
     time_offset_secs: i64,
     moving_averages: Vec<usize>,
     overlays: Vec<Box<dyn ChartOverlay + 'a>>,
+    live: Option<Duration>,
 }
 
 impl<Message> CandleProgram<'_, Message> {
@@ -1259,6 +1423,10 @@ impl<Message> CandleProgram<'_, Message> {
                 }
                 Some(canvas::Action::request_redraw())
             }
+            canvas::Event::Window(window::Event::RedrawRequested(now)) => {
+                let interval = self.live?;
+                Some(canvas::Action::request_redraw_at(*now + interval))
+            }
             canvas::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
                 // Keyboard crosshair only while the pointer is on the chart,
                 // so arrows keep working for the rest of the app otherwise.
@@ -1349,6 +1517,8 @@ impl<Message> CandleProgram<'_, Message> {
             .fold(0xcbf2_9ce4_8422_2325, |hash, overlay| {
                 mix(hash, overlay.stamp())
             });
+        let mut pyramid = state.pyramid.borrow_mut();
+        pyramid.sync(candles);
         let stamp = fingerprint(candles, overlays, viewport, size, &self.theme.palette);
         let (scale, axes) = {
             let mut derived = state.derived.borrow_mut();
@@ -1356,7 +1526,7 @@ impl<Message> CandleProgram<'_, Message> {
                 Some(cached) if cached.stamp == stamp => (cached.scale, cached.axes.clone()),
                 _ => {
                     state.layers.clear();
-                    let scale = autoscale(candles, range.clone());
+                    let scale = autoscale(&pyramid, candles, range.clone());
                     let axes = self.axes(candles, chrome, viewport, range.clone(), scale);
                     *derived = Some(DerivedFrame {
                         stamp,
@@ -1373,6 +1543,7 @@ impl<Message> CandleProgram<'_, Message> {
             viewport,
             scale,
             axes: &axes,
+            pyramid: &pyramid,
         };
         let layers = state.layers.draw(renderer, size, |frame| {
             self.draw_static(&ctx, frame, range);
@@ -1557,9 +1728,13 @@ impl<Message> CandleProgram<'_, Message> {
 
         // ponytail: the aggregation pass still scans every visible candle
         // (~ms-ctx.scale at 1M); precompute a min/max pyramid if that ever shows.
-        if let Some(columns) =
-            aggregate_columns(ctx.candles, range.clone(), ctx.viewport, ctx.chrome)
-        {
+        if let Some(columns) = aggregate_columns(
+            ctx.candles,
+            range.clone(),
+            ctx.viewport,
+            ctx.chrome,
+            ctx.pyramid,
+        ) {
             // Sub-pixel candles: one wick spanning the column's low..high (a
             // 1px body would be an invisible same-color subset of it) plus an
             // aggregated volume bar.
@@ -1691,10 +1866,17 @@ impl<Message> CandleProgram<'_, Message> {
         }
         let palette = self.theme.palette;
         let colors = [palette.accent, palette.warning, palette.brand];
-        let max_period = self.moving_averages.iter().copied().max().unwrap_or(0);
-        let window = range.start.saturating_sub(max_period)..range.end;
-        let prefix = ClosePrefix::new(ctx.candles, window);
-        let columns = aggregate_columns(ctx.candles, range.clone(), ctx.viewport, ctx.chrome);
+        let sma = |index: usize, period: usize| -> Option<f64> {
+            (index + 1 >= period)
+                .then(|| ctx.pyramid.close_sum(index + 1 - period..index + 1) / period as f64)
+        };
+        let columns = aggregate_columns(
+            ctx.candles,
+            range.clone(),
+            ctx.viewport,
+            ctx.chrome,
+            ctx.pyramid,
+        );
 
         for (slot, period) in self.moving_averages.iter().enumerate() {
             let color = colors[slot % colors.len()];
@@ -1703,7 +1885,7 @@ impl<Message> CandleProgram<'_, Message> {
                 Some(columns) => {
                     for (offset, column) in columns.iter().enumerate() {
                         let Some(column) = column else { continue };
-                        if let Some(mean) = prefix.sma(column.last_index, *period) {
+                        if let Some(mean) = sma(column.last_index, *period) {
                             points.push(Point::new(
                                 ctx.chrome.plot.x + offset as f32,
                                 ctx.scale.y(ctx.chrome.plot, mean),
@@ -1713,7 +1895,7 @@ impl<Message> CandleProgram<'_, Message> {
                 }
                 None => {
                     for index in range.clone() {
-                        if let Some(mean) = prefix.sma(index, *period) {
+                        if let Some(mean) = sma(index, *period) {
                             points.push(Point::new(
                                 ctx.chrome.x(ctx.viewport, index as f64),
                                 ctx.scale.y(ctx.chrome.plot, mean),
@@ -1969,24 +2151,22 @@ mod tests {
     #[test]
     fn autoscale_pads_range() {
         let data = candles(10);
-        let scale = autoscale(&data, 0..10);
+        let scale = autoscale(&pyramid_for(&data), &data, 0..10);
         assert!(scale.lo < 99.0);
         assert!(scale.hi > 111.0);
 
-        let empty = autoscale(&data, 3..3);
+        let empty = autoscale(&pyramid_for(&data), &data, 3..3);
         assert_eq!(empty, PriceScale { lo: 0.0, hi: 1.0 });
 
-        let flat = autoscale(
-            &[Candle {
-                ts: 0,
-                open: 50.0,
-                high: 50.0,
-                low: 50.0,
-                close: 50.0,
-                volume: 0.0,
-            }],
-            0..1,
-        );
+        let flat_data = [Candle {
+            ts: 0,
+            open: 50.0,
+            high: 50.0,
+            low: 50.0,
+            close: 50.0,
+            volume: 0.0,
+        }];
+        let flat = autoscale(&pyramid_for(&flat_data), &flat_data, 0..1);
         assert!(flat.hi > flat.lo);
     }
 
@@ -2017,17 +2197,15 @@ mod tests {
         // A range of a few ulps once made `value += step` a no-op forever.
         for lo in [1.0f64, 60_000.0] {
             let hi = f64::from_bits(lo.to_bits() + 1);
-            let scale = autoscale(
-                &[Candle {
-                    ts: 0,
-                    open: lo,
-                    high: hi,
-                    low: lo,
-                    close: hi,
-                    volume: 0.0,
-                }],
-                0..1,
-            );
+            let ulp_data = [Candle {
+                ts: 0,
+                open: lo,
+                high: hi,
+                low: lo,
+                close: hi,
+                volume: 0.0,
+            }];
+            let scale = autoscale(&pyramid_for(&ulp_data), &ulp_data, 0..1);
             let (ticks, _) = price_ticks(scale, 6);
             assert!(ticks.len() < 1_000);
         }
@@ -2066,7 +2244,7 @@ mod tests {
         let chrome = chrome(BOUNDS);
         let viewport = Viewport::initial(50, DEFAULT_BARS);
         let range = visible_indices(viewport, 50);
-        let scale = autoscale(&data, range.clone());
+        let scale = autoscale(&pyramid_for(&data), &data, range.clone());
 
         let derived = hover_program(&data);
         let axes = derived.axes(&data, chrome, viewport, range.clone(), scale);
@@ -2086,7 +2264,7 @@ mod tests {
         let chrome = chrome(BOUNDS);
         let viewport = Viewport::initial(50, DEFAULT_BARS);
         let range = visible_indices(viewport, 50);
-        let scale = autoscale(&data, range.clone());
+        let scale = autoscale(&pyramid_for(&data), &data, range.clone());
 
         let mut seoul = hover_program(&data);
         seoul.time_offset_secs = 9 * 3_600;
@@ -2101,32 +2279,82 @@ mod tests {
     }
 
     #[test]
-    fn sma_matches_brute_force_and_respects_history() {
-        let data = candles(40);
-        let prefix = ClosePrefix::new(&data, 5..40);
-        for period in [2usize, 5, 10] {
-            for index in 5..40 {
-                let expected = if index + 1 >= 5 + period {
-                    Some(
-                        data[index + 1 - period..=index]
-                            .iter()
-                            .map(|c| c.close)
-                            .sum::<f64>()
-                            / period as f64,
-                    )
-                } else {
-                    None
-                };
-                let actual = prefix.sma(index, period);
-                match (actual, expected) {
-                    (Some(a), Some(e)) => assert!((a - e).abs() < 1e-9),
-                    (a, e) => assert_eq!(a, e, "period {period} index {index}"),
+    fn pyramid_extremes_and_sums_match_brute_force() {
+        let data: Vec<Candle> = (0..5_000)
+            .map(|i| {
+                let base = 100.0 + ((i * 37) % 91) as f64;
+                Candle {
+                    ts: 1_700_000_000 + i as i64 * 60,
+                    open: base,
+                    high: base + ((i * 13) % 17) as f64,
+                    low: base - ((i * 7) % 11) as f64,
+                    close: base + ((i * 29) % 23) as f64 - 11.0,
+                    volume: 10.0 + ((i * 3) % 97) as f64,
                 }
-            }
+            })
+            .collect();
+        let pyramid = pyramid_for(&data);
+        for range in [
+            0..1,
+            0..63,
+            10..64,
+            63..65,
+            0..4096,
+            100..4999,
+            4095..5000,
+            0..5000,
+        ] {
+            let low = data[range.clone()]
+                .iter()
+                .map(|c| c.low)
+                .fold(f64::MAX, f64::min);
+            let high = data[range.clone()]
+                .iter()
+                .map(|c| c.high)
+                .fold(f64::MIN, f64::max);
+            let (p_low, p_high) = pyramid.extremes(&data, range.clone());
+            assert_eq!((p_low, p_high), (low, high), "range {range:?}");
+            let volume: f64 = data[range.clone()].iter().map(|c| c.volume).sum();
+            assert!((pyramid.volume_sum(range.clone()) - volume).abs() < 1e-6);
+            let closes: f64 = data[range.clone()].iter().map(|c| c.close).sum();
+            assert!((pyramid.close_sum(range)).abs() - closes.abs() < 1e-6);
         }
-        // Indices outside the window are unavailable, not out-of-bounds.
-        assert_eq!(prefix.sma(4, 2), None);
-        assert_eq!(prefix.sma(40, 2), None);
+    }
+
+    #[test]
+    fn pyramid_sync_is_incremental_and_survives_eviction() {
+        let mut data = candles(200);
+        let mut incremental = pyramid_for(&data[..150]);
+
+        // Appends extend.
+        incremental.sync(&data);
+        let fresh = pyramid_for(&data);
+        assert_eq!(
+            incremental.extremes(&data, 0..200),
+            fresh.extremes(&data, 0..200)
+        );
+        assert_eq!(incremental.close_sum(0..200), fresh.close_sum(0..200));
+
+        // A tick to the last candle updates its block path.
+        data[199].close += 50.0;
+        data[199].high = data[199].high.max(data[199].close);
+        incremental.sync(&data);
+        let fresh = pyramid_for(&data);
+        assert_eq!(
+            incremental.extremes(&data, 150..200),
+            fresh.extremes(&data, 150..200)
+        );
+        assert_eq!(incremental.close_sum(199..200), fresh.close_sum(199..200));
+
+        // Front eviction rebuilds.
+        data.drain(..37);
+        incremental.sync(&data);
+        let fresh = pyramid_for(&data);
+        assert_eq!(incremental.len(), data.len());
+        assert_eq!(
+            incremental.extremes(&data, 0..data.len()),
+            fresh.extremes(&data, 0..data.len())
+        );
     }
 
     #[test]
@@ -2148,6 +2376,12 @@ mod tests {
         assert_eq!(format_volume(2_100_000_000.0), "2.1B");
     }
 
+    fn pyramid_for(data: &[Candle]) -> Pyramid {
+        let mut pyramid = Pyramid::empty();
+        pyramid.sync(data);
+        pyramid
+    }
+
     fn hover_program(data: &[Candle]) -> CandleProgram<'_, Option<CandleHit>> {
         CandleProgram {
             data: Data::Borrowed(data),
@@ -2158,6 +2392,7 @@ mod tests {
             time_offset_secs: 0,
             moving_averages: Vec::new(),
             overlays: Vec::new(),
+            live: None,
         }
     }
 
@@ -2181,7 +2416,7 @@ mod tests {
             candles: data,
             chrome,
             viewport,
-            scale: autoscale(data, visible.clone()),
+            scale: autoscale(&pyramid_for(data), data, visible.clone()),
             visible,
         }
     }
@@ -2434,8 +2669,9 @@ mod tests {
             to: 4_999.5,
         };
         let range = visible_indices(viewport, data.len());
-        let columns = aggregate_columns(&data, range.clone(), viewport, chrome)
-            .expect("sub-pixel candles aggregate");
+        let columns =
+            aggregate_columns(&data, range.clone(), viewport, chrome, &pyramid_for(&data))
+                .expect("sub-pixel candles aggregate");
         assert_eq!(columns.len(), 400);
 
         let mut expected: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -2483,13 +2719,13 @@ mod tests {
             from: -0.5,
             to: 99.5,
         };
-        assert!(aggregate_columns(&data, 0..100, wide, chrome).is_none());
+        assert!(aggregate_columns(&data, 0..100, wide, chrome, &pyramid_for(&data)).is_none());
 
         let narrow = Viewport {
             from: -0.5,
             to: 799.5,
         };
-        assert!(aggregate_columns(&data, 0..100, narrow, chrome).is_some());
+        assert!(aggregate_columns(&data, 0..100, narrow, chrome, &pyramid_for(&data)).is_some());
     }
 
     #[test]
@@ -2680,6 +2916,7 @@ mod tests {
                 time_offset_secs: 0,
                 moving_averages: Vec::new(),
                 overlays: Vec::new(),
+                live: None,
             };
             let views = [
                 ("last-120", None),

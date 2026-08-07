@@ -9,9 +9,16 @@ changes; crosshair moves reblit that cache and redraw only the overlay.
 
 Scroll to zoom around the cursor, drag to pan, hover for the OHLCV readout,
 and switch symbols in the header. The app runs a production-shaped mock feed:
-`market_connect` backfills 10k candles like a REST kline fetch, and a
-timer-driven subscription plays the role of the exchange WebSocket, ticking
-the last candle every 250ms and occasionally rolling a new one. The tape
+`market_connect` backfills 10k candles like a REST kline fetch, then a
+detached exchange thread pushes ticks into the shared tape every 100ms —
+no app message moves the market. The chart repaints on its own live beat
+(the LiveSurface scheduling idea inside the canvas program), so ticks never
+trigger an app update or view rebuild; a relaxed 500ms subscription samples
+the tape for the header readout only. Measured: one Elm tick cycle
+(update + whole-view rebuild, excluding tree diff and layout) costs 16us in
+this small app and grows with app size, while the beat's repaint stays ~2us
+flat — reproduce with
+`cargo test -p candles-example --release perf::bench_tick_cycle -- --ignored --nocapture`. The tape
 lives behind one shared lock (`SharedCandles`) that the subscription mutates
 in place and the chart locks briefly per frame — no candle data is ever
 copied per tick, per frame, or across the Ice boundary, and history is
@@ -43,16 +50,14 @@ bounded by viewport pixels for any chart):
 | candles | view | static-layer rebuild | cached frame |
 | ------: | :-- | ---: | ---: |
 | 1k - 1M | last 120 | ~85us | ~2us |
-| 10k | all visible | 0.6ms | ~2us |
-| 100k | all visible | 1.4ms | ~2us |
-| 1M | all visible | 11.5ms | ~2us |
+| 1k - 1M | all visible | 600-900us | ~2us |
 
-The cached (per cursor move) frame is flat at any zoom and any dataset size:
-scale and axes are memoized under the same fingerprint that keys the cached
-geometry. Rebuilds are bounded too — once candles are narrower than a pixel
-they fold into per-pixel columns (M4-style), so tessellation is O(plot width);
-what remains at extreme sizes is the O(visible) numeric scan (see the
-`ponytail:` marker in `candle_chart.rs`). Reproduce with:
+Every per-frame cost is bounded by plot width, not dataset size: the cached
+(per cursor move) frame is memoized flat, and rebuilds run on an incrementally
+maintained summary pyramid — per-pixel column aggregation and autoscale are
+O(width x log candles) range queries, prefix sums answer volume/SMA in O(1),
+and a tick updates only its block path in O(log). Memory cost: ~2 f64 per
+candle. Reproduce with:
 
 ```bash
 cargo test -p ducktape-ui --release --features candle-chart,tiny-skia,x11 \
