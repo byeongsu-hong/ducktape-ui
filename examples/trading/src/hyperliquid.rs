@@ -209,6 +209,9 @@ pub struct Account {
     /// How far the account's equity has fallen toward its maintenance
     /// requirement, already scaled to the rail's pixel width.
     pub health: f64,
+    /// The same reading as a percentage, so the rail's length is also
+    /// available as a number the accessibility tree can carry.
+    pub margin_pct: f64,
     pub positions: Vec<Position>,
 }
 
@@ -519,6 +522,7 @@ fn parse_account(value: &Value) -> Account {
         notional: num(&summary, "totalNtlPos"),
         maintenance,
         health: margin_load(equity, maintenance) * RISK_RAIL_WIDTH,
+        margin_pct: margin_load(equity, maintenance) * 100.0,
         positions,
     }
 }
@@ -1025,6 +1029,7 @@ pub fn mark_account(account: Option<Account>, positions: Vec<Position>) -> Optio
         // The requirement itself waits for the poll, but the equity it is
         // measured against does not, so the rail closes as the account loses.
         health: margin_load(value, account.maintenance) * RISK_RAIL_WIDTH,
+        margin_pct: margin_load(value, account.maintenance) * 100.0,
         positions,
         ..account
     })
@@ -1091,6 +1096,12 @@ pub fn fmt_latency(millis: i64) -> String {
         return "—".to_owned();
     }
     format!("{millis}ms")
+}
+
+/// A plain share, for a figure that is a proportion rather than a move: no
+/// sign, because a margin requirement is never a gain.
+pub fn fmt_share(percent: f64) -> String {
+    format!("{percent:.0}%")
 }
 
 /// The spread as a share of the mid, in basis points. A spread is only worth
@@ -1643,6 +1654,10 @@ mod tests {
             RISK_RAIL_WIDTH / 5.0,
             "a fifth of the equity is spoken for"
         );
+        // The rail is a length, and a length is not readable aloud. The same
+        // reading has to exist as a number for the accessibility tree.
+        assert_eq!(account.margin_pct, 20.0);
+        assert_eq!(fmt_share(account.margin_pct), "20%");
 
         // The requirement waits for the next poll, but the equity it is
         // measured against does not: losing half the account doubles the rail.
