@@ -687,6 +687,7 @@ view
                         gap=12.0
                         align=center
                       Label value="POSITIONS"
+                      Label value=fmt_count(len(positions))
                       match hover
                         some(hit)
                           row #readout gap=10.0 align=center
@@ -810,9 +811,9 @@ view
                         pr=18.0
                         gap=10.0
                         align=center
-                      Label value="YOUR FILLS"
+                      Label value="RECENT FILLS"
                       space w=fill
-                      Label value=coin
+                      Label value=fmt_count(len(history))
                     row
                       with
                         w=fill
@@ -945,6 +946,30 @@ view
                   Label value="OPEN ORDERS"
                   space w=fill
                   Label value=fmt_count(len(orders))
+                row
+                  with
+                    w=fill
+                    pl=14.0
+                    pr=14.0
+                    pb=8.0
+                    gap=8.0
+                  Head
+                    with
+                      name="COIN"
+                      width=48.0
+                      right=false
+                  space w=fill
+                  Head
+                    with
+                      name="PRICE"
+                      width=78.0
+                      right=true
+                  Head
+                    with
+                      name="SIZE"
+                      width=56.0
+                      right=true
+                rule horizontal thickness=1.0 color=edge
                 scroll #order-list
                   with
                     h=fill
