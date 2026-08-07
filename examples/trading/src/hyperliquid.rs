@@ -1098,6 +1098,17 @@ pub fn fmt_latency(millis: i64) -> String {
     format!("{millis}ms")
 }
 
+/// An hourly funding rate. Two decimals is the precision the rest of the
+/// panel wants and the one funding cannot use: the rate is a hundredth of a
+/// percent on most markets, so `fmt_pct` renders 166 of the exchange's 177
+/// funded markets as an identical "+0.00%". Four decimals is what the venue
+/// itself quotes, and it is the difference between a column and a row of
+/// zeroes.
+pub fn fmt_funding(percent: f64) -> String {
+    let sign = if percent >= 0.0 { "+" } else { "" };
+    format!("{sign}{percent:.4}%")
+}
+
 /// A plain share, for a figure that is a proportion rather than a move: no
 /// sign, because a margin requirement is never a gain.
 pub fn fmt_share(percent: f64) -> String {
@@ -1820,6 +1831,14 @@ mod tests {
         assert_eq!(fmt_latency(42), "42ms");
         assert_eq!(fmt_latency(0), "—", "unmeasured is not instant");
         assert_eq!(fmt_latency(-1), "—");
+
+        // Hourly funding is a hundredth of a percent on most of the exchange,
+        // so the two decimals every other figure here uses would render 166 of
+        // the 177 funded markets as the same "+0.00%".
+        assert_eq!(fmt_pct(0.00125), "+0.00%", "what two decimals can say");
+        assert_eq!(fmt_funding(0.00125), "+0.0013%");
+        assert_eq!(fmt_funding(-0.232341), "-0.2323%", "the widest real rate");
+        assert_eq!(fmt_funding(0.0), "+0.0000%");
     }
 
     /// The fixtures above encode what the exchange documents. This one asks

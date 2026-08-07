@@ -40,6 +40,7 @@ extern crate::hyperliquid
   sync fmt_latency(millis:i64) -> str
   sync fmt_bps(percent:f64) -> str
   sync fmt_share(percent:f64) -> str
+  sync fmt_funding(percent:f64) -> str
   sync fmt_compact_usd(value:f64) -> str
   sync fmt_pnl(value:f64) -> str
   sync fmt_count(value:i64) -> str
