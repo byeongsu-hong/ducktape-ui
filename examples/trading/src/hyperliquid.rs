@@ -11,7 +11,7 @@ use ducktape_ui::ui::candle_chart::{
     format_volume,
 };
 use ducktape_ui::ui::theme;
-use iced::{Element, Length};
+use iced::{Color, Element, Font, Length};
 use serde_json::{Value, json};
 use ui_lang_runtime::{Role, StableId, accessible};
 
@@ -22,6 +22,33 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 /// Candles fetched when a market is opened, and on every poll after that.
 const BACKFILL_BARS: i64 = 500;
 const REFRESH_BARS: i64 = 3;
+
+fn rgb(hex: u32) -> Color {
+    Color::from_rgb8(
+        ((hex >> 16) & 0xff) as u8,
+        ((hex >> 8) & 0xff) as u8,
+        (hex & 0xff) as u8,
+    )
+}
+
+/// The chart wears the terminal's palette rather than the library default:
+/// a cold near-black ground, monochrome moving averages, and colour reserved
+/// for the two things that mean money moved.
+fn chart_theme() -> theme::Theme {
+    let mut chart = theme::DARK;
+    chart.palette.background = rgb(0x0b_0c_0e);
+    chart.palette.foreground = rgb(0xe6_e8_ec);
+    chart.palette.muted_foreground = rgb(0x78_80_8d);
+    chart.palette.border = rgb(0x23_28_30);
+    chart.palette.success = rgb(0x2e_bd_85);
+    chart.palette.destructive = rgb(0xf6_46_5d);
+    // The moving-average slots; steel rather than colour, so the fills and
+    // the position levels are the only saturated marks on the plot.
+    chart.palette.accent = rgb(0x4a_51_5c);
+    chart.palette.warning = rgb(0x78_80_8d);
+    chart.typography.font = Font::with_name("Geist Mono");
+    chart
+}
 
 /// One HTTP agent for the process: connection reuse plus a global timeout, so
 /// a stalled request cannot wedge the polling loop forever.
@@ -422,7 +449,7 @@ pub fn symbol_row(rows: Vec<SymbolRow>, coin: String) -> Option<SymbolRow> {
 /// This account's fills on one market, as chart glyphs: a buy points up out
 /// of its price, a sell points down into it.
 fn fill_markers(fills: &[Fill], coin: &str) -> Vec<ChartMarker> {
-    let palette = theme::DARK.palette;
+    let palette = chart_theme().palette;
     fills
         .iter()
         .filter(|fill| fill.coin == coin)
@@ -445,7 +472,7 @@ fn fill_markers(fills: &[Fill], coin: &str) -> Vec<ChartMarker> {
 /// The levels an open position is read against: where it was entered, and
 /// where it dies. A cross-margin position reports no liquidation price.
 fn position_lines(positions: &[Position], coin: &str) -> Vec<PriceLine> {
-    let palette = theme::DARK.palette;
+    let palette = chart_theme().palette;
     positions
         .iter()
         .filter(|position| position.coin == coin)
@@ -472,7 +499,7 @@ pub fn chart(
     positions: &[Position],
     coin: &str,
 ) -> Element<'static, Option<CandleHit>> {
-    let chart = candle_chart_shared(tape.candles.clone(), &theme::DARK)
+    let chart = candle_chart_shared(tape.candles.clone(), &chart_theme())
         .height(Length::Fill)
         .moving_averages([20, 60])
         .price_lines(position_lines(positions, coin))

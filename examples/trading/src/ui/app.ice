@@ -1,14 +1,20 @@
 app Trading
   title "Ducktape Trading"
   id "dev.ducktape.ice.trading"
-  text-size 14
+  font "../../../showcase/assets/fonts/Geist-Regular.ttf"
+  font "../../../showcase/assets/fonts/Geist-Bold.ttf"
+  font "../../../showcase/assets/fonts/GeistMono-Regular.ttf"
+  text-size 13
   window
     size 1440 900
-    min-size 1100 700
+    min-size 1120 720
     position centered
 
 use "theme.ice"
 use "extern/hyperliquid.ice"
+
+font geist family="Geist" default=true
+font digits family="Geist Mono"
 
 state
   gate = true
@@ -30,9 +36,209 @@ state
 derived
   watching = !gate && !empty(address)
 
+component Num(value:str, size:f64, width:f64)
+  text value
+    with
+      size=size
+      w=width
+      align-x=right
+      font=digits
+      @text-fg
+
+component Delta(value:str, up:bool, size:f64, width:f64)
+  col #root w=width
+    if up
+      text value
+        with
+          size=size
+          w=fill
+          align-x=right
+          font=digits
+          @text-up
+    if !up
+      text value
+        with
+          size=size
+          w=fill
+          align-x=right
+          font=digits
+          @text-down
+
+component Label(value:str)
+  text value
+    with
+      size=10.0
+      tracking=1.1
+      @text-faint
+
+component IntervalTab(name:str, current:str)
+  emits
+    pick(str)
+  col #root
+    if name == current
+      button #tab-on -> emit(pick, name)
+        with
+          label=name
+          w=38.0
+          p=5.0
+        active bg=raised text=fg r=4.0
+        hovered bg=raised text=fg r=4.0
+        text name
+          with
+            size=11.0
+            w=fill
+            align-x=center
+            font=digits
+            @text-fg
+    if name != current
+      button #tab-off -> emit(pick, name)
+        with
+          label=name
+          w=38.0
+          p=5.0
+        active bg=panel text=muted r=4.0
+        hovered bg=raised text=fg r=4.0
+        text name
+          with
+            size=11.0
+            w=fill
+            align-x=center
+            font=digits
+            @text-muted
+
+component MarketRow(market:SymbolRow, selected:bool)
+  emits
+    pick(str)
+  button #row -> emit(pick, market.name)
+    with
+      label=market.name
+      w=fill
+      p=0.0
+    active bg=panel text=fg r=0.0
+    hovered bg=raised text=fg r=0.0
+    row
+      with
+        w=fill
+        h=30.0
+        align=center
+      if selected && market.change_pct >= 0.0
+        rule vertical thickness=3.0 color=up
+      if selected && market.change_pct < 0.0
+        rule vertical thickness=3.0 color=down
+      if !selected
+        rule vertical thickness=3.0 color=panel
+      row
+        with
+          w=fill
+          px=10.0
+          gap=8.0
+          align=center
+        if selected
+          text market.name
+            with
+              size=12.0
+              w=fill
+              @text-fg
+        if !selected
+          text market.name
+            with
+              size=12.0
+              w=fill
+              @text-muted
+        Num
+          with
+            value=fmt_px(market.price)
+            size=11.0
+            width=78.0
+        Delta
+          with
+            value=fmt_pct(market.change_pct)
+            up=(market.change_pct >= 0.0)
+            size=11.0
+            width=58.0
+
+component PositionRow(held:Position)
+  row #root
+    with
+      w=fill
+      h=38.0
+      px=14.0
+      gap=10.0
+      align=center
+    text held.coin
+      with
+        size=12.0
+        w=72.0
+        @text-fg
+    if held.size >= 0.0
+      text "LONG"
+        with
+          size=10.0
+          w=56.0
+          tracking=0.8
+          @text-up
+    if held.size < 0.0
+      text "SHORT"
+        with
+          size=10.0
+          w=56.0
+          tracking=0.8
+          @text-down
+    Num
+      with
+        value=fmt_size(held.size)
+        size=12.0
+        width=96.0
+    Num
+      with
+        value=fmt_px(held.entry)
+        size=12.0
+        width=104.0
+    Num
+      with
+        value=fmt_px(held.mark)
+        size=12.0
+        width=104.0
+    col w=104.0
+      if held.liq > 0.0
+        text fmt_px(held.liq)
+          with
+            size=12.0
+            w=fill
+            align-x=right
+            font=digits
+            @text-down
+      if held.liq <= 0.0
+        text "none"
+          with
+            size=12.0
+            w=fill
+            align-x=right
+            font=digits
+            @text-faint
+    Num
+      with
+        value=fmt_usd(held.margin)
+        size=12.0
+        width=104.0
+    space w=fill
+    col gap=1.0 w=132.0
+      Delta
+        with
+          value=fmt_signed_usd(held.pnl)
+          up=(held.pnl >= 0.0)
+          size=15.0
+          width=132.0
+      Delta
+        with
+          value=fmt_pct(held.roe_pct)
+          up=(held.pnl >= 0.0)
+          size=10.0
+          width=132.0
+
 on connect
   address = trim(draft)
-  gate = false
+  gate = true
   status = "Loading"
   tape = tape_focus(tape, coin, interval)
   parallel
@@ -43,12 +249,16 @@ on connect
 
 on browse
   address = ""
-  gate = false
+  gate = true
   status = "Loading"
   tape = tape_focus(tape, coin, interval)
   parallel
     run hl_symbols() -> symbols_loaded _ | failed _
     run hl_candles(tape, coin, interval) -> candles_loaded _ | failed _
+
+on reopen
+  draft = address
+  gate = true
 
 on pick_symbol(name)
   coin = name
@@ -98,10 +308,6 @@ on fills_loaded(rows)
 on failed(error)
   status = error.message
 
-on reopen
-  draft = address
-  gate = true
-
 on candle_hovered(next)
   hover = next
 
@@ -114,7 +320,7 @@ view
   overlay
     with
       when=gate
-      backdrop=black/70
+      backdrop=black/80
       p=24.0
       align-x=center
       align-y=center
@@ -125,392 +331,355 @@ view
           h=fill
           bg=bg
         col w=fill h=fill
-          box #header w=fill bg=surface
+          box #header
+            with
+              w=fill
+              h=58.0
+              bg=panel
             row
               with
                 w=fill
-                p=12.0
-                gap=20.0
+                h=fill
+                px=16.0
+                gap=18.0
                 align=center
-              col gap=2.0
-                row gap=8.0 align=center
-                  text coin size=18.0 @text-fg
-                  match focus
-                    some(row)
-                      if row.change_pct >= 0.0
-                        text fmt_px(row.price) size=18.0 @text-up
-                      if row.change_pct < 0.0
-                        text fmt_px(row.price) size=18.0 @text-down
-                    none
-                      text "-" size=18.0 @text-muted
-                text "Hyperliquid perpetuals" size=11.0 @text-muted
+              row gap=10.0 align=center
+                text coin
+                  with
+                    size=20.0
+                    @text-fg
+                    @font-bold
+                Label value="PERP"
               match focus
                 some(row)
-                  row gap=20.0 align=center
-                    col gap=2.0
-                      text "24h change" size=10.0 @text-muted
-                      if row.change_pct >= 0.0
-                        text fmt_pct(row.change_pct) size=13.0 @text-up
-                      if row.change_pct < 0.0
-                        text fmt_pct(row.change_pct) size=13.0 @text-down
-                    col gap=2.0
-                      text "24h volume" size=10.0 @text-muted
-                      text fmt_volume(row.volume) size=13.0 @text-fg
-                    col gap=2.0
-                      text "Funding" size=10.0 @text-muted
-                      if row.funding_pct >= 0.0
-                        text fmt_pct(row.funding_pct) size=13.0 @text-up
-                      if row.funding_pct < 0.0
-                        text fmt_pct(row.funding_pct) size=13.0 @text-down
-                    col gap=2.0
-                      text "Max leverage" size=10.0 @text-muted
-                      text fmt_leverage(row.leverage) size=13.0 @text-fg
+                  row gap=14.0 align=center
+                    if row.change_pct >= 0.0
+                      text fmt_px(row.price)
+                        with
+                          size=20.0
+                          font=digits
+                          @text-up
+                    if row.change_pct < 0.0
+                      text fmt_px(row.price)
+                        with
+                          size=20.0
+                          font=digits
+                          @text-down
+                    Delta
+                      with
+                        value=fmt_pct(row.change_pct)
+                        up=(row.change_pct >= 0.0)
+                        size=12.0
+                        width=64.0
+                    rule vertical thickness=1.0 color=edge
+                    row gap=6.0 align=center
+                      Label value="VOL"
+                      text fmt_volume(row.volume)
+                        with
+                          size=11.0
+                          font=digits
+                          @text-muted
+                      Label value="FUNDING"
+                      text fmt_pct(row.funding_pct)
+                        with
+                          size=11.0
+                          font=digits
+                          @text-muted
+                      Label value="MAX"
+                      text fmt_leverage(row.leverage)
+                        with
+                          size=11.0
+                          font=digits
+                          @text-muted
                 none
-                  text "Loading markets" size=12.0 @text-muted
+                  text "Loading markets" size=11.0 @text-faint
               space w=fill
-              row #intervals gap=6.0 align=center
-                button "1m" #iv-1m p=6.0 -> pick_interval("1m")
-                  active bg=raised text=fg r=6.0
-                  hovered bg=border text=fg r=6.0
-                button "5m" #iv-5m p=6.0 -> pick_interval("5m")
-                  active bg=raised text=fg r=6.0
-                  hovered bg=border text=fg r=6.0
-                button "15m" #iv-15m p=6.0 -> pick_interval("15m")
-                  active bg=raised text=fg r=6.0
-                  hovered bg=border text=fg r=6.0
-                button "1h" #iv-1h p=6.0 -> pick_interval("1h")
-                  active bg=raised text=fg r=6.0
-                  hovered bg=border text=fg r=6.0
-                button "4h" #iv-4h p=6.0 -> pick_interval("4h")
-                  active bg=raised text=fg r=6.0
-                  hovered bg=border text=fg r=6.0
-                button "1d" #iv-1d p=6.0 -> pick_interval("1d")
-                  active bg=raised text=fg r=6.0
-                  hovered bg=border text=fg r=6.0
+              row #intervals gap=2.0 align=center
+                IntervalTab name="1m" current=interval
+                  events
+                    pick -> pick_interval _
+                IntervalTab name="5m" current=interval
+                  events
+                    pick -> pick_interval _
+                IntervalTab name="15m" current=interval
+                  events
+                    pick -> pick_interval _
+                IntervalTab name="1h" current=interval
+                  events
+                    pick -> pick_interval _
+                IntervalTab name="4h" current=interval
+                  events
+                    pick -> pick_interval _
+                IntervalTab name="1d" current=interval
+                  events
+                    pick -> pick_interval _
+              rule vertical thickness=1.0 color=edge
               match account
                 some(held)
-                  row gap=20.0 align=center
-                    col gap=2.0
-                      text "Account value" size=10.0 @text-muted
-                      text fmt_usd(held.value) size=13.0 @text-fg
-                    col gap=2.0
-                      text "Unrealized PnL" size=10.0 @text-muted
-                      if held.pnl >= 0.0
-                        text fmt_signed_usd(held.pnl) size=13.0 @text-up
-                      if held.pnl < 0.0
-                        text fmt_signed_usd(held.pnl) size=13.0 @text-down
-                    col gap=2.0
-                      text "Margin used" size=10.0 @text-muted
-                      text fmt_usd(held.margin_used) size=13.0 @text-fg
+                  row gap=14.0 align=center
+                    row gap=6.0 align=center
+                      Label value="EQUITY"
+                      text fmt_usd(held.value)
+                        with
+                          size=13.0
+                          font=digits
+                          @text-fg
+                    row gap=6.0 align=center
+                      Label value="PNL"
+                      Delta
+                        with
+                          value=fmt_signed_usd(held.pnl)
+                          up=(held.pnl >= 0.0)
+                          size=13.0
+                          width=104.0
                 none
-                  text "Read-only" size=12.0 @text-muted
+                  Label value="READ ONLY"
+          rule horizontal thickness=1.0 color=edge
           row w=fill h=fill
             box #markets
               with
-                w=260.0
+                w=248.0
                 h=fill
-                bg=surface
+                bg=panel
               col w=fill h=fill
                 box w=fill p=10.0
-                  input "Search markets" #search <-> query hint="BTC" change=search
+                  input "" #search <-> query
+                    with
+                      label="Search markets"
+                      hint="Search markets"
+                      change=search
+                      text-size=12.0
+                    active bg=raised border=edge r=4.0 placeholder=faint value=fg
+                    hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
+                    focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                 row
                   with
                     w=fill
-                    px=10.0
-                    pb=6.0
+                    px=12.0
+                    pb=8.0
                     gap=8.0
-                  text "Market"
+                  Label value="MARKET"
+                  space w=fill
+                  text "LAST"
                     with
                       size=10.0
-                      w=fill
-                      @text-muted
-                  text "Price"
-                    with
-                      size=10.0
-                      w=80.0
+                      w=78.0
                       align-x=right
-                      @text-muted
-                  text "24h"
+                      tracking=1.1
+                      @text-faint
+                  text "24H"
                     with
                       size=10.0
-                      w=64.0
+                      w=58.0
                       align-x=right
-                      @text-muted
+                      tracking=1.1
+                      @text-faint
+                rule horizontal thickness=1.0 color=edge
                 scroll #market-list h=fill
                   col w=fill
                     for row in visible
-                      button #market(row.name) -> pick_symbol(row.name)
-                        with
-                          label=row.name
-                          w=fill
-                          p=8.0
-                        active bg=surface text=fg r=0.0
-                        hovered bg=raised text=fg r=0.0
-                        row
-                          with
-                            w=fill
-                            gap=8.0
-                            align=center
-                          if row.name == coin
-                            text row.name
-                              with
-                                size=12.0
-                                w=fill
-                                @text-primary
-                          if row.name != coin
-                            text row.name
-                              with
-                                size=12.0
-                                w=fill
-                                @text-fg
-                          text fmt_px(row.price)
-                            with
-                              size=12.0
-                              w=80.0
-                              align-x=right
-                              @text-fg
-                          if row.change_pct >= 0.0
-                            text fmt_pct(row.change_pct)
-                              with
-                                size=12.0
-                                w=64.0
-                                align-x=right
-                                @text-up
-                          if row.change_pct < 0.0
-                            text fmt_pct(row.change_pct)
-                              with
-                                size=12.0
-                                w=64.0
-                                align-x=right
-                                @text-down
+                      MarketRow market=row selected=(row.name == coin) #market(row.name)
+                        events
+                          pick -> pick_symbol _
+            rule vertical thickness=1.0 color=edge
             col w=fill h=fill
               box #chart-frame
                 with
                   w=fill
                   h=fill
-                  p=8.0
+                  p=6.0
                 extern chart(tape, fills, positions, coin) #chart -> candle_hovered _
+              rule horizontal thickness=1.0 color=edge
               box #positions
                 with
                   w=fill
-                  h=240.0
-                  bg=surface
+                  h=214.0
+                  bg=panel
                 col w=fill h=fill
                   row
                     with
                       w=fill
-                      p=10.0
-                      gap=10.0
+                      h=34.0
+                      px=14.0
+                      gap=12.0
                       align=center
-                    text "Positions" size=13.0 @text-fg
+                    Label value="POSITIONS"
+                    space w=fill
                     match hover
                       some(hit)
-                        row #readout gap=8.0 align=center
-                          text "O" size=11.0 @text-muted
-                          text fmt_px(hit.open) size=11.0 @text-fg
-                          text "H" size=11.0 @text-muted
-                          text fmt_px(hit.high) size=11.0 @text-fg
-                          text "L" size=11.0 @text-muted
-                          text fmt_px(hit.low) size=11.0 @text-fg
-                          text "C" size=11.0 @text-muted
-                          text fmt_px(hit.close) size=11.0 @text-fg
-                          text "Vol" size=11.0 @text-muted
-                          text fmt_volume(hit.volume) size=11.0 @text-fg
+                        row #readout gap=10.0 align=center
+                          Label value="O"
+                          text fmt_px(hit.open)
+                            with
+                              size=11.0
+                              font=digits
+                              @text-muted
+                          Label value="H"
+                          text fmt_px(hit.high)
+                            with
+                              size=11.0
+                              font=digits
+                              @text-muted
+                          Label value="L"
+                          text fmt_px(hit.low)
+                            with
+                              size=11.0
+                              font=digits
+                              @text-muted
+                          Label value="C"
+                          text fmt_px(hit.close)
+                            with
+                              size=11.0
+                              font=digits
+                              @text-fg
+                          Label value="VOL"
+                          text fmt_volume(hit.volume)
+                            with
+                              size=11.0
+                              font=digits
+                              @text-muted
                       none
-                        text status size=11.0 @text-muted
-                    space w=fill
-                    text "Scroll to zoom, drag to pan" size=11.0 @text-muted
+                        text status size=11.0 @text-faint
                   row
                     with
                       w=fill
-                      px=10.0
-                      pb=6.0
-                      gap=8.0
-                    text "Coin"
+                      px=14.0
+                      pb=8.0
+                      gap=10.0
+                    text "COIN"
                       with
                         size=10.0
-                        w=90.0
-                        @text-muted
-                    text "Side"
+                        w=72.0
+                        tracking=1.1
+                        @text-faint
+                    text "SIDE"
                       with
                         size=10.0
-                        w=60.0
-                        @text-muted
-                    text "Size"
+                        w=56.0
+                        tracking=1.1
+                        @text-faint
+                    text "SIZE"
                       with
                         size=10.0
-                        w=100.0
+                        w=96.0
                         align-x=right
-                        @text-muted
-                    text "Entry"
+                        tracking=1.1
+                        @text-faint
+                    text "ENTRY"
                       with
                         size=10.0
-                        w=110.0
+                        w=104.0
                         align-x=right
-                        @text-muted
-                    text "Mark"
+                        tracking=1.1
+                        @text-faint
+                    text "MARK"
                       with
                         size=10.0
-                        w=110.0
+                        w=104.0
                         align-x=right
-                        @text-muted
-                    text "Liq."
+                        tracking=1.1
+                        @text-faint
+                    text "LIQ"
                       with
                         size=10.0
-                        w=110.0
+                        w=104.0
                         align-x=right
-                        @text-muted
-                    text "Margin"
+                        tracking=1.1
+                        @text-faint
+                    text "MARGIN"
                       with
                         size=10.0
-                        w=100.0
+                        w=104.0
                         align-x=right
-                        @text-muted
-                    text "PnL"
+                        tracking=1.1
+                        @text-faint
+                    space w=fill
+                    text "UNREALIZED"
                       with
                         size=10.0
-                        w=120.0
+                        w=132.0
                         align-x=right
-                        @text-muted
-                    text "ROE"
-                      with
-                        size=10.0
-                        w=80.0
-                        align-x=right
-                        @text-muted
+                        tracking=1.1
+                        @text-faint
+                  rule horizontal thickness=1.0 color=edge
                   scroll #position-list h=fill
                     col w=fill
                       if empty(positions) && watching
-                        box w=fill p=16.0
-                          text "No open positions" size=12.0 @text-muted
-                      if !watching
-                        box w=fill p=16.0
-                          button "Connect an address" #reconnect p=8.0 -> reopen
-                            active bg=raised text=fg r=6.0
-                            hovered bg=border text=fg r=6.0
-                      for held in positions
-                        row
+                        box
                           with
                             w=fill
-                            px=10.0
-                            py=6.0
-                            gap=8.0
-                            align=center
-                          text held.coin
-                            with
-                              size=12.0
-                              w=90.0
-                              @text-fg
-                          if held.size >= 0.0
-                            text held.side
-                              with
-                                size=12.0
-                                w=60.0
-                                @text-up
-                          if held.size < 0.0
-                            text held.side
-                              with
-                                size=12.0
-                                w=60.0
-                                @text-down
-                          text fmt_size(held.size)
-                            with
-                              size=12.0
-                              w=100.0
-                              align-x=right
-                              @text-fg
-                          text fmt_px(held.entry)
-                            with
-                              size=12.0
-                              w=110.0
-                              align-x=right
-                              @text-fg
-                          text fmt_px(held.mark)
-                            with
-                              size=12.0
-                              w=110.0
-                              align-x=right
-                              @text-fg
-                          if held.liq > 0.0
-                            text fmt_px(held.liq)
-                              with
-                                size=12.0
-                                w=110.0
-                                align-x=right
-                                @text-down
-                          if held.liq <= 0.0
-                            text "-"
-                              with
-                                size=12.0
-                                w=110.0
-                                align-x=right
-                                @text-muted
-                          text fmt_usd(held.margin)
-                            with
-                              size=12.0
-                              w=100.0
-                              align-x=right
-                              @text-fg
-                          if held.pnl >= 0.0
-                            text fmt_signed_usd(held.pnl)
-                              with
-                                size=12.0
-                                w=120.0
-                                align-x=right
-                                @text-up
-                          if held.pnl < 0.0
-                            text fmt_signed_usd(held.pnl)
-                              with
-                                size=12.0
-                                w=120.0
-                                align-x=right
-                                @text-down
-                          if held.roe_pct >= 0.0
-                            text fmt_pct(held.roe_pct)
-                              with
-                                size=12.0
-                                w=80.0
-                                align-x=right
-                                @text-up
-                          if held.roe_pct < 0.0
-                            text fmt_pct(held.roe_pct)
-                              with
-                                size=12.0
-                                w=80.0
-                                align-x=right
-                                @text-down
+                            h=120.0
+                            align-x=center
+                            align-y=center
+                          text "No open positions on this account." size=12.0 @text-faint
+                      if !watching
+                        box
+                          with
+                            w=fill
+                            h=120.0
+                            align-x=center
+                            align-y=center
+                          button #reconnect p=10.0 label="Connect an address" -> reopen
+                            active bg=raised text=fg r=4.0
+                            hovered bg=edge text=fg r=4.0
+                            text "Connect an address" size=12.0 @text-fg
+                      for held in positions
+                        PositionRow held=held #position(held.coin)
     layer
       box #gate
         with
-          w=440.0
-          p=24.0
-          r=12.0
+          w=460.0
+          p=28.0
+          r=8.0
           border-w=1.0
-          bg=surface
-          border=border
-        col gap=16.0 w=fill
-          col gap=6.0 w=fill
-            text "Connect an address" size=18.0 @text-fg
-            text "Positions and fills are read for any Hyperliquid account. Skip to browse markets only."
+          bg=panel
+          border=edge
+        col gap=20.0 w=fill
+          col gap=8.0 w=fill
+            Label value="HYPERLIQUID"
+            text "Read an account"
+              with
+                size=22.0
+                @text-fg
+                @font-bold
+            text "Enter an address to see its open positions and every fill marked on the chart. Skip to browse markets only."
               with
                 size=12.0
                 w=fill
                 wrap=word
                 @text-muted
-          input "Address" #address-input <-> draft hint="0x..." submit=connect
-          row gap=8.0 w=fill
-            button "Connect" #connect p=10.0 disabled=empty(trim(draft)) -> connect
-              active bg=primary text=primary_fg r=8.0
-              hovered bg=primary text=primary_fg r=8.0
-              disabled bg=raised text=muted r=8.0
-            button "Browse read-only" #browse p=10.0 -> browse
-              active bg=raised text=fg r=8.0
-              hovered bg=border text=fg r=8.0
+          input "Address" #address-input <-> draft
+            with
+              hint="0x0000000000000000000000000000000000000000"
+              submit=connect
+              text-size=12.0
+              font=digits
+            active bg=raised border=edge r=4.0 placeholder=faint value=fg
+            hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
+            focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+          row
+            with
+              gap=10.0
+              w=fill
+              align=center
+            button #connect -> connect
+              with
+                p=11.0
+                disabled=empty(trim(draft))
+                label="Connect"
+              active bg=fg text=fg_invert r=4.0
+              hovered bg=fg text=fg_invert r=4.0
+              disabled bg=raised text=faint r=4.0
+              text "Connect" size=12.0
+            button #browse p=11.0 label="Browse markets" -> browse
+              active bg=panel text=muted r=4.0
+              hovered bg=raised text=fg r=4.0
+              text "Browse markets" size=12.0
 
 test trading_gate_gates_the_app
   viewport 1440 900
   target dialog = #gate
   target app = #app
-  expect dialog.width ~= 440.0
+  expect dialog.width ~= 460.0
   expect app.width ~= 1440.0
   capture gate

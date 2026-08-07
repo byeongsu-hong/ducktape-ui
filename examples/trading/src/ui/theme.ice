@@ -1,25 +1,27 @@
-theme contract TradingTheme
+theme contract TerminalTheme
   bg
+  panel
+  raised
+  edge
   fg
   primary
   danger
-  surface
-  raised
   muted
-  primary_fg
+  faint
   up
   down
-  border
+  fg_invert
 
-palette trading for TradingTheme
-  bg #1b1a17
-  fg #eceae4
-  primary #6cc06f
-  danger #d4655a
-  surface #232219
-  raised #2b2a25
-  muted #9f9c95
-  primary_fg #1b1a17
-  up #6cc06f
-  down #d4655a
-  border #2e2d27
+palette terminal for TerminalTheme
+  bg #0b0c0e
+  panel #131519
+  raised #1b1f26
+  edge #232830
+  fg #e6e8ec
+  primary #e6e8ec
+  danger #f6465d
+  muted #78808d
+  faint #5f6874
+  up #2ebd85
+  down #f6465d
+  fg_invert #0b0c0e

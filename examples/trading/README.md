@@ -11,8 +11,14 @@ cargo test -p trading-example
 ```
 
 The app opens on an address prompt. Paste an address to read an account, or
-**Browse read-only** to use markets only; the positions panel offers the
+**Browse markets** to use market data only; the positions panel offers the
 prompt again if you change your mind.
+
+Numbers are set in Geist Mono so a column of prices aligns on its digits, and
+colour is reserved for one thing: whether money moved. Nothing else in the
+interface — not a button, not a border, not a selected tab — is allowed to be
+green or red, so the fills on the chart, the 24h column, and the unrealized
+PnL read at a glance.
 
 ![Trading](screenshots/trading.png)
 
