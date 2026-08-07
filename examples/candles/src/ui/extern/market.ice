@@ -1,8 +1,9 @@
 extern crate::market
-  Candle(ts:i64, open:f64, high:f64, low:f64, close:f64, volume:f64)
+  MarketFeed()
+  Tick(revision:i64, last:f64, up:bool)
   CandleHit(index:i64, ts:i64, open:f64, high:f64, low:f64, close:f64, volume:f64)
-  sync gen_candles(count:i64) -> [Candle]
-  sync next_tick(candles:[Candle]) -> [Candle]
+  sync market_connect(symbol:str, interval_secs:i64, history:i64) -> MarketFeed
+  subscription market_events(feed:MarketFeed) -> Tick
   sync fmt_price(value:f64) -> str
   sync fmt_volume(value:f64) -> str
-  component chart(candles:&[Candle]) -> CandleHit?
+  component chart(feed:&MarketFeed) -> CandleHit?

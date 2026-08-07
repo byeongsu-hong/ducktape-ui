@@ -11,17 +11,27 @@ use "theme.ice"
 use "extern/market.ice"
 
 state
-  candles:[Candle] = gen_candles(360)
+  symbol = "DUCK-USD"
+  feed:MarketFeed = market_connect("DUCK-USD", 60, 10000)
+  last = 0.0
+  last_up = true
   hover:CandleHit? = none
+
+on pick_symbol(name)
+  symbol = name
+  feed = market_connect(name, 60, 10000)
+  last = 0.0
+  hover = none
+
+on tick(t)
+  last = t.last
+  last_up = t.up
 
 on candle_hovered(next)
   hover = next
 
-on tick
-  candles = next_tick(candles)
-
 subscribe
-  every 500ms -> tick
+  market_events(feed) -> tick _
 
 view
   box #app
@@ -38,8 +48,14 @@ view
             gap=16.0
             align=center
           col gap=2.0
-            text "DUCK / USD" size=16.0 @text-fg
-            text "1h - synthetic tape" size=11.0 @text-muted
+            row gap=8.0 align=center
+              text symbol size=16.0 @text-fg
+              if last > 0.0
+                if last_up
+                  text fmt_price(last) size=16.0 @text-up
+                if !last_up
+                  text fmt_price(last) size=16.0 @text-down
+            text "1m - mock feed - 10k backfill - 250ms ticks" size=11.0 @text-muted
           space w=fill
           match hover
             some(h)
@@ -58,13 +74,20 @@ view
                 text "Vol" size=12.0 @text-muted
                 text fmt_volume(h.volume) size=12.0 @text-fg
             none
-              text "Scroll to zoom - drag to pan" size=12.0 @text-muted
+              row gap=8.0 align=center
+                button "DUCK-USD" #pick-duck p=6.0 -> pick_symbol("DUCK-USD")
+                  active bg=surface text=fg r=6.0
+                  hovered bg=border text=fg r=6.0
+                button "TAPE-KRW" #pick-tape p=6.0 -> pick_symbol("TAPE-KRW")
+                  active bg=surface text=fg r=6.0
+                  hovered bg=border text=fg r=6.0
+                text "Scroll to zoom - drag to pan" size=12.0 @text-muted
       box #chart-frame
         with
           w=fill
           h=fill
           p=8.0
-        extern chart(candles) #chart -> candle_hovered _
+        extern chart(feed) #chart -> candle_hovered _
 
 test candles_smoke
   viewport 960 600

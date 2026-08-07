@@ -278,6 +278,15 @@ struct Axes {
     last_close_y: Option<f32>,
 }
 
+/// Everything one frame's drawing shares.
+struct FrameCtx<'a> {
+    candles: &'a [Candle],
+    chrome: Chrome,
+    viewport: Viewport,
+    scale: PriceScale,
+    axes: &'a Axes,
+}
+
 /// Median spacing between the candles in `range`, for time-label granularity.
 fn time_step_secs(candles: &[Candle], range: Range<usize>) -> i64 {
     let candles = &candles[range];
@@ -438,8 +447,31 @@ fn fingerprint(
     hash
 }
 
+/// Chart data shared with a live producer. The chart locks it briefly per
+/// frame, so a feed mutates candles in place and no copy ever crosses the
+/// view boundary.
+pub type SharedCandles = std::sync::Arc<std::sync::Mutex<Vec<Candle>>>;
+
+enum Data<'a> {
+    Borrowed(&'a [Candle]),
+    Shared(SharedCandles),
+}
+
+impl Data<'_> {
+    fn with<R>(&self, read: impl FnOnce(&[Candle]) -> R) -> R {
+        match self {
+            Data::Borrowed(candles) => read(candles),
+            Data::Shared(shared) => read(
+                &shared
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            ),
+        }
+    }
+}
+
 pub struct CandleChart<'a, Message> {
-    candles: &'a [Candle],
+    data: Data<'a>,
     theme: UiTheme,
     on_hover: Option<Rc<dyn Fn(Option<CandleHit>) -> Message + 'a>>,
     width: Length,
@@ -451,8 +483,22 @@ pub fn candle_chart<'a, Message>(
     candles: &'a [Candle],
     theme: &UiTheme,
 ) -> CandleChart<'a, Message> {
+    with_data(Data::Borrowed(candles), theme)
+}
+
+/// A chart over [`SharedCandles`]: the returned element owns a handle, so it
+/// can outlive the caller (`Element<'static>`) while a feed keeps ticking
+/// the same data.
+pub fn candle_chart_shared<Message>(
+    candles: SharedCandles,
+    theme: &UiTheme,
+) -> CandleChart<'static, Message> {
+    with_data(Data::Shared(candles), theme)
+}
+
+fn with_data<'a, Message>(data: Data<'a>, theme: &UiTheme) -> CandleChart<'a, Message> {
     CandleChart {
-        candles,
+        data,
         theme: *theme,
         on_hover: None,
         width: Length::Fill,
@@ -497,7 +543,7 @@ where
         let height = chart.height;
         Element::new(
             Canvas::new(CandleProgram {
-                candles: chart.candles,
+                data: chart.data,
                 theme: chart.theme,
                 on_hover: chart.on_hover,
                 initial_bars: chart.initial_bars,
@@ -544,26 +590,34 @@ impl Default for CandleState {
 }
 
 struct CandleProgram<'a, Message> {
-    candles: &'a [Candle],
+    data: Data<'a>,
     theme: UiTheme,
     on_hover: Option<Rc<dyn Fn(Option<CandleHit>) -> Message + 'a>>,
     initial_bars: usize,
 }
 
 impl<Message> CandleProgram<'_, Message> {
-    fn viewport(&self, state: &CandleState) -> Viewport {
+    fn viewport(&self, candles: &[Candle], state: &CandleState) -> Viewport {
         state
             .viewport
-            .unwrap_or_else(|| Viewport::initial(self.candles.len(), self.initial_bars))
-            .clamped(self.candles.len())
+            .unwrap_or_else(|| Viewport::initial(candles.len(), self.initial_bars))
+            .clamped(candles.len())
     }
 
-    fn hover_index(&self, state: &CandleState, chrome: Chrome, position: Point) -> Option<usize> {
+    fn hover_index(
+        &self,
+        candles: &[Candle],
+        state: &CandleState,
+        chrome: Chrome,
+        position: Point,
+    ) -> Option<usize> {
         if !chrome.plot.contains(position) {
             return None;
         }
-        let index = self.viewport(state).index_near(chrome, position.x)?;
-        (index < self.candles.len()).then_some(index)
+        let index = self
+            .viewport(candles, state)
+            .index_near(chrome, position.x)?;
+        (index < candles.len()).then_some(index)
     }
 }
 
@@ -577,8 +631,53 @@ impl<Message> canvas::Program<Message> for CandleProgram<'_, Message> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
+        self.data
+            .with(|candles| self.update_with(candles, state, event, bounds, cursor))
+    }
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &iced::Renderer,
+        theme: &iced::Theme,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        self.data
+            .with(|candles| self.draw_with(candles, state, renderer, theme, bounds, cursor))
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &Self::State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        if state.drag.is_some() {
+            return mouse::Interaction::Grabbing;
+        }
+        let in_plot = cursor
+            .position_in(bounds)
+            .is_some_and(|position| chrome(bounds.size()).plot.contains(position));
+        if in_plot && !self.data.with(<[Candle]>::is_empty) {
+            mouse::Interaction::Crosshair
+        } else {
+            mouse::Interaction::default()
+        }
+    }
+}
+
+impl<Message> CandleProgram<'_, Message> {
+    fn update_with(
+        &self,
+        candles: &[Candle],
+        state: &mut CandleState,
+        event: &canvas::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<canvas::Action<Message>> {
         let chrome = chrome(bounds.size());
-        let len = self.candles.len();
+        let len = candles.len();
         if len == 0 || chrome.plot.width <= 0.0 || chrome.plot.height <= 0.0 {
             return None;
         }
@@ -595,7 +694,7 @@ impl<Message> canvas::Program<Message> for CandleProgram<'_, Message> {
                 if lines == 0.0 {
                     return None;
                 }
-                let viewport = self.viewport(state);
+                let viewport = self.viewport(candles, state);
                 let anchor = chrome.index_at(viewport, position.x);
                 let factor = ZOOM_PER_LINE.powf(f64::from(-lines));
                 state.viewport = Some(viewport.zoom(anchor, factor, len));
@@ -608,7 +707,7 @@ impl<Message> canvas::Program<Message> for CandleProgram<'_, Message> {
                 }
                 state.drag = Some(Drag {
                     x: cursor.position()?.x,
-                    viewport: self.viewport(state),
+                    viewport: self.viewport(candles, state),
                 });
                 Some(canvas::Action::request_redraw().and_capture())
             }
@@ -624,11 +723,11 @@ impl<Message> canvas::Program<Message> for CandleProgram<'_, Message> {
                 }
                 let next = cursor
                     .position_in(bounds)
-                    .and_then(|position| self.hover_index(state, chrome, position));
+                    .and_then(|position| self.hover_index(candles, state, chrome, position));
                 if next != state.hovered {
                     state.hovered = next;
                     if let Some(on_hover) = &self.on_hover {
-                        let hit = next.map(|index| CandleHit::new(index, &self.candles[index]));
+                        let hit = next.map(|index| CandleHit::new(index, &candles[index]));
                         return Some(canvas::Action::publish(on_hover(hit)));
                     }
                 }
@@ -646,16 +745,17 @@ impl<Message> canvas::Program<Message> for CandleProgram<'_, Message> {
         }
     }
 
-    fn draw(
+    fn draw_with(
         &self,
-        state: &Self::State,
+        candles: &[Candle],
+        state: &CandleState,
         renderer: &iced::Renderer,
         _theme: &iced::Theme,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let size = bounds.size();
-        if self.candles.is_empty() {
+        if candles.is_empty() {
             let mut frame = canvas::Frame::new(renderer, size);
             self.label(
                 &mut frame,
@@ -671,18 +771,18 @@ impl<Message> canvas::Program<Message> for CandleProgram<'_, Message> {
         if chrome.plot.width < 16.0 || chrome.plot.height < 16.0 {
             return Vec::new();
         }
-        let viewport = self.viewport(state);
-        let range = visible_indices(viewport, self.candles.len());
+        let viewport = self.viewport(candles, state);
+        let range = visible_indices(viewport, candles.len());
 
-        let stamp = fingerprint(self.candles, viewport, size, &self.theme.palette);
+        let stamp = fingerprint(candles, viewport, size, &self.theme.palette);
         let (scale, axes) = {
             let mut derived = state.derived.borrow_mut();
             match derived.as_ref() {
                 Some(cached) if cached.stamp == stamp => (cached.scale, cached.axes.clone()),
                 _ => {
                     state.layers.clear();
-                    let scale = autoscale(self.candles, range.clone());
-                    let axes = self.axes(chrome, viewport, range.clone(), scale);
+                    let scale = autoscale(candles, range.clone());
+                    let axes = self.axes(candles, chrome, viewport, range.clone(), scale);
                     *derived = Some(DerivedFrame {
                         stamp,
                         scale,
@@ -692,8 +792,15 @@ impl<Message> canvas::Program<Message> for CandleProgram<'_, Message> {
                 }
             }
         };
+        let ctx = FrameCtx {
+            candles,
+            chrome,
+            viewport,
+            scale,
+            axes: &axes,
+        };
         let layers = state.layers.draw(renderer, size, |frame| {
-            self.draw_static(frame, chrome, viewport, range, scale, &axes);
+            self.draw_static(&ctx, frame, range);
         });
 
         // Canvas text renders above canvas fills within a frame, so a tag
@@ -704,30 +811,11 @@ impl<Message> canvas::Program<Message> for CandleProgram<'_, Message> {
         let cursor_in_plot = cursor
             .position_in(bounds)
             .filter(|position| chrome.plot.contains(*position));
-        self.draw_axis_labels(&mut overlay, chrome, viewport, scale, &axes, cursor_in_plot);
+        self.draw_axis_labels(&ctx, &mut overlay, cursor_in_plot);
         if let Some(position) = cursor_in_plot {
-            self.draw_crosshair(&mut overlay, chrome, viewport, scale, &axes, position);
+            self.draw_crosshair(&ctx, &mut overlay, position);
         }
         vec![layers, overlay.into_geometry()]
-    }
-
-    fn mouse_interaction(
-        &self,
-        state: &Self::State,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> mouse::Interaction {
-        if state.drag.is_some() {
-            return mouse::Interaction::Grabbing;
-        }
-        let in_plot = cursor
-            .position_in(bounds)
-            .is_some_and(|position| chrome(bounds.size()).plot.contains(position));
-        if in_plot && !self.candles.is_empty() {
-            mouse::Interaction::Crosshair
-        } else {
-            mouse::Interaction::default()
-        }
     }
 }
 
@@ -768,6 +856,7 @@ impl<Message> CandleProgram<'_, Message> {
 
     fn axes(
         &self,
+        candles: &[Candle],
         chrome: Chrome,
         viewport: Viewport,
         range: Range<usize>,
@@ -778,9 +867,9 @@ impl<Message> CandleProgram<'_, Message> {
         let time_ticks = range
             .clone()
             .step_by(stride)
-            .map(|index| (chrome.x(viewport, index as f64), self.candles[index].ts))
+            .map(|index| (chrome.x(viewport, index as f64), candles[index].ts))
             .collect();
-        let last_close_y = self.candles.last().and_then(|last| {
+        let last_close_y = candles.last().and_then(|last| {
             let y = scale.y(chrome.plot, last.close);
             (y >= chrome.plot.y && y <= chrome.plot.y + chrome.plot.height).then_some(y)
         });
@@ -788,37 +877,31 @@ impl<Message> CandleProgram<'_, Message> {
             ticks,
             precision: decimals(step),
             time_ticks,
-            time_step_secs: time_step_secs(self.candles, range),
+            time_step_secs: time_step_secs(candles, range),
             last_close_y,
         }
     }
 
-    fn draw_static(
-        &self,
-        frame: &mut canvas::Frame,
-        chrome: Chrome,
-        viewport: Viewport,
-        range: Range<usize>,
-        scale: PriceScale,
-        axes: &Axes,
-    ) {
+    fn draw_static(&self, ctx: &FrameCtx<'_>, frame: &mut canvas::Frame, range: Range<usize>) {
         let palette = self.theme.palette;
-        let plot = chrome.plot;
+        let plot = ctx.chrome.plot;
         let grid = alpha(palette.border, 0.55);
 
-        for tick in &axes.ticks {
-            let y = scale.y(plot, *tick);
+        for tick in &ctx.axes.ticks {
+            let y = ctx.scale.y(plot, *tick);
             frame.fill_rectangle(Point::new(plot.x, y), Size::new(plot.width, 1.0), grid);
         }
-        for (x, _) in &axes.time_ticks {
+        for (x, _) in &ctx.axes.time_ticks {
             frame.fill_rectangle(Point::new(*x, plot.y), Size::new(1.0, plot.height), grid);
         }
 
         let volume_height = plot.height * VOLUME_RATIO;
 
         // ponytail: the aggregation pass still scans every visible candle
-        // (~ms-scale at 1M); precompute a min/max pyramid if that ever shows.
-        if let Some(columns) = aggregate_columns(self.candles, range.clone(), viewport, chrome) {
+        // (~ms-ctx.scale at 1M); precompute a min/max pyramid if that ever shows.
+        if let Some(columns) =
+            aggregate_columns(ctx.candles, range.clone(), ctx.viewport, ctx.chrome)
+        {
             // Sub-pixel candles: one wick spanning the column's low..high (a
             // 1px body would be an invisible same-color subset of it) plus an
             // aggregated volume bar.
@@ -835,8 +918,8 @@ impl<Message> CandleProgram<'_, Message> {
                         palette.destructive
                     };
                     let x = plot.x + offset as f32;
-                    let wick_top = scale.y(plot, column.high);
-                    let wick_bottom = scale.y(plot, column.low);
+                    let wick_top = ctx.scale.y(plot, column.high);
+                    let wick_bottom = ctx.scale.y(plot, column.low);
                     frame.fill_rectangle(
                         Point::new(x, wick_top),
                         Size::new(1.0, (wick_bottom - wick_top).max(1.0)),
@@ -853,32 +936,32 @@ impl<Message> CandleProgram<'_, Message> {
                 }
             });
         } else {
-            let bar_width = plot.width / viewport.span() as f32;
+            let bar_width = plot.width / ctx.viewport.span() as f32;
             let body_width = (bar_width * BODY_RATIO).max(1.0);
-            let max_volume = self.candles[range.clone()]
+            let max_volume = ctx.candles[range.clone()]
                 .iter()
                 .fold(0f64, |max, candle| max.max(candle.volume));
             frame.with_clip(plot, |frame| {
                 for index in range {
-                    let candle = &self.candles[index];
+                    let candle = &ctx.candles[index];
                     let bullish = candle.close >= candle.open;
                     let color = if bullish {
                         palette.success
                     } else {
                         palette.destructive
                     };
-                    let x = chrome.x(viewport, index as f64);
+                    let x = ctx.chrome.x(ctx.viewport, index as f64);
 
-                    let wick_top = scale.y(plot, candle.high);
-                    let wick_bottom = scale.y(plot, candle.low);
+                    let wick_top = ctx.scale.y(plot, candle.high);
+                    let wick_bottom = ctx.scale.y(plot, candle.low);
                     frame.fill_rectangle(
                         Point::new(x - 0.5, wick_top),
                         Size::new(1.0, (wick_bottom - wick_top).max(1.0)),
                         color,
                     );
 
-                    let body_top = scale.y(plot, candle.open.max(candle.close));
-                    let body_bottom = scale.y(plot, candle.open.min(candle.close));
+                    let body_top = ctx.scale.y(plot, candle.open.max(candle.close));
+                    let body_bottom = ctx.scale.y(plot, candle.open.min(candle.close));
                     frame.fill_rectangle(
                         Point::new(x - body_width / 2.0, body_top),
                         Size::new(body_width, (body_bottom - body_top).max(1.0)),
@@ -897,7 +980,7 @@ impl<Message> CandleProgram<'_, Message> {
             });
         }
 
-        if let (Some(last), Some(y)) = (self.candles.last(), axes.last_close_y) {
+        if let (Some(last), Some(y)) = (ctx.candles.last(), ctx.axes.last_close_y) {
             let color = if last.close >= last.open {
                 palette.success
             } else {
@@ -911,7 +994,7 @@ impl<Message> CandleProgram<'_, Message> {
             );
             self.tag(
                 frame,
-                &format_price(last.close, axes.precision.max(2)),
+                &format_price(last.close, ctx.axes.precision.max(2)),
                 y,
                 plot,
                 color,
@@ -922,29 +1005,27 @@ impl<Message> CandleProgram<'_, Message> {
 
     fn draw_axis_labels(
         &self,
+        ctx: &FrameCtx<'_>,
         frame: &mut canvas::Frame,
-        chrome: Chrome,
-        viewport: Viewport,
-        scale: PriceScale,
-        axes: &Axes,
         cursor_in_plot: Option<Point>,
     ) {
         let palette = self.theme.palette;
-        let plot = chrome.plot;
+        let plot = ctx.chrome.plot;
 
         let tag_row = |y: f32| {
-            axes.last_close_y
+            ctx.axes
+                .last_close_y
                 .is_some_and(|tag_y| (tag_y - y).abs() < TAG_HEIGHT)
                 || cursor_in_plot.is_some_and(|position| (position.y - y).abs() < TAG_HEIGHT)
         };
-        for tick in &axes.ticks {
-            let y = scale.y(plot, *tick);
+        for tick in &ctx.axes.ticks {
+            let y = ctx.scale.y(plot, *tick);
             if tag_row(y) {
                 continue;
             }
             self.label(
                 frame,
-                &format_price(*tick, axes.precision),
+                &format_price(*tick, ctx.axes.precision),
                 Point::new(plot.x + plot.width + 6.0, y),
                 TextAlignment::Left,
                 Vertical::Center,
@@ -953,10 +1034,10 @@ impl<Message> CandleProgram<'_, Message> {
         }
 
         let time_tag_x = cursor_in_plot
-            .and_then(|position| viewport.index_near(chrome, position.x))
-            .filter(|index| *index < self.candles.len())
-            .map(|index| chrome.x(viewport, index as f64));
-        for (x, ts) in &axes.time_ticks {
+            .and_then(|position| ctx.viewport.index_near(ctx.chrome, position.x))
+            .filter(|index| *index < ctx.candles.len())
+            .map(|index| ctx.chrome.x(ctx.viewport, index as f64));
+        for (x, ts) in &ctx.axes.time_ticks {
             // Skip labels the plot edge would clip or the crosshair tag covers.
             if *x < 18.0 || *x > plot.width - 18.0 {
                 continue;
@@ -966,7 +1047,7 @@ impl<Message> CandleProgram<'_, Message> {
             }
             self.label(
                 frame,
-                &format_ts(*ts, axes.time_step_secs),
+                &format_ts(*ts, ctx.axes.time_step_secs),
                 Point::new(*x, plot.y + plot.height + TIME_AXIS_HEIGHT / 2.0),
                 TextAlignment::Center,
                 Vertical::Center,
@@ -999,17 +1080,9 @@ impl<Message> CandleProgram<'_, Message> {
         );
     }
 
-    fn draw_crosshair(
-        &self,
-        frame: &mut canvas::Frame,
-        chrome: Chrome,
-        viewport: Viewport,
-        scale: PriceScale,
-        axes: &Axes,
-        position: Point,
-    ) {
+    fn draw_crosshair(&self, ctx: &FrameCtx<'_>, frame: &mut canvas::Frame, position: Point) {
         let palette = self.theme.palette;
-        let plot = chrome.plot;
+        let plot = ctx.chrome.plot;
 
         self.dashed(
             frame,
@@ -1017,30 +1090,30 @@ impl<Message> CandleProgram<'_, Message> {
             Point::new(plot.x + plot.width, position.y),
             palette.muted_foreground,
         );
-        let price = scale.price_at(plot, position.y);
+        let price = ctx.scale.price_at(plot, position.y);
         self.tag(
             frame,
-            &format_price(price, axes.precision.max(2)),
+            &format_price(price, ctx.axes.precision.max(2)),
             position.y,
             plot,
             palette.foreground,
             palette.background,
         );
 
-        let Some(index) = viewport.index_near(chrome, position.x) else {
+        let Some(index) = ctx.viewport.index_near(ctx.chrome, position.x) else {
             return;
         };
-        if index >= self.candles.len() {
+        if index >= ctx.candles.len() {
             return;
         }
-        let x = chrome.x(viewport, index as f64);
+        let x = ctx.chrome.x(ctx.viewport, index as f64);
         self.dashed(
             frame,
             Point::new(x, plot.y),
             Point::new(x, plot.y + plot.height),
             palette.muted_foreground,
         );
-        let content = format_ts(self.candles[index].ts, axes.time_step_secs);
+        let content = format_ts(ctx.candles[index].ts, ctx.axes.time_step_secs);
         let width =
             (content.len() as f32 * self.theme.typography.meta_compact * 0.65 + 14.0).max(44.0);
         frame.fill_rectangle(
@@ -1267,7 +1340,7 @@ mod tests {
 
     fn hover_program(data: &[Candle]) -> CandleProgram<'_, Option<CandleHit>> {
         CandleProgram {
-            candles: data,
+            data: Data::Borrowed(data),
             theme: super::super::theme::LIGHT,
             on_hover: Some(Rc::new(|hit| hit)),
             initial_bars: DEFAULT_BARS,
@@ -1298,7 +1371,7 @@ mod tests {
         let point = Point::new(600.0, 300.0);
         let cursor = mouse::Cursor::Available(point);
 
-        let before = program.viewport(&state);
+        let before = program.viewport(&data, &state);
         let anchor = chrome(BOUNDS).index_at(before, point.x);
         let action = program
             .update(&mut state, &wheel(1.0), bounds, cursor)
@@ -1380,7 +1453,7 @@ mod tests {
         let bounds = Rectangle::with_size(BOUNDS);
 
         let point = Point::new(600.0, 300.0);
-        let viewport = program.viewport(&state);
+        let viewport = program.viewport(&data, &state);
         let expected = chrome(BOUNDS).index_at(viewport, point.x).round() as usize;
         let action = program
             .update(
@@ -1552,7 +1625,7 @@ mod tests {
         for count in [1_000usize, 10_000, 100_000, 1_000_000] {
             let data = candles(count);
             let program = CandleProgram::<()> {
-                candles: &data,
+                data: Data::Borrowed(&data),
                 theme,
                 on_hover: None,
                 initial_bars: DEFAULT_BARS,
