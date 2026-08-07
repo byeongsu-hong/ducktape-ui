@@ -1577,8 +1577,7 @@ pub fn header_inset() -> f64 {
 
 /// This account's fills on one market, as chart glyphs: a buy points up out
 /// of its price, a sell points down into it.
-fn fill_markers(fills: &[Fill], coin: &str) -> Vec<ChartMarker> {
-    let palette = chart_theme().palette;
+fn fill_markers(fills: &[Fill], coin: &str, palette: &theme::Palette) -> Vec<ChartMarker> {
     fills
         .iter()
         .filter(|fill| fill.coin == coin)
@@ -1600,8 +1599,7 @@ fn fill_markers(fills: &[Fill], coin: &str) -> Vec<ChartMarker> {
 
 /// The levels an open position is read against: where it was entered, and
 /// where it dies. A cross-margin position reports no liquidation price.
-fn position_lines(positions: &[Position], coin: &str) -> Vec<PriceLine> {
-    let palette = chart_theme().palette;
+fn position_lines(positions: &[Position], coin: &str, palette: &theme::Palette) -> Vec<PriceLine> {
     positions
         .iter()
         .filter(|position| position.coin == coin)
@@ -1621,8 +1619,7 @@ fn position_lines(positions: &[Position], coin: &str) -> Vec<PriceLine> {
 }
 
 /// Resting orders as levels: the price you are still waiting to trade at.
-fn order_lines(orders: &[Order], coin: &str) -> Vec<PriceLine> {
-    let palette = chart_theme().palette;
+fn order_lines(orders: &[Order], coin: &str, palette: &theme::Palette) -> Vec<PriceLine> {
     orders
         .iter()
         .filter(|order| order.coin == coin)
@@ -1655,13 +1652,18 @@ pub fn chart(
     orders: &[Order],
     coin: &str,
 ) -> Element<'static, ChartSignal> {
-    let chart = candle_chart_shared(tape.candles.clone(), &chart_theme())
+    // One theme for the frame. Reading `.palette` from a fresh one in each
+    // helper rebuilt the whole thing, font resolution included, four times per
+    // view — and the view rebuilds on every beat of the feed.
+    let theme = chart_theme();
+    let palette = &theme.palette;
+    let chart = candle_chart_shared(tape.candles.clone(), &theme)
         .height(Length::Fill)
         .live(BEAT)
         .moving_averages([20, 60])
-        .price_lines(position_lines(positions, coin))
-        .price_lines(order_lines(orders, coin))
-        .markers(fill_markers(fills, coin))
+        .price_lines(position_lines(positions, coin, palette))
+        .price_lines(order_lines(orders, coin, palette))
+        .markers(fill_markers(fills, coin, palette))
         .on_hover(|hover| ChartSignal {
             hover,
             older: false,
@@ -1837,7 +1839,7 @@ mod tests {
             },
         ];
 
-        let markers = fill_markers(&fills, "BTC");
+        let markers = fill_markers(&fills, "BTC", &chart_theme().palette);
         assert_eq!(
             markers.len(),
             2,
@@ -1883,12 +1885,12 @@ mod tests {
                 funding: 0.0,
             },
         ];
-        let lines = position_lines(&positions, "BTC");
+        let lines = position_lines(&positions, "BTC", &chart_theme().palette);
         assert_eq!(lines.len(), 2, "entry and liquidation");
         assert_eq!(lines[0].price, 60_000.0);
         assert_eq!(lines[1].price, 45_000.0);
         assert_eq!(
-            position_lines(&positions, "ETH").len(),
+            position_lines(&positions, "ETH", &chart_theme().palette).len(),
             1,
             "no liquidation price means no line"
         );
@@ -2471,7 +2473,7 @@ mod tests {
         assert!(orders[1].buy);
         assert_eq!(orders[0].ts, 1_786_096_201, "seconds, like the chart");
 
-        let lines = order_lines(&orders, "BTC");
+        let lines = order_lines(&orders, "BTC", &chart_theme().palette);
         assert_eq!(lines.len(), 1, "only the charted market is drawn");
         assert_eq!(lines[0].price, 60_000.0);
     }
