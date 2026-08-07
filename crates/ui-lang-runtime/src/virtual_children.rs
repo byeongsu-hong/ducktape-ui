@@ -34,21 +34,43 @@ const OVERSCAN_ROWS: usize = 4;
 pub fn virtual_children<'a, Message, Theme, Renderer>(
     children: Vec<Element<'a, Message, Theme, Renderer>>,
     estimated_height: f32,
-) -> Element<'a, Message, Theme, Renderer>
+) -> VirtualChildren<'a, Message, Theme, Renderer> {
+    VirtualChildren {
+        children,
+        estimated_height: estimated_height.max(1.0),
+        spacing: 0.0,
+    }
+}
+
+/// Mount this as the single child of an ordinary column, which keeps handling
+/// padding, dimensions, and the rest; only per-child layout moves in here.
+pub struct VirtualChildren<'a, Message, Theme, Renderer> {
+    children: Vec<Element<'a, Message, Theme, Renderer>>,
+    estimated_height: f32,
+    spacing: f32,
+}
+
+impl<Message, Theme, Renderer> VirtualChildren<'_, Message, Theme, Renderer> {
+    /// The gap between children, matching `column(..).spacing(..)`. It is
+    /// counted in the geometry, so an offscreen child's slot is the same size
+    /// whether or not it has been measured.
+    #[must_use]
+    pub fn spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing.max(0.0);
+        self
+    }
+}
+
+impl<'a, Message, Theme, Renderer> From<VirtualChildren<'a, Message, Theme, Renderer>>
+    for Element<'a, Message, Theme, Renderer>
 where
     Message: 'a,
     Theme: 'a,
     Renderer: iced::advanced::Renderer + 'a,
 {
-    Element::new(VirtualChildren {
-        children,
-        estimated_height: estimated_height.max(1.0),
-    })
-}
-
-struct VirtualChildren<'a, Message, Theme, Renderer> {
-    children: Vec<Element<'a, Message, Theme, Renderer>>,
-    estimated_height: f32,
+    fn from(virtual_children: VirtualChildren<'a, Message, Theme, Renderer>) -> Self {
+        Self::new(virtual_children)
+    }
 }
 
 #[derive(Default)]
@@ -70,13 +92,14 @@ impl State {
             .unwrap_or(estimate)
     }
 
-    /// Row tops, from measurements where they exist and the estimate elsewhere.
-    fn tops(&self, count: usize, estimate: f32) -> Vec<f32> {
+    /// Row tops, from measurements where they exist and the estimate
+    /// elsewhere, with `spacing` between every pair.
+    fn tops(&self, count: usize, estimate: f32, spacing: f32) -> Vec<f32> {
         let mut tops = Vec::with_capacity(count);
         let mut running = 0.0;
         for index in 0..count {
             tops.push(running);
-            running += self.height_of(index, estimate);
+            running += self.height_of(index, estimate) + spacing;
         }
         tops
     }
@@ -120,7 +143,7 @@ where
     ) -> layout::Node {
         let count = self.children.len();
         let state = tree.state.downcast_mut::<State>();
-        let tops = state.tops(count, self.estimated_height);
+        let tops = state.tops(count, self.estimated_height, self.spacing);
 
         // Before the first draw the viewport is unknown; fill a screen's worth
         // from the top rather than the whole document.
@@ -160,11 +183,13 @@ where
             };
             let height = node.size().height;
             nodes.push(node.move_to(iced::Point::new(0.0, running)));
-            running += height;
+            running += height + self.spacing;
         }
+        // `running` carries a trailing gap for every child, including the last.
+        let content_height = (running - self.spacing).max(0.0);
 
         state.mounted = mounted;
-        layout::Node::with_children(Size::new(width, running), nodes)
+        layout::Node::with_children(Size::new(width, content_height), nodes)
     }
 
     fn update(
@@ -370,6 +395,54 @@ mod tests {
             None,
         ))
         .expect("headless renderer")
+    }
+
+    /// Spacing has to live in the geometry, not just between drawn children:
+    /// an offscreen child's slot is sized from the estimate plus its gap, so
+    /// the scrollbar and the mounted window agree with what is drawn.
+    #[test]
+    fn spacing_sits_between_children_and_in_the_total_height() {
+        const COUNT: usize = 10;
+        const ROW: f32 = 20.0;
+        const GAP: f32 = 6.0;
+        let layouts = Rc::new(Cell::new(0));
+        let children: Vec<Element<'_, (), iced::Theme, iced_test::renderer::Renderer>> = (0..COUNT)
+            .map(|_| {
+                Element::new(Counted {
+                    layouts: Rc::clone(&layouts),
+                    height: ROW,
+                })
+            })
+            .collect();
+
+        let renderer = headless_renderer();
+        let mut widget = virtual_children(children, ROW).spacing(GAP);
+        let mut tree =
+            Tree::new(&widget as &dyn Widget<(), iced::Theme, iced_test::renderer::Renderer>);
+        // Tall enough that every child mounts, so these are measured heights.
+        let node = widget.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(240.0, 1_000.0)),
+        );
+
+        assert_eq!(
+            layouts.get(),
+            COUNT,
+            "every child fits, so every child is laid out"
+        );
+        for (index, child) in node.children().iter().enumerate() {
+            assert_eq!(
+                child.bounds().y,
+                index as f32 * (ROW + GAP),
+                "child {index} sits after its predecessors and their gaps"
+            );
+        }
+        assert_eq!(
+            node.size().height,
+            COUNT as f32 * ROW + (COUNT - 1) as f32 * GAP,
+            "the total counts nine gaps for ten children, not ten"
+        );
     }
 
     /// The whole point: a thousand children, and only a viewport's worth ever
