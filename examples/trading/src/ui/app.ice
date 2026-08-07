@@ -54,6 +54,10 @@ state
 derived
   watching = !gate && !empty(address)
 
+preset terminal
+  state
+    gate = false
+
 component Num(value:str, size:f64, width:f64)
   text value
     with
@@ -540,15 +544,22 @@ on seed_ticket(price, buy)
   quote = price_ticket(seed, "", ticket_leverage, focus, buy)
 
 on ticket_priced(typed)
+  ticket_price = typed
   quote = price_ticket(typed, ticket_size, ticket_leverage, focus, ticket_buy)
 
 on ticket_sized(typed)
+  ticket_size = typed
   quote = price_ticket(ticket_price, typed, ticket_leverage, focus, ticket_buy)
 
 on ticket_levered(typed)
+  ticket_leverage = typed
   quote = price_ticket(ticket_price, ticket_size, typed, focus, ticket_buy)
 
 on close_ticket
+  ticket = false
+
+on ticket_key(event)
+  return if event.key != key.named("Escape")
   ticket = false
 
 on ticket_side(buy)
@@ -581,6 +592,7 @@ on pick_interval(next)
   run hl_candles(tape, coin, next) -> candles_loaded _ | failed _
 
 on search(typed)
+  query = typed
   visible = filter_symbols(symbols, typed, coin)
 
 on tick_universe
@@ -651,6 +663,7 @@ on lower_resized(_dx, dy)
   lower_height = lower_height - dy
 
 subscribe
+  keyboard press when ticket -> ticket_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 700ms when flashing -> cool_flash
@@ -1526,6 +1539,38 @@ test trading_gate_refuses_a_malformed_address
   target field = dialog/address-input
   focus field
   replace "0xnope"
+  expect draft == "0xnope"
   expect a11y connect disabled true
   replace "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
   expect a11y connect disabled false
+
+test trading_escape_closes_the_ticket
+  preset terminal
+  viewport 1400 900
+  target panel = #ticket-panel
+  target size = panel/ticket-size
+  target limit = panel/ticket-price
+  expect missing panel
+  dispatch open_ticket
+  expect exists panel
+  focus limit
+  type "64000"
+  expect ticket_price == "64000"
+  focus size
+  expect size.focused
+  type "0.5"
+  expect ticket_size == "0.5"
+  expect quote.ready
+  expect quote.notional ~= 32000.0
+  key escape
+  expect missing panel
+
+test trading_search_keeps_what_was_typed
+  preset terminal
+  viewport 1400 900
+  target app = #app
+  target markets = app/markets
+  target search = markets/search
+  focus search
+  type "ET"
+  expect query == "ET"

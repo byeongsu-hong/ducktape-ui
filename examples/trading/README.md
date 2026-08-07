@@ -111,6 +111,9 @@ takes anything; the market does not, so a 400 typed into a 5x market is held at
 5 and the ticket says 5. A liquidation quoted at a leverage the panel is not
 showing is the one number here that must never be wrong.
 
+Escape closes it, and the subscription that listens for Escape exists only
+while it is open.
+
 Nothing is signed and nothing is sent, and the panel says so in the place a
 submit button would be. Sending would mean this app holding the key that signs
 an EIP-712 order, which is not a thing an example should ask for. The boundary
@@ -237,6 +240,7 @@ the first and guards on the second, so hovering and paging share a route
 without the chart knowing what an exchange is.
 
 ## Tests
+
 
 `cargo test -p trading-example` parses recorded payloads for every response
 shape, checks the tape merge, the market-switch guard, the book's depth and
