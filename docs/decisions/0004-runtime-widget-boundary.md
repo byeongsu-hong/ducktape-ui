@@ -66,11 +66,10 @@ boundary is intended to catch.
 
 Runtime and component APIs may evolve together without expanding Core syntax.
 The first version intentionally omits variable-height rows and domain-specific
-tree/grid policy. If repeated use later satisfies decision 0002, a Core
-proposal can be evaluated against working semantics rather than speculation.
+tree/grid policy. A Core proposal for any of it can be evaluated against
+working semantics rather than speculation.
 
 ## Revisit trigger
 
-Revisit the boundary when three independent applications demonstrate that the
-typed extern component cannot preserve essential static semantics or
-composition. Performance alone is not a Core admission reason.
+Revisit the boundary when a typed extern component cannot preserve essential
+static semantics or composition.

@@ -1,7 +1,7 @@
 # Feature evidence contracts
 
-Every feature proposal names its primary semantic owner under decision 0002
-before implementation and identifies any adjacent integration layers. A
+Every feature proposal names its primary semantic owner before
+implementation and identifies any adjacent integration layers. A
 feature or epic is complete only when it supplies the applicable evidence for
 its owner and integrations and updates `SPEC.md`, `README.md`, and
 `COVERAGE.md` wherever their public claims change. Evidence may be split across

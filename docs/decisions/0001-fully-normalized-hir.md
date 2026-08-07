@@ -731,9 +731,7 @@ consume the same canonical program model.
 
 During migration, every pull request identified the semantic family it moved,
 the old path it deleted, its invalid cases, its source-origin evidence, and any
-performance change. With the full boundary complete, future Core syntax remains
-governed independently by the Core admission rule; completion does not itself
-admit new syntax.
+performance change.
 
 ## Revisit trigger
 
