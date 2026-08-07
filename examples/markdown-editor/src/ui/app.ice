@@ -2,11 +2,11 @@ app MarkdownEditor
   title "Markdown Editor"
   palette active_palette
   id "dev.ducktape.ice.markdown-editor"
-  font "../../assets/fonts/IBMPlexSansKR-Regular.ttf"
-  font "../../assets/fonts/IBMPlexSansKR-Bold.ttf"
-  font "../../assets/fonts/IBMPlexSans-Italic.ttf"
-  font "../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
-  font "../../assets/fonts/MonoplexKR-Regular.ttf"
+  font "../../../../assets/fonts/IBMPlexSansKR-Regular.ttf"
+  font "../../../../assets/fonts/IBMPlexSansKR-Bold.ttf"
+  font "../../../../assets/fonts/IBMPlexSans-Italic.ttf"
+  font "../../../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
+  font "../../../../assets/fonts/MonoplexKR-Regular.ttf"
   text-size 14
   antialiasing true
   window

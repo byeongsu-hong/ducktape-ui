@@ -2743,12 +2743,13 @@ mod tests {
         };
 
         let mut fonts = Database::new();
-        fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Regular.ttf").to_vec());
-        fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Bold.ttf").to_vec());
-        fonts.load_font_data(include_bytes!("../assets/fonts/Geist-Italic.ttf").to_vec());
-        fonts.load_font_data(include_bytes!("../assets/fonts/GeistMono-Regular.ttf").to_vec());
-        fonts.load_font_data(include_bytes!("../assets/fonts/GeistMono-Bold.ttf").to_vec());
-        fonts.load_font_data(include_bytes!("../assets/fonts/GeistMono-Italic.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../../../assets/fonts/Geist-Regular.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../../../assets/fonts/Geist-Bold.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../../../assets/fonts/Geist-Italic.ttf").to_vec());
+        fonts
+            .load_font_data(include_bytes!("../../../assets/fonts/GeistMono-Regular.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../../../assets/fonts/GeistMono-Bold.ttf").to_vec());
+        fonts.load_font_data(include_bytes!("../../../assets/fonts/GeistMono-Italic.ttf").to_vec());
 
         for family in ["Geist", "Geist Mono"] {
             for weight in [Weight::NORMAL, Weight::BOLD] {

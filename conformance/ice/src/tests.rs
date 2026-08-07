@@ -9,13 +9,10 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 const CONTRACT: &str = include_str!("../../expected/reference.json");
-const GEIST_REGULAR: &[u8] =
-    include_bytes!("../../../examples/showcase/assets/fonts/Geist-Regular.ttf");
-const GEIST_BOLD: &[u8] = include_bytes!("../../../examples/showcase/assets/fonts/Geist-Bold.ttf");
-const GEIST_MONO_REGULAR: &[u8] =
-    include_bytes!("../../../examples/showcase/assets/fonts/GeistMono-Regular.ttf");
-const GEIST_MONO_BOLD: &[u8] =
-    include_bytes!("../../../examples/showcase/assets/fonts/GeistMono-Bold.ttf");
+const GEIST_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Geist-Regular.ttf");
+const GEIST_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Geist-Bold.ttf");
+const GEIST_MONO_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/GeistMono-Regular.ttf");
+const GEIST_MONO_BOLD: &[u8] = include_bytes!("../../../assets/fonts/GeistMono-Bold.ttf");
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

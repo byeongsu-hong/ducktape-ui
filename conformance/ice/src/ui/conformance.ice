@@ -1,10 +1,10 @@
 app Conformance
   title "Ice UI conformance"
   id "dev.ducktape.ui.conformance"
-  font "../../../../examples/showcase/assets/fonts/Geist-Regular.ttf"
-  font "../../../../examples/showcase/assets/fonts/Geist-Bold.ttf"
-  font "../../../../examples/showcase/assets/fonts/GeistMono-Regular.ttf"
-  font "../../../../examples/showcase/assets/fonts/GeistMono-Bold.ttf"
+  font "../../../../assets/fonts/Geist-Regular.ttf"
+  font "../../../../assets/fonts/Geist-Bold.ttf"
+  font "../../../../assets/fonts/GeistMono-Regular.ttf"
+  font "../../../../assets/fonts/GeistMono-Bold.ttf"
   text-size 14
   antialiasing true
   window

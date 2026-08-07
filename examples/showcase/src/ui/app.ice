@@ -1,12 +1,12 @@
 app Showcase
   title "ducktape-ui · Ice"
   id "dev.ducktape.ui.showcase"
-  font "../../assets/fonts/Geist-Regular.ttf"
-  font "../../assets/fonts/Geist-Bold.ttf"
-  font "../../assets/fonts/Geist-Italic.ttf"
-  font "../../assets/fonts/GeistMono-Regular.ttf"
-  font "../../assets/fonts/GeistMono-Bold.ttf"
-  font "../../assets/fonts/GeistMono-Italic.ttf"
+  font "../../../../assets/fonts/Geist-Regular.ttf"
+  font "../../../../assets/fonts/Geist-Bold.ttf"
+  font "../../../../assets/fonts/Geist-Italic.ttf"
+  font "../../../../assets/fonts/GeistMono-Regular.ttf"
+  font "../../../../assets/fonts/GeistMono-Bold.ttf"
+  font "../../../../assets/fonts/GeistMono-Italic.ttf"
   text-size 14
   // Keep deterministic headless paint and interaction captures.
   antialiasing false
