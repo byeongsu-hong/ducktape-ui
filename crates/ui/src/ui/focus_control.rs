@@ -112,7 +112,12 @@ impl widget::operation::Focusable for State {
     }
 
     fn unfocus(&mut self) {
-        self.unfocus();
+        // Moving keyboard focus elsewhere must not cancel a pointer gesture
+        // already in flight. `operation::focus` unfocuses every other
+        // focusable, so an application task that focuses one control while a
+        // press is held on another would otherwise drop the press, and the
+        // release that completes it would publish nothing at all.
+        self.blur();
     }
 }
 
@@ -329,8 +334,15 @@ where
         {
             let state = tree.state.downcast_mut::<State>();
 
-            if self.disabled || !self.tab_stop {
+            // Same rule as `diff`: a roving non-tab-stop item gives up focus,
+            // but never while it holds a pointer press. Any operation can
+            // traverse mid-gesture — a focus task, an accessibility snapshot,
+            // a scroll — and cancelling the press there loses the release that
+            // completes the click.
+            if self.disabled {
                 state.unfocus();
+            } else if !self.tab_stop && !state.is_pressed() {
+                state.blur();
             }
 
             if !self.disabled && self.tab_stop {
@@ -970,6 +982,81 @@ mod tests {
             handle_event(&mut state, &press, false, true, &9, &mut shell);
         }
         assert!(!state.is_focused());
+    }
+
+    #[test]
+    fn focus_operation_elsewhere_preserves_pending_pointer_activation() {
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut state = State::default();
+        let mut messages = Vec::new();
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            handle_event(&mut state, &press, true, true, &9, &mut shell);
+        }
+        assert!(state.is_pressed());
+
+        // `operation::focus` unfocuses every other focusable, and an
+        // application task can run one while the press is still held.
+        widget::operation::Focusable::unfocus(&mut state);
+        assert!(!state.is_focused());
+        assert!(state.is_pressed());
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            handle_event(&mut state, &release, true, true, &9, &mut shell);
+        }
+        assert_eq!(messages, [9]);
+    }
+
+    #[test]
+    fn non_tab_stop_operation_traversal_preserves_pending_pointer_activation() {
+        use iced::advanced::renderer::Headless as _;
+
+        struct Noop;
+
+        impl widget::Operation for Noop {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+        }
+
+        let mut control: FocusControl<'_, u8> = FocusControl::new(
+            widget::Id::new("roving-operation"),
+            Space::new(),
+            9_u8,
+            &LIGHT,
+        )
+        .tab_stop(false);
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&control as &dyn Widget<_, _, _>);
+        let node = Widget::layout(
+            &mut control,
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(64.0, 64.0)),
+        );
+        let state = tree.state.downcast_mut::<State>();
+        state.focus_from_pointer();
+        state.press = Some(Press::Mouse);
+
+        Widget::operate(
+            &mut control,
+            &mut tree,
+            Layout::new(&node),
+            &renderer,
+            &mut Noop,
+        );
+
+        let state = tree.state.downcast_ref::<State>();
+        assert!(state.is_focused());
+        assert_eq!(state.press, Some(Press::Mouse));
     }
 
     #[test]

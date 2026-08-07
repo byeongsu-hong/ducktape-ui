@@ -23,8 +23,8 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, r
 use iced::keyboard;
 use iced::widget::{column, container, scrollable, space};
 use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
+use rustc_hash::FxHashMap as HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write as _;
 use std::hash::Hash;
@@ -346,7 +346,7 @@ where
             selected_index: None,
             scroll: RowScroll::default(),
             measured: MeasuredHeights::default(),
-            measured_heights: HashMap::new(),
+            measured_heights: HashMap::default(),
             keyed_rows: KeyedRows::new(2),
         }
     }

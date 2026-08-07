@@ -9,7 +9,7 @@ use iced::advanced::text;
 use iced::keyboard;
 use iced::widget::{container, scrollable};
 use iced::{Element, Rectangle};
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::fmt;
 use std::fmt::Write as _;
 use std::hash::Hash;
@@ -329,11 +329,11 @@ where
     pub fn new(id: TreeViewId) -> Self {
         Self {
             list: VirtualListState::new(id.0),
-            expanded: Arc::new(HashSet::new()),
+            expanded: Arc::new(HashSet::default()),
             nodes: Arc::from([]),
-            node_indexes: Arc::new(HashMap::new()),
+            node_indexes: Arc::new(HashMap::default()),
             rows: Arc::from([]),
-            row_indexes: Arc::new(HashMap::new()),
+            row_indexes: Arc::new(HashMap::default()),
             editing: None,
         }
     }
@@ -416,8 +416,9 @@ where
         config: TreeViewConfig,
     ) -> Result<(), TreeViewReconcileError<Key>> {
         let mut records: Vec<TreeNodeRecord<Key>> = Vec::with_capacity(items.len());
-        let mut indexes: HashMap<Key, usize> = HashMap::with_capacity(items.len());
-        let mut sibling_counts = HashMap::<Option<usize>, usize>::new();
+        let mut indexes: HashMap<Key, usize> =
+            HashMap::with_capacity_and_hasher(items.len(), rustc_hash::FxBuildHasher);
+        let mut sibling_counts = HashMap::<Option<usize>, usize>::default();
         let mut open_path = Vec::<usize>::new();
         for (source_index, item) in items.iter().enumerate() {
             let node = node(item);
@@ -689,7 +690,7 @@ where
     fn rebuild_rows(&mut self, config: TreeViewConfig) {
         let mut visible = vec![false; self.nodes.len()];
         let mut rows = Vec::new();
-        let mut row_indexes = HashMap::new();
+        let mut row_indexes = HashMap::default();
         let editing = self.editing.as_ref().map(|editing| &editing.key);
         for (index, node) in self.nodes.iter().enumerate() {
             let shown = node.parent_index.is_none_or(|parent| {
