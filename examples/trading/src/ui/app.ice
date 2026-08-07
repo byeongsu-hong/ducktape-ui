@@ -34,6 +34,7 @@ state
   account:Account? = none
   positions:[Position] = []
   fills:[Fill] = []
+  tape_prints:[Trade] = []
   orders:[Order] = []
   book:Book? = none
   hover:CandleHit? = none
@@ -242,6 +243,43 @@ component BookRow(level:Level, buy:bool)
           align-x=right
           font=digits
           @text-muted
+
+component TradeRow(print:Trade)
+  row #root
+    with
+      w=fill
+      h=18.0
+      pl=14.0
+      pr=14.0
+      gap=6.0
+      align=center
+    text fmt_time(print.ts)
+      with
+        size=10.0
+        w=46.0
+        font=digits
+        @text-faint
+    Delta
+      with
+        value=fmt_px(print.price)
+        up=print.buy
+        size=11.0
+        width=74.0
+    space w=fill
+    text fmt_sweep(print.sweep)
+      with
+        size=9.0
+        w=22.0
+        align-x=right
+        font=digits
+        @text-faint
+    text fmt_size(print.size)
+      with
+        size=11.0
+        w=52.0
+        align-x=right
+        font=digits
+        @text-muted
 
 component OrderRow(order:Order)
   row #root
@@ -478,6 +516,7 @@ on reopen
 
 on pick_symbol(name)
   coin = name
+  tape_prints = []
   focus = symbol_row(symbols, name)
   hover = none
   status = "Loading candles"
@@ -537,6 +576,7 @@ on market_ticked(tick)
   focus = symbol_row(symbols, coin)
   positions = mark_positions(positions, tick)
   account = mark_account(account, positions)
+  tape_prints = push_trades(tape_prints, tick, 60)
 
 on failed(error)
   status = error.message
@@ -1049,6 +1089,42 @@ view
                     pr=14.0
                     gap=10.0
                     align=center
+                  Label value="TAPE"
+                  space w=fill
+                  Label value=coin
+                rule horizontal thickness=1.0 color=edge
+                scroll #tape-list
+                  with
+                    h=fill
+                    bar-w=6.0
+                    bar-m=2.0
+                    scroller-w=6.0
+                  active
+                    y-rail bg=panel
+                    y-scroller bg=edge r=3.0
+                  hovered
+                    y-rail bg=panel
+                    y-scroller bg=faint r=3.0
+                  col w=fill
+                    if empty(tape_prints)
+                      box
+                        with
+                          w=fill
+                          h=72.0
+                          align-x=center
+                          align-y=center
+                        text "Waiting for a print." size=11.0 @text-faint
+                    for print in tape_prints
+                      TradeRow print=print
+                rule horizontal thickness=1.0 color=edge
+                row
+                  with
+                    w=fill
+                    h=32.0
+                    pl=14.0
+                    pr=14.0
+                    gap=10.0
+                    align=center
                   Label value="OPEN ORDERS"
                   space w=fill
                   Label value=fmt_count(len(orders))
@@ -1078,7 +1154,7 @@ view
                 rule horizontal thickness=1.0 color=edge
                 scroll #order-list
                   with
-                    h=fill
+                    h=120.0
                     bar-w=6.0
                     bar-m=2.0
                     scroller-w=6.0
