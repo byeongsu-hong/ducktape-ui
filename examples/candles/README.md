@@ -43,16 +43,14 @@ bounded by viewport pixels for any chart):
 | candles | view | static-layer rebuild | cached frame |
 | ------: | :-- | ---: | ---: |
 | 1k - 1M | last 120 | ~85us | ~2us |
-| 10k | all visible | 0.6ms | ~2us |
-| 100k | all visible | 1.4ms | ~2us |
-| 1M | all visible | 11.5ms | ~2us |
+| 1k - 1M | all visible | 600-900us | ~2us |
 
-The cached (per cursor move) frame is flat at any zoom and any dataset size:
-scale and axes are memoized under the same fingerprint that keys the cached
-geometry. Rebuilds are bounded too — once candles are narrower than a pixel
-they fold into per-pixel columns (M4-style), so tessellation is O(plot width);
-what remains at extreme sizes is the O(visible) numeric scan (see the
-`ponytail:` marker in `candle_chart.rs`). Reproduce with:
+Every per-frame cost is bounded by plot width, not dataset size: the cached
+(per cursor move) frame is memoized flat, and rebuilds run on an incrementally
+maintained summary pyramid — per-pixel column aggregation and autoscale are
+O(width x log candles) range queries, prefix sums answer volume/SMA in O(1),
+and a tick updates only its block path in O(log). Memory cost: ~2 f64 per
+candle. Reproduce with:
 
 ```bash
 cargo test -p ducktape-ui --release --features candle-chart,tiny-skia,x11 \
