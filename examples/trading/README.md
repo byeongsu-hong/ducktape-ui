@@ -15,6 +15,11 @@ there is something to look at on the first run. Press **Connect** to read it,
 type your own, or **Browse markets** to use market data only; the positions
 panel offers the prompt again if you change your mind.
 
+An address is checked before it is sent, because the exchange answers a
+malformed one with a plain-text parser complaint rather than JSON — so without
+the check, a typo reads as "Hyperliquid sent bad JSON", the one error that
+blames the exchange for something you just typed.
+
 ![Trading](screenshots/trading.png)
 
 ## Design
@@ -165,7 +170,8 @@ without the chart knowing what an exchange is.
 `cargo test -p trading-example` parses recorded payloads for every response
 shape, checks the tape merge, the market-switch guard, the book's depth and
 spread, how pushed fills stack and cool, and the valuation and risk-rail
-arithmetic, then renders the address prompt headlessly. Two tests talk to the
+arithmetic, then renders the address prompt headlessly and types a bad address
+into it to prove the button will not send one. Two tests talk to the
 live exchange — one per endpoint shape, so the subscription names and payloads
 are checked against Hyperliquid rather than against a recording, and the
 account's own marks are fed back through the valuation to prove they are a

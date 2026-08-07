@@ -445,6 +445,7 @@ component PositionRow(held:Position)
           width=104.0
 
 on connect
+  return if !valid_address(draft)
   address = trim(draft)
   gate = false
   status = "Loading"
@@ -1109,6 +1110,13 @@ view
             active bg=raised border=edge r=4.0 placeholder=faint value=fg
             hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
             focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+          if !empty(trim(draft)) && !valid_address(draft)
+            text "An address is 0x and forty hexadecimal digits."
+              with
+                size=11.0
+                w=fill
+                wrap=word
+                @text-faint
           row
             with
               gap=10.0
@@ -1118,7 +1126,7 @@ view
               with
                 p=11.0
                 label="Connect"
-                disabled=empty(trim(draft))
+                disabled=!valid_address(draft)
               active bg=fg text=fg_invert r=4.0
               hovered bg=fg text=fg_invert r=4.0
               disabled bg=raised text=faint r=4.0
@@ -1135,3 +1143,14 @@ test trading_gate_gates_the_app
   expect dialog.width ~= 460.0
   expect app.width ~= 1440.0
   capture gate
+
+test trading_gate_refuses_a_malformed_address
+  viewport 1440 900
+  target dialog = #gate
+  target connect = dialog/connect
+  target field = dialog/address-input
+  focus field
+  replace "0xnope"
+  expect a11y connect disabled true
+  replace "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+  expect a11y connect disabled false
