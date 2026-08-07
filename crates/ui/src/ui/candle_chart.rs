@@ -5,7 +5,7 @@
 //! axis tags draw on a per-frame overlay. The wheel zooms around the cursor,
 //! dragging pans, and the price scale follows the visible candles.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -135,6 +135,35 @@ impl Viewport {
         let index = chrome.index_at(self, x).round();
         (index >= 0.0 && index.is_finite()).then_some(index as usize)
     }
+}
+
+/// When candles were appended while the right edge of the view was at (or
+/// past) the previous last candle, shift the view right so it keeps
+/// following the tape; a view scrolled into history stays put.
+fn follow_appended(viewport: Viewport, seen_len: usize, len: usize) -> Viewport {
+    let appended = len.saturating_sub(seen_len);
+    if appended == 0 || seen_len == 0 {
+        return viewport;
+    }
+    if viewport.to >= seen_len as f64 - 1.5 {
+        viewport.pan(appended as f64, len)
+    } else {
+        viewport
+    }
+}
+
+/// Bottom-right chip that resumes following the latest candle.
+fn latest_chip(plot: Rectangle) -> Rectangle {
+    Rectangle {
+        x: plot.x + plot.width - 82.0,
+        y: plot.y + plot.height - 30.0,
+        width: 72.0,
+        height: 20.0,
+    }
+}
+
+fn chip_visible(viewport: Option<Viewport>, len: usize) -> bool {
+    viewport.is_some_and(|viewport| viewport.to < len as f64 - 0.5)
 }
 
 fn visible_indices(viewport: Viewport, len: usize) -> Range<usize> {
@@ -570,7 +599,9 @@ struct DerivedFrame {
 }
 
 pub struct CandleState {
-    viewport: Option<Viewport>,
+    viewport: Cell<Option<Viewport>>,
+    /// Data length at the last draw, to detect appends for auto-follow.
+    seen_len: Cell<usize>,
     drag: Option<Drag>,
     hovered: Option<usize>,
     layers: canvas::Cache,
@@ -580,7 +611,8 @@ pub struct CandleState {
 impl Default for CandleState {
     fn default() -> Self {
         Self {
-            viewport: None,
+            viewport: Cell::new(None),
+            seen_len: Cell::new(0),
             drag: None,
             hovered: None,
             layers: canvas::Cache::new(),
@@ -600,6 +632,7 @@ impl<Message> CandleProgram<'_, Message> {
     fn viewport(&self, candles: &[Candle], state: &CandleState) -> Viewport {
         state
             .viewport
+            .get()
             .unwrap_or_else(|| Viewport::initial(candles.len(), self.initial_bars))
             .clamped(candles.len())
     }
@@ -697,13 +730,19 @@ impl<Message> CandleProgram<'_, Message> {
                 let viewport = self.viewport(candles, state);
                 let anchor = chrome.index_at(viewport, position.x);
                 let factor = ZOOM_PER_LINE.powf(f64::from(-lines));
-                state.viewport = Some(viewport.zoom(anchor, factor, len));
+                state.viewport.set(Some(viewport.zoom(anchor, factor, len)));
                 Some(canvas::Action::request_redraw().and_capture())
             }
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
                 if !chrome.plot.contains(position) {
                     return None;
+                }
+                if chip_visible(state.viewport.get(), len)
+                    && latest_chip(chrome.plot).contains(position)
+                {
+                    state.viewport.set(None);
+                    return Some(canvas::Action::request_redraw().and_capture());
                 }
                 state.drag = Some(Drag {
                     x: cursor.position()?.x,
@@ -718,7 +757,7 @@ impl<Message> CandleProgram<'_, Message> {
                 if let (Some(drag), Some(position)) = (state.drag, cursor.position()) {
                     let bars_per_pixel = drag.viewport.span() / f64::from(chrome.plot.width);
                     let bars = f64::from(drag.x - position.x) * bars_per_pixel;
-                    state.viewport = Some(drag.viewport.pan(bars, len));
+                    state.viewport.set(Some(drag.viewport.pan(bars, len)));
                     return Some(canvas::Action::request_redraw().and_capture());
                 }
                 let next = cursor
@@ -771,6 +810,13 @@ impl<Message> CandleProgram<'_, Message> {
         if chrome.plot.width < 16.0 || chrome.plot.height < 16.0 {
             return Vec::new();
         }
+        if let Some(pinned) = state.viewport.get() {
+            let followed = follow_appended(pinned, state.seen_len.get(), candles.len());
+            if followed != pinned {
+                state.viewport.set(Some(followed));
+            }
+        }
+        state.seen_len.set(candles.len());
         let viewport = self.viewport(candles, state);
         let range = visible_indices(viewport, candles.len());
 
@@ -814,6 +860,22 @@ impl<Message> CandleProgram<'_, Message> {
         self.draw_axis_labels(&ctx, &mut overlay, cursor_in_plot);
         if let Some(position) = cursor_in_plot {
             self.draw_crosshair(&ctx, &mut overlay, position);
+        }
+        if chip_visible(state.viewport.get(), candles.len()) {
+            let chip = latest_chip(chrome.plot);
+            overlay.fill_rectangle(
+                Point::new(chip.x, chip.y),
+                chip.size(),
+                self.theme.palette.foreground,
+            );
+            self.label(
+                &mut overlay,
+                "Latest >",
+                Point::new(chip.center_x(), chip.center_y()),
+                TextAlignment::Center,
+                Vertical::Center,
+                self.theme.palette.background,
+            );
         }
         vec![layers, overlay.into_geometry()]
     }
@@ -1381,13 +1443,13 @@ mod tests {
         assert_eq!(redraw, iced::window::RedrawRequest::NextFrame);
         assert_eq!(status, iced::event::Status::Captured);
 
-        let zoomed = state.viewport.expect("zoom sets the viewport");
+        let zoomed = state.viewport.get().expect("zoom sets the viewport");
         assert!(zoomed.span() < before.span());
         let anchor_after = chrome(BOUNDS).index_at(zoomed, point.x);
         assert!((anchor - anchor_after).abs() < 1e-6);
 
         program.update(&mut state, &wheel(-1.0), bounds, cursor);
-        let restored = state.viewport.expect("zoom out keeps the viewport");
+        let restored = state.viewport.get().expect("zoom out keeps the viewport");
         assert!((restored.span() - before.span()).abs() < 1e-6);
 
         // Wheel over the price-axis gutter must not zoom.
@@ -1428,7 +1490,7 @@ mod tests {
             )
             .expect("drag pans");
         assert_eq!(action.into_inner().2, iced::event::Status::Captured);
-        let panned = state.viewport.expect("pan sets the viewport");
+        let panned = state.viewport.get().expect("pan sets the viewport");
         let bars = f64::from(start.x - dragged_to.x) * origin.span() / f64::from(plot.width);
         assert!((panned.from - (origin.from + bars)).abs() < 1e-6);
 
@@ -1576,6 +1638,58 @@ mod tests {
         assert!(aggregate_columns(&data, 0..100, narrow, chrome).is_some());
     }
 
+    #[test]
+    fn follow_tracks_appends_only_at_the_right_edge() {
+        // Pinned at the right edge: 5 appended candles shift the view by 5.
+        let pinned = Viewport {
+            from: 179.5,
+            to: 299.5,
+        };
+        let followed = follow_appended(pinned, 300, 305);
+        assert!((followed.from - 184.5).abs() < 1e-9);
+        assert!((followed.to - 304.5).abs() < 1e-9);
+
+        // Scrolled into history: appends leave the view alone.
+        let history = Viewport {
+            from: 10.0,
+            to: 130.0,
+        };
+        assert_eq!(follow_appended(history, 300, 305), history);
+
+        // No append, or first observation: unchanged.
+        assert_eq!(follow_appended(pinned, 300, 300), pinned);
+        assert_eq!(follow_appended(pinned, 0, 300), pinned);
+    }
+
+    #[test]
+    fn latest_chip_resets_to_follow() {
+        use iced::widget::canvas::Program as _;
+
+        let data = candles(300);
+        let program = hover_program(&data);
+        let mut state = CandleState::default();
+        let bounds = Rectangle::with_size(BOUNDS);
+        let plot = chrome(BOUNDS).plot;
+
+        // Pan away from the right edge so the chip appears.
+        state.viewport.set(Some(Viewport {
+            from: 10.0,
+            to: 130.0,
+        }));
+        assert!(chip_visible(state.viewport.get(), data.len()));
+        assert!(!chip_visible(None, data.len()));
+
+        let chip = latest_chip(plot);
+        let inside = Point::new(chip.center_x(), chip.center_y());
+        let press = canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let action = program
+            .update(&mut state, &press, bounds, mouse::Cursor::Available(inside))
+            .expect("chip press acts");
+        assert_eq!(action.into_inner().2, iced::event::Status::Captured);
+        assert!(state.viewport.get().is_none());
+        assert!(state.drag.is_none());
+    }
+
     /// Timing evidence for the cached-layer design, not a pass/fail test.
     /// Run with:
     /// `cargo test -p ducktape-ui --release --features candle-chart,tiny-skia,x11 \`
@@ -1645,7 +1759,7 @@ mod tests {
             ];
             for (label, viewport) in views {
                 let state = CandleState {
-                    viewport,
+                    viewport: Cell::new(viewport),
                     ..CandleState::default()
                 };
                 let cold = per_frame(&state, &program, true);
