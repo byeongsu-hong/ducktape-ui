@@ -84,8 +84,9 @@ divider under the chart drags: positions and fills are worth more rows on some
 days than others, and it stops at its limits rather than at the gesture: a
 drag that overshoots pins to the bound instead of refusing to move.
 
-A position row is a way back to its market. An account holding a hundred of
-them has no other route to any but the one already charted.
+A row that names a market is a way back to it — a position, a resting order, a
+fill. An account holding a hundred of them has no other route to any but the
+one already charted.
 
 Funding is the one figure here written to four decimals. Two is what every
 other number wants, and it is exactly what funding cannot use: the hourly rate
@@ -135,7 +136,9 @@ takes anything; the market does not, so a 400 typed into a 5x market is held at
 showing is the one number here that must never be wrong.
 
 Escape closes it, and the subscription that listens for Escape exists only
-while it is open.
+while it is open. Escape with a search in the box clears the search instead,
+on its own subscription with its own condition, so neither key listener exists
+when there is nothing for it to do.
 
 Nothing is signed and nothing is sent, and the panel says so in the place a
 submit button would be. Sending would mean this app holding the key that signs
@@ -210,6 +213,13 @@ into at most one message per beat, and each one holds the latest of everything
 rather than only what changed, so a handler can assign it without asking which
 kind of update it was.
 
+A failure and a progress message share one slot under the positions header,
+and a failure wins it. They are different things: "Loading candles" is the app
+working and "Hyperliquid unreachable" is the app stopped, so they are separate
+state and only one of them is red. The slot is also the chart's hover readout,
+and that loses to both — a candle's open and close are worth less than knowing
+the feed is gone.
+
 Latency is the round trip of the socket's own ping, which needs no agreement
 between our clock and the exchange's, and the ping is required anyway: a socket
 that goes quiet for a minute is closed. A dropped feed clears it back to an em
@@ -245,6 +255,12 @@ three are ordinary `ChartOverlay` implementations — the same extension point a
 caller uses for anything the built-ins do not cover — so nothing about trading
 leaks into the chart widget.
 
+The chart is drawn by Rust and everything around it by Ice, so the palette
+exists twice: as tokens in `theme.ice`, and as literals in `chart_theme`.
+Nothing makes them agree, and the chart is half the screen — a drift would be
+plain at runtime and invisible until then. A test reads the tokens out of
+`theme.ice` and holds the chart to them.
+
 ## Boundary
 
 One extern block
@@ -264,13 +280,22 @@ without the chart knowing what an exchange is.
 
 ## Tests
 
-
 `cargo test -p trading-example` parses recorded payloads for every response
-shape, checks the tape merge, the market-switch guard, the book's depth and
-spread, how pushed fills stack and cool, and the valuation and risk-rail
-arithmetic, then renders the address prompt headlessly and types a bad address
-into it to prove the button will not send one. Two tests talk to the
-live exchange — one per endpoint shape, so the subscription names and payloads
+shape and checks the arithmetic they feed: the tape merge and its market
+guard, how one aggressor's prints fold into one row, the book's depth and
+spread, how fills stack and cool, the valuation between polls, and both rails.
+It prices the ticket against the closed form of the liquidation it quotes, and
+against the cases where it must refuse to quote one at all.
+
+It also drives the app. The address prompt refuses a malformed address; the
+ticket takes a price and a size, prices them, and closes on Escape; a search
+survives being typed and clears on Escape; the panels that need an account say
+so when there is none; and a failure outranks the progress line it shares a
+slot with. None of those reach the network, so they run wherever the rest does.
+One test reads the palette out of `theme.ice` and holds the chart to it, because
+the chart is drawn in Rust and would otherwise drift in silence.
+
+Two tests talk to the live exchange — one per endpoint shape, so the subscription names and payloads
 are checked against Hyperliquid rather than against a recording, and the
 account's own marks are fed back through the valuation to prove they are a
 fixed point of it — and are opt-in:

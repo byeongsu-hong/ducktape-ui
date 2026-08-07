@@ -45,6 +45,7 @@ state
   book:Book? = none
   hover:CandleHit? = none
   status = ""
+  error = ""
   feeds:task-handle? = none
   latency = 0
   flashing = false
@@ -57,6 +58,12 @@ derived
 preset terminal
   state
     gate = false
+
+preset failing
+  state
+    gate = false
+    error = "Hyperliquid unreachable"
+    status = "Loading candles"
 
 component Num(value:str, size:f64, width:f64)
   text value
@@ -301,122 +308,140 @@ component TradeRow(print:Trade)
         @text-muted
 
 component OrderRow(order:Order)
-  row #root
+  emits
+    pick(str)
+  button #root -> emit(pick, order.coin)
     with
+      label=order_label(order)
       w=fill
-      h=26.0
-      pl=14.0
-      pr=14.0
-      gap=8.0
-      align=center
-    text order.coin
-      with
-        size=11.0
-        w=40.0
-        @text-muted
-    text fmt_age(order.ts)
-      with
-        size=9.0
-        w=28.0
-        font=digits
-        @text-faint
-    space w=fill
-    Delta
-      with
-        value=fmt_px(order.price)
-        up=order.buy
-        size=11.0
-        width=78.0
-    text fmt_size(order.size)
-      with
-        size=11.0
-        w=56.0
-        align-x=right
-        font=digits
-        @text-faint
-
-component FillRow(fill:Fill)
-  stack #root w=fill h=26.0
-    row w=fill h=26.0
-      if fill.heat > 1 && fill.buy
-        box
-          with
-            w=fill
-            h=26.0
-            bg=up_flash
-          space w=fill h=fill
-      if fill.heat > 1 && !fill.buy
-        box
-          with
-            w=fill
-            h=26.0
-            bg=down_flash
-          space w=fill h=fill
-      if fill.heat == 1 && fill.buy
-        box
-          with
-            w=fill
-            h=26.0
-            bg=up_soft
-          space w=fill h=fill
-      if fill.heat == 1 && !fill.buy
-        box
-          with
-            w=fill
-            h=26.0
-            bg=down_soft
-          space w=fill h=fill
+      p=0.0
+    active bg=panel r=0.0
+    hovered bg=raised r=0.0
     row
       with
         w=fill
         h=26.0
         pl=14.0
-        pr=18.0
-        gap=6.0
+        pr=14.0
+        gap=8.0
         align=center
-      text fmt_time(fill.ts)
+      text order.coin
         with
           size=11.0
-          w=52.0
+          w=40.0
+          @text-muted
+      text fmt_age(order.ts)
+        with
+          size=9.0
+          w=28.0
           font=digits
           @text-faint
-      text fill.coin
-        with
-          size=11.0
-          w=46.0
-          @text-muted
+      space w=fill
       Delta
         with
-          value=fmt_px(fill.price)
-          up=fill.buy
+          value=fmt_px(order.price)
+          up=order.buy
           size=11.0
           width=78.0
-      space w=fill
-      col w=72.0
-        if fill.closed_pnl > 0.0
-          text fmt_pnl(fill.closed_pnl)
+      text fmt_size(order.size)
+        with
+          size=11.0
+          w=56.0
+          align-x=right
+          font=digits
+          @text-faint
+
+component FillRow(fill:Fill)
+  emits
+    pick(str)
+  button #root -> emit(pick, fill.coin)
+    with
+      label=fill_label(fill)
+      w=fill
+      p=0.0
+    active bg=panel r=0.0
+    hovered bg=raised r=0.0
+    stack w=fill h=26.0
+      row w=fill h=26.0
+        if fill.heat > 1 && fill.buy
+          box
             with
-              size=11.0
               w=fill
-              align-x=right
-              font=digits
-              @text-up
-        if fill.closed_pnl < 0.0
-          text fmt_pnl(fill.closed_pnl)
+              h=26.0
+              bg=up_flash
+            space w=fill h=fill
+        if fill.heat > 1 && !fill.buy
+          box
             with
-              size=11.0
               w=fill
-              align-x=right
-              font=digits
-              @text-down
-        if fill.closed_pnl == 0.0
-          text fmt_size(fill.size)
+              h=26.0
+              bg=down_flash
+            space w=fill h=fill
+        if fill.heat == 1 && fill.buy
+          box
             with
-              size=11.0
               w=fill
-              align-x=right
-              font=digits
-              @text-faint
+              h=26.0
+              bg=up_soft
+            space w=fill h=fill
+        if fill.heat == 1 && !fill.buy
+          box
+            with
+              w=fill
+              h=26.0
+              bg=down_soft
+            space w=fill h=fill
+      row
+        with
+          w=fill
+          h=26.0
+          pl=14.0
+          pr=18.0
+          gap=6.0
+          align=center
+        text fmt_time(fill.ts)
+          with
+            size=11.0
+            w=52.0
+            font=digits
+            @text-faint
+        text fill.coin
+          with
+            size=11.0
+            w=46.0
+            @text-muted
+        Delta
+          with
+            value=fmt_px(fill.price)
+            up=fill.buy
+            size=11.0
+            width=78.0
+        space w=fill
+        col w=72.0
+          if fill.closed_pnl > 0.0
+            text fmt_pnl(fill.closed_pnl)
+              with
+                size=11.0
+                w=fill
+                align-x=right
+                font=digits
+                @text-up
+          if fill.closed_pnl < 0.0
+            text fmt_pnl(fill.closed_pnl)
+              with
+                size=11.0
+                w=fill
+                align-x=right
+                font=digits
+                @text-down
+          if fill.closed_pnl == 0.0
+            text fmt_size(fill.size)
+              with
+                size=11.0
+                w=fill
+                align-x=right
+                font=digits
+                @text-faint
 
 component PositionRow(held:Position)
   emits
@@ -577,6 +602,11 @@ on ticket_key(event)
   return if event.key != key.named("Escape")
   ticket = false
 
+on search_key(event)
+  return if event.key != key.named("Escape")
+  query = ""
+  visible = filter_symbols(symbols, "", coin)
+
 on ticket_side(buy)
   ticket_buy = buy
   quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, buy)
@@ -623,15 +653,18 @@ on cool_flash
   flashing = any_hot(fills)
 
 on symbols_loaded(rows)
+  error = ""
   symbols = rows
   visible = filter_symbols(rows, query, coin)
   focus = symbol_row(rows, coin)
   status = ""
 
 on candles_loaded(_count)
+  error = ""
   status = ""
 
 on account_loaded(next)
+  error = ""
   account = some(next)
   positions = next.positions
 
@@ -640,6 +673,7 @@ on fills_streamed(rows)
   flashing = any_hot(fills)
 
 on orders_loaded(rows)
+  error = ""
   orders = rows
 
 on market_ticked(tick)
@@ -652,12 +686,12 @@ on market_ticked(tick)
   account = mark_account(account, positions)
   tape_prints = push_trades(tape_prints, tick, 60)
 
-on failed(error)
-  status = error.message
+on failed(reason)
+  error = reason.message
   loading_history = false
 
-on feed_failed(error)
-  status = error.message
+on feed_failed(reason)
+  error = reason.message
   latency = 0
 
 on chart_signalled(signal)
@@ -669,6 +703,7 @@ on chart_signalled(signal)
   run hl_history(tape, coin, interval) -> history_loaded _ | failed _
 
 on history_loaded(_count)
+  error = ""
   loading_history = false
   status = ""
 
@@ -677,6 +712,7 @@ on lower_resized(_dx, dy)
 
 subscribe
   keyboard press when ticket -> ticket_key _
+  keyboard press when !gate && !ticket && !empty(query) -> search_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 700ms when flashing -> cool_flash
@@ -917,41 +953,46 @@ view
                             align=center
                           Label value="POSITIONS"
                           Label value=fmt_count(len(positions))
-                          match hover
-                            some(hit)
-                              row #readout gap=10.0 align=center
-                                Label value="O"
-                                text fmt_px(hit.open)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-muted
-                                Label value="H"
-                                text fmt_px(hit.high)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-muted
-                                Label value="L"
-                                text fmt_px(hit.low)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-muted
-                                Label value="C"
-                                text fmt_px(hit.close)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-fg
-                                Label value="VOL"
-                                text fmt_volume(hit.volume)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-muted
-                            none
-                              text status size=11.0 @text-faint
+                          if !empty(error)
+                            text error size=11.0 @text-down
+                          if empty(error) && !empty(status)
+                            text status size=11.0 @text-faint
+                          if empty(error) && empty(status)
+                            match hover
+                              some(hit)
+                                row #readout gap=10.0 align=center
+                                  Label value="O"
+                                  text fmt_px(hit.open)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-muted
+                                  Label value="H"
+                                  text fmt_px(hit.high)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-muted
+                                  Label value="L"
+                                  text fmt_px(hit.low)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-muted
+                                  Label value="C"
+                                  text fmt_px(hit.close)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-fg
+                                  Label value="VOL"
+                                  text fmt_volume(hit.volume)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-muted
+                              none
+                                text status size=11.0 @text-faint
                         row
                           with
                             w=fill
@@ -1105,6 +1146,8 @@ view
                                 text "Fills need an address." size=12.0 @text-faint
                             for fill in fills
                               FillRow fill=fill
+                                events
+                                  pick -> pick_symbol _
                 rule vertical thickness=1.0 color=edge
                 box #book
                   with
@@ -1287,6 +1330,8 @@ view
                             text "Orders need an address." size=11.0 @text-faint
                         for order in orders
                           OrderRow order=order
+                            events
+                              pick -> pick_symbol _
         layer
           box #gate
             with
@@ -1620,3 +1665,21 @@ test trading_browse_says_what_needs_an_address
   expect text "Connect an address"
   expect no text "No fills on this account yet."
   expect no text "No resting orders."
+
+test trading_escape_clears_a_search
+  preset terminal
+  viewport 1400 900
+  target app = #app
+  target markets = app/markets
+  target search = markets/search
+  focus search
+  type "ZZZ"
+  expect query == "ZZZ"
+  key escape
+  expect query == ""
+
+test trading_shows_the_failure_not_the_progress
+  preset failing
+  viewport 1400 900
+  expect text "Hyperliquid unreachable"
+  expect no text "Loading candles"

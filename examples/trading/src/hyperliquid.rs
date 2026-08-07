@@ -1537,6 +1537,29 @@ pub fn position_label(held: Position) -> String {
     format!("{} {side} {}", held.coin, fmt_size(held.size))
 }
 
+/// A resting order names its side, its size and the price it waits at.
+pub fn order_label(order: Order) -> String {
+    let side = if order.buy { "buy" } else { "sell" };
+    format!(
+        "{} {side} {} at {}",
+        order.coin,
+        fmt_size(order.size),
+        fmt_px(order.price)
+    )
+}
+
+/// A fill names what it did and where. Its realized PnL is the point when it
+/// closed something, and its size when it opened.
+pub fn fill_label(fill: Fill) -> String {
+    let side = if fill.buy { "bought" } else { "sold" };
+    let outcome = if fill.closed_pnl == 0.0 {
+        fmt_size(fill.size)
+    } else {
+        fmt_signed_usd(fill.closed_pnl)
+    };
+    format!("{} {side} {} at {}", fill.coin, outcome, fmt_px(fill.price))
+}
+
 /// The share of the tape that lifted the offer, as a percentage. Which side
 /// is crossing tells you something a price alone does not: the same price with
 /// buyers taking it and with sellers hitting it are two different markets.
@@ -2106,6 +2129,41 @@ mod tests {
         );
     }
 
+    /// The chart is drawn by Rust and the panels around it by Ice, so the
+    /// palette exists twice: once as tokens in `theme.ice` and once as the
+    /// literals below. Nothing makes them agree, and the chart is half the
+    /// screen — a drift would be obvious at runtime and invisible until then.
+    #[test]
+    fn the_chart_wears_the_same_palette_as_the_panels() {
+        const THEME: &str = include_str!("ui/theme.ice");
+
+        fn token(name: &str) -> Color {
+            let line = THEME
+                .lines()
+                .map(str::trim)
+                .find(|line| line.starts_with(&format!("{name} #")))
+                .unwrap_or_else(|| panic!("theme.ice declares no `{name}`"));
+            let hex = line.rsplit('#').next().expect("a colour");
+            assert_eq!(hex.len(), 6, "`{name}` is not an opaque #RRGGBB");
+            rgb(u32::from_str_radix(hex, 16).expect("hexadecimal"))
+        }
+
+        let chart = chart_theme().palette;
+        assert_eq!(chart.background, token("bg"));
+        assert_eq!(chart.foreground, token("fg"));
+        assert_eq!(chart.muted_foreground, token("muted"));
+        assert_eq!(chart.border, token("edge"));
+        assert_eq!(chart.success, token("up"));
+        assert_eq!(chart.destructive, token("down"));
+        assert_eq!(chart.warning, token("faint"));
+
+        // `accent` is the only slot with no counterpart, and deliberately so:
+        // the moving averages are ink rather than colour, because the fills
+        // and the position levels are the only long/short marks on the plot.
+        assert_ne!(chart.accent, chart.success);
+        assert_ne!(chart.accent, chart.destructive);
+    }
+
     #[test]
     fn an_interactive_row_is_named_by_what_it_does() {
         // A book row starts an order, so it is named by the order and not by
@@ -2130,6 +2188,40 @@ mod tests {
         // A row carrying a side, a size, an entry, a cliff and a PnL is worth
         // more than its ticker to somebody who cannot see the rest of it.
         assert_eq!(position_label(held(30.0)), "BTC long 30.00");
+
+        let order = Order {
+            coin: "BTC".into(),
+            buy: true,
+            price: 60_000.0,
+            size: 0.5,
+            ts: 0,
+        };
+        assert_eq!(order_label(order.clone()), "BTC buy 0.500 at 60,000.00");
+        assert_eq!(
+            order_label(Order {
+                buy: false,
+                ..order
+            }),
+            "BTC sell 0.500 at 60,000.00"
+        );
+
+        let fill = |closed_pnl: f64, buy: bool| Fill {
+            coin: "BTC".into(),
+            ts: 0,
+            price: 64_000.0,
+            size: 0.5,
+            buy,
+            closed_pnl,
+            heat: 0,
+            tid: 0,
+        };
+        // A fill that closed something is named by what it made; one that
+        // opened, by what it took on. The row reads the same way.
+        assert_eq!(
+            fill_label(fill(250.0, false)),
+            "BTC sold +$250.00 at 64,000.00"
+        );
+        assert_eq!(fill_label(fill(0.0, true)), "BTC bought 0.500 at 64,000.00");
         assert_eq!(
             position_label(held(-30.0)),
             "BTC short 30.00",
