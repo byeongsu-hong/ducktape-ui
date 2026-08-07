@@ -84,8 +84,9 @@ divider under the chart drags: positions and fills are worth more rows on some
 days than others, and it stops at its limits rather than at the gesture: a
 drag that overshoots pins to the bound instead of refusing to move.
 
-A position row is a way back to its market. An account holding a hundred of
-them has no other route to any but the one already charted.
+A row that names a market is a way back to it — a position, a resting order, a
+fill. An account holding a hundred of them has no other route to any but the
+one already charted.
 
 Funding is the one figure here written to four decimals. Two is what every
 other number wants, and it is exactly what funding cannot use: the hourly rate
