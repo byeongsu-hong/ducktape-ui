@@ -44,6 +44,13 @@ requirement the margin engine holds against it. That bar is how much of the
 equity the requirement has already claimed — empty with nothing open, full at
 the call. Two rails, one reading, one for the position and one for everything.
 
+That one carries its share as a number beside it as well as a length. The
+position rail can be a bare bar because everything it measures — the entry, the
+mark, the liquidation price — is written out in the row beneath it, so a reader
+who cannot see the bar can still do the subtraction. Nothing else on screen
+carries the maintenance requirement, so a bar alone would be its only copy, and
+a bar has no accessible value.
+
 A fill the account just printed is pushed onto the top of the list wearing its
 side's colour, which fades over two beats and leaves the row cold. It is the
 only motion on screen that is not a number changing, so it is the only thing

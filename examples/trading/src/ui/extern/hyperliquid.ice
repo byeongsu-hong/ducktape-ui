@@ -3,7 +3,7 @@ extern crate::hyperliquid
   HlError(message:str)
   SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, prev:f64)
   Position(coin:str, size:f64, entry:f64, mark:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
-  Account(value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, positions:[Position])
+  Account(value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, margin_pct:f64, positions:[Position])
   Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, heat:i64)
   Order(coin:str, buy:bool, price:f64, size:f64, ts:i64)
   Level(price:f64, size:f64, bar:f64)
@@ -39,6 +39,7 @@ extern crate::hyperliquid
   sync fmt_leverage(value:f64) -> str
   sync fmt_latency(millis:i64) -> str
   sync fmt_bps(percent:f64) -> str
+  sync fmt_share(percent:f64) -> str
   sync fmt_compact_usd(value:f64) -> str
   sync fmt_pnl(value:f64) -> str
   sync fmt_count(value:i64) -> str
