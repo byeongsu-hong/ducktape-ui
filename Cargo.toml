@@ -14,6 +14,7 @@ members = [
     "examples/showcase",
     "examples/starter",
     "examples/terminal",
+    "examples/trading",
     "conformance/ice",
 ]
 resolver = "3"

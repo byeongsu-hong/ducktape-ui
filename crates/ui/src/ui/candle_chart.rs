@@ -4,6 +4,12 @@
 //! rebuilt when the data or the visible range changes; the crosshair and its
 //! axis tags draw on a per-frame overlay. The wheel zooms around the cursor,
 //! dragging pans, and the price scale follows the visible candles.
+//!
+//! Anything drawn over the candles is a [`ChartOverlay`]: it receives the
+//! frame's time and price mapping through [`ChartCoords`] and reports a
+//! `stamp` that keys the geometry cache. [`CandleChart::markers`] and
+//! [`CandleChart::price_lines`] are the built-in ones, so a caller adds a
+//! band, a bracket, or a trend line the same way the chart adds its own.
 
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
@@ -36,6 +42,8 @@ const PRICE_TICK_TARGET: usize = 6;
 const TIME_TICK_TARGET: usize = 6;
 const TAG_HEIGHT: f32 = 16.0;
 const DASH: [f32; 2] = [3.0, 3.0];
+const MARKER_WIDTH: f32 = 9.0;
+const MARKER_HEIGHT: f32 = 8.0;
 
 /// One OHLCV bar. `ts` is unix seconds; candles must be sorted ascending.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -638,6 +646,14 @@ fn mix(hash: u64, value: u64) -> u64 {
     (hash ^ value).wrapping_mul(0x0000_0100_0000_01b3)
 }
 
+fn label_hash(label: Option<&str>) -> u64 {
+    label.map_or(0, |text| {
+        text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            mix(hash, u64::from(byte))
+        })
+    })
+}
+
 fn mix_color(hash: u64, color: Color) -> u64 {
     let rg = (u64::from(color.r.to_bits()) << 32) | u64::from(color.g.to_bits());
     let ba = (u64::from(color.b.to_bits()) << 32) | u64::from(color.a.to_bits());
@@ -649,6 +665,7 @@ fn mix_color(hash: u64, color: Color) -> u64 {
 // ever mutates that way.
 fn fingerprint(
     candles: &[Candle],
+    overlays: u64,
     viewport: Viewport,
     size: Size,
     palette: &super::theme::Palette,
@@ -670,6 +687,9 @@ fn fingerprint(
     }
     hash = mix(hash, viewport.from.to_bits());
     hash = mix(hash, viewport.to.to_bits());
+    // Overlays report their own stamp; mixing it in means a moved marker or
+    // a new price line rebuilds the cached layer like a new candle does.
+    hash = mix(hash, overlays);
     // The cached layer paints with these palette colors, so a theme change
     // must invalidate it.
     for color in [
@@ -683,6 +703,350 @@ fn fingerprint(
         hash = mix_color(hash, color);
     }
     hash
+}
+
+/// The glyph for one marker, positioned so an arrow's tip lands on `at` and a
+/// centred shape is centred on it.
+fn marker_path(shape: MarkerShape, at: Point) -> Path {
+    let half = MARKER_WIDTH / 2.0;
+    match shape {
+        MarkerShape::ArrowUp | MarkerShape::ArrowDown => {
+            let direction = if shape == MarkerShape::ArrowUp {
+                1.0
+            } else {
+                -1.0
+            };
+            let base = at.y + direction * MARKER_HEIGHT;
+            Path::new(|builder| {
+                builder.move_to(at);
+                builder.line_to(Point::new(at.x - half, base));
+                builder.line_to(Point::new(at.x + half, base));
+                builder.close();
+            })
+        }
+        MarkerShape::Diamond => Path::new(|builder| {
+            builder.move_to(Point::new(at.x, at.y - half));
+            builder.line_to(Point::new(at.x + half, at.y));
+            builder.line_to(Point::new(at.x, at.y + half));
+            builder.line_to(Point::new(at.x - half, at.y));
+            builder.close();
+        }),
+        MarkerShape::Dot => Path::circle(at, half * 0.8),
+    }
+}
+
+/// The candle a fill landed in: the last one that opened at or before it.
+/// Fills older than the loaded tape have none.
+fn marker_index(candles: &[Candle], ts: i64) -> Option<usize> {
+    candles
+        .partition_point(|candle| candle.ts <= ts)
+        .checked_sub(1)
+}
+
+/// What an overlay is given to draw with: the plot rectangle and the same
+/// time/price coordinate mapping the chart itself uses this frame.
+pub struct ChartCoords<'a> {
+    theme: &'a UiTheme,
+    candles: &'a [Candle],
+    chrome: Chrome,
+    viewport: Viewport,
+    scale: PriceScale,
+    visible: Range<usize>,
+}
+
+impl<'a> ChartCoords<'a> {
+    /// The candle area, excluding the price and time axis strips.
+    pub fn plot(&self) -> Rectangle {
+        self.chrome.plot
+    }
+
+    /// The candles currently in view, as indices into [`ChartCoords::candles`].
+    pub fn visible(&self) -> Range<usize> {
+        self.visible.clone()
+    }
+
+    pub fn candles(&self) -> &'a [Candle] {
+        self.candles
+    }
+
+    pub fn theme(&self) -> &'a UiTheme {
+        self.theme
+    }
+
+    /// The candle a timestamp falls in: the last one that opened at or before
+    /// it. Timestamps older than the loaded data have none.
+    pub fn index_at(&self, ts: i64) -> Option<usize> {
+        marker_index(self.candles, ts)
+    }
+
+    /// Horizontal centre of a candle. Fractional indices interpolate, so an
+    /// overlay can place something between two candles.
+    pub fn x_for_index(&self, index: f64) -> f32 {
+        self.chrome.x(self.viewport, index)
+    }
+
+    /// Horizontal position of a timestamp, `None` when it predates the data.
+    pub fn x_for_ts(&self, ts: i64) -> Option<f32> {
+        Some(self.x_for_index(self.index_at(ts)? as f64))
+    }
+
+    pub fn y_for_price(&self, price: f64) -> f32 {
+        self.scale.y(self.chrome.plot, price)
+    }
+
+    pub fn price_at_y(&self, y: f32) -> f64 {
+        self.scale.price_at(self.chrome.plot, y)
+    }
+
+    /// Chart text in the chart's own font, size, and alignment rules.
+    pub fn label(
+        &self,
+        frame: &mut canvas::Frame,
+        content: &str,
+        position: Point,
+        align_x: TextAlignment,
+        align_y: Vertical,
+        color: Color,
+    ) {
+        draw_label(
+            self.theme, frame, content, position, align_x, align_y, color,
+        );
+    }
+
+    /// A dashed line in the chart's crosshair style.
+    pub fn dashed(&self, frame: &mut canvas::Frame, from: Point, to: Point, color: Color) {
+        draw_dashed(frame, from, to, color);
+    }
+
+    /// A filled label in the price-axis strip, level with `y`.
+    pub fn tag(
+        &self,
+        frame: &mut canvas::Frame,
+        content: &str,
+        y: f32,
+        background: Color,
+        foreground: Color,
+    ) {
+        draw_tag(
+            self.theme,
+            frame,
+            content,
+            y,
+            self.chrome.plot,
+            background,
+            foreground,
+        );
+    }
+}
+
+/// A drawing attached to the chart, painted over the candles in the order the
+/// overlays were added.
+///
+/// The chart caches its geometry, so an overlay reports a `stamp` that changes
+/// whenever its drawing would: the chart mixes it into the cache key and
+/// repaints when it moves. A stamp that never changes pins stale geometry on
+/// screen.
+pub trait ChartOverlay {
+    fn draw(&self, frame: &mut canvas::Frame, coords: &ChartCoords<'_>);
+
+    fn stamp(&self) -> u64;
+}
+
+/// Where a marker sits relative to the price it annotates, and which way it
+/// points. The chart draws the glyph; what it means is the caller's business.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerShape {
+    /// Triangle under the price, tip pointing up at it.
+    ArrowUp,
+    /// Triangle over the price, tip pointing down at it.
+    ArrowDown,
+    /// Diamond centred on the price.
+    Diamond,
+    /// Dot centred on the price.
+    Dot,
+}
+
+/// A point annotation: one glyph at `price` on the candle holding `ts` (unix
+/// seconds), with an optional short label beside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChartMarker {
+    pub ts: i64,
+    pub price: f64,
+    pub shape: MarkerShape,
+    pub color: Color,
+    pub label: Option<String>,
+}
+
+impl ChartMarker {
+    pub fn new(ts: i64, price: f64, shape: MarkerShape, color: Color) -> Self {
+        Self {
+            ts,
+            price,
+            shape,
+            color,
+            label: None,
+        }
+    }
+
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+}
+
+/// The built-in marker overlay, installed by [`CandleChart::markers`].
+pub struct Markers {
+    markers: Vec<ChartMarker>,
+    stamp: u64,
+}
+
+impl Markers {
+    pub fn new(markers: impl IntoIterator<Item = ChartMarker>) -> Self {
+        let mut markers: Vec<ChartMarker> = markers.into_iter().collect();
+        markers.sort_by_key(|marker| marker.ts);
+        let stamp = markers.iter().fold(0xcbf2_9ce4_8422_2325, |hash, marker| {
+            let hash = mix(mix(hash, marker.ts as u64), marker.price.to_bits());
+            let hash = mix(hash, marker.shape as u64);
+            mix(
+                mix_color(hash, marker.color),
+                label_hash(marker.label.as_deref()),
+            )
+        });
+        Self { markers, stamp }
+    }
+}
+
+impl ChartOverlay for Markers {
+    fn draw(&self, frame: &mut canvas::Frame, coords: &ChartCoords<'_>) {
+        let visible = coords.visible();
+        if self.markers.is_empty() || visible.is_empty() {
+            return;
+        }
+        let outline = coords.theme().palette.background;
+        frame.with_clip(coords.plot(), |frame| {
+            for marker in &self.markers {
+                let Some(index) = coords.index_at(marker.ts) else {
+                    continue;
+                };
+                if !visible.contains(&index) {
+                    continue;
+                }
+                let at = Point::new(
+                    coords.x_for_index(index as f64),
+                    coords.y_for_price(marker.price),
+                );
+                let path = marker_path(marker.shape, at);
+                frame.fill(&path, marker.color);
+                frame.stroke(
+                    &path,
+                    canvas::Stroke::default()
+                        .with_color(outline)
+                        .with_width(1.0),
+                );
+                if let Some(text) = &marker.label {
+                    let (offset, align_y) = match marker.shape {
+                        MarkerShape::ArrowDown => (-MARKER_HEIGHT - 2.0, Vertical::Bottom),
+                        _ => (MARKER_HEIGHT + 2.0, Vertical::Top),
+                    };
+                    coords.label(
+                        frame,
+                        text,
+                        Point::new(at.x, at.y + offset),
+                        TextAlignment::Center,
+                        align_y,
+                        marker.color,
+                    );
+                }
+            }
+        });
+    }
+
+    fn stamp(&self) -> u64 {
+        self.stamp
+    }
+}
+
+/// A horizontal annotation across the plot at `price`, tagged on the price
+/// axis: an entry, a liquidation level, a target, an alert.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PriceLine {
+    pub price: f64,
+    pub color: Color,
+    pub label: Option<String>,
+    pub dashed: bool,
+}
+
+impl PriceLine {
+    pub fn new(price: f64, color: Color) -> Self {
+        Self {
+            price,
+            color,
+            label: None,
+            dashed: true,
+        }
+    }
+
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    #[must_use]
+    pub fn solid(mut self) -> Self {
+        self.dashed = false;
+        self
+    }
+}
+
+/// The built-in price-line overlay, installed by [`CandleChart::price_lines`].
+pub struct PriceLines {
+    lines: Vec<PriceLine>,
+    stamp: u64,
+}
+
+impl PriceLines {
+    pub fn new(lines: impl IntoIterator<Item = PriceLine>) -> Self {
+        let lines: Vec<PriceLine> = lines.into_iter().collect();
+        let stamp = lines.iter().fold(0xcbf2_9ce4_8422_2325, |hash, line| {
+            let hash = mix(hash, line.price.to_bits());
+            let hash = mix(mix_color(hash, line.color), u64::from(line.dashed));
+            mix(hash, label_hash(line.label.as_deref()))
+        });
+        Self { lines, stamp }
+    }
+}
+
+impl ChartOverlay for PriceLines {
+    fn draw(&self, frame: &mut canvas::Frame, coords: &ChartCoords<'_>) {
+        let plot = coords.plot();
+        for line in &self.lines {
+            let y = coords.y_for_price(line.price);
+            if y < plot.y || y > plot.y + plot.height {
+                continue;
+            }
+            let from = Point::new(plot.x, y);
+            if line.dashed {
+                coords.dashed(frame, from, Point::new(plot.x + plot.width, y), line.color);
+            } else {
+                frame.fill_rectangle(from, Size::new(plot.width, 1.0), line.color);
+            }
+            if let Some(label) = &line.label {
+                coords.tag(
+                    frame,
+                    label,
+                    y,
+                    line.color,
+                    coords.theme().palette.background,
+                );
+            }
+        }
+    }
+
+    fn stamp(&self) -> u64 {
+        self.stamp
+    }
 }
 
 /// Chart data shared with a live producer. The chart locks it briefly per
@@ -718,6 +1082,7 @@ pub struct CandleChart<'a, Message> {
     precision: Option<usize>,
     time_offset_secs: i64,
     moving_averages: Vec<usize>,
+    overlays: Vec<Box<dyn ChartOverlay + 'a>>,
     live: Option<Duration>,
 }
 
@@ -749,6 +1114,7 @@ fn with_data<'a, Message>(data: Data<'a>, theme: &UiTheme) -> CandleChart<'a, Me
         precision: None,
         time_offset_secs: 0,
         moving_averages: Vec::new(),
+        overlays: Vec::new(),
         live: None,
     }
 }
@@ -802,6 +1168,25 @@ impl<'a, Message> CandleChart<'a, Message> {
         self
     }
 
+    /// Attaches a drawing to the chart. Overlays paint over the candles in
+    /// the order they were added, each with the frame's coordinate mapping.
+    #[must_use]
+    pub fn overlay(mut self, overlay: impl ChartOverlay + 'a) -> Self {
+        self.overlays.push(Box::new(overlay));
+        self
+    }
+
+    /// Point annotations pinned to a time and a price: fills, signals, alerts.
+    #[must_use]
+    pub fn markers(self, markers: impl IntoIterator<Item = ChartMarker>) -> Self {
+        self.overlay(Markers::new(markers))
+    }
+
+    /// Horizontal annotations across the plot: entry, liquidation, target.
+    #[must_use]
+    pub fn price_lines(self, lines: impl IntoIterator<Item = PriceLine>) -> Self {
+        self.overlay(PriceLines::new(lines))
+    }
     /// Repaints on its own beat so a live feed renders without any app
     /// message or view rebuild: shared-tape mutations are picked up by the
     /// data fingerprint on each beat (the LiveSurface scheduling idea,
@@ -829,6 +1214,7 @@ where
                 precision: chart.precision,
                 time_offset_secs: chart.time_offset_secs,
                 moving_averages: chart.moving_averages,
+                overlays: chart.overlays,
                 live: chart.live,
             })
             .width(width)
@@ -888,6 +1274,7 @@ struct CandleProgram<'a, Message> {
     precision: Option<usize>,
     time_offset_secs: i64,
     moving_averages: Vec<usize>,
+    overlays: Vec<Box<dyn ChartOverlay + 'a>>,
     live: Option<Duration>,
 }
 
@@ -1124,9 +1511,15 @@ impl<Message> CandleProgram<'_, Message> {
         let viewport = self.viewport(candles, state);
         let range = visible_indices(viewport, candles.len());
 
+        let overlays = self
+            .overlays
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325, |hash, overlay| {
+                mix(hash, overlay.stamp())
+            });
         let mut pyramid = state.pyramid.borrow_mut();
         pyramid.sync(candles);
-        let stamp = fingerprint(candles, viewport, size, &self.theme.palette);
+        let stamp = fingerprint(candles, overlays, viewport, size, &self.theme.palette);
         let (scale, axes) = {
             let mut derived = state.derived.borrow_mut();
             match derived.as_ref() {
@@ -1197,6 +1590,67 @@ impl<Message> CandleProgram<'_, Message> {
     }
 }
 
+/// Chart text in the chart's own font and size.
+fn draw_label(
+    theme: &UiTheme,
+    frame: &mut canvas::Frame,
+    content: &str,
+    position: Point,
+    align_x: TextAlignment,
+    align_y: Vertical,
+    color: Color,
+) {
+    frame.fill_text(canvas::Text {
+        content: content.to_owned(),
+        position,
+        color,
+        size: Pixels(theme.typography.meta_compact),
+        font: theme.typography.font,
+        align_x,
+        align_y,
+        ..canvas::Text::default()
+    });
+}
+
+fn draw_dashed(frame: &mut canvas::Frame, from: Point, to: Point, color: Color) {
+    frame.stroke(
+        &Path::line(from, to),
+        canvas::Stroke {
+            line_dash: canvas::LineDash {
+                segments: &DASH,
+                offset: 0,
+            },
+            ..canvas::Stroke::default().with_color(color).with_width(1.0)
+        },
+    );
+}
+
+/// A filled label in the price-axis strip, level with `y`.
+fn draw_tag(
+    theme: &UiTheme,
+    frame: &mut canvas::Frame,
+    content: &str,
+    y: f32,
+    plot: Rectangle,
+    background: Color,
+    foreground: Color,
+) {
+    frame.fill_rectangle(
+        Point::new(plot.x + plot.width, y - TAG_HEIGHT / 2.0),
+        Size::new(PRICE_AXIS_WIDTH, TAG_HEIGHT),
+        background,
+    );
+    draw_label(
+        theme,
+        frame,
+        content,
+        Point::new(plot.x + plot.width + 6.0, y),
+        TextAlignment::Left,
+        Vertical::Center,
+        foreground,
+    );
+}
+
 impl<Message> CandleProgram<'_, Message> {
     fn label(
         &self,
@@ -1207,29 +1661,19 @@ impl<Message> CandleProgram<'_, Message> {
         align_y: Vertical,
         color: Color,
     ) {
-        frame.fill_text(canvas::Text {
-            content: content.to_owned(),
+        draw_label(
+            &self.theme,
+            frame,
+            content,
             position,
-            color,
-            size: Pixels(self.theme.typography.meta_compact),
-            font: self.theme.typography.font,
             align_x,
             align_y,
-            ..canvas::Text::default()
-        });
+            color,
+        );
     }
 
     fn dashed(&self, frame: &mut canvas::Frame, from: Point, to: Point, color: Color) {
-        frame.stroke(
-            &Path::line(from, to),
-            canvas::Stroke {
-                line_dash: canvas::LineDash {
-                    segments: &DASH,
-                    offset: 0,
-                },
-                ..canvas::Stroke::default().with_color(color).with_width(1.0)
-            },
-        );
+        draw_dashed(frame, from, to, color);
     }
 
     fn axes(
@@ -1369,7 +1813,21 @@ impl<Message> CandleProgram<'_, Message> {
             });
         }
 
-        self.draw_moving_averages(ctx, frame, overlay_range);
+        self.draw_moving_averages(ctx, frame, overlay_range.clone());
+
+        if !self.overlays.is_empty() {
+            let coords = ChartCoords {
+                theme: &self.theme,
+                candles: ctx.candles,
+                chrome: ctx.chrome,
+                viewport: ctx.viewport,
+                scale: ctx.scale,
+                visible: overlay_range,
+            };
+            for overlay in &self.overlays {
+                overlay.draw(frame, &coords);
+            }
+        }
 
         if let (Some(last), Some(y)) = (ctx.candles.last(), ctx.axes.last_close_y) {
             let color = if last.close >= last.open {
@@ -1528,19 +1986,7 @@ impl<Message> CandleProgram<'_, Message> {
         background: Color,
         foreground: Color,
     ) {
-        frame.fill_rectangle(
-            Point::new(plot.x + plot.width, y - TAG_HEIGHT / 2.0),
-            Size::new(PRICE_AXIS_WIDTH, TAG_HEIGHT),
-            background,
-        );
-        self.label(
-            frame,
-            content,
-            Point::new(plot.x + plot.width + 6.0, y),
-            TextAlignment::Left,
-            Vertical::Center,
-            foreground,
-        );
+        draw_tag(&self.theme, frame, content, y, plot, background, foreground);
     }
 
     fn draw_crosshair(&self, ctx: &FrameCtx<'_>, frame: &mut canvas::Frame, position: Point) {
@@ -1945,8 +2391,111 @@ mod tests {
             precision: None,
             time_offset_secs: 0,
             moving_averages: Vec::new(),
+            overlays: Vec::new(),
             live: None,
         }
+    }
+
+    /// A caller-defined overlay: the extension point the built-ins ride on.
+    struct Ruler(f64);
+
+    impl ChartOverlay for Ruler {
+        fn draw(&self, _frame: &mut canvas::Frame, _coords: &ChartCoords<'_>) {}
+
+        fn stamp(&self) -> u64 {
+            self.0.to_bits()
+        }
+    }
+
+    fn coords_for<'a>(data: &'a [Candle], theme: &'a UiTheme) -> ChartCoords<'a> {
+        let chrome = chrome(BOUNDS);
+        let viewport = Viewport::initial(data.len(), DEFAULT_BARS);
+        let visible = visible_indices(viewport, data.len());
+        ChartCoords {
+            theme,
+            candles: data,
+            chrome,
+            viewport,
+            scale: autoscale(&pyramid_for(data), data, visible.clone()),
+            visible,
+        }
+    }
+
+    #[test]
+    fn coords_map_time_and_price_for_overlays() {
+        let data = candles(40);
+        let step = data[1].ts - data[0].ts;
+        let coords = coords_for(&data, &super::super::theme::LIGHT);
+
+        assert_eq!(coords.index_at(data[0].ts - 1), None, "before the tape");
+        assert_eq!(coords.index_at(data[3].ts), Some(3));
+        // Mid-candle marks stay on the candle they opened in.
+        assert_eq!(coords.index_at(data[3].ts + step - 1), Some(3));
+        assert_eq!(coords.index_at(data[39].ts + step * 99), Some(39));
+
+        assert_eq!(coords.x_for_ts(data[0].ts - 1), None);
+        assert_eq!(coords.x_for_ts(data[7].ts), Some(coords.x_for_index(7.0)));
+        // Fractional indices land between their neighbours.
+        let between = coords.x_for_index(7.5);
+        assert!(between > coords.x_for_index(7.0) && between < coords.x_for_index(8.0));
+
+        let price = data[20].close;
+        let round_trip = coords.price_at_y(coords.y_for_price(price));
+        assert!((round_trip - price).abs() < 1e-6, "{round_trip} != {price}");
+        // Higher prices sit higher on screen.
+        assert!(coords.y_for_price(price + 1.0) < coords.y_for_price(price));
+    }
+
+    #[test]
+    fn overlays_stack_and_invalidate_the_cached_layer() {
+        let data = candles(10);
+        let theme = &super::super::theme::LIGHT;
+        let palette = &theme.palette;
+        let marks = || {
+            [
+                ChartMarker::new(
+                    data[5].ts,
+                    101.0,
+                    MarkerShape::ArrowDown,
+                    palette.destructive,
+                ),
+                ChartMarker::new(data[2].ts, 100.0, MarkerShape::ArrowUp, palette.success)
+                    .label("0.5"),
+            ]
+        };
+
+        let chart: CandleChart<'_, ()> = candle_chart(&data, theme)
+            .markers(marks())
+            .price_lines([PriceLine::new(100.5, palette.accent).label("entry")])
+            .overlay(Ruler(1.0));
+        assert_eq!(chart.overlays.len(), 3, "built-ins are overlays too");
+
+        let markers = Markers::new(marks());
+        assert_eq!(markers.markers[0].ts, data[2].ts, "markers sort by time");
+
+        // Every annotation edit has to move the stamp, or the cached geometry
+        // outlives the data it was drawn from.
+        let relabelled = Markers::new([marks()[0].clone(), marks()[1].clone().label("1.0")]);
+        let recoloured = Markers::new([
+            marks()[0].clone(),
+            ChartMarker::new(data[2].ts, 100.0, MarkerShape::Dot, palette.success).label("0.5"),
+        ]);
+        assert_ne!(markers.stamp(), Markers::new([]).stamp());
+        assert_ne!(markers.stamp(), relabelled.stamp(), "label edits repaint");
+        assert_ne!(markers.stamp(), recoloured.stamp(), "shape edits repaint");
+        assert_ne!(
+            PriceLines::new([PriceLine::new(100.5, palette.accent)]).stamp(),
+            PriceLines::new([PriceLine::new(100.5, palette.accent).solid()]).stamp(),
+            "line style edits repaint"
+        );
+
+        let viewport = Viewport::initial(data.len(), DEFAULT_BARS);
+        let bare = fingerprint(&data, 0, viewport, BOUNDS, palette);
+        assert_ne!(
+            bare,
+            fingerprint(&data, markers.stamp(), viewport, BOUNDS, palette),
+            "overlay stamps reach the cache key"
+        );
     }
 
     fn wheel(lines: f32) -> canvas::Event {
@@ -2366,6 +2915,7 @@ mod tests {
                 precision: None,
                 time_offset_secs: 0,
                 moving_averages: Vec::new(),
+                overlays: Vec::new(),
                 live: None,
             };
             let views = [
@@ -2404,7 +2954,7 @@ mod tests {
         };
         let palette = super::super::theme::LIGHT.palette;
         let size = Size::new(1280.0, 720.0);
-        let base = fingerprint(&data, viewport, size, &palette);
+        let base = fingerprint(&data, 0, viewport, size, &palette);
         let mut appended = data.clone();
         appended.push(Candle {
             ts: 1_700_000_000 + 10 * 86_400,
@@ -2414,16 +2964,17 @@ mod tests {
             close: 1.5,
             volume: 10.0,
         });
-        assert_ne!(base, fingerprint(&appended, viewport, size, &palette));
+        assert_ne!(base, fingerprint(&appended, 0, viewport, size, &palette));
 
         let mut ticked = data.clone();
         ticked[9].close += 0.01;
-        assert_ne!(base, fingerprint(&ticked, viewport, size, &palette));
+        assert_ne!(base, fingerprint(&ticked, 0, viewport, size, &palette));
 
         assert_ne!(
             base,
             fingerprint(
                 &data,
+                0,
                 Viewport {
                     from: 1.0,
                     to: 11.0
@@ -2435,10 +2986,10 @@ mod tests {
 
         assert_ne!(
             base,
-            fingerprint(&data, viewport, Size::new(1280.0, 640.0), &palette),
+            fingerprint(&data, 0, viewport, Size::new(1280.0, 640.0), &palette),
         );
 
         let dark = super::super::theme::DARK.palette;
-        assert_ne!(base, fingerprint(&data, viewport, size, &dark));
+        assert_ne!(base, fingerprint(&data, 0, viewport, size, &dark));
     }
 }

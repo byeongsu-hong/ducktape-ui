@@ -2342,7 +2342,7 @@ mod tests {
             .write()
             .expect("font system")
             .load_font(Cow::Borrowed(include_bytes!(
-                "../assets/fonts/IBMPlexSansKR-Regular.ttf"
+                "../../../assets/fonts/IBMPlexSansKR-Regular.ttf"
             )));
 
         let metrics = |stage: &str| {
@@ -2533,7 +2533,7 @@ mod tests {
             .write()
             .expect("font system")
             .load_font(Cow::Borrowed(include_bytes!(
-                "../assets/fonts/MonoplexKR-Regular.ttf"
+                "../../../assets/fonts/MonoplexKR-Regular.ttf"
             )));
         let markers = ["before `code` after", "before ``code`` after"]
             .into_iter()
