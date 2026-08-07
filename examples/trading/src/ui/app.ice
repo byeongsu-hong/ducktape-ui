@@ -45,6 +45,7 @@ state
   book:Book? = none
   hover:CandleHit? = none
   status = ""
+  error = ""
   feeds:task-handle? = none
   latency = 0
   flashing = false
@@ -57,6 +58,12 @@ derived
 preset terminal
   state
     gate = false
+
+preset failing
+  state
+    gate = false
+    error = "Hyperliquid unreachable"
+    status = "Loading candles"
 
 component Num(value:str, size:f64, width:f64)
   text value
@@ -628,15 +635,18 @@ on cool_flash
   flashing = any_hot(fills)
 
 on symbols_loaded(rows)
+  error = ""
   symbols = rows
   visible = filter_symbols(rows, query, coin)
   focus = symbol_row(rows, coin)
   status = ""
 
 on candles_loaded(_count)
+  error = ""
   status = ""
 
 on account_loaded(next)
+  error = ""
   account = some(next)
   positions = next.positions
 
@@ -645,6 +655,7 @@ on fills_streamed(rows)
   flashing = any_hot(fills)
 
 on orders_loaded(rows)
+  error = ""
   orders = rows
 
 on market_ticked(tick)
@@ -657,12 +668,12 @@ on market_ticked(tick)
   account = mark_account(account, positions)
   tape_prints = push_trades(tape_prints, tick, 60)
 
-on failed(error)
-  status = error.message
+on failed(reason)
+  error = reason.message
   loading_history = false
 
-on feed_failed(error)
-  status = error.message
+on feed_failed(reason)
+  error = reason.message
   latency = 0
 
 on chart_signalled(signal)
@@ -674,6 +685,7 @@ on chart_signalled(signal)
   run hl_history(tape, coin, interval) -> history_loaded _ | failed _
 
 on history_loaded(_count)
+  error = ""
   loading_history = false
   status = ""
 
@@ -923,41 +935,46 @@ view
                             align=center
                           Label value="POSITIONS"
                           Label value=fmt_count(len(positions))
-                          match hover
-                            some(hit)
-                              row #readout gap=10.0 align=center
-                                Label value="O"
-                                text fmt_px(hit.open)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-muted
-                                Label value="H"
-                                text fmt_px(hit.high)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-muted
-                                Label value="L"
-                                text fmt_px(hit.low)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-muted
-                                Label value="C"
-                                text fmt_px(hit.close)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-fg
-                                Label value="VOL"
-                                text fmt_volume(hit.volume)
-                                  with
-                                    size=11.0
-                                    font=digits
-                                    @text-muted
-                            none
-                              text status size=11.0 @text-faint
+                          if !empty(error)
+                            text error size=11.0 @text-down
+                          if empty(error) && !empty(status)
+                            text status size=11.0 @text-faint
+                          if empty(error) && empty(status)
+                            match hover
+                              some(hit)
+                                row #readout gap=10.0 align=center
+                                  Label value="O"
+                                  text fmt_px(hit.open)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-muted
+                                  Label value="H"
+                                  text fmt_px(hit.high)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-muted
+                                  Label value="L"
+                                  text fmt_px(hit.low)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-muted
+                                  Label value="C"
+                                  text fmt_px(hit.close)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-fg
+                                  Label value="VOL"
+                                  text fmt_volume(hit.volume)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-muted
+                              none
+                                text status size=11.0 @text-faint
                         row
                           with
                             w=fill
@@ -1638,3 +1655,9 @@ test trading_escape_clears_a_search
   expect query == "ZZZ"
   key escape
   expect query == ""
+
+test trading_shows_the_failure_not_the_progress
+  preset failing
+  viewport 1400 900
+  expect text "Hyperliquid unreachable"
+  expect no text "Loading candles"

@@ -212,6 +212,13 @@ into at most one message per beat, and each one holds the latest of everything
 rather than only what changed, so a handler can assign it without asking which
 kind of update it was.
 
+A failure and a progress message share one slot under the positions header,
+and a failure wins it. They are different things: "Loading candles" is the app
+working and "Hyperliquid unreachable" is the app stopped, so they are separate
+state and only one of them is red. The slot is also the chart's hover readout,
+and that loses to both — a candle's open and close are worth less than knowing
+the feed is gone.
+
 Latency is the round trip of the socket's own ping, which needs no agreement
 between our clock and the exchange's, and the ping is required anyway: a socket
 that goes quiet for a minute is closed. A dropped feed clears it back to an em
@@ -272,13 +279,22 @@ without the chart knowing what an exchange is.
 
 ## Tests
 
-
 `cargo test -p trading-example` parses recorded payloads for every response
-shape, checks the tape merge, the market-switch guard, the book's depth and
-spread, how pushed fills stack and cool, and the valuation and risk-rail
-arithmetic, then renders the address prompt headlessly and types a bad address
-into it to prove the button will not send one. Two tests talk to the
-live exchange — one per endpoint shape, so the subscription names and payloads
+shape and checks the arithmetic they feed: the tape merge and its market
+guard, how one aggressor's prints fold into one row, the book's depth and
+spread, how fills stack and cool, the valuation between polls, and both rails.
+It prices the ticket against the closed form of the liquidation it quotes, and
+against the cases where it must refuse to quote one at all.
+
+It also drives the app. The address prompt refuses a malformed address; the
+ticket takes a price and a size, prices them, and closes on Escape; a search
+survives being typed and clears on Escape; the panels that need an account say
+so when there is none; and a failure outranks the progress line it shares a
+slot with. None of those reach the network, so they run wherever the rest does.
+One test reads the palette out of `theme.ice` and holds the chart to it, because
+the chart is drawn in Rust and would otherwise drift in silence.
+
+Two tests talk to the live exchange — one per endpoint shape, so the subscription names and payloads
 are checked against Hyperliquid rather than against a recording, and the
 account's own marks are fed back through the valuation to prove they are a
 fixed point of it — and are opt-in:
