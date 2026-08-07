@@ -26,7 +26,7 @@ const REFRESH_BARS: i64 = 3;
 const BOOK_DEPTH: usize = 10;
 const BOOK_BAR_WIDTH: f64 = 196.0;
 /// Pixel width of the risk rail drawn under a position's liquidation price.
-const RISK_RAIL_WIDTH: f64 = 84.0;
+const RISK_RAIL_WIDTH: f64 = 80.0;
 
 fn rgb(hex: u32) -> Color {
     Color::from_rgb8(

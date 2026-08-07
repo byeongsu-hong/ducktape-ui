@@ -7,7 +7,7 @@ app Trading
   text-size 13
   window
     size 1440 900
-    min-size 1120 720
+    min-size 1400 820
     position centered
 
 use "theme.ice"
@@ -230,10 +230,39 @@ component BookRow(level:Level, buy:bool)
       text fmt_size(level.size)
         with
           size=11.0
-          w=72.0
+          w=68.0
           align-x=right
           font=digits
           @text-muted
+
+component OrderRow(order:Order)
+  row #root
+    with
+      w=fill
+      h=26.0
+      pl=14.0
+      pr=14.0
+      gap=8.0
+      align=center
+    text order.coin
+      with
+        size=11.0
+        w=48.0
+        @text-muted
+    space w=fill
+    Delta
+      with
+        value=fmt_px(order.price)
+        up=order.buy
+        size=11.0
+        width=78.0
+    text fmt_size(order.size)
+      with
+        size=11.0
+        w=56.0
+        align-x=right
+        font=digits
+        @text-faint
 
 component FillRow(fill:Fill)
   row #root
@@ -247,22 +276,22 @@ component FillRow(fill:Fill)
     text fmt_time(fill.ts)
       with
         size=11.0
-        w=56.0
+        w=52.0
         font=digits
         @text-faint
     text fill.coin
       with
         size=11.0
-        w=52.0
+        w=46.0
         @text-muted
     Delta
       with
         value=fmt_px(fill.price)
         up=fill.buy
         size=11.0
-        width=84.0
+        width=78.0
     space w=fill
-    col w=80.0
+    col w=72.0
       if fill.closed_pnl > 0.0
         text fmt_pnl(fill.closed_pnl)
           with
@@ -288,50 +317,21 @@ component FillRow(fill:Fill)
             font=digits
             @text-faint
 
-component OrderRow(order:Order)
-  row #root
-    with
-      w=fill
-      h=26.0
-      pl=14.0
-      pr=14.0
-      gap=8.0
-      align=center
-    text order.coin
-      with
-        size=11.0
-        w=52.0
-        @text-muted
-    space w=fill
-    Delta
-      with
-        value=fmt_px(order.price)
-        up=order.buy
-        size=11.0
-        width=84.0
-    text fmt_size(order.size)
-      with
-        size=11.0
-        w=64.0
-        align-x=right
-        font=digits
-        @text-faint
-
 component PositionRow(held:Position)
   row #root
     with
       w=fill
       h=44.0
       pl=14.0
-      pr=20.0
+      pr=18.0
       gap=8.0
       align=center
     text held.coin
       with
         size=12.0
-        w=56.0
+        w=52.0
         @text-fg
-    col w=58.0 gap=1.0
+    col w=56.0 gap=1.0
       if held.size >= 0.0
         text "LONG"
           with
@@ -349,13 +349,13 @@ component PositionRow(held:Position)
       with
         value=fmt_size(held.size)
         size=12.0
-        width=76.0
+        width=72.0
     Num
       with
         value=fmt_px(held.entry)
         size=12.0
-        width=84.0
-    col w=84.0 gap=4.0
+        width=80.0
+    col w=80.0 gap=4.0
       if held.liq > 0.0
         text fmt_px(held.liq)
           with
@@ -372,7 +372,7 @@ component PositionRow(held:Position)
             align-x=right
             font=digits
             @text-faint
-      row w=84.0 h=3.0
+      row w=80.0 h=3.0
         box
           with
             w=held.risk
@@ -381,7 +381,7 @@ component PositionRow(held:Position)
           space w=fill h=fill
         box
           with
-            w=(84.0 - held.risk)
+            w=(80.0 - held.risk)
             h=3.0
             bg=edge
           space w=fill h=fill
@@ -390,21 +390,21 @@ component PositionRow(held:Position)
         value=fmt_compact_usd(held.funding)
         up=(held.funding >= 0.0)
         size=11.0
-        width=76.0
+        width=72.0
     space w=fill
-    col gap=1.0 w=108.0
+    col gap=1.0 w=104.0
       Delta
         with
           value=fmt_compact_usd(held.pnl)
           up=(held.pnl >= 0.0)
           size=14.0
-          width=108.0
+          width=104.0
       Delta
         with
           value=fmt_pct(held.roe_pct)
           up=(held.pnl >= 0.0)
           size=10.0
-          width=108.0
+          width=104.0
 
 on connect
   address = trim(draft)
@@ -611,7 +611,7 @@ view
           row w=fill h=fill
             box #markets
               with
-                w=248.0
+                w=232.0
                 h=fill
                 bg=panel
               col w=fill h=fill
@@ -637,12 +637,12 @@ view
                   Head
                     with
                       name="LAST"
-                      width=78.0
+                      width=74.0
                       right=true
                   Head
                     with
                       name="24H"
-                      width=58.0
+                      width=54.0
                       right=true
                 rule horizontal thickness=1.0 color=edge
                 scroll #market-list
@@ -732,38 +732,38 @@ view
                       Head
                         with
                           name="COIN"
-                          width=56.0
+                          width=52.0
                           right=false
                       Head
                         with
                           name="SIDE"
-                          width=58.0
+                          width=56.0
                           right=false
                       Head
                         with
                           name="SIZE"
-                          width=76.0
+                          width=72.0
                           right=true
                       Head
                         with
                           name="ENTRY"
-                          width=84.0
+                          width=80.0
                           right=true
                       Head
                         with
                           name="LIQ"
-                          width=84.0
+                          width=80.0
                           right=true
                       Head
                         with
                           name="FUNDING"
-                          width=76.0
+                          width=72.0
                           right=true
                       space w=fill
                       Head
                         with
                           name="UNREALIZED"
-                          width=108.0
+                          width=104.0
                           right=true
                     rule horizontal thickness=1.0 color=edge
                     scroll #position-list
@@ -801,7 +801,7 @@ view
                         for held in positions
                           PositionRow held=held #position(held.coin)
                   rule vertical thickness=1.0 color=edge
-                  col #fills w=308.0 h=fill
+                  col #fills w=320.0 h=fill
                     row
                       with
                         w=fill
@@ -823,23 +823,23 @@ view
                       Head
                         with
                           name="TIME"
-                          width=56.0
-                          right=false
-                      Head
-                        with
-                          name="COIN"
                           width=52.0
                           right=false
                       Head
                         with
+                          name="COIN"
+                          width=46.0
+                          right=false
+                      Head
+                        with
                           name="PRICE"
-                          width=84.0
+                          width=78.0
                           right=true
                       space w=fill
                       Head
                         with
                           name="PNL / SIZE"
-                          width=80.0
+                          width=72.0
                           right=true
                     rule horizontal thickness=1.0 color=edge
                     scroll #fill-list
@@ -868,7 +868,7 @@ view
             rule vertical thickness=1.0 color=edge
             box #book
               with
-                w=240.0
+                w=232.0
                 h=fill
                 bg=panel
               col w=fill h=fill
@@ -895,12 +895,12 @@ view
                   Head
                     with
                       name="SIZE"
-                      width=76.0
+                      width=72.0
                       right=true
                 rule horizontal thickness=1.0 color=edge
                 match book
                   some(depth)
-                    col w=fill h=fill
+                    col w=fill
                       for level in depth.asks
                         BookRow level=level buy=false
                       row
