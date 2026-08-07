@@ -204,51 +204,60 @@ component MarketRow(market:SymbolRow, selected:bool)
             width=58.0
 
 component BookRow(level:Level, buy:bool)
-  stack #root w=fill h=18.0
-    row w=fill h=18.0
-      if buy
-        box
-          with
-            w=level.bar
-            h=18.0
-            bg=up_soft
-          space w=fill h=fill
-      if !buy
-        box
-          with
-            w=level.bar
-            h=18.0
-            bg=down_soft
-          space w=fill h=fill
-    row
-      with
-        w=fill
-        h=18.0
-        pl=14.0
-        pr=14.0
-        gap=8.0
-        align=center
-      if buy
-        text fmt_px(level.price)
-          with
-            size=11.0
-            w=fill
-            font=digits
-            @text-up
-      if !buy
-        text fmt_px(level.price)
-          with
-            size=11.0
-            w=fill
-            font=digits
-            @text-down
-      text fmt_size(level.size)
+  emits
+    pick(f64, bool)
+  button #root -> emit(pick, level.price, !buy)
+    with
+      label=fmt_px(level.price)
+      w=fill
+      p=0.0
+    active bg=panel r=0.0
+    hovered bg=raised r=0.0
+    stack w=fill h=18.0
+      row w=fill h=18.0
+        if buy
+          box
+            with
+              w=level.bar
+              h=18.0
+              bg=up_soft
+            space w=fill h=fill
+        if !buy
+          box
+            with
+              w=level.bar
+              h=18.0
+              bg=down_soft
+            space w=fill h=fill
+      row
         with
-          size=11.0
-          w=68.0
-          align-x=right
-          font=digits
-          @text-muted
+          w=fill
+          h=18.0
+          pl=14.0
+          pr=14.0
+          gap=8.0
+          align=center
+        if buy
+          text fmt_px(level.price)
+            with
+              size=11.0
+              w=fill
+              font=digits
+              @text-up
+        if !buy
+          text fmt_px(level.price)
+            with
+              size=11.0
+              w=fill
+              font=digits
+              @text-down
+        text fmt_size(level.size)
+          with
+            size=11.0
+            w=68.0
+            align-x=right
+            font=digits
+            @text-muted
 
 component TradeRow(print:Trade)
   row #root
@@ -519,7 +528,16 @@ on open_ticket
   let seed = ticket_seed(book, focus)
   ticket = true
   ticket_price = seed
-  quote = price_ticket(seed, ticket_size, ticket_leverage, focus, ticket_buy)
+  ticket_size = ""
+  quote = price_ticket(seed, "", ticket_leverage, focus, ticket_buy)
+
+on seed_ticket(price, buy)
+  let seed = fmt_px(price)
+  ticket = true
+  ticket_buy = buy
+  ticket_price = seed
+  ticket_size = ""
+  quote = price_ticket(seed, "", ticket_leverage, focus, buy)
 
 on ticket_priced(typed)
   quote = price_ticket(typed, ticket_size, ticket_leverage, focus, ticket_buy)
@@ -1094,6 +1112,8 @@ view
                         col w=fill
                           for level in depth.asks
                             BookRow level=level buy=false
+                              events
+                                pick -> seed_ticket _ _
                           row
                             with
                               w=fill
@@ -1116,6 +1136,8 @@ view
                                 @text-muted
                           for level in depth.bids
                             BookRow level=level buy=true
+                              events
+                                pick -> seed_ticket _ _
                       none
                         box
                           with
@@ -1432,6 +1454,14 @@ view
               Label value="ORDER VALUE"
               space w=fill
               text fmt_usd(quote.notional)
+                with
+                  size=12.0
+                  font=digits
+                  @text-muted
+            row w=fill align=center
+              Label value="PRICED AT"
+              space w=fill
+              text fmt_leverage(quote.leverage)
                 with
                   size=12.0
                   font=digits

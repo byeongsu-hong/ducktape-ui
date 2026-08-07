@@ -494,6 +494,10 @@ pub struct Ticket {
     /// Where the margin engine would close it, or zero when the inputs do not
     /// yet describe a position.
     pub liquidation: f64,
+    /// The leverage these figures were actually priced at, which is what the
+    /// market allows rather than what the field says. Typing 40 into a 5x
+    /// market has to show a liquidation for 5, and say 5.
+    pub leverage: f64,
     /// Whether the numbers above describe anything at all.
     pub ready: bool,
 }
@@ -593,6 +597,7 @@ pub fn price_ticket(
         } else {
             0.0
         },
+        leverage,
         ready,
     }
 }
@@ -2017,10 +2022,17 @@ mod tests {
         );
 
         // Leverage past what the market allows is held at the ceiling rather
-        // than quoting a liquidation the exchange would never have opened.
+        // than quoting a liquidation the exchange would never have opened —
+        // and the ticket reports the leverage it priced at, not the one that
+        // was typed, so the figures and the number beside them agree.
+        let over = quoted("100", "2", "400", true);
+        assert_eq!(over.leverage, 40.0, "held at the market's maximum");
+        assert_eq!(over.margin, quoted("100", "2", "40", true).margin);
+        assert_eq!(over.liquidation, quoted("100", "2", "40", true).liquidation);
         assert_eq!(
-            quoted("100", "2", "400", true).margin,
-            quoted("100", "2", "40", true).margin
+            quoted("100", "2", "10", true).leverage,
+            10.0,
+            "and reports the typed one when it is allowed"
         );
 
         // Half-typed input is not an order, and must not read as one.

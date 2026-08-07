@@ -95,6 +95,17 @@ dies. The liquidation is isolated-margin arithmetic against the maintenance
 requirement this market holds — a cross position dies against the whole
 account instead, which is the rail under the equity figure.
 
+A level in the book opens it already filled: clicking an ask starts a buy at
+that price, clicking a bid a sell, because the side you want is the side you
+just clicked across. The size is cleared whenever it opens — 0.5 means a
+different order on every market, and carrying it over is how you place one you
+did not mean.
+
+Leverage is reported as it was priced rather than as it was typed. The field
+takes anything; the market does not, so a 400 typed into a 5x market is held at
+5 and the ticket says 5. A liquidation quoted at a leverage the panel is not
+showing is the one number here that must never be wrong.
+
 Nothing is signed and nothing is sent, and the panel says so in the place a
 submit button would be. Sending would mean this app holding the key that signs
 an EIP-712 order, which is not a thing an example should ask for. The boundary
