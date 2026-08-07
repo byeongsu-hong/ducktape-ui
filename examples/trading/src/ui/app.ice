@@ -534,6 +534,8 @@ on market_ticked(tick)
   symbols = apply_feed(symbols, tick)
   visible = filter_symbols(symbols, query)
   focus = symbol_row(symbols, coin)
+  positions = mark_positions(positions, tick)
+  account = mark_account(account, positions)
 
 on failed(error)
   status = error.message

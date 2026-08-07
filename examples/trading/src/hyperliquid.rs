@@ -943,6 +943,75 @@ pub fn apply_feed(rows: Vec<SymbolRow>, tick: MarketTick) -> Vec<SymbolRow> {
     rows
 }
 
+/// The margin a position was opened with: what it was worth at its entry,
+/// over its leverage. This is what the exchange's `returnOnEquity` divides
+/// by, for a cross position and an isolated one alike — `marginUsed` is
+/// something else, and for an isolated position something else again.
+fn opening_margin(position: &Position) -> Option<f64> {
+    if position.leverage <= 0.0 {
+        return None;
+    }
+    let margin = position.entry * position.size.abs() / position.leverage;
+    (margin > 0.0).then_some(margin)
+}
+
+/// Re-values open positions against the prices that just came in. Asking the
+/// exchange to restate them is the one thing here that still polls, and
+/// between polls the figures that move with the mark move: what the position
+/// has made, what that is as a return, and how far the mark now sits from the
+/// liquidation price.
+///
+/// The mark is the feed's mid, which is a tick either side of the mark price
+/// the exchange values it at; the next poll settles the difference.
+pub fn mark_positions(positions: Vec<Position>, tick: MarketTick) -> Vec<Position> {
+    positions
+        .into_iter()
+        .map(|position| {
+            let Some(mark) = tick.mids.get(&position.coin).copied() else {
+                return position;
+            };
+            // Move what the exchange last reported by what the price has done
+            // since, rather than recomputing it from the entry: the entry it
+            // reports is an average rounded to five figures, and a position
+            // of sixty million units turns that rounding into real money. A
+            // delta carries none of it, and the next poll re-anchors.
+            let gain = (mark - position.mark) * position.size;
+            Position {
+                mark,
+                pnl: position.pnl + gain,
+                roe_pct: position.roe_pct
+                    + opening_margin(&position).map_or(0.0, |opening| gain / opening * 100.0),
+                risk: liquidation_travel(position.entry, mark, position.liq) * RISK_RAIL_WIDTH,
+                ..position
+            }
+        })
+        .collect()
+}
+
+/// Re-totals the account from positions the feed has just re-valued. Equity
+/// holds unrealized PnL, so it moves by the difference between the PnL the
+/// last poll reported and the PnL now, which keeps this exact however many
+/// times it runs between polls.
+///
+/// What is withdrawable, what margin is tied up, and what the maintenance
+/// requirement is are the margin engine's own numbers rather than arithmetic
+/// over positions — an isolated position posts collateral of its own, and the
+/// account carries resting orders too — so those wait for the next poll.
+pub fn mark_account(account: Option<Account>, positions: Vec<Position>) -> Option<Account> {
+    let account = account?;
+    let pnl: f64 = positions.iter().map(|position| position.pnl).sum();
+    Some(Account {
+        value: account.value - account.pnl + pnl,
+        pnl,
+        notional: positions
+            .iter()
+            .map(|position| position.mark * position.size.abs())
+            .sum(),
+        positions,
+        ..account
+    })
+}
+
 /// Price decimals that suit the instrument: a four-figure coin and a
 /// fraction-of-a-cent coin cannot share one setting.
 fn price_decimals(value: f64) -> usize {
@@ -1194,6 +1263,10 @@ pub fn chart(
 mod tests {
     use super::*;
 
+    /// The address the app opens on, which is a real account with real
+    /// positions to check the valuation arithmetic against.
+    const WATCHED: &str = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a";
+
     #[test]
     fn symbols_drop_delisted_and_sort_by_volume() {
         let response = json!([
@@ -1414,6 +1487,98 @@ mod tests {
         );
     }
 
+    fn tick_at(prices: [(&str, f64); 2]) -> MarketTick {
+        MarketTick {
+            mids: prices
+                .into_iter()
+                .map(|(coin, price)| (coin.to_owned(), price))
+                .collect(),
+            ..MarketTick::default()
+        }
+    }
+
+    /// Between the polls that restate them, positions are worth whatever the
+    /// feed's last price says they are.
+    #[test]
+    fn the_feed_revalues_positions_and_the_equity_holding_them() {
+        let account = parse_account(&json!({
+            "marginSummary": { "accountValue": "12200.0", "totalMarginUsed": "3500.0" },
+            "withdrawable": "8700.0",
+            "assetPositions": [
+                { "position": {
+                    "coin": "BTC", "szi": "0.5", "entryPx": "60000.0",
+                    "positionValue": "32000.0", "unrealizedPnl": "2000.0",
+                    "returnOnEquity": "1.0", "liquidationPx": "45000.0",
+                    "marginUsed": "2133.33", "leverage": { "type": "cross", "value": 15 }
+                }},
+                { "position": {
+                    "coin": "ETH", "szi": "-2.0", "entryPx": "3000.0",
+                    "positionValue": "5800.0", "unrealizedPnl": "200.0",
+                    "returnOnEquity": "0.1666666667", "liquidationPx": "3600.0",
+                    "marginUsed": "1160.0", "leverage": { "type": "cross", "value": 5 }
+                }},
+            ]
+        }));
+        assert_eq!(account.pnl, 2_200.0);
+
+        // BTC runs another $2k; the short is unchanged.
+        let marked = mark_positions(
+            account.positions.clone(),
+            tick_at([("BTC", 66_000.0), ("ETH", 2_900.0)]),
+        );
+
+        let long = &marked[0];
+        assert_eq!(long.mark, 66_000.0);
+        assert_eq!(long.pnl, 3_000.0, "half a coin, six thousand up");
+        // Return is on the margin the position opened with, 60000 * 0.5 / 15:
+        // the reported 100% plus the 50% the last $2,000 added.
+        assert!((long.roe_pct - 150.0).abs() < 1e-9);
+        assert_eq!(
+            long.margin, account.positions[0].margin,
+            "what the position ties up is the margin engine's to say"
+        );
+        assert_eq!(
+            long.risk, 0.0,
+            "a long in profit has travelled nowhere toward its cliff"
+        );
+
+        let short = &marked[1];
+        assert_eq!(short.pnl, 200.0, "an unmoved price restates the same PnL");
+        assert!((short.roe_pct - (200.0 / 1_200.0 * 100.0)).abs() < 1e-6);
+
+        // The rail measures the ground between the entry and the cliff, so a
+        // mark halfway down is half a rail.
+        let falling = mark_positions(
+            account.positions.clone(),
+            tick_at([("BTC", 52_500.0), ("ETH", 2_900.0)]),
+        );
+        assert!(falling[0].pnl < 0.0);
+        assert!((falling[0].risk - RISK_RAIL_WIDTH / 2.0).abs() < 1e-9);
+
+        // Equity carries unrealized PnL, so it moves by what the positions
+        // just made, and re-running it is not compounding.
+        let revalued = mark_account(Some(account.clone()), marked.clone()).expect("an account");
+        assert_eq!(revalued.pnl, 3_200.0);
+        assert_eq!(revalued.value, 13_200.0, "equity moved by the $1k gained");
+        assert!(
+            mark_account(Some(revalued.clone()), marked).as_ref() == Some(&revalued),
+            "re-valuing the same prices twice changes nothing"
+        );
+        assert_eq!(revalued.notional, 66_000.0 * 0.5 + 2_900.0 * 2.0);
+        assert_eq!(
+            revalued.withdrawable, account.withdrawable,
+            "what the margin engine will release waits for the next poll"
+        );
+
+        // A market the feed said nothing about keeps what it had.
+        let quiet = mark_positions(account.positions.clone(), MarketTick::default());
+        assert!(quiet == account.positions, "a silent beat restates nothing");
+        assert!(
+            mark_account(None, quiet).is_none(),
+            "no account, nothing to re-total"
+        );
+    }
+
     #[test]
     fn the_risk_rail_measures_entry_to_liquidation() {
         // A long: entry above the cliff, so travel grows as the mark falls.
@@ -1580,6 +1745,57 @@ mod tests {
                 .await
                 .expect("clearinghouse state");
             assert!(account.value > 0.0, "the HLP vault holds a balance");
+
+            // The exchange reports a mark, a PnL, and a return; the feed only
+            // sends a price. Hand its own marks back to the arithmetic that
+            // turns one into the others, and it has to land where the
+            // exchange did — position by position, on a live book.
+            let watched = hl_account(WATCHED.to_owned())
+                .await
+                .expect("clearinghouse state");
+            assert!(
+                !watched.positions.is_empty(),
+                "the address this app opens on holds nothing to re-value"
+            );
+            let marked = mark_positions(
+                watched.positions.clone(),
+                MarketTick {
+                    mids: watched
+                        .positions
+                        .iter()
+                        .map(|position| (position.coin.clone(), position.mark))
+                        .collect(),
+                    ..MarketTick::default()
+                },
+            );
+            // Feeding the exchange's own marks back in has to leave every
+            // figure exactly where the exchange put it: a valuation that
+            // moves on unchanged prices is a valuation that disagrees with
+            // the account it is describing.
+            for (reported, valued) in watched.positions.iter().zip(&marked) {
+                let coin = &reported.coin;
+                assert!(
+                    (valued.pnl - reported.pnl).abs() <= reported.pnl.abs() * 1e-9,
+                    "{coin}: valued {} against a reported {}",
+                    valued.pnl,
+                    reported.pnl
+                );
+                assert!(
+                    (valued.roe_pct - reported.roe_pct).abs() <= reported.roe_pct.abs() * 1e-9,
+                    "{coin}: returned {}% against a reported {}%",
+                    valued.roe_pct,
+                    reported.roe_pct
+                );
+            }
+            let revalued = mark_account(Some(watched.clone()), marked).expect("an account");
+            assert!(
+                (revalued.value - watched.value).abs() <= watched.value.abs() * 1e-9,
+                "the same prices cannot move the equity"
+            );
+            assert!(
+                (revalued.notional - watched.notional).abs() <= watched.notional.abs() * 1e-6,
+                "nor what the book says the positions are worth"
+            );
         });
     }
 

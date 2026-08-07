@@ -21,6 +21,8 @@ extern crate::hyperliquid
   stream hl_market_feed(tape:Tape) -> MarketTick ! HlError
   stream hl_fill_feed(address:str) -> [Fill] ! HlError
   sync apply_feed(rows:[SymbolRow], tick:MarketTick) -> [SymbolRow]
+  sync mark_positions(positions:[Position], tick:MarketTick) -> [Position]
+  sync mark_account(account:Account?, positions:[Position]) -> Account?
   sync filter_symbols(rows:[SymbolRow], query:str) -> [SymbolRow]
   sync symbol_row(rows:[SymbolRow], coin:str) -> SymbolRow?
   sync push_fills(history:[Fill], incoming:[Fill], limit:i64) -> [Fill]

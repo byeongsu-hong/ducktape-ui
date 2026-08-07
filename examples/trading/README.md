@@ -76,6 +76,19 @@ prompt is up (`when` conditions on the `subscribe` block, so iced drops the
 timers instead of ignoring their messages), and `abort feeds` closes the
 sockets with them.
 
+Waiting five seconds to find out what a position is worth is not a position
+panel, so between polls the feed values them itself. Every beat re-marks each
+position at the price that just came in and moves its PnL by what the price
+did — a delta, not a recomputation from the entry: the entry price the
+exchange reports is an average rounded to five significant figures, and a
+position of sixty million units turns that rounding into real money. The
+return moves the same way, over the margin the position opened with, which is
+what the exchange's own `returnOnEquity` divides by. The risk rail re-measures
+against the new mark, equity moves by what the positions just made, and each
+poll re-anchors all of it. What is withdrawable, what margin is tied up, and
+what the maintenance requirement is stay with the poll: those are the margin
+engine's answers, not arithmetic over positions.
+
 The market feed re-reads the tape's focus on every beat, so switching markets
 costs an unsubscribe and a subscribe on the socket already open rather than a
 new connection. Candles are merged straight into the shared tape and never
@@ -135,10 +148,12 @@ without the chart knowing what an exchange is.
 
 `cargo test -p trading-example` parses recorded payloads for every response
 shape, checks the tape merge, the market-switch guard, the book's depth and
-spread, how pushed fills stack and cool, and the risk-rail arithmetic, then
-renders the address prompt headlessly. Two tests talk to the live exchange —
-one per endpoint shape, so the subscription names and payloads are checked
-against Hyperliquid rather than against a recording — and are opt-in:
+spread, how pushed fills stack and cool, and the valuation and risk-rail
+arithmetic, then renders the address prompt headlessly. Two tests talk to the
+live exchange — one per endpoint shape, so the subscription names and payloads
+are checked against Hyperliquid rather than against a recording, and the
+account's own marks are fed back through the valuation to prove they are a
+fixed point of it — and are opt-in:
 
 ```bash
 cargo test -p trading-example -- --ignored
