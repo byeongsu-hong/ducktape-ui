@@ -576,10 +576,15 @@ pub async fn hl_account(address: String) -> Result<Account, HlError> {
 /// `hash`; four rows at the same price is the wire's bookkeeping rather than
 /// the market's, so consecutive prints from one order become one row carrying
 /// what that order paid on average and how many resting orders it took.
-fn parse_trades(value: &Value) -> Vec<Trade> {
+fn parse_trades(value: &Value, coin: &str) -> Vec<Trade> {
     let mut tape: Vec<Trade> = Vec::new();
     let mut aggressor = String::new();
     for print in value.as_array().map(Vec::as_slice).unwrap_or_default() {
+        // A print from the market the app just left would read as this one's.
+        // A print from the market the app just left would read as this one's.
+        if text(print, "coin") != coin {
+            continue;
+        }
         let hash = text(print, "hash");
         let price = num(print, "px");
         let size = num(print, "sz");
@@ -949,7 +954,8 @@ pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
                 None
             }
             Event::Payload("trades", data) => {
-                let fresh = parse_trades(data);
+                let (held, _) = tape.focus()?;
+                let fresh = parse_trades(data, &held);
                 changed |= !fresh.is_empty();
                 tick.trades.extend(fresh);
                 None
@@ -1789,15 +1795,24 @@ mod tests {
     fn one_aggressor_is_one_print_however_many_orders_it_ate() {
         // Two messages, one hash: a market order that took two resting orders
         // at the same price. That is one trade to watch, not two.
-        let tape = parse_trades(&json!([
-            { "coin": "BTC", "hash": "0xaa", "px": "64986.0", "sz": "0.2", "side": "A",
-              "time": 1_786_117_888_774i64, "tid": 1 },
-            { "coin": "BTC", "hash": "0xaa", "px": "64986.0", "sz": "0.3", "side": "A",
-              "time": 1_786_117_888_774i64, "tid": 2 },
-            { "coin": "BTC", "hash": "0xbb", "px": "64990.0", "sz": "1.0", "side": "B",
-              "time": 1_786_117_889_000i64, "tid": 3 },
-        ]));
-        assert_eq!(tape.len(), 2, "one row per aggressing order");
+        let tape = parse_trades(
+            &json!([
+                { "coin": "BTC", "hash": "0xaa", "px": "64986.0", "sz": "0.2", "side": "A",
+                  "time": 1_786_117_888_774i64, "tid": 1 },
+                { "coin": "BTC", "hash": "0xaa", "px": "64986.0", "sz": "0.3", "side": "A",
+                  "time": 1_786_117_888_774i64, "tid": 2 },
+                { "coin": "BTC", "hash": "0xbb", "px": "64990.0", "sz": "1.0", "side": "B",
+                  "time": 1_786_117_889_000i64, "tid": 3 },
+                { "coin": "ETH", "hash": "0xdd", "px": "3000.0", "sz": "5.0", "side": "B",
+                  "time": 1_786_117_889_100i64, "tid": 99 },
+            ]),
+            "BTC",
+        );
+        assert_eq!(
+            tape.len(),
+            2,
+            "one row per aggressing order, and none from another market"
+        );
         assert_eq!(tape[0].size, 0.5, "the sweep is what it took in total");
         assert_eq!(tape[0].sweep, 2);
         assert!(!tape[0].buy, "an ask print hit the bid");
@@ -1808,18 +1823,38 @@ mod tests {
         assert_eq!(fmt_sweep(tape[0].sweep), "×2");
 
         // A sweep across levels is priced at what the aggressor actually paid.
-        let across = parse_trades(&json!([
-            { "hash": "0xcc", "px": "100.0", "sz": "1.0", "side": "B", "time": 0, "tid": 4 },
-            { "hash": "0xcc", "px": "102.0", "sz": "3.0", "side": "B", "time": 0, "tid": 5 },
-        ]));
+        let across = parse_trades(
+            &json!([
+                { "coin": "BTC", "hash": "0xcc", "px": "100.0", "sz": "1.0", "side": "B", "time": 0, "tid": 4 },
+                { "coin": "BTC", "hash": "0xcc", "px": "102.0", "sz": "3.0", "side": "B", "time": 0, "tid": 5 },
+            ]),
+            "BTC",
+        );
         assert_eq!(across[0].price, 101.5, "size-weighted, not the last level");
 
         // A missing hash is not an identity and must never merge two orders.
-        let anonymous = parse_trades(&json!([
-            { "px": "1.0", "sz": "1.0", "side": "B", "time": 0, "tid": 6 },
-            { "px": "2.0", "sz": "1.0", "side": "B", "time": 0, "tid": 7 },
-        ]));
+        let anonymous = parse_trades(
+            &json!([
+                { "coin": "BTC", "px": "1.0", "sz": "1.0", "side": "B", "time": 0, "tid": 6 },
+                { "coin": "BTC", "px": "2.0", "sz": "1.0", "side": "B", "time": 0, "tid": 7 },
+            ]),
+            "BTC",
+        );
         assert_eq!(anonymous.len(), 2, "no hash, no grouping");
+
+        // The market switch this guards: a print already in flight for the
+        // market just left must not be folded onto the one now on screen. The
+        // sweep merge makes it worse than one stray row — a BTC print landing
+        // beside an ETH one at the same hash would average their prices.
+        assert!(
+            parse_trades(
+                &json!([{ "coin": "BTC", "hash": "0xee", "px": "64000.0", "sz": "1.0",
+                          "side": "B", "time": 0, "tid": 8 }]),
+                "ETH"
+            )
+            .is_empty(),
+            "another market's print is not this market's tape"
+        );
     }
 
     #[test]
