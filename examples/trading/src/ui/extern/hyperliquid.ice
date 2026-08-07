@@ -1,7 +1,7 @@
 extern crate::hyperliquid
   Tape()
   HlError(message:str)
-  SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, oracle:f64)
+  SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, prev_day:f64)
   Position(coin:str, side:str, size:f64, entry:f64, mark:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
   Account(value:f64, pnl:f64, margin_used:f64, withdrawable:f64, notional:f64, maintenance:f64, positions:[Position])
   Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, action:str, fee:f64)
@@ -12,6 +12,7 @@ extern crate::hyperliquid
   sync tape_new() -> Tape
   sync tape_focus(tape:Tape, coin:str, interval:str) -> Tape
   hl_symbols() -> [SymbolRow] ! HlError
+  hl_mids(rows:[SymbolRow]) -> [SymbolRow] ! HlError
   hl_candles(tape:Tape, coin:str, interval:str) -> i64 ! HlError
   hl_account(address:str) -> Account ! HlError
   hl_fills(address:str) -> [Fill] ! HlError

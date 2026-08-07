@@ -151,7 +151,9 @@ pub struct SymbolRow {
     pub funding_pct: f64,
     pub leverage: f64,
     pub open_interest: f64,
-    pub oracle: f64,
+    /// Yesterday's close, kept so a mid-price tick can re-derive the 24h
+    /// change without re-fetching the whole universe.
+    pub prev_day: f64,
 }
 
 /// One open position, shaped the way the official app reads it out.
@@ -348,15 +350,11 @@ fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
         })
         .map(|(asset, context)| {
             let price = num(context, "markPx");
-            let previous = num(context, "prevDayPx");
+            let prev_day = num(context, "prevDayPx");
             SymbolRow {
                 name: text(asset, "name"),
                 price,
-                change_pct: if previous > 0.0 {
-                    (price - previous) / previous * 100.0
-                } else {
-                    0.0
-                },
+                change_pct: change_pct(price, prev_day),
                 volume: num(context, "dayNtlVlm"),
                 funding_pct: num(context, "funding") * 100.0,
                 leverage: asset
@@ -364,7 +362,7 @@ fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
                     .and_then(Value::as_f64)
                     .unwrap_or(0.0),
                 open_interest: num(context, "openInterest"),
-                oracle: num(context, "oraclePx"),
+                prev_day,
             }
         })
         .collect();
@@ -372,10 +370,51 @@ fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
     rows
 }
 
+fn change_pct(price: f64, prev_day: f64) -> f64 {
+    if prev_day > 0.0 {
+        (price - prev_day) / prev_day * 100.0
+    } else {
+        0.0
+    }
+}
+
 pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
     Ok(parse_symbols(
         &info(json!({ "type": "metaAndAssetCtxs" })).await?,
     ))
+}
+
+/// Re-prices the market list without re-reading the universe. `allMids` is one
+/// flat `coin -> price` map and costs a tenth of `metaAndAssetCtxs`, which is
+/// what lets prices tick every few seconds while the 24h figures behind them
+/// refresh on a slow timer. Row order is left alone, so the sidebar does not
+/// reshuffle under the cursor between volume refreshes.
+///
+/// An empty list means nothing has loaded yet, so this reads the universe
+/// instead: the caller polls one function and the list heals itself after a
+/// failed first load.
+pub async fn hl_mids(rows: Vec<SymbolRow>) -> Result<Vec<SymbolRow>, HlError> {
+    if rows.is_empty() {
+        return hl_symbols().await;
+    }
+    let mids = info(json!({ "type": "allMids" })).await?;
+    Ok(apply_mids(rows, &mids))
+}
+
+fn apply_mids(rows: Vec<SymbolRow>, mids: &Value) -> Vec<SymbolRow> {
+    rows.into_iter()
+        .map(|row| {
+            // A market the map does not mention, or quotes unreadably, keeps
+            // the price it already had rather than dropping to zero.
+            let mid = num(mids, &row.name);
+            let price = if mid > 0.0 { mid } else { row.price };
+            SymbolRow {
+                change_pct: change_pct(price, row.prev_day),
+                price,
+                ..row
+            }
+        })
+        .collect()
 }
 
 /// The share of the entry-to-liquidation distance the mark has already
@@ -1089,6 +1128,22 @@ mod tests {
             assert!(symbols.len() > 20, "got {} markets", symbols.len());
             let btc = symbols.iter().find(|row| row.name == "BTC").expect("BTC");
             assert!(btc.price > 0.0 && btc.volume > 0.0, "BTC context is empty");
+            assert!(btc.prev_day > 0.0, "the 24h change needs yesterday's close");
+
+            // The cheap poll re-prices those same rows in place.
+            let repriced = hl_mids(symbols.clone()).await.expect("mid prices");
+            assert_eq!(repriced.len(), symbols.len(), "no row is dropped");
+            let quoted = repriced
+                .iter()
+                .zip(&symbols)
+                .filter(|(fresh, stale)| fresh.price != stale.price)
+                .count();
+            assert!(quoted > 0, "allMids named none of the markets we hold");
+            let btc = repriced.iter().find(|row| row.name == "BTC").expect("BTC");
+            assert!(btc.price > 0.0 && btc.volume > 0.0, "context survived");
+
+            // An empty list falls back to the universe, so the sidebar heals.
+            assert!(!hl_mids(Vec::new()).await.expect("fallback").is_empty());
 
             // A fresh tape adopts the first market loaded into it.
             let tape = tape_new();
@@ -1129,6 +1184,105 @@ mod tests {
     }
 
     #[test]
+    fn a_mid_reprices_a_row_without_disturbing_its_context() {
+        let row = |name: &str, price: f64| SymbolRow {
+            name: name.into(),
+            price,
+            change_pct: 0.0,
+            volume: 1.0,
+            funding_pct: 0.0,
+            leverage: 40.0,
+            open_interest: 0.0,
+            prev_day: 100.0,
+        };
+        // `allMids` quotes every venue in one map: perps by ticker, spot as
+        // "@n", prediction markets as "#n". Only the tickers we hold matter.
+        let mids = json!({ "BTC": "110.0", "@1": "16.2", "SOL": "not a number" });
+        let rows = apply_mids(vec![row("BTC", 100.0), row("SOL", 50.0)], &mids);
+
+        assert_eq!(rows[0].price, 110.0);
+        assert_eq!(
+            rows[0].change_pct, 10.0,
+            "re-derived from yesterday's close"
+        );
+        assert_eq!(rows[0].volume, 1.0, "24h context is left for the slow poll");
+        assert_eq!(
+            rows[1].price, 50.0,
+            "an unreadable quote keeps the old price"
+        );
+        assert_eq!(
+            apply_mids(vec![row("DOGE", 7.0)], &mids)[0].price,
+            7.0,
+            "a market the map omits keeps the price it had"
+        );
+    }
+
+    /// Hyperliquid meters `info` by request weight, not request count: 1200
+    /// per minute per IP. The poll cadence lives in `app.ice`, so this reads
+    /// it back out and prices it, charging the documented worst case for
+    /// every paged response. Adding a request to a timer, or speeding one up,
+    /// fails here rather than in production with a 429.
+    #[test]
+    fn polling_stays_inside_the_rate_limit() {
+        const APP: &str = include_str!("ui/app.ice");
+        const BUDGET: u32 = 1_200;
+
+        /// `l2Book`, `allMids`, and `clearinghouseState` cost 2; every other
+        /// documented request costs 20; paged responses add one per page.
+        fn weight(call: &str) -> u32 {
+            match call {
+                "hl_book" | "hl_mids" | "hl_account" => 2,
+                "hl_symbols" | "hl_orders" => 20,
+                // One extra per 60 candles, and the poll right after a market
+                // switch is a full backfill.
+                "hl_candles" => 20 + BACKFILL_BARS as u32 / 60,
+                // One extra per 20 fills; the endpoint returns at most 2000.
+                "hl_fills" => 20 + 2_000 / 20,
+                other => panic!("{other} has no published weight"),
+            }
+        }
+
+        // Which fetches each handler fires, straight from the handler bodies.
+        let mut owner = "";
+        let mut calls: Vec<(&str, &str)> = Vec::new();
+        for line in APP.lines() {
+            if let Some(name) = line.strip_prefix("on ") {
+                owner = name.split('(').next().unwrap_or(name).trim();
+            } else if let Some(call) = line.trim().strip_prefix("run ") {
+                calls.push((owner, call.split('(').next().unwrap_or(call)));
+            }
+        }
+
+        let timers: Vec<(u32, &str)> = APP
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("every "))
+            .map(|timer| {
+                let (period, route) = timer.split_once("s ").expect("a seconds cadence");
+                let handler = route.rsplit("-> ").next().expect("a route").trim();
+                (period.parse().expect("whole seconds"), handler)
+            })
+            .collect();
+        assert!(!timers.is_empty(), "the subscribe block did not parse");
+
+        let mut total = 0;
+        for (period, handler) in timers {
+            let per_poll: u32 = calls
+                .iter()
+                .filter(|(fired_by, _)| *fired_by == handler)
+                .map(|(_, call)| weight(call))
+                .sum();
+            assert!(per_poll > 0, "timer for {handler} fetches nothing");
+            // Round the rate up, so a cadence that does not divide the minute
+            // is charged the busier of the two rates it alternates between.
+            total += per_poll * 60u32.div_ceil(period);
+        }
+        assert!(
+            total <= BUDGET,
+            "polling costs {total} weight/minute against a {BUDGET} budget"
+        );
+    }
+
+    #[test]
     fn search_matches_tickers_case_insensitively() {
         let rows = vec![
             SymbolRow {
@@ -1139,7 +1293,7 @@ mod tests {
                 funding_pct: 0.0,
                 leverage: 40.0,
                 open_interest: 0.0,
-                oracle: 1.0,
+                prev_day: 1.0,
             },
             SymbolRow {
                 name: "ETH".into(),
@@ -1149,7 +1303,7 @@ mod tests {
                 funding_pct: 0.0,
                 leverage: 25.0,
                 open_interest: 0.0,
-                oracle: 1.0,
+                prev_day: 1.0,
             },
         ];
         assert_eq!(filter_symbols(rows.clone(), " et ".into()).len(), 1);

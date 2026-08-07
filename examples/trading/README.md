@@ -42,6 +42,7 @@ the UI thread with `smol::unblock`:
 | Ice call | Request | Reads |
 | --- | --- | --- |
 | `hl_symbols` | `metaAndAssetCtxs` | tradeable perps, mark price, 24h change, volume, open interest, funding |
+| `hl_mids` | `allMids` | a fresh price for every row already on screen |
 | `hl_candles` | `candleSnapshot` | OHLCV for the selected market and interval |
 | `hl_book` | `l2Book` | ten levels a side, with cumulative depth and the spread |
 | `hl_account` | `clearinghouseState` | equity, margin, open positions with PnL, ROE, leverage, and funding paid |
@@ -53,10 +54,21 @@ exchange sends every number as a string — a derive would need a custom
 deserializer per field. Prices, sizes, and PnL that are missing or unparsable
 read as zero rather than failing the whole poll.
 
-Polling replaces a websocket here: markets, candles, and the book every 3s, the
-account and its orders every 5s, fills every 30s, and all of it stops while the
-address prompt is up (`when` conditions on the `subscribe` block, so iced
-actually drops the timers instead of ignoring their messages).
+Polling replaces a websocket here, and the exchange meters it by *weight*
+rather than by request count: 1200 per minute per IP, where `l2Book`,
+`allMids`, and `clearinghouseState` cost 2 and everything else costs 20 plus a
+page charge. So the cadence is set by price rather than by taste — prices, the
+book, and candles every 3s; the account every 5s; the 24h figures behind the
+market list and the resting orders every 15s; fills every 60s. That is why the
+sidebar re-prices from `allMids` instead of re-reading `metaAndAssetCtxs`:
+same 3s tick, a tenth of the weight, and volume and open interest simply
+refresh on the slower timer behind it.
+
+All of it stops while the address prompt is up — `when` conditions on the
+`subscribe` block, so iced actually drops the timers instead of ignoring their
+messages. `polling_stays_inside_the_rate_limit` reads the cadence back out of
+`app.ice`, prices every timer at the documented worst case, and fails if the
+total crosses the budget; it stands at 944 of 1200.
 
 `hl_candles` keeps one tape for the whole session. An empty tape backfills 500
 candles and adopts the market that filled it; a loaded one asks only for the

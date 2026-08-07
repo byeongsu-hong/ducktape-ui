@@ -460,19 +460,24 @@ on search(typed)
 
 on tick
   parallel
-    run hl_symbols() -> symbols_loaded _ | failed _
+    run hl_mids(symbols) -> symbols_loaded _ | failed _
     run hl_candles(tape, coin, interval) -> candles_loaded _ | failed _
     run hl_book(coin) -> book_loaded _ | failed _
 
+on tick_meta
+  run hl_symbols() -> symbols_loaded _ | failed _
+
 on tick_account
-  parallel
-    run hl_account(address) -> account_loaded _ | failed _
-    run hl_orders(address) -> orders_loaded _ | failed _
+  run hl_account(address) -> account_loaded _ | failed _
+
+on tick_orders
+  run hl_orders(address) -> orders_loaded _ | failed _
 
 on tick_fills
   run hl_fills(address) -> fills_loaded _ | failed _
 
 on symbols_loaded(rows)
+  return if empty(rows)
   symbols = rows
   visible = filter_symbols(rows, query)
   focus = symbol_row(rows, coin)
@@ -503,8 +508,10 @@ on candle_hovered(next)
 
 subscribe
   every 3s when !gate -> tick
+  every 15s when !gate -> tick_meta
   every 5s when !gate && !empty(address) -> tick_account
-  every 30s when !gate && !empty(address) -> tick_fills
+  every 15s when !gate && !empty(address) -> tick_orders
+  every 60s when !gate && !empty(address) -> tick_fills
 
 view
   overlay
