@@ -195,16 +195,26 @@ viewport holds a fraction of the same catalog — 8.4x less area — and costs
 ~3.1ms against ~3.3ms, a 6% difference. **A frame costs what the view contains,
 not what it shows.** Every widget below the fold is laid out on every frame.
 
-That is the fact to design against, and it sets what does and does not help:
+That is the fact to design against. What moves it is a boundary the layout walk
+can stop at, and the repo has two:
 
-- Bounding the *content*, not the window, is the only thing that moves this
-  number. `virtual_list` mounts the rows a viewport can hold; the contract in
-  `tests/virtual_list_performance.rs` covers 1000 rows in ~1.0ms where a plain
-  lazy column needs 13.1ms for 150.
-- `lazy` / `memo_lazy` skip rebuilding a subtree's elements, which lands in the
-  ~0.72ms `__view` share. They do not skip laying it out, so they cannot
-  recover the other three quarters. Reach for them to cut allocation, not
-  layout.
-- Micro-optimizing emitted code has a ceiling of that same ~0.72ms. Removing
-  984 redundant scope clones from showcase's generated view — every one of them
-  real waste — was worth ~19us. Measure before spending effort there.
+- **`lazy`** lowers to `ui_lang_runtime::memo_lazy`, which is iced's `Lazy`
+  plus a memoized layout node — while the dependency hash and the incoming
+  `Limits` are unchanged, `layout()` clones the stored node instead of walking
+  the subtree. (Plain `iced::widget::Lazy` caches only the element and still
+  re-walks; the distinction is the whole point of the fork.) The runtime probe
+  re-lays-out 150 lazy chat rows in ~35us, against showcase's ~3.3ms for a
+  comparable tree with no lazy boundary anywhere.
+- **`virtual_list`** mounts only the rows a viewport can hold, so nothing
+  off-screen exists to lay out. `tests/virtual_list_performance.rs` covers 1000
+  rows in ~1.0ms where a plain lazy column needs 13.1ms for 150.
+
+A boundary only pays while its dependency is stable, which is why showcase is
+the worst case rather than a bug: the catalog is a demo of interactive widgets,
+threaded with `bind` parameters and ~45 pieces of state, so almost no subtree
+in it holds still long enough to cache. Read its 3.3ms as the cost of a view
+that cannot memoize, not as a number every Ice app pays.
+
+Micro-optimizing emitted code has the ~0.72ms `__view` share as its ceiling.
+Removing 984 redundant scope clones from showcase's generated view — every one
+of them real waste — was worth ~19us. Measure before spending effort there.
