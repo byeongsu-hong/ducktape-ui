@@ -188,5 +188,23 @@ numbers measure rustc, not the app.
 The phase that matters is `__view build only` against `idle redraw`: the first
 is the code the Ice compiler emits, the second adds iced's layout and event
 walk. On showcase that is ~0.72ms against ~3.3ms, so roughly three quarters of a
-frame is layout over the whole view tree, and optimizing generated code alone
-cannot reach it.
+frame is layout, and optimizing generated code alone cannot reach it.
+
+`idle redraw @480x320` says what that layout is proportional to. The small
+viewport holds a fraction of the same catalog — 8.4x less area — and costs
+~3.1ms against ~3.3ms, a 6% difference. **A frame costs what the view contains,
+not what it shows.** Every widget below the fold is laid out on every frame.
+
+That is the fact to design against, and it sets what does and does not help:
+
+- Bounding the *content*, not the window, is the only thing that moves this
+  number. `virtual_list` mounts the rows a viewport can hold; the contract in
+  `tests/virtual_list_performance.rs` covers 1000 rows in ~1.0ms where a plain
+  lazy column needs 13.1ms for 150.
+- `lazy` / `memo_lazy` skip rebuilding a subtree's elements, which lands in the
+  ~0.72ms `__view` share. They do not skip laying it out, so they cannot
+  recover the other three quarters. Reach for them to cut allocation, not
+  layout.
+- Micro-optimizing emitted code has a ceiling of that same ~0.72ms. Removing
+  984 redundant scope clones from showcase's generated view — every one of them
+  real waste — was worth ~19us. Measure before spending effort there.

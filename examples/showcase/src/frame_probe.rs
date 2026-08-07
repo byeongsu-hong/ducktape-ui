@@ -105,8 +105,26 @@ fn frame_cost() {
         });
     }
 
+    // Does a frame cost what it shows, or what the view contains? A viewport
+    // small enough to hold a fraction of the catalog answers it: layout that
+    // walks the whole tree does not get cheaper, layout bounded by what is
+    // visible does.
+    let mut tiny = Driver::new(
+        Showcase::__program(),
+        Config::new("frame_cost_tiny").viewport(480.0, 320.0),
+    );
+    for _ in 0..WARMUP {
+        tiny.redraw(here());
+    }
+    let mut tiny_idle = Phase::new("idle redraw @480x320");
+    for _ in 0..FRAMES {
+        tiny_idle.sample(|| tiny.redraw(here()));
+    }
+
     eprintln!("\nshowcase frame cost ({FRAMES} frames, 1440x900)");
-    for phase in [&view_only, &idle, &cursor, &update, &scroll, &click] {
+    for phase in [
+        &view_only, &idle, &tiny_idle, &cursor, &update, &scroll, &click,
+    ] {
         phase.report();
     }
 }
