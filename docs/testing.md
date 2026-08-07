@@ -315,3 +315,48 @@ Both apps therefore land in the same place: iced re-lays-out the whole tree per
 frame, that walk is 78-89% of the cost, and it does not shrink with the
 viewport, with warm-up, or with anything the code generator emits. Only a
 boundary the walk can stop at moves it.
+
+### Why an edit costs what it costs
+
+The `edit` number is not a fixed price. It tracks the size of the generated
+module the edit dirties, because rustc's incremental cache is per **item** and
+a component's whole view is one function:
+
+| edited | dirtied module | generated lines | rebuild |
+|---|---|---|---|
+| `showcase` `components/navigation.ice` | navigation | 673 | 3.0s |
+| `trading` `app.ice` | app + root | 2.6k + 4.0k | 3.0s |
+| `showcase` `app.ice` | root | 5.5k | 6.3s |
+| `showcase` `components/catalog.ice` | catalog | **6.9k** | **6.5s** |
+
+There is a floor near 3.0s (link, cargo, the work no cache can avoid) and above
+it the cost follows the dirtied module. showcase's `catalog` module is **one
+6,894-line function** — its `Catalog` component takes 45 parameters and mounts
+16 `Panel`s — so changing one character in it re-checks all of it. There is no
+smaller unit for the cache to reuse.
+
+`codegen/view/outline.rs` already exists to split those functions up, and its
+own notes measure typecheck as superlinear in function size (`~M^1.7`). It does
+not fire here: a component use whose slot content is present renders inline
+(`call.slots.is_empty()` in `view/content.rs`).
+
+Removing that condition outright takes showcase's worst edit from **6.5s to
+3.3s** and leaves total generated lines flat (15,506 -> 15,632), but it is
+**unsound** — `iced-app`'s `render_surface` stops compiling with `cannot find
+value 'item'`, because slot content snapshots the call-site environment and can
+interpolate a loop variable that an outlined method has no binding for.
+
+Narrowing it to "outline unless the slot content actually reached a render-site
+local" is sound and recovers nothing, because the slots stop short for a
+different reason: they read the enclosing component's parameters, and
+`RecordingEnv::record` hard-captures a `ComponentParam` whose self-backed
+marker is absent from the snapshotted slot environment
+(`expr.rs`, the `None => self.hard_capture.set(true)` arm). Locals are empty in
+every case measured; the flag is the marker's absence, not a real capture.
+
+So the ~2x on the worst edit is real and reachable, and the work is to carry
+those markers into the slot snapshot (or resolve them through to the parent
+environment) so slot content parameterizes the way arguments already do. It is
+a change to capture analysis, where a mistake miscompiles rather than fails, so
+it wants its own pass with the workspace suite as the oracle — that suite is
+what caught the unsound version.
