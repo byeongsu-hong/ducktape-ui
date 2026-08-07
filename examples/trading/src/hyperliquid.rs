@@ -1537,6 +1537,38 @@ pub fn position_label(held: Position) -> String {
     format!("{} {side} {}", held.coin, fmt_size(held.size))
 }
 
+/// What an order would do to what you already hold. Opening and closing are
+/// different acts on the same ticket, and the difference is the sign of a
+/// number two panels apart — the size you typed here and the position sitting
+/// in the panel below.
+pub fn ticket_effect(positions: Vec<Position>, coin: String, size: String, buy: bool) -> String {
+    let size = amount(&size).abs();
+    if size <= 0.0 {
+        return String::new();
+    }
+    let held = positions
+        .into_iter()
+        .find(|position| position.coin == coin)
+        .map_or(0.0, |position| position.size);
+    let side = if buy { "long" } else { "short" };
+    // A buy against a short reduces it, and so does a sell against a long.
+    if held == 0.0 || (held > 0.0) == buy {
+        return format!("Opens {} {side}", fmt_size(size));
+    }
+    let open = held.abs();
+    let holding = if held > 0.0 { "long" } else { "short" };
+    if size < open {
+        format!("Reduces your {holding} to {}", fmt_size(open - size))
+    } else if size > open {
+        format!(
+            "Closes your {holding} and opens {} {side}",
+            fmt_size(size - open)
+        )
+    } else {
+        format!("Closes your {holding}")
+    }
+}
+
 /// A resting order names its side, its size and the price it waits at.
 pub fn order_label(order: Order) -> String {
     let side = if order.buy { "buy" } else { "sell" };
@@ -2443,6 +2475,48 @@ mod tests {
             quoted_strict.liquidation > quoted("100", "2", "10", true).liquidation,
             "a heavier requirement moves the cliff toward the entry"
         );
+    }
+
+    #[test]
+    fn the_ticket_says_whether_it_opens_or_closes() {
+        let short = |size: f64| Position {
+            coin: "BTC".into(),
+            size,
+            entry: 60_000.0,
+            mark: 60_000.0,
+            liq: 0.0,
+            pnl: 0.0,
+            roe_pct: 0.0,
+            margin: 0.0,
+            risk: 0.0,
+            leverage: 20.0,
+            margin_mode: "cross".into(),
+            funding: 0.0,
+        };
+        let held = vec![short(-30.0)];
+        let effect =
+            |size: &str, buy: bool| ticket_effect(held.clone(), "BTC".into(), size.into(), buy);
+
+        // A buy against a short is the interesting case: the same ticket that
+        // opens a position on one side closes one on the other, and the only
+        // thing that says which is a sign two panels apart.
+        assert_eq!(effect("10", true), "Reduces your short to 20.00");
+        assert_eq!(effect("30", true), "Closes your short");
+        assert_eq!(effect("50", true), "Closes your short and opens 20.00 long");
+        assert_eq!(effect("10", false), "Opens 10.00 short", "same side, adds");
+
+        // A market you hold nothing in, and a market that is not this one.
+        assert_eq!(
+            ticket_effect(held.clone(), "ETH".into(), "1".into(), true),
+            "Opens 1.00 long"
+        );
+        assert_eq!(
+            ticket_effect(Vec::new(), "BTC".into(), "1".into(), true),
+            "Opens 1.00 long"
+        );
+        // Nothing typed is not an order, and says nothing.
+        assert_eq!(effect("", true), "");
+        assert_eq!(effect("0", true), "");
     }
 
     #[test]

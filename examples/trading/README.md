@@ -123,6 +123,12 @@ just clicked across. The size is cleared whenever it opens — 0.5 means a
 different order on every market, and carrying it over is how you place one you
 did not mean.
 
+It also says what the order would do to what you already hold. Opening and
+closing are different acts on the same ticket, and the only thing that
+separates them is the sign of a number two panels away — so the ticket reads it
+for you: a buy against a short reduces it, closes it, or closes it and opens
+the other way.
+
 A market the app has not read yet gets no cliff quoted at all. What an order
 is worth and what it ties up are multiplication and always answerable, but the
 liquidation needs the venue's requirement, and treating an unknown requirement

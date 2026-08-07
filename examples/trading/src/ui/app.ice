@@ -1489,6 +1489,13 @@ view
                       w=fill
                       align-x=center
                       @text-muted
+          if !empty(ticket_effect(positions, coin, ticket_size, ticket_buy))
+            text ticket_effect(positions, coin, ticket_size, ticket_buy)
+              with
+                size=11.0
+                w=fill
+                wrap=word
+                @text-muted
           col gap=8.0 w=fill
             Label value="LIMIT PRICE"
             input "" #ticket-price <-> ticket_price
