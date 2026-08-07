@@ -53,25 +53,6 @@ fn render_resolved_regular_layout(
     let mut body = String::from("{ let mut __children: ::std::vec::Vec<__IceElement<'_, ");
     write!(body, "{message}>> = ::std::vec::Vec::new();").unwrap();
     let child_scope = rendered_child_scope(identity, scope, env, document)?;
-    // A `pin` layer of a plain `stack` is positioned — CSS `position: absolute`
-    // — so it draws over the stack but must not vote on its measured size.
-    // Codegen collects those layer indices; `stack under=N` builds iced's own
-    // `Stack`, which already sizes to its base layer alone.
-    let floating = match &layout.mode {
-        ResolvedLayoutMode::Stack(stack)
-            if stack.under == 0 && has_floating_layer(children, document)? =>
-        {
-            Some("__ice_floating")
-        }
-        _ => None,
-    };
-    if let Some(sink) = floating {
-        write!(
-            body,
-            " let mut {sink}: ::std::vec::Vec<usize> = ::std::vec::Vec::new();"
-        )
-        .unwrap();
-    }
     render_children(
         &mut body,
         children,
@@ -80,7 +61,6 @@ fn render_resolved_regular_layout(
         env,
         &child_scope,
         slot,
-        floating,
     )?;
 
     let needs_child_count = match &layout.mode {
@@ -126,9 +106,6 @@ fn render_resolved_regular_layout(
         }
         ResolvedLayoutMode::Stack(_) => {
             body.push_str(" let __layout = ::ui_lang_runtime::zstack(__children)");
-            if let Some(sink) = floating {
-                write!(body, ".floating({sink})").unwrap();
-            }
         }
         ResolvedLayoutMode::Hover(hover) => {
             // Exactly two children (the parser enforces it): base, reveal.
