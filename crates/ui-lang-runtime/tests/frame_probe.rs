@@ -135,6 +135,10 @@ impl Phase {
         value
     }
 
+    fn p50(&self) -> u128 {
+        percentile(&self.elapsed_us, 50).max(1)
+    }
+
     fn report(&self) {
         let p50 = percentile(&self.elapsed_us, 50);
         let p95 = percentile(&self.elapsed_us, 95);
@@ -271,40 +275,48 @@ fn chat_frame_phase_costs() {
     // rows: a cold channel open only builds and shapes the viewport window,
     // not the whole stream. One sample = the full settle — build, measure,
     // apply reported events, rebuild.
-    const TIMELINE_ROWS: usize = 1_000;
-    let timeline_bodies: Vec<String> = (0..TIMELINE_ROWS)
-        .map(|index| {
-            format!(
-                "message {index}: the quick brown fox jumps over the lazy dog \
-                 while the review bot files another finding about wrapping \
-                 behavior in long chat lines that span two rendered rows"
-            )
-        })
-        .collect();
     let timeline_config = VirtualListConfig::measured(48.0).unwrap();
-    let mut timeline_phase = Phase::new("virtual timeline cold open");
-    for round in 0..8 {
-        timeline_phase.sample(|| {
-            let mut state: VirtualListState<u64> =
-                VirtualListState::new(VirtualListId::new(format!("probe-timeline-{round}")));
-            let items: Vec<u64> = (0..TIMELINE_ROWS as u64).collect();
-            state
-                .reconcile(&items, |key| *key, timeline_config)
-                .unwrap();
-            state.apply(
-                VirtualListEvent::ViewportChanged {
-                    height: WINDOW.height,
-                },
-                &items,
-                |key| *key,
-                timeline_config,
-            );
-            state.scroll_to_end(items.len(), timeline_config);
-            let mut timeline_cache = user_interface::Cache::default();
-            let mut messages: Vec<TimelineMessage> = Vec::new();
-            for _ in 0..2 {
-                let element: Element<'_, TimelineMessage, Theme, iced_test::renderer::Renderer> =
-                    virtual_list(
+    let mut timeline_phases = Vec::new();
+    for (label, timeline_rows) in [
+        ("virtual timeline @150 cold", ROWS),
+        ("virtual timeline @1000 cold", 1_000),
+    ] {
+        let timeline_bodies: Vec<String> = (0..timeline_rows)
+            .map(|index| {
+                format!(
+                    "message {index}: the quick brown fox jumps over the lazy dog \
+                     while the review bot files another finding about wrapping \
+                     behavior in long chat lines that span two rendered rows"
+                )
+            })
+            .collect();
+        let mut timeline_phase = Phase::new(label);
+        for round in 0..8 {
+            timeline_phase.sample(|| {
+                let mut state: VirtualListState<u64> =
+                    VirtualListState::new(VirtualListId::new(format!("probe-timeline-{round}")));
+                let items: Vec<u64> = (0..timeline_rows as u64).collect();
+                state
+                    .reconcile(&items, |key| *key, timeline_config)
+                    .unwrap();
+                state.apply(
+                    VirtualListEvent::ViewportChanged {
+                        height: WINDOW.height,
+                    },
+                    &items,
+                    |key| *key,
+                    timeline_config,
+                );
+                state.scroll_to_end(items.len(), timeline_config);
+                let mut timeline_cache = user_interface::Cache::default();
+                let mut messages: Vec<TimelineMessage> = Vec::new();
+                for _ in 0..2 {
+                    let element: Element<
+                        '_,
+                        TimelineMessage,
+                        Theme,
+                        iced_test::renderer::Renderer,
+                    > = virtual_list(
                         &state,
                         &items,
                         timeline_config,
@@ -320,24 +332,27 @@ fn chat_frame_phase_costs() {
                         },
                         TimelineMessage::List,
                     );
-                let mut ui = UserInterface::build(element, WINDOW, timeline_cache, &mut renderer);
-                ui.update(
-                    &[Event::Window(iced::window::Event::RedrawRequested(
-                        iced::time::Instant::now(),
-                    ))],
-                    mouse::Cursor::Unavailable,
-                    &mut renderer,
-                    &mut clipboard,
-                    &mut messages,
-                );
-                timeline_cache = ui.into_cache();
-                for message in messages.drain(..) {
-                    let TimelineMessage::List(event) = message;
-                    state.apply(event, &items, |key| *key, timeline_config);
+                    let mut ui =
+                        UserInterface::build(element, WINDOW, timeline_cache, &mut renderer);
+                    ui.update(
+                        &[Event::Window(iced::window::Event::RedrawRequested(
+                            iced::time::Instant::now(),
+                        ))],
+                        mouse::Cursor::Unavailable,
+                        &mut renderer,
+                        &mut clipboard,
+                        &mut messages,
+                    );
+                    timeline_cache = ui.into_cache();
+                    for message in messages.drain(..) {
+                        let TimelineMessage::List(event) = message;
+                        state.apply(event, &items, |key| *key, timeline_config);
+                    }
                 }
-            }
-            std::hint::black_box(&state);
-        });
+                std::hint::black_box(&state);
+            });
+        }
+        timeline_phases.push(timeline_phase);
     }
 
     eprintln!(
@@ -352,5 +367,37 @@ fn chat_frame_phase_costs() {
     switch_phase.report();
     all_deps_phase.report();
     cold_phase.report();
-    timeline_phase.report();
+    for phase in &timeline_phases {
+        phase.report();
+    }
+
+    // Ratio contracts, not absolute budgets: both sides are measured in this
+    // same run on this same machine, so a busy box slows them together and
+    // the comparison still holds. Absolute microsecond budgets would only
+    // flake here.
+    let [timeline_small, timeline_large] = &timeline_phases[..] else {
+        panic!("expected exactly two timeline phases");
+    };
+    let column_cold = cold_phase.p50();
+    let small = timeline_small.p50();
+    let large = timeline_large.p50();
+
+    // 1. Virtualizing the same row count must be decisively cheaper than
+    //    building every row: the plain lazy column shapes offscreen text,
+    //    the virtual list shapes only the viewport.
+    assert!(
+        small * 5 < column_cold,
+        "virtual timeline @{ROWS} ({small}us) must beat the plain column @{ROWS} \
+         ({column_cold}us) by more than 5x (measured 13x)"
+    );
+
+    // 2. The whole point: cost tracks the viewport, not the stream. Measured,
+    //    6.7x the rows costs +0.3% and the exact same allocation count, so a
+    //    2.5x bound is loose enough never to flake and tight enough to catch
+    //    any new per-row work leaking into a frame.
+    assert!(
+        large * 2 < small * 5,
+        "virtual timeline must stay viewport-proportional: @1000 ({large}us) \
+         vs @{ROWS} ({small}us) grew more than 2.5x for 6.7x the rows"
+    );
 }
