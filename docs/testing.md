@@ -252,3 +252,19 @@ an author-supplied key the way `keyed` already does, rather than deriving
 identity from the whole dependency — which is a language change, not a tuning
 one. Recorded here so the next pass starts from the constraint rather than
 rediscovering it.
+
+Two controls in that probe are there to foreclose the easy explanations, and
+both come back negative:
+
+- `__view build only (chrome)` against `idle redraw` — 142us against 1276us.
+  Generated code is 11% of trading's frame, matching showcase's 22%. Whatever
+  is expensive, it is not the code the Ice compiler emits.
+- `cold redraw` against the steady-state p50 — 1296us against 1313us. The first
+  frame, which has to shape every paragraph from nothing, costs what the
+  sixtieth costs. This is not a warm-up cost that amortizes; the walk is paid
+  again on every frame.
+
+Both apps therefore land in the same place: iced re-lays-out the whole tree per
+frame, that walk is 78-89% of the cost, and it does not shrink with the
+viewport, with warm-up, or with anything the code generator emits. Only a
+boundary the walk can stop at moves it.
