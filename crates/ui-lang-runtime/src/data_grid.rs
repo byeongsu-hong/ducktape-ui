@@ -984,12 +984,15 @@ where
         let selected = state.rows.selected() == Some(&item_key);
         let mut cells = Vec::with_capacity(state.columns.len());
         for (column_index, record) in state.columns.iter().enumerate() {
-            let cell_id = DataGridCellId {
-                row: item_key.clone(),
-                column: record.column.key.clone(),
-            };
-            let active = state.active_cell().as_ref() == Some(&cell_id);
-            let editing = state.editing.as_ref() == Some(&cell_id);
+            // Compare against the parts rather than assembling a cell id per
+            // cell: `active_cell()` clones both keys to build one, and the
+            // literal below cloned two more, so a mounted grid paid four
+            // allocations per cell per frame purely to answer two booleans.
+            // The id is built only where one is actually handed onwards.
+            let active = selected && state.active_column.as_ref() == Some(&record.column.key);
+            let editing = state.editing.as_ref().is_some_and(|editing| {
+                editing.row == item_key && editing.column == record.column.key
+            });
             let view = cell(DataGridCellContext {
                 row_index,
                 row: item,
@@ -1011,10 +1014,12 @@ where
                     .height(Length::Fixed(config.row_height()))
                     .into(),
                 on_press: on_event(focus_event.clone()),
-                on_double_click: record
-                    .column
-                    .editable
-                    .then(|| on_event(DataGridEvent::BeginEdit(cell_id.clone()))),
+                on_double_click: record.column.editable.then(|| {
+                    on_event(DataGridEvent::BeginEdit(DataGridCellId {
+                        row: item_key.clone(),
+                        column: record.column.key.clone(),
+                    }))
+                }),
                 pointer_focus_claim: Rc::clone(&pointer_focus_claim),
             });
             let cell = accessible(
