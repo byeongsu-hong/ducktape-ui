@@ -13,7 +13,9 @@ cargo test -p trading-example
 The app opens on an address prompt, prefilled with a well-known account so
 there is something to look at on the first run. Press **Connect** to read it,
 type your own, or **Browse markets** to use market data only; the positions
-panel offers the prompt again if you change your mind.
+panel offers the prompt again if you change your mind. Browsing without one,
+the three panels that need an account say so rather than reporting that the
+account has nothing in it.
 
 An address is checked before it is sent, because the exchange answers a
 malformed one with a plain-text parser complaint rather than JSON — so without
@@ -50,6 +52,10 @@ mark, the liquidation price — is written out in the row beneath it, so a reade
 who cannot see the bar can still do the subtraction. Nothing else on screen
 carries the maintenance requirement, so a bar alone would be its only copy, and
 a bar has no accessible value.
+
+The tape's header carries which side is crossing, weighted by size. The same
+price with buyers taking it and with sellers hitting it are two different
+markets, and that is not something the price alone says.
 
 The **tape** under the book is everybody's trades rather than this account's:
 the socket was already open and one more subscription costs nothing, so the
@@ -104,11 +110,24 @@ dies. The liquidation is isolated-margin arithmetic against the maintenance
 requirement this market holds — a cross position dies against the whole
 account instead, which is the rail under the equity figure.
 
+Every row that does something is named by what it does, not by what it shows:
+a book level announces the order it would start rather than the price it
+displays, and a position row its side and size rather than its ticker. A row
+carrying five figures is worth more than one of them to somebody who cannot
+see the other four.
+
 A level in the book opens it already filled: clicking an ask starts a buy at
 that price, clicking a bid a sell, because the side you want is the side you
 just clicked across. The size is cleared whenever it opens — 0.5 means a
 different order on every market, and carrying it over is how you place one you
 did not mean.
+
+A market the app has not read yet gets no cliff quoted at all. What an order
+is worth and what it ties up are multiplication and always answerable, but the
+liquidation needs the venue's requirement, and treating an unknown requirement
+as zero puts the cliff further from the entry than it really is. That is the
+one direction a risk number must never be wrong in, so the panel says it does
+not know.
 
 Leverage is reported as it was priced rather than as it was typed. The field
 takes anything; the market does not, so a 400 typed into a 5x market is held at
@@ -152,7 +171,7 @@ Two sockets, each a thread pumping into a channel that Ice consumes as a
 | `hl_candles` | `candleSnapshot` | 500 candles when a market or interval is opened |
 | `hl_history` | `candleSnapshot` | 500 more, ending where the tape begins, when the chart is panned back that far |
 | `hl_account` | `clearinghouseState` | equity, margin, open positions with PnL, ROE, leverage, and funding paid |
-| `hl_orders` | `openOrders` | resting orders, listed and drawn on the chart as levels |
+| `hl_orders` | `openOrders` | resting orders, listed with their age and drawn on the chart as levels |
 
 Responses are read as `serde_json::Value` and mapped by hand, because the
 exchange sends every number as a string — a derive would need a custom

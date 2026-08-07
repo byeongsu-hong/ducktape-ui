@@ -9,7 +9,7 @@ extern crate::hyperliquid
   Order(coin:str, buy:bool, price:f64, size:f64, ts:i64)
   Level(price:f64, size:f64, bar:f64)
   Book(bids:[Level], asks:[Level], spread_pct:f64, mid:f64)
-  Ticket(notional:f64, margin:f64, liquidation:f64, leverage:f64, ready:bool)
+  Ticket(notional:f64, margin:f64, liquidation:f64, leverage:f64, ready:bool, known:bool)
   CandleHit(index:i64, ts:i64, open:f64, high:f64, low:f64, close:f64, volume:f64)
   MarketTick(book:Book?, latency:i64)
   ChartSignal(hover:CandleHit?, older:bool)
@@ -34,6 +34,10 @@ extern crate::hyperliquid
   sync cool_fills(rows:[Fill]) -> [Fill]
   sync any_hot(rows:[Fill]) -> bool
   sync valid_address(address:str) -> bool
+  sync book_label(price:f64, buy:bool) -> str
+  sync position_label(held:Position) -> str
+  sync tape_pressure(prints:[Trade]) -> f64
+  sync fmt_age(ts:i64) -> str
   sync pane_height(wanted:f64) -> f64
   sync header_inset() -> f64
   sync fmt_px(value:f64) -> str

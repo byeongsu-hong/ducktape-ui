@@ -212,7 +212,7 @@ component BookRow(level:Level, buy:bool)
     pick(f64, bool)
   button #root -> emit(pick, level.price, !buy)
     with
-      label=fmt_px(level.price)
+      label=book_label(level.price, !buy)
       w=fill
       p=0.0
     active bg=panel r=0.0
@@ -312,8 +312,14 @@ component OrderRow(order:Order)
     text order.coin
       with
         size=11.0
-        w=48.0
+        w=40.0
         @text-muted
+    text fmt_age(order.ts)
+      with
+        size=9.0
+        w=28.0
+        font=digits
+        @text-faint
     space w=fill
     Delta
       with
@@ -417,7 +423,7 @@ component PositionRow(held:Position)
     pick(str)
   button #root -> emit(pick, held.coin)
     with
-      label=held.coin
+      label=position_label(held)
       w=fill
       p=0.0
     active bg=panel r=0.0
@@ -1081,7 +1087,7 @@ view
                             y-rail bg=panel
                             y-scroller bg=faint r=3.0
                           col w=fill
-                            if empty(fills)
+                            if empty(fills) && watching
                               box
                                 with
                                   w=fill
@@ -1089,6 +1095,14 @@ view
                                   align-x=center
                                   align-y=center
                                 text "No fills on this account yet." size=12.0 @text-faint
+                            if !watching
+                              box
+                                with
+                                  w=fill
+                                  h=100.0
+                                  align-x=center
+                                  align-y=center
+                                text "Fills need an address." size=12.0 @text-faint
                             for fill in fills
                               FillRow fill=fill
                 rule vertical thickness=1.0 color=edge
@@ -1255,7 +1269,7 @@ view
                         y-rail bg=panel
                         y-scroller bg=faint r=3.0
                       col w=fill
-                        if empty(orders)
+                        if empty(orders) && watching
                           box
                             with
                               w=fill
@@ -1263,6 +1277,14 @@ view
                               align-x=center
                               align-y=center
                             text "No resting orders." size=11.0 @text-faint
+                        if !watching
+                          box
+                            with
+                              w=fill
+                              h=72.0
+                              align-x=center
+                              align-y=center
+                            text "Orders need an address." size=11.0 @text-faint
                         for order in orders
                           OrderRow order=order
         layer
@@ -1507,10 +1529,16 @@ view
                     size=13.0
                     font=digits
                     @text-down
-              if quote.liquidation <= 0.0
+              if quote.liquidation <= 0.0 && quote.known
                 text "none"
                   with
                     size=13.0
+                    font=digits
+                    @text-faint
+              if !quote.known
+                text "market not loaded"
+                  with
+                    size=11.0
                     font=digits
                     @text-faint
             text "Isolated margin, at the maintenance requirement this market holds. A cross position dies against the whole account instead, which is the rail under the equity figure."
@@ -1583,3 +1611,12 @@ test trading_search_keeps_what_was_typed
   focus search
   type "ET"
   expect query == "ET"
+
+test trading_browse_says_what_needs_an_address
+  preset terminal
+  viewport 1400 900
+  expect text "Fills need an address."
+  expect text "Orders need an address."
+  expect text "Connect an address"
+  expect no text "No fills on this account yet."
+  expect no text "No resting orders."

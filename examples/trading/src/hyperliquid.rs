@@ -564,6 +564,11 @@ pub struct Ticket {
     pub leverage: f64,
     /// Whether the numbers above describe anything at all.
     pub ready: bool,
+    /// Whether the market's maintenance requirement is known. Without it
+    /// there is no cliff to quote, and one computed as though the requirement
+    /// were zero sits further from the entry than the real one — so the panel
+    /// says it does not know rather than something reassuring.
+    pub known: bool,
 }
 
 /// Liquidation for a position opened at `price` with `leverage`, isolated.
@@ -644,16 +649,18 @@ pub fn price_ticket(
     let leverage = amount(&leverage).clamp(0.0, ceiling);
     let notional = price * size;
     let ready = price > 0.0 && size > 0.0 && leverage > 0.0;
+    let known = maintenance > 0.0;
     Ticket {
         notional,
         margin: if ready { notional / leverage } else { 0.0 },
-        liquidation: if ready {
+        liquidation: if ready && known {
             ticket_liquidation(price, leverage, maintenance, buy)
         } else {
             0.0
         },
         leverage,
         ready,
+        known,
     }
 }
 
@@ -1515,6 +1522,52 @@ pub fn pane_height(wanted: f64) -> f64 {
     wanted.clamp(LOWER_MIN, LOWER_MAX)
 }
 
+/// What a book row's button does, which is what a reader arriving on it needs
+/// to hear. The price alone is a number with no side and no consequence, and
+/// this row starts an order.
+pub fn book_label(price: f64, buy: bool) -> String {
+    let side = if buy { "Buy" } else { "Sell" };
+    format!("{side} at {}", fmt_px(price))
+}
+
+/// A position row carries a side, a size, an entry, a liquidation price and a
+/// PnL. Named by its coin alone, a reader arriving on it hears "BTC".
+pub fn position_label(held: Position) -> String {
+    let side = if held.size >= 0.0 { "long" } else { "short" };
+    format!("{} {side} {}", held.coin, fmt_size(held.size))
+}
+
+/// The share of the tape that lifted the offer, as a percentage. Which side
+/// is crossing tells you something a price alone does not: the same price with
+/// buyers taking it and with sellers hitting it are two different markets.
+/// Reads 50 on an empty tape, which is the only honest reading of no trades.
+pub fn tape_pressure(prints: Vec<Trade>) -> f64 {
+    let (bought, total) = prints.iter().fold((0.0, 0.0), |(bought, total), print| {
+        let size = print.size.abs();
+        (bought + if print.buy { size } else { 0.0 }, total + size)
+    });
+    if total <= 0.0 {
+        return 50.0;
+    }
+    bought / total * 100.0
+}
+
+/// How long a resting order has been waiting, in the coarsest unit that still
+/// says something: an order placed four days ago and one placed four minutes
+/// ago are different orders, and the seconds between them are not the point.
+pub fn fmt_age(ts: i64) -> String {
+    let seconds = now_ms() / 1_000 - ts;
+    if ts <= 0 || seconds < 0 {
+        return "—".to_owned();
+    }
+    match seconds {
+        0..60 => "now".to_owned(),
+        60..3_600 => format!("{}m", seconds / 60),
+        3_600..86_400 => format!("{}h", seconds / 3_600),
+        _ => format!("{}d", seconds / 86_400),
+    }
+}
+
 /// Left gap the header keeps clear so its content never sits under the macOS
 /// traffic lights, which float over the fullsize content view. The rightmost
 /// button ends near 74pt; everywhere else the header owns its full width.
@@ -2054,6 +2107,69 @@ mod tests {
     }
 
     #[test]
+    fn an_interactive_row_is_named_by_what_it_does() {
+        // A book row starts an order, so it is named by the order and not by
+        // the resting one it crosses: the ask is where you buy.
+        assert_eq!(book_label(64_850.0, true), "Buy at 64,850.00");
+        assert_eq!(book_label(64_849.0, false), "Sell at 64,849.00");
+
+        let held = |size: f64| Position {
+            coin: "BTC".into(),
+            size,
+            entry: 60_000.0,
+            mark: 64_000.0,
+            liq: 45_000.0,
+            pnl: 0.0,
+            roe_pct: 0.0,
+            margin: 0.0,
+            risk: 0.0,
+            leverage: 20.0,
+            margin_mode: "cross".into(),
+            funding: 0.0,
+        };
+        // A row carrying a side, a size, an entry, a cliff and a PnL is worth
+        // more than its ticker to somebody who cannot see the rest of it.
+        assert_eq!(position_label(held(30.0)), "BTC long 30.00");
+        assert_eq!(
+            position_label(held(-30.0)),
+            "BTC short 30.00",
+            "the size reads unsigned; the word carries the side"
+        );
+    }
+
+    #[test]
+    fn the_tape_reads_which_side_is_crossing() {
+        let print = |size: f64, buy: bool| Trade {
+            ts: 0,
+            price: 1.0,
+            size,
+            buy,
+            sweep: 1,
+            tid: 0,
+        };
+        // Weighted by size, not by row count: one large seller against three
+        // small buyers is a selling tape however the rows look.
+        assert_eq!(
+            tape_pressure(vec![
+                print(1.0, true),
+                print(1.0, true),
+                print(1.0, true),
+                print(9.0, false)
+            ]),
+            25.0
+        );
+        assert_eq!(tape_pressure(vec![print(4.0, true)]), 100.0);
+        assert_eq!(tape_pressure(vec![print(4.0, false)]), 0.0);
+        assert_eq!(
+            tape_pressure(vec![print(1.0, true), print(1.0, false)]),
+            50.0
+        );
+        // No trades is not a one-sided market, and must not divide by zero.
+        assert_eq!(tape_pressure(Vec::new()), 50.0);
+        assert_eq!(tape_pressure(vec![print(0.0, true)]), 50.0);
+    }
+
+    #[test]
     fn the_tape_stacks_newest_first_and_never_repeats_a_print() {
         let beat = |prints: Vec<Trade>| MarketTick {
             trades: prints,
@@ -2203,9 +2319,23 @@ mod tests {
             "a price read back off the screen carries its separators"
         );
 
-        // A market with no published maximum still prices; it just has no
-        // maintenance requirement to hold against.
-        assert!(price_ticket("100".into(), "2".into(), "10".into(), None, true).ready);
+        // A market the app has not loaded yet still prices what an order is
+        // worth and what it ties up — that is multiplication — but it must
+        // not quote a cliff. Treating an unknown requirement as zero puts the
+        // liquidation further from the entry than it really is, which is the
+        // one direction a risk number must never be wrong in.
+        let unknown = price_ticket("100".into(), "2".into(), "10".into(), None, true);
+        assert!(unknown.ready, "the order is still describable");
+        assert_eq!(unknown.notional, 200.0);
+        assert_eq!(unknown.margin, 20.0);
+        assert!(!unknown.known, "and the panel says it does not know");
+        assert_eq!(unknown.liquidation, 0.0, "rather than an optimistic one");
+        // What it would have said: 100 * (1 - 1/10) / (1 - 0) = 90, a cliff
+        // ten percent away when the real one is nearer.
+        assert!(
+            quoted("100", "2", "10", true).liquidation > 90.0,
+            "the real cliff sits closer to the entry than a zero requirement implies"
+        );
 
         // The requirement is the venue's to publish, not this arithmetic's to
         // know. A market that maintains at twice the rate liquidates sooner,
@@ -2417,6 +2547,20 @@ mod tests {
         assert_eq!(fmt_latency(42), "42ms");
         assert_eq!(fmt_latency(0), "—", "unmeasured is not instant");
         assert_eq!(fmt_latency(-1), "—");
+
+        // Order age reads in the coarsest unit that still says something.
+        let now = now_ms() / 1_000;
+        assert_eq!(fmt_age(now), "now");
+        assert_eq!(fmt_age(now - 59), "now");
+        assert_eq!(fmt_age(now - 60), "1m");
+        assert_eq!(fmt_age(now - 3_599), "59m");
+        assert_eq!(fmt_age(now - 3_600), "1h");
+        assert_eq!(fmt_age(now - 86_400 * 4), "4d");
+        // An order the exchange gave no timestamp, and one stamped in the
+        // future by a clock that disagrees with ours, both read as unknown
+        // rather than as "now" or as a negative age.
+        assert_eq!(fmt_age(0), "—");
+        assert_eq!(fmt_age(now + 600), "—");
 
         // Hourly funding is a hundredth of a percent on most of the exchange,
         // so the two decimals every other figure here uses would render 166 of
