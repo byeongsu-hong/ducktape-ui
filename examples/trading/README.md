@@ -110,6 +110,12 @@ dies. The liquidation is isolated-margin arithmetic against the maintenance
 requirement this market holds — a cross position dies against the whole
 account instead, which is the rail under the equity figure.
 
+Every row that does something is named by what it does, not by what it shows:
+a book level announces the order it would start rather than the price it
+displays, and a position row its side and size rather than its ticker. A row
+carrying five figures is worth more than one of them to somebody who cannot
+see the other four.
+
 A level in the book opens it already filled: clicking an ask starts a buy at
 that price, clicking a bid a sell, because the side you want is the side you
 just clicked across. The size is cleared whenever it opens — 0.5 means a

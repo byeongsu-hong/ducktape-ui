@@ -1522,6 +1522,21 @@ pub fn pane_height(wanted: f64) -> f64 {
     wanted.clamp(LOWER_MIN, LOWER_MAX)
 }
 
+/// What a book row's button does, which is what a reader arriving on it needs
+/// to hear. The price alone is a number with no side and no consequence, and
+/// this row starts an order.
+pub fn book_label(price: f64, buy: bool) -> String {
+    let side = if buy { "Buy" } else { "Sell" };
+    format!("{side} at {}", fmt_px(price))
+}
+
+/// A position row carries a side, a size, an entry, a liquidation price and a
+/// PnL. Named by its coin alone, a reader arriving on it hears "BTC".
+pub fn position_label(held: Position) -> String {
+    let side = if held.size >= 0.0 { "long" } else { "short" };
+    format!("{} {side} {}", held.coin, fmt_size(held.size))
+}
+
 /// The share of the tape that lifted the offer, as a percentage. Which side
 /// is crossing tells you something a price alone does not: the same price with
 /// buyers taking it and with sellers hitting it are two different markets.
@@ -2088,6 +2103,37 @@ mod tests {
             )
             .is_empty(),
             "another market's print is not this market's tape"
+        );
+    }
+
+    #[test]
+    fn an_interactive_row_is_named_by_what_it_does() {
+        // A book row starts an order, so it is named by the order and not by
+        // the resting one it crosses: the ask is where you buy.
+        assert_eq!(book_label(64_850.0, true), "Buy at 64,850.00");
+        assert_eq!(book_label(64_849.0, false), "Sell at 64,849.00");
+
+        let held = |size: f64| Position {
+            coin: "BTC".into(),
+            size,
+            entry: 60_000.0,
+            mark: 64_000.0,
+            liq: 45_000.0,
+            pnl: 0.0,
+            roe_pct: 0.0,
+            margin: 0.0,
+            risk: 0.0,
+            leverage: 20.0,
+            margin_mode: "cross".into(),
+            funding: 0.0,
+        };
+        // A row carrying a side, a size, an entry, a cliff and a PnL is worth
+        // more than its ticker to somebody who cannot see the rest of it.
+        assert_eq!(position_label(held(30.0)), "BTC long 30.00");
+        assert_eq!(
+            position_label(held(-30.0)),
+            "BTC short 30.00",
+            "the size reads unsigned; the word carries the side"
         );
     }
 

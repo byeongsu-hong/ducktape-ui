@@ -212,7 +212,7 @@ component BookRow(level:Level, buy:bool)
     pick(f64, bool)
   button #root -> emit(pick, level.price, !buy)
     with
-      label=fmt_px(level.price)
+      label=book_label(level.price, !buy)
       w=fill
       p=0.0
     active bg=panel r=0.0
@@ -423,7 +423,7 @@ component PositionRow(held:Position)
     pick(str)
   button #root -> emit(pick, held.coin)
     with
-      label=held.coin
+      label=position_label(held)
       w=fill
       p=0.0
     active bg=panel r=0.0
@@ -1611,3 +1611,12 @@ test trading_search_keeps_what_was_typed
   focus search
   type "ET"
   expect query == "ET"
+
+test trading_browse_says_what_needs_an_address
+  preset terminal
+  viewport 1400 900
+  expect text "Fills need an address."
+  expect text "Orders need an address."
+  expect text "Connect an address"
+  expect no text "No fills on this account yet."
+  expect no text "No resting orders."
