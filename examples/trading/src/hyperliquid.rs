@@ -1522,6 +1522,21 @@ pub fn pane_height(wanted: f64) -> f64 {
     wanted.clamp(LOWER_MIN, LOWER_MAX)
 }
 
+/// The share of the tape that lifted the offer, as a percentage. Which side
+/// is crossing tells you something a price alone does not: the same price with
+/// buyers taking it and with sellers hitting it are two different markets.
+/// Reads 50 on an empty tape, which is the only honest reading of no trades.
+pub fn tape_pressure(prints: Vec<Trade>) -> f64 {
+    let (bought, total) = prints.iter().fold((0.0, 0.0), |(bought, total), print| {
+        let size = print.size.abs();
+        (bought + if print.buy { size } else { 0.0 }, total + size)
+    });
+    if total <= 0.0 {
+        return 50.0;
+    }
+    bought / total * 100.0
+}
+
 /// How long a resting order has been waiting, in the coarsest unit that still
 /// says something: an order placed four days ago and one placed four minutes
 /// ago are different orders, and the seconds between them are not the point.
@@ -2074,6 +2089,38 @@ mod tests {
             .is_empty(),
             "another market's print is not this market's tape"
         );
+    }
+
+    #[test]
+    fn the_tape_reads_which_side_is_crossing() {
+        let print = |size: f64, buy: bool| Trade {
+            ts: 0,
+            price: 1.0,
+            size,
+            buy,
+            sweep: 1,
+            tid: 0,
+        };
+        // Weighted by size, not by row count: one large seller against three
+        // small buyers is a selling tape however the rows look.
+        assert_eq!(
+            tape_pressure(vec![
+                print(1.0, true),
+                print(1.0, true),
+                print(1.0, true),
+                print(9.0, false)
+            ]),
+            25.0
+        );
+        assert_eq!(tape_pressure(vec![print(4.0, true)]), 100.0);
+        assert_eq!(tape_pressure(vec![print(4.0, false)]), 0.0);
+        assert_eq!(
+            tape_pressure(vec![print(1.0, true), print(1.0, false)]),
+            50.0
+        );
+        // No trades is not a one-sided market, and must not divide by zero.
+        assert_eq!(tape_pressure(Vec::new()), 50.0);
+        assert_eq!(tape_pressure(vec![print(0.0, true)]), 50.0);
     }
 
     #[test]

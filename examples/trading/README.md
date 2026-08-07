@@ -13,7 +13,9 @@ cargo test -p trading-example
 The app opens on an address prompt, prefilled with a well-known account so
 there is something to look at on the first run. Press **Connect** to read it,
 type your own, or **Browse markets** to use market data only; the positions
-panel offers the prompt again if you change your mind.
+panel offers the prompt again if you change your mind. Browsing without one,
+the three panels that need an account say so rather than reporting that the
+account has nothing in it.
 
 An address is checked before it is sent, because the exchange answers a
 malformed one with a plain-text parser complaint rather than JSON — so without
@@ -50,6 +52,10 @@ mark, the liquidation price — is written out in the row beneath it, so a reade
 who cannot see the bar can still do the subtraction. Nothing else on screen
 carries the maintenance requirement, so a bar alone would be its only copy, and
 a bar has no accessible value.
+
+The tape's header carries which side is crossing, weighted by size. The same
+price with buyers taking it and with sellers hitting it are two different
+markets, and that is not something the price alone says.
 
 The **tape** under the book is everybody's trades rather than this account's:
 the socket was already open and one more subscription costs nothing, so the
