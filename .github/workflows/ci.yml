@@ -18,26 +18,28 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   ICED_TEST_BACKEND: tiny-skia
+  # One content-keyed compiler cache for every job on every platform: the six
+  # jobs that build overlapping dependency graphs stop paying for them twice.
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+  CARGO_NET_RETRY: "10"
+  RUSTUP_MAX_RETRIES: "10"
 
 jobs:
   validate:
     name: Rust and Ice
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+          shared-key: workspace
+          # Without this the job id joins the key and the shared one is moot.
+          add-job-id-key: false
       - run: cargo ice fmt --check
       - run: cargo ice clippy
       - name: Check public Ice API baseline
@@ -94,8 +96,65 @@ jobs:
           rustc --edition=2024 -D warnings --test scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke-tests
           target/native-wgpu-smoke-tests
       - run: cargo test --workspace --locked
+
+  performance:
+    name: Performance contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # This job's product is wall-clock numbers, and sccache keeps a server
+      # uploading to the Actions cache in the background. Measuring against a
+      # 30ms budget while something else has the box is how a contract fails
+      # for a reason that has nothing to do with the code under test.
+      RUSTC_WRAPPER: ""
+      SCCACHE_GHA_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace
+          # Without this the job id joins the key and the shared one is moot.
+          add-job-id-key: false
+      - name: Run RichTextEditor performance contracts
+        run: scripts/editor-performance-contracts.sh target/performance/rich-text-editor.jsonl
+      - name: Upload RichTextEditor performance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rich-text-editor-performance
+          path: target/performance/rich-text-editor.jsonl
+          if-no-files-found: error
+      - name: Run remaining performance contracts
+        run: |
+          cargo test --locked -p ui-lang-core performance_contract -- --ignored --test-threads=1
+          cargo test --locked -p ui-lang-runtime performance_contract -- --ignored --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test virtual_list_performance -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test log_timeline_performance -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test tree_view_performance -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test data_grid_performance -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test frame_probe -- --ignored --nocapture --test-threads=1
+          cargo test --locked -p ui-lang-build performance_contract -- --ignored --test-threads=1
+          cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
+          cargo test --locked -p cargo-ice qualification_snapshot_cost -- --ignored --nocapture --test-threads=1
+          cargo test --locked -p ui-lang-core lowering_wide_component_calls_scales -- --ignored --nocapture --test-threads=1
+
+  review:
+    name: Review bundles and packaging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace
+          # Without this the job id joins the key and the shared one is moot.
+          add-job-id-key: false
       - name: Verify full and selected review bundles
         run: |
+          # A restored target cache can still hold the previous run's bundles,
+          # and the baseline copies below refuse to write over them.
+          rm -rf target/ci-review
           cargo ice review examples/showcase/src/ui/app.ice \
             --package showcase \
             --output target/ci-review/full
@@ -200,34 +259,12 @@ jobs:
           PY
       - name: Upload review bundle evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: ice-review-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/ci-review
           if-no-files-found: error
           retention-days: 7
-      - name: Run RichTextEditor performance contracts
-        run: scripts/editor-performance-contracts.sh target/performance/rich-text-editor.jsonl
-      - name: Upload RichTextEditor performance evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rich-text-editor-performance
-          path: target/performance/rich-text-editor.jsonl
-          if-no-files-found: error
-      - name: Run remaining performance contracts
-        run: |
-          cargo test --locked -p ui-lang-core performance_contract -- --ignored --test-threads=1
-          cargo test --locked -p ui-lang-runtime performance_contract -- --ignored --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test virtual_list_performance -- --ignored --nocapture --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test log_timeline_performance -- --ignored --nocapture --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test tree_view_performance -- --ignored --nocapture --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test data_grid_performance -- --ignored --nocapture --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test frame_probe -- --ignored --nocapture --test-threads=1
-          cargo test --locked -p ui-lang-build performance_contract -- --ignored --test-threads=1
-          cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
-          cargo test --locked -p cargo-ice qualification_snapshot_cost -- --ignored --nocapture --test-threads=1
-          cargo test --locked -p ui-lang-core lowering_wide_component_calls_scales -- --ignored --nocapture --test-threads=1
       - run: cargo ice compat
       - run: scripts/package-smoke.sh
       - run: scripts/downstream-package-smoke.sh
@@ -237,18 +274,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+      - uses: actions/checkout@v7
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - run: rustup toolchain install 1.88.0 --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # This job builds with a pinned toolchain, not the runner's default.
+          key: "1.88.0"
       - run: cargo +1.88.0 check --workspace --locked
 
   platforms:
@@ -260,17 +292,9 @@ jobs:
       matrix:
         runner: [macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+      - uses: actions/checkout@v7
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --locked
       - name: Test native editor interactions
         run: |
@@ -289,17 +313,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+      - uses: actions/checkout@v7
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -341,17 +357,9 @@ jobs:
       WGPU_BACKEND: ${{ matrix.backend }}
       ICE_DEV_REQUIRED_DRAW: ${{ matrix.required_draw }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+      - uses: actions/checkout@v7
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: Swatinem/rust-cache@v2
       - name: Install Linux display and Vulkan dependencies
         if: matrix.label == 'Linux'
         run: |

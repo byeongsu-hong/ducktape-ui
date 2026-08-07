@@ -801,18 +801,18 @@ where
     let empty_format = highlights
         .iter()
         .fold(Format::default(), |base, (_, next)| base.overlay(*next));
-    let line = highlights
+    let line_highlight = highlights
         .iter()
-        .filter_map(|(_, format)| {
-            format
-                .line_highlight
-                .map(|highlight| (highlight, format.line_padding))
-        })
+        .filter_map(|(_, format)| format.line_highlight)
         .next_back();
-    let (line_highlight, line_padding) = line
-        .map_or((None, Padding::ZERO), |(highlight, padding)| {
-            (Some(highlight), padding)
-        });
+    // Padding is LAYOUT and a highlight is PAINT: reading the padding off the
+    // highlighted run tied them together, so a line could not be inset without
+    // also wearing a plate — which is what a nesting indent needs to do.
+    let line_padding = highlights
+        .iter()
+        .map(|(_, format)| format.line_padding)
+        .rfind(|padding| *padding != Padding::ZERO)
+        .unwrap_or(Padding::ZERO);
     let line_rule = highlights
         .iter()
         .filter_map(|(_, format)| format.line_rule)

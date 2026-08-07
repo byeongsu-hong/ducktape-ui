@@ -32,9 +32,9 @@ use std::ops::Range;
 #[path = "rich_text_editor/affordance.rs"]
 mod affordance;
 use affordance::{
-    DRAG_THRESHOLD, GutterDrag, MENU_POINTER_GRACE, MenuColors, draw_drop_indicator, draw_gutter,
-    draw_margin_mark, draw_menu, gutter_buttons, margin_mark_bounds, menu_panel, menu_row_at,
-    snap_boundary,
+    DRAG_THRESHOLD, GutterDrag, MenuColors, draw_drop_indicator, draw_gutter, draw_margin_mark,
+    draw_margin_tip, draw_menu, gutter_buttons, margin_mark_bounds, margin_tip_bounds, menu_panel,
+    menu_row_at, snap_boundary,
 };
 pub use affordance::{
     EditorMenu, GUTTER_WIDTH, GutterButton, MARGIN_WIDTH, MenuAnchor, MenuEvent, MenuItem,
@@ -198,6 +198,7 @@ where
     drop_boundaries: Vec<usize>,
     on_gutter_drop: Option<Box<GutterDropFn<'a, Message>>>,
     margin_marks: Vec<usize>,
+    margin_label: String,
     on_margin_press: Option<Box<MarginPressFn<'a, Message>>>,
     menu: Option<EditorMenu>,
     on_menu: Option<Box<MenuFn<'a, Message>>>,
@@ -238,6 +239,7 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             drop_boundaries: Vec::new(),
             on_gutter_drop: None,
             margin_marks: Vec::new(),
+            margin_label: String::new(),
             on_margin_press: None,
             menu: None,
             on_menu: None,
@@ -382,6 +384,7 @@ where
             drop_boundaries: self.drop_boundaries,
             on_gutter_drop: self.on_gutter_drop,
             margin_marks: self.margin_marks,
+            margin_label: self.margin_label,
             on_margin_press: self.on_margin_press,
             menu: self.menu,
             on_menu: self.on_menu,
@@ -438,6 +441,16 @@ where
     ) -> Self {
         self.margin_marks = marks;
         self.on_margin_press = Some(Box::new(press));
+        self
+    }
+
+    /// Names the margin chip: the tip that appears beside a hovered mark.
+    ///
+    /// A chip drawn INSIDE this widget cannot carry a host tooltip, so without
+    /// this the only thing telling a reader what it does is the pointer
+    /// cursor. Empty (the default) draws no tip.
+    pub fn margin_label(mut self, label: impl Into<String>) -> Self {
+        self.margin_label = label.into();
         self
     }
 
@@ -547,6 +560,27 @@ where
         let anchor = state.document.caret(position)
             + (text_bounds.position() - Point::ORIGIN - Vector::new(0.0, state.scroll));
         Some(menu_panel(anchor, menu.items.len(), text_bounds))
+    }
+
+    /// The line the hover gutter rides.
+    ///
+    /// AN OPEN LINE-ANCHORED MENU OWNS IT. The "⋮⋮" that opened the menu is
+    /// the menu's anchor, so it cannot slide onto whatever line the pointer
+    /// wandered to next — that leaves the panel hanging off nothing and the
+    /// handle marking a block the menu will not act on. Only when no menu is
+    /// up does the pointer decide. The caret palette is keyboard-driven and
+    /// anchors on the caret, which draws itself.
+    fn gutter_line(&self, state: &State<Highlighter>) -> Option<usize> {
+        self.menu_line().or(state.hover_line)
+    }
+
+    /// The line an open menu is anchored to, if it is anchored to one.
+    fn menu_line(&self) -> Option<usize> {
+        let menu = self.menu.as_ref().filter(|_| self.on_menu.is_some())?;
+        match menu.anchor {
+            MenuAnchor::Line(line) => Some(line),
+            MenuAnchor::Caret => None,
+        }
     }
 
     /// The absolute column-0 caret row of `line` — what the gutter centers on.
@@ -1044,7 +1078,7 @@ where
                     // keys the (focus-gated) keyboard route must reach.
                     if let Some(on_gutter) = self.on_gutter.as_deref()
                         && state.composition.is_none()
-                        && let Some(line) = state.hover_line
+                        && let Some(line) = self.gutter_line(state)
                         && point.x < self.padding.left
                     {
                         let row = self.gutter_row(state, text_bounds, line);
@@ -1196,23 +1230,18 @@ where
                     state.hover_line = hovered;
                     shell.request_redraw();
                 }
-                // Hovering a menu row highlights it — and a mouse-opened
-                // (line-anchored) menu LIVES with the pointer: once it strays
-                // past the grace ring around the panel the menu dismisses
-                // instead of being left stranded over the document. The
-                // caret-anchored slash palette is keyboard-driven and never
-                // follows the mouse.
+                // Hovering a menu row highlights it. THE POINTER DOES NOT END
+                // THE MENU: a menu the mouse OPENED is closed the way every
+                // other popover here is — a press outside it, Escape, a
+                // window blur, or a pick. Dismissing it because the pointer
+                // wandered gave a click-made thing a hover lifetime, and cost
+                // the reader the panel they were still reading.
                 if let Some(point) = cursor.position() {
                     let text_bounds = bounds.shrink(self.padding);
                     if let Some(panel) = self.menu_panel_in(state, text_bounds) {
                         let menu = self.menu.as_ref().expect("panel implies menu");
                         let on_menu = self.on_menu.as_deref().expect("panel implies route");
-                        let strayed = matches!(menu.anchor, MenuAnchor::Line(_))
-                            && !panel.expand(MENU_POINTER_GRACE).contains(point);
-                        if strayed {
-                            shell.publish(on_menu(MenuEvent::Dismiss));
-                            shell.request_redraw();
-                        } else if let Some(row) = menu_row_at(panel, menu.items.len(), point)
+                        if let Some(row) = menu_row_at(panel, menu.items.len(), point)
                             && row != menu.selected
                         {
                             shell.publish(on_menu(MenuEvent::Select(row)));
@@ -1559,12 +1588,13 @@ where
             return;
         }
 
-        // The hover gutter rides the hovered line; the closure's verdict on
-        // Plus doubles as its visibility switch for the line.
+        // The hover gutter rides the hovered line — or the line an open menu
+        // anchored it to; the closure's verdict on Plus doubles as its
+        // visibility switch for the line.
         if let Some(on_gutter) = self.on_gutter.as_deref()
             && !state.pointer.is_dragging()
             && state.gutter_drag.is_none()
-            && let Some(line) = state.hover_line
+            && let Some(line) = self.gutter_line(state)
             && on_gutter(line, GutterButton::Plus).is_some()
         {
             let row = self.gutter_row(state, text_bounds, line);
@@ -1575,18 +1605,43 @@ where
         }
 
         // The margin marks ride their lines whenever the host declared them —
-        // persistent indicators, not hover affordances.
+        // persistent indicators, not hover affordances. The TIP is the hover
+        // affordance: a chip drawn in here can carry no host tooltip, so
+        // without it the pointer cursor is the only thing naming the gesture.
         if self.on_margin_press.is_some() && !self.margin_marks.is_empty() {
             let accent = theme.extended_palette().primary.base.color;
+            let pointer = cursor
+                .position_in(bounds)
+                .map(|point| Point::new(bounds.x + point.x, bounds.y + point.y));
+            let mut tip = None;
             renderer.with_layer(bounds, |renderer| {
                 for &line in &self.margin_marks {
                     let row = self.gutter_row(state, text_bounds, line);
                     let mark = margin_mark_bounds(text_bounds, row);
-                    if bounds.intersection(&mark).is_some() {
-                        draw_margin_mark(renderer, mark, accent);
+                    if bounds.intersection(&mark).is_none() {
+                        continue;
+                    }
+                    draw_margin_mark(renderer, mark, accent);
+                    if pointer.is_some_and(|point| mark.contains(point)) {
+                        tip = Some(mark);
                     }
                 }
             });
+            // Its own layer, expanded past `bounds`: the tip hangs back over
+            // the text and must paint above every plate drawn under it.
+            if let Some(mark) = tip.filter(|_| !self.margin_label.is_empty()) {
+                let palette = theme.extended_palette();
+                let colors = MenuColors {
+                    panel: palette.background.base.color,
+                    outline: palette.background.strong.color,
+                    selected: palette.background.weak.color,
+                    label: palette.background.base.text,
+                };
+                let panel = margin_tip_bounds(mark, &self.margin_label, text_bounds);
+                renderer.with_layer(panel.expand(24.0), |renderer| {
+                    draw_margin_tip(renderer, panel, &self.margin_label, state.font, &colors);
+                });
+            }
         }
 
         // Mid-drag, the accent line marks where the grabbed block would land.
@@ -1652,7 +1707,7 @@ where
             }
             if self.on_gutter.is_some()
                 && state.composition.is_none()
-                && let Some(line) = state.hover_line
+                && let Some(line) = self.gutter_line(state)
                 && point.x < self.padding.left
             {
                 let row = self.gutter_row(state, text_bounds, line);

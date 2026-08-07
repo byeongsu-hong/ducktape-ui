@@ -116,6 +116,14 @@ fn render_resolved_regular_layout(
             if hover.radius > 0.0 {
                 write!(body, ".radius({} as f32)", hover.radius).unwrap();
             }
+            if let Some(open) = hover.open {
+                write!(
+                    body,
+                    ".open({})",
+                    resolved_expr_use_code(program, open, env, ValueMode::Owned)?
+                )
+                .unwrap();
+            }
         }
         ResolvedLayoutMode::Linear(linear) => {
             let constructor = if linear.axis == ResolvedLinearAxis::Column {

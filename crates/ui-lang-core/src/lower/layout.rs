@@ -177,11 +177,13 @@ pub(crate) enum ResolvedLayoutMode {
     Scroll(Box<ResolvedScrollLayout>),
 }
 
-/// The draw-time hover container: base + reveal, an optional hover tint.
+/// The draw-time hover container: base + reveal, an optional hover tint, and
+/// the application's own "held open" verdict.
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedHoverLayout {
     pub(crate) tint: Option<ResolvedThemeColor>,
     pub(crate) radius: f64,
+    pub(crate) open: Option<CheckedExprUseId>,
 }
 
 #[derive(Clone, Debug)]
@@ -297,6 +299,7 @@ impl Lowerer {
 
         let columns = values.optional(options.columns.as_ref(), &Type::I64, "columns")?;
         let clip = values.optional(options.clip.as_ref(), &Type::Bool, "clip")?;
+        let hover_open = values.optional(options.hover_open.as_ref(), &Type::Bool, "hover open")?;
         let width = Self::resolve_layout_length(&mut values, &options.width, "width")?;
         let height = Self::resolve_layout_length(&mut values, &options.height, "height")?;
         let spacing = values.optional(options.spacing.as_ref(), &Type::F64, "spacing")?;
@@ -452,6 +455,7 @@ impl Lowerer {
                         .map(|tint| self.resolve_theme_color(tint, span))
                         .transpose()?,
                     radius: options.hover_radius.unwrap_or(0.0),
+                    open: hover_open,
                 }),
                 Layout::Scroll => {
                     let mut scroll = scroll

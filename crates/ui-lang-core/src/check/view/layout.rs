@@ -55,6 +55,9 @@ pub(in crate::check) fn infer_layout_group(
             if let Some(clip) = &options.clip {
                 require_type(&expr_type(clip, env, document, span)?, &Type::Bool, span)?;
             }
+            if let Some(open) = &options.hover_open {
+                require_type(&expr_type(open, env, document, span)?, &Type::Bool, span)?;
+            }
             let layout_metric = match kind {
                 Layout::Column => "column metric",
                 Layout::Row => "row metric",

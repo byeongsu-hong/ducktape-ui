@@ -19,6 +19,9 @@ pub struct LayoutOptions {
     pub hover_tint: Option<String>,
     /// `hover` only: the tint's corner radius (a literal, like plate radii).
     pub hover_radius: Option<f64>,
+    /// `hover` only: holds the reveal open whatever the cursor is doing —
+    /// the openness of whatever the reveal's controls opened.
+    pub hover_open: Option<Expr>,
     pub columns: Option<Expr>,
     pub clip: Option<Expr>,
     pub width: Option<LengthValue>,
@@ -78,7 +81,11 @@ pub(crate) fn layout_expression_roots(options: &LayoutOptions) -> Vec<&Expr> {
     }
 
     let mut roots = Vec::new();
-    roots.extend([&options.columns, &options.clip].into_iter().flatten());
+    roots.extend(
+        [&options.columns, &options.clip, &options.hover_open]
+            .into_iter()
+            .flatten(),
+    );
     push_length(&mut roots, &options.width);
     push_length(&mut roots, &options.height);
     roots.extend(

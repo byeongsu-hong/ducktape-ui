@@ -1,6 +1,7 @@
 //! Draw-time hover: a base child, an optional hover tint, and a reveal child
-//! that exists only while the cursor is over the widget — with NO application
-//! state involved.
+//! that exists while the cursor is over the widget — or while the application
+//! declares it HELD OPEN — with no application state involved in the hover
+//! itself.
 //!
 //! The state-driven alternative (an `enter=`/`exit=` route flipping a
 //! `hovered_x` field) republishes on every row crossing and rebuilds the
@@ -11,6 +12,13 @@
 //! `mouse_interaction` forward to the reveal only while it is visible. A
 //! cached `lazy` row can therefore keep its hover toolbar — hovering changes
 //! no dependency, dispatches nothing, and reveals in the same frame.
+//!
+//! [`HoverReveal::open`] is the one thing the application does own, and it
+//! exists because a reveal is often a TRIGGER: press the toolbar's emoji
+//! button and a popover opens somewhere else, anchored on a toolbar that the
+//! next mouse move erases — a card floating over nothing. `open` is the
+//! popover's own openness handed back, so the trigger outlives the pointer
+//! and dies with the thing it opened.
 //!
 //! Layout note: BOTH children are laid out every pass (the reveal must have
 //! bounds the moment the cursor arrives, and layout may not read the cursor),
@@ -26,9 +34,11 @@ use iced::{Color, Element, Event, Length, Rectangle, Size, Vector};
 pub struct HoverReveal<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     base: Element<'a, Message, Theme, Renderer>,
     reveal: Element<'a, Message, Theme, Renderer>,
-    /// Painted over the widget's bounds while hovered, under both children.
+    /// Painted over the widget's bounds while revealed, under both children.
     tint: Option<Color>,
     radius: f32,
+    /// Holds the reveal open whatever the cursor is doing.
+    open: bool,
 }
 
 /// Creates a [`HoverReveal`] over the given base and reveal children.
@@ -44,11 +54,12 @@ where
         reveal: reveal.into(),
         tint: None,
         radius: 0.0,
+        open: false,
     }
 }
 
 impl<'a, Message, Theme, Renderer> HoverReveal<'a, Message, Theme, Renderer> {
-    /// Sets the hover tint painted under the children while hovered.
+    /// Sets the hover tint painted under the children while revealed.
     #[must_use]
     pub fn tint(mut self, tint: Color) -> Self {
         self.tint = Some(tint);
@@ -61,14 +72,23 @@ impl<'a, Message, Theme, Renderer> HoverReveal<'a, Message, Theme, Renderer> {
         self.radius = radius;
         self
     }
+
+    /// Holds the reveal open regardless of the cursor — pass the openness of
+    /// whatever the reveal's controls opened, so a trigger cannot vanish out
+    /// from under its own popover.
+    #[must_use]
+    pub fn open(mut self, open: bool) -> Self {
+        self.open = open;
+        self
+    }
 }
 
-/// Whether the cursor was over the widget on the LAST update pass — draw and
-/// interaction read the live cursor themselves; this only lets `update`
-/// request a redraw exactly when the hover edge flips.
+/// Whether the reveal was up on the LAST update pass — draw and interaction
+/// read the live cursor themselves; this only lets `update` request a redraw
+/// exactly when the reveal edge flips.
 #[derive(Default)]
 struct HoverState {
-    hovered: bool,
+    revealed: bool,
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -153,14 +173,14 @@ where
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let hovered = cursor.is_over(bounds);
+        let revealed = self.open || cursor.is_over(bounds);
         let mut children = layout.children();
         let base_layout = children.next().expect("hover base layout");
         let reveal_layout = children.next().expect("hover reveal layout");
 
         // The reveal sees events first while visible — it floats OVER the
         // base, so its buttons must win the press.
-        if hovered {
+        if revealed {
             self.reveal.as_widget_mut().update(
                 &mut tree.children[1],
                 event,
@@ -185,11 +205,11 @@ where
             );
         }
 
-        // Repaint exactly on the hover edge — the passes that draw the tint
+        // Repaint exactly on the reveal edge — the passes that draw the tint
         // and the reveal read the cursor themselves but run only per frame.
         let state = tree.state.downcast_mut::<HoverState>();
-        if state.hovered != hovered {
-            state.hovered = hovered;
+        if state.revealed != revealed {
+            state.revealed = revealed;
             shell.request_redraw();
         }
     }
@@ -206,7 +226,7 @@ where
         let mut children = layout.children();
         let base_layout = children.next().expect("hover base layout");
         let reveal_layout = children.next().expect("hover reveal layout");
-        if cursor.is_over(bounds) {
+        if self.open || cursor.is_over(bounds) {
             let reveal = self.reveal.as_widget().mouse_interaction(
                 &tree.children[1],
                 reveal_layout,
@@ -238,12 +258,12 @@ where
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let hovered = cursor.is_over(bounds);
+        let revealed = self.open || cursor.is_over(bounds);
         let mut children = layout.children();
         let base_layout = children.next().expect("hover base layout");
         let reveal_layout = children.next().expect("hover reveal layout");
 
-        if hovered && let Some(tint) = self.tint {
+        if revealed && let Some(tint) = self.tint {
             renderer.fill_quad(
                 renderer::Quad {
                     bounds,
@@ -272,7 +292,7 @@ where
         // still loses to the base's GLYPHS: a chat row's hover toolbar came up
         // with the message text painted straight through its card. Pushing a
         // layer is what makes "drawn later" mean "drawn above".
-        if hovered {
+        if revealed {
             renderer.with_layer(bounds, |renderer| {
                 self.reveal.as_widget().draw(
                     &tree.children[1],
@@ -295,8 +315,10 @@ where
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        // Only the base contributes overlays: the reveal is transient by
-        // definition, and an overlay that outlives its trigger is a trap.
+        // Only the base contributes overlays: a reveal holds a strip of
+        // direct controls, never a widget that hangs one. The popover a
+        // reveal's button OPENS belongs to the application, which hands its
+        // openness back through `open`.
         let mut children = layout.children();
         let base_layout = children.next().expect("hover base layout");
         self.base.as_widget_mut().overlay(
