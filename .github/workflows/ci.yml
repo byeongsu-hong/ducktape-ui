@@ -100,9 +100,15 @@ jobs:
     name: Performance contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      # This job's product is wall-clock numbers, and sccache keeps a server
+      # uploading to the Actions cache in the background. Measuring against a
+      # 30ms budget while something else has the box is how a contract fails
+      # for a reason that has nothing to do with the code under test.
+      RUSTC_WRAPPER: ""
+      SCCACHE_GHA_ENABLED: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: workspace
