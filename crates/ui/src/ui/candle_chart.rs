@@ -379,7 +379,28 @@ fn decimals(step: f64) -> usize {
 
 /// Formats a price with a fixed number of decimals, e.g. for hover readouts.
 pub fn format_price(value: f64, decimals: usize) -> String {
-    format!("{value:.decimals$}")
+    let raw = format!("{value:.decimals$}");
+    let (sign, digits) = raw
+        .strip_prefix('-')
+        .map_or(("", raw.as_str()), |rest| ("-", rest));
+    let (integer, fraction) = digits
+        .split_once('.')
+        .map_or((digits, None), |(integer, fraction)| {
+            (integer, Some(fraction))
+        });
+    let mut grouped = String::with_capacity(raw.len() + integer.len() / 3);
+    grouped.push_str(sign);
+    for (offset, digit) in integer.chars().enumerate() {
+        if offset > 0 && (integer.len() - offset) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    if let Some(fraction) = fraction {
+        grouped.push('.');
+        grouped.push_str(fraction);
+    }
+    grouped
 }
 
 /// Formats a volume compactly: `950`, `12.5K`, `3.4M`, `2.1B`.
@@ -1390,6 +1411,17 @@ mod tests {
         assert_eq!(format_ts(1_700_000_000, 86_400), "11-14");
         assert_eq!(format_ts(1_700_000_000, 30 * 86_400), "2023-11");
         assert_eq!(format_ts(1_700_000_000, 3_600), "22:13");
+    }
+
+    #[test]
+    fn prices_group_thousands() {
+        assert_eq!(format_price(0.05, 2), "0.05");
+        assert_eq!(format_price(999.0, 0), "999");
+        assert_eq!(format_price(1_234.5, 2), "1,234.50");
+        assert_eq!(format_price(1_200_000.0, 0), "1,200,000");
+        assert_eq!(format_price(-51_234.567, 2), "-51,234.57");
+        // Rounding can carry into a new leading digit.
+        assert_eq!(format_price(999.995, 2), "1,000.00");
     }
 
     #[test]
