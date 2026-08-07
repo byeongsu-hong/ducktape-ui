@@ -36,15 +36,17 @@ bounded by viewport pixels for any chart):
 
 | candles | view | static-layer rebuild | cached frame |
 | ------: | :-- | ---: | ---: |
-| 1k - 1M | last 120 | ~85us | 2.1us |
-| 10k | all visible | 7.9ms | 22us |
-| 100k | all visible | 173ms | 201us |
-| 1M | all visible | 2.2s | 4.4ms |
+| 1k - 1M | last 120 | ~85us | ~2us |
+| 10k | all visible | 0.6ms | ~2us |
+| 100k | all visible | 1.4ms | ~2us |
+| 1M | all visible | 11.5ms | ~2us |
 
-Total dataset size does not affect the common path: candles are culled to the
-visible index range, and cursor movement hits only the cached path. The full
-zoom-out of 100k+ visible candles is the known ceiling (no decimation yet, see
-the `ponytail:` marker in `candle_chart.rs`). Reproduce with:
+The cached (per cursor move) frame is flat at any zoom and any dataset size:
+scale and axes are memoized under the same fingerprint that keys the cached
+geometry. Rebuilds are bounded too — once candles are narrower than a pixel
+they fold into per-pixel columns (M4-style), so tessellation is O(plot width);
+what remains at extreme sizes is the O(visible) numeric scan (see the
+`ponytail:` marker in `candle_chart.rs`). Reproduce with:
 
 ```bash
 cargo test -p ducktape-ui --release --features candle-chart,tiny-skia,x11 \

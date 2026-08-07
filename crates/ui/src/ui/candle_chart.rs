@@ -5,7 +5,7 @@
 //! axis tags draw on a per-frame overlay. The wheel zooms around the cursor,
 //! dragging pans, and the price scale follows the visible candles.
 
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -183,6 +183,60 @@ fn autoscale(candles: &[Candle], range: Range<usize>) -> PriceScale {
     }
 }
 
+/// One pixel column of aggregated candles: the union of every candle whose
+/// center maps into that column (M4-style min/max plus first/last).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ColumnAgg {
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: f64,
+}
+
+/// Folds the visible candles into per-pixel columns once candles are narrower
+/// than a pixel, bounding tessellation at O(plot width) regardless of how many
+/// candles are visible. Returns `None` while candles are at least a pixel wide
+/// — the per-candle path is exact and cheap there.
+fn aggregate_columns(
+    candles: &[Candle],
+    range: Range<usize>,
+    viewport: Viewport,
+    chrome: Chrome,
+) -> Option<Vec<Option<ColumnAgg>>> {
+    let plot = chrome.plot;
+    let bar_width = plot.width / viewport.span() as f32;
+    if bar_width >= 1.0 || plot.width < 1.0 {
+        return None;
+    }
+    let mut columns: Vec<Option<ColumnAgg>> = vec![None; plot.width.ceil() as usize];
+    for index in range {
+        let candle = &candles[index];
+        let column = (chrome.x(viewport, index as f64) - plot.x).floor();
+        if column < 0.0 || column >= columns.len() as f32 {
+            continue;
+        }
+        match &mut columns[column as usize] {
+            Some(agg) => {
+                agg.high = agg.high.max(candle.high);
+                agg.low = agg.low.min(candle.low);
+                agg.close = candle.close;
+                agg.volume += candle.volume;
+            }
+            slot => {
+                *slot = Some(ColumnAgg {
+                    open: candle.open,
+                    high: candle.high,
+                    low: candle.low,
+                    close: candle.close,
+                    volume: candle.volume,
+                });
+            }
+        }
+    }
+    Some(columns)
+}
+
 /// Plot area: the canvas minus the price axis strip on the right and the
 /// time axis strip at the bottom.
 #[derive(Debug, Clone, Copy)]
@@ -214,6 +268,7 @@ impl Chrome {
 }
 
 /// Per-frame axis metadata shared by the cached and overlay layers.
+#[derive(Clone)]
 struct Axes {
     ticks: Vec<f64>,
     precision: usize,
@@ -345,8 +400,17 @@ fn mix_color(hash: u64, color: Color) -> u64 {
 // ponytail: samples the endpoints only, so an in-place edit of a middle candle
 // that keeps len and both ends identical is missed; hash every candle if data
 // ever mutates that way.
-fn fingerprint(candles: &[Candle], viewport: Viewport, palette: &super::theme::Palette) -> u64 {
+fn fingerprint(
+    candles: &[Candle],
+    viewport: Viewport,
+    size: Size,
+    palette: &super::theme::Palette,
+) -> u64 {
     let mut hash = mix(0xcbf2_9ce4_8422_2325, candles.len() as u64);
+    hash = mix(
+        hash,
+        (u64::from(size.width.to_bits()) << 32) | u64::from(size.height.to_bits()),
+    );
     if let Some(first) = candles.first() {
         hash = mix(hash, first.ts as u64);
     }
@@ -450,12 +514,21 @@ struct Drag {
     viewport: Viewport,
 }
 
+/// Everything derived from (data, viewport, size, theme), memoized under the
+/// same fingerprint that keys the cached geometry layer so cached frames do
+/// no O(visible candles) work.
+struct DerivedFrame {
+    stamp: u64,
+    scale: PriceScale,
+    axes: Axes,
+}
+
 pub struct CandleState {
     viewport: Option<Viewport>,
     drag: Option<Drag>,
     hovered: Option<usize>,
     layers: canvas::Cache,
-    stamp: Cell<u64>,
+    derived: RefCell<Option<DerivedFrame>>,
 }
 
 impl Default for CandleState {
@@ -465,7 +538,7 @@ impl Default for CandleState {
             drag: None,
             hovered: None,
             layers: canvas::Cache::new(),
-            stamp: Cell::new(0),
+            derived: RefCell::new(None),
         }
     }
 }
@@ -600,14 +673,25 @@ impl<Message> canvas::Program<Message> for CandleProgram<'_, Message> {
         }
         let viewport = self.viewport(state);
         let range = visible_indices(viewport, self.candles.len());
-        let scale = autoscale(self.candles, range.clone());
-        let axes = self.axes(chrome, viewport, range.clone(), scale);
 
-        let stamp = fingerprint(self.candles, viewport, &self.theme.palette);
-        if state.stamp.get() != stamp {
-            state.layers.clear();
-            state.stamp.set(stamp);
-        }
+        let stamp = fingerprint(self.candles, viewport, size, &self.theme.palette);
+        let (scale, axes) = {
+            let mut derived = state.derived.borrow_mut();
+            match derived.as_ref() {
+                Some(cached) if cached.stamp == stamp => (cached.scale, cached.axes.clone()),
+                _ => {
+                    state.layers.clear();
+                    let scale = autoscale(self.candles, range.clone());
+                    let axes = self.axes(chrome, viewport, range.clone(), scale);
+                    *derived = Some(DerivedFrame {
+                        stamp,
+                        scale,
+                        axes: axes.clone(),
+                    });
+                    (scale, axes)
+                }
+            }
+        };
         let layers = state.layers.draw(renderer, size, |frame| {
             self.draw_static(frame, chrome, viewport, range, scale, &axes);
         });
@@ -730,53 +814,88 @@ impl<Message> CandleProgram<'_, Message> {
             frame.fill_rectangle(Point::new(*x, plot.y), Size::new(1.0, plot.height), grid);
         }
 
-        let bar_width = plot.width / viewport.span() as f32;
-        let body_width = (bar_width * BODY_RATIO).max(1.0);
-        let max_volume = self.candles[range.clone()]
-            .iter()
-            .fold(0f64, |max, candle| max.max(candle.volume));
         let volume_height = plot.height * VOLUME_RATIO;
 
-        // ponytail: no decimation — a full zoom-out tessellates every visible
-        // candle (~2.2s rebuild at 1M visible); add M4/LTTB downsampling if
-        // full-view rendering of 100k+ candles matters.
-        frame.with_clip(plot, |frame| {
-            for index in range {
-                let candle = &self.candles[index];
-                let bullish = candle.close >= candle.open;
-                let color = if bullish {
-                    palette.success
-                } else {
-                    palette.destructive
-                };
-                let x = chrome.x(viewport, index as f64);
-
-                let wick_top = scale.y(plot, candle.high);
-                let wick_bottom = scale.y(plot, candle.low);
-                frame.fill_rectangle(
-                    Point::new(x - 0.5, wick_top),
-                    Size::new(1.0, (wick_bottom - wick_top).max(1.0)),
-                    color,
-                );
-
-                let body_top = scale.y(plot, candle.open.max(candle.close));
-                let body_bottom = scale.y(plot, candle.open.min(candle.close));
-                frame.fill_rectangle(
-                    Point::new(x - body_width / 2.0, body_top),
-                    Size::new(body_width, (body_bottom - body_top).max(1.0)),
-                    color,
-                );
-
-                if max_volume > 0.0 {
-                    let height = volume_height * (candle.volume / max_volume) as f32;
+        // ponytail: the aggregation pass still scans every visible candle
+        // (~ms-scale at 1M); precompute a min/max pyramid if that ever shows.
+        if let Some(columns) = aggregate_columns(self.candles, range.clone(), viewport, chrome) {
+            // Sub-pixel candles: one wick spanning the column's low..high (a
+            // 1px body would be an invisible same-color subset of it) plus an
+            // aggregated volume bar.
+            let max_volume = columns
+                .iter()
+                .flatten()
+                .fold(0f64, |max, column| max.max(column.volume));
+            frame.with_clip(plot, |frame| {
+                for (offset, column) in columns.iter().enumerate() {
+                    let Some(column) = column else { continue };
+                    let color = if column.close >= column.open {
+                        palette.success
+                    } else {
+                        palette.destructive
+                    };
+                    let x = plot.x + offset as f32;
+                    let wick_top = scale.y(plot, column.high);
+                    let wick_bottom = scale.y(plot, column.low);
                     frame.fill_rectangle(
-                        Point::new(x - body_width / 2.0, plot.y + plot.height - height),
-                        Size::new(body_width, height),
-                        alpha(color, 0.3),
+                        Point::new(x, wick_top),
+                        Size::new(1.0, (wick_bottom - wick_top).max(1.0)),
+                        color,
                     );
+                    if max_volume > 0.0 {
+                        let height = volume_height * (column.volume / max_volume) as f32;
+                        frame.fill_rectangle(
+                            Point::new(x, plot.y + plot.height - height),
+                            Size::new(1.0, height),
+                            alpha(color, 0.3),
+                        );
+                    }
                 }
-            }
-        });
+            });
+        } else {
+            let bar_width = plot.width / viewport.span() as f32;
+            let body_width = (bar_width * BODY_RATIO).max(1.0);
+            let max_volume = self.candles[range.clone()]
+                .iter()
+                .fold(0f64, |max, candle| max.max(candle.volume));
+            frame.with_clip(plot, |frame| {
+                for index in range {
+                    let candle = &self.candles[index];
+                    let bullish = candle.close >= candle.open;
+                    let color = if bullish {
+                        palette.success
+                    } else {
+                        palette.destructive
+                    };
+                    let x = chrome.x(viewport, index as f64);
+
+                    let wick_top = scale.y(plot, candle.high);
+                    let wick_bottom = scale.y(plot, candle.low);
+                    frame.fill_rectangle(
+                        Point::new(x - 0.5, wick_top),
+                        Size::new(1.0, (wick_bottom - wick_top).max(1.0)),
+                        color,
+                    );
+
+                    let body_top = scale.y(plot, candle.open.max(candle.close));
+                    let body_bottom = scale.y(plot, candle.open.min(candle.close));
+                    frame.fill_rectangle(
+                        Point::new(x - body_width / 2.0, body_top),
+                        Size::new(body_width, (body_bottom - body_top).max(1.0)),
+                        color,
+                    );
+
+                    if max_volume > 0.0 {
+                        let height = volume_height * (candle.volume / max_volume) as f32;
+                        frame.fill_rectangle(
+                            Point::new(x - body_width / 2.0, plot.y + plot.height - height),
+                            Size::new(body_width, height),
+                            alpha(color, 0.3),
+                        );
+                    }
+                }
+            });
+        }
 
         if let (Some(last), Some(y)) = (self.candles.last(), axes.last_close_y) {
             let color = if last.close >= last.open {
@@ -1302,6 +1421,88 @@ mod tests {
         assert!(state.hovered.is_none());
     }
 
+    #[test]
+    fn aggregation_matches_brute_force_grouping() {
+        use std::collections::HashMap;
+
+        // Varied, deterministic data so columns mix bullish/bearish candles.
+        let data: Vec<Candle> = (0..5_000)
+            .map(|i| {
+                let base = 100.0 + ((i * 37) % 91) as f64;
+                Candle {
+                    ts: 1_700_000_000 + i as i64 * 3_600,
+                    open: base,
+                    high: base + ((i * 13) % 17) as f64,
+                    low: base - ((i * 7) % 11) as f64,
+                    close: base + ((i * 29) % 23) as f64 - 11.0,
+                    volume: 10.0 + ((i * 3) % 97) as f64,
+                }
+            })
+            .collect();
+        let chrome = chrome(Size::new(464.0, 300.0));
+        let viewport = Viewport {
+            from: -0.5,
+            to: 4_999.5,
+        };
+        let range = visible_indices(viewport, data.len());
+        let columns = aggregate_columns(&data, range.clone(), viewport, chrome)
+            .expect("sub-pixel candles aggregate");
+        assert_eq!(columns.len(), 400);
+
+        let mut expected: HashMap<usize, Vec<usize>> = HashMap::new();
+        for index in range {
+            let column = (chrome.x(viewport, index as f64) - chrome.plot.x).floor();
+            if (0.0..400.0).contains(&column) {
+                expected.entry(column as usize).or_default().push(index);
+            }
+        }
+        for (offset, column) in columns.iter().enumerate() {
+            match (column, expected.get(&offset)) {
+                (Some(agg), Some(members)) => {
+                    let high = members
+                        .iter()
+                        .map(|i| data[*i].high)
+                        .fold(f64::MIN, f64::max);
+                    let low = members
+                        .iter()
+                        .map(|i| data[*i].low)
+                        .fold(f64::MAX, f64::min);
+                    let volume: f64 = members.iter().map(|i| data[*i].volume).sum();
+                    assert_eq!(agg.open, data[members[0]].open);
+                    assert_eq!(agg.close, data[*members.last().unwrap()].close);
+                    assert_eq!(agg.high, high);
+                    assert_eq!(agg.low, low);
+                    assert!((agg.volume - volume).abs() < 1e-9);
+                }
+                (None, None) => {}
+                (agg, members) => {
+                    panic!("column {offset}: agg {agg:?} vs members {members:?}")
+                }
+            }
+        }
+
+        let aggregated: f64 = columns.iter().flatten().map(|c| c.volume).sum();
+        let visible: f64 = data.iter().map(|c| c.volume).sum();
+        assert!((aggregated - visible).abs() < 1e-6);
+    }
+
+    #[test]
+    fn aggregation_only_engages_below_one_pixel_per_candle() {
+        let data = candles(100);
+        let chrome = chrome(Size::new(464.0, 300.0));
+        let wide = Viewport {
+            from: -0.5,
+            to: 99.5,
+        };
+        assert!(aggregate_columns(&data, 0..100, wide, chrome).is_none());
+
+        let narrow = Viewport {
+            from: -0.5,
+            to: 799.5,
+        };
+        assert!(aggregate_columns(&data, 0..100, narrow, chrome).is_some());
+    }
+
     /// Timing evidence for the cached-layer design, not a pass/fail test.
     /// Run with:
     /// `cargo test -p ducktape-ui --release --features candle-chart,tiny-skia,x11 \`
@@ -1333,7 +1534,7 @@ mod tests {
             let frame = || {
                 if cold {
                     state.layers.clear();
-                    state.stamp.set(0);
+                    *state.derived.borrow_mut() = None;
                 }
                 let _ = program.draw(state, &renderer, &iced::Theme::Light, bounds, cursor);
             };
@@ -1391,7 +1592,8 @@ mod tests {
             to: 10.0,
         };
         let palette = super::super::theme::LIGHT.palette;
-        let base = fingerprint(&data, viewport, &palette);
+        let size = Size::new(1280.0, 720.0);
+        let base = fingerprint(&data, viewport, size, &palette);
         let mut appended = data.clone();
         appended.push(Candle {
             ts: 1_700_000_000 + 10 * 86_400,
@@ -1401,11 +1603,11 @@ mod tests {
             close: 1.5,
             volume: 10.0,
         });
-        assert_ne!(base, fingerprint(&appended, viewport, &palette));
+        assert_ne!(base, fingerprint(&appended, viewport, size, &palette));
 
         let mut ticked = data.clone();
         ticked[9].close += 0.01;
-        assert_ne!(base, fingerprint(&ticked, viewport, &palette));
+        assert_ne!(base, fingerprint(&ticked, viewport, size, &palette));
 
         assert_ne!(
             base,
@@ -1415,11 +1617,17 @@ mod tests {
                     from: 1.0,
                     to: 11.0
                 },
+                size,
                 &palette,
             )
         );
 
+        assert_ne!(
+            base,
+            fingerprint(&data, viewport, Size::new(1280.0, 640.0), &palette),
+        );
+
         let dark = super::super::theme::DARK.palette;
-        assert_ne!(base, fingerprint(&data, viewport, &dark));
+        assert_ne!(base, fingerprint(&data, viewport, size, &dark));
     }
 }
