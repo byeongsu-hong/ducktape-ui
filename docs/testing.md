@@ -266,21 +266,39 @@ both, and an earlier reading taken minutes apart was wrong by 40%.
 At 1600x1000: **1276us with no symbols, 2094us with 120** — the rows are 39% of
 the frame, ~6.8us each, and a real perp universe is larger than 120.
 
-Those rows are exactly what a `lazy` boundary is for, and they cannot have one:
+Those rows are exactly what a `lazy` boundary is for, and getting one took two
+changes on the app side, neither of them to the language:
 
-- `MarketRow` depends on the row **and** on `coin`, the selected symbol, while
-  `lazy` takes a single dependency and exposes only that alias inside.
-- Folding the selection into the row does not rescue it. A `lazy` dependency
-  must be `Hash`, and `SymbolRow` carries `price`, `change_pct`, `funding_pct`
-  — `f64` does not implement `Hash`, which is why SPEC rejects float-bearing
-  values as lazy identity in the first place.
+- **One dependency, not two.** `MarketRow` read the row *and* `coin` to know
+  whether it was the market on screen, and `lazy` exposes only its alias inside
+  the subtree. `filter_symbols` now marks the row it selects, so the row is the
+  whole dependency and the comparison happens where the list is built. Anything
+  that changes what a row renders — including which one is picked — has to
+  rebuild `visible`, which is what
+  `picking_a_market_moves_the_mark_onto_its_row` holds down.
+- **A hand-written `Hash`.** Every number on a market row is an `f64`, which is
+  not `Hash`, so `SymbolRow` could not be derived into a dependency. The
+  checker's `lazy_hashable` already admits any named extern type and leaves the
+  obligation to Rust, so the app implements `Hash` over the float bits, folding
+  `-0.0` onto `0.0` so rows that render alike also cache alike. Only a bare
+  `f64` dependency is rejected outright.
 
-So the lever that reaches the ~75% of a frame that is layout is unavailable
-precisely where market data lives. Closing that would mean letting `lazy` take
-an author-supplied key the way `keyed` already does, rather than deriving
-identity from the whole dependency — which is a language change, not a tuning
-one. Recorded here so the next pass starts from the constraint rather than
-rediscovering it.
+The result, measured back to back at 1600x1000:
+
+| | before | after |
+|---|---|---|
+| chrome only | 1276us | 1274us |
+| 120 symbols | 2094us | 1445us |
+
+The rows went from 818us to ~172us, **4.8x**, and 31% came off the whole frame.
+The chrome did not move, which is the check that the win is the rows and not
+the weather.
+
+Two things this does not show. The universe is rebuilt on every market tick, so
+a row whose price moved misses its cache and re-lays-out — the win is on frames
+where the data holds still, which is most of them. And the remaining 1274us of
+chrome has no boundary in it at all; that, not the rows, is now the largest
+single number on this screen.
 
 Two controls in that probe are there to foreclose the easy explanations, and
 both come back negative:

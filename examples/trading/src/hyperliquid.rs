@@ -6,6 +6,7 @@
 //! field anyway.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -165,6 +166,12 @@ impl HlError {
 }
 
 /// One tradeable perp with its current context.
+///
+/// `Hash` is hand-written because every number here is an `f64`, which does not
+/// implement it. A market row is the dependency of a `lazy` boundary in the
+/// view, so it needs an identity that changes exactly when the rendered row
+/// changes — hashing the bits is precisely that, once negative zero is folded
+/// onto zero so two rows that render identically also cache identically.
 #[derive(Clone, PartialEq)]
 pub struct SymbolRow {
     pub name: String,
@@ -182,6 +189,36 @@ pub struct SymbolRow {
     /// rather than to arithmetic, so the venue publishes it per market and
     /// the shared math never learns one exchange's rule.
     pub maintenance: f64,
+    /// Whether this row is the market on screen. Carried on the row rather than
+    /// read from app state beside it so the row is the whole dependency of its
+    /// own subtree, which is what lets the view cache it.
+    pub selected: bool,
+}
+
+/// `-0.0` and `0.0` are the same price and must hash alike; `NaN` never
+/// compares equal, so its bits are as good an identity as anything.
+fn hash_f64(value: f64, state: &mut impl Hasher) {
+    let value = if value == 0.0 { 0.0 } else { value };
+    value.to_bits().hash(state);
+}
+
+impl Hash for SymbolRow {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.selected.hash(state);
+        for value in [
+            self.price,
+            self.change_pct,
+            self.volume,
+            self.funding_pct,
+            self.leverage,
+            self.open_interest,
+            self.prev,
+            self.maintenance,
+        ] {
+            hash_f64(value, state);
+        }
+    }
 }
 
 /// One open position, shaped the way the official app reads it out.
@@ -487,6 +524,7 @@ fn parse_context(name: String, context: &Value) -> SymbolRow {
         maintenance: 0.0,
         open_interest: num(context, "openInterest"),
         prev: previous,
+        selected: false,
     }
 }
 
@@ -1372,13 +1410,17 @@ pub fn fmt_leverage_mode(value: f64, mode: String) -> String {
 }
 
 /// Substring match on the ticker, which is all a 200-row sidebar needs.
-pub fn filter_symbols(rows: Vec<SymbolRow>, query: String) -> Vec<SymbolRow> {
+/// Filters the universe down to what the list shows, and marks the row that is
+/// on screen. The mark rides along instead of being read from `coin` at render
+/// time so each row stays a self-contained dependency for the view's cache.
+pub fn filter_symbols(rows: Vec<SymbolRow>, query: String, coin: String) -> Vec<SymbolRow> {
     let query = query.trim().to_uppercase();
-    if query.is_empty() {
-        return rows;
-    }
     rows.into_iter()
-        .filter(|row| row.name.to_uppercase().contains(&query))
+        .filter(|row| query.is_empty() || row.name.to_uppercase().contains(&query))
+        .map(|row| SymbolRow {
+            selected: row.name == coin,
+            ..row
+        })
         .collect()
 }
 
@@ -2036,6 +2078,7 @@ mod tests {
             open_interest: 0.0,
             prev: 100.0,
             maintenance: 1.0 / 80.0,
+            selected: false,
         };
         // `activeAssetCtx` restates the day's figures and not the asset's, so
         // it arrives with no maximum leverage and no maintenance rule. Taking
@@ -2077,6 +2120,7 @@ mod tests {
             maintenance: 1.0 / (2.0 * max_leverage),
             open_interest: 0.0,
             prev: 100.0,
+            selected: false,
         };
         let quoted = |price: &str, size: &str, leverage: &str, buy: bool| {
             price_ticket(
@@ -2179,6 +2223,7 @@ mod tests {
             maintenance: 1.0 / (2.0 * 40.0),
             open_interest: 0.0,
             prev: 0.0,
+            selected: false,
         };
         assert_eq!(
             ticket_seed(Some(book.clone()), Some(row.clone())),
@@ -2592,6 +2637,7 @@ mod tests {
                 maintenance: 1.0 / (2.0 * 40.0),
                 open_interest: 0.0,
                 prev: 1.0,
+                selected: false,
             },
             SymbolRow {
                 name: "ETH".into(),
@@ -2603,10 +2649,32 @@ mod tests {
                 maintenance: 1.0 / (2.0 * 25.0),
                 open_interest: 0.0,
                 prev: 1.0,
+                selected: false,
             },
         ];
-        assert_eq!(filter_symbols(rows.clone(), " et ".into()).len(), 1);
-        assert_eq!(filter_symbols(rows.clone(), "".into()).len(), 2);
-        assert_eq!(filter_symbols(rows, "doge".into()).len(), 0);
+        assert_eq!(
+            filter_symbols(rows.clone(), " et ".into(), "BTC".into()).len(),
+            1
+        );
+        assert_eq!(
+            filter_symbols(rows.clone(), "".into(), "BTC".into()).len(),
+            2
+        );
+        assert_eq!(
+            filter_symbols(rows.clone(), "doge".into(), "BTC".into()).len(),
+            0
+        );
+
+        // The mark rides on the row, so the view can cache a row without also
+        // reading the selected coin beside it.
+        let marked = filter_symbols(rows, "".into(), "ETH".into());
+        assert_eq!(
+            marked
+                .iter()
+                .filter(|row| row.selected)
+                .map(|row| row.name.as_str())
+                .collect::<Vec<_>>(),
+            ["ETH"]
+        );
     }
 }

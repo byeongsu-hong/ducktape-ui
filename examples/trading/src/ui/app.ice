@@ -151,7 +151,7 @@ component IntervalTab(name:str, current:str)
             font=digits
             @text-muted
 
-component MarketRow(market:SymbolRow, selected:bool)
+component MarketRow(market:SymbolRow)
   emits
     pick(str)
   button #row -> emit(pick, market.name)
@@ -166,11 +166,11 @@ component MarketRow(market:SymbolRow, selected:bool)
         w=fill
         h=30.0
         align=center
-      if selected && market.change_pct >= 0.0
+      if market.selected && market.change_pct >= 0.0
         rule vertical thickness=3.0 color=up
-      if selected && market.change_pct < 0.0
+      if market.selected && market.change_pct < 0.0
         rule vertical thickness=3.0 color=down
-      if !selected
+      if !market.selected
         rule vertical thickness=3.0 color=panel
       row
         with
@@ -179,13 +179,13 @@ component MarketRow(market:SymbolRow, selected:bool)
           pr=16.0
           gap=8.0
           align=center
-        if selected
+        if market.selected
           text market.name
             with
               size=12.0
               w=fill
               @text-fg
-        if !selected
+        if !market.selected
           text market.name
             with
               size=12.0
@@ -562,6 +562,7 @@ on reopen
 
 on pick_symbol(name)
   coin = name
+  visible = filter_symbols(symbols, query, name)
   tape_prints = []
   focus = symbol_row(symbols, name)
   hover = none
@@ -580,7 +581,7 @@ on pick_interval(next)
   run hl_candles(tape, coin, next) -> candles_loaded _ | failed _
 
 on search(typed)
-  visible = filter_symbols(symbols, typed)
+  visible = filter_symbols(symbols, typed, coin)
 
 on tick_universe
   run hl_symbols() -> symbols_loaded _ | failed _
@@ -596,7 +597,7 @@ on cool_flash
 
 on symbols_loaded(rows)
   symbols = rows
-  visible = filter_symbols(rows, query)
+  visible = filter_symbols(rows, query, coin)
   focus = symbol_row(rows, coin)
   status = ""
 
@@ -618,7 +619,7 @@ on market_ticked(tick)
   book = tick.book
   latency = tick.latency
   symbols = apply_feed(symbols, tick)
-  visible = filter_symbols(symbols, query)
+  visible = filter_symbols(symbols, query, coin)
   focus = symbol_row(symbols, coin)
   positions = mark_positions(positions, tick)
   account = mark_account(account, positions)
@@ -854,9 +855,10 @@ view
                                 wrap=word
                                 @text-faint
                         for row in visible
-                          MarketRow market=row selected=(row.name == coin) #market(row.name)
-                            events
-                              pick -> pick_symbol _
+                          lazy row as market
+                            MarketRow market=market #market(market.name)
+                              events
+                                pick -> pick_symbol _
                 rule vertical thickness=1.0 color=edge
                 col w=fill h=fill
                   box #chart-frame

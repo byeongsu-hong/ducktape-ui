@@ -61,6 +61,8 @@ fn frame_cost() {
             leverage: 5.0,
             open_interest: 250_000.0 * (index % 11) as f64,
             prev: 99.0 + index as f64,
+            maintenance: 1.0 / 80.0,
+            selected: index == 0,
         })
         .collect();
     driver.dispatch(__TradingMessage::SymbolsLoaded(rows), here());
