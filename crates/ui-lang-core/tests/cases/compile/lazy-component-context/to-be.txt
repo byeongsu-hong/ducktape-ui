@@ -1,5 +1,5 @@
 let __ice_lazy_context_
-let __ice_lazy_event_
+let __ice_lazy_event_10_0 = (move |__event_0| __DemoMessage::Entered(__event_0)).clone();
 let __activate = __DemoMessage::__BoardHandleEntered((__ice_use_scope
 let __activate = __DemoMessage::__BoardHandleEntered((__ice_lazy_p0
 self.__ice_component_use_0(__ice_palette, format!("{}/Card@36", __for_scope), (move |__event_0| __DemoMessage::Entered(__event_0)).clone(), item))

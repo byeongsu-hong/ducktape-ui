@@ -244,42 +244,43 @@ component AlbumGrid(albums:[Album])
       gap=16.0
       @w-full
     for album in albums
-      button #album(album.id) -> emit(play, album.title, album.artist, album.cover)
-        with
-          label=album.title
-          w=fill
-          h=214.0
-          p=0.0
-        col
+      lazy album as card
+        button #album(card.id) -> emit(play, card.title, card.artist, card.cover)
           with
+            label=card.title
             w=fill
             h=214.0
-            gap=0.0
-          image album.cover
+            p=0.0
+          col
             with
               w=fill
-              h=160.0
-              fit=cover
-              r=12.0
-          col #metadata
-            with
-              w=fill
-              h=54.0
-              p=8.0
-              gap=2.0
-            text album.title #title
+              h=214.0
+              gap=0.0
+            image card.cover
               with
-                size=13.0
-                wrap=none
-                @text-fg
-            text album.artist #artist
+                w=fill
+                h=160.0
+                fit=cover
+                r=12.0
+            col #metadata
               with
-                size=10.0
-                wrap=none
-                @text-muted
-        active bg=transparent text=fg r=12.0
-        hovered shadow=black/16 shadow-y=3.0 shadow-blur=9.0
-        pressed bg=accent
+                w=fill
+                h=54.0
+                p=8.0
+                gap=2.0
+              text card.title #title
+                with
+                  size=13.0
+                  wrap=none
+                  @text-fg
+              text card.artist #artist
+                with
+                  size=10.0
+                  wrap=none
+                  @text-muted
+          active bg=transparent text=fg r=12.0
+          hovered shadow=black/16 shadow-y=3.0 shadow-blur=9.0
+          pressed bg=accent
 
 component StationCard(album:Album)
   emits
