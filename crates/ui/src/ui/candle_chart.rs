@@ -38,6 +38,9 @@ const RIGHT_MARGIN_RATIO: f64 = 0.05;
 const PRICE_PAD_RATIO: f64 = 0.05;
 const ZOOM_PER_LINE: f64 = 1.12;
 const WHEEL_PIXELS_PER_LINE: f32 = 40.0;
+/// How close to the oldest candle a pan has to come before the chart asks for
+/// more history: far enough out that the fetch lands before the gap shows.
+const HISTORY_MARGIN_BARS: f64 = 20.0;
 const PRICE_TICK_TARGET: usize = 6;
 const TIME_TICK_TARGET: usize = 6;
 const TAG_HEIGHT: f32 = 16.0;
@@ -161,6 +164,13 @@ fn follow_appended(viewport: Viewport, seen_len: usize, len: usize) -> Viewport 
     } else {
         viewport
     }
+}
+
+/// How many candles were loaded in front of the tape since the last draw,
+/// found by looking up where the candle that used to be oldest now sits.
+/// Every index behind them moved by this much, and so must the pinned view.
+fn prepended(candles: &[Candle], seen_first_ts: Option<i64>) -> usize {
+    seen_first_ts.map_or(0, |seen| candles.partition_point(|candle| candle.ts < seen))
 }
 
 /// Bottom-right chip that resumes following the latest candle.
@@ -295,7 +305,11 @@ const PYRAMID_BLOCK: usize = 64;
 /// a rebuild costs O(plot width * log candles) instead of O(visible candles).
 /// Memory is ~2 f64 per candle (prefixes) plus ~2/64th for the levels.
 struct Pyramid {
-    first_ts: i64,
+    /// The whole first candle, not just its timestamp: two markets on the
+    /// same interval share a timestamp grid, so a tape that swaps symbols
+    /// keeps its length and its front stamp while every number under it
+    /// changes.
+    first: Option<Candle>,
     last: Option<Candle>,
     /// level k summarizes blocks of PYRAMID_BLOCK^(k+1) candles.
     low_min: Vec<Vec<f64>>,
@@ -307,7 +321,7 @@ struct Pyramid {
 impl Pyramid {
     fn empty() -> Self {
         Self {
-            first_ts: 0,
+            first: None,
             last: None,
             low_min: Vec::new(),
             high_max: Vec::new(),
@@ -323,9 +337,7 @@ impl Pyramid {
     /// Brings the summaries in line with `candles`: appends extend, a changed
     /// last candle updates its block path, an evicted front rebuilds.
     fn sync(&mut self, candles: &[Candle]) {
-        let same_front = candles
-            .first()
-            .is_some_and(|first| first.ts == self.first_ts);
+        let same_front = self.first.is_some() && self.first == candles.first().copied();
         if candles.len() < self.len() || (!candles.is_empty() && !same_front) {
             *self = Self::empty();
         }
@@ -333,7 +345,7 @@ impl Pyramid {
             *self = Self::empty();
             return;
         }
-        self.first_ts = candles[0].ts;
+        self.first = candles.first().copied();
         // A tick rewrote the last known candle in place.
         let known = self.len();
         if known > 0 && self.last != Some(candles[known - 1]) {
@@ -639,6 +651,43 @@ fn format_ts(ts: i64, step_secs: i64) -> String {
     } else {
         let secs = ts.rem_euclid(86_400);
         format!("{:02}:{:02}", secs / 3600, (secs % 3600) / 60)
+    }
+}
+
+/// A time-axis tick label. Intraday ticks read as clock time, except the
+/// first one on screen and the first of each day, which carry the date —
+/// a wall of bare clock times says nothing about which day you are looking
+/// at. `previous` is the last tick actually drawn, not the last considered.
+fn format_tick(ts: i64, step_secs: i64, previous: Option<i64>) -> String {
+    let day = ts.div_euclid(86_400);
+    if step_secs >= 86_400 || previous.is_some_and(|prior| prior.div_euclid(86_400) == day) {
+        return format_ts(ts, step_secs);
+    }
+    let (_, month, date) = civil_from_days(day);
+    let secs = ts.rem_euclid(86_400);
+    format!(
+        "{month:02}-{date:02} {:02}:{:02}",
+        secs / 3600,
+        (secs % 3600) / 60
+    )
+}
+
+/// The crosshair's time tag, which always carries its date: the axis only
+/// prints one at a day boundary, and the tag is what a reader points at to
+/// settle exactly which candle this is.
+fn format_ts_dated(ts: i64, step_secs: i64) -> String {
+    let (year, month, date) = civil_from_days(ts.div_euclid(86_400));
+    if step_secs >= 28 * 86_400 {
+        format!("{year}-{month:02}")
+    } else if step_secs >= 86_400 {
+        format!("{year}-{month:02}-{date:02}")
+    } else {
+        let secs = ts.rem_euclid(86_400);
+        format!(
+            "{month:02}-{date:02} {:02}:{:02}",
+            secs / 3600,
+            (secs % 3600) / 60
+        )
     }
 }
 
@@ -1076,6 +1125,7 @@ pub struct CandleChart<'a, Message> {
     data: Data<'a>,
     theme: UiTheme,
     on_hover: Option<Rc<dyn Fn(Option<CandleHit>) -> Message + 'a>>,
+    on_reach_start: Option<Rc<dyn Fn(Option<CandleHit>) -> Message + 'a>>,
     width: Length,
     height: Length,
     initial_bars: usize,
@@ -1108,6 +1158,7 @@ fn with_data<'a, Message>(data: Data<'a>, theme: &UiTheme) -> CandleChart<'a, Me
         data,
         theme: *theme,
         on_hover: None,
+        on_reach_start: None,
         width: Length::Fill,
         height: Length::Fixed(DEFAULT_HEIGHT),
         initial_bars: DEFAULT_BARS,
@@ -1123,6 +1174,23 @@ impl<'a, Message> CandleChart<'a, Message> {
     #[must_use]
     pub fn on_hover(mut self, on_hover: impl Fn(Option<CandleHit>) -> Message + 'a) -> Self {
         self.on_hover = Some(Rc::new(on_hover));
+        self
+    }
+
+    /// Called when a pan or zoom brings the view within a candle or two of
+    /// the oldest one loaded, so the app can fetch what came before it. It
+    /// carries the hovered candle like [`Self::on_hover`] does, so a single
+    /// message type can answer both without losing the readout.
+    ///
+    /// Fires at most once per tape length: loading more history changes the
+    /// length and arms it again, while a drag that reaches the edge and stays
+    /// there asks only once.
+    #[must_use]
+    pub fn on_reach_start(
+        mut self,
+        on_reach_start: impl Fn(Option<CandleHit>) -> Message + 'a,
+    ) -> Self {
+        self.on_reach_start = Some(Rc::new(on_reach_start));
         self
     }
 
@@ -1210,6 +1278,7 @@ where
                 data: chart.data,
                 theme: chart.theme,
                 on_hover: chart.on_hover,
+                on_reach_start: chart.on_reach_start,
                 initial_bars: chart.initial_bars,
                 precision: chart.precision,
                 time_offset_secs: chart.time_offset_secs,
@@ -1244,6 +1313,12 @@ pub struct CandleState {
     key_cursor: Cell<Option<usize>>,
     /// Data length at the last draw, to detect appends for auto-follow.
     seen_len: Cell<usize>,
+    /// Timestamp of the oldest candle at the last draw, to detect a history
+    /// load prepending to the front and shifting every index.
+    seen_first_ts: Cell<Option<i64>>,
+    /// Tape length the last history request was made at, so reaching the
+    /// oldest candle asks once rather than on every dragged pixel.
+    requested_len: Cell<Option<usize>>,
     drag: Option<Drag>,
     hovered: Option<usize>,
     layers: canvas::Cache,
@@ -1257,6 +1332,8 @@ impl Default for CandleState {
             viewport: Cell::new(None),
             key_cursor: Cell::new(None),
             seen_len: Cell::new(0),
+            seen_first_ts: Cell::new(None),
+            requested_len: Cell::new(None),
             drag: None,
             hovered: None,
             layers: canvas::Cache::new(),
@@ -1270,6 +1347,7 @@ struct CandleProgram<'a, Message> {
     data: Data<'a>,
     theme: UiTheme,
     on_hover: Option<Rc<dyn Fn(Option<CandleHit>) -> Message + 'a>>,
+    on_reach_start: Option<Rc<dyn Fn(Option<CandleHit>) -> Message + 'a>>,
     initial_bars: usize,
     precision: Option<usize>,
     time_offset_secs: i64,
@@ -1285,6 +1363,25 @@ impl<Message> CandleProgram<'_, Message> {
             .get()
             .unwrap_or_else(|| Viewport::initial(candles.len(), self.initial_bars))
             .clamped(candles.len())
+    }
+
+    /// The history request a freshly moved viewport earns, if any: the view
+    /// has reached the oldest candle and this tape length has not asked yet.
+    fn history_request(
+        &self,
+        candles: &[Candle],
+        state: &CandleState,
+        viewport: Viewport,
+    ) -> Option<canvas::Action<Message>> {
+        let on_reach_start = self.on_reach_start.as_ref()?;
+        if viewport.from > HISTORY_MARGIN_BARS || state.requested_len.get() == Some(candles.len()) {
+            return None;
+        }
+        state.requested_len.set(Some(candles.len()));
+        let hovered = state
+            .hovered
+            .and_then(|index| Some(CandleHit::new(index, candles.get(index)?)));
+        Some(canvas::Action::publish(on_reach_start(hovered)).and_capture())
     }
 
     fn hover_index(
@@ -1380,8 +1477,10 @@ impl<Message> CandleProgram<'_, Message> {
                 let viewport = self.viewport(candles, state);
                 let anchor = chrome.index_at(viewport, position.x);
                 let factor = ZOOM_PER_LINE.powf(f64::from(-lines));
-                state.viewport.set(Some(viewport.zoom(anchor, factor, len)));
-                Some(canvas::Action::request_redraw().and_capture())
+                let zoomed = viewport.zoom(anchor, factor, len);
+                state.viewport.set(Some(zoomed));
+                self.history_request(candles, state, zoomed)
+                    .or_else(|| Some(canvas::Action::request_redraw().and_capture()))
             }
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
@@ -1407,8 +1506,11 @@ impl<Message> CandleProgram<'_, Message> {
                 if let (Some(drag), Some(position)) = (state.drag, cursor.position()) {
                     let bars_per_pixel = drag.viewport.span() / f64::from(chrome.plot.width);
                     let bars = f64::from(drag.x - position.x) * bars_per_pixel;
-                    state.viewport.set(Some(drag.viewport.pan(bars, len)));
-                    return Some(canvas::Action::request_redraw().and_capture());
+                    let panned = drag.viewport.pan(bars, len);
+                    state.viewport.set(Some(panned));
+                    return self
+                        .history_request(candles, state, panned)
+                        .or_else(|| Some(canvas::Action::request_redraw().and_capture()));
                 }
                 state.key_cursor.set(None);
                 let next = cursor
@@ -1501,6 +1603,20 @@ impl<Message> CandleProgram<'_, Message> {
         if chrome.plot.width < 16.0 || chrome.plot.height < 16.0 {
             return Vec::new();
         }
+        // Candles loaded in front of the tape shift every index behind them.
+        // Move the pinned view by as much so the screen stays on the bars it
+        // was showing, and count the shift into `seen_len` so the auto-follow
+        // below still only sees genuine appends.
+        let loaded = prepended(candles, state.seen_first_ts.get());
+        if loaded > 0 {
+            if let Some(pinned) = state.viewport.get() {
+                state
+                    .viewport
+                    .set(Some(pinned.pan(loaded as f64, candles.len())));
+            }
+            state.seen_len.set(state.seen_len.get() + loaded);
+        }
+        state.seen_first_ts.set(Some(candles[0].ts));
         if let Some(pinned) = state.viewport.get() {
             let followed = follow_appended(pinned, state.seen_len.get(), candles.len());
             if followed != pinned {
@@ -1958,6 +2074,7 @@ impl<Message> CandleProgram<'_, Message> {
             .and_then(|position| ctx.viewport.index_near(ctx.chrome, position.x))
             .filter(|index| *index < ctx.candles.len())
             .map(|index| ctx.chrome.x(ctx.viewport, index as f64));
+        let mut drawn: Option<i64> = None;
         for (x, ts) in &ctx.axes.time_ticks {
             // Skip labels the plot edge would clip or the crosshair tag covers.
             if *x < 18.0 || *x > plot.width - 18.0 {
@@ -1966,9 +2083,11 @@ impl<Message> CandleProgram<'_, Message> {
             if time_tag_x.is_some_and(|tag_x| (tag_x - *x).abs() < 48.0) {
                 continue;
             }
+            let content = format_tick(*ts, ctx.axes.time_step_secs, drawn);
+            drawn = Some(*ts);
             self.label(
                 frame,
-                &format_ts(*ts, ctx.axes.time_step_secs),
+                &content,
                 Point::new(*x, plot.y + plot.height + TIME_AXIS_HEIGHT / 2.0),
                 TextAlignment::Center,
                 Vertical::Center,
@@ -2022,7 +2141,7 @@ impl<Message> CandleProgram<'_, Message> {
             Point::new(x, plot.y + plot.height),
             palette.muted_foreground,
         );
-        let content = format_ts(
+        let content = format_ts_dated(
             ctx.candles[index].ts + self.time_offset_secs,
             ctx.axes.time_step_secs,
         );
@@ -2382,17 +2501,149 @@ mod tests {
         pyramid
     }
 
+    /// Two markets on one interval share a timestamp grid, so a tape that
+    /// swaps symbols can keep its length and its first timestamp while every
+    /// price under it changes. The summaries have to notice, or the moving
+    /// averages and the price scale keep reading the market you left.
+    #[test]
+    fn the_summaries_rebuild_when_the_tape_swaps_symbols() {
+        let held = candles(200);
+        let mut pyramid = pyramid_for(&held);
+        assert_eq!(pyramid.extremes(&held, 0..200), (99.0, 301.0));
+
+        let swapped: Vec<Candle> = held
+            .iter()
+            .map(|candle| Candle {
+                open: candle.open / 100.0,
+                high: candle.high / 100.0,
+                low: candle.low / 100.0,
+                close: candle.close / 100.0,
+                ..*candle
+            })
+            .collect();
+        pyramid.sync(&swapped);
+        assert_eq!(
+            pyramid.extremes(&swapped, 0..200),
+            (0.99, 3.01),
+            "the block summaries follow the new market"
+        );
+        assert!(
+            (pyramid.close_sum(0..200) - swapped.iter().map(|c| c.close).sum::<f64>()).abs() < 1e-9,
+            "so do the prefix sums the moving averages read"
+        );
+    }
+
+    #[test]
+    fn time_labels_carry_the_date_where_it_changes() {
+        // Midnight UTC on 2023-11-14.
+        let day = 1_700_000_000i64.div_euclid(86_400) * 86_400;
+
+        // The first label on screen is dated, the rest of that day are not.
+        assert_eq!(format_tick(day + 3_600, 900, None), "11-14 01:00");
+        assert_eq!(format_tick(day + 7_200, 900, Some(day + 3_600)), "02:00");
+        assert_eq!(
+            format_tick(day + 86_400, 900, Some(day + 7_200)),
+            "11-15 00:00",
+            "midnight starts a new date"
+        );
+        // A daily view already carries its date in every label.
+        assert_eq!(format_tick(day, 86_400, Some(day - 86_400)), "11-14");
+
+        // The crosshair tag is never bare, whatever the axis is showing.
+        assert_eq!(format_ts_dated(day + 3_600, 900), "11-14 01:00");
+        assert_eq!(format_ts_dated(day, 86_400), "2023-11-14");
+        assert_eq!(format_ts_dated(day, 30 * 86_400), "2023-11");
+    }
+
+    #[test]
+    fn reaching_the_oldest_candle_asks_for_history_once() {
+        use iced::widget::canvas::Program as _;
+
+        let data = candles(300);
+        let program = history_program(&data);
+        let mut state = CandleState::default();
+        let bounds = Rectangle::with_size(BOUNDS);
+        let press = canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let at = |x: f32| mouse::Cursor::Available(Point::new(x, 300.0));
+        let drag_to = |state: &mut CandleState, x: f32| {
+            program
+                .update(state, &moved(Point::new(x, 300.0)), bounds, at(x))
+                .expect("a drag pans")
+                .into_inner()
+                .0
+        };
+
+        program.update(&mut state, &press, bounds, at(600.0));
+
+        // A drag that stays in the recent tape asks for nothing.
+        assert!(
+            drag_to(&mut state, 700.0).is_none(),
+            "the oldest candle is still far off"
+        );
+
+        // Dragging back past it publishes exactly one request.
+        assert!(
+            drag_to(&mut state, 3_000.0).is_some(),
+            "the view reached the oldest candle"
+        );
+        assert!(
+            drag_to(&mut state, 3_100.0).is_none(),
+            "one request per tape length, not one per dragged pixel"
+        );
+    }
+
+    /// Loading older candles renumbers every index. The pinned view has to
+    /// move with them or the screen jumps back in time on its own.
+    #[test]
+    fn a_history_load_keeps_the_view_on_the_same_candles() {
+        let data = candles(300);
+        let older: Vec<Candle> = candles(100)
+            .iter()
+            .map(|candle| Candle {
+                ts: candle.ts - 100 * 86_400,
+                ..*candle
+            })
+            .chain(data.iter().copied())
+            .collect();
+
+        assert_eq!(prepended(&older, Some(data[0].ts)), 100);
+        assert_eq!(prepended(&data, Some(data[0].ts)), 0, "a plain append");
+        assert_eq!(prepended(&data, None), 0, "nothing seen yet");
+
+        let pinned = Viewport {
+            from: 10.0,
+            to: 60.0,
+        };
+        let moved = pinned.pan(prepended(&older, Some(data[0].ts)) as f64, older.len());
+        assert_eq!(
+            (moved.from, moved.to),
+            (110.0, 160.0),
+            "the view follows its candles across the prepend"
+        );
+    }
+
     fn hover_program(data: &[Candle]) -> CandleProgram<'_, Option<CandleHit>> {
         CandleProgram {
             data: Data::Borrowed(data),
             theme: super::super::theme::LIGHT,
             on_hover: Some(Rc::new(|hit| hit)),
+            on_reach_start: None,
             initial_bars: DEFAULT_BARS,
             precision: None,
             time_offset_secs: 0,
             moving_averages: Vec::new(),
             overlays: Vec::new(),
             live: None,
+        }
+    }
+
+    /// Publishes only when the view reaches the oldest candle, so any message
+    /// out of this program is a history request.
+    fn history_program(data: &[Candle]) -> CandleProgram<'_, Option<CandleHit>> {
+        CandleProgram {
+            on_hover: None,
+            on_reach_start: Some(Rc::new(|hit| hit)),
+            ..hover_program(data)
         }
     }
 
@@ -2911,6 +3162,7 @@ mod tests {
                 data: Data::Borrowed(&data),
                 theme,
                 on_hover: None,
+                on_reach_start: None,
                 initial_bars: DEFAULT_BARS,
                 precision: None,
                 time_offset_secs: 0,
