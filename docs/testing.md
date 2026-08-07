@@ -168,8 +168,37 @@ front-end* cost on generated code, not an Ice compiler cost. Two profile levers
 were measured and rejected because of that: `[profile.dev.build-override]
 opt-level = 3` (no effect — the Ice compiler is not the bottleneck) and
 `debug = "line-tables-only"` / `debug = 0` (0.92x at best — debug info is not
-the bottleneck either). What is left is reducing the volume and inference cost
-of generated Rust.
+the bottleneck either).
+
+What the crate is actually spending it on is visible in the dependency graph
+(`RUSTC_BOOTSTRAP=1 cargo rustc -p showcase --bin showcase -- -Zincremental-info`,
+run twice so the second pass does not discard the cache over changed flags).
+showcase's is 1.29M nodes and 12.45M edges, led by `layout_of` (117k nodes),
+`impl_trait_header`, `implementations_of_trait`, `symbol_name` (77k) and
+`items_of_instance` (48k) — roughly 77k monomorphized instances out of 15.5k
+generated lines. The front-end cost is instantiating iced's widget machinery,
+not parsing or checking volume.
+
+Three more things were measured against that and rejected, so nobody repeats
+them:
+
+- **Content-addressed generated filenames breaking incremental reuse.** They
+  are not content-addressed. `generated_group_file_name` hashes the source path
+  and slug, so an edit leaves every generated file name byte-identical; the
+  suffix only differs between checkouts because the absolute path does.
+- **Boxing style closures to collapse instantiations.** Emitting container
+  styles as `Box<dyn Fn(&Theme) -> Style>` instead of a distinct closure type
+  per container left rustc unchanged: total 14.66s against 14.13s,
+  `monomorphization_collector_graph_walk` 2.00s against 1.93s. iced already
+  erases the closure at that boundary.
+- **Per-file incremental isolation.** Generated fenced groups land in separate
+  files so an edit to one leaves the others' spans untouched, but editing
+  `components/catalog.ice` costs the same as editing the app root — 6.4–7.6s
+  either way. The isolation is real and does not show up in the wall clock.
+
+So the remaining lever on the build side is the count of distinct widget types
+the generated view instantiates, which is a question about how views are lowered
+rather than about compiler flags.
 
 ### The frame
 
