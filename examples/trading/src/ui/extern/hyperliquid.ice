@@ -34,6 +34,7 @@ extern crate::hyperliquid
   sync cool_fills(rows:[Fill]) -> [Fill]
   sync any_hot(rows:[Fill]) -> bool
   sync valid_address(address:str) -> bool
+  sync pane_height(wanted:f64) -> f64
   sync header_inset() -> f64
   sync fmt_px(value:f64) -> str
   sync fmt_usd(value:f64) -> str

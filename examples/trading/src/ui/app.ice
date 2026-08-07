@@ -54,6 +54,10 @@ state
 derived
   watching = !gate && !empty(address)
 
+preset terminal
+  state
+    gate = false
+
 component Num(value:str, size:f64, width:f64)
   text value
     with
@@ -409,93 +413,102 @@ component FillRow(fill:Fill)
               @text-faint
 
 component PositionRow(held:Position)
-  row #root
+  emits
+    pick(str)
+  button #root -> emit(pick, held.coin)
     with
+      label=held.coin
       w=fill
-      h=44.0
-      pl=14.0
-      pr=18.0
-      gap=8.0
-      align=center
-    text held.coin
+      p=0.0
+    active bg=panel r=0.0
+    hovered bg=raised r=0.0
+    row
       with
-        size=12.0
-        w=52.0
-        @text-fg
-    col w=56.0 gap=1.0
-      if held.size >= 0.0
-        text "LONG"
-          with
-            size=10.0
-            tracking=0.8
-            @text-up
-      if held.size < 0.0
-        text "SHORT"
-          with
-            size=10.0
-            tracking=0.8
-            @text-down
-      text fmt_leverage_mode(held.leverage, held.margin_mode) size=9.0 @text-faint
-    Num
-      with
-        value=fmt_size(held.size)
-        size=12.0
-        width=72.0
-    Num
-      with
-        value=fmt_px(held.entry)
-        size=12.0
-        width=80.0
-    col w=80.0 gap=4.0
-      if held.liq > 0.0
-        text fmt_px(held.liq)
-          with
-            size=12.0
-            w=fill
-            align-x=right
-            font=digits
-            @text-down
-      if held.liq <= 0.0
-        text "none"
-          with
-            size=12.0
-            w=fill
-            align-x=right
-            font=digits
-            @text-faint
-      row w=80.0 h=3.0
-        box
-          with
-            w=held.risk
-            h=3.0
-            bg=down
-          space w=fill h=fill
-        box
-          with
-            w=(80.0 - held.risk)
-            h=3.0
-            bg=edge
-          space w=fill h=fill
-    Delta
-      with
-        value=fmt_compact_usd(held.funding)
-        up=(held.funding >= 0.0)
-        size=11.0
-        width=72.0
-    space w=fill
-    col gap=1.0 w=104.0
+        w=fill
+        h=44.0
+        pl=14.0
+        pr=18.0
+        gap=8.0
+        align=center
+      text held.coin
+        with
+          size=12.0
+          w=52.0
+          @text-fg
+      col w=56.0 gap=1.0
+        if held.size >= 0.0
+          text "LONG"
+            with
+              size=10.0
+              tracking=0.8
+              @text-up
+        if held.size < 0.0
+          text "SHORT"
+            with
+              size=10.0
+              tracking=0.8
+              @text-down
+        text fmt_leverage_mode(held.leverage, held.margin_mode) size=9.0 @text-faint
+      Num
+        with
+          value=fmt_size(held.size)
+          size=12.0
+          width=72.0
+      Num
+        with
+          value=fmt_px(held.entry)
+          size=12.0
+          width=80.0
+      col w=80.0 gap=4.0
+        if held.liq > 0.0
+          text fmt_px(held.liq)
+            with
+              size=12.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-down
+        if held.liq <= 0.0
+          text "none"
+            with
+              size=12.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-faint
+        row w=80.0 h=3.0
+          box
+            with
+              w=held.risk
+              h=3.0
+              bg=down
+            space w=fill h=fill
+          box
+            with
+              w=(80.0 - held.risk)
+              h=3.0
+              bg=edge
+            space w=fill h=fill
       Delta
         with
-          value=fmt_compact_usd(held.pnl)
-          up=(held.pnl >= 0.0)
-          size=14.0
-          width=104.0
-      Delta
-        with
-          value=fmt_pct(held.roe_pct)
-          up=(held.pnl >= 0.0)
-          size=10.0
-          width=104.0
+          value=fmt_compact_usd(held.funding)
+          up=(held.funding >= 0.0)
+          size=11.0
+          width=72.0
+      space w=fill
+      col gap=1.0 w=104.0
+        Delta
+          with
+            value=fmt_compact_usd(held.pnl)
+            up=(held.pnl >= 0.0)
+            size=14.0
+            width=104.0
+        Delta
+          with
+            value=fmt_pct(held.roe_pct)
+            up=(held.pnl >= 0.0)
+            size=10.0
+            width=104.0
 
 on connect
   return if !valid_address(draft)
@@ -540,15 +553,22 @@ on seed_ticket(price, buy)
   quote = price_ticket(seed, "", ticket_leverage, focus, buy)
 
 on ticket_priced(typed)
+  ticket_price = typed
   quote = price_ticket(typed, ticket_size, ticket_leverage, focus, ticket_buy)
 
 on ticket_sized(typed)
+  ticket_size = typed
   quote = price_ticket(ticket_price, typed, ticket_leverage, focus, ticket_buy)
 
 on ticket_levered(typed)
+  ticket_leverage = typed
   quote = price_ticket(ticket_price, ticket_size, typed, focus, ticket_buy)
 
 on close_ticket
+  ticket = false
+
+on ticket_key(event)
+  return if event.key != key.named("Escape")
   ticket = false
 
 on ticket_side(buy)
@@ -581,6 +601,7 @@ on pick_interval(next)
   run hl_candles(tape, coin, next) -> candles_loaded _ | failed _
 
 on search(typed)
+  query = typed
   visible = filter_symbols(symbols, typed, coin)
 
 on tick_universe
@@ -646,11 +667,10 @@ on history_loaded(_count)
   status = ""
 
 on lower_resized(_dx, dy)
-  return if dy > 0.0 && lower_height - dy < 120.0
-  return if dy < 0.0 && lower_height - dy > 560.0
-  lower_height = lower_height - dy
+  lower_height = pane_height(lower_height - dy)
 
 subscribe
+  keyboard press when ticket -> ticket_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 700ms when flashing -> cool_flash
@@ -1004,6 +1024,8 @@ view
                                   text "Connect an address" size=12.0 @text-fg
                             for held in positions
                               PositionRow held=held #position(held.coin)
+                                events
+                                  pick -> pick_symbol _
                       rule vertical thickness=1.0 color=edge
                       col #fills w=320.0 h=fill
                         row
@@ -1526,6 +1548,38 @@ test trading_gate_refuses_a_malformed_address
   target field = dialog/address-input
   focus field
   replace "0xnope"
+  expect draft == "0xnope"
   expect a11y connect disabled true
   replace "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
   expect a11y connect disabled false
+
+test trading_escape_closes_the_ticket
+  preset terminal
+  viewport 1400 900
+  target panel = #ticket-panel
+  target size = panel/ticket-size
+  target limit = panel/ticket-price
+  expect missing panel
+  dispatch open_ticket
+  expect exists panel
+  focus limit
+  type "64000"
+  expect ticket_price == "64000"
+  focus size
+  expect size.focused
+  type "0.5"
+  expect ticket_size == "0.5"
+  expect quote.ready
+  expect quote.notional ~= 32000.0
+  key escape
+  expect missing panel
+
+test trading_search_keeps_what_was_typed
+  preset terminal
+  viewport 1400 900
+  target app = #app
+  target markets = app/markets
+  target search = markets/search
+  focus search
+  type "ET"
+  expect query == "ET"

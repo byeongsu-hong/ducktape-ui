@@ -49,6 +49,10 @@ const FLASH_STEPS: i64 = 2;
 /// Book levels shown per side, and the pixel width of a full depth bar.
 const BOOK_DEPTH: usize = 10;
 const BOOK_BAR_WIDTH: f64 = 196.0;
+/// What the lower panel can be dragged between: enough for a position row,
+/// and never so tall that the chart is gone.
+const LOWER_MIN: f64 = 120.0;
+const LOWER_MAX: f64 = 560.0;
 /// Pixel width of the risk rail drawn under a position's liquidation price.
 const RISK_RAIL_WIDTH: f64 = 80.0;
 
@@ -1498,6 +1502,19 @@ pub fn valid_address(address: String) -> bool {
         && address[2..].bytes().all(|digit| digit.is_ascii_hexdigit())
 }
 
+/// The lower panel's height, held between what still shows a row and what
+/// still leaves a chart. Clamping rather than refusing matters on a drag: a
+/// gesture that overshoots the limit should stop at it, not stop the panel
+/// moving at all, which is what rejecting the whole delta does.
+pub fn pane_height(wanted: f64) -> f64 {
+    // Only a NaN needs a default; an infinity clamps to the right end on its
+    // own, and `clamp` would hand a NaN straight back.
+    if wanted.is_nan() {
+        return LOWER_MIN;
+    }
+    wanted.clamp(LOWER_MIN, LOWER_MAX)
+}
+
 /// Left gap the header keeps clear so its content never sits under the macOS
 /// traffic lights, which float over the fullsize content view. The rightmost
 /// button ends near 74pt; everywhere else the header owns its full width.
@@ -2241,6 +2258,21 @@ mod tests {
             "an empty book is not a price of zero"
         );
         assert_eq!(ticket_seed(None, None), "", "nothing to seed it with");
+    }
+
+    #[test]
+    fn the_lower_panel_stops_at_its_limits_instead_of_at_the_gesture() {
+        assert_eq!(pane_height(232.0), 232.0, "an ordinary drag is itself");
+        assert_eq!(pane_height(LOWER_MIN), LOWER_MIN);
+        assert_eq!(pane_height(LOWER_MAX), LOWER_MAX);
+        // The reason this clamps rather than refusing: a drag that overshoots
+        // has to stop at the limit. Rejecting the whole delta stops the panel
+        // moving at all, so a fast gesture reads as a stuck divider.
+        assert_eq!(pane_height(20.0), LOWER_MIN, "past the floor, pinned to it");
+        assert_eq!(pane_height(9_000.0), LOWER_MAX, "and past the ceiling");
+        assert_eq!(pane_height(-400.0), LOWER_MIN, "a drag through zero");
+        assert_eq!(pane_height(f64::NAN), LOWER_MIN, "never a NaN-tall panel");
+        assert_eq!(pane_height(f64::INFINITY), LOWER_MAX);
     }
 
     #[test]

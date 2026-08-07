@@ -75,7 +75,11 @@ side's colour, which fades over two beats and leaves the row cold. It is the
 only motion on screen that is not a number changing, so it is the only thing
 that can mean *something happened while you were looking elsewhere*. The
 divider under the chart drags: positions and fills are worth more rows on some
-days than others.
+days than others, and it stops at its limits rather than at the gesture: a
+drag that overshoots pins to the bound instead of refusing to move.
+
+A position row is a way back to its market. An account holding a hundred of
+them has no other route to any but the one already charted.
 
 Funding is the one figure here written to four decimals. Two is what every
 other number wants, and it is exactly what funding cannot use: the hourly rate
@@ -110,6 +114,9 @@ Leverage is reported as it was priced rather than as it was typed. The field
 takes anything; the market does not, so a 400 typed into a 5x market is held at
 5 and the ticket says 5. A liquidation quoted at a leverage the panel is not
 showing is the one number here that must never be wrong.
+
+Escape closes it, and the subscription that listens for Escape exists only
+while it is open.
 
 Nothing is signed and nothing is sent, and the panel says so in the place a
 submit button would be. Sending would mean this app holding the key that signs
@@ -237,6 +244,7 @@ the first and guards on the second, so hovering and paging share a route
 without the chart knowing what an exchange is.
 
 ## Tests
+
 
 `cargo test -p trading-example` parses recorded payloads for every response
 shape, checks the tape merge, the market-switch guard, the book's depth and
