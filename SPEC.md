@@ -2980,6 +2980,15 @@ while offscreen. Mount it inside a `scroll`. The estimate only needs the right
 order of magnitude. `wrap` and `align=` are rejected on such a column (`E197`),
 because both need every child measured.
 
+Measuring a row that sits above the viewport moves everything below it, which
+under a `scroll` anchored to the start shifts what the reader is looking at.
+Put a virtualized column in a scroll with `anchor-y=end` whenever it is read
+by scrolling back through unmeasured content — a message history, say. An
+end-anchored scroll stores its offset as a distance from the bottom, so
+content growing above the viewport carries the offset with it and the visible
+rows stay put. Scrolling forward is unaffected either way, because rows enter
+from the end and correct only what is already below.
+
 An `overlay` keeps the two trees explicit instead of relying on child order.
 When its bool condition is true, `layer` floats over `content`; the backdrop
 blocks button and scroll input and an optional `dismiss=` route handles a left

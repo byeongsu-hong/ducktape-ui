@@ -16,6 +16,14 @@
 //! Mount it inside a vertical `scrollable`. The window comes from the viewport
 //! the previous pass observed, and a viewport change re-opens layout — the
 //! same trick the rich-text editor uses to bound its highlighting.
+//!
+//! Measuring a child above the viewport moves everything below it. Anchor the
+//! scrollable to the end ([`iced::widget::scrollable::Anchor::End`]) whenever
+//! the content is read by scrolling backwards through children that have never
+//! been measured: an end-anchored scrollable stores its offset as a distance
+//! from the bottom, so content growing above carries the offset with it and the
+//! visible rows hold still. Scrolling forwards needs nothing, because children
+//! enter from the end and correct only what is already past.
 
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
