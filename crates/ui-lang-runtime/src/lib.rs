@@ -28,6 +28,7 @@ pub mod testing;
 #[cfg(feature = "virtual-list")]
 mod tree_view;
 #[cfg(feature = "virtual-list")]
+mod virtual_children;
 mod virtual_list;
 #[cfg(feature = "virtual-list")]
 mod virtualization;
@@ -53,6 +54,7 @@ pub use stack_relief::*;
 #[cfg(feature = "virtual-list")]
 pub use tree_view::*;
 #[cfg(feature = "virtual-list")]
+pub use virtual_children::*;
 pub use virtual_list::*;
 pub use zstack::*;
 
