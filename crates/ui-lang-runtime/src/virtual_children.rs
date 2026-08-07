@@ -24,8 +24,35 @@
 //! from the bottom, so content growing above carries the offset with it and the
 //! visible rows hold still. Scrolling forwards needs nothing, because children
 //! enter from the end and correct only what is already past.
+//!
+//! # Keyboard focus is kept; accessibility is not
+//!
+//! **Focus survives scrolling.** Whichever child holds keyboard focus is
+//! measured wherever it sits, in addition to the window, so it keeps receiving
+//! key presses and stays visible to focus operations. That is not a nicety: an
+//! [`iced::advanced::widget::operation::focusable::focus_next`] counts
+//! focusables before it moves focus, and a pass that cannot see the focused
+//! child concludes nothing is focused and focuses a *second* widget, leaving
+//! two focus rings and two widgets answering Enter. Focus is re-read whenever
+//! the viewport moves and at the end of every [`Operation`] — the two moments
+//! it can change — while the outgoing child still has a layout to be asked
+//! through.
+//!
+//! **Offscreen children are absent from the accessibility tree.** Publishing a
+//! child's semantics means running an [`Operation`] over it; an operation needs
+//! a real layout subtree (a container's `operate` unwraps its child node, so a
+//! placeholder panics); and building one means laying the child out, which is
+//! the shaping this widget exists to skip. So a screen reader sees only the
+//! mounted slice, and this column publishes no `size_of_set`/`position_in_set`
+//! to compensate, because it does not own its children's semantics. `.ice`
+//! tests read that same snapshot, so `click` and `expect a11y` cannot target an
+//! offscreen child either. When a collection has to read correctly to assistive
+//! tech, use [`crate::virtual_list`], which owns its rows and publishes set
+//! metadata and an active descendant for them. A `virtual-row` column is for
+//! long, read-mostly content.
 
-use iced::advanced::widget::{Operation, Tree, tree};
+use iced::advanced::widget::operation::Focusable;
+use iced::advanced::widget::{Id, Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
 
@@ -81,14 +108,29 @@ where
     }
 }
 
+/// The children the last `layout` measured for real: the viewport window, plus
+/// the one holding keyboard focus wherever it happens to sit. Everything else
+/// got a placeholder node, so only these can be drawn, updated, or operated on.
+#[derive(Clone, Default)]
+struct Live {
+    mounted: std::ops::Range<usize>,
+    focused: Option<usize>,
+}
+
+impl Live {
+    fn contains(&self, index: usize) -> bool {
+        self.mounted.contains(&index) || self.focused == Some(index)
+    }
+}
+
 #[derive(Default)]
 struct State {
     /// Real heights for children that have been laid out, `None` until then.
     measured: Vec<Option<f32>>,
     /// The visible region the last pass worked against.
     viewport: Rectangle,
-    /// The slice laid out for real, so draw and events agree with layout.
-    mounted: std::ops::Range<usize>,
+    /// What layout actually measured, so draw and events agree with it.
+    live: Live,
 }
 
 impl State {
@@ -110,6 +152,62 @@ impl State {
             running += self.height_of(index, estimate) + spacing;
         }
         tops
+    }
+}
+
+/// Reports whether anything in the subtree it is run over holds focus.
+#[derive(Default)]
+struct FindFocus {
+    found: bool,
+}
+
+impl Operation for FindFocus {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        operate(self);
+    }
+
+    fn focusable(&mut self, _id: Option<&Id>, _bounds: Rectangle, state: &mut dyn Focusable) {
+        self.found |= state.is_focused();
+    }
+}
+
+impl<Message, Theme, Renderer> VirtualChildren<'_, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::Renderer,
+{
+    /// Re-reads which child holds focus so the next `layout` can keep measuring
+    /// it after it leaves the window.
+    ///
+    /// Only children that were measured can be asked, which is enough: a child
+    /// can only *take* focus while it is measured, so every acquisition is
+    /// observed by the next call — and once observed, the child is measured
+    /// from then on and keeps reporting.
+    fn track_focus(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &Renderer) {
+        let live = tree.state.downcast_ref::<State>().live.clone();
+
+        let mut focused = None;
+        for ((index, child), child_layout) in
+            self.children.iter_mut().enumerate().zip(layout.children())
+        {
+            if !live.contains(index) {
+                continue;
+            }
+            let mut probe = FindFocus::default();
+            child.as_widget_mut().operate(
+                &mut tree.children[index],
+                child_layout,
+                renderer,
+                &mut probe,
+            );
+            if probe.found {
+                focused = Some(index);
+            }
+        }
+
+        // Whatever this found is either inside the window or the child already
+        // being kept for focus, so widening the measured set is never implied —
+        // draw and events cannot start reaching a placeholder.
+        tree.state.downcast_mut::<State>().live.focused = focused;
     }
 }
 
@@ -137,6 +235,13 @@ where
         tree.diff_children(&self.children);
         let state = tree.state.downcast_mut::<State>();
         state.measured.resize(self.children.len(), None);
+        if state
+            .live
+            .focused
+            .is_some_and(|index| index >= self.children.len())
+        {
+            state.live.focused = None;
+        }
     }
 
     fn size(&self) -> Size<Length> {
@@ -165,13 +270,19 @@ where
             .partition_point(|top| *top <= visible_top)
             .saturating_sub(1);
         let last = tops.partition_point(|top| *top < visible_top + visible_height);
-        let mounted = first.saturating_sub(OVERSCAN_ROWS)..(last + OVERSCAN_ROWS).min(count);
+        let live = Live {
+            mounted: first.saturating_sub(OVERSCAN_ROWS)..(last + OVERSCAN_ROWS).min(count),
+            // Measure the focused child wherever it is, so it keeps its key
+            // events and stays visible to focus operations. It draws outside
+            // the viewport and the enclosing scrollable clips it away.
+            focused: state.live.focused,
+        };
 
         let width = limits.max().width;
         let mut nodes = Vec::with_capacity(count);
         let mut running = 0.0;
         for index in 0..count {
-            let node = if mounted.contains(&index) {
+            let node = if live.contains(index) {
                 let child_limits =
                     layout::Limits::new(Size::new(0.0, 0.0), Size::new(width, f32::INFINITY));
                 let node = self.children[index].as_widget_mut().layout(
@@ -196,7 +307,7 @@ where
         // `running` carries a trailing gap for every child, including the last.
         let content_height = (running - self.spacing).max(0.0);
 
-        state.mounted = mounted;
+        state.live = live;
         layout::Node::with_children(Size::new(width, content_height), nodes)
     }
 
@@ -211,20 +322,23 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let state = tree.state.downcast_mut::<State>();
         // Scrolling moves the viewport without changing anything this widget
         // owns, so nothing else would re-open layout — and until it does, the
         // rows scrolled into view have never been measured.
-        if state.viewport != *viewport {
-            state.viewport = *viewport;
+        if tree.state.downcast_ref::<State>().viewport != *viewport {
+            // A click focuses a child from inside its own `update`, where no
+            // operation can see it. This is the last pass where the outgoing
+            // window still has layouts to ask through, so ask now.
+            self.track_focus(tree, layout, renderer);
+            tree.state.downcast_mut::<State>().viewport = *viewport;
             shell.invalidate_layout();
         }
 
-        let mounted = state.mounted.clone();
+        let live = tree.state.downcast_ref::<State>().live.clone();
         for ((index, child), child_layout) in
             self.children.iter_mut().enumerate().zip(layout.children())
         {
-            if !mounted.contains(&index) {
+            if !live.contains(index) {
                 continue;
             }
             child.as_widget_mut().update(
@@ -250,11 +364,11 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        let mounted = tree.state.downcast_ref::<State>().mounted.clone();
+        let live = tree.state.downcast_ref::<State>().live.clone();
         for ((index, child), child_layout) in
             self.children.iter().enumerate().zip(layout.children())
         {
-            if !mounted.contains(&index) {
+            if !live.contains(index) {
                 continue;
             }
             child.as_widget().draw(
@@ -277,12 +391,12 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        let mounted = tree.state.downcast_ref::<State>().mounted.clone();
+        let live = tree.state.downcast_ref::<State>().live.clone();
         self.children
             .iter()
             .enumerate()
             .zip(layout.children())
-            .filter(|((index, _), _)| mounted.contains(index))
+            .filter(|((index, _), _)| live.contains(*index))
             .map(|((index, child), child_layout)| {
                 child.as_widget().mouse_interaction(
                     &tree.children[index],
@@ -303,13 +417,13 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        let mounted = tree.state.downcast_ref::<State>().mounted.clone();
+        let live = tree.state.downcast_ref::<State>().live.clone();
         operation.container(None, layout.bounds());
         operation.traverse(&mut |operation| {
             for ((index, child), child_layout) in
                 self.children.iter_mut().enumerate().zip(layout.children())
             {
-                if !mounted.contains(&index) {
+                if !live.contains(index) {
                     continue;
                 }
                 child.as_widget_mut().operate(
@@ -320,6 +434,8 @@ where
                 );
             }
         });
+        // The operation may well have been the one that moved focus.
+        self.track_focus(tree, layout, renderer);
     }
 
     fn overlay<'b>(
@@ -330,8 +446,8 @@ where
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        let mounted = tree.state.downcast_ref::<State>().mounted.clone();
-        // Only mounted children have a layout they actually produced, so only
+        let live = tree.state.downcast_ref::<State>().live.clone();
+        // Only measured children have a layout they actually produced, so only
         // they can be asked for an overlay.
         let overlays: Vec<_> = self
             .children
@@ -339,7 +455,7 @@ where
             .zip(&mut tree.children)
             .zip(layout.children())
             .enumerate()
-            .filter(|(index, _)| mounted.contains(index))
+            .filter(|(index, _)| live.contains(*index))
             .filter_map(|(_, ((child, state), child_layout))| {
                 child
                     .as_widget_mut()
@@ -379,6 +495,80 @@ mod tests {
         ) -> layout::Node {
             self.layouts.set(self.layouts.get() + 1);
             layout::Node::new(Size::new(limits.max().width, self.height))
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut iced_test::renderer::Renderer,
+            _theme: &iced::Theme,
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
+
+    /// A fixed-height child that can hold keyboard focus, like the hover
+    /// buttons Ice puts on a chat row.
+    struct FocusableRow {
+        height: f32,
+    }
+
+    #[derive(Default)]
+    struct FocusState {
+        focused: bool,
+    }
+
+    impl Focusable for FocusState {
+        fn is_focused(&self) -> bool {
+            self.focused
+        }
+
+        fn focus(&mut self) {
+            self.focused = true;
+        }
+
+        fn unfocus(&mut self) {
+            self.focused = false;
+        }
+    }
+
+    impl Widget<(), iced::Theme, iced_test::renderer::Renderer> for FocusableRow {
+        fn tag(&self) -> tree::Tag {
+            tree::Tag::of::<FocusState>()
+        }
+
+        fn state(&self) -> tree::State {
+            tree::State::new(FocusState::default())
+        }
+
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fixed(self.height))
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &iced_test::renderer::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(Size::new(limits.max().width, self.height))
+        }
+
+        fn operate(
+            &mut self,
+            tree: &mut Tree,
+            layout: Layout<'_>,
+            _renderer: &iced_test::renderer::Renderer,
+            operation: &mut dyn Operation,
+        ) {
+            operation.focusable(
+                None,
+                layout.bounds(),
+                tree.state.downcast_mut::<FocusState>(),
+            );
         }
 
         fn draw(
@@ -450,6 +640,78 @@ mod tests {
             node.size().height,
             COUNT as f32 * ROW + (COUNT - 1) as f32 * GAP,
             "the total counts nine gaps for ten children, not ten"
+        );
+    }
+
+    /// Focus is state, and leaving it in a child nothing can reach is worse
+    /// than not drawing that child: `focus_next` counts focusables before it
+    /// moves focus, so a pass that misses the focused one concludes nothing is
+    /// focused and focuses a second widget. Whichever child holds focus stays
+    /// measured wherever it drifts to.
+    #[test]
+    fn the_focused_child_stays_reachable_after_scrolling_out_of_the_window() {
+        const COUNT: usize = 100;
+        const ROW: f32 = 20.0;
+        let children: Vec<Element<'_, (), iced::Theme, iced_test::renderer::Renderer>> = (0..COUNT)
+            .map(|_| Element::new(FocusableRow { height: ROW }))
+            .collect();
+
+        let renderer = headless_renderer();
+        let mut widget = virtual_children(children, ROW);
+        let mut tree =
+            Tree::new(&widget as &dyn Widget<(), iced::Theme, iced_test::renderer::Renderer>);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(240.0, 100.0));
+        let node = widget.layout(&mut tree, &renderer, &limits);
+
+        // A click focuses a child from inside its own `update`, so put the flag
+        // there the same way, without any operation having seen it.
+        tree.children[0].state.downcast_mut::<FocusState>().focused = true;
+
+        // Scroll far past it, then relayout the way the invalidation would.
+        let scrolled = Rectangle::new(iced::Point::new(0.0, 600.0), Size::new(240.0, 100.0));
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        widget.update(
+            &mut tree,
+            &Event::Mouse(mouse::Event::CursorLeft),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut shell,
+            &scrolled,
+        );
+        assert!(
+            shell.is_layout_invalid(),
+            "a moved viewport re-opens layout"
+        );
+        drop(shell);
+        let node = widget.layout(&mut tree, &renderer, &limits);
+
+        let live = tree.state.downcast_ref::<State>().live.clone();
+        assert!(
+            !live.mounted.contains(&0),
+            "the window has moved off child 0, so this proves nothing otherwise"
+        );
+        assert_eq!(
+            live.focused,
+            Some(0),
+            "the focused child is measured wherever it sits"
+        );
+
+        // The real payoff: a focus operation still reaches it. Today's failure
+        // is that it does not, so the child keeps `focused` while a focus
+        // operation lights up a second widget somewhere else.
+        let mut unfocus = iced::advanced::widget::operation::focusable::unfocus::<()>();
+        widget.operate(&mut tree, Layout::new(&node), &renderer, &mut unfocus);
+        assert!(
+            !tree.children[0].state.downcast_ref::<FocusState>().focused,
+            "an offscreen focused child must still answer focus operations"
+        );
+        assert_eq!(
+            tree.state.downcast_ref::<State>().live.focused,
+            None,
+            "and once it loses focus it stops being measured"
         );
     }
 
