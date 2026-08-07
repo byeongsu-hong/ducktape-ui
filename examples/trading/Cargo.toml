@@ -1,0 +1,21 @@
+[package]
+name = "trading-example"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+ducktape-ui = { workspace = true, features = ["candle-chart"] }
+iced = { version = "=0.14.0", features = ["smol"] }
+serde_json = "1"
+smol = "2"
+ui-lang.workspace = true
+ui-lang-runtime.workspace = true
+ureq = { version = "3", features = ["json"] }
+
+[build-dependencies]
+ui-lang-build.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
