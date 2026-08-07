@@ -5,6 +5,10 @@
 //! dominates a real frame before optimizing it.
 #![cfg(not(debug_assertions))]
 
+mod common;
+
+use common::{percentile, percentile_usize};
+
 use iced::advanced::renderer;
 use iced::advanced::{clipboard, mouse};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
@@ -149,23 +153,6 @@ impl Phase {
             self.label
         );
     }
-}
-
-fn percentile(samples: &[u128], rank: usize) -> u128 {
-    let mut sorted = samples.to_vec();
-    sorted.sort_unstable();
-    let index = (sorted.len() * rank).div_ceil(100).saturating_sub(1);
-    sorted[index]
-}
-
-fn percentile_usize(samples: &[usize], rank: usize) -> usize {
-    percentile(
-        &samples
-            .iter()
-            .map(|value| *value as u128)
-            .collect::<Vec<_>>(),
-        rank,
-    ) as usize
 }
 
 fn renderer() -> iced_test::renderer::Renderer {

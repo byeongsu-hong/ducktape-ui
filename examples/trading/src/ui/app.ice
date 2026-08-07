@@ -9,6 +9,10 @@ app Trading
     size 1440 900
     min-size 1400 820
     position centered
+    platform macos
+      title-hidden true
+      titlebar-transparent true
+      fullsize-content-view true
 
 use "theme.ice"
 use "extern/hyperliquid.ice"
@@ -582,6 +586,7 @@ view
                 w=fill
                 h=fill
                 px=16.0
+                pl=(16.0 + header_inset())
                 gap=18.0
                 align=center
               row gap=10.0 align=center

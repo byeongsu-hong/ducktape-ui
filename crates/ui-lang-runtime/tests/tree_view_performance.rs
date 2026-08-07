@@ -1,5 +1,9 @@
 #![cfg(not(debug_assertions))]
 
+mod common;
+
+use common::{assert_wall_clock_budgets, percentile_usize};
+
 use iced::advanced::renderer;
 use iced::{Element, Font, Pixels, Size, Theme, mouse};
 use iced_test::runtime::UserInterface;
@@ -74,46 +78,6 @@ fn renderer() -> iced_test::renderer::Renderer {
         ),
     )
     .expect("headless renderer")
-}
-
-fn percentile(samples: &[u128], rank: usize) -> u128 {
-    let mut sorted = samples.to_vec();
-    sorted.sort_unstable();
-    let index = (sorted.len() * rank).div_ceil(100).saturating_sub(1);
-    sorted[index]
-}
-
-fn percentile_usize(samples: &[usize], rank: usize) -> usize {
-    percentile(
-        &samples
-            .iter()
-            .map(|value| *value as u128)
-            .collect::<Vec<_>>(),
-        rank,
-    ) as usize
-}
-
-/// Re-measures once before failing a wall-clock budget.
-///
-/// Shared CI runners drift under noisy neighbors, so a single breach is
-/// re-sampled and only a reproducible breach fails. Allocation budgets are
-/// deterministic and are asserted strictly on the first measurement.
-fn assert_wall_clock_budgets(
-    label: &str,
-    first: Vec<u128>,
-    p50_budget: u128,
-    p95_budget: u128,
-    remeasure: impl FnOnce() -> Vec<u128>,
-) {
-    let elapsed = if percentile(&first, 50) <= p50_budget && percentile(&first, 95) <= p95_budget {
-        first
-    } else {
-        remeasure()
-    };
-    let p50 = percentile(&elapsed, 50);
-    let p95 = percentile(&elapsed, 95);
-    assert!(p50 <= p50_budget, "{label} p50 {p50}us");
-    assert!(p95 <= p95_budget, "{label} p95 {p95}us");
 }
 
 #[test]

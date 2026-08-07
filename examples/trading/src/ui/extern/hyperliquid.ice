@@ -26,6 +26,7 @@ extern crate::hyperliquid
   sync push_fills(history:[Fill], incoming:[Fill], limit:i64) -> [Fill]
   sync cool_fills(rows:[Fill]) -> [Fill]
   sync any_hot(rows:[Fill]) -> bool
+  sync header_inset() -> f64
   sync fmt_px(value:f64) -> str
   sync fmt_usd(value:f64) -> str
   sync fmt_signed_usd(value:f64) -> str
