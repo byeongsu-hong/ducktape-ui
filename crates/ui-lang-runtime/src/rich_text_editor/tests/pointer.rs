@@ -459,9 +459,10 @@ fn only_a_rendered_link_hit_can_reach_an_outer_release_handler() {
     }
 }
 
-/// The dismissal contract of the anchored menu: a press outside the widget, a
-/// window blur, or (for a mouse-opened line menu) the pointer straying past
-/// the grace ring must all publish `Dismiss` — never leave the menu stranded.
+/// The dismissal contract of the anchored menu: a press outside the widget or
+/// a window blur publishes `Dismiss` — and MOVING THE POINTER NEVER DOES.
+/// A menu a click opened outlives the pointer, exactly like the anchor it
+/// hangs off (see `gutter_line`).
 mod menu_isolation {
     use super::*;
     use iced::advanced::clipboard;
@@ -544,7 +545,10 @@ mod menu_isolation {
     }
 
     #[test]
-    fn a_pointer_straying_from_a_line_menu_dismisses_it() {
+    fn a_pointer_straying_from_a_line_menu_leaves_it_open() {
+        // The whole reason the menu is up is that the reader clicked for it.
+        // Reading the panel means moving off the handle, and moving off the
+        // handle used to take the panel away with it.
         let strayed = drive(
             MenuAnchor::Line(1),
             Event::Mouse(mouse::Event::CursorMoved {
@@ -552,7 +556,10 @@ mod menu_isolation {
             }),
             mouse::Cursor::Available(Point::new(390.0, 295.0)),
         );
-        assert_eq!(strayed, [Msg::Menu(MenuEvent::Dismiss)]);
+        assert!(
+            !strayed.contains(&Msg::Menu(MenuEvent::Dismiss)),
+            "{strayed:?}"
+        );
     }
 
     #[test]
@@ -582,5 +589,101 @@ mod menu_isolation {
             mouse::Cursor::Available(Point::new(390.0, 295.0)),
         );
         assert_eq!(messages, []);
+    }
+}
+
+/// An open line-anchored menu OWNS the gutter: the "⋮⋮" that opened it stays
+/// beside its own block instead of sliding to whatever line the pointer
+/// drifted onto, which left the panel hanging off nothing.
+mod gutter_anchoring {
+    use super::*;
+    use iced::advanced::clipboard;
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum Msg {
+        Act(Action),
+        Menu(MenuEvent),
+        Gutter(usize, GutterButton),
+    }
+
+    /// Presses the gutter handle beside LINE 0 while the pointer hovers line
+    /// 2, and reports what the editor published.
+    fn press_line_zero_handle(menu: Option<EditorMenu>) -> Vec<Msg> {
+        let content = Content::with_text("alpha\nbeta\ngamma");
+        // The padding must clear GUTTER_WIDTH or the buttons fall outside.
+        let padding = 60.0;
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(300.0))
+            .padding(padding)
+            .on_action(Msg::Act)
+            .on_gutter(|line, button| Some(Msg::Gutter(line, button)))
+            .menu(menu)
+            .on_menu(Msg::Menu);
+        let renderer = headless_renderer();
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(400.0, 300.0));
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        let bounds = Layout::new(&node).bounds();
+        let text_bounds = bounds.shrink(padding);
+
+        // The pointer is parked on a DIFFERENT block than the menu's.
+        {
+            let state = tree
+                .state
+                .downcast_mut::<State<text::highlighter::PlainText>>();
+            state.hover_line = Some(2);
+        }
+        let state = tree
+            .state
+            .downcast_ref::<State<text::highlighter::PlainText>>();
+        let row = editor.gutter_row(state, text_bounds, 0);
+        let [_, (_, handle)] = gutter_buttons(text_bounds, row);
+        let press = handle.center();
+
+        let mut clipboard = clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        editor.update(
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&node),
+            mouse::Cursor::Available(press),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &Rectangle::with_size(Size::new(400.0, 300.0)),
+        );
+        messages
+    }
+
+    #[test]
+    fn an_open_line_menu_keeps_the_gutter_on_its_own_line() {
+        let menu = EditorMenu {
+            anchor: MenuAnchor::Line(0),
+            items: vec![MenuItem {
+                tag: "delete".into(),
+                label: "Delete".into(),
+            }],
+            selected: 0,
+        };
+        let messages = press_line_zero_handle(Some(menu));
+        assert!(
+            messages.contains(&Msg::Gutter(0, GutterButton::Handle)),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn with_no_menu_up_the_gutter_follows_the_pointer_instead() {
+        // The contrast that proves the test above measures the anchoring and
+        // not the geometry: hovering line 2 puts no button beside line 0.
+        let messages = press_line_zero_handle(None);
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Msg::Gutter(..))),
+            "{messages:?}"
+        );
     }
 }

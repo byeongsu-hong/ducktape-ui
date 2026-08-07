@@ -64,11 +64,6 @@ pub(super) const MENU_PADDING: f32 = 5.0;
 const MENU_GAP: f32 = 4.0;
 const MENU_LABEL_SIZE: f32 = 13.5;
 
-/// How far the pointer may wander from a mouse-opened (line-anchored) menu's
-/// panel before the menu follows it away — i.e. dismisses instead of being
-/// left stranded over the document.
-pub(super) const MENU_POINTER_GRACE: f32 = 48.0;
-
 const BUTTON_SIZE: f32 = 18.0;
 const BUTTON_GAP: f32 = 2.0;
 const GUTTER_INSET: f32 = 6.0;

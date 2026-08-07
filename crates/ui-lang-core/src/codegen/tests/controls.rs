@@ -243,8 +243,12 @@ view
 #[test]
 fn lowers_hover_to_the_draw_time_reveal() {
     // `hover` is stateless hover: base + reveal children, tint painted only
-    // under the cursor — no routes, no rebuilds on row crossings.
+    // under the cursor — no routes, no rebuilds on row crossings. `open=` is
+    // the one thing the application owns: it holds the reveal up while the
+    // popover its buttons opened is still there.
     let source = r#"app Hovered
+state
+  picking = false
 theme contract AppTheme
   bg
   fg
@@ -256,7 +260,7 @@ palette app for AppTheme
   primary #333333
   danger #ff0000
 view
-  hover tint=primary/20 r=9.0
+  hover tint=primary/20 r=9.0 open=picking
     text "the row"
     text "the toolbar"
 "#;
@@ -264,6 +268,7 @@ view
     assert!(generated.contains("::ui_lang_runtime::hover_reveal(__base, __reveal)"));
     assert!(generated.contains(".tint("));
     assert!(generated.contains(".radius(9"));
+    assert!(generated.contains(".open("));
 
     // Exactly two children — one is a parse error.
     let error = compile(

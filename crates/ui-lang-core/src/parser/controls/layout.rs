@@ -126,6 +126,13 @@ pub(in crate::parser) fn parse_layout_options(
                 return Err(error("E062", line, "hover r= takes a number literal"));
             };
             options.hover_radius = Some(radius);
+        } else if kind == "hover"
+            && let Some(value) = part.strip_prefix("open=")
+        {
+            if options.hover_open.is_some() {
+                return Err(error("E062", line, "duplicate hover open"));
+            }
+            options.hover_open = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("cols=") {
             if kind != "grid" || options.columns.is_some() {
                 return Err(error(

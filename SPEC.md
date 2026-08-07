@@ -1200,7 +1200,7 @@ tooltip_property
                  | "shadow-x=" | "shadow-y=" | "shadow-blur=") expr
                | "px-snap=" expr
 hover_area     = "hover" id? ("tint=" name ("/" u8)?)? ("r=" number)?
-                 INDENT node node
+                 ("open=" expr)? INDENT node node
 mouse_area     = "mouse" id? mouse_property+ INDENT node
 mouse_property = ("press=" | "press-at=" | "release=" | "double="
                | "right_press=" | "right_release=" | "middle_press="
@@ -1534,6 +1534,12 @@ is involved: hovering dispatches no messages and rebuilds nothing, so a
 cached `lazy` row keeps a hover toolbar at native latency. Prefer it over
 `mouse enter=`/`exit=` routes whenever the hover only changes what is DRAWN;
 the routes remain for hover state the application itself must know.
+
+`open=` (a `bool`) holds the reveal up whatever the cursor is doing. Pass it
+whenever a control INSIDE the reveal opens something that outlives the hover
+— a menu, a picker, a confirm — using that thing's own openness. Without it
+the trigger disappears the moment the pointer moves and the popover is left
+floating over nothing, pointing at a button that is no longer there.
 
 The mouse `move=` route is the exception and receives `(x:f64, y:f64)` in
 local widget coordinates. `press-at=` receives the same `(x:f64, y:f64)` local
