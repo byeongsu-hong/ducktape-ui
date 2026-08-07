@@ -266,16 +266,24 @@ where
             cursor,
             viewport,
         );
+        // THE REVEAL GETS ITS OWN LAYER, exactly like `iced::widget::hover`.
+        // Within one renderer layer both backends batch by primitive KIND and
+        // not by call order, so an opaque reveal plate drawn after the base
+        // still loses to the base's GLYPHS: a chat row's hover toolbar came up
+        // with the message text painted straight through its card. Pushing a
+        // layer is what makes "drawn later" mean "drawn above".
         if hovered {
-            self.reveal.as_widget().draw(
-                &tree.children[1],
-                renderer,
-                theme,
-                style,
-                reveal_layout,
-                cursor,
-                viewport,
-            );
+            renderer.with_layer(bounds, |renderer| {
+                self.reveal.as_widget().draw(
+                    &tree.children[1],
+                    renderer,
+                    theme,
+                    style,
+                    reveal_layout,
+                    cursor,
+                    viewport,
+                );
+            });
         }
     }
 
