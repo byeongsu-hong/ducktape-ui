@@ -28,6 +28,33 @@ fn overlapping_formats_keep_block_metrics_under_token_colors() {
 }
 
 #[test]
+fn line_padding_insets_a_line_that_wears_no_highlight() {
+    // A nesting indent is padding with nothing painted behind it. Reading the
+    // padding off the highlighted run made that impossible to express.
+    let source = Content::with_text("nested item");
+    let mut document = DocumentLayout::default();
+    document.update(
+        TestDoc::new(&content_lines(&source)).lines(),
+        &mut WholeLine::default(),
+        &|_| Format {
+            line_padding: Padding {
+                left: 22.0,
+                ..Padding::ZERO
+            },
+            ..Format::default()
+        },
+        test_layout_style(100.0),
+        DocumentUpdate::text(DocumentChange::Discover),
+        usize::MAX,
+    );
+
+    let line = &document.lines[0];
+    assert_eq!(line.signature.line_padding.left, 22.0);
+    assert!(line.signature.line_highlight.is_none());
+    assert!((line.paragraph.bounds().width - 78.0).abs() < 0.01);
+}
+
+#[test]
 fn line_padding_changes_wrapping_caret_and_hit_geometry() {
     let source = Content::with_text("code that wraps");
     let padding = Padding {
