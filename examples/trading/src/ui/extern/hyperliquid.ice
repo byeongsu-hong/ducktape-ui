@@ -20,6 +20,7 @@ extern crate::hyperliquid
   sync filter_symbols(rows:[SymbolRow], query:str) -> [SymbolRow]
   sync symbol_row(rows:[SymbolRow], coin:str) -> SymbolRow?
   sync recent_fills(rows:[Fill], limit:i64) -> [Fill]
+  sync header_inset() -> f64
   sync fmt_px(value:f64) -> str
   sync fmt_usd(value:f64) -> str
   sync fmt_signed_usd(value:f64) -> str

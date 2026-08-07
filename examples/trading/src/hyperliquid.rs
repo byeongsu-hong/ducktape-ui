@@ -668,6 +668,13 @@ pub fn recent_fills(rows: Vec<Fill>, limit: i64) -> Vec<Fill> {
     rows
 }
 
+/// Left gap the header keeps clear so its content never sits under the macOS
+/// traffic lights, which float over the fullsize content view. The rightmost
+/// button ends near 74pt; everywhere else the header owns its full width.
+pub fn header_inset() -> f64 {
+    if cfg!(target_os = "macos") { 78.0 } else { 0.0 }
+}
+
 /// This account's fills on one market, as chart glyphs: a buy points up out
 /// of its price, a sell points down into it.
 fn fill_markers(fills: &[Fill], coin: &str) -> Vec<ChartMarker> {
