@@ -1,5 +1,35 @@
 use super::*;
 
+/// Does this layer list contain a `pin` as a DIRECT layer? Conditionals are
+/// transparent — a pin behind an `if` is still a layer of the stack — but a pin
+/// inside a nested layout belongs to that layout.
+pub(in crate::codegen) fn has_floating_layer(
+    children: &[ViewId],
+    document: &LoweredProgram,
+) -> Result<bool, Error> {
+    for child in children {
+        let view = document.resolved_view(*child)?;
+        let nested = match &view.kind {
+            ResolvedViewKind::Pin { .. } => return Ok(true),
+            ResolvedViewKind::If { children } | ResolvedViewKind::For { children } => children,
+            ResolvedViewKind::Match { arms } => {
+                for arm in arms {
+                    if has_floating_layer(arm, document)? {
+                        return Ok(true);
+                    }
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        if has_floating_layer(nested, document)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_children(
     out: &mut String,
     children: &[ViewId],
@@ -8,6 +38,10 @@ pub(in crate::codegen) fn render_children(
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
+    // The stack layer-index sink, when this list is the layer list of a plain
+    // `stack`. A `pin` layer is positioned, so it must not vote on the stack's
+    // size; conditionals are transparent, a nested layout is not.
+    floating: Option<&str>,
 ) -> Result<(), Error> {
     for child in children {
         let view = document.resolved_view(*child)?;
@@ -21,11 +55,11 @@ pub(in crate::codegen) fn render_children(
                     continue;
                 }
                 if condition == "true" {
-                    render_children(out, children, document, message, env, scope, slot)?;
+                    render_children(out, children, document, message, env, scope, slot, floating)?;
                     continue;
                 }
                 write!(out, " if {condition} {{").unwrap();
-                render_children(out, children, document, message, env, scope, slot)?;
+                render_children(out, children, document, message, env, scope, slot, floating)?;
                 out.push_str(" }");
             }
             ResolvedViewKind::For { children } => {
@@ -55,7 +89,9 @@ pub(in crate::codegen) fn render_children(
                     RECONCILIATION_SCOPE_BINDING.into(),
                     reconciliation_scope_binding("__for_scope.clone()".into()),
                 );
-                render_children(out, children, document, message, &child_env, scope, slot)?;
+                render_children(
+                    out, children, document, message, &child_env, scope, slot, floating,
+                )?;
                 out.push_str(" }");
             }
             ResolvedViewKind::Match { arms } => {
@@ -97,6 +133,7 @@ pub(in crate::codegen) fn render_children(
                         &child_env,
                         scope,
                         slot,
+                        floating,
                     )?;
                     out.push_str(" },");
                 }
@@ -107,6 +144,11 @@ pub(in crate::codegen) fn render_children(
                     render_node_if_present(*child, document, message, env, scope, slot)?
                 {
                     write!(out, " __children.push({child});").unwrap();
+                    if let Some(sink) = floating
+                        && matches!(view.kind, ResolvedViewKind::Pin { .. })
+                    {
+                        write!(out, " {sink}.push(__children.len() - 1);").unwrap();
+                    }
                 }
             }
         }

@@ -1,0 +1,2 @@
+__ice_floating.push(__children.len() - 1);
+::ui_lang_runtime::zstack(__children).floating(__ice_floating)

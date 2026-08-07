@@ -18,6 +18,8 @@ pub struct ZStack<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     width: Length,
     height: Length,
     children: Vec<Element<'a, Message, Theme, Renderer>>,
+    /// Layer indices that draw over the stack but never vote on its size.
+    floating: Vec<usize>,
     clip: bool,
 }
 
@@ -29,21 +31,38 @@ where
     Renderer: iced::advanced::Renderer,
 {
     let children: Vec<_> = children.into_iter().collect();
-    // The stack's reported length per axis comes from the layers that DON'T
-    // fill it: a fill layer is an overlay over the content, not a sizing
-    // vote — reporting Fill for it made every parent column treat the stack
-    // as fluid and hand it the leftover space, which in a shrink column is
-    // ZERO (a full-height bar beside a paragraph collapsed the whole stack).
-    // Only when every layer fills an axis does the stack itself fill it, so
-    // a stack of fill layers still stretches like a popover backdrop.
+    let (width, height) = vote(&children, &[]);
+    ZStack {
+        width,
+        height,
+        children,
+        floating: Vec::new(),
+        clip: false,
+    }
+}
+
+/// The stack's reported length per axis, taken from the layers that DON'T fill
+/// it: a fill layer is an overlay over the content, not a sizing vote —
+/// reporting Fill for it made every parent column treat the stack as fluid and
+/// hand it the leftover space, which in a shrink column is ZERO (a full-height
+/// bar beside a paragraph collapsed the whole stack). Only when every layer
+/// fills an axis does the stack itself fill it, so a stack of fill layers still
+/// stretches like a popover backdrop.
+///
+/// A floating layer is positioned, so it never votes — not even to make the
+/// stack fluid.
+fn vote<Message, Theme, Renderer: iced::advanced::Renderer>(
+    children: &[Element<'_, Message, Theme, Renderer>],
+    floating: &[usize],
+) -> (Length, Length) {
     let mut width = Length::Shrink;
     let mut height = Length::Shrink;
     let mut sized_width = false;
     let mut sized_height = false;
     let mut any_layer = false;
-    for child in &children {
+    for (layer, child) in children.iter().enumerate() {
         let hint = child.as_widget().size_hint();
-        if hint.is_void() {
+        if hint.is_void() || floating.contains(&layer) {
             continue;
         }
         any_layer = true;
@@ -62,15 +81,30 @@ where
     if !sized_height && any_layer {
         height = Length::Fill;
     }
-    ZStack {
-        width,
-        height,
-        children,
-        clip: false,
-    }
+    (width, height)
 }
 
 impl<'a, Message, Theme, Renderer> ZStack<'a, Message, Theme, Renderer> {
+    /// Marks layers as floating, by index. A floating layer is laid out and
+    /// drawn exactly like any other layer — against the full limits, so it may
+    /// overflow the stack — but it does not vote on the stack's measured size.
+    /// That is CSS `position: absolute`, and a `pin` layer of a `stack` is one:
+    /// opening a popover pinned under a header row must not grow the header.
+    ///
+    /// Recomputes the stack's own reported length, so call it before
+    /// [`width`](Self::width)/[`height`](Self::height).
+    ///
+    /// ponytail: a stack whose only layers are floating measures 0x0 and its
+    /// `draw` early-returns. Give it a base layer, or a fixed size.
+    pub fn floating(mut self, layers: impl IntoIterator<Item = usize>) -> Self
+    where
+        Renderer: iced::advanced::Renderer,
+    {
+        self.floating = layers.into_iter().collect();
+        (self.width, self.height) = vote(&self.children, &self.floating);
+        self
+    }
+
     /// Sets the width of the [`ZStack`].
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
@@ -131,6 +165,11 @@ where
         // whole stack. Such layers are deferred and laid out against the size
         // the CONTENT layers resolved — a full-height bar beside a paragraph
         // fills the paragraph, never the void.
+        //
+        // ...AND floating layers, which are laid out here like everyone else —
+        // against the FULL limits, so a popover pinned past the content still
+        // gets the room to open — but whose size is not unioned in. Positioned,
+        // drawn, overflowing, and invisible to the parent's measurement.
         let max = limits.max();
         let deferred: Vec<bool> = self
             .children
@@ -156,10 +195,15 @@ where
             })
             .collect();
 
-        let intrinsic = nodes.iter().flatten().fold(Size::ZERO, |acc, node| {
-            let size = node.size();
-            Size::new(acc.width.max(size.width), acc.height.max(size.height))
-        });
+        let intrinsic = nodes
+            .iter()
+            .enumerate()
+            .filter(|(layer, _)| !self.floating.contains(layer))
+            .filter_map(|(_, node)| node.as_ref())
+            .fold(Size::ZERO, |acc, node| {
+                let size = node.size();
+                Size::new(acc.width.max(size.width), acc.height.max(size.height))
+            });
 
         // The same unbounded-axis guard for the stack's OWN length: a fill
         // layer makes the constructor report Fill, and resolving Fill against
@@ -462,5 +506,50 @@ mod tests {
             (stack_height - 40.0).abs() < 0.01,
             "stack in column: {stack_height}"
         );
+    }
+
+    /// A floating layer — a `pin` layer of a `stack` — must not vote on the
+    /// stack's size: opening a pinned popover in a header must not push the
+    /// page down. It must still be laid out against the FULL limits, so the
+    /// popover keeps its natural size and simply overflows the header.
+    #[test]
+    fn floating_layer_does_not_size_the_stack() {
+        let renderer = renderer();
+        let header = || -> Element<'_, (), Theme, TestRenderer> {
+            container(Space::new().width(100.0).height(40.0)).into()
+        };
+        let menu = || -> Element<'_, (), Theme, TestRenderer> {
+            iced::widget::pin(container(Space::new().width(200.0).height(90.0)))
+                .x(0.0)
+                .y(38.0)
+                .into()
+        };
+        let limits = layout::Limits::new(Size::ZERO, Size::new(500.0, 800.0));
+
+        // Voting: the union grows the header to the menu — the reported defect.
+        let mut voting: Element<'_, (), Theme, TestRenderer> = zstack([header(), menu()]).into();
+        let mut tree = Tree::new(&voting);
+        let grown = voting.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        assert!(
+            (grown.size().height - 90.0).abs() < 0.01,
+            "{:?}",
+            grown.size()
+        );
+
+        // Floating: the header keeps its own height.
+        let mut stack: Element<'_, (), Theme, TestRenderer> =
+            zstack([header(), menu()]).floating([1]).into();
+        let mut tree = Tree::new(&stack);
+        let node = stack.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        assert!(
+            (node.size().height - 40.0).abs() < 0.01,
+            "{:?}",
+            node.size()
+        );
+
+        // ...and the popover still opens at full size, overflowing the stack.
+        let popover = node.children()[1].children()[0].bounds();
+        assert!((popover.y - 38.0).abs() < 0.01, "popover: {popover:?}");
+        assert!((popover.height - 90.0).abs() < 0.01, "popover: {popover:?}");
     }
 }
