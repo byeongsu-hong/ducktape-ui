@@ -4,6 +4,7 @@ extern crate::hyperliquid
   SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, prev:f64)
   Position(coin:str, size:f64, entry:f64, mark:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
   Account(value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, margin_pct:f64, positions:[Position])
+  Trade(ts:i64, price:f64, size:f64, buy:bool, sweep:i64)
   Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, heat:i64)
   Order(coin:str, buy:bool, price:f64, size:f64, ts:i64)
   Level(price:f64, size:f64, bar:f64)
@@ -25,6 +26,7 @@ extern crate::hyperliquid
   sync mark_account(account:Account?, positions:[Position]) -> Account?
   sync filter_symbols(rows:[SymbolRow], query:str) -> [SymbolRow]
   sync symbol_row(rows:[SymbolRow], coin:str) -> SymbolRow?
+  sync push_trades(tape:[Trade], tick:MarketTick, limit:i64) -> [Trade]
   sync push_fills(history:[Fill], incoming:[Fill], limit:i64) -> [Fill]
   sync cool_fills(rows:[Fill]) -> [Fill]
   sync any_hot(rows:[Fill]) -> bool
@@ -39,6 +41,7 @@ extern crate::hyperliquid
   sync fmt_leverage(value:f64) -> str
   sync fmt_latency(millis:i64) -> str
   sync fmt_bps(percent:f64) -> str
+  sync fmt_sweep(count:i64) -> str
   sync fmt_share(percent:f64) -> str
   sync fmt_funding(percent:f64) -> str
   sync fmt_compact_usd(value:f64) -> str

@@ -51,6 +51,20 @@ who cannot see the bar can still do the subtraction. Nothing else on screen
 carries the maintenance requirement, so a bar alone would be its only copy, and
 a bar has no accessible value.
 
+The **tape** under the book is everybody's trades rather than this account's:
+the socket was already open and one more subscription costs nothing, so the
+panel that tells you whether anything is happening at all is close to free.
+
+It reads the way the market traded rather than the way the wire reported. One
+aggressing order that eats four resting orders arrives as four messages sharing
+a hash — four rows would be the exchange's bookkeeping, not the market's. They
+become one row, priced at what that order actually paid across the levels it
+took and marked with how many it took. A sweep is the thing worth seeing, and
+it is exactly what a raw message-per-row tape buries.
+
+The tape takes whatever height the rail has left, because it is the panel that
+gets better with more rows. Resting orders are few and keep a fixed slot.
+
 A fill the account just printed is pushed onto the top of the list wearing its
 side's colour, which fades over two beats and leaves the row cold. It is the
 only motion on screen that is not a number changing, so it is the only thing
@@ -83,7 +97,7 @@ Two sockets, each a thread pumping into a channel that Ice consumes as a
 
 | Ice stream | Subscriptions | Feeds |
 | --- | --- | --- |
-| `hl_market_feed` | `allMids`, `l2Book`, `activeAssetCtx`, `candle` | every mid price, the book, the header's figures, and the live candle |
+| `hl_market_feed` | `allMids`, `l2Book`, `activeAssetCtx`, `candle`, `trades` | every mid price, the book, the header's figures, the live candle, and the public tape |
 | `hl_fill_feed` | `userFills` | a snapshot of recent fills, then each new one as it prints |
 
 | Ice call | Request | Reads |

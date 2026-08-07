@@ -215,6 +215,23 @@ pub struct Account {
     pub positions: Vec<Position>,
 }
 
+/// One print on the public tape: somebody else's trade, which is every
+/// trade rather than only this account's.
+#[derive(Clone, PartialEq)]
+pub struct Trade {
+    pub ts: i64,
+    pub price: f64,
+    pub size: f64,
+    /// Which side crossed the spread. The tape reads as a column of these.
+    pub buy: bool,
+    /// How many prints the exchange filled from one aggressing order. A
+    /// market order that eats four resting levels is one event to watch and
+    /// four messages on the wire.
+    pub sweep: i64,
+    /// The exchange's trade id, which is how a repeated message is recognised.
+    tid: i64,
+}
+
 /// One executed trade, which is what the chart marks.
 #[derive(Clone, PartialEq)]
 pub struct Fill {
@@ -554,6 +571,46 @@ pub async fn hl_account(address: String) -> Result<Account, HlError> {
 /// The account's fills. `heat` is what the list flashes with, so the
 /// snapshot the feed opens with reads cold and everything pushed after it
 /// arrives lit.
+/// The public tape, folded the way it was actually traded. One aggressing
+/// order that eats four resting orders arrives as four messages sharing a
+/// `hash`; four rows at the same price is the wire's bookkeeping rather than
+/// the market's, so consecutive prints from one order become one row carrying
+/// what that order paid on average and how many resting orders it took.
+fn parse_trades(value: &Value) -> Vec<Trade> {
+    let mut tape: Vec<Trade> = Vec::new();
+    let mut aggressor = String::new();
+    for print in value.as_array().map(Vec::as_slice).unwrap_or_default() {
+        let hash = text(print, "hash");
+        let price = num(print, "px");
+        let size = num(print, "sz");
+        match tape.last_mut() {
+            // An empty hash is not an identity, so it never merges.
+            Some(held) if !hash.is_empty() && hash == aggressor => {
+                let total = held.size + size;
+                if total > 0.0 {
+                    held.price = (held.price * held.size + price * size) / total;
+                }
+                held.size = total;
+                held.sweep += 1;
+            }
+            _ => {
+                aggressor = hash;
+                tape.push(Trade {
+                    ts: value_i64(print, "time") / 1_000,
+                    price,
+                    size,
+                    // The same encoding the account's own fills use: "B" took
+                    // the offer, "A" hit the bid.
+                    buy: text(print, "side") == "B",
+                    sweep: 1,
+                    tid: value_i64(print, "tid"),
+                });
+            }
+        }
+    }
+    tape
+}
+
 fn parse_fills(value: &Value, heat: i64) -> Vec<Fill> {
     value
         .as_array()
@@ -840,6 +897,8 @@ pub struct MarketTick {
     pub latency: i64,
     /// Every mid price the exchange last published, by market.
     mids: HashMap<String, f64>,
+    /// Prints on the charted market since the last beat, oldest first.
+    trades: Vec<Trade>,
     /// The charted market's republished context, when it arrived.
     context: Option<SymbolRow>,
 }
@@ -859,6 +918,7 @@ pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
                 wanted.push(json!({ "type": "l2Book", "coin": coin }));
                 wanted.push(json!({ "type": "activeAssetCtx", "coin": coin }));
                 wanted.push(json!({ "type": "candle", "coin": coin, "interval": interval }));
+                wanted.push(json!({ "type": "trades", "coin": coin }));
             }
             wanted
         },
@@ -888,6 +948,12 @@ pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
                 tick.context = Some(context);
                 None
             }
+            Event::Payload("trades", data) => {
+                let fresh = parse_trades(data);
+                changed |= !fresh.is_empty();
+                tick.trades.extend(fresh);
+                None
+            }
             Event::Payload("candle", data) => {
                 // A candle for the market the app just left would corrupt
                 // the tape it is drawing now.
@@ -910,7 +976,11 @@ pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
                 // Nothing moved: an unchanged message would rebuild the view
                 // for no reason.
                 ready.then(|| MarketTick {
+                    // Both are consumed once: the app folds them into what it
+                    // already holds, so replaying them on a quiet beat would
+                    // re-apply prices and repeat the tape.
                     mids: std::mem::take(&mut tick.mids),
+                    trades: std::mem::take(&mut tick.trades),
                     ..tick.clone()
                 })
             }
@@ -1187,6 +1257,32 @@ pub fn push_fills(history: Vec<Fill>, incoming: Vec<Fill>, limit: i64) -> Vec<Fi
     rows.sort_by_key(|fill| std::cmp::Reverse(fill.ts));
     rows.truncate(limit.max(0) as usize);
     rows
+}
+
+/// Puts a beat's prints on top of the tape, newest first, capped so the panel
+/// builds a bounded number of rows however busy the market is. Arrival order
+/// is the tape's order — prints inside one second are not re-sorted, because
+/// the sequence they crossed in is the thing worth reading.
+pub fn push_trades(tape: Vec<Trade>, tick: MarketTick, limit: i64) -> Vec<Trade> {
+    let held: HashSet<i64> = tape.iter().map(|print| print.tid).collect();
+    let mut rows: Vec<Trade> = tick
+        .trades
+        .into_iter()
+        .rev()
+        .filter(|print| !held.contains(&print.tid))
+        .chain(tape)
+        .collect();
+    rows.truncate(limit.max(0) as usize);
+    rows
+}
+
+/// How many resting orders one aggressor took, when it took more than one.
+/// A single print needs no mark; a sweep is the thing worth seeing.
+pub fn fmt_sweep(count: i64) -> String {
+    if count <= 1 {
+        return String::new();
+    }
+    format!("×{count}")
 }
 
 /// One step of the highlight decay on the newest fills.
@@ -1690,6 +1786,73 @@ mod tests {
     }
 
     #[test]
+    fn one_aggressor_is_one_print_however_many_orders_it_ate() {
+        // Two messages, one hash: a market order that took two resting orders
+        // at the same price. That is one trade to watch, not two.
+        let tape = parse_trades(&json!([
+            { "coin": "BTC", "hash": "0xaa", "px": "64986.0", "sz": "0.2", "side": "A",
+              "time": 1_786_117_888_774i64, "tid": 1 },
+            { "coin": "BTC", "hash": "0xaa", "px": "64986.0", "sz": "0.3", "side": "A",
+              "time": 1_786_117_888_774i64, "tid": 2 },
+            { "coin": "BTC", "hash": "0xbb", "px": "64990.0", "sz": "1.0", "side": "B",
+              "time": 1_786_117_889_000i64, "tid": 3 },
+        ]));
+        assert_eq!(tape.len(), 2, "one row per aggressing order");
+        assert_eq!(tape[0].size, 0.5, "the sweep is what it took in total");
+        assert_eq!(tape[0].sweep, 2);
+        assert!(!tape[0].buy, "an ask print hit the bid");
+        assert_eq!(tape[0].ts, 1_786_117_888, "seconds, like everything else");
+        assert_eq!(tape[1].sweep, 1, "a single print wears no mark");
+        assert!(tape[1].buy);
+        assert_eq!(fmt_sweep(tape[1].sweep), "", "and no marker either");
+        assert_eq!(fmt_sweep(tape[0].sweep), "×2");
+
+        // A sweep across levels is priced at what the aggressor actually paid.
+        let across = parse_trades(&json!([
+            { "hash": "0xcc", "px": "100.0", "sz": "1.0", "side": "B", "time": 0, "tid": 4 },
+            { "hash": "0xcc", "px": "102.0", "sz": "3.0", "side": "B", "time": 0, "tid": 5 },
+        ]));
+        assert_eq!(across[0].price, 101.5, "size-weighted, not the last level");
+
+        // A missing hash is not an identity and must never merge two orders.
+        let anonymous = parse_trades(&json!([
+            { "px": "1.0", "sz": "1.0", "side": "B", "time": 0, "tid": 6 },
+            { "px": "2.0", "sz": "1.0", "side": "B", "time": 0, "tid": 7 },
+        ]));
+        assert_eq!(anonymous.len(), 2, "no hash, no grouping");
+    }
+
+    #[test]
+    fn the_tape_stacks_newest_first_and_never_repeats_a_print() {
+        let beat = |prints: Vec<Trade>| MarketTick {
+            trades: prints,
+            ..MarketTick::default()
+        };
+        let print = |tid: i64, price: f64| Trade {
+            ts: tid,
+            price,
+            size: 1.0,
+            buy: true,
+            sweep: 1,
+            tid,
+        };
+
+        // The feed hands them over oldest first; the panel reads down from now.
+        let tape = push_trades(Vec::new(), beat(vec![print(1, 10.0), print(2, 11.0)]), 60);
+        assert_eq!(tape[0].tid, 2, "newest on top");
+        assert_eq!(tape[1].tid, 1);
+
+        // A reconnect replays what we already have.
+        let again = push_trades(tape.clone(), beat(vec![print(2, 11.0), print(3, 12.0)]), 60);
+        assert_eq!(again.len(), 3, "only the print we had not seen is added");
+        assert_eq!(again[0].tid, 3);
+
+        let capped = push_trades(again, beat(vec![print(4, 13.0)]), 2);
+        assert_eq!(capped.len(), 2, "the panel builds a bounded number of rows");
+        assert_eq!(capped[0].tid, 4, "and drops the oldest, not the newest");
+    }
+
+    #[test]
     fn the_risk_rail_measures_entry_to_liquidation() {
         // A long: entry above the cliff, so travel grows as the mark falls.
         assert_eq!(liquidation_travel(100.0, 100.0, 80.0), 0.0, "at entry");
@@ -1991,6 +2154,48 @@ mod tests {
         assert!(
             ticks.iter().any(|tick| tick.latency > 0),
             "the ping round trip is the latency readout"
+        );
+
+        // The tape. Bitcoin prints many times a minute, so silence here is a
+        // subscription that never took rather than a quiet market.
+        let prints: Vec<Trade> = ticks
+            .iter()
+            .flat_map(|tick| tick.trades.iter().cloned())
+            .collect();
+        assert!(!prints.is_empty(), "no trade arrived in 45s on BTC");
+        assert!(
+            prints
+                .iter()
+                .all(|print| print.price > 0.0 && print.size > 0.0),
+            "a print with no price or no size is a parse that missed"
+        );
+        assert!(
+            prints.iter().all(|print| print.sweep >= 1),
+            "every row stands for at least one resting order"
+        );
+        // Both sides trade in any 45s window of a liquid market. All-one-side
+        // is how a reversed or ignored `side` field would look.
+        assert!(
+            prints.iter().any(|print| print.buy) && prints.iter().any(|print| !print.buy),
+            "every print read as the same side: {} of {} were buys",
+            prints.iter().filter(|print| print.buy).count(),
+            prints.len()
+        );
+        // Prints cross the spread, so they land on the book rather than
+        // somewhere else entirely. A wide band, because the book moved while
+        // these were arriving; it is checking the order of magnitude.
+        let mid = book.mid;
+        assert!(
+            prints
+                .iter()
+                .all(|print| (print.price - mid).abs() < mid * 0.05),
+            "a print landed 5% off the book, so the tape is not this market"
+        );
+
+        let folded = push_trades(Vec::new(), ticks[0].clone(), 60);
+        assert!(
+            folded.len() <= 60 && folded.windows(2).all(|pair| pair[0].ts >= pair[1].ts),
+            "the panel reads down from now"
         );
         assert!(
             !lock(&tape.candles).is_empty(),
