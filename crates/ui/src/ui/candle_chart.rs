@@ -531,6 +531,7 @@ pub struct CandleChart<'a, Message> {
     height: Length,
     initial_bars: usize,
     precision: Option<usize>,
+    time_offset_secs: i64,
 }
 
 pub fn candle_chart<'a, Message>(
@@ -559,6 +560,7 @@ fn with_data<'a, Message>(data: Data<'a>, theme: &UiTheme) -> CandleChart<'a, Me
         height: Length::Fixed(DEFAULT_HEIGHT),
         initial_bars: DEFAULT_BARS,
         precision: None,
+        time_offset_secs: 0,
     }
 }
 
@@ -595,6 +597,14 @@ impl<'a, Message> CandleChart<'a, Message> {
         self.precision = Some(decimals.min(8));
         self
     }
+
+    /// Shifts time-axis labels by a fixed UTC offset in seconds (candle
+    /// timestamps stay UTC; only label rendering moves).
+    #[must_use]
+    pub fn time_offset(mut self, seconds: i64) -> Self {
+        self.time_offset_secs = seconds;
+        self
+    }
 }
 
 impl<'a, Message> From<CandleChart<'a, Message>> for Element<'a, Message>
@@ -611,6 +621,7 @@ where
                 on_hover: chart.on_hover,
                 initial_bars: chart.initial_bars,
                 precision: chart.precision,
+                time_offset_secs: chart.time_offset_secs,
             })
             .width(width)
             .height(height),
@@ -662,6 +673,7 @@ struct CandleProgram<'a, Message> {
     on_hover: Option<Rc<dyn Fn(Option<CandleHit>) -> Message + 'a>>,
     initial_bars: usize,
     precision: Option<usize>,
+    time_offset_secs: i64,
 }
 
 impl<Message> CandleProgram<'_, Message> {
@@ -965,7 +977,12 @@ impl<Message> CandleProgram<'_, Message> {
         let time_ticks = range
             .clone()
             .step_by(stride)
-            .map(|index| (chrome.x(viewport, index as f64), candles[index].ts))
+            .map(|index| {
+                (
+                    chrome.x(viewport, index as f64),
+                    candles[index].ts + self.time_offset_secs,
+                )
+            })
             .collect();
         let last_close_y = candles.last().and_then(|last| {
             let y = scale.y(chrome.plot, last.close);
@@ -1212,7 +1229,10 @@ impl<Message> CandleProgram<'_, Message> {
             Point::new(x, plot.y + plot.height),
             palette.muted_foreground,
         );
-        let content = format_ts(ctx.candles[index].ts, ctx.axes.time_step_secs);
+        let content = format_ts(
+            ctx.candles[index].ts + self.time_offset_secs,
+            ctx.axes.time_step_secs,
+        );
         let width =
             (content.len() as f32 * self.theme.typography.meta_compact * 0.65 + 14.0).max(44.0);
         frame.fill_rectangle(
@@ -1450,6 +1470,26 @@ mod tests {
     }
 
     #[test]
+    fn time_offset_shifts_labels_not_data() {
+        let data = candles(50);
+        let chrome = chrome(BOUNDS);
+        let viewport = Viewport::initial(50, DEFAULT_BARS);
+        let range = visible_indices(viewport, 50);
+        let scale = autoscale(&data, range.clone());
+
+        let mut seoul = hover_program(&data);
+        seoul.time_offset_secs = 9 * 3_600;
+        let shifted = seoul.axes(&data, chrome, viewport, range.clone(), scale);
+        let utc = hover_program(&data).axes(&data, chrome, viewport, range, scale);
+        for (offset_tick, utc_tick) in shifted.time_ticks.iter().zip(&utc.time_ticks) {
+            assert_eq!(offset_tick.1, utc_tick.1 + 9 * 3_600);
+            assert_eq!(offset_tick.0, utc_tick.0);
+        }
+        // The step derives from raw deltas, so the offset cancels out.
+        assert_eq!(shifted.time_step_secs, utc.time_step_secs);
+    }
+
+    #[test]
     fn prices_group_thousands() {
         assert_eq!(format_price(0.05, 2), "0.05");
         assert_eq!(format_price(999.0, 0), "999");
@@ -1475,6 +1515,7 @@ mod tests {
             on_hover: Some(Rc::new(|hit| hit)),
             initial_bars: DEFAULT_BARS,
             precision: None,
+            time_offset_secs: 0,
         }
     }
 
@@ -1813,6 +1854,7 @@ mod tests {
                 on_hover: None,
                 initial_bars: DEFAULT_BARS,
                 precision: None,
+                time_offset_secs: 0,
             };
             let views = [
                 ("last-120", None),
