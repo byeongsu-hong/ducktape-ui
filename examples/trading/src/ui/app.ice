@@ -607,6 +607,13 @@ on search_key(event)
   query = ""
   visible = filter_symbols(symbols, "", coin)
 
+on close_held
+  let held = position_held(positions, coin)
+  return if held == 0.0
+  ticket_buy = held < 0.0
+  ticket_size = fmt_size(held)
+  quote = price_ticket(ticket_price, fmt_size(held), ticket_leverage, focus, held < 0.0)
+
 on ticket_side(buy)
   ticket_buy = buy
   quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, buy)
@@ -1489,6 +1496,21 @@ view
                       w=fill
                       align-x=center
                       @text-muted
+          if position_held(positions, coin) != 0.0
+            button #close-held -> close_held
+              with
+                label="Fill the size that closes this position"
+                w=fill
+                p=8.0
+              active bg=raised text=muted r=4.0
+              hovered bg=edge text=fg r=4.0
+              text "CLOSE POSITION"
+                with
+                  size=10.0
+                  w=fill
+                  align-x=center
+                  tracking=1.1
+                  @text-muted
           if !empty(ticket_effect(positions, coin, ticket_size, ticket_buy))
             text ticket_effect(positions, coin, ticket_size, ticket_buy)
               with

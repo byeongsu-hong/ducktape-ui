@@ -126,6 +126,11 @@ just clicked across. The size is cleared whenever it opens — 0.5 means a
 different order on every market, and carrying it over is how you place one you
 did not mean.
 
+A position in this market puts a **close** on the ticket, which fills the size
+that flattens it and takes the side that does — both read off the same signed
+number, which is the only place the two agree by construction rather than by
+you doing the sign in your head.
+
 It also says what the order would do to what you already hold. Opening and
 closing are different acts on the same ticket, and the only thing that
 separates them is the sign of a number two panels away — so the ticket reads it

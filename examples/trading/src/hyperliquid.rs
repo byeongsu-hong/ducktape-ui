@@ -1569,6 +1569,15 @@ pub fn ticket_effect(positions: Vec<Position>, coin: String, size: String, buy: 
     }
 }
 
+/// The signed size held in one market, or zero when none is. Signed, because
+/// the ticket needs both how much to close and which way that trade goes.
+pub fn position_held(positions: Vec<Position>, coin: String) -> f64 {
+    positions
+        .into_iter()
+        .find(|position| position.coin == coin)
+        .map_or(0.0, |position| position.size)
+}
+
 /// A resting order names its side, its size and the price it waits at.
 pub fn order_label(order: Order) -> String {
     let side = if order.buy { "buy" } else { "sell" };
@@ -2517,6 +2526,42 @@ mod tests {
         // Nothing typed is not an order, and says nothing.
         assert_eq!(effect("", true), "");
         assert_eq!(effect("0", true), "");
+    }
+
+    #[test]
+    fn closing_a_position_is_its_size_and_the_other_side() {
+        let at = |coin: &str, size: f64| Position {
+            coin: coin.into(),
+            size,
+            entry: 60_000.0,
+            mark: 60_000.0,
+            liq: 0.0,
+            pnl: 0.0,
+            roe_pct: 0.0,
+            margin: 0.0,
+            risk: 0.0,
+            leverage: 20.0,
+            margin_mode: "cross".into(),
+            funding: 0.0,
+        };
+        let book = vec![at("BTC", -30.0), at("ETH", 5.0)];
+
+        // Signed, because the ticket needs both the size to fill and the side
+        // that closing takes — and they come from the same number.
+        assert_eq!(position_held(book.clone(), "BTC".into()), -30.0);
+        assert_eq!(position_held(book.clone(), "ETH".into()), 5.0);
+        assert_eq!(position_held(book.clone(), "SOL".into()), 0.0, "none held");
+        assert_eq!(position_held(Vec::new(), "BTC".into()), 0.0);
+
+        // What the panel then fills: an unsigned size, and the opposite side.
+        let short = position_held(book.clone(), "BTC".into());
+        assert_eq!(fmt_size(short), "30.00", "the field takes no sign");
+        assert!(short < 0.0, "so closing a short buys");
+        // And the effect line agrees with what the button just did.
+        assert_eq!(
+            ticket_effect(book, "BTC".into(), fmt_size(short), short < 0.0),
+            "Closes your short"
+        );
     }
 
     #[test]
