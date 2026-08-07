@@ -8,6 +8,7 @@
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
+use std::time::Duration;
 
 use super::theme::{Theme as UiTheme, alpha};
 use iced::advanced::text::Alignment as TextAlignment;
@@ -16,6 +17,7 @@ use iced::keyboard::{self, key::Named};
 use iced::mouse;
 use iced::widget::Canvas;
 use iced::widget::canvas::{self, Path};
+use iced::window;
 use iced::{Color, Element, Length, Pixels, Point, Rectangle, Size};
 
 const DEFAULT_HEIGHT: f32 = 320.0;
@@ -716,6 +718,7 @@ pub struct CandleChart<'a, Message> {
     precision: Option<usize>,
     time_offset_secs: i64,
     moving_averages: Vec<usize>,
+    live: Option<Duration>,
 }
 
 pub fn candle_chart<'a, Message>(
@@ -746,6 +749,7 @@ fn with_data<'a, Message>(data: Data<'a>, theme: &UiTheme) -> CandleChart<'a, Me
         precision: None,
         time_offset_secs: 0,
         moving_averages: Vec::new(),
+        live: None,
     }
 }
 
@@ -797,6 +801,16 @@ impl<'a, Message> CandleChart<'a, Message> {
         self.moving_averages = periods.into_iter().filter(|p| *p > 1).collect();
         self
     }
+
+    /// Repaints on its own beat so a live feed renders without any app
+    /// message or view rebuild: shared-tape mutations are picked up by the
+    /// data fingerprint on each beat (the LiveSurface scheduling idea,
+    /// expressed inside the canvas program).
+    #[must_use]
+    pub fn live(mut self, interval: Duration) -> Self {
+        self.live = Some(interval);
+        self
+    }
 }
 
 impl<'a, Message> From<CandleChart<'a, Message>> for Element<'a, Message>
@@ -815,6 +829,7 @@ where
                 precision: chart.precision,
                 time_offset_secs: chart.time_offset_secs,
                 moving_averages: chart.moving_averages,
+                live: chart.live,
             })
             .width(width)
             .height(height),
@@ -873,6 +888,7 @@ struct CandleProgram<'a, Message> {
     precision: Option<usize>,
     time_offset_secs: i64,
     moving_averages: Vec<usize>,
+    live: Option<Duration>,
 }
 
 impl<Message> CandleProgram<'_, Message> {
@@ -1019,6 +1035,10 @@ impl<Message> CandleProgram<'_, Message> {
                     }
                 }
                 Some(canvas::Action::request_redraw())
+            }
+            canvas::Event::Window(window::Event::RedrawRequested(now)) => {
+                let interval = self.live?;
+                Some(canvas::Action::request_redraw_at(*now + interval))
             }
             canvas::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
                 // Keyboard crosshair only while the pointer is on the chart,
@@ -1925,6 +1945,7 @@ mod tests {
             precision: None,
             time_offset_secs: 0,
             moving_averages: Vec::new(),
+            live: None,
         }
     }
 
@@ -2345,6 +2366,7 @@ mod tests {
                 precision: None,
                 time_offset_secs: 0,
                 moving_averages: Vec::new(),
+                live: None,
             };
             let views = [
                 ("last-120", None),
