@@ -24,6 +24,9 @@ env:
   SCCACHE_GHA_ENABLED: "true"
   CARGO_NET_RETRY: "10"
   RUSTUP_MAX_RETRIES: "10"
+  # apt bounds and retries its own downloads with these; without them a
+  # stalled mirror holds the runner until the job's timeout.
+  APT: -o Acquire::Retries=3 -o Acquire::http::Timeout=15
 
 jobs:
   validate:
@@ -318,8 +321,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes at-spi2-core dbus-x11 gcc-mingw-w64-x86-64
+          sudo apt-get $APT update
+          sudo apt-get $APT install --yes at-spi2-core dbus-x11 gcc-mingw-w64-x86-64
           rustup target add x86_64-pc-windows-gnu
       - run: scripts/a11y-smoke.sh
       - run: scripts/a11y-windows-check.sh
@@ -363,8 +366,8 @@ jobs:
       - name: Install Linux display and Vulkan dependencies
         if: matrix.label == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes libvulkan1 libxkbcommon-x11-0 mesa-vulkan-drivers xauth xvfb
+          sudo apt-get $APT update
+          sudo apt-get $APT install --yes libvulkan1 libxkbcommon-x11-0 mesa-vulkan-drivers xauth
       - name: Build application and smoke harness
         shell: bash
         run: |
