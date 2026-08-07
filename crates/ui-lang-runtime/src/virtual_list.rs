@@ -3723,6 +3723,53 @@ mod tests {
         assert_eq!(renderer.quads[0].border.color, iced::Color::WHITE);
     }
 
+    /// Loading older messages prepends rows, shifting every existing item's
+    /// index. Measurements are keyed by item identity precisely so they
+    /// survive that; keyed by index they would all land on the wrong rows.
+    #[test]
+    fn measured_heights_survive_a_prepend() {
+        let measured = VirtualListConfig::measured(20.0).unwrap();
+        let items: Vec<u64> = (100..110).collect();
+        let mut state = VirtualListState::new(VirtualListId::new("measured-prepend"));
+        state.reconcile(&items, |key| *key, measured).unwrap();
+        state.apply(
+            VirtualListEvent::ViewportChanged { height: 100.0 },
+            &items,
+            |key| *key,
+            measured,
+        );
+        // Two rows measure taller than the estimate.
+        state.apply(
+            VirtualListEvent::RowsMeasured {
+                heights: vec![(101, 60.0), (104, 50.0)],
+            },
+            &items,
+            |key| *key,
+            measured,
+        );
+        let before = state.rows(items.len(), measured);
+        assert_eq!(before.row_height(1), 60.0);
+        assert_eq!(before.row_height(4), 50.0);
+        assert_eq!(before.total_height(), 10.0 * 20.0 + 40.0 + 30.0);
+
+        // Five older messages arrive at the top: every prior item shifts by 5.
+        let older: Vec<u64> = (95..110).collect();
+        state.reconcile(&older, |key| *key, measured).unwrap();
+        let after = state.rows(older.len(), measured);
+        assert_eq!(
+            after.row_height(6),
+            60.0,
+            "item 101 kept its measured height at its new index"
+        );
+        assert_eq!(after.row_height(9), 50.0, "and so did item 104");
+        assert_eq!(
+            after.row_height(1),
+            20.0,
+            "a newly prepended row is still an estimate"
+        );
+        assert_eq!(after.total_height(), 15.0 * 20.0 + 40.0 + 30.0);
+    }
+
     #[test]
     fn measured_rows_fold_into_geometry_and_keep_the_anchor() {
         let measured = VirtualListConfig::measured(20.0).unwrap();
