@@ -334,8 +334,15 @@ where
         {
             let state = tree.state.downcast_mut::<State>();
 
-            if self.disabled || !self.tab_stop {
+            // Same rule as `diff`: a roving non-tab-stop item gives up focus,
+            // but never while it holds a pointer press. Any operation can
+            // traverse mid-gesture — a focus task, an accessibility snapshot,
+            // a scroll — and cancelling the press there loses the release that
+            // completes the click.
+            if self.disabled {
                 state.unfocus();
+            } else if !self.tab_stop && !state.is_pressed() {
+                state.blur();
             }
 
             if !self.disabled && self.tab_stop {
@@ -1001,6 +1008,55 @@ mod tests {
             handle_event(&mut state, &release, true, true, &9, &mut shell);
         }
         assert_eq!(messages, [9]);
+    }
+
+    #[test]
+    fn non_tab_stop_operation_traversal_preserves_pending_pointer_activation() {
+        use iced::advanced::renderer::Headless as _;
+
+        struct Noop;
+
+        impl widget::Operation for Noop {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+        }
+
+        let mut control: FocusControl<'_, u8> = FocusControl::new(
+            widget::Id::new("roving-operation"),
+            Space::new(),
+            9_u8,
+            &LIGHT,
+        )
+        .tab_stop(false);
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut tree = widget::Tree::new(&control as &dyn Widget<_, _, _>);
+        let node = Widget::layout(
+            &mut control,
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(64.0, 64.0)),
+        );
+        let state = tree.state.downcast_mut::<State>();
+        state.focus_from_pointer();
+        state.press = Some(Press::Mouse);
+
+        Widget::operate(
+            &mut control,
+            &mut tree,
+            Layout::new(&node),
+            &renderer,
+            &mut Noop,
+        );
+
+        let state = tree.state.downcast_ref::<State>();
+        assert!(state.is_focused());
+        assert_eq!(state.press, Some(Press::Mouse));
     }
 
     #[test]
