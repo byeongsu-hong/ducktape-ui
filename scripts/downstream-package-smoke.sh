@@ -178,7 +178,7 @@ for generated_manifest in "${generated_manifests[@]}"; do
     exit 1
   fi
   generated_digest=$(sha256sum "$generated_rust" | cut -d ' ' -f 1)
-  if ! grep -Fq '"schemaVersion": 2' "$generated_manifest" ||
+  if ! grep -Fq '"schemaVersion": 3' "$generated_manifest" ||
     ! grep -Fq "\"$generated_name\": {" "$generated_manifest" ||
     ! grep -Fq '"source": "src/ui/app.ice"' "$generated_manifest" ||
     ! grep -Fq "\"contentSha256\": \"$generated_digest\"" "$generated_manifest"; then
