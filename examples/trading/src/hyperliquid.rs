@@ -481,6 +481,127 @@ pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
     ))
 }
 
+/// What a position opened right now would be worth to the margin engine, and
+/// where it would die. Nothing here is sent anywhere: it is the arithmetic a
+/// ticket has to show before it is worth calling a ticket, and the same
+/// arithmetic a real order would be checked against.
+#[derive(Clone, PartialEq)]
+pub struct Ticket {
+    /// Price times size, which is what leverage divides.
+    pub notional: f64,
+    /// What the position would tie up at the chosen leverage.
+    pub margin: f64,
+    /// Where the margin engine would close it, or zero when the inputs do not
+    /// yet describe a position.
+    pub liquidation: f64,
+    /// The leverage these figures were actually priced at, which is what the
+    /// market allows rather than what the field says. Typing 40 into a 5x
+    /// market has to show a liquidation for 5, and say 5.
+    pub leverage: f64,
+    /// Whether the numbers above describe anything at all.
+    pub ready: bool,
+}
+
+/// Hyperliquid holds a maintenance requirement of half the margin at the
+/// market's maximum leverage, so a 40x market maintains at 1/80th of notional.
+fn maintenance_fraction(max_leverage: f64) -> f64 {
+    if max_leverage <= 0.0 {
+        return 0.0;
+    }
+    1.0 / (2.0 * max_leverage)
+}
+
+/// Liquidation for a position opened at `price` with `leverage`, isolated.
+///
+/// Equity is the margin posted plus what the position has made; the engine
+/// closes when that reaches the maintenance requirement on the position's
+/// current value. Solving for the price where those meet:
+///
+/// ```text
+/// long:   P(1 - 1/L) / (1 - m)
+/// short:  P(1 + 1/L) / (1 + m)
+/// ```
+///
+/// with `m` the maintenance fraction. A cross position is not this — it dies
+/// against the whole account's equity, which is what the header's rail reads —
+/// so this is the isolated case and the ticket says so.
+fn ticket_liquidation(price: f64, leverage: f64, max_leverage: f64, buy: bool) -> f64 {
+    if price <= 0.0 || leverage <= 0.0 {
+        return 0.0;
+    }
+    let maintenance = maintenance_fraction(max_leverage);
+    let liquidation = if buy {
+        price * (1.0 - 1.0 / leverage) / (1.0 - maintenance)
+    } else {
+        price * (1.0 + 1.0 / leverage) / (1.0 + maintenance)
+    };
+    // Leverage under 1x on a long puts the cliff below zero: there is none.
+    if liquidation.is_finite() && liquidation > 0.0 {
+        liquidation
+    } else {
+        0.0
+    }
+}
+
+/// What to put in the price field when the ticket opens: the book's mid if
+/// one has arrived, otherwise the market's last price. A ticket that opens
+/// empty makes you type a number you are looking at.
+pub fn ticket_seed(book: Option<Book>, focus: Option<SymbolRow>) -> String {
+    let price = book
+        .map(|depth| depth.mid)
+        .filter(|mid| *mid > 0.0)
+        .or_else(|| focus.map(|row| row.price))
+        .unwrap_or(0.0);
+    if price > 0.0 {
+        format_price(price, price_decimals(price))
+    } else {
+        String::new()
+    }
+}
+
+/// A number as typed into a ticket field. Anything that is not one reads as
+/// zero, which every figure downstream already treats as "not yet".
+fn amount(typed: &str) -> f64 {
+    typed.trim().replace(',', "").parse().map_or(
+        0.0,
+        |value: f64| if value.is_finite() { value } else { 0.0 },
+    )
+}
+
+/// Prices a ticket from what the panel has typed into it. Leverage is held
+/// inside what the market allows, so a ticket cannot quote a liquidation the
+/// exchange would never have opened.
+pub fn price_ticket(
+    price: String,
+    size: String,
+    leverage: String,
+    market: Option<SymbolRow>,
+    buy: bool,
+) -> Ticket {
+    let max_leverage = market.map_or(0.0, |row| row.leverage);
+    let price = amount(&price).max(0.0);
+    let size = amount(&size).abs();
+    let ceiling = if max_leverage > 0.0 {
+        max_leverage
+    } else {
+        f64::INFINITY
+    };
+    let leverage = amount(&leverage).clamp(0.0, ceiling);
+    let notional = price * size;
+    let ready = price > 0.0 && size > 0.0 && leverage > 0.0;
+    Ticket {
+        notional,
+        margin: if ready { notional / leverage } else { 0.0 },
+        liquidation: if ready {
+            ticket_liquidation(price, leverage, max_leverage, buy)
+        } else {
+            0.0
+        },
+        leverage,
+        ready,
+    }
+}
+
 /// The share of the entry-to-liquidation distance the mark has already
 /// covered: 0 at the entry price, 1 at the cliff. Works for either side
 /// because both endpoints flip together, and reads 0 when the position has
@@ -1885,6 +2006,124 @@ mod tests {
         let capped = push_trades(again, beat(vec![print(4, 13.0)]), 2);
         assert_eq!(capped.len(), 2, "the panel builds a bounded number of rows");
         assert_eq!(capped[0].tid, 4, "and drops the oldest, not the newest");
+    }
+
+    #[test]
+    fn the_ticket_prices_an_order_it_will_never_send() {
+        let market = |max_leverage: f64| SymbolRow {
+            name: "BTC".into(),
+            price: 100.0,
+            change_pct: 0.0,
+            volume: 0.0,
+            funding_pct: 0.0,
+            leverage: max_leverage,
+            open_interest: 0.0,
+            prev: 100.0,
+        };
+        let quoted = |price: &str, size: &str, leverage: &str, buy: bool| {
+            price_ticket(
+                price.into(),
+                size.into(),
+                leverage.into(),
+                Some(market(40.0)),
+                buy,
+            )
+        };
+
+        // A 10x long on 2 BTC at 100: 200 of notional on 20 of margin. The
+        // maintenance requirement on a 40x market is 1/80th of the position,
+        // so the cliff is where 20 + (X - 100)*2 meets X*2/80.
+        let long = quoted("100", "2", "10", true);
+        assert!(long.ready);
+        assert_eq!(long.notional, 200.0);
+        assert_eq!(long.margin, 20.0);
+        assert!(
+            (long.liquidation - 100.0 * 0.9 / (1.0 - 1.0 / 80.0)).abs() < 1e-9,
+            "got {}",
+            long.liquidation
+        );
+        assert!(long.liquidation < 100.0, "a long dies below its entry");
+
+        let short = quoted("100", "2", "10", false);
+        assert_eq!(short.margin, long.margin, "the side does not change margin");
+        assert!(short.liquidation > 100.0, "a short dies above its entry");
+
+        // More leverage moves the cliff toward the entry, which is the whole
+        // reason the ticket shows it.
+        assert!(quoted("100", "2", "20", true).liquidation > long.liquidation);
+        assert!(
+            quoted("100", "2", "1", true).liquidation == 0.0,
+            "unlevered, there is no cliff to quote"
+        );
+
+        // Leverage past what the market allows is held at the ceiling rather
+        // than quoting a liquidation the exchange would never have opened —
+        // and the ticket reports the leverage it priced at, not the one that
+        // was typed, so the figures and the number beside them agree.
+        let over = quoted("100", "2", "400", true);
+        assert_eq!(over.leverage, 40.0, "held at the market's maximum");
+        assert_eq!(over.margin, quoted("100", "2", "40", true).margin);
+        assert_eq!(over.liquidation, quoted("100", "2", "40", true).liquidation);
+        assert_eq!(
+            quoted("100", "2", "10", true).leverage,
+            10.0,
+            "and reports the typed one when it is allowed"
+        );
+
+        // Half-typed input is not an order, and must not read as one.
+        for (price, size, leverage) in [("", "2", "10"), ("100", "", "10"), ("100", "2", "")] {
+            let partial = quoted(price, size, leverage, true);
+            assert!(!partial.ready, "{price:?}/{size:?}/{leverage:?} priced");
+            assert_eq!(partial.margin, 0.0);
+            assert_eq!(partial.liquidation, 0.0);
+        }
+        assert!(!quoted("not a price", "2", "10", true).ready);
+        assert_eq!(
+            quoted("1,250.5", "2", "10", true).notional,
+            2_501.0,
+            "a price read back off the screen carries its separators"
+        );
+
+        // A market with no published maximum still prices; it just has no
+        // maintenance requirement to hold against.
+        assert!(price_ticket("100".into(), "2".into(), "10".into(), None, true).ready);
+    }
+
+    #[test]
+    fn the_ticket_opens_on_a_price_you_are_already_looking_at() {
+        let book = Book {
+            bids: Vec::new(),
+            asks: Vec::new(),
+            spread: 0.0,
+            spread_pct: 0.0,
+            mid: 64_849.0,
+        };
+        let row = SymbolRow {
+            name: "BTC".into(),
+            price: 64_500.0,
+            change_pct: 0.0,
+            volume: 0.0,
+            funding_pct: 0.0,
+            leverage: 40.0,
+            open_interest: 0.0,
+            prev: 0.0,
+        };
+        assert_eq!(
+            ticket_seed(Some(book.clone()), Some(row.clone())),
+            "64,849.00",
+            "the book is the freshest price on screen"
+        );
+        assert_eq!(
+            ticket_seed(None, Some(row.clone())),
+            "64,500.00",
+            "without a book, the market's last"
+        );
+        assert_eq!(
+            ticket_seed(Some(Book { mid: 0.0, ..book }), Some(row)),
+            "64,500.00",
+            "an empty book is not a price of zero"
+        );
+        assert_eq!(ticket_seed(None, None), "", "nothing to seed it with");
     }
 
     #[test]
