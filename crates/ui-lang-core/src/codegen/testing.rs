@@ -900,11 +900,15 @@ fn resolved_test_target_path_code(
     }
     let mut scope = rust_string(program.app_name());
     for segment in &target.segments {
+        let borrowed = borrowed_scope(&scope);
         scope = if let Some(key) = segment.key {
             let key = resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?;
-            format!("format!(\"{{}}/{}({{}})\", {scope}, {key})", segment.name)
+            format!(
+                "format!(\"{{}}/{}({{}})\", {borrowed}, {key})",
+                segment.name
+            )
         } else {
-            format!("format!(\"{{}}/{}\", {scope})", segment.name)
+            format!("format!(\"{{}}/{}\", {borrowed})", segment.name)
         };
     }
     Ok(scope)

@@ -2,6 +2,6 @@ let __ice_lazy_context_
 let __ice_lazy_event_
 let __activate = __DemoMessage::__BoardHandleEntered((__ice_use_scope
 let __activate = __DemoMessage::__BoardHandleEntered((__ice_lazy_p0
-self.__ice_component_use_0(__ice_palette, format!("{}/Card@36", __for_scope.clone()), (move |__event_0| __DemoMessage::Entered(__event_0)).clone(), item))
+self.__ice_component_use_0(__ice_palette, format!("{}/Card@36", __for_scope), (move |__event_0| __DemoMessage::Entered(__event_0)).clone(), item))
 let __activate = (__ice_lazy_p
 let cached: i64 = __dependency.0.clone();

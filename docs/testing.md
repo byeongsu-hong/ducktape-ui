@@ -134,3 +134,59 @@ A contract that asserts today's number pins today's behaviour, including its
 waste. When a fix makes a metric drop, the contract asserting the old value is
 part of the fix — update it, and bring its budget down with it, or the next
 regression has nowhere to land.
+
+## Probes: where the time actually goes
+
+Contracts guard a number that is already understood. A probe finds the number in
+the first place — it prints a phase split, asserts nothing, and is `#[ignore]`d
+or excluded from debug builds, so it never runs in CI. Reach for one before
+optimizing anything, because both of the loops below turned out to be dominated
+by a phase that was not the obvious suspect.
+
+### The edit → run loop
+
+```sh
+scripts/build_bench.py --packages showcase iced-app --runs 5 --json before.json
+# change something
+scripts/build_bench.py --packages showcase iced-app --runs 5 --compare before.json
+```
+
+Three medians per package: `noop` (cargo's own overhead), `script` (the package
+build script run directly — the Ice compiler alone), and `edit` (one byte
+changed in a root `.ice`, which is what an author waits for). `edit - script` is
+rustc's share.
+
+Do **not** measure the Ice compiler by bumping `ICE_DEV_BUILD_FINGERPRINT`:
+cargo marks the whole crate dirty on an env change, so that number is mostly
+rustc. `build_bench.py` runs the build-script binary directly instead.
+
+On showcase (2170 lines of `.ice`, 15.5k lines generated) the split is
+`script` 0.3s against `edit` 6.5s, and `-Ztime-passes` on the incremental
+rebuild attributes rustc's share to `type_check_crate` 2.7s, `link` 0.9s,
+`MIR_borrow_checking` 0.8s, `codegen_crate` 0.55s. So the loop is a *rustc
+front-end* cost on generated code, not an Ice compiler cost. Two profile levers
+were measured and rejected because of that: `[profile.dev.build-override]
+opt-level = 3` (no effect — the Ice compiler is not the bottleneck) and
+`debug = "line-tables-only"` / `debug = 0` (0.92x at best — debug info is not
+the bottleneck either). What is left is reducing the volume and inference cost
+of generated Rust.
+
+### The frame
+
+```sh
+cargo test --release -p showcase -- --ignored --nocapture frame_cost
+```
+
+`examples/showcase/src/frame_probe.rs` drives the real generated app through
+`testing::Driver` and prints p50/p95 per phase. `crates/ui-lang-runtime/tests/frame_probe.rs`
+is its counterpart for hand-written iced trees; use that one when the question
+is about a runtime widget rather than about generated code.
+
+Release only — the module is `#![cfg(not(debug_assertions))]`, because `-O0`
+numbers measure rustc, not the app.
+
+The phase that matters is `__view build only` against `idle redraw`: the first
+is the code the Ice compiler emits, the second adds iced's layout and event
+walk. On showcase that is ~0.72ms against ~3.3ms, so roughly three quarters of a
+frame is layout over the whole view tree, and optimizing generated code alone
+cannot reach it.

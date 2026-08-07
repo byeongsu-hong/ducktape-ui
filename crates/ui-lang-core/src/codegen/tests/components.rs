@@ -484,7 +484,8 @@ view
     assert!(!generated.contains("format!(\"{}/frame({})\", __for_scope.clone(), item)"));
     assert!(!generated.contains("format!(\"{}/slotted({})\", __for_scope.clone(), item)"));
     assert!(generated.contains("format!(\"{}/Private@"));
-    assert!(generated.contains("\", __for_scope.clone())"));
+    // `format!` borrows through `format_args!`, so the scope reaches it uncloned.
+    assert!(generated.contains("\", __for_scope)"));
 }
 
 #[test]
@@ -1382,7 +1383,7 @@ view
         "the nested method must take the enclosing scope local as a positional parameter"
     );
     assert!(
-        generated.contains("self.__ice_component_use_0(__ice_palette, format!(\"{}/Inner@25\", __ice_use_scope.clone()), __ice_use_scope.clone())"),
+        generated.contains("self.__ice_component_use_0(__ice_palette, format!(\"{}/Inner@25\", __ice_use_scope), __ice_use_scope.clone())"),
         "the nested call inside the outer method passes the outer's normalized scope"
     );
 }

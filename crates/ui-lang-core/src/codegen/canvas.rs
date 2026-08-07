@@ -219,7 +219,7 @@ fn canvas_capture_env(
 
     for (index, scope) in captures.iter().enumerate() {
         let alias = format!("__canvas_{phase}_scope_{index}");
-        write!(setup, "let {alias} = ({scope}).clone();").unwrap();
+        write!(setup, "let {alias} = ({}).clone();", borrowed_scope(scope)).unwrap();
         for binding in captured.values_mut() {
             binding.code = binding.code.replace(scope, &alias);
             if let Some(StateBinding::Component {

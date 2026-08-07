@@ -123,12 +123,13 @@ fn resolved_boolean_identity_code(
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let Some(identity) = identity else {
-        let scope = reconciliation_scope(scope, env);
+        let scope = borrowed_scope(reconciliation_scope(scope, env));
         return Ok(format!(
             "format!(\"{{}}/@{kind}:{}\", {scope})",
             control.source_line
         ));
     };
+    let scope = borrowed_scope(scope);
     if let Some(key) = identity.key {
         Ok(format!(
             "format!(\"{{}}/{}({{}})\", {scope}, {})",
