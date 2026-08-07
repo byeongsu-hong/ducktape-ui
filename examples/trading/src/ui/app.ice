@@ -1003,7 +1003,7 @@ view
                             @text-fg
                         space w=fill
                         Label value="SPREAD"
-                        text fmt_px(depth.spread)
+                        text fmt_bps(depth.spread_pct)
                           with
                             size=11.0
                             font=digits

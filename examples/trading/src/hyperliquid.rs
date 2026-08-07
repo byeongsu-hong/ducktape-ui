@@ -174,7 +174,6 @@ pub struct SymbolRow {
     pub funding_pct: f64,
     pub leverage: f64,
     pub open_interest: f64,
-    pub oracle: f64,
     /// Yesterday's close, kept so a streamed mid price can be turned back
     /// into a 24h change without another request.
     pub prev: f64,
@@ -184,7 +183,6 @@ pub struct SymbolRow {
 #[derive(Clone, PartialEq)]
 pub struct Position {
     pub coin: String,
-    pub side: String,
     pub size: f64,
     pub entry: f64,
     pub mark: f64,
@@ -205,7 +203,6 @@ pub struct Position {
 pub struct Account {
     pub value: f64,
     pub pnl: f64,
-    pub margin_used: f64,
     pub withdrawable: f64,
     pub notional: f64,
     pub maintenance: f64,
@@ -224,8 +221,6 @@ pub struct Fill {
     pub size: f64,
     pub buy: bool,
     pub closed_pnl: f64,
-    pub action: String,
-    pub fee: f64,
     /// Decay steps left on the highlight a just-printed fill wears, counted
     /// down to zero by the app. Fills already on the books arrive cold.
     pub heat: i64,
@@ -456,7 +451,6 @@ fn parse_context(name: String, context: &Value) -> SymbolRow {
         funding_pct: num(context, "funding") * 100.0,
         leverage: 0.0,
         open_interest: num(context, "openInterest"),
-        oracle: num(context, "oraclePx"),
         prev: previous,
     }
 }
@@ -491,7 +485,6 @@ fn parse_account(value: &Value) -> Account {
             let mark = if size == 0.0 { 0.0 } else { value / size.abs() };
             Position {
                 coin: text(position, "coin"),
-                side: if size >= 0.0 { "Long" } else { "Short" }.to_owned(),
                 size,
                 entry,
                 // The exchange reports notional, not a mark price.
@@ -522,7 +515,6 @@ fn parse_account(value: &Value) -> Account {
     Account {
         value: equity,
         pnl: positions.iter().map(|position| position.pnl).sum(),
-        margin_used: num(&summary, "totalMarginUsed"),
         withdrawable: num(value, "withdrawable"),
         notional: num(&summary, "totalNtlPos"),
         maintenance,
@@ -572,8 +564,6 @@ fn parse_fills(value: &Value, heat: i64) -> Vec<Fill> {
             // "B" is a buy, "A" hits the ask side and is a sell.
             buy: text(fill, "side") == "B",
             closed_pnl: num(fill, "closedPnl"),
-            action: text(fill, "dir"),
-            fee: num(fill, "fee"),
             heat,
             tid: value_i64(fill, "tid"),
         })
@@ -1103,6 +1093,17 @@ pub fn fmt_latency(millis: i64) -> String {
     format!("{millis}ms")
 }
 
+/// The spread as a share of the mid, in basis points. A spread is only worth
+/// reading against the price it sits on: two dollars is nothing on Bitcoin and
+/// the whole market on a coin worth a cent, and the absolute figure makes you
+/// do that division yourself for every market you look at.
+pub fn fmt_bps(percent: f64) -> String {
+    if !percent.is_finite() || percent <= 0.0 {
+        return "—".to_owned();
+    }
+    format!("{:.1} bps", percent * 100.0)
+}
+
 /// Large money in a narrow column: "-$3.3M" rather than eleven digits.
 pub fn fmt_compact_usd(value: f64) -> String {
     if value == 0.0 {
@@ -1349,13 +1350,14 @@ mod tests {
         assert_eq!(account.value, 10_000.0);
         assert_eq!(account.pnl, 2_200.0, "summary PnL is the open positions");
 
+        // A signed size is the side: the panel reads long or short off it.
         let long = &account.positions[0];
-        assert_eq!(long.side, "Long");
+        assert!(long.size > 0.0);
         assert_eq!(long.mark, 64_000.0, "mark comes from notional over size");
         assert!((long.roe_pct - 25.0).abs() < 1e-9);
 
         let short = &account.positions[1];
-        assert_eq!(short.side, "Short");
+        assert!(short.size < 0.0);
         assert_eq!(short.mark, 2_900.0);
         assert_eq!(short.liq, 0.0, "a null liquidation price reads as none");
     }
@@ -1425,8 +1427,6 @@ mod tests {
                 size: 0.5,
                 buy: true,
                 closed_pnl: 0.0,
-                action: "Open Long".into(),
-                fee: 0.0,
                 heat: 0,
                 tid: 1,
             },
@@ -1437,8 +1437,6 @@ mod tests {
                 size: 2.0,
                 buy: true,
                 closed_pnl: 0.0,
-                action: "Open Long".into(),
-                fee: 0.0,
                 heat: 0,
                 tid: 2,
             },
@@ -1449,8 +1447,6 @@ mod tests {
                 size: 0.5,
                 buy: false,
                 closed_pnl: 250.0,
-                action: "Close Long".into(),
-                fee: 1.0,
                 heat: 0,
                 tid: 3,
             },
@@ -1475,7 +1471,6 @@ mod tests {
         let positions = vec![
             Position {
                 coin: "BTC".into(),
-                side: "Long".into(),
                 size: 0.5,
                 entry: 60_000.0,
                 mark: 64_000.0,
@@ -1490,7 +1485,6 @@ mod tests {
             },
             Position {
                 coin: "ETH".into(),
-                side: "Short".into(),
                 size: -2.0,
                 entry: 3_000.0,
                 mark: 2_900.0,
@@ -1736,8 +1730,6 @@ mod tests {
             size: 1.0,
             buy: true,
             closed_pnl: 0.0,
-            action: String::new(),
-            fee: 0.0,
             heat,
             tid,
         }
@@ -1784,6 +1776,15 @@ mod tests {
         );
         assert_eq!(fmt_compact_usd(-3_309_352.0), "-$3.3M");
         assert_eq!(fmt_pct(3.4), "+3.40%");
+
+        // A spread reads against the price it sits on: $2 on a $64,849 mid is
+        // the tightest market on the exchange, and the same $2 on a $3 coin is
+        // not a market at all. Both are "2.00" until you divide.
+        assert_eq!(fmt_bps(2.0 / 64_849.0 * 100.0), "0.3 bps");
+        assert_eq!(fmt_bps(2.0 / 3.0 * 100.0), "6666.7 bps");
+        // A book with one side empty has no spread to quote.
+        assert_eq!(fmt_bps(0.0), "—");
+        assert_eq!(fmt_bps(f64::NAN), "—", "never render a NaN into the panel");
     }
 
     /// The fixtures above encode what the exchange documents. This one asks
@@ -1954,7 +1955,6 @@ mod tests {
                 funding_pct: 0.0,
                 leverage: 40.0,
                 open_interest: 0.0,
-                oracle: 1.0,
                 prev: 1.0,
             },
             SymbolRow {
@@ -1965,7 +1965,6 @@ mod tests {
                 funding_pct: 0.0,
                 leverage: 25.0,
                 open_interest: 0.0,
-                oracle: 1.0,
                 prev: 1.0,
             },
         ];

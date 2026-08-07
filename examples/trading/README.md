@@ -46,6 +46,12 @@ that can mean *something happened while you were looking elsewhere*. The
 divider under the chart drags: positions and fills are worth more rows on some
 days than others.
 
+The book quotes its spread in basis points rather than in dollars, because a
+spread only means something against the price under it: two dollars is the
+tightest market on the exchange on Bitcoin and no market at all on a coin worth
+three. One number you can carry between markets beats one you have to divide
+first.
+
 ## What talks to the exchange
 
 Everything the exchange pushes arrives on a websocket; everything it only
@@ -145,7 +151,9 @@ One extern block
 a set of `sync` formatters and list folds, and one `component` adapter that
 renders the chart from the tape plus the current fills, positions, and orders.
 Candles never cross into Ice; everything the panels list does, because the
-panels list it.
+panels list it — and only that. A struct crossing the boundary carries the
+fields the screen reads and no others, so the extern block stays a description
+of the interface rather than of the exchange.
 
 The chart adapter reports back one `ChartSignal`: the candle under the cursor,
 and whether the view has reached the oldest candle loaded. One handler reads
