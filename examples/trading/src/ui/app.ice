@@ -651,13 +651,27 @@ view
               match account
                 some(held)
                   row gap=14.0 align=center
-                    row gap=6.0 align=center
-                      Label value="EQUITY"
-                      text fmt_usd(held.value)
-                        with
-                          size=13.0
-                          font=digits
-                          @text-fg
+                    col gap=4.0
+                      row gap=6.0 align=center
+                        Label value="EQUITY"
+                        text fmt_usd(held.value)
+                          with
+                            size=13.0
+                            font=digits
+                            @text-fg
+                      row w=80.0 h=3.0
+                        box
+                          with
+                            w=held.health
+                            h=3.0
+                            bg=down
+                          space w=fill h=fill
+                        box
+                          with
+                            w=(80.0 - held.health)
+                            h=3.0
+                            bg=edge
+                          space w=fill h=fill
                     row gap=6.0 align=center
                       Label value="PNL"
                       Delta
