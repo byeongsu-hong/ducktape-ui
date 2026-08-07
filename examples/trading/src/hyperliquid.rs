@@ -22,6 +22,11 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 /// Candles fetched when a market is opened, and on every poll after that.
 const BACKFILL_BARS: i64 = 500;
 const REFRESH_BARS: i64 = 3;
+/// Book levels shown per side, and the pixel width of a full depth bar.
+const BOOK_DEPTH: usize = 10;
+const BOOK_BAR_WIDTH: f64 = 196.0;
+/// Pixel width of the risk rail drawn under a position's liquidation price.
+const RISK_RAIL_WIDTH: f64 = 84.0;
 
 fn rgb(hex: u32) -> Color {
     Color::from_rgb8(
@@ -36,17 +41,17 @@ fn rgb(hex: u32) -> Color {
 /// for the two things that mean money moved.
 fn chart_theme() -> theme::Theme {
     let mut chart = theme::DARK;
-    chart.palette.background = rgb(0x0b_0c_0e);
-    chart.palette.foreground = rgb(0xe6_e8_ec);
-    chart.palette.muted_foreground = rgb(0x78_80_8d);
-    chart.palette.border = rgb(0x23_28_30);
-    chart.palette.success = rgb(0x2e_bd_85);
-    chart.palette.destructive = rgb(0xf6_46_5d);
-    // The moving-average slots; steel rather than colour, so the fills and
-    // the position levels are the only saturated marks on the plot.
-    chart.palette.accent = rgb(0x4a_51_5c);
-    chart.palette.warning = rgb(0x78_80_8d);
-    chart.typography.font = Font::with_name("Geist Mono");
+    chart.palette.background = rgb(0x14_12_0f);
+    chart.palette.foreground = rgb(0xed_e8_df);
+    chart.palette.muted_foreground = rgb(0x93_89_7c);
+    chart.palette.border = rgb(0x2f_28_23);
+    chart.palette.success = rgb(0x5f_ae_7e);
+    chart.palette.destructive = rgb(0xd0_64_5a);
+    // The moving-average slots; ink rather than colour, so the fills and the
+    // position levels are the only long/short marks on the plot.
+    chart.palette.accent = rgb(0x4a_42_3b);
+    chart.palette.warning = rgb(0x6b_61_57);
+    chart.typography.font = Font::with_name("Monoplex KR");
     chart
 }
 
@@ -145,6 +150,8 @@ pub struct SymbolRow {
     pub volume: f64,
     pub funding_pct: f64,
     pub leverage: f64,
+    pub open_interest: f64,
+    pub oracle: f64,
 }
 
 /// One open position, shaped the way the official app reads it out.
@@ -159,6 +166,12 @@ pub struct Position {
     pub pnl: f64,
     pub roe_pct: f64,
     pub margin: f64,
+    /// How far the mark has travelled from entry toward liquidation, already
+    /// scaled to the rail's pixel width. Zero when there is no cliff to run at.
+    pub risk: f64,
+    pub leverage: f64,
+    pub margin_mode: String,
+    pub funding: f64,
 }
 
 /// The account summary plus its open positions.
@@ -167,6 +180,9 @@ pub struct Account {
     pub value: f64,
     pub pnl: f64,
     pub margin_used: f64,
+    pub withdrawable: f64,
+    pub notional: f64,
+    pub maintenance: f64,
     pub positions: Vec<Position>,
 }
 
@@ -179,6 +195,38 @@ pub struct Fill {
     pub size: f64,
     pub buy: bool,
     pub closed_pnl: f64,
+    pub action: String,
+    pub fee: f64,
+}
+
+/// One resting order, listed and drawn on the chart as a level.
+#[derive(Clone, PartialEq)]
+pub struct Order {
+    pub coin: String,
+    pub buy: bool,
+    pub price: f64,
+    pub size: f64,
+    pub ts: i64,
+}
+
+/// One price level of the book, with the cumulative depth behind it already
+/// resolved to a bar width so the view does no arithmetic.
+#[derive(Clone, PartialEq)]
+pub struct Level {
+    pub price: f64,
+    pub size: f64,
+    pub total: f64,
+    pub bar: f64,
+}
+
+/// The top of the book for one market.
+#[derive(Clone, PartialEq)]
+pub struct Book {
+    pub bids: Vec<Level>,
+    pub asks: Vec<Level>,
+    pub spread: f64,
+    pub spread_pct: f64,
+    pub mid: f64,
 }
 
 /// The candle tape the chart renders, plus the symbol and interval it holds.
@@ -315,6 +363,8 @@ fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
                     .get("maxLeverage")
                     .and_then(Value::as_f64)
                     .unwrap_or(0.0),
+                open_interest: num(context, "openInterest"),
+                oracle: num(context, "oraclePx"),
             }
         })
         .collect();
@@ -328,6 +378,18 @@ pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
     ))
 }
 
+/// The share of the entry-to-liquidation distance the mark has already
+/// covered: 0 at the entry price, 1 at the cliff. Works for either side
+/// because both endpoints flip together, and reads 0 when the position has
+/// no liquidation price at all.
+fn liquidation_travel(entry: f64, mark: f64, liquidation: f64) -> f64 {
+    let span = liquidation - entry;
+    if !(span.is_finite() && span.abs() > f64::EPSILON) || liquidation <= 0.0 {
+        return 0.0;
+    }
+    ((mark - entry) / span).clamp(0.0, 1.0)
+}
+
 fn parse_account(value: &Value) -> Account {
     let summary = value.get("marginSummary").cloned().unwrap_or(Value::Null);
     let positions: Vec<Position> = list(value, "assetPositions")
@@ -336,17 +398,33 @@ fn parse_account(value: &Value) -> Account {
         .map(|position| {
             let size = num(position, "szi");
             let value = num(position, "positionValue");
+            let entry = num(position, "entryPx");
+            let mark = if size == 0.0 { 0.0 } else { value / size.abs() };
             Position {
                 coin: text(position, "coin"),
                 side: if size >= 0.0 { "Long" } else { "Short" }.to_owned(),
                 size,
-                entry: num(position, "entryPx"),
+                entry,
                 // The exchange reports notional, not a mark price.
-                mark: if size == 0.0 { 0.0 } else { value / size.abs() },
+                mark,
                 liq: num(position, "liquidationPx"),
                 pnl: num(position, "unrealizedPnl"),
                 roe_pct: num(position, "returnOnEquity") * 100.0,
                 margin: num(position, "marginUsed"),
+                risk: liquidation_travel(entry, mark, num(position, "liquidationPx"))
+                    * RISK_RAIL_WIDTH,
+                leverage: position
+                    .get("leverage")
+                    .and_then(|leverage| leverage.get("value"))
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0),
+                margin_mode: position
+                    .get("leverage")
+                    .map_or_else(String::new, |leverage| text(leverage, "type")),
+                // Funding paid since the position was opened; negative is paid out.
+                funding: position
+                    .get("cumFunding")
+                    .map_or(0.0, |funding| num(funding, "sinceOpen")),
             }
         })
         .collect();
@@ -354,6 +432,9 @@ fn parse_account(value: &Value) -> Account {
         value: num(&summary, "accountValue"),
         pnl: positions.iter().map(|position| position.pnl).sum(),
         margin_used: num(&summary, "totalMarginUsed"),
+        withdrawable: num(value, "withdrawable"),
+        notional: num(&summary, "totalNtlPos"),
+        maintenance: num(value, "crossMaintenanceMarginUsed"),
         positions,
     }
 }
@@ -378,8 +459,97 @@ fn parse_fills(value: &Value) -> Vec<Fill> {
             // "B" is a buy, "A" hits the ask side and is a sell.
             buy: text(fill, "side") == "B",
             closed_pnl: num(fill, "closedPnl"),
+            action: text(fill, "dir"),
+            fee: num(fill, "fee"),
         })
         .collect()
+}
+
+fn parse_orders(value: &Value) -> Vec<Order> {
+    value
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|order| Order {
+            coin: text(order, "coin"),
+            buy: text(order, "side") == "B",
+            price: num(order, "limitPx"),
+            size: num(order, "sz"),
+            ts: value_i64(order, "timestamp") / 1_000,
+        })
+        .collect()
+}
+
+/// One side of the book, nearest price first, with cumulative depth resolved
+/// into the bar width the view draws behind each row.
+fn parse_levels(side: Option<&Value>) -> Vec<Level> {
+    let levels = side
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let mut total = 0.0;
+    let mut rows: Vec<Level> = levels
+        .iter()
+        .take(BOOK_DEPTH)
+        .map(|level| {
+            total += num(level, "sz");
+            Level {
+                price: num(level, "px"),
+                size: num(level, "sz"),
+                total,
+                bar: 0.0,
+            }
+        })
+        .collect();
+    let deepest = rows.last().map_or(0.0, |level| level.total);
+    if deepest > 0.0 {
+        for level in &mut rows {
+            level.bar = level.total / deepest * BOOK_BAR_WIDTH;
+        }
+    }
+    rows
+}
+
+fn parse_book(value: &Value) -> Book {
+    let sides = value.get("levels").and_then(Value::as_array);
+    let bids = parse_levels(sides.and_then(|sides| sides.first()));
+    let asks = parse_levels(sides.and_then(|sides| sides.get(1)));
+    let (best_bid, best_ask) = (
+        bids.first().map_or(0.0, |level| level.price),
+        asks.first().map_or(0.0, |level| level.price),
+    );
+    let spread = if best_bid > 0.0 && best_ask > 0.0 {
+        best_ask - best_bid
+    } else {
+        0.0
+    };
+    let mid = if spread > 0.0 {
+        (best_ask + best_bid) / 2.0
+    } else {
+        best_bid.max(best_ask)
+    };
+    Book {
+        bids,
+        asks,
+        spread,
+        spread_pct: if mid > 0.0 { spread / mid * 100.0 } else { 0.0 },
+        mid,
+    }
+}
+
+pub async fn hl_orders(address: String) -> Result<Vec<Order>, HlError> {
+    Ok(parse_orders(
+        &info(json!({ "type": "openOrders", "user": address })).await?,
+    ))
+}
+
+/// The book renders newest-first from the top, so the asks are reversed here
+/// and the view just walks both lists.
+pub async fn hl_book(coin: String) -> Result<Book, HlError> {
+    let mut book = parse_book(&info(json!({ "type": "l2Book", "coin": coin })).await?);
+    book.asks.reverse();
+    Ok(book)
 }
 
 pub async fn hl_fills(address: String) -> Result<Vec<Fill>, HlError> {
@@ -427,8 +597,51 @@ pub fn fmt_volume(value: f64) -> String {
     format_volume(value)
 }
 
+/// Wall-clock time of day in UTC, which is what a fills list is read by.
+pub fn fmt_time(ts: i64) -> String {
+    let secs = ts.rem_euclid(86_400);
+    format!(
+        "{:02}:{:02}:{:02}",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
+}
+
 pub fn fmt_leverage(value: f64) -> String {
     format!("{value:.0}x")
+}
+
+/// Large money in a narrow column: "-$3.3M" rather than eleven digits.
+pub fn fmt_compact_usd(value: f64) -> String {
+    if value == 0.0 {
+        return "$0".to_owned();
+    }
+    let sign = if value > 0.0 { "+" } else { "-" };
+    format!("{sign}${}", format_volume(value.abs()))
+}
+
+/// A plain count for a section header.
+pub fn fmt_count(value: i64) -> String {
+    value.to_string()
+}
+
+/// A single fill's realized PnL: exact while it is small enough to read,
+/// compact once it is not.
+pub fn fmt_pnl(value: f64) -> String {
+    if value.abs() < 10_000.0 {
+        fmt_signed_usd(value)
+    } else {
+        fmt_compact_usd(value)
+    }
+}
+
+/// How a position is levered, as one cell: "40x cross".
+pub fn fmt_leverage_mode(value: f64, mode: String) -> String {
+    if mode.is_empty() {
+        return fmt_leverage(value);
+    }
+    format!("{} {mode}", fmt_leverage(value))
 }
 
 /// Substring match on the ticker, which is all a 200-row sidebar needs.
@@ -444,6 +657,15 @@ pub fn filter_symbols(rows: Vec<SymbolRow>, query: String) -> Vec<SymbolRow> {
 
 pub fn symbol_row(rows: Vec<SymbolRow>, coin: String) -> Option<SymbolRow> {
     rows.into_iter().find(|row| row.name == coin)
+}
+
+/// The newest fills across every market, capped so the list builds a bounded
+/// number of rows however long the account's history is.
+pub fn recent_fills(rows: Vec<Fill>, limit: i64) -> Vec<Fill> {
+    let mut rows = rows;
+    rows.sort_by_key(|fill| std::cmp::Reverse(fill.ts));
+    rows.truncate(limit.max(0) as usize);
+    rows
 }
 
 /// This account's fills on one market, as chart glyphs: a buy points up out
@@ -491,18 +713,37 @@ fn position_lines(positions: &[Position], coin: &str) -> Vec<PriceLine> {
         .collect()
 }
 
+/// Resting orders as levels: the price you are still waiting to trade at.
+fn order_lines(orders: &[Order], coin: &str) -> Vec<PriceLine> {
+    let palette = chart_theme().palette;
+    orders
+        .iter()
+        .filter(|order| order.coin == coin)
+        .map(|order| {
+            let color = if order.buy {
+                palette.success
+            } else {
+                palette.destructive
+            };
+            PriceLine::new(order.price, color).label(fmt_size(order.size))
+        })
+        .collect()
+}
+
 /// The chart for the selected market, with this account's fills marked on it
-/// and its position levels drawn across it.
+/// and its levels drawn across it.
 pub fn chart(
     tape: &Tape,
     fills: &[Fill],
     positions: &[Position],
+    orders: &[Order],
     coin: &str,
 ) -> Element<'static, Option<CandleHit>> {
     let chart = candle_chart_shared(tape.candles.clone(), &chart_theme())
         .height(Length::Fill)
         .moving_averages([20, 60])
         .price_lines(position_lines(positions, coin))
+        .price_lines(order_lines(orders, coin))
         .markers(fill_markers(fills, coin))
         .on_hover(|hit| hit);
     accessible(chart, StableId::new("trading-chart"), Role::Image)
@@ -641,6 +882,8 @@ mod tests {
                 size: 0.5,
                 buy: true,
                 closed_pnl: 0.0,
+                action: "Open Long".into(),
+                fee: 0.0,
             },
             Fill {
                 coin: "ETH".into(),
@@ -649,6 +892,8 @@ mod tests {
                 size: 2.0,
                 buy: true,
                 closed_pnl: 0.0,
+                action: "Open Long".into(),
+                fee: 0.0,
             },
             Fill {
                 coin: "BTC".into(),
@@ -657,6 +902,8 @@ mod tests {
                 size: 0.5,
                 buy: false,
                 closed_pnl: 250.0,
+                action: "Close Long".into(),
+                fee: 1.0,
             },
         ];
 
@@ -687,6 +934,10 @@ mod tests {
                 pnl: 2_000.0,
                 roe_pct: 25.0,
                 margin: 8_000.0,
+                risk: 0.0,
+                leverage: 20.0,
+                margin_mode: "cross".into(),
+                funding: 0.0,
             },
             Position {
                 coin: "ETH".into(),
@@ -698,6 +949,10 @@ mod tests {
                 pnl: 200.0,
                 roe_pct: 10.0,
                 margin: 1_000.0,
+                risk: 0.0,
+                leverage: 20.0,
+                margin_mode: "cross".into(),
+                funding: 0.0,
             },
         ];
         let lines = position_lines(&positions, "BTC");
@@ -712,12 +967,107 @@ mod tests {
     }
 
     #[test]
+    fn the_risk_rail_measures_entry_to_liquidation() {
+        // A long: entry above the cliff, so travel grows as the mark falls.
+        assert_eq!(liquidation_travel(100.0, 100.0, 80.0), 0.0, "at entry");
+        assert_eq!(liquidation_travel(100.0, 90.0, 80.0), 0.5, "halfway down");
+        assert_eq!(liquidation_travel(100.0, 80.0, 80.0), 1.0, "at the cliff");
+        assert_eq!(
+            liquidation_travel(100.0, 110.0, 80.0),
+            0.0,
+            "in profit, clamped"
+        );
+        assert_eq!(
+            liquidation_travel(100.0, 70.0, 80.0),
+            1.0,
+            "past it, clamped"
+        );
+
+        // A short flips both endpoints, so the same ratio holds.
+        assert_eq!(liquidation_travel(100.0, 110.0, 120.0), 0.5);
+
+        // Cross positions report no liquidation price at all.
+        assert_eq!(liquidation_travel(100.0, 90.0, 0.0), 0.0);
+        assert_eq!(
+            liquidation_travel(100.0, 90.0, 100.0),
+            0.0,
+            "no span to travel"
+        );
+    }
+
+    #[test]
+    fn the_book_stacks_depth_and_measures_the_spread() {
+        let book = parse_book(&json!({
+            "coin": "BTC",
+            "levels": [
+                [{ "px": "64848.0", "sz": "1.0", "n": 1 }, { "px": "64847.0", "sz": "3.0", "n": 2 }],
+                [{ "px": "64850.0", "sz": "2.0", "n": 1 }, { "px": "64851.0", "sz": "2.0", "n": 1 }],
+            ]
+        }));
+
+        assert_eq!(book.bids[0].total, 1.0, "depth accumulates from the top");
+        assert_eq!(book.bids[1].total, 4.0);
+        assert_eq!(
+            book.bids[1].bar, BOOK_BAR_WIDTH,
+            "the deepest level is a full bar"
+        );
+        assert!(book.bids[0].bar < book.bids[1].bar);
+        assert_eq!(book.spread, 2.0, "64850 ask against a 64848 bid");
+        assert_eq!(book.mid, 64_849.0);
+        assert!((book.spread_pct - 2.0 / 64_849.0 * 100.0).abs() < 1e-12);
+
+        // An empty side must not divide by its own zero depth.
+        let empty = parse_book(&json!({ "levels": [[], []] }));
+        assert_eq!(empty.spread, 0.0);
+        assert_eq!(empty.mid, 0.0);
+    }
+
+    #[test]
+    fn resting_orders_carry_a_side_and_price() {
+        let orders = parse_orders(&json!([
+            { "coin": "HYPE", "side": "A", "limitPx": "56.473", "sz": "23.24", "timestamp": 1_786_096_201_409i64 },
+            { "coin": "BTC", "side": "B", "limitPx": "60000.0", "sz": "0.5", "timestamp": 1_786_096_201_409i64 },
+        ]));
+        assert!(!orders[0].buy, "an ask is a sell order");
+        assert!(orders[1].buy);
+        assert_eq!(orders[0].ts, 1_786_096_201, "seconds, like the chart");
+
+        let lines = order_lines(&orders, "BTC");
+        assert_eq!(lines.len(), 1, "only the charted market is drawn");
+        assert_eq!(lines[0].price, 60_000.0);
+    }
+
+    #[test]
+    fn the_fills_list_is_newest_first_and_bounded() {
+        let fill = |ts: i64| Fill {
+            coin: "BTC".into(),
+            ts,
+            price: 1.0,
+            size: 1.0,
+            buy: true,
+            closed_pnl: 0.0,
+            action: String::new(),
+            fee: 0.0,
+        };
+        let rows = recent_fills(vec![fill(10), fill(30), fill(20)], 2);
+        assert_eq!(rows.len(), 2, "the list is capped");
+        assert_eq!(rows[0].ts, 30, "newest first");
+        assert_eq!(rows[1].ts, 20);
+    }
+
+    #[test]
     fn formatting_shows_direction_and_instrument_precision() {
         assert_eq!(fmt_px(64_581.0), "64,581.00");
         assert_eq!(fmt_px(0.0004321), "0.000432");
         assert_eq!(fmt_signed_usd(-1_234.5), "-$1,234.50");
         assert_eq!(fmt_signed_usd(12.0), "+$12.00");
         assert_eq!(fmt_pct(-3.456), "-3.46%");
+        assert_eq!(
+            fmt_compact_usd(0.0),
+            "$0",
+            "a zero is neither a gain nor a loss"
+        );
+        assert_eq!(fmt_compact_usd(-3_309_352.0), "-$3.3M");
         assert_eq!(fmt_pct(3.4), "+3.40%");
     }
 
@@ -753,6 +1103,16 @@ mod tests {
                 );
             }
 
+            let book = hl_book("BTC".into()).await.expect("order book");
+            assert!(!book.bids.is_empty() && !book.asks.is_empty());
+            assert!(book.spread > 0.0, "a live book has a spread");
+            assert!(
+                book.asks
+                    .last()
+                    .is_some_and(|best| best.price > book.bids[0].price),
+                "the asks are reversed so the best ask sits against the spread"
+            );
+
             // A vault address: reachable, and its summary parses.
             let account = hl_account("0xdfc24b077bc1425ad1dea75bcb6f8158e10df303".into())
                 .await
@@ -771,6 +1131,8 @@ mod tests {
                 volume: 0.0,
                 funding_pct: 0.0,
                 leverage: 40.0,
+                open_interest: 0.0,
+                oracle: 1.0,
             },
             SymbolRow {
                 name: "ETH".into(),
@@ -779,6 +1141,8 @@ mod tests {
                 volume: 0.0,
                 funding_pct: 0.0,
                 leverage: 25.0,
+                open_interest: 0.0,
+                oracle: 1.0,
             },
         ];
         assert_eq!(filter_symbols(rows.clone(), " et ".into()).len(), 1);
