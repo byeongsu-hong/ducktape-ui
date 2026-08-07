@@ -112,7 +112,12 @@ impl widget::operation::Focusable for State {
     }
 
     fn unfocus(&mut self) {
-        self.unfocus();
+        // Moving keyboard focus elsewhere must not cancel a pointer gesture
+        // already in flight. `operation::focus` unfocuses every other
+        // focusable, so an application task that focuses one control while a
+        // press is held on another would otherwise drop the press, and the
+        // release that completes it would publish nothing at all.
+        self.blur();
     }
 }
 
@@ -970,6 +975,32 @@ mod tests {
             handle_event(&mut state, &press, false, true, &9, &mut shell);
         }
         assert!(!state.is_focused());
+    }
+
+    #[test]
+    fn focus_operation_elsewhere_preserves_pending_pointer_activation() {
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut state = State::default();
+        let mut messages = Vec::new();
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            handle_event(&mut state, &press, true, true, &9, &mut shell);
+        }
+        assert!(state.is_pressed());
+
+        // `operation::focus` unfocuses every other focusable, and an
+        // application task can run one while the press is still held.
+        widget::operation::Focusable::unfocus(&mut state);
+        assert!(!state.is_focused());
+        assert!(state.is_pressed());
+
+        {
+            let mut shell = Shell::new(&mut messages);
+            handle_event(&mut state, &release, true, true, &9, &mut shell);
+        }
+        assert_eq!(messages, [9]);
     }
 
     #[test]
