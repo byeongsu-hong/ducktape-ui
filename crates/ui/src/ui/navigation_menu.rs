@@ -16,7 +16,7 @@ use super::popover::{
     panel, panel_style,
 };
 use super::theme::{Theme, alpha, mix};
-use super::tooltip::event_time;
+use super::tooltip::{event_time, redraw_time};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
 use iced::alignment::{Horizontal, Vertical};
 use iced::keyboard::{self, key::Named};
@@ -1263,7 +1263,11 @@ fn update_hover<Message>(
                 && state.open != Some(*index)
         });
     hover.observe(target, now, delay);
-    if let Some(target) = hover.take_ready(now) {
+    // The deadline fires on the redraw requested for it, never on a pointer
+    // event that merely arrived after it: a click whose press lands late would
+    // otherwise open the disclosure and let its own release toggle it shut.
+    let ready = redraw_time(event).and_then(|now| hover.take_ready(now));
+    if let Some(target) = ready {
         let mut next = state.clone();
         next.open = Some(target);
         shell.publish(on_event(changed(next, None)));
@@ -1597,6 +1601,58 @@ mod tests {
         assert_eq!(next.focused, state.focused);
         hover.observe(None, start + delay, delay);
         assert_eq!(hover.deadline(), None);
+    }
+
+    #[test]
+    fn hover_intent_opens_on_the_requested_redraw_not_a_late_pointer_event() {
+        let items = items();
+        let triggers: Vec<Rectangle> = (0..3)
+            .map(|index| {
+                Rectangle::new(Point::new(index as f32 * 80.0, 0.0), Size::new(80.0, 32.0))
+            })
+            .collect();
+        let cursor = Point::new(200.0, 16.0);
+        let state = NavigationMenuState::default();
+        let mut hover = HoverIntent::default();
+        // A redraw that is already a second old, so every later wall-clock read
+        // is past the deadline it schedules.
+        let started = Instant::now() - Duration::from_secs(1);
+        let mut open_hover = |event: &Event| {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            update_hover(
+                &mut hover,
+                event,
+                Some(cursor),
+                &triggers,
+                &[0, 1, 2],
+                &items,
+                &state,
+                NAVIGATION_MENU_HOVER_DELAY,
+                &|event| event,
+                &mut shell,
+            );
+            messages.pop().map(|event| event.state().open)
+        };
+
+        assert_eq!(
+            open_hover(&Event::Window(iced::window::Event::RedrawRequested(
+                started
+            ))),
+            None
+        );
+        assert_eq!(
+            open_hover(&Event::Mouse(mouse::Event::CursorMoved {
+                position: cursor
+            })),
+            None
+        );
+        assert_eq!(
+            open_hover(&Event::Window(iced::window::Event::RedrawRequested(
+                started + NAVIGATION_MENU_HOVER_DELAY
+            ))),
+            Some(Some(2))
+        );
     }
 
     #[test]

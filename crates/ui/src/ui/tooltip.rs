@@ -516,11 +516,17 @@ impl<Message> overlay::Overlay<Message, iced::Theme, iced::Renderer>
     }
 }
 
-pub(crate) fn event_time(event: &Event) -> Instant {
+/// The instant a redraw was requested for, or `None` for events that carry no
+/// time of their own.
+pub(crate) fn redraw_time(event: &Event) -> Option<Instant> {
     match event {
-        Event::Window(iced::window::Event::RedrawRequested(now)) => *now,
-        _ => Instant::now(),
+        Event::Window(iced::window::Event::RedrawRequested(now)) => Some(*now),
+        _ => None,
     }
+}
+
+pub(crate) fn event_time(event: &Event) -> Instant {
+    redraw_time(event).unwrap_or_else(Instant::now)
 }
 
 pub(crate) fn is_escape(event: &Event) -> bool {
