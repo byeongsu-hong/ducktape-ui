@@ -209,6 +209,9 @@ pub struct Account {
     pub withdrawable: f64,
     pub notional: f64,
     pub maintenance: f64,
+    /// How far the account's equity has fallen toward its maintenance
+    /// requirement, already scaled to the rail's pixel width.
+    pub health: f64,
     pub positions: Vec<Position>,
 }
 
@@ -514,15 +517,36 @@ fn parse_account(value: &Value) -> Account {
             }
         })
         .collect();
+    let equity = num(&summary, "accountValue");
+    let maintenance = num(value, "crossMaintenanceMarginUsed");
     Account {
-        value: num(&summary, "accountValue"),
+        value: equity,
         pnl: positions.iter().map(|position| position.pnl).sum(),
         margin_used: num(&summary, "totalMarginUsed"),
         withdrawable: num(value, "withdrawable"),
         notional: num(&summary, "totalNtlPos"),
-        maintenance: num(value, "crossMaintenanceMarginUsed"),
+        maintenance,
+        health: margin_load(equity, maintenance) * RISK_RAIL_WIDTH,
         positions,
     }
+}
+
+/// The share of the account's equity the maintenance requirement has already
+/// claimed: 0 with nothing at risk, 1 where the margin engine steps in. Cross
+/// positions do not die one at a time — the whole account goes when its equity
+/// falls under `crossMaintenanceMarginUsed` — so this is that one distance,
+/// read the same way the per-position rail reads entry to liquidation.
+///
+/// Equity at or below zero is already past the cliff, and an account with no
+/// maintenance requirement has no cliff to be near.
+fn margin_load(equity: f64, maintenance: f64) -> f64 {
+    if maintenance <= 0.0 {
+        return 0.0;
+    }
+    if equity <= 0.0 {
+        return 1.0;
+    }
+    (maintenance / equity).clamp(0.0, 1.0)
 }
 
 pub async fn hl_account(address: String) -> Result<Account, HlError> {
@@ -1000,13 +1024,17 @@ pub fn mark_positions(positions: Vec<Position>, tick: MarketTick) -> Vec<Positio
 pub fn mark_account(account: Option<Account>, positions: Vec<Position>) -> Option<Account> {
     let account = account?;
     let pnl: f64 = positions.iter().map(|position| position.pnl).sum();
+    let value = account.value - account.pnl + pnl;
     Some(Account {
-        value: account.value - account.pnl + pnl,
+        value,
         pnl,
         notional: positions
             .iter()
             .map(|position| position.mark * position.size.abs())
             .sum(),
+        // The requirement itself waits for the poll, but the equity it is
+        // measured against does not, so the rail closes as the account loses.
+        health: margin_load(value, account.maintenance) * RISK_RAIL_WIDTH,
         positions,
         ..account
     })
@@ -1487,7 +1515,7 @@ mod tests {
         );
     }
 
-    fn tick_at(prices: [(&str, f64); 2]) -> MarketTick {
+    fn tick_at<const MARKETS: usize>(prices: [(&str, f64); MARKETS]) -> MarketTick {
         MarketTick {
             mids: prices
                 .into_iter()
@@ -1577,6 +1605,56 @@ mod tests {
             mark_account(None, quiet).is_none(),
             "no account, nothing to re-total"
         );
+    }
+
+    #[test]
+    fn the_health_rail_measures_equity_against_the_maintenance_call() {
+        assert_eq!(margin_load(10_000.0, 0.0), 0.0, "nothing open, no cliff");
+        assert_eq!(margin_load(10_000.0, 2_500.0), 0.25, "a quarter claimed");
+        assert_eq!(margin_load(10_000.0, 10_000.0), 1.0, "the call lands here");
+        assert_eq!(margin_load(8_000.0, 10_000.0), 1.0, "past it, clamped");
+        assert_eq!(margin_load(0.0, 10_000.0), 1.0, "wiped out is not empty");
+        assert_eq!(margin_load(-500.0, 10_000.0), 1.0, "nor is owing money");
+        // An account with no requirement is not at risk however small it is.
+        assert_eq!(margin_load(0.0, 0.0), 0.0);
+
+        let account = parse_account(&json!({
+            "marginSummary": { "accountValue": "10000.0", "totalMarginUsed": "3000.0" },
+            "crossMaintenanceMarginUsed": "2000.0",
+            "withdrawable": "7000.0",
+            "assetPositions": [
+                { "position": {
+                    "coin": "BTC", "szi": "1.0", "entryPx": "60000.0",
+                    "positionValue": "60000.0", "unrealizedPnl": "0.0",
+                    "returnOnEquity": "0.0", "liquidationPx": "45000.0",
+                    "marginUsed": "3000.0", "leverage": { "type": "cross", "value": 20 }
+                }},
+            ]
+        }));
+        assert_eq!(account.maintenance, 2_000.0);
+        assert_eq!(
+            account.health,
+            RISK_RAIL_WIDTH / 5.0,
+            "a fifth of the equity is spoken for"
+        );
+
+        // The requirement waits for the next poll, but the equity it is
+        // measured against does not: losing half the account doubles the rail.
+        let sinking = mark_account(
+            Some(account.clone()),
+            mark_positions(account.positions.clone(), tick_at([("BTC", 55_000.0)])),
+        )
+        .expect("an account");
+        assert_eq!(sinking.value, 5_000.0, "the position gave back $5k");
+        assert_eq!(sinking.health, RISK_RAIL_WIDTH * 2.0 / 5.0);
+        assert_eq!(
+            sinking.maintenance, account.maintenance,
+            "the requirement is the margin engine's to restate"
+        );
+
+        // A read-only session has no account and so no rail to draw.
+        let browsing = parse_account(&json!({ "marginSummary": {} }));
+        assert_eq!(browsing.health, 0.0);
     }
 
     #[test]
@@ -1756,6 +1834,14 @@ mod tests {
             assert!(
                 !watched.positions.is_empty(),
                 "the address this app opens on holds nothing to re-value"
+            );
+            // A live leveraged account owes a maintenance requirement, and it
+            // is under its equity or the exchange would have closed it.
+            assert!(watched.maintenance > 0.0, "open positions, no requirement");
+            assert!(
+                watched.health > 0.0 && watched.health < RISK_RAIL_WIDTH,
+                "a solvent account draws a partial rail, got {}",
+                watched.health
             );
             let marked = mark_positions(
                 watched.positions.clone(),

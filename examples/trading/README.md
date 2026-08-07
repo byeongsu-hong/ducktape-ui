@@ -33,6 +33,12 @@ travelled from your entry toward the cliff. Distance to liquidation is the
 number a leveraged position actually turns on, and it is the one number every
 table makes you compute. Here it is a length.
 
+The same rail runs under the equity figure, because cross positions do not die
+one at a time: the account goes when its equity falls under the maintenance
+requirement the margin engine holds against it. That bar is how much of the
+equity the requirement has already claimed — empty with nothing open, full at
+the call. Two rails, one reading, one for the position and one for everything.
+
 A fill the account just printed is pushed onto the top of the list wearing its
 side's colour, which fades over two beats and leaves the row cold. It is the
 only motion on screen that is not a number changing, so it is the only thing
@@ -87,7 +93,9 @@ what the exchange's own `returnOnEquity` divides by. The risk rail re-measures
 against the new mark, equity moves by what the positions just made, and each
 poll re-anchors all of it. What is withdrawable, what margin is tied up, and
 what the maintenance requirement is stay with the poll: those are the margin
-engine's answers, not arithmetic over positions.
+engine's answers, not arithmetic over positions. The health rail still closes
+between polls, though — the requirement it measures against is fixed until the
+next one, but the equity falling toward it is not.
 
 The market feed re-reads the tape's focus on every beat, so switching markets
 costs an unsubscribe and a subscribe on the socket already open rather than a
