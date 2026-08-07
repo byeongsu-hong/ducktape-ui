@@ -60,6 +60,11 @@ use iced::{Element, Event, Length, Rectangle, Size, Vector};
 /// two reveals something already measured.
 const OVERSCAN_ROWS: usize = 4;
 
+/// Stands in for the viewport height on the one pass that precedes any event
+/// reporting a real one. Only the order of magnitude matters: the first
+/// `update` corrects it.
+const NOMINAL_SCREEN_HEIGHT: f32 = 1_080.0;
+
 /// Lays out only the visible slice of `children`, estimating the rest at
 /// `estimated_height` until they are measured.
 ///
@@ -259,12 +264,17 @@ where
         let tops = state.tops(count, self.estimated_height, self.spacing);
 
         // Before the first draw the viewport is unknown; fill a screen's worth
-        // from the top rather than the whole document.
+        // from the top rather than the whole document. A vertical scrollable
+        // hands its content an *infinite* height limit, so the limit alone
+        // would mean the whole document — which is the one moment a long list
+        // can least afford to shape every row.
         let visible_top = state.viewport.y;
         let visible_height = if state.viewport.height > 0.0 {
             state.viewport.height
-        } else {
+        } else if limits.max().height.is_finite() {
             limits.max().height.max(self.estimated_height)
+        } else {
+            NOMINAL_SCREEN_HEIGHT.max(self.estimated_height)
         };
         let first = tops
             .partition_point(|top| *top <= visible_top)
@@ -322,15 +332,23 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        // Row offsets are measured from this widget's own top, while the
+        // viewport a scrollable reports is in screen coordinates. Rebase it, or
+        // everything above the scrollable — a header, a toolbar — shifts the
+        // window down by its own height and leaves that much of the list blank
+        // at the top. Only a scrollable sitting at y=0 gets away without this.
+        // The children still get the screen-space `viewport` they expect.
+        let visible = *viewport - Vector::new(layout.bounds().x, layout.bounds().y);
+
         // Scrolling moves the viewport without changing anything this widget
         // owns, so nothing else would re-open layout — and until it does, the
         // rows scrolled into view have never been measured.
-        if tree.state.downcast_ref::<State>().viewport != *viewport {
+        if tree.state.downcast_ref::<State>().viewport != visible {
             // A click focuses a child from inside its own `update`, where no
             // operation can see it. This is the last pass where the outgoing
             // window still has layouts to ask through, so ask now.
             self.track_focus(tree, layout, renderer);
-            tree.state.downcast_mut::<State>().viewport = *viewport;
+            tree.state.downcast_mut::<State>().viewport = visible;
             shell.invalidate_layout();
         }
 

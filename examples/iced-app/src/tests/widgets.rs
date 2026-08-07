@@ -205,6 +205,11 @@ mod test_mount_features {
 }
 
 #[cfg(test)]
+mod virtual_rows {
+    ui_lang::include_app!("src/ui/virtual_rows.ice");
+}
+
+#[cfg(test)]
 mod component_output {
     mod plugin_backend {
         pub use crate::backend::borrowed_help;

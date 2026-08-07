@@ -128,6 +128,15 @@ pub use crate::shadow::shadow_round_trip;
 #[cfg(test)]
 pub use crate::theme_mode::theme_mode_round_trip;
 
+/// Rows for the virtualized-column test: zero-padded so a test can name one by
+/// value, and uniform so every row's height equals the column's estimate.
+#[cfg(test)]
+pub fn virtual_rows(count: i64) -> Vec<String> {
+    (0..count.max(0))
+        .map(|row| format!("row {row:03}"))
+        .collect()
+}
+
 #[cfg(test)]
 pub use crate::text_values::{
     text_alignment_round_trip, text_line_height_round_trip, text_shaping_round_trip,
