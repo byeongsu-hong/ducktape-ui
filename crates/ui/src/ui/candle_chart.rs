@@ -221,6 +221,7 @@ struct ColumnAgg {
     low: f64,
     close: f64,
     volume: f64,
+    last_index: usize,
 }
 
 /// Folds the visible candles into per-pixel columns once candles are narrower
@@ -251,6 +252,7 @@ fn aggregate_columns(
                 agg.low = agg.low.min(candle.low);
                 agg.close = candle.close;
                 agg.volume += candle.volume;
+                agg.last_index = index;
             }
             slot => {
                 *slot = Some(ColumnAgg {
@@ -259,11 +261,44 @@ fn aggregate_columns(
                     low: candle.low,
                     close: candle.close,
                     volume: candle.volume,
+                    last_index: index,
                 });
             }
         }
     }
     Some(columns)
+}
+
+/// Overlay line colors rotate through these theme roles per moving average.
+const MA_STROKE_WIDTH: f32 = 1.5;
+
+/// Prefix sums of closes over `window`, for O(1) SMA lookups inside it.
+struct ClosePrefix {
+    start: usize,
+    sums: Vec<f64>,
+}
+
+impl ClosePrefix {
+    fn new(candles: &[Candle], window: Range<usize>) -> Self {
+        let start = window.start;
+        let mut sums = Vec::with_capacity(window.len() + 1);
+        sums.push(0.0);
+        let mut total = 0.0;
+        for candle in &candles[window] {
+            total += candle.close;
+            sums.push(total);
+        }
+        Self { start, sums }
+    }
+
+    /// Mean close of the `period` candles ending at `index`, or None while
+    /// the window has too little history before `index`.
+    fn sma(&self, index: usize, period: usize) -> Option<f64> {
+        let end = index.checked_sub(self.start)? + 1;
+        let begin = end.checked_sub(period)?;
+        let span = &self.sums;
+        (end < span.len()).then(|| (span[end] - span[begin]) / period as f64)
+    }
 }
 
 /// Plot area: the canvas minus the price axis strip on the right and the
@@ -532,6 +567,7 @@ pub struct CandleChart<'a, Message> {
     initial_bars: usize,
     precision: Option<usize>,
     time_offset_secs: i64,
+    moving_averages: Vec<usize>,
 }
 
 pub fn candle_chart<'a, Message>(
@@ -561,6 +597,7 @@ fn with_data<'a, Message>(data: Data<'a>, theme: &UiTheme) -> CandleChart<'a, Me
         initial_bars: DEFAULT_BARS,
         precision: None,
         time_offset_secs: 0,
+        moving_averages: Vec::new(),
     }
 }
 
@@ -605,6 +642,13 @@ impl<'a, Message> CandleChart<'a, Message> {
         self.time_offset_secs = seconds;
         self
     }
+
+    /// Overlays simple moving averages of the close, one line per period.
+    #[must_use]
+    pub fn moving_averages(mut self, periods: impl IntoIterator<Item = usize>) -> Self {
+        self.moving_averages = periods.into_iter().filter(|p| *p > 1).collect();
+        self
+    }
 }
 
 impl<'a, Message> From<CandleChart<'a, Message>> for Element<'a, Message>
@@ -622,6 +666,7 @@ where
                 initial_bars: chart.initial_bars,
                 precision: chart.precision,
                 time_offset_secs: chart.time_offset_secs,
+                moving_averages: chart.moving_averages,
             })
             .width(width)
             .height(height),
@@ -674,6 +719,7 @@ struct CandleProgram<'a, Message> {
     initial_bars: usize,
     precision: Option<usize>,
     time_offset_secs: i64,
+    moving_averages: Vec<usize>,
 }
 
 impl<Message> CandleProgram<'_, Message> {
@@ -999,6 +1045,7 @@ impl<Message> CandleProgram<'_, Message> {
     }
 
     fn draw_static(&self, ctx: &FrameCtx<'_>, frame: &mut canvas::Frame, range: Range<usize>) {
+        let overlay_range = range.clone();
         let palette = self.theme.palette;
         let plot = ctx.chrome.plot;
         let grid = alpha(palette.border, 0.55);
@@ -1096,6 +1143,8 @@ impl<Message> CandleProgram<'_, Message> {
             });
         }
 
+        self.draw_moving_averages(ctx, frame, overlay_range);
+
         if let (Some(last), Some(y)) = (ctx.candles.last(), ctx.axes.last_close_y) {
             let color = if last.close >= last.open {
                 palette.success
@@ -1116,6 +1165,71 @@ impl<Message> CandleProgram<'_, Message> {
                 color,
                 palette.background,
             );
+        }
+    }
+
+    /// One polyline per configured period; sampled per candle when bars are
+    /// wide, per pixel column when aggregated, so the point count stays
+    /// bounded by the plot width in both modes.
+    fn draw_moving_averages(
+        &self,
+        ctx: &FrameCtx<'_>,
+        frame: &mut canvas::Frame,
+        range: Range<usize>,
+    ) {
+        if self.moving_averages.is_empty() || range.is_empty() {
+            return;
+        }
+        let palette = self.theme.palette;
+        let colors = [palette.accent, palette.warning, palette.brand];
+        let max_period = self.moving_averages.iter().copied().max().unwrap_or(0);
+        let window = range.start.saturating_sub(max_period)..range.end;
+        let prefix = ClosePrefix::new(ctx.candles, window);
+        let columns = aggregate_columns(ctx.candles, range.clone(), ctx.viewport, ctx.chrome);
+
+        for (slot, period) in self.moving_averages.iter().enumerate() {
+            let color = colors[slot % colors.len()];
+            let mut points: Vec<Point> = Vec::new();
+            match &columns {
+                Some(columns) => {
+                    for (offset, column) in columns.iter().enumerate() {
+                        let Some(column) = column else { continue };
+                        if let Some(mean) = prefix.sma(column.last_index, *period) {
+                            points.push(Point::new(
+                                ctx.chrome.plot.x + offset as f32,
+                                ctx.scale.y(ctx.chrome.plot, mean),
+                            ));
+                        }
+                    }
+                }
+                None => {
+                    for index in range.clone() {
+                        if let Some(mean) = prefix.sma(index, *period) {
+                            points.push(Point::new(
+                                ctx.chrome.x(ctx.viewport, index as f64),
+                                ctx.scale.y(ctx.chrome.plot, mean),
+                            ));
+                        }
+                    }
+                }
+            }
+            if points.len() < 2 {
+                continue;
+            }
+            let path = Path::new(|builder| {
+                builder.move_to(points[0]);
+                for point in &points[1..] {
+                    builder.line_to(*point);
+                }
+            });
+            frame.with_clip(ctx.chrome.plot, |frame| {
+                frame.stroke(
+                    &path,
+                    canvas::Stroke::default()
+                        .with_color(color)
+                        .with_width(MA_STROKE_WIDTH),
+                );
+            });
         }
     }
 
@@ -1490,6 +1604,35 @@ mod tests {
     }
 
     #[test]
+    fn sma_matches_brute_force_and_respects_history() {
+        let data = candles(40);
+        let prefix = ClosePrefix::new(&data, 5..40);
+        for period in [2usize, 5, 10] {
+            for index in 5..40 {
+                let expected = if index + 1 >= 5 + period {
+                    Some(
+                        data[index + 1 - period..=index]
+                            .iter()
+                            .map(|c| c.close)
+                            .sum::<f64>()
+                            / period as f64,
+                    )
+                } else {
+                    None
+                };
+                let actual = prefix.sma(index, period);
+                match (actual, expected) {
+                    (Some(a), Some(e)) => assert!((a - e).abs() < 1e-9),
+                    (a, e) => assert_eq!(a, e, "period {period} index {index}"),
+                }
+            }
+        }
+        // Indices outside the window are unavailable, not out-of-bounds.
+        assert_eq!(prefix.sma(4, 2), None);
+        assert_eq!(prefix.sma(40, 2), None);
+    }
+
+    #[test]
     fn prices_group_thousands() {
         assert_eq!(format_price(0.05, 2), "0.05");
         assert_eq!(format_price(999.0, 0), "999");
@@ -1516,6 +1659,7 @@ mod tests {
             initial_bars: DEFAULT_BARS,
             precision: None,
             time_offset_secs: 0,
+            moving_averages: Vec::new(),
         }
     }
 
@@ -1855,6 +1999,7 @@ mod tests {
                 initial_bars: DEFAULT_BARS,
                 precision: None,
                 time_offset_secs: 0,
+                moving_averages: Vec::new(),
             };
             let views = [
                 ("last-120", None),

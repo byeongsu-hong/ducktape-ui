@@ -162,6 +162,7 @@ pub fn fmt_volume(value: f64) -> String {
 pub fn chart(feed: &MarketFeed) -> Element<'static, Option<CandleHit>> {
     let chart = candle_chart_shared(feed.tape.clone(), &theme::DARK)
         .height(Length::Fill)
+        .moving_averages([20, 60])
         .on_hover(|hit| hit);
     accessible(chart, StableId::new("candles-chart"), Role::Image)
         .label("Mock market candlestick chart")
