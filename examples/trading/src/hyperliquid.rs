@@ -1229,6 +1229,9 @@ mod tests {
 
         /// `l2Book`, `allMids`, and `clearinghouseState` cost 2; every other
         /// documented request costs 20; paged responses add one per page.
+        /// `hl_mids` is priced as the `allMids` it settles into — it reads the
+        /// universe only until the list first loads, which is the startup
+        /// burst rather than the steady rate this measures.
         fn weight(call: &str) -> u32 {
             match call {
                 "hl_book" | "hl_mids" | "hl_account" => 2,
