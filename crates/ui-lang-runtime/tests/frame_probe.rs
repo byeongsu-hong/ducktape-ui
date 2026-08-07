@@ -355,6 +355,25 @@ fn chat_frame_phase_costs() {
         timeline_phases.push(timeline_phase);
     }
 
+    // Constructing row elements WITHOUT laying them out: the cost a
+    // "build every child, lay out only the visible ones" virtualization
+    // would still pay. Shaping happens in layout, so this isolates it.
+    let mut construct_phase = Phase::new("construct 1000 rows, no layout");
+    for _ in 0..8 {
+        construct_phase.sample(|| {
+            let built: Vec<Element<'_, Message, Theme, iced_test::renderer::Renderer>> = (0..1000)
+                .map(|index| {
+                    column![
+                        text(format!("user-{}", index % 7)),
+                        text(model.bodies[index % ROWS].clone()).size(14),
+                    ]
+                    .into()
+                })
+                .collect();
+            std::hint::black_box(&built);
+        });
+    }
+
     eprintln!(
         "chat frame probe: {ROWS} lazy rows, {}x{}",
         WINDOW.width, WINDOW.height
@@ -367,6 +386,7 @@ fn chat_frame_phase_costs() {
     switch_phase.report();
     all_deps_phase.report();
     cold_phase.report();
+    construct_phase.report();
     for phase in &timeline_phases {
         phase.report();
     }
