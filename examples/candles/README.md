@@ -7,9 +7,15 @@ and a crosshair on an iced canvas. Grid, candles, volume, and axes live in a
 cached geometry layer that is only rebuilt when the data or the visible range
 changes; crosshair moves reblit that cache and redraw only the overlay.
 
-Scroll to zoom around the cursor, drag to pan, hover for the OHLCV readout.
-The app streams a deterministic synthetic tape: every 500ms the last candle
-ticks, and occasionally a fresh candle rolls over.
+Scroll to zoom around the cursor, drag to pan, hover for the OHLCV readout,
+and switch symbols in the header. The app runs a production-shaped mock feed:
+`market_connect` backfills 10k candles like a REST kline fetch, and a
+timer-driven subscription plays the role of the exchange WebSocket, ticking
+the last candle every 250ms and occasionally rolling a new one. The tape
+lives behind one shared lock (`SharedCandles`) that the subscription mutates
+in place and the chart locks briefly per frame — no candle data is ever
+copied per tick, per frame, or across the Ice boundary, and history is
+capped at 100k candles with chunked eviction.
 
 ```bash
 cargo run -p candles-example
@@ -81,8 +87,9 @@ Then copy this example's three-file recipe: the adapter module that re-exports
 ## Boundary
 
 The Ice/Rust boundary is one extern block
-([`src/ui/extern/market.ice`](src/ui/extern/market.ice)): `Candle` and
-`CandleHit` record views, three `sync` helpers for the tape and number
-formatting, and one `component` adapter that returns the chart element. The
-view mounts it with `extern chart(candles) -> candle_hovered _` and feeds the
-reported hit back into the header readout.
+([`src/ui/extern/market.ice`](src/ui/extern/market.ice)): an opaque
+`MarketFeed` handle constructed by a `sync` extern, a `subscription` extern
+that emits lightweight `Tick` notices (revision, last price, direction), two
+formatting helpers, and one `component` adapter that renders the chart from
+the shared tape. Candles themselves never cross into Ice; the `Tick` notice
+is the Elm-side invalidation signal and the header's live price.
