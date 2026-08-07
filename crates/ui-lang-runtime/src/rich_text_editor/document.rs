@@ -811,8 +811,7 @@ where
     let line_padding = highlights
         .iter()
         .map(|(_, format)| format.line_padding)
-        .filter(|padding| *padding != Padding::ZERO)
-        .next_back()
+        .rfind(|padding| *padding != Padding::ZERO)
         .unwrap_or(Padding::ZERO);
     let line_rule = highlights
         .iter()
