@@ -1183,6 +1183,18 @@ pub fn any_hot(rows: Vec<Fill>) -> bool {
     rows.iter().any(|fill| fill.heat > 0)
 }
 
+/// An account address is `0x` and forty hexadecimal digits. Worth checking
+/// before the request rather than after it: the exchange answers a malformed
+/// address with a plain-text parser complaint rather than JSON, so a typo
+/// surfaces as "Hyperliquid sent bad JSON" — the one error message that blames
+/// the exchange for something the user just typed.
+pub fn valid_address(address: String) -> bool {
+    let address = address.trim();
+    address.len() == 42
+        && address.starts_with("0x")
+        && address[2..].bytes().all(|digit| digit.is_ascii_hexdigit())
+}
+
 /// Left gap the header keeps clear so its content never sits under the macOS
 /// traffic lights, which float over the fullsize content view. The rightmost
 /// button ends near 74pt; everywhere else the header owns its full width.
@@ -1942,6 +1954,36 @@ mod tests {
             !lock(&tape.candles).is_empty(),
             "candles are merged into the tape rather than sent through Ice"
         );
+    }
+
+    #[test]
+    fn an_address_is_checked_before_it_reaches_the_exchange() {
+        // The address the app opens on, and the vault the live test reads.
+        assert!(valid_address(WATCHED.to_owned()));
+        assert!(valid_address(
+            "  0xdfc24b077bc1425ad1dea75bcb6f8158e10df303  ".to_owned()
+        ));
+        assert!(
+            valid_address("0xDFC24B077BC1425AD1DEA75BCB6F8158E10DF303".to_owned()),
+            "checksummed addresses are the same address"
+        );
+
+        assert!(!valid_address(String::new()), "the prompt starts empty");
+        assert!(!valid_address("0x".to_owned()));
+        assert!(
+            !valid_address("dfc24b077bc1425ad1dea75bcb6f8158e10df303".to_owned()),
+            "forty digits without the prefix is not an address"
+        );
+        assert!(
+            !valid_address("0xdfc24b077bc1425ad1dea75bcb6f8158e10df3033".to_owned()),
+            "one digit too many"
+        );
+        assert!(
+            !valid_address("0xzzc24b077bc1425ad1dea75bcb6f8158e10df303".to_owned()),
+            "the right length, but not hexadecimal"
+        );
+        // Forty-two bytes of multibyte text must not be sliced mid-character.
+        assert!(!valid_address("0x".to_owned() + &"é".repeat(20)));
     }
 
     #[test]
