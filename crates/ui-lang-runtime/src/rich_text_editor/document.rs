@@ -134,6 +134,9 @@ pub(super) struct LayoutUpdate {
     pub(super) highlighted_lines: usize,
     pub(super) change_hint_used: bool,
     pub(super) change_hint_rejected: bool,
+    /// Lines below this index kept their cached highlighting. The caller must
+    /// re-open a pass before showing any of them.
+    pub(super) highlight_valid_until: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -187,6 +190,7 @@ impl DocumentLayout {
         format: &dyn Fn(&H::Highlight) -> Format,
         style: LineLayoutStyle,
         update: DocumentUpdate,
+        highlight_until: usize,
     ) -> LayoutUpdate
     where
         H: text::Highlighter,
@@ -235,11 +239,25 @@ impl DocumentLayout {
             highlighter.change_line(scan_start);
         }
 
+        let new_suffix_start = new_len.saturating_sub(common_suffix);
+        // Highlighting is sequential, so it can only ever be cut off as a
+        // suffix: skip a line and every later line's highlighter state is
+        // wrong. The cut must also clear the changed middle region — those
+        // lines hold stale TEXT, not merely stale colour, so reusing them
+        // would render the document as it was before the edit. When nothing
+        // changed textually that region is empty and the cut is free to sit
+        // wherever the viewport ends.
+        let text_region_end = if new_suffix_start > common_prefix {
+            new_suffix_start
+        } else {
+            0
+        };
+        let truncate_at = highlight_until.max(text_region_end).min(new_len);
+
         let mut old = std::mem::take(&mut self.lines)
             .into_iter()
             .map(Some)
             .collect::<Vec<_>>();
-        let new_suffix_start = new_len.saturating_sub(common_suffix);
         let old_suffix_start = old_len.saturating_sub(common_suffix);
         let mut lines = Vec::with_capacity(new_len);
         let mut rebuilt = 0;
@@ -261,7 +279,7 @@ impl DocumentLayout {
                 None
             };
 
-            if index < scan_start {
+            if index < scan_start || index >= truncate_at {
                 let mut line = candidate
                     .and_then(|candidate| old.get_mut(candidate))
                     .and_then(Option::take)
@@ -332,6 +350,7 @@ impl DocumentLayout {
             highlighted_lines: highlighted,
             change_hint_used,
             change_hint_rejected,
+            highlight_valid_until: truncate_at,
         }
     }
 
@@ -446,6 +465,13 @@ impl DocumentLayout {
                 clip,
             );
         }
+    }
+
+    /// The number of lines whose top edge sits above `y`, from the tops the
+    /// previous pass produced. Used to bound highlighting to the viewport;
+    /// an empty document reports 0, which makes the first pass build in full.
+    pub(super) fn lines_above(&self, y: f32) -> usize {
+        self.lines.partition_point(|line| line.top < y)
     }
 
     pub(super) fn line(&self, index: usize) -> Option<&DocumentLine> {

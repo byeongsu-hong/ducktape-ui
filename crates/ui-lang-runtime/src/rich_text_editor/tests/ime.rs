@@ -10,6 +10,7 @@ fn preedit_uses_the_same_wrapped_layout_as_committed_text() {
             &|_| Format::default(),
             test_layout_style(70.0),
             DocumentUpdate::text(DocumentChange::Discover),
+            usize::MAX,
         );
         document
             .lines

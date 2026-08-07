@@ -50,6 +50,7 @@ fn line_padding_changes_wrapping_caret_and_hit_geometry() {
         },
         test_layout_style(100.0),
         DocumentUpdate::text(DocumentChange::Discover),
+        usize::MAX,
     );
 
     let line = &document.lines[0];
@@ -290,6 +291,7 @@ fn empty_formatted_lines_keep_their_rich_metrics() {
         &|_| format,
         test_layout_style(500.0),
         DocumentUpdate::text(DocumentChange::Discover),
+        usize::MAX,
     );
 
     assert_eq!(rebuilt.rebuilt_lines, content.line_count());

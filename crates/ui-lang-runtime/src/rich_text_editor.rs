@@ -607,6 +607,9 @@ where
     source: String,
     source_lines: Vec<String>,
     source_line_map: TextLines,
+    /// Lines at or past this index still carry the highlighting of an earlier
+    /// pass. Scrolling one into view has to re-open a shaping pass.
+    highlight_valid_until: usize,
     content_version: Option<ContentVersion>,
     width: f32,
     font: Font,
@@ -720,6 +723,7 @@ where
             source: String::new(),
             source_lines: vec![String::new()],
             source_line_map: TextLines::empty(),
+            highlight_valid_until: 0,
             content_version: None,
             width: 0.0,
             font,
@@ -808,9 +812,22 @@ where
         // itself on or off is caught by the `wrapping` term below.
         let width_reflows = self.wrapping != text::Wrapping::None;
         let width_changed = width_reflows && state.width != inner_width;
+        // Highlighting stops at the bottom of the viewport, so scrolling past
+        // the validated region has to re-open a pass — nothing else would,
+        // once the content and geometry have settled.
+        const HIGHLIGHT_OVERSCAN_LINES: usize = 32;
+        // Clamped to the document: the validated mark can never exceed the
+        // line count, so an unclamped window would read as "past validated"
+        // forever on any document shorter than the overscan.
+        let highlight_until = state
+            .document
+            .lines_above(state.scroll + viewport_height)
+            .saturating_add(HIGHLIGHT_OVERSCAN_LINES)
+            .min(state.source_lines.len());
         let needs_shape = source_changed
             || preedit_changed
             || settings_updated
+            || highlight_until > state.highlight_valid_until
             || width_changed
             || state.font != font
             || state.text_size != text_size
@@ -880,7 +897,9 @@ where
                     geometry_changed,
                     format_changed,
                 },
+                highlight_until,
             );
+            state.highlight_valid_until = update.highlight_valid_until;
             #[cfg(test)]
             {
                 state.metrics.mapping_line_comparisons += update.mapping_line_comparisons;
@@ -959,6 +978,11 @@ where
             if next != state.scroll {
                 state.scroll = next;
                 shell.capture_event();
+                // Highlighting only covers down to the old viewport bottom, so
+                // revealing new lines needs a layout pass, not just a repaint.
+                // That pass is bounded by the viewport, which is what makes
+                // paying it per scroll step affordable.
+                shell.invalidate_layout();
                 shell.request_redraw();
             }
             return;

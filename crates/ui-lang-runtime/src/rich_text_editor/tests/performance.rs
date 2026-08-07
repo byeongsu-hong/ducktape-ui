@@ -17,6 +17,7 @@ fn ime_stages_rebuild_only_the_changed_line_in_a_long_document() {
                 &|_| Format::default(),
                 style,
                 DocumentUpdate::text(DocumentChange::Discover),
+                usize::MAX,
             )
             .rebuilt_lines,
         lines.len()
@@ -32,6 +33,7 @@ fn ime_stages_rebuild_only_the_changed_line_in_a_long_document() {
                     &|_| Format::default(),
                     style,
                     DocumentUpdate::text(DocumentChange::Discover),
+                    usize::MAX,
                 )
                 .rebuilt_lines,
             1,
@@ -55,6 +57,7 @@ fn line_insertions_reuse_the_unchanged_suffix() {
                 &|_| Format::default(),
                 style,
                 DocumentUpdate::text(DocumentChange::Discover),
+                usize::MAX,
             )
             .rebuilt_lines,
         3
@@ -69,6 +72,7 @@ fn line_insertions_reuse_the_unchanged_suffix() {
                 &|_| Format::default(),
                 style,
                 DocumentUpdate::text(DocumentChange::Discover),
+                usize::MAX,
             )
             .rebuilt_lines,
         1
@@ -83,6 +87,7 @@ fn line_insertions_reuse_the_unchanged_suffix() {
                 &|_| Format::default(),
                 style,
                 DocumentUpdate::text(DocumentChange::Discover),
+                usize::MAX,
             )
             .rebuilt_lines,
         0
@@ -101,6 +106,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         &|_| Format::default(),
         style,
         DocumentUpdate::text(DocumentChange::Discover),
+        usize::MAX,
     );
     let original_ids = document
         .lines
@@ -115,6 +121,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         &|_| Format::default(),
         style,
         DocumentUpdate::text(DocumentChange::Hint(test_change(1, 1, 1))),
+        usize::MAX,
     );
     assert_eq!(update.mapping_line_comparisons, 0);
     assert_eq!(update.rebuilt_lines, 1);
@@ -141,6 +148,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         &|_| Format::default(),
         style,
         DocumentUpdate::text(DocumentChange::Hint(test_change(1, 0, 1))),
+        usize::MAX,
     );
     assert_eq!(update.mapping_line_comparisons, 0);
     assert_eq!(update.rebuilt_lines, 1);
@@ -154,6 +162,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         &|_| Format::default(),
         style,
         DocumentUpdate::text(DocumentChange::Hint(test_change(1, 1, 0))),
+        usize::MAX,
     );
     assert_eq!(update.mapping_line_comparisons, 0);
     assert_eq!(update.rebuilt_lines, 0);
@@ -166,6 +175,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         &|_| Format::default(),
         style,
         DocumentUpdate::text(DocumentChange::Hint(test_change(1, 0, 1))),
+        usize::MAX,
     );
     assert_eq!(update.mapping_line_comparisons, 0);
     assert_eq!(update.rebuilt_lines, 1);
@@ -189,6 +199,7 @@ fn invalid_change_hints_fall_back_to_exact_diffing() {
             &|_| Format::default(),
             style,
             DocumentUpdate::text(DocumentChange::Discover),
+            usize::MAX,
         );
         let changed = ["first".to_owned(), "SECOND".to_owned(), "third".to_owned()];
         let update = document.update(
@@ -197,6 +208,7 @@ fn invalid_change_hints_fall_back_to_exact_diffing() {
             &|_| Format::default(),
             style,
             DocumentUpdate::text(DocumentChange::Hint(invalid)),
+            usize::MAX,
         );
 
         assert!(update.change_hint_rejected, "{invalid:?}");
@@ -223,6 +235,7 @@ fn insertion_hint_keeps_an_identical_shifted_suffix_line_identity() {
         &|_| Format::default(),
         style,
         DocumentUpdate::text(DocumentChange::Discover),
+        usize::MAX,
     );
     let shifted_identity = document.lines[1].identity;
 
@@ -238,6 +251,7 @@ fn insertion_hint_keeps_an_identical_shifted_suffix_line_identity() {
         &|_| Format::default(),
         style,
         DocumentUpdate::text(DocumentChange::Hint(test_change(1, 0, 1))),
+        usize::MAX,
     );
 
     assert_eq!(update.rebuilt_lines, 1);
@@ -259,6 +273,7 @@ fn change_hint_restarts_stateful_highlighting_at_the_changed_line() {
         },
         style,
         DocumentUpdate::text(DocumentChange::Discover),
+        usize::MAX,
     );
 
     let changed = ["before".to_owned(), "toggle".to_owned(), "after".to_owned()];
@@ -271,6 +286,7 @@ fn change_hint_restarts_stateful_highlighting_at_the_changed_line() {
         },
         style,
         DocumentUpdate::text(DocumentChange::Hint(test_change(1, 1, 1))),
+        usize::MAX,
     );
 
     assert_eq!(update.mapping_line_comparisons, 0);
@@ -583,11 +599,21 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
     let state = tree
         .state
         .downcast_ref::<State<text::highlighter::PlainText>>();
+    eprintln!(
+        "100k caret={caret_elapsed:?}, insertion={elapsed:?}, metrics={:?}",
+        state.metrics
+    );
     assert_eq!(state.metrics.full_text_materializations, 1);
     assert_eq!(state.metrics.materialized_source_bytes, source.len() + 1);
     assert_eq!(state.metrics.parsed_line_strings, 100_001);
     assert_eq!(state.metrics.mapping_line_comparisons, 0);
-    assert_eq!(state.metrics.styled_signature_comparisons, 50_001);
+    // The caret sits on line 50_000 but no layout ran after it moved there,
+    // so the viewport is still parked ~47k lines below, where the caret loop
+    // left it. A stateful highlighter cannot skip ahead, so it must run from
+    // the edit down to the visible region — inherent, not waste. When the
+    // viewport follows the caret, as it does while actually typing, this is
+    // bounded by the viewport instead (see the format-key contract).
+    assert_eq!(state.metrics.styled_signature_comparisons, 46_936);
     assert_eq!(state.metrics.newly_owned_styled_texts, 1);
     assert_eq!(
         state.metrics.newly_owned_styled_text_bytes,
@@ -596,7 +622,7 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
     assert_eq!(state.metrics.line_vector_slots_prepared, 200_002);
     assert_eq!(state.metrics.rebuilt_lines, 1);
     assert_eq!(state.metrics.shaped_paragraphs, 1);
-    assert_eq!(state.metrics.highlighted_lines, 50_001);
+    assert_eq!(state.metrics.highlighted_lines, 46_936);
     assert_eq!(state.metrics.accepted_change_hints, 1);
     assert_eq!(state.document.lines[50_000].signature.text, "linex 50000");
     budget_failures.extend(record_performance_metrics(
@@ -606,10 +632,6 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
         Duration::from_secs(5),
         &state.metrics,
     ));
-    eprintln!(
-        "100k caret={caret_elapsed:?}, insertion={elapsed:?}, metrics={:?}",
-        state.metrics
-    );
     assert_performance_budgets(&budget_failures);
 }
 
@@ -800,16 +822,17 @@ fn performance_contract_100k_hangul_ime_sequence() {
     let state = tree
         .state
         .downcast_ref::<State<text::highlighter::PlainText>>();
+    eprintln!("100k IME={elapsed:?}, metrics={:?}", state.metrics);
     assert_eq!(state.metrics.full_text_materializations, 0);
     assert_eq!(state.metrics.composition_display_strings, 3);
     assert_eq!(state.metrics.composition_line_strings, 300_003);
     assert!(state.metrics.mapping_line_comparisons > 0);
-    assert_eq!(state.metrics.styled_signature_comparisons, 150_003);
+    assert_eq!(state.metrics.styled_signature_comparisons, 99);
     assert_eq!(state.metrics.newly_owned_styled_texts, 3);
     assert_eq!(state.metrics.line_vector_slots_prepared, 600_006);
     assert_eq!(state.metrics.rebuilt_lines, 3);
     assert_eq!(state.metrics.shaped_paragraphs, 3);
-    assert_eq!(state.metrics.highlighted_lines, 150_003);
+    assert_eq!(state.metrics.highlighted_lines, 99);
     assert_eq!(state.metrics.accepted_change_hints, 0);
     let budget_failures = record_performance_metrics(
         "hangul_ime_sequence",
@@ -820,7 +843,6 @@ fn performance_contract_100k_hangul_ime_sequence() {
     )
     .into_iter()
     .collect::<Vec<_>>();
-    eprintln!("100k IME={elapsed:?}, metrics={:?}", state.metrics);
     assert_performance_budgets(&budget_failures);
 }
 
@@ -855,27 +877,31 @@ fn performance_contract_100k_format_key_only_layout() {
     let elapsed = started.elapsed();
 
     let state = tree.state.downcast_ref::<State<WholeLine>>();
+    eprintln!("100k format key={elapsed:?}, metrics={:?}", state.metrics);
     assert_eq!(state.metrics.full_text_materializations, 0);
     assert_eq!(state.metrics.materialized_source_bytes, 0);
     assert_eq!(state.metrics.parsed_line_strings, 0);
     assert_eq!(state.metrics.mapping_line_comparisons, 0);
-    assert_eq!(state.metrics.styled_signature_comparisons, 100_001);
+    // A format key changes how every line looks, but only the lines on
+    // screen have to be re-highlighted and re-shaped now; the rest keep the
+    // formatting of the previous pass until they scroll into view. This used
+    // to touch all 100_001 lines for ~10.7s.
+    assert_eq!(state.metrics.styled_signature_comparisons, 61);
     assert_eq!(state.metrics.newly_owned_styled_texts, 0);
     assert_eq!(state.metrics.newly_owned_styled_text_bytes, 0);
     assert_eq!(state.metrics.line_vector_slots_prepared, 200_002);
-    assert_eq!(state.metrics.rebuilt_lines, 100_001);
-    assert_eq!(state.metrics.shaped_paragraphs, 100_001);
-    assert_eq!(state.metrics.highlighted_lines, 100_001);
+    assert_eq!(state.metrics.rebuilt_lines, 61);
+    assert_eq!(state.metrics.shaped_paragraphs, 61);
+    assert_eq!(state.metrics.highlighted_lines, 61);
     let budget_failures = record_performance_metrics(
         "format_key_only",
         1,
         elapsed,
-        Duration::from_secs(30),
+        Duration::from_secs(1),
         &state.metrics,
     )
     .into_iter()
     .collect::<Vec<_>>();
-    eprintln!("100k format key={elapsed:?}, metrics={:?}", state.metrics);
     assert_performance_budgets(&budget_failures);
 }
 
@@ -910,6 +936,7 @@ fn performance_contract_100k_viewport_resize() {
     let state = tree
         .state
         .downcast_ref::<State<text::highlighter::PlainText>>();
+    eprintln!("100k resize={elapsed:?}, metrics={:?}", state.metrics);
     assert_eq!(state.metrics.full_text_materializations, 0);
     assert_eq!(state.metrics.mapping_line_comparisons, 0);
     assert_eq!(state.metrics.styled_signature_comparisons, 0);
@@ -932,7 +959,6 @@ fn performance_contract_100k_viewport_resize() {
     )
     .into_iter()
     .collect::<Vec<_>>();
-    eprintln!("100k resize={elapsed:?}, metrics={:?}", state.metrics);
     assert_performance_budgets(&budget_failures);
 }
 
