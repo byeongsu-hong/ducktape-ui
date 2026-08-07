@@ -626,9 +626,9 @@ view
                         width=64.0
                     rule vertical thickness=1.0 color=edge
                     row gap=14.0 align=center
-                      Stat name="24H VOL" value=fmt_volume(row.volume)
-                      Stat name="OPEN INT" value=fmt_volume(row.open_interest)
-                      Stat name="FUNDING" value=fmt_pct(row.funding_pct)
+                      Stat name="VOL" value=fmt_volume(row.volume)
+                      Stat name="OI" value=fmt_volume(row.open_interest)
+                      Stat name="FUNDING" value=fmt_funding(row.funding_pct)
                       Stat name="MAX" value=fmt_leverage(row.leverage)
                 none
                   text "Loading markets" size=11.0 @text-faint

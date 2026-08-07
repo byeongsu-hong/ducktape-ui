@@ -58,6 +58,13 @@ that can mean *something happened while you were looking elsewhere*. The
 divider under the chart drags: positions and fills are worth more rows on some
 days than others.
 
+Funding is the one figure here written to four decimals. Two is what every
+other number wants, and it is exactly what funding cannot use: the hourly rate
+is a hundredth of a percent on most of the exchange, so 166 of the 177 funded
+markets would print the identical `+0.00%`. The header pays for those two
+digits by calling volume `VOL` and open interest `OI`, which is what a book
+calls them anyway, and it fits the window's own 1400pt minimum again.
+
 The book quotes its spread in basis points rather than in dollars, because a
 spread only means something against the price under it: two dollars is the
 tightest market on the exchange on Bitcoin and no market at all on a coin worth
