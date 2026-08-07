@@ -31,8 +31,11 @@ Monoplex KR and every word is IBM Plex Sans KR — the same skeleton drawn twice
 one monospaced so a column of prices aligns on its digits, one proportional for
 prose. The ground is a warm ink-black rather than the blue-black every exchange
 ships, and the two money colours are a ledger green and an oxide red: printer's
-inks, not phosphor. Nothing else on screen — no button, border, tab, or rule —
-is allowed to be green or red, so long and short read at a glance.
+inks, not phosphor. They mean one thing and are spent nowhere else: which way
+money went, which side an order takes, and how far a position has run toward
+losing all of it. A border, a tab, a rule, a heading, a failure — none of them
+may be either colour, so long and short read at a glance. A feed that dropped
+is the app's problem and not the market's, so it says so in plain ink.
 
 The one thing this layout gives you that an exchange table does not is the
 **risk rail** under each liquidation price: a bar showing how far the mark has

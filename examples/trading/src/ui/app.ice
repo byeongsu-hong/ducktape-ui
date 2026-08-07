@@ -954,7 +954,7 @@ view
                           Label value="POSITIONS"
                           Label value=fmt_count(len(positions))
                           if !empty(error)
-                            text error size=11.0 @text-down
+                            text error size=11.0 @text-fg
                           if empty(error) && !empty(status)
                             text status size=11.0 @text-faint
                           if empty(error) && empty(status)
@@ -1686,6 +1686,12 @@ test trading_escape_clears_a_search
   expect query == ""
 
 test trading_shows_the_failure_not_the_progress
+  preset failing
+  viewport 1400 900
+  expect text "Hyperliquid unreachable"
+  expect no text "Loading candles"
+
+test trading_says_what_broke_without_spending_a_money_colour
   preset failing
   viewport 1400 900
   expect text "Hyperliquid unreachable"
