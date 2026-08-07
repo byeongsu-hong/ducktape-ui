@@ -911,7 +911,7 @@ editor_style_property
                | ("border=" | "placeholder=" | "value=" | "selection=") color_ref
                | ("border-w=" | "r=" | "r-tl="
                  | "r-tr=" | "r-br=" | "r-bl=") expr
-column_property = flex_property | "max-w=" expr
+column_property = flex_property | "max-w=" expr | "virtual-row=" expr
 flex_property  = ("w=" | "h=") length | "gap=" expr
                | ("p=" | "px=" | "py="
                  | "pt=" | "pr=" | "pb="
@@ -2892,7 +2892,7 @@ The implemented native nodes are:
 
 | Node | Contract |
 | --- | --- |
-| `col` | vertical children with full sizing, padding, spacing, alignment, clipping and wrapping behavior |
+| `col` | vertical children with full sizing, padding, spacing, alignment, clipping and wrapping behavior; `virtual-row=` lays out only the visible ones |
 | `row` | horizontal children with full sizing, padding, spacing, alignment, clipping and wrapping behavior |
 | `scroll` | one content child; complete direction/scrollbar/builders, every viewport getter and status selector, every concrete Style field, and typed native runtime style callbacks |
 | `grid` | responsive children with pixel width/spacing, fixed columns, minimum-cell wrapping, or native maximum-cell wrapping, and aspect-ratio or evenly distributed `Length` height |
@@ -2969,6 +2969,16 @@ An SVG accepts `style=status_svg(loading)` after a matching `svg-style`
 declaration. The Rust function receives `&iced::Theme`, `svg::Status`, then its
 owned arguments and returns `svg::Style`. Explicit `color=` and `hover=`
 properties override the callback result for their respective statuses.
+
+`col virtual-row=<estimate>` turns a column into a virtualized one: it accepts
+every child but lays out only those the viewport can reach, sizing the rest
+from the estimate until they scroll in and are measured for real. Text is
+shaped during layout, so a child never laid out never shapes — which is where
+the cost of a long list actually sits. Children keep their widget state, since
+they stay in the tree; they are simply not measured, drawn, or offered events
+while offscreen. Mount it inside a `scroll`. The estimate only needs the right
+order of magnitude. `wrap` and `align=` are rejected on such a column (`E197`),
+because both need every child measured.
 
 An `overlay` keeps the two trees explicit instead of relying on child order.
 When its bool condition is true, `layer` floats over `content`; the backdrop

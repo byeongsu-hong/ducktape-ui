@@ -86,6 +86,7 @@ pub(in crate::check) fn infer_layout_group(
                 &options.padding.bottom,
                 &options.padding.left,
                 &options.max_width,
+                &options.virtual_row,
                 &options.max_height,
                 &options.wrap_spacing,
             ]
@@ -93,6 +94,26 @@ pub(in crate::check) fn infer_layout_group(
             .flatten()
             {
                 require_nonnegative_f64(value, env, document, layout_metric, span)?;
+            }
+            if options.virtual_row.is_some() {
+                // A virtualized column lays out only the rows the viewport can
+                // see, so it cannot honour options that depend on every child
+                // being measured. Reject them rather than silently misplace
+                // rows the reader would have to scroll past to notice.
+                if options.wrap {
+                    return Err(Error::new(
+                        "E197",
+                        span,
+                        "a virtual-row column cannot wrap: wrapping needs every child measured",
+                    ));
+                }
+                if options.align.is_some() {
+                    return Err(Error::new(
+                        "E197",
+                        span,
+                        "a virtual-row column cannot set align: only mounted rows are laid out",
+                    ));
+                }
             }
             if let Some(flexbox) = &options.flexbox {
                 for value in [&flexbox.row_gap, &flexbox.column_gap]

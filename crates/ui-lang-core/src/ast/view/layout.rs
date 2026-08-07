@@ -26,6 +26,8 @@ pub struct LayoutOptions {
     pub spacing: Option<Expr>,
     pub padding: PaddingOptions,
     pub max_width: Option<Expr>,
+    /// Estimated row height that turns this column into a virtualized one.
+    pub virtual_row: Option<Expr>,
     pub max_height: Option<Expr>,
     pub align: Option<FlexAlignment>,
     pub wrap: bool,
@@ -90,6 +92,7 @@ pub(crate) fn layout_expression_roots(options: &LayoutOptions) -> Vec<&Expr> {
             &options.padding.bottom,
             &options.padding.left,
             &options.max_width,
+            &options.virtual_row,
             &options.max_height,
             &options.wrap_spacing,
         ]
@@ -296,7 +299,7 @@ pub(crate) fn layout_semantic_key(kind: Layout, options: &LayoutOptions) -> Stri
         },
     );
     format!(
-        "layout:{kind:?}|columns={}|clip={}|size={}:{}|spacing={}|padding={:?}|max={}{}|align={:?}|wrap={}:{:?}:{}|flex={flexbox}|cell={}{}|grid-height={grid_height}|under={}|scroll={scroll}",
+        "layout:{kind:?}|columns={}|clip={}|size={}:{}|spacing={}|padding={:?}|max={}{}|virtual-row={}|align={:?}|wrap={}:{:?}:{}|flex={flexbox}|cell={}{}|grid-height={grid_height}|under={}|scroll={scroll}",
         options.columns.is_some(),
         options.clip.is_some(),
         length(&options.width),
@@ -313,6 +316,7 @@ pub(crate) fn layout_semantic_key(kind: Layout, options: &LayoutOptions) -> Stri
         ],
         options.max_width.is_some(),
         options.max_height.is_some(),
+        options.virtual_row.is_some(),
         options.align,
         options.wrap,
         options.wrap_align,
@@ -335,7 +339,7 @@ pub(crate) fn keyed_column_semantic_key(options: &LayoutOptions) -> String {
     }
 
     format!(
-        "keyed|width={}|height={}|spacing={}|padding={:?}|max-width={}|align={:?}",
+        "keyed|width={}|height={}|spacing={}|padding={:?}|max-width={}|virtual-row={}|align={:?}",
         length_key(&options.width),
         length_key(&options.height),
         options.spacing.is_some(),
@@ -349,6 +353,7 @@ pub(crate) fn keyed_column_semantic_key(options: &LayoutOptions) -> String {
             options.padding.left.is_some(),
         ],
         options.max_width.is_some(),
+        options.virtual_row.is_some(),
         options.align,
     )
 }

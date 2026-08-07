@@ -42,6 +42,9 @@ pub(crate) struct ResolvedLinearLayout {
     pub(crate) width: Option<ResolvedContainerLength>,
     pub(crate) height: Option<ResolvedContainerLength>,
     pub(crate) max_width: Option<CheckedExprUseId>,
+    /// Estimated row height; `Some` makes this column lay out only the rows
+    /// the viewport can see.
+    pub(crate) virtual_row: Option<CheckedExprUseId>,
     pub(crate) align: Option<ResolvedContainerAlignment>,
     pub(crate) clip: Option<CheckedExprUseId>,
     pub(crate) wrap: bool,
@@ -300,6 +303,8 @@ impl Lowerer {
         let padding = Self::resolve_layout_padding(&mut values, &options.padding)?;
         let max_width = values.optional(options.max_width.as_ref(), &Type::F64, "max-width")?;
         let max_height = values.optional(options.max_height.as_ref(), &Type::F64, "max-height")?;
+        let virtual_row =
+            values.optional(options.virtual_row.as_ref(), &Type::F64, "virtual row")?;
         let wrap_spacing =
             values.optional(options.wrap_spacing.as_ref(), &Type::F64, "wrap spacing")?;
         let (row_gap, column_gap) = options.flexbox.as_ref().map_or_else(
@@ -417,6 +422,7 @@ impl Lowerer {
                     width,
                     height,
                     max_width,
+                    virtual_row,
                     align: options.align.map(alignment),
                     clip,
                     wrap: options.wrap,

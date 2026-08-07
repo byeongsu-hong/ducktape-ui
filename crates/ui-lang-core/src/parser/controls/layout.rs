@@ -239,6 +239,10 @@ pub(in crate::parser) fn parse_layout_options(
             && let Some(value) = part.strip_prefix("max-w=")
         {
             options.max_width = Some(parse_expr(strip_wrapping_parens(value), line)?);
+        } else if kind == "col"
+            && let Some(value) = part.strip_prefix("virtual-row=")
+        {
+            options.virtual_row = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if is_flex && let Some(value) = part.strip_prefix("align=") {
             options.align = Some(parse_flex_alignment(value, line)?);
         } else if is_flex && part == "wrap" {

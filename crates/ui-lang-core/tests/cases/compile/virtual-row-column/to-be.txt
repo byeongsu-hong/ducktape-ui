@@ -1,0 +1,1 @@
+::iced::widget::column(::std::vec![::iced::Element::from(::ui_lang_runtime::virtual_children(__children, (48.0) as f32).spacing((6.0) as f32))])

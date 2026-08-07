@@ -123,11 +123,33 @@ fn render_resolved_regular_layout(
             } else {
                 "row"
             };
-            write!(
-                body,
-                " let __layout = ::iced::widget::{constructor}(__children)"
-            )
-            .unwrap();
+            if let Some(virtual_row) = linear.virtual_row {
+                // Keep the ordinary column so padding, dimensions, and
+                // max-width behave exactly as they do elsewhere; only per-child
+                // layout moves inside, where the rows the viewport cannot see
+                // are never laid out and so never shape their text. Spacing
+                // goes in with them — the outer column has one child, so its
+                // own spacing would have nothing to sit between.
+                let estimate = resolved_expr_use_code(program, virtual_row, env, ValueMode::Owned)?;
+                let spacing = match linear.spacing {
+                    Some(spacing) => format!(
+                        ".spacing(({}) as f32)",
+                        resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
+                    ),
+                    None => String::new(),
+                };
+                write!(
+                    body,
+                    " let __layout = ::iced::widget::{constructor}(::std::vec![::iced::Element::from(::ui_lang_runtime::virtual_children(__children, ({estimate}) as f32){spacing})])"
+                )
+                .unwrap();
+            } else {
+                write!(
+                    body,
+                    " let __layout = ::iced::widget::{constructor}(__children)"
+                )
+                .unwrap();
+            }
         }
         ResolvedLayoutMode::Grid(_) => {
             body.push_str(" let __layout = ::iced::widget::grid(__children)");
@@ -150,7 +172,10 @@ fn render_resolved_regular_layout(
             };
             write!(body, ".{method}(::iced::Center)").unwrap();
         }
-        if let Some(spacing) = linear.spacing {
+        // A virtualized column has exactly one child — the spacing went in
+        // with the rows, and repeating it here would only read as if it
+        // applied twice.
+        if let Some(spacing) = linear.spacing.filter(|_| linear.virtual_row.is_none()) {
             write!(
                 body,
                 ".spacing(::ui_lang_runtime::bounded_spacing({}, __child_count))",
