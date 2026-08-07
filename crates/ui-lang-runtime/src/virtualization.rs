@@ -12,8 +12,13 @@
 //! rebuilt by its owner as real layout heights land; every query stays
 //! `O(log)` in rows and corrections. The window math never branches on which
 //! kind of list it serves.
+//!
+//! Identity maps here are rebuilt over every row on each reconcile, so they
+//! hash with `rustc-hash` rather than the standard SipHash. The keys are the
+//! application's own row keys, never attacker-supplied input, so the
+//! DoS resistance buys nothing and the reconcile pays for it on every row.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::hash::Hash;
 use std::ops::Range;
 use std::sync::Arc;
@@ -243,7 +248,7 @@ struct KeyedRow {
 impl<Key> KeyedRows<Key> {
     pub(crate) fn new(first_local_id: u32) -> Self {
         Self {
-            entries: Arc::new(HashMap::new()),
+            entries: Arc::new(HashMap::default()),
             next_local_id: first_local_id,
         }
     }
@@ -295,7 +300,7 @@ where
         retained: Option<&Key>,
         exhausted_message: &'static str,
     ) -> Result<Option<usize>, Key> {
-        let mut entries = HashMap::with_capacity(items.len());
+        let mut entries = HashMap::with_capacity_and_hasher(items.len(), rustc_hash::FxBuildHasher);
         let mut retained_index = None;
         let mut next_local_id = self.next_local_id;
         for (index, item) in items.iter().enumerate() {
