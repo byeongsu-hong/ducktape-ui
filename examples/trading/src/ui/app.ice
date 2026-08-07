@@ -413,93 +413,102 @@ component FillRow(fill:Fill)
               @text-faint
 
 component PositionRow(held:Position)
-  row #root
+  emits
+    pick(str)
+  button #root -> emit(pick, held.coin)
     with
+      label=held.coin
       w=fill
-      h=44.0
-      pl=14.0
-      pr=18.0
-      gap=8.0
-      align=center
-    text held.coin
+      p=0.0
+    active bg=panel r=0.0
+    hovered bg=raised r=0.0
+    row
       with
-        size=12.0
-        w=52.0
-        @text-fg
-    col w=56.0 gap=1.0
-      if held.size >= 0.0
-        text "LONG"
-          with
-            size=10.0
-            tracking=0.8
-            @text-up
-      if held.size < 0.0
-        text "SHORT"
-          with
-            size=10.0
-            tracking=0.8
-            @text-down
-      text fmt_leverage_mode(held.leverage, held.margin_mode) size=9.0 @text-faint
-    Num
-      with
-        value=fmt_size(held.size)
-        size=12.0
-        width=72.0
-    Num
-      with
-        value=fmt_px(held.entry)
-        size=12.0
-        width=80.0
-    col w=80.0 gap=4.0
-      if held.liq > 0.0
-        text fmt_px(held.liq)
-          with
-            size=12.0
-            w=fill
-            align-x=right
-            font=digits
-            @text-down
-      if held.liq <= 0.0
-        text "none"
-          with
-            size=12.0
-            w=fill
-            align-x=right
-            font=digits
-            @text-faint
-      row w=80.0 h=3.0
-        box
-          with
-            w=held.risk
-            h=3.0
-            bg=down
-          space w=fill h=fill
-        box
-          with
-            w=(80.0 - held.risk)
-            h=3.0
-            bg=edge
-          space w=fill h=fill
-    Delta
-      with
-        value=fmt_compact_usd(held.funding)
-        up=(held.funding >= 0.0)
-        size=11.0
-        width=72.0
-    space w=fill
-    col gap=1.0 w=104.0
+        w=fill
+        h=44.0
+        pl=14.0
+        pr=18.0
+        gap=8.0
+        align=center
+      text held.coin
+        with
+          size=12.0
+          w=52.0
+          @text-fg
+      col w=56.0 gap=1.0
+        if held.size >= 0.0
+          text "LONG"
+            with
+              size=10.0
+              tracking=0.8
+              @text-up
+        if held.size < 0.0
+          text "SHORT"
+            with
+              size=10.0
+              tracking=0.8
+              @text-down
+        text fmt_leverage_mode(held.leverage, held.margin_mode) size=9.0 @text-faint
+      Num
+        with
+          value=fmt_size(held.size)
+          size=12.0
+          width=72.0
+      Num
+        with
+          value=fmt_px(held.entry)
+          size=12.0
+          width=80.0
+      col w=80.0 gap=4.0
+        if held.liq > 0.0
+          text fmt_px(held.liq)
+            with
+              size=12.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-down
+        if held.liq <= 0.0
+          text "none"
+            with
+              size=12.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-faint
+        row w=80.0 h=3.0
+          box
+            with
+              w=held.risk
+              h=3.0
+              bg=down
+            space w=fill h=fill
+          box
+            with
+              w=(80.0 - held.risk)
+              h=3.0
+              bg=edge
+            space w=fill h=fill
       Delta
         with
-          value=fmt_compact_usd(held.pnl)
-          up=(held.pnl >= 0.0)
-          size=14.0
-          width=104.0
-      Delta
-        with
-          value=fmt_pct(held.roe_pct)
-          up=(held.pnl >= 0.0)
-          size=10.0
-          width=104.0
+          value=fmt_compact_usd(held.funding)
+          up=(held.funding >= 0.0)
+          size=11.0
+          width=72.0
+      space w=fill
+      col gap=1.0 w=104.0
+        Delta
+          with
+            value=fmt_compact_usd(held.pnl)
+            up=(held.pnl >= 0.0)
+            size=14.0
+            width=104.0
+        Delta
+          with
+            value=fmt_pct(held.roe_pct)
+            up=(held.pnl >= 0.0)
+            size=10.0
+            width=104.0
 
 on connect
   return if !valid_address(draft)
@@ -658,9 +667,7 @@ on history_loaded(_count)
   status = ""
 
 on lower_resized(_dx, dy)
-  return if dy > 0.0 && lower_height - dy < 120.0
-  return if dy < 0.0 && lower_height - dy > 560.0
-  lower_height = lower_height - dy
+  lower_height = pane_height(lower_height - dy)
 
 subscribe
   keyboard press when ticket -> ticket_key _
@@ -1017,6 +1024,8 @@ view
                                   text "Connect an address" size=12.0 @text-fg
                             for held in positions
                               PositionRow held=held #position(held.coin)
+                                events
+                                  pick -> pick_symbol _
                       rule vertical thickness=1.0 color=edge
                       col #fills w=320.0 h=fill
                         row
