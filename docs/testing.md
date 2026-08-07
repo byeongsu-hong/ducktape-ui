@@ -60,7 +60,23 @@ externs therefore call the same Rust functions used by the app. Deterministic
 test behavior belongs behind a named preset or Rust `cfg(test)` boundary; Ice
 does not add a mock layer. Subscriptions are re-established around simulated
 events; intentionally infinite timer/I/O subscriptions are sampled rather than
-awaited as finite work. See the layout and interaction contracts in
+awaited as finite work.
+
+A task stream is not a subscription and does not get that treatment. A handler
+that starts an endless `stream` — a websocket pump, a worker feed — leaves work
+the driver waits on, and every later step waits with it:
+
+```
+statement: dispatch browse()
+expected: quiescence within 2s
+actual: 1 task stream(s) still pending after 2.000930993s
+```
+
+Raising `timeout` does not help, because the stream never ends. Reach the state
+that handler would have produced with a `preset` instead, and dispatch only the
+handlers whose tasks finish. A preset is also the only way to set state no
+handler can construct from Ice — an extern error payload, say, whose type has
+no Ice constructor. See the layout and interaction contracts in
 [`component_state.ice`](../examples/iced-app/src/ui/component_state.ice).
 
 ## Targets and assertions
@@ -70,7 +86,23 @@ extern boundary as production code. IDs select rendered widgets after real
 Iced layout. A component call ID is a scope rather than a synthetic layout box,
 so a test selects an identified descendant such as `#counter/root`. Target
 aliases may reuse an earlier target as a path prefix, while `#` paths remain
-absolute. Geometry assertions use logical-pixel bounds; paint assertions
+absolute.
+
+An absolute path reaches what the tested view exposes at its top; a layout ID
+nested below that is reached by chaining from an alias, not by spelling out a
+longer `#` path. Given a dialog holding a button, `#connect` and `#gate/connect`
+are both `E194 unknown rendered widget target`, and this is the form that
+resolves:
+
+```ice
+target dialog = #gate
+target connect = dialog/connect
+target field = dialog/address-input
+focus field
+```
+
+Actions and assertions take the alias too, so `focus #address-input` fails for
+the same reason `target` did. Geometry assertions use logical-pixel bounds; paint assertions
 inspect unambiguous tiny-skia quad or text commands for backgrounds, borders,
 radii, shadows, colors, fonts, sizes, and line heights without comparing
 screenshots. Primitive counts, text/image bounds, shaped text baseline,
