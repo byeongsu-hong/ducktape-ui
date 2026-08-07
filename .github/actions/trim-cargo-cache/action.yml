@@ -17,3 +17,5 @@ runs:
         cargo clean $members
         # shellcheck disable=SC2086
         cargo clean --release $members
+        # Evidence written by the jobs themselves, not build output.
+        rm -rf target/ci-review target/performance target/platform-review

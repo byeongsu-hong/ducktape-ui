@@ -137,6 +137,9 @@ jobs:
           scope: workspace
       - name: Verify full and selected review bundles
         run: |
+          # A restored target cache can still hold the previous run's bundles,
+          # and the baseline copies below refuse to write over them.
+          rm -rf target/ci-review
           cargo ice review examples/showcase/src/ui/app.ice \
             --package showcase \
             --output target/ci-review/full
