@@ -85,6 +85,22 @@ tightest market on the exchange on Bitcoin and no market at all on a coin worth
 three. One number you can carry between markets beats one you have to divide
 first.
 
+## The ticket sends nothing
+
+**NEW ORDER** on the book opens a ticket that prices an order and stops there.
+It seeds the limit price from the book's mid, takes a size and a leverage held
+inside what the market allows, and answers the only three questions worth
+asking before an order exists: what it is worth, what it ties up, and where it
+dies. The liquidation is isolated-margin arithmetic against the maintenance
+requirement this market holds — a cross position dies against the whole
+account instead, which is the rail under the equity figure.
+
+Nothing is signed and nothing is sent, and the panel says so in the place a
+submit button would be. Sending would mean this app holding the key that signs
+an EIP-712 order, which is not a thing an example should ask for. The boundary
+is the interesting part: everything up to the signature is arithmetic worth
+having, and the signature is where a real client starts.
+
 ## What talks to the exchange
 
 Everything the exchange pushes arrives on a websocket; everything it only
