@@ -93,6 +93,67 @@ pub(super) fn margin_mark_bounds(text_bounds: Rectangle, row: Rectangle) -> Rect
     )
 }
 
+const TIP_LABEL_SIZE: f32 = 12.0;
+const TIP_PAD_X: f32 = 8.0;
+const TIP_HEIGHT: f32 = 22.0;
+const TIP_GAP: f32 = 6.0;
+
+/// The tip plate for a hovered margin mark. It hangs to the LEFT: the margin
+/// strip is only as wide as the chip, so the only room is back over the text.
+///
+/// Clamped into `text_bounds` so a tip never leaves the document.
+// ponytail: the width is a per-character estimate rather than a shaped
+// measurement — a tooltip carries a short fixed phrase and a few px of slack
+// is invisible. Measure through a `Paragraph` if a long one ever lands here.
+pub(super) fn margin_tip_bounds(mark: Rectangle, label: &str, text_bounds: Rectangle) -> Rectangle {
+    let width = label.chars().count() as f32 * TIP_LABEL_SIZE * 0.56 + TIP_PAD_X * 2.0;
+    let x = (mark.x - TIP_GAP - width).max(text_bounds.x);
+    Rectangle::new(
+        Point::new(x, mark.center_y() - TIP_HEIGHT / 2.0),
+        Size::new(width, TIP_HEIGHT),
+    )
+}
+
+/// Paint the hovered mark's tip — the same plate the anchored menu wears, so
+/// the two read as one family.
+pub(super) fn draw_margin_tip(
+    renderer: &mut iced::Renderer,
+    bounds: Rectangle,
+    label: &str,
+    font: Font,
+    colors: &MenuColors,
+) {
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds,
+            border: border::rounded(6).color(colors.outline).width(1.0),
+            shadow: iced::Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.18),
+                offset: iced::Vector::new(0.0, 2.0),
+                blur_radius: 10.0,
+            },
+            ..renderer::Quad::default()
+        },
+        colors.panel,
+    );
+    renderer.fill_text(
+        Text {
+            content: label.to_owned(),
+            bounds: bounds.size(),
+            size: Pixels(TIP_LABEL_SIZE),
+            line_height: text::LineHeight::default(),
+            font,
+            align_x: text::Alignment::Center,
+            align_y: alignment::Vertical::Center,
+            shaping: text::Shaping::Advanced,
+            wrapping: text::Wrapping::None,
+        },
+        bounds.center(),
+        colors.label,
+        bounds,
+    );
+}
+
 /// Paint one margin mark — a comment chip: a rounded plate with three dots,
 /// bare quads like the gutter so it renders identically on every platform.
 pub(super) fn draw_margin_mark(renderer: &mut iced::Renderer, bounds: Rectangle, color: Color) {
@@ -424,5 +485,23 @@ mod tests {
         );
         let below_rows = Point::new(panel.x + 10.0, panel.y + panel.height + 1.0);
         assert_eq!(menu_row_at(panel, 3, below_rows), None);
+    }
+
+    #[test]
+    fn a_margin_tip_hangs_left_of_its_mark_and_stays_in_the_document() {
+        let text_bounds = Rectangle::new(Point::new(100.0, 0.0), Size::new(400.0, 300.0));
+        let row = Rectangle::new(Point::new(100.0, 40.0), Size::new(1.0, 20.0));
+        let mark = margin_mark_bounds(text_bounds, row);
+
+        // The margin strip only fits the chip, so the tip goes back over the
+        // text — right edge a gap short of the mark, centered on the row.
+        let tip = margin_tip_bounds(mark, "Comments", text_bounds);
+        assert!(tip.x + tip.width < mark.x, "{tip:?} overlaps {mark:?}");
+        assert_eq!(tip.center_y(), mark.center_y());
+
+        // A label too long for the text column stops at its left edge rather
+        // than sliding out of the document.
+        let long = margin_tip_bounds(mark, &"x".repeat(400), text_bounds);
+        assert_eq!(long.x, text_bounds.x);
     }
 }
