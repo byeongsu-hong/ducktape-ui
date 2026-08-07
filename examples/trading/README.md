@@ -119,7 +119,11 @@ kind of update it was.
 
 Latency is the round trip of the socket's own ping, which needs no agreement
 between our clock and the exchange's, and the ping is required anyway: a socket
-that goes quiet for a minute is closed.
+that goes quiet for a minute is closed. A dropped feed clears it back to an em
+dash rather than leaving the last good number in the header, because a stale
+`42ms` is the panel claiming to be live while it reconnects. Only the market
+feed's own failures do that; a poll that fails says so in the status line and
+leaves the socket's reading alone.
 
 `hl_candles` keeps one tape for the whole session. An empty tape backfills 500
 candles and adopts the market that filled it, and the feed replaces the live

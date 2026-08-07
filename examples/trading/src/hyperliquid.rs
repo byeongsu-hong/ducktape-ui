@@ -1797,6 +1797,14 @@ mod tests {
         // A book with one side empty has no spread to quote.
         assert_eq!(fmt_bps(0.0), "—");
         assert_eq!(fmt_bps(f64::NAN), "—", "never render a NaN into the panel");
+
+        // The feed reads its own round trip, and zero is not a fast socket —
+        // it is a socket that has not answered a ping yet, or one that just
+        // dropped. The header has to say so rather than hold the last good
+        // number and look live.
+        assert_eq!(fmt_latency(42), "42ms");
+        assert_eq!(fmt_latency(0), "—", "unmeasured is not instant");
+        assert_eq!(fmt_latency(-1), "—");
     }
 
     /// The fixtures above encode what the exchange documents. This one asks
