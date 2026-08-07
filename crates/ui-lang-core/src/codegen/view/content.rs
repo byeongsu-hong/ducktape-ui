@@ -306,7 +306,7 @@ pub(in crate::codegen) fn render_content(
             }
             let component_scope = match &call.scope {
                 ComponentScope::Implicit { call_site, .. } => {
-                    let scope = reconciliation_scope(scope, env);
+                    let scope = borrowed_scope(reconciliation_scope(scope, env));
                     format!("format!(\"{{}}/{}@{}\", {scope})", name, call_site)
                 }
                 ComponentScope::Explicit => resolved_view_identity_code(

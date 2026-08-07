@@ -40,11 +40,15 @@ fn resolved_widget_target_code(
         .map(|(_, binding)| binding.code.clone())
         .unwrap_or_else(|| rust_string(program.app_name()));
     for segment in &target.segments {
+        let borrowed = borrowed_scope(&scope);
         scope = if let Some(key) = segment.key {
             let key = resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?;
-            format!("format!(\"{{}}/{}({{}})\", {scope}, {key})", segment.name)
+            format!(
+                "format!(\"{{}}/{}({{}})\", {borrowed}, {key})",
+                segment.name
+            )
         } else {
-            format!("format!(\"{{}}/{}\", {scope})", segment.name)
+            format!("format!(\"{{}}/{}\", {borrowed})", segment.name)
         };
     }
     let constructor = if env.component_context().is_none()

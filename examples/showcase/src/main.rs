@@ -1,4 +1,6 @@
 mod adapters;
+#[cfg(test)]
+mod frame_probe;
 
 ui_lang::include_app!("src/ui/app.ice");
 

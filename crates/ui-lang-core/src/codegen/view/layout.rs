@@ -717,7 +717,7 @@ fn render_flex_children(
                 let item_name = &iteration.item.name;
                 let items =
                     resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
-                let reconciliation_scope = reconciliation_scope(scope, env);
+                let reconciliation_scope = borrowed_scope(reconciliation_scope(scope, env));
                 write!(
                     out,
                     " for (__ice_index, {item_name}) in {items}.iter().cloned().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",

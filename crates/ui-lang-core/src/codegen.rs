@@ -247,6 +247,18 @@ fn reconciliation_scope<'a>(public_scope: &'a str, env: &'a dyn BindingEnvironme
         .map_or(public_scope, |binding| binding.code.as_str())
 }
 
+/// A scope expression that is about to be read, not consumed.
+///
+/// Scope bindings carry a trailing `.clone()` so they can be moved into a
+/// closure or handed to a component by value. `format!` borrows through
+/// `format_args!`, and `.to_owned()`/`.clone()` allocate their own copy, so in
+/// those positions the trailing clone is one heap allocation per rendered node
+/// per frame that nothing reads. Callers that really do move the scope must
+/// keep it.
+fn borrowed_scope(scope: &str) -> &str {
+    scope.strip_suffix(".clone()").unwrap_or(scope)
+}
+
 fn reconciliation_scope_binding(code: String) -> Binding {
     Binding {
         code,

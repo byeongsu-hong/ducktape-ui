@@ -286,7 +286,7 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
     }
     let mut hoists = captures
         .iter()
-        .map(|(scope, alias)| format!("let {alias} = ({scope}).clone();"))
+        .map(|(scope, alias)| format!("let {alias} = ({}).clone();", borrowed_scope(scope)))
         .collect::<String>();
     if let Some((key, code)) = &route_callback {
         let mut callback = snapshot

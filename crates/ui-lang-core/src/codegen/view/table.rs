@@ -34,7 +34,8 @@ pub(in crate::codegen) fn render_table(
         RECONCILIATION_SCOPE_BINDING.into(),
         reconciliation_scope_binding("__ice_table_recon.clone()".into()),
     );
-    let table_recon = reconciliation_scope(scope, env).to_owned();
+    let scope = borrowed_scope(scope);
+    let table_recon = borrowed_scope(reconciliation_scope(scope, env)).to_owned();
     let mut column_codes = Vec::with_capacity(columns.len());
     for (index, (column, resolved)) in columns.iter().zip(&table.columns).enumerate() {
         let header_scope = format!("format!(\"{{}}/header({index})\", {scope})");
@@ -162,6 +163,7 @@ pub(in crate::codegen) fn render_keyed_column(
         ),
     );
     let key = resolved_expr_use_code(program, keyed.key, &child_env, ValueMode::Owned)?;
+    let scope = borrowed_scope(scope);
     let child_scope = format!("format!(\"{{}}/key({{}})\", {scope}, __key)");
     let child = render_node(child, document, message, &child_env, &child_scope, slot)?;
     let mut code = format!(

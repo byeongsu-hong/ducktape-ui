@@ -35,6 +35,7 @@ fn resolved_view_identity_code(
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
+    let scope = borrowed_scope(scope);
     if let Some(key) = identity.key {
         let key = resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?;
         Ok(format!(
@@ -56,7 +57,7 @@ pub(super) fn resolved_accessibility_key_code(
 ) -> Result<String, Error> {
     identity.map_or_else(
         || {
-            let scope = reconciliation_scope(scope, env);
+            let scope = borrowed_scope(reconciliation_scope(scope, env));
             Ok(format!(
                 "format!(\"{{}}/@{kind}:{}\", {scope})",
                 program.origin(origin).line

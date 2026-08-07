@@ -22,7 +22,8 @@ pub(in crate::codegen) fn render_input(
         }) => {
             let variant = component_binding_variant(component, name);
             format!(
-                "{{ let __scope = ({scope}).clone(); move |__value| {message}::{variant}(__scope.clone(), __value) }}"
+                "{{ let __scope = ({}).clone(); move |__value| {message}::{variant}(__scope.clone(), __value) }}",
+                borrowed_scope(scope)
             )
         }
         None => {

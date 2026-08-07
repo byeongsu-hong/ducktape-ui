@@ -636,7 +636,7 @@ fn render_resolved_media(
             line: media.reconciliation_line,
             column: origin.column,
         };
-        let reconciliation_scope = reconciliation_scope(scope, env);
+        let reconciliation_scope = borrowed_scope(reconciliation_scope(scope, env));
         let accessibility_key = format!(
             "format!(\"{{}}/@media:{}\", {reconciliation_scope})",
             span.line

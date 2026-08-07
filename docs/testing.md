@@ -134,3 +134,87 @@ A contract that asserts today's number pins today's behaviour, including its
 waste. When a fix makes a metric drop, the contract asserting the old value is
 part of the fix — update it, and bring its budget down with it, or the next
 regression has nowhere to land.
+
+## Probes: where the time actually goes
+
+Contracts guard a number that is already understood. A probe finds the number in
+the first place — it prints a phase split, asserts nothing, and is `#[ignore]`d
+or excluded from debug builds, so it never runs in CI. Reach for one before
+optimizing anything, because both of the loops below turned out to be dominated
+by a phase that was not the obvious suspect.
+
+### The edit → run loop
+
+```sh
+scripts/build_bench.py --packages showcase iced-app --runs 5 --json before.json
+# change something
+scripts/build_bench.py --packages showcase iced-app --runs 5 --compare before.json
+```
+
+Three medians per package: `noop` (cargo's own overhead), `script` (the package
+build script run directly — the Ice compiler alone), and `edit` (one byte
+changed in a root `.ice`, which is what an author waits for). `edit - script` is
+rustc's share.
+
+Do **not** measure the Ice compiler by bumping `ICE_DEV_BUILD_FINGERPRINT`:
+cargo marks the whole crate dirty on an env change, so that number is mostly
+rustc. `build_bench.py` runs the build-script binary directly instead.
+
+On showcase (2170 lines of `.ice`, 15.5k lines generated) the split is
+`script` 0.3s against `edit` 6.5s, and `-Ztime-passes` on the incremental
+rebuild attributes rustc's share to `type_check_crate` 2.7s, `link` 0.9s,
+`MIR_borrow_checking` 0.8s, `codegen_crate` 0.55s. So the loop is a *rustc
+front-end* cost on generated code, not an Ice compiler cost. Two profile levers
+were measured and rejected because of that: `[profile.dev.build-override]
+opt-level = 3` (no effect — the Ice compiler is not the bottleneck) and
+`debug = "line-tables-only"` / `debug = 0` (0.92x at best — debug info is not
+the bottleneck either). What is left is reducing the volume and inference cost
+of generated Rust.
+
+### The frame
+
+```sh
+cargo test --release -p showcase -- --ignored --nocapture frame_cost
+```
+
+`examples/showcase/src/frame_probe.rs` drives the real generated app through
+`testing::Driver` and prints p50/p95 per phase. `crates/ui-lang-runtime/tests/frame_probe.rs`
+is its counterpart for hand-written iced trees; use that one when the question
+is about a runtime widget rather than about generated code.
+
+Release only — the module is `#![cfg(not(debug_assertions))]`, because `-O0`
+numbers measure rustc, not the app.
+
+The phase that matters is `__view build only` against `idle redraw`: the first
+is the code the Ice compiler emits, the second adds iced's layout and event
+walk. On showcase that is ~0.72ms against ~3.3ms, so roughly three quarters of a
+frame is layout, and optimizing generated code alone cannot reach it.
+
+`idle redraw @480x320` says what that layout is proportional to. The small
+viewport holds a fraction of the same catalog — 8.4x less area — and costs
+~3.1ms against ~3.3ms, a 6% difference. **A frame costs what the view contains,
+not what it shows.** Every widget below the fold is laid out on every frame.
+
+That is the fact to design against. What moves it is a boundary the layout walk
+can stop at, and the repo has two:
+
+- **`lazy`** lowers to `ui_lang_runtime::memo_lazy`, which is iced's `Lazy`
+  plus a memoized layout node — while the dependency hash and the incoming
+  `Limits` are unchanged, `layout()` clones the stored node instead of walking
+  the subtree. (Plain `iced::widget::Lazy` caches only the element and still
+  re-walks; the distinction is the whole point of the fork.) The runtime probe
+  re-lays-out 150 lazy chat rows in ~35us, against showcase's ~3.3ms for a
+  comparable tree with no lazy boundary anywhere.
+- **`virtual_list`** mounts only the rows a viewport can hold, so nothing
+  off-screen exists to lay out. `tests/virtual_list_performance.rs` covers 1000
+  rows in ~1.0ms where a plain lazy column needs 13.1ms for 150.
+
+A boundary only pays while its dependency is stable, which is why showcase is
+the worst case rather than a bug: the catalog is a demo of interactive widgets,
+threaded with `bind` parameters and ~45 pieces of state, so almost no subtree
+in it holds still long enough to cache. Read its 3.3ms as the cost of a view
+that cannot memoize, not as a number every Ice app pays.
+
+Micro-optimizing emitted code has the ~0.72ms `__view` share as its ceiling.
+Removing 984 redundant scope clones from showcase's generated view — every one
+of them real waste — was worth ~19us. Measure before spending effort there.
