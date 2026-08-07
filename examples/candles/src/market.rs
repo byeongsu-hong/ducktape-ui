@@ -14,6 +14,7 @@ const TICK: Duration = Duration::from_millis(250);
 const HISTORY_CAP: usize = 100_000;
 const EVICT_CHUNK: usize = 4_096;
 const NEW_CANDLE_ODDS: f64 = 1.0 / 16.0;
+const OUTAGE_TICKS: u32 = 16; // 4s of dropout at the 250ms tick rate
 const START_TS: i64 = 1_735_689_600; // 2025-01-01T00:00:00Z
 
 fn next(state: &mut u64) -> f64 {
@@ -39,6 +40,16 @@ struct Generator {
     /// Prices mean-revert toward this level so a long-running tape never
     /// compounds off to absurd magnitudes.
     anchor: f64,
+    /// Ticks until the next simulated disconnect.
+    outage_in: u32,
+    /// Remaining ticks of the current disconnect (0 = connected).
+    outage_left: u32,
+}
+
+impl Generator {
+    fn schedule_next_outage(&mut self) {
+        self.outage_in = 150 + (next(&mut self.seed) * 100.0) as u32;
+    }
 }
 
 impl PartialEq for MarketFeed {
@@ -84,11 +95,17 @@ pub fn market_connect(symbol: String, interval_secs: i64, history: i64) -> Marke
         .collect();
     MarketFeed {
         tape: Arc::new(Mutex::new(candles)),
-        generator: Arc::new(Mutex::new(Generator {
-            seed,
-            interval_secs,
-            revision: 0,
-            anchor,
+        generator: Arc::new(Mutex::new({
+            let mut generator = Generator {
+                seed,
+                interval_secs,
+                revision: 0,
+                anchor,
+                outage_in: 0,
+                outage_left: 0,
+            };
+            generator.schedule_next_outage();
+            generator
         })),
     }
 }
@@ -100,18 +117,13 @@ pub struct Tick {
     pub revision: i64,
     pub last: f64,
     pub up: bool,
+    pub connected: bool,
 }
 
-fn apply_tick(feed: &MarketFeed) -> Tick {
-    let mut generator = lock(&feed.generator);
-    let mut tape = lock(&feed.tape);
-    generator.revision += 1;
+/// One market advance of the tape (a mid-candle update or a roll).
+fn advance(generator: &mut Generator, tape: &mut Vec<Candle>) {
     let Some(last) = tape.last().copied() else {
-        return Tick {
-            revision: generator.revision,
-            last: 0.0,
-            up: true,
-        };
+        return;
     };
     if next(&mut generator.seed) < NEW_CANDLE_ODDS {
         let open = last.close;
@@ -135,11 +147,59 @@ fn apply_tick(feed: &MarketFeed) -> Tick {
         entry.low = entry.low.min(entry.close);
         entry.volume += next(&mut generator.seed) * 40.0;
     }
-    let entry = *tape.last().expect("tape is non-empty");
+}
+
+fn apply_tick(feed: &MarketFeed) -> Tick {
+    let mut generator = lock(&feed.generator);
+    let mut tape = lock(&feed.tape);
+    generator.revision += 1;
+
+    // Simulated disconnect: the market keeps moving, we just do not see it
+    // until the reconnect backfills every missed advance in one burst.
+    if generator.outage_left > 0 {
+        generator.outage_left -= 1;
+        if generator.outage_left == 0 {
+            let missed = OUTAGE_TICKS;
+            for _ in 0..missed {
+                advance(&mut generator, &mut tape);
+            }
+            generator.schedule_next_outage();
+        } else {
+            let last = tape.last().map_or(0.0, |candle| candle.close);
+            return Tick {
+                revision: generator.revision,
+                last,
+                up: true,
+                connected: false,
+            };
+        }
+    } else if generator.outage_in == 0 {
+        generator.outage_left = OUTAGE_TICKS;
+        let last = tape.last().map_or(0.0, |candle| candle.close);
+        return Tick {
+            revision: generator.revision,
+            last,
+            up: true,
+            connected: false,
+        };
+    } else {
+        generator.outage_in -= 1;
+        advance(&mut generator, &mut tape);
+    }
+
+    let Some(entry) = tape.last().copied() else {
+        return Tick {
+            revision: generator.revision,
+            last: 0.0,
+            up: true,
+            connected: true,
+        };
+    };
     Tick {
         revision: generator.revision,
         last: entry.close,
         up: entry.close >= entry.open,
+        connected: true,
     }
 }
 
@@ -200,6 +260,44 @@ mod tests {
         for _ in 0..64 {
             apply_tick(&feed);
             assert!(lock(&feed.tape).len() <= HISTORY_CAP + 1);
+        }
+    }
+
+    #[test]
+    fn outage_freezes_the_tape_then_backfills_continuously() {
+        let feed = market_connect("TEST".into(), 60, 100);
+        // Fast-forward to the scheduled outage deterministically.
+        let mut guard_ticks = 0;
+        loop {
+            let before = lock(&feed.tape).clone();
+            let tick = apply_tick(&feed);
+            if !tick.connected {
+                // Disconnected: the tape must not have advanced.
+                assert_eq!(*lock(&feed.tape), before);
+                break;
+            }
+            guard_ticks += 1;
+            assert!(guard_ticks < 1_000, "outage never started");
+        }
+        // Ride out the outage; every tick stays disconnected and frozen.
+        let frozen = lock(&feed.tape).clone();
+        let mut reconnect = None;
+        for _ in 0..OUTAGE_TICKS + 2 {
+            let tick = apply_tick(&feed);
+            if tick.connected {
+                reconnect = Some(tick);
+                break;
+            }
+            assert_eq!(*lock(&feed.tape), frozen);
+        }
+        let reconnect = reconnect.expect("feed reconnects after the outage");
+        assert!(reconnect.connected);
+        // The backfill advanced the tape and timestamps stay continuous.
+        let tape = lock(&feed.tape);
+        assert!(tape.len() >= frozen.len());
+        assert!(tape.last().unwrap() != frozen.last().unwrap() || tape.len() > frozen.len());
+        for pair in tape.windows(2) {
+            assert_eq!(pair[1].ts - pair[0].ts, 60, "gap in backfilled tape");
         }
     }
 
