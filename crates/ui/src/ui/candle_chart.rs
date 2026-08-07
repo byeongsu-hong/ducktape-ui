@@ -12,6 +12,7 @@ use std::rc::Rc;
 use super::theme::{Theme as UiTheme, alpha};
 use iced::advanced::text::Alignment as TextAlignment;
 use iced::alignment::Vertical;
+use iced::keyboard::{self, key::Named};
 use iced::mouse;
 use iced::widget::Canvas;
 use iced::widget::canvas::{self, Path};
@@ -691,6 +692,8 @@ struct DerivedFrame {
 
 pub struct CandleState {
     viewport: Cell<Option<Viewport>>,
+    /// Keyboard-walked candle index; mouse movement clears it.
+    key_cursor: Cell<Option<usize>>,
     /// Data length at the last draw, to detect appends for auto-follow.
     seen_len: Cell<usize>,
     drag: Option<Drag>,
@@ -703,6 +706,7 @@ impl Default for CandleState {
     fn default() -> Self {
         Self {
             viewport: Cell::new(None),
+            key_cursor: Cell::new(None),
             seen_len: Cell::new(0),
             drag: None,
             hovered: None,
@@ -854,6 +858,7 @@ impl<Message> CandleProgram<'_, Message> {
                     state.viewport.set(Some(drag.viewport.pan(bars, len)));
                     return Some(canvas::Action::request_redraw().and_capture());
                 }
+                state.key_cursor.set(None);
                 let next = cursor
                     .position_in(bounds)
                     .and_then(|position| self.hover_index(candles, state, chrome, position));
@@ -865,6 +870,42 @@ impl<Message> CandleProgram<'_, Message> {
                     }
                 }
                 Some(canvas::Action::request_redraw())
+            }
+            canvas::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
+                // Keyboard crosshair only while the pointer is on the chart,
+                // so arrows keep working for the rest of the app otherwise.
+                cursor.position_in(bounds)?;
+                let step: i64 = match key {
+                    keyboard::Key::Named(Named::ArrowLeft) => -1,
+                    keyboard::Key::Named(Named::ArrowRight) => 1,
+                    keyboard::Key::Named(Named::Escape) => {
+                        if state.key_cursor.take().is_some() {
+                            return Some(canvas::Action::request_redraw().and_capture());
+                        }
+                        return None;
+                    }
+                    _ => return None,
+                };
+                let viewport = self.viewport(candles, state);
+                let current = state
+                    .key_cursor
+                    .get()
+                    .unwrap_or_else(|| visible_indices(viewport, len).end.saturating_sub(1));
+                let target = (current as i64 + step).clamp(0, len as i64 - 1) as usize;
+                state.key_cursor.set(Some(target));
+                // Keep the walked candle on screen.
+                let visible = visible_indices(viewport, len);
+                if !visible.contains(&target) {
+                    state.viewport.set(Some(viewport.pan(step as f64, len)));
+                }
+                if state.hovered != Some(target) {
+                    state.hovered = Some(target);
+                    if let Some(on_hover) = &self.on_hover {
+                        let hit = Some(CandleHit::new(target, &candles[target]));
+                        return Some(canvas::Action::publish(on_hover(hit)).and_capture());
+                    }
+                }
+                Some(canvas::Action::request_redraw().and_capture())
             }
             canvas::Event::Mouse(mouse::Event::CursorLeft) => {
                 if state.hovered.take().is_some()
@@ -951,8 +992,17 @@ impl<Message> CandleProgram<'_, Message> {
         let cursor_in_plot = cursor
             .position_in(bounds)
             .filter(|position| chrome.plot.contains(*position));
-        self.draw_axis_labels(&ctx, &mut overlay, cursor_in_plot);
-        if let Some(position) = cursor_in_plot {
+        let key_position = state.key_cursor.get().and_then(|index| {
+            let candle = candles.get(index)?;
+            let x = chrome.x(viewport, index as f64);
+            chrome
+                .plot
+                .contains(Point::new(x, chrome.plot.y + 1.0))
+                .then(|| Point::new(x, scale.y(chrome.plot, candle.close)))
+        });
+        let crosshair = cursor_in_plot.or(key_position);
+        self.draw_axis_labels(&ctx, &mut overlay, crosshair);
+        if let Some(position) = crosshair {
             self.draw_crosshair(&ctx, &mut overlay, position);
         }
         if chip_visible(state.viewport.get(), candles.len()) {
@@ -1942,6 +1992,85 @@ mod tests {
         assert_eq!(action.into_inner().2, iced::event::Status::Captured);
         assert!(state.viewport.get().is_none());
         assert!(state.drag.is_none());
+    }
+
+    fn arrow(named: Named) -> canvas::Event {
+        canvas::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(named),
+            modified_key: keyboard::Key::Named(named),
+            physical_key: keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Unidentified,
+            ),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::default(),
+            text: None,
+            repeat: false,
+        })
+    }
+
+    #[test]
+    fn arrow_keys_walk_candles_and_escape_returns_to_mouse() {
+        use iced::widget::canvas::Program as _;
+
+        let data = candles(300);
+        let program = hover_program(&data);
+        let mut state = CandleState::default();
+        let bounds = Rectangle::with_size(BOUNDS);
+        let over = mouse::Cursor::Available(Point::new(600.0, 300.0));
+
+        // First arrow starts from the last visible candle.
+        let action = program
+            .update(&mut state, &arrow(Named::ArrowLeft), bounds, over)
+            .expect("arrow acts");
+        let (message, _, status) = action.into_inner();
+        let hit = message.expect("publishes").expect("hits a candle");
+        assert_eq!(hit.index, 298);
+        assert_eq!(status, iced::event::Status::Captured);
+        assert_eq!(state.key_cursor.get(), Some(298));
+
+        // Walking right again moves forward and republishes.
+        let action = program
+            .update(&mut state, &arrow(Named::ArrowRight), bounds, over)
+            .expect("arrow acts");
+        assert_eq!(
+            action
+                .into_inner()
+                .0
+                .expect("publishes")
+                .expect("hit")
+                .index,
+            299
+        );
+
+        // Right edge clamps.
+        program.update(&mut state, &arrow(Named::ArrowRight), bounds, over);
+        assert_eq!(state.key_cursor.get(), Some(299));
+
+        // Escape hands control back; arrows without the pointer do nothing.
+        program
+            .update(&mut state, &arrow(Named::Escape), bounds, over)
+            .expect("escape acts");
+        assert_eq!(state.key_cursor.get(), None);
+        assert!(
+            program
+                .update(
+                    &mut state,
+                    &arrow(Named::ArrowLeft),
+                    bounds,
+                    mouse::Cursor::Unavailable,
+                )
+                .is_none()
+        );
+
+        // Mouse movement also clears an active keyboard cursor.
+        state.key_cursor.set(Some(200));
+        program.update(
+            &mut state,
+            &moved(Point::new(601.0, 300.0)),
+            bounds,
+            mouse::Cursor::Available(Point::new(601.0, 300.0)),
+        );
+        assert_eq!(state.key_cursor.get(), None);
     }
 
     /// Timing evidence for the cached-layer design, not a pass/fail test.
