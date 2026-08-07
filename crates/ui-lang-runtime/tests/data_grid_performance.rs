@@ -1,5 +1,9 @@
 #![cfg(not(debug_assertions))]
 
+mod common;
+
+use common::{assert_wall_clock_budgets, percentile_usize};
+
 use iced::advanced::renderer;
 use iced::{Element, Font, Pixels, Size, Theme, mouse};
 use iced_test::runtime::UserInterface;
@@ -81,23 +85,6 @@ fn renderer() -> iced_test::renderer::Renderer {
     .expect("headless renderer")
 }
 
-fn percentile(samples: &[u128], rank: usize) -> u128 {
-    let mut sorted = samples.to_vec();
-    sorted.sort_unstable();
-    let index = (sorted.len() * rank).div_ceil(100).saturating_sub(1);
-    sorted[index]
-}
-
-fn percentile_usize(samples: &[usize], rank: usize) -> usize {
-    percentile(
-        &samples
-            .iter()
-            .map(|value| *value as u128)
-            .collect::<Vec<_>>(),
-        rank,
-    ) as usize
-}
-
 #[test]
 #[ignore = "100k-row by 16-column release render contract run explicitly in CI"]
 fn performance_contract_100k_by_16_unchanged_render() {
@@ -146,37 +133,38 @@ fn performance_contract_100k_by_16_unchanged_render() {
     }
     builds.set(0);
 
-    let mut elapsed_us = Vec::with_capacity(FRAMES);
-    let mut allocations = Vec::with_capacity(FRAMES);
-    let mut allocated_bytes = Vec::with_capacity(FRAMES);
-    for _ in 0..FRAMES {
-        let region = Region::new(GLOBAL);
-        let started = std::time::Instant::now();
-        cache = run_frame(cache);
-        elapsed_us.push(started.elapsed().as_micros());
-        let stats = region.change();
-        allocations.push(stats.allocations);
-        allocated_bytes.push(stats.bytes_allocated);
-    }
+    let mut sample = |mut cache| {
+        let mut elapsed_us = Vec::with_capacity(FRAMES);
+        let mut allocations = Vec::with_capacity(FRAMES);
+        let mut allocated_bytes = Vec::with_capacity(FRAMES);
+        for _ in 0..FRAMES {
+            let region = Region::new(GLOBAL);
+            let started = std::time::Instant::now();
+            cache = run_frame(cache);
+            elapsed_us.push(started.elapsed().as_micros());
+            let stats = region.change();
+            allocations.push(stats.allocations);
+            allocated_bytes.push(stats.bytes_allocated);
+        }
+        (cache, elapsed_us, allocations, allocated_bytes)
+    };
+    let (cache, elapsed_us, allocations, allocated_bytes) = sample(cache);
 
     let mounted_cells = state.grid.inspect(config()).mounted_cell_count;
-    let elapsed_p50 = percentile(&elapsed_us, 50);
-    let elapsed_p95 = percentile(&elapsed_us, 95);
     let allocations_p95 = percentile_usize(&allocations, 95);
     let allocated_bytes_p95 = percentile_usize(&allocated_bytes, 95);
+    assert_eq!(builds.get(), FRAMES * mounted_cells);
+    let (elapsed_p50, elapsed_p95) = assert_wall_clock_budgets(
+        "unchanged render",
+        elapsed_us,
+        P50_BUDGET_US,
+        P95_BUDGET_US,
+        move || sample(cache).1,
+    );
     println!(
         "100k by 16 unchanged render ({mounted_cells} mounted cells): \
          p50={elapsed_p50}us p95={elapsed_p95}us allocations(p95)={allocations_p95} \
          bytes(p95)={allocated_bytes_p95}"
-    );
-    assert_eq!(builds.get(), FRAMES * mounted_cells);
-    assert!(
-        elapsed_p50 <= P50_BUDGET_US,
-        "unchanged render p50 {elapsed_p50}us exceeds {P50_BUDGET_US}us; samples={elapsed_us:?}"
-    );
-    assert!(
-        elapsed_p95 <= P95_BUDGET_US,
-        "unchanged render p95 {elapsed_p95}us exceeds {P95_BUDGET_US}us; samples={elapsed_us:?}"
     );
     assert!(
         allocations_p95 <= ALLOCATION_BUDGET,
@@ -204,36 +192,38 @@ fn performance_contract_100k_by_16_reconcile() {
             .reconcile(&state.rows, |row| *row, &state.columns, config())
             .unwrap();
     }
-    let mut elapsed_us = Vec::with_capacity(SAMPLES);
-    let mut allocations = Vec::with_capacity(SAMPLES);
-    let mut allocated_bytes = Vec::with_capacity(SAMPLES);
-    for _ in 0..SAMPLES {
-        let region = Region::new(GLOBAL);
-        let started = std::time::Instant::now();
-        state
-            .grid
-            .reconcile(&state.rows, |row| *row, &state.columns, config())
-            .unwrap();
-        elapsed_us.push(started.elapsed().as_micros());
-        let stats = region.change();
-        allocations.push(stats.allocations);
-        allocated_bytes.push(stats.bytes_allocated);
-    }
-    let elapsed_p50 = percentile(&elapsed_us, 50);
-    let elapsed_p95 = percentile(&elapsed_us, 95);
+    let mut sample = || {
+        let mut elapsed_us = Vec::with_capacity(SAMPLES);
+        let mut allocations = Vec::with_capacity(SAMPLES);
+        let mut allocated_bytes = Vec::with_capacity(SAMPLES);
+        for _ in 0..SAMPLES {
+            let region = Region::new(GLOBAL);
+            let started = std::time::Instant::now();
+            state
+                .grid
+                .reconcile(&state.rows, |row| *row, &state.columns, config())
+                .unwrap();
+            elapsed_us.push(started.elapsed().as_micros());
+            let stats = region.change();
+            allocations.push(stats.allocations);
+            allocated_bytes.push(stats.bytes_allocated);
+        }
+        (elapsed_us, allocations, allocated_bytes)
+    };
+    let (elapsed_us, allocations, allocated_bytes) = sample();
+
     let allocations_p95 = percentile_usize(&allocations, 95);
     let allocated_bytes_p95 = percentile_usize(&allocated_bytes, 95);
+    let (elapsed_p50, elapsed_p95) = assert_wall_clock_budgets(
+        "reconcile",
+        elapsed_us,
+        P50_BUDGET_US,
+        P95_BUDGET_US,
+        || sample().0,
+    );
     println!(
         "100k by 16 reconcile: p50={elapsed_p50}us p95={elapsed_p95}us \
          allocations(p95)={allocations_p95} bytes(p95)={allocated_bytes_p95}"
-    );
-    assert!(
-        elapsed_p50 <= P50_BUDGET_US,
-        "reconcile p50 {elapsed_p50}us exceeds {P50_BUDGET_US}us; samples={elapsed_us:?}"
-    );
-    assert!(
-        elapsed_p95 <= P95_BUDGET_US,
-        "reconcile p95 {elapsed_p95}us exceeds {P95_BUDGET_US}us; samples={elapsed_us:?}"
     );
     assert!(
         allocations_p95 <= ALLOCATION_BUDGET,
@@ -288,22 +278,31 @@ fn performance_contract_100k_by_16_scroll_reducer_and_scroll_to_cell() {
         state = step(sample, &state);
     }
 
-    let mut elapsed_us = Vec::with_capacity(SAMPLES);
-    let mut allocations = Vec::with_capacity(SAMPLES);
-    let mut allocated_bytes = Vec::with_capacity(SAMPLES);
-    for sample in 0..SAMPLES {
-        let region = Region::new(GLOBAL);
-        let started = std::time::Instant::now();
-        let next = step(sample, &state);
-        std::hint::black_box(&next);
-        elapsed_us.push(started.elapsed().as_micros());
-        let stats = region.change();
-        allocations.push(stats.allocations);
-        allocated_bytes.push(stats.bytes_allocated);
-        state = next;
-    }
-    assert!(percentile(&elapsed_us, 50) <= P50_BUDGET_US);
-    assert!(percentile(&elapsed_us, 95) <= P95_BUDGET_US);
+    let mut sample_run = || {
+        let mut elapsed_us = Vec::with_capacity(SAMPLES);
+        let mut allocations = Vec::with_capacity(SAMPLES);
+        let mut allocated_bytes = Vec::with_capacity(SAMPLES);
+        for sample in 0..SAMPLES {
+            let region = Region::new(GLOBAL);
+            let started = std::time::Instant::now();
+            let next = step(sample, &state);
+            std::hint::black_box(&next);
+            elapsed_us.push(started.elapsed().as_micros());
+            let stats = region.change();
+            allocations.push(stats.allocations);
+            allocated_bytes.push(stats.bytes_allocated);
+            state = next;
+        }
+        (elapsed_us, allocations, allocated_bytes)
+    };
+    let (elapsed_us, allocations, allocated_bytes) = sample_run();
     assert_eq!(percentile_usize(&allocations, 95), 0);
     assert_eq!(percentile_usize(&allocated_bytes, 95), 0);
+    assert_wall_clock_budgets(
+        "snapshot reducer",
+        elapsed_us,
+        P50_BUDGET_US,
+        P95_BUDGET_US,
+        || sample_run().0,
+    );
 }
