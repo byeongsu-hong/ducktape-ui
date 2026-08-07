@@ -564,6 +564,11 @@ pub struct Ticket {
     pub leverage: f64,
     /// Whether the numbers above describe anything at all.
     pub ready: bool,
+    /// Whether the market's maintenance requirement is known. Without it
+    /// there is no cliff to quote, and one computed as though the requirement
+    /// were zero sits further from the entry than the real one — so the panel
+    /// says it does not know rather than something reassuring.
+    pub known: bool,
 }
 
 /// Liquidation for a position opened at `price` with `leverage`, isolated.
@@ -644,16 +649,18 @@ pub fn price_ticket(
     let leverage = amount(&leverage).clamp(0.0, ceiling);
     let notional = price * size;
     let ready = price > 0.0 && size > 0.0 && leverage > 0.0;
+    let known = maintenance > 0.0;
     Ticket {
         notional,
         margin: if ready { notional / leverage } else { 0.0 },
-        liquidation: if ready {
+        liquidation: if ready && known {
             ticket_liquidation(price, leverage, maintenance, buy)
         } else {
             0.0
         },
         leverage,
         ready,
+        known,
     }
 }
 
@@ -1515,6 +1522,22 @@ pub fn pane_height(wanted: f64) -> f64 {
     wanted.clamp(LOWER_MIN, LOWER_MAX)
 }
 
+/// How long a resting order has been waiting, in the coarsest unit that still
+/// says something: an order placed four days ago and one placed four minutes
+/// ago are different orders, and the seconds between them are not the point.
+pub fn fmt_age(ts: i64) -> String {
+    let seconds = now_ms() / 1_000 - ts;
+    if ts <= 0 || seconds < 0 {
+        return "—".to_owned();
+    }
+    match seconds {
+        0..60 => "now".to_owned(),
+        60..3_600 => format!("{}m", seconds / 60),
+        3_600..86_400 => format!("{}h", seconds / 3_600),
+        _ => format!("{}d", seconds / 86_400),
+    }
+}
+
 /// Left gap the header keeps clear so its content never sits under the macOS
 /// traffic lights, which float over the fullsize content view. The rightmost
 /// button ends near 74pt; everywhere else the header owns its full width.
@@ -2203,9 +2226,23 @@ mod tests {
             "a price read back off the screen carries its separators"
         );
 
-        // A market with no published maximum still prices; it just has no
-        // maintenance requirement to hold against.
-        assert!(price_ticket("100".into(), "2".into(), "10".into(), None, true).ready);
+        // A market the app has not loaded yet still prices what an order is
+        // worth and what it ties up — that is multiplication — but it must
+        // not quote a cliff. Treating an unknown requirement as zero puts the
+        // liquidation further from the entry than it really is, which is the
+        // one direction a risk number must never be wrong in.
+        let unknown = price_ticket("100".into(), "2".into(), "10".into(), None, true);
+        assert!(unknown.ready, "the order is still describable");
+        assert_eq!(unknown.notional, 200.0);
+        assert_eq!(unknown.margin, 20.0);
+        assert!(!unknown.known, "and the panel says it does not know");
+        assert_eq!(unknown.liquidation, 0.0, "rather than an optimistic one");
+        // What it would have said: 100 * (1 - 1/10) / (1 - 0) = 90, a cliff
+        // ten percent away when the real one is nearer.
+        assert!(
+            quoted("100", "2", "10", true).liquidation > 90.0,
+            "the real cliff sits closer to the entry than a zero requirement implies"
+        );
 
         // The requirement is the venue's to publish, not this arithmetic's to
         // know. A market that maintains at twice the rate liquidates sooner,
@@ -2417,6 +2454,20 @@ mod tests {
         assert_eq!(fmt_latency(42), "42ms");
         assert_eq!(fmt_latency(0), "—", "unmeasured is not instant");
         assert_eq!(fmt_latency(-1), "—");
+
+        // Order age reads in the coarsest unit that still says something.
+        let now = now_ms() / 1_000;
+        assert_eq!(fmt_age(now), "now");
+        assert_eq!(fmt_age(now - 59), "now");
+        assert_eq!(fmt_age(now - 60), "1m");
+        assert_eq!(fmt_age(now - 3_599), "59m");
+        assert_eq!(fmt_age(now - 3_600), "1h");
+        assert_eq!(fmt_age(now - 86_400 * 4), "4d");
+        // An order the exchange gave no timestamp, and one stamped in the
+        // future by a clock that disagrees with ours, both read as unknown
+        // rather than as "now" or as a negative age.
+        assert_eq!(fmt_age(0), "—");
+        assert_eq!(fmt_age(now + 600), "—");
 
         // Hourly funding is a hundredth of a percent on most of the exchange,
         // so the two decimals every other figure here uses would render 166 of

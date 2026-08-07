@@ -312,8 +312,14 @@ component OrderRow(order:Order)
     text order.coin
       with
         size=11.0
-        w=48.0
+        w=40.0
         @text-muted
+    text fmt_age(order.ts)
+      with
+        size=9.0
+        w=28.0
+        font=digits
+        @text-faint
     space w=fill
     Delta
       with
@@ -1507,10 +1513,16 @@ view
                     size=13.0
                     font=digits
                     @text-down
-              if quote.liquidation <= 0.0
+              if quote.liquidation <= 0.0 && quote.known
                 text "none"
                   with
                     size=13.0
+                    font=digits
+                    @text-faint
+              if !quote.known
+                text "market not loaded"
+                  with
+                    size=11.0
                     font=digits
                     @text-faint
             text "Isolated margin, at the maintenance requirement this market holds. A cross position dies against the whole account instead, which is the rail under the equity figure."

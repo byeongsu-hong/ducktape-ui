@@ -110,6 +110,13 @@ just clicked across. The size is cleared whenever it opens — 0.5 means a
 different order on every market, and carrying it over is how you place one you
 did not mean.
 
+A market the app has not read yet gets no cliff quoted at all. What an order
+is worth and what it ties up are multiplication and always answerable, but the
+liquidation needs the venue's requirement, and treating an unknown requirement
+as zero puts the cliff further from the entry than it really is. That is the
+one direction a risk number must never be wrong in, so the panel says it does
+not know.
+
 Leverage is reported as it was priced rather than as it was typed. The field
 takes anything; the market does not, so a 400 typed into a 5x market is held at
 5 and the ticket says 5. A liquidation quoted at a leverage the panel is not
@@ -152,7 +159,7 @@ Two sockets, each a thread pumping into a channel that Ice consumes as a
 | `hl_candles` | `candleSnapshot` | 500 candles when a market or interval is opened |
 | `hl_history` | `candleSnapshot` | 500 more, ending where the tape begins, when the chart is panned back that far |
 | `hl_account` | `clearinghouseState` | equity, margin, open positions with PnL, ROE, leverage, and funding paid |
-| `hl_orders` | `openOrders` | resting orders, listed and drawn on the chart as levels |
+| `hl_orders` | `openOrders` | resting orders, listed with their age and drawn on the chart as levels |
 
 Responses are read as `serde_json::Value` and mapped by hand, because the
 exchange sends every number as a string — a derive would need a custom
