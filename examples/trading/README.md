@@ -135,7 +135,9 @@ takes anything; the market does not, so a 400 typed into a 5x market is held at
 showing is the one number here that must never be wrong.
 
 Escape closes it, and the subscription that listens for Escape exists only
-while it is open.
+while it is open. Escape with a search in the box clears the search instead,
+on its own subscription with its own condition, so neither key listener exists
+when there is nothing for it to do.
 
 Nothing is signed and nothing is sent, and the panel says so in the place a
 submit button would be. Sending would mean this app holding the key that signs
@@ -244,6 +246,12 @@ it, and each carries its size or, for a closing fill, what it realized. All
 three are ordinary `ChartOverlay` implementations — the same extension point a
 caller uses for anything the built-ins do not cover — so nothing about trading
 leaks into the chart widget.
+
+The chart is drawn by Rust and everything around it by Ice, so the palette
+exists twice: as tokens in `theme.ice`, and as literals in `chart_theme`.
+Nothing makes them agree, and the chart is half the screen — a drift would be
+plain at runtime and invisible until then. A test reads the tokens out of
+`theme.ice` and holds the chart to them.
 
 ## Boundary
 

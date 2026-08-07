@@ -577,6 +577,11 @@ on ticket_key(event)
   return if event.key != key.named("Escape")
   ticket = false
 
+on search_key(event)
+  return if event.key != key.named("Escape")
+  query = ""
+  visible = filter_symbols(symbols, "", coin)
+
 on ticket_side(buy)
   ticket_buy = buy
   quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, buy)
@@ -677,6 +682,7 @@ on lower_resized(_dx, dy)
 
 subscribe
   keyboard press when ticket -> ticket_key _
+  keyboard press when !gate && !ticket && !empty(query) -> search_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 700ms when flashing -> cool_flash
@@ -1620,3 +1626,15 @@ test trading_browse_says_what_needs_an_address
   expect text "Connect an address"
   expect no text "No fills on this account yet."
   expect no text "No resting orders."
+
+test trading_escape_clears_a_search
+  preset terminal
+  viewport 1400 900
+  target app = #app
+  target markets = app/markets
+  target search = markets/search
+  focus search
+  type "ZZZ"
+  expect query == "ZZZ"
+  key escape
+  expect query == ""

@@ -2106,6 +2106,41 @@ mod tests {
         );
     }
 
+    /// The chart is drawn by Rust and the panels around it by Ice, so the
+    /// palette exists twice: once as tokens in `theme.ice` and once as the
+    /// literals below. Nothing makes them agree, and the chart is half the
+    /// screen — a drift would be obvious at runtime and invisible until then.
+    #[test]
+    fn the_chart_wears_the_same_palette_as_the_panels() {
+        const THEME: &str = include_str!("ui/theme.ice");
+
+        fn token(name: &str) -> Color {
+            let line = THEME
+                .lines()
+                .map(str::trim)
+                .find(|line| line.starts_with(&format!("{name} #")))
+                .unwrap_or_else(|| panic!("theme.ice declares no `{name}`"));
+            let hex = line.rsplit('#').next().expect("a colour");
+            assert_eq!(hex.len(), 6, "`{name}` is not an opaque #RRGGBB");
+            rgb(u32::from_str_radix(hex, 16).expect("hexadecimal"))
+        }
+
+        let chart = chart_theme().palette;
+        assert_eq!(chart.background, token("bg"));
+        assert_eq!(chart.foreground, token("fg"));
+        assert_eq!(chart.muted_foreground, token("muted"));
+        assert_eq!(chart.border, token("edge"));
+        assert_eq!(chart.success, token("up"));
+        assert_eq!(chart.destructive, token("down"));
+        assert_eq!(chart.warning, token("faint"));
+
+        // `accent` is the only slot with no counterpart, and deliberately so:
+        // the moving averages are ink rather than colour, because the fills
+        // and the position levels are the only long/short marks on the plot.
+        assert_ne!(chart.accent, chart.success);
+        assert_ne!(chart.accent, chart.destructive);
+    }
+
     #[test]
     fn an_interactive_row_is_named_by_what_it_does() {
         // A book row starts an order, so it is named by the order and not by
