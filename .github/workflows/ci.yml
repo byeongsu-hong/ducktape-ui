@@ -23,21 +23,14 @@ jobs:
   validate:
     name: Rust and Ice
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: ./.github/actions/cargo-cache
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+          scope: workspace
       - run: cargo ice fmt --check
       - run: cargo ice clippy
       - name: Check public Ice API baseline
@@ -94,6 +87,54 @@ jobs:
           rustc --edition=2024 -D warnings --test scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke-tests
           target/native-wgpu-smoke-tests
       - run: cargo test --workspace --locked
+      - name: Drop workspace artifacts before the cache is saved
+        if: always()
+        uses: ./.github/actions/trim-cargo-cache
+
+  performance:
+    name: Performance contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: workspace
+      - name: Run RichTextEditor performance contracts
+        run: scripts/editor-performance-contracts.sh target/performance/rich-text-editor.jsonl
+      - name: Upload RichTextEditor performance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rich-text-editor-performance
+          path: target/performance/rich-text-editor.jsonl
+          if-no-files-found: error
+      - name: Run remaining performance contracts
+        run: |
+          cargo test --locked -p ui-lang-core performance_contract -- --ignored --test-threads=1
+          cargo test --locked -p ui-lang-runtime performance_contract -- --ignored --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test virtual_list_performance -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test log_timeline_performance -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test tree_view_performance -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test data_grid_performance -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p ui-lang-runtime --test frame_probe -- --ignored --nocapture --test-threads=1
+          cargo test --locked -p ui-lang-build performance_contract -- --ignored --test-threads=1
+          cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
+          cargo test --locked -p cargo-ice qualification_snapshot_cost -- --ignored --nocapture --test-threads=1
+          cargo test --locked -p ui-lang-core lowering_wide_component_calls_scales -- --ignored --nocapture --test-threads=1
+      - name: Drop workspace artifacts before the cache is saved
+        if: always()
+        uses: ./.github/actions/trim-cargo-cache
+
+  review:
+    name: Review bundles and packaging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: workspace
       - name: Verify full and selected review bundles
         run: |
           cargo ice review examples/showcase/src/ui/app.ice \
@@ -206,31 +247,12 @@ jobs:
           path: target/ci-review
           if-no-files-found: error
           retention-days: 7
-      - name: Run RichTextEditor performance contracts
-        run: scripts/editor-performance-contracts.sh target/performance/rich-text-editor.jsonl
-      - name: Upload RichTextEditor performance evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rich-text-editor-performance
-          path: target/performance/rich-text-editor.jsonl
-          if-no-files-found: error
-      - name: Run remaining performance contracts
-        run: |
-          cargo test --locked -p ui-lang-core performance_contract -- --ignored --test-threads=1
-          cargo test --locked -p ui-lang-runtime performance_contract -- --ignored --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test virtual_list_performance -- --ignored --nocapture --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test log_timeline_performance -- --ignored --nocapture --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test tree_view_performance -- --ignored --nocapture --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test data_grid_performance -- --ignored --nocapture --test-threads=1
-          cargo test --release --locked -p ui-lang-runtime --test frame_probe -- --ignored --nocapture --test-threads=1
-          cargo test --locked -p ui-lang-build performance_contract -- --ignored --test-threads=1
-          cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
-          cargo test --locked -p cargo-ice qualification_snapshot_cost -- --ignored --nocapture --test-threads=1
-          cargo test --locked -p ui-lang-core lowering_wide_component_calls_scales -- --ignored --nocapture --test-threads=1
       - run: cargo ice compat
       - run: scripts/package-smoke.sh
       - run: scripts/downstream-package-smoke.sh
+      - name: Drop workspace artifacts before the cache is saved
+        if: always()
+        uses: ./.github/actions/trim-cargo-cache
 
   msrv:
     name: MSRV (1.88)
@@ -238,18 +260,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+      - uses: ./.github/actions/cargo-cache
       - run: rustup toolchain install 1.88.0 --profile minimal
       - run: cargo +1.88.0 check --workspace --locked
+      - name: Drop workspace artifacts before the cache is saved
+        if: always()
+        uses: ./.github/actions/trim-cargo-cache
 
   platforms:
     name: Workspace (${{ matrix.runner }})
@@ -261,16 +277,7 @@ jobs:
         runner: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+      - uses: ./.github/actions/cargo-cache
       - run: cargo check --workspace --locked
       - name: Test native editor interactions
         run: |
@@ -283,6 +290,9 @@ jobs:
             --package showcase \
             --test generated_control_accessibility \
             --output target/platform-review
+      - name: Drop workspace artifacts before the cache is saved
+        if: always()
+        uses: ./.github/actions/trim-cargo-cache
 
   accessibility:
     name: Accessibility (Linux and Windows)
@@ -290,16 +300,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+      - uses: ./.github/actions/cargo-cache
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -307,6 +308,9 @@ jobs:
           rustup target add x86_64-pc-windows-gnu
       - run: scripts/a11y-smoke.sh
       - run: scripts/a11y-windows-check.sh
+      - name: Drop workspace artifacts before the cache is saved
+        if: always()
+        uses: ./.github/actions/trim-cargo-cache
 
   native-wgpu:
     name: Native WGPU (${{ matrix.label }})
@@ -342,16 +346,7 @@ jobs:
       ICE_DEV_REQUIRED_DRAW: ${{ matrix.required_draw }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ github.job }}-${{ strategy.job-index || 0 }}-
+      - uses: ./.github/actions/cargo-cache
       - name: Install Linux display and Vulkan dependencies
         if: matrix.label == 'Linux'
         run: |
@@ -372,3 +367,6 @@ jobs:
         if: matrix.label != 'Linux'
         shell: bash
         run: '"${{ matrix.helper }}" "${{ matrix.executable }}"'
+      - name: Drop workspace artifacts before the cache is saved
+        if: always()
+        uses: ./.github/actions/trim-cargo-cache

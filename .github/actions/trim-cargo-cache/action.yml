@@ -1,0 +1,19 @@
+name: Trim cargo cache
+description: >-
+  Removes every workspace member's build artifacts so the saved cache holds
+  dependencies only. Workspace crates are rebuilt on every commit anyway, and
+  caching them inflates an entry that competes with every other job for the
+  repository's cache budget. The member list comes from cargo metadata, so a
+  new workspace member needs no change here.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        members=$(cargo metadata --format-version 1 --no-deps --locked \
+          | jq -r '.packages[] | "-p " + .name' | tr '\n' ' ')
+        # shellcheck disable=SC2086
+        cargo clean $members
+        # shellcheck disable=SC2086
+        cargo clean --release $members
