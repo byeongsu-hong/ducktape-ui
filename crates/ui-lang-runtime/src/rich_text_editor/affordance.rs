@@ -149,9 +149,39 @@ pub(super) fn draw_margin_tip(
     );
 }
 
-/// Paint one margin mark — a comment chip: a rounded plate with three dots,
-/// bare quads like the gutter so it renders identically on every platform.
-pub(super) fn draw_margin_mark(renderer: &mut iced::Renderer, bounds: Rectangle, color: Color) {
+/// The count a chip can spell inside a fixed-width plate. Past it the chip
+/// says `9+`: the plate's width is what the host reserves as `MARGIN_WIDTH`,
+/// so letting the number grow the chip would push it off the document edge and
+/// desync every hit-test that shares `margin_mark_bounds`. A block carrying ten
+/// separate threads is far past the point where the exact number is what the
+/// reader needs.
+const MARK_COUNT_CAP: usize = 9;
+const MARK_COUNT_SIZE: f32 = 10.5;
+
+/// How a chip spells its count. `0` means the host did not supply one.
+pub(super) fn margin_mark_caption(count: usize) -> Option<String> {
+    match count {
+        0 => None,
+        1..=MARK_COUNT_CAP => Some(count.to_string()),
+        _ => Some(format!("{MARK_COUNT_CAP}+")),
+    }
+}
+
+/// Paint one margin mark — a comment chip: a rounded plate carrying HOW MANY
+/// threads sit on the line, bare quads like the gutter so the plate renders
+/// identically on every platform.
+///
+/// The three dots are the no-count fallback, and they were once the only thing
+/// drawn: the chip said a line had been commented on and refused to say how
+/// much was waiting there, so the only way to learn whether it held one note or
+/// a whole argument was to open the rail.
+pub(super) fn draw_margin_mark(
+    renderer: &mut iced::Renderer,
+    bounds: Rectangle,
+    color: Color,
+    count: usize,
+    font: Font,
+) {
     let plate = Rectangle::new(
         Point::new(bounds.x + 1.0, bounds.y + 3.0),
         Size::new(bounds.width - 2.0, bounds.height - 6.0),
@@ -167,6 +197,25 @@ pub(super) fn draw_margin_mark(renderer: &mut iced::Renderer, bounds: Rectangle,
             ..color
         },
     );
+    if let Some(caption) = margin_mark_caption(count) {
+        renderer.fill_text(
+            Text {
+                content: caption,
+                bounds: plate.size(),
+                size: Pixels(MARK_COUNT_SIZE),
+                line_height: text::LineHeight::default(),
+                font,
+                align_x: text::Alignment::Center,
+                align_y: alignment::Vertical::Center,
+                shaping: text::Shaping::Basic,
+                wrapping: text::Wrapping::None,
+            },
+            plate.center(),
+            color,
+            plate,
+        );
+        return;
+    }
     let dot = 2.0;
     let step = 3.6;
     let left = plate.center_x() - step - dot / 2.0;
@@ -498,5 +547,40 @@ mod tests {
         // than sliding out of the document.
         let long = margin_tip_bounds(mark, &"x".repeat(400), text_bounds);
         assert_eq!(long.x, text_bounds.x);
+    }
+
+    /// THE CHIP SPELLS HOW MUCH IS WAITING. It used to draw three dots and
+    /// nothing else, so a line with one stray note and a line carrying a whole
+    /// argument looked identical and the only way to tell them apart was to
+    /// open the rail.
+    #[test]
+    fn a_comment_chip_says_how_many_threads_it_carries() {
+        assert_eq!(margin_mark_caption(1).as_deref(), Some("1"));
+        assert_eq!(margin_mark_caption(4).as_deref(), Some("4"));
+        assert_eq!(margin_mark_caption(MARK_COUNT_CAP).as_deref(), Some("9"));
+        // Past the cap the plate cannot widen without desyncing every
+        // hit-test that shares `margin_mark_bounds`, so it says "more".
+        assert_eq!(
+            margin_mark_caption(MARK_COUNT_CAP + 1).as_deref(),
+            Some("9+")
+        );
+        assert_eq!(margin_mark_caption(250).as_deref(), Some("9+"));
+        // A host that supplies no count keeps the old dots rather than
+        // drawing a bare "0", which would read as "no comments here".
+        assert_eq!(margin_mark_caption(0), None);
+    }
+
+    /// The plate must stay inside the padding the host reserves, whatever the
+    /// caption — this is the invariant that makes the cap necessary.
+    #[test]
+    fn the_chip_never_outgrows_the_margin_the_host_reserved() {
+        let text_bounds = Rectangle::new(Point::new(40.0, 0.0), Size::new(300.0, 400.0));
+        let row = Rectangle::new(Point::new(40.0, 20.0), Size::new(1.0, 18.0));
+        let mark = margin_mark_bounds(text_bounds, row);
+        let right_edge = mark.x + mark.width;
+        assert!(
+            right_edge <= text_bounds.x + text_bounds.width + MARGIN_WIDTH,
+            "the chip at {right_edge} escaped the {MARGIN_WIDTH}px margin"
+        );
     }
 }

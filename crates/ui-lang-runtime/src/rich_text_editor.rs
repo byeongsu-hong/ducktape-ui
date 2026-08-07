@@ -197,7 +197,9 @@ where
     on_gutter: Option<Box<GutterFn<'a, Message>>>,
     drop_boundaries: Vec<usize>,
     on_gutter_drop: Option<Box<GutterDropFn<'a, Message>>>,
-    margin_marks: Vec<usize>,
+    /// `(line, thread count)` — the count the chip spells. See
+    /// [`margin_mark_caption`].
+    margin_marks: Vec<(usize, usize)>,
     margin_label: String,
     on_margin_press: Option<Box<MarginPressFn<'a, Message>>>,
     menu: Option<EditorMenu>,
@@ -436,7 +438,7 @@ where
     /// padding for the mark column.
     pub fn margin_marks(
         mut self,
-        marks: Vec<usize>,
+        marks: Vec<(usize, usize)>,
         press: impl Fn(usize) -> Message + 'a,
     ) -> Self {
         self.margin_marks = marks;
@@ -1115,10 +1117,14 @@ where
                         && state.composition.is_none()
                         && point.x > self.padding.left + text_bounds.width
                     {
-                        let pressed = self.margin_marks.iter().copied().find(|&line| {
-                            let row = self.gutter_row(state, text_bounds, line);
-                            margin_mark_bounds(text_bounds, row).contains(absolute)
-                        });
+                        let pressed =
+                            self.margin_marks
+                                .iter()
+                                .map(|&(line, _)| line)
+                                .find(|&line| {
+                                    let row = self.gutter_row(state, text_bounds, line);
+                                    margin_mark_bounds(text_bounds, row).contains(absolute)
+                                });
                         if let Some(line) = pressed {
                             shell.publish(on_margin(line));
                             shell.capture_event();
@@ -1615,13 +1621,13 @@ where
                 .map(|point| Point::new(bounds.x + point.x, bounds.y + point.y));
             let mut tip = None;
             renderer.with_layer(bounds, |renderer| {
-                for &line in &self.margin_marks {
+                for &(line, count) in &self.margin_marks {
                     let row = self.gutter_row(state, text_bounds, line);
                     let mark = margin_mark_bounds(text_bounds, row);
                     if bounds.intersection(&mark).is_none() {
                         continue;
                     }
-                    draw_margin_mark(renderer, mark, accent);
+                    draw_margin_mark(renderer, mark, accent, count, state.font);
                     if pointer.is_some_and(|point| mark.contains(point)) {
                         tip = Some(mark);
                     }
@@ -1722,7 +1728,7 @@ where
                 && state.composition.is_none()
                 && point.x > self.padding.left + text_bounds.width
             {
-                let over_mark = self.margin_marks.iter().any(|&line| {
+                let over_mark = self.margin_marks.iter().any(|&(line, _)| {
                     let row = self.gutter_row(state, text_bounds, line);
                     margin_mark_bounds(text_bounds, row).contains(absolute)
                 });
