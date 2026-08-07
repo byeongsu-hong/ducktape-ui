@@ -1,7 +1,7 @@
 extern crate::hyperliquid
   Tape()
   HlError(message:str)
-  SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, prev:f64, maintenance:f64)
+  SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, prev:f64, maintenance:f64, selected:bool)
   Position(coin:str, size:f64, entry:f64, mark:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
   Account(value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, margin_pct:f64, positions:[Position])
   Trade(ts:i64, price:f64, size:f64, buy:bool, sweep:i64)
@@ -25,7 +25,7 @@ extern crate::hyperliquid
   sync apply_feed(rows:[SymbolRow], tick:MarketTick) -> [SymbolRow]
   sync mark_positions(positions:[Position], tick:MarketTick) -> [Position]
   sync mark_account(account:Account?, positions:[Position]) -> Account?
-  sync filter_symbols(rows:[SymbolRow], query:str) -> [SymbolRow]
+  sync filter_symbols(rows:[SymbolRow], query:str, coin:str) -> [SymbolRow]
   sync symbol_row(rows:[SymbolRow], coin:str) -> SymbolRow?
   sync ticket_seed(book:Book?, focus:SymbolRow?) -> str
   sync price_ticket(price:str, size:str, leverage:str, market:SymbolRow?, buy:bool) -> Ticket
