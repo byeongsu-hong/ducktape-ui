@@ -55,6 +55,11 @@ The **tape** under the book is everybody's trades rather than this account's:
 the socket was already open and one more subscription costs nothing, so the
 panel that tells you whether anything is happening at all is close to free.
 
+A print is checked against the market on screen before it is folded in, the
+same way a pushed candle is: switching markets clears the tape, but a message
+already in flight for the market you just left arrives after that and would
+otherwise read as this one's.
+
 It reads the way the market traded rather than the way the wire reported. One
 aggressing order that eats four resting orders arrives as four messages sharing
 a hash — four rows would be the exchange's bookkeeping, not the market's. They
