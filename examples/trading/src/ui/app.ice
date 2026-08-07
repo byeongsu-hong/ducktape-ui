@@ -457,7 +457,7 @@ on connect
     run hl_orders(trim(draft)) -> orders_loaded _ | failed _
     abortable feeds abort-on-drop
       parallel
-        stream hl_market_feed(tape) -> market_ticked _ | failed _
+        stream hl_market_feed(tape) -> market_ticked _ | feed_failed _
         stream hl_fill_feed(trim(draft)) -> fills_streamed _ | failed _
 
 on browse
@@ -469,7 +469,7 @@ on browse
     run hl_symbols() -> symbols_loaded _ | failed _
     run hl_candles(tape, coin, interval) -> candles_loaded _ | failed _
     abortable feeds abort-on-drop
-      stream hl_market_feed(tape) -> market_ticked _ | failed _
+      stream hl_market_feed(tape) -> market_ticked _ | feed_failed _
 
 on reopen
   draft = address
@@ -541,6 +541,10 @@ on market_ticked(tick)
 on failed(error)
   status = error.message
   loading_history = false
+
+on feed_failed(error)
+  status = error.message
+  latency = 0
 
 on chart_signalled(signal)
   hover = signal.hover
@@ -737,6 +741,21 @@ view
                     y-rail bg=panel
                     y-scroller bg=faint r=3.0
                   col w=fill
+                    if empty(visible) && !empty(symbols)
+                      box
+                        with
+                          w=fill
+                          h=100.0
+                          p=16.0
+                          align-x=center
+                          align-y=center
+                        text "No market matches that."
+                          with
+                            size=12.0
+                            w=fill
+                            align-x=center
+                            wrap=word
+                            @text-faint
                     for row in visible
                       MarketRow market=row selected=(row.name == coin) #market(row.name)
                         events
