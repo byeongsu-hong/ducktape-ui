@@ -218,3 +218,37 @@ that cannot memoize, not as a number every Ice app pays.
 Micro-optimizing emitted code has the ~0.72ms `__view` share as its ceiling.
 Removing 984 redundant scope clones from showcase's generated view — every one
 of them real waste — was worth ~19us. Measure before spending effort there.
+
+### A second app, and where the boundary runs out
+
+`examples/trading/src/frame_probe.rs` measures the opposite shape from
+showcase: lists whose rows are a near-pure function of one row value.
+
+```sh
+TRADING_PROBE_SYMBOLS=0   cargo test --release -p trading-example -- --ignored --nocapture frame_cost
+TRADING_PROBE_SYMBOLS=120 cargo test --release -p trading-example -- --ignored --nocapture frame_cost
+```
+
+Every list on that screen is filled by a network task and starts empty, so a
+headless boot measures the chrome alone; the probe seeds the symbol universe
+the way the task would. Run the two counts back to back — a busy machine moves
+both, and an earlier reading taken minutes apart was wrong by 40%.
+
+At 1600x1000: **1276us with no symbols, 2094us with 120** — the rows are 39% of
+the frame, ~6.8us each, and a real perp universe is larger than 120.
+
+Those rows are exactly what a `lazy` boundary is for, and they cannot have one:
+
+- `MarketRow` depends on the row **and** on `coin`, the selected symbol, while
+  `lazy` takes a single dependency and exposes only that alias inside.
+- Folding the selection into the row does not rescue it. A `lazy` dependency
+  must be `Hash`, and `SymbolRow` carries `price`, `change_pct`, `funding_pct`
+  — `f64` does not implement `Hash`, which is why SPEC rejects float-bearing
+  values as lazy identity in the first place.
+
+So the lever that reaches the ~75% of a frame that is layout is unavailable
+precisely where market data lives. Closing that would mean letting `lazy` take
+an author-supplied key the way `keyed` already does, rather than deriving
+identity from the whole dependency — which is a language change, not a tuning
+one. Recorded here so the next pass starts from the constraint rather than
+rediscovering it.

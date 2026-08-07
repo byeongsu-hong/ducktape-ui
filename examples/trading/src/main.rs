@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod frame_probe;
 mod hyperliquid;
 
 ui_lang::include_app!("src/ui/app.ice");
