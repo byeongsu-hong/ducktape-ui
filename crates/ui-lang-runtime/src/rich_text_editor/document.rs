@@ -185,7 +185,7 @@ pub(super) fn ordered_positions(left: Position, right: Position) -> (Position, P
 impl DocumentLayout {
     pub(super) fn update<H>(
         &mut self,
-        texts: &[String],
+        texts: Lines<'_>,
         highlighter: &mut H,
         format: &dyn Fn(&H::Highlight) -> Format,
         style: LineLayoutStyle,
@@ -266,7 +266,8 @@ impl DocumentLayout {
         let mut newly_owned_styled_texts = 0;
         let mut newly_owned_styled_text_bytes = 0;
 
-        for (index, text) in texts.iter().enumerate() {
+        for index in 0..new_len {
+            let text = texts.get(index);
             let candidate = if index < common_prefix {
                 Some(index)
             } else if index >= new_suffix_start {
@@ -315,7 +316,7 @@ impl DocumentLayout {
                     .and_then(|line| {
                         if line
                             .as_ref()
-                            .is_some_and(|line| line.signature.text == text.as_str())
+                            .is_some_and(|line| line.signature.text == text)
                         {
                             line.take().map(DocumentLine::into_text)
                         } else {
@@ -504,7 +505,7 @@ fn hinted_mapping(change: EditorChange, old_len: usize, new_len: usize) -> Optio
     })
 }
 
-fn discover_mapping(lines: &[DocumentLine], texts: &[String]) -> LineMapping {
+fn discover_mapping(lines: &[DocumentLine], texts: Lines<'_>) -> LineMapping {
     let old_len = lines.len();
     let new_len = texts.len();
     let shared_len = old_len.min(new_len);
@@ -513,7 +514,7 @@ fn discover_mapping(lines: &[DocumentLine], texts: &[String]) -> LineMapping {
 
     while common_prefix < shared_len {
         mapping_line_comparisons += 1;
-        if lines[common_prefix].signature.text != texts[common_prefix] {
+        if lines[common_prefix].signature.text != texts.get(common_prefix) {
             break;
         }
         common_prefix += 1;
@@ -522,7 +523,9 @@ fn discover_mapping(lines: &[DocumentLine], texts: &[String]) -> LineMapping {
     let mut common_suffix = 0;
     while common_suffix < shared_len.saturating_sub(common_prefix) {
         mapping_line_comparisons += 1;
-        if lines[old_len - common_suffix - 1].signature.text != texts[new_len - common_suffix - 1] {
+        if lines[old_len - common_suffix - 1].signature.text
+            != texts.get(new_len - common_suffix - 1)
+        {
             break;
         }
         common_suffix += 1;
@@ -624,6 +627,29 @@ impl StyledLineFormat {
     }
 }
 
+/// A document's lines, borrowed from the text they live in. Replaces passing
+/// `&[String]` around, which forced every caller to own a second copy of the
+/// whole document just to hand its lines over.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Lines<'a> {
+    source: &'a str,
+    map: &'a TextLines,
+}
+
+impl<'a> Lines<'a> {
+    pub(super) const fn new(source: &'a str, map: &'a TextLines) -> Self {
+        Self { source, map }
+    }
+
+    pub(super) fn len(self) -> usize {
+        self.map.len()
+    }
+
+    pub(super) fn get(self, index: usize) -> &'a str {
+        self.map.line(self.source, index)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TextLines {
     starts: Vec<usize>,
@@ -638,9 +664,11 @@ impl TextLines {
         }
     }
 
-    pub(super) fn parse(source: &str) -> (Vec<String>, Self) {
+    /// Records where every line sits without copying any of them out. The
+    /// ranges below ARE the lines; materializing them into owned strings
+    /// duplicates the whole document for nothing.
+    pub(super) fn parse(source: &str) -> Self {
         let bytes = source.as_bytes();
-        let mut lines = Vec::new();
         let mut starts = vec![0];
         let mut lengths = Vec::new();
         let mut line_start = 0;
@@ -657,17 +685,26 @@ impl TextLines {
                 }
             };
 
-            lines.push(source[line_start..index].to_owned());
             lengths.push(index - line_start);
             index += ending_len;
             line_start = index;
             starts.push(index);
         }
 
-        lines.push(source[line_start..].to_owned());
         lengths.push(source.len() - line_start);
 
-        (lines, Self { starts, lengths })
+        Self { starts, lengths }
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.lengths.len()
+    }
+
+    /// The text of one line, borrowed straight out of the source it maps.
+    pub(super) fn line<'a>(&self, source: &'a str, index: usize) -> &'a str {
+        let start = self.starts.get(index).copied().unwrap_or_default();
+        let length = self.lengths.get(index).copied().unwrap_or_default();
+        source.get(start..start + length).unwrap_or_default()
     }
 
     pub(super) fn offset(&self, position: Position) -> usize {

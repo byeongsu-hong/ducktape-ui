@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn preedit_uses_the_same_wrapped_layout_as_committed_text() {
-    fn geometry(lines: &[String]) -> Vec<(usize, usize, f32, f32, f32)> {
+    fn geometry(lines: Lines<'_>) -> Vec<(usize, usize, f32, f32, f32)> {
         let mut document = DocumentLayout::default();
         document.update(
             lines,
@@ -36,7 +36,7 @@ fn preedit_uses_the_same_wrapped_layout_as_committed_text() {
         selection: None,
     });
     let source_text = source.text();
-    let (_, source_lines) = TextLines::parse(&source_text);
+    let source_lines = TextLines::parse(&source_text);
     let composition = CompositionDocument::new(
         source.cursor(),
         &source_text,
@@ -51,11 +51,17 @@ fn preedit_uses_the_same_wrapped_layout_as_committed_text() {
     let committed = Content::with_text("앞 한글입력뒤");
 
     assert_eq!(source.text(), "앞 뒤");
-    assert_eq!(composition.lines, content_lines(&committed));
+    let committed_doc = TestDoc::new(&content_lines(&committed));
+    let composed = Lines::new(&composition.display, &composition.layout.display_lines);
     assert_eq!(
-        geometry(&composition.lines),
-        geometry(&content_lines(&committed))
+        (0..composed.len())
+            .map(|i| composed.get(i))
+            .collect::<Vec<_>>(),
+        (0..committed_doc.lines().len())
+            .map(|i| committed_doc.lines().get(i))
+            .collect::<Vec<_>>()
     );
+    assert_eq!(geometry(composed), geometry(committed_doc.lines()));
     assert_eq!(
         composition.layout.cursor,
         Position {
@@ -80,7 +86,7 @@ fn preedit_replaces_the_selected_source_without_committing_it() {
         selection: Some(Position { line: 0, column: 4 }),
     });
     let source_text = source.text();
-    let (_, source_lines) = TextLines::parse(&source_text);
+    let source_lines = TextLines::parse(&source_text);
     let composition = CompositionDocument::new(
         source.cursor(),
         &source_text,
@@ -94,7 +100,13 @@ fn preedit_replaces_the_selected_source_without_committing_it() {
     .expect("visible composition");
 
     assert_eq!(source.text(), "앞 OLD 뒤");
-    assert_eq!(composition.lines, ["앞 한글 뒤"]);
+    let composed = Lines::new(&composition.display, &composition.layout.display_lines);
+    assert_eq!(
+        (0..composed.len())
+            .map(|i| composed.get(i))
+            .collect::<Vec<_>>(),
+        ["앞 한글 뒤"]
+    );
     assert_eq!(
         composition.layout.display_to_source(Position {
             line: 0,

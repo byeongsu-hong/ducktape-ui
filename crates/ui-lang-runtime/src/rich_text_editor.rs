@@ -605,7 +605,6 @@ where
     highlighter: Highlighter,
     settings: Highlighter::Settings,
     source: String,
-    source_lines: Vec<String>,
     source_line_map: TextLines,
     /// Lines at or past this index still carry the highlighting of an earlier
     /// pass. Scrolling one into view has to re-open a shaping pass.
@@ -631,12 +630,8 @@ where
 struct LayoutMetrics {
     full_text_materializations: usize,
     materialized_source_bytes: usize,
-    parsed_line_strings: usize,
-    parsed_line_bytes: usize,
     composition_display_strings: usize,
     composition_display_bytes: usize,
-    composition_line_strings: usize,
-    composition_line_bytes: usize,
     mapping_line_comparisons: usize,
     styled_signature_comparisons: usize,
     newly_owned_styled_texts: usize,
@@ -721,7 +716,6 @@ where
             highlighter: Highlighter::new(&self.highlighter_settings),
             settings: self.highlighter_settings.clone(),
             source: String::new(),
-            source_lines: vec![String::new()],
             source_line_map: TextLines::empty(),
             highlight_valid_until: 0,
             content_version: None,
@@ -779,16 +773,12 @@ where
         state.content_version = Some(self.content_version);
         if source_changed {
             let source = materialized_source.expect("changed content was materialized");
-            let (source_lines, source_line_map) = TextLines::parse(&source);
+            let source_line_map = TextLines::parse(&source);
             #[cfg(test)]
             {
                 state.metrics.materialized_source_bytes += source.len();
-                state.metrics.parsed_line_strings += source_lines.len();
-                state.metrics.parsed_line_bytes +=
-                    source_lines.iter().map(String::len).sum::<usize>();
             }
             state.source = source;
-            state.source_lines = source_lines;
             state.source_line_map = source_line_map;
         }
 
@@ -823,7 +813,7 @@ where
             .document
             .lines_above(state.scroll + viewport_height)
             .saturating_add(HIGHLIGHT_OVERSCAN_LINES)
-            .min(state.source_lines.len());
+            .min(state.source_line_map.len());
         let needs_shape = source_changed
             || preedit_changed
             || settings_updated
@@ -848,15 +838,11 @@ where
             if let Some(composition) = composition.as_ref() {
                 state.metrics.composition_display_strings += 1;
                 state.metrics.composition_display_bytes += composition.display_bytes;
-                state.metrics.composition_line_strings += composition.lines.len();
-                state.metrics.composition_line_bytes +=
-                    composition.lines.iter().map(String::len).sum::<usize>();
             }
-            let shaped_lines = composition
-                .as_ref()
-                .map_or(state.source_lines.as_slice(), |composition| {
-                    composition.lines.as_slice()
-                });
+            let shaped_lines = composition.as_ref().map_or_else(
+                || Lines::new(&state.source, &state.source_line_map),
+                |composition| Lines::new(&composition.display, &composition.layout.display_lines),
+            );
             let geometry_changed = width_changed
                 || state.font != font
                 || state.text_size != text_size

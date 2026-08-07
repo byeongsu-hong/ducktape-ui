@@ -31,10 +31,16 @@ fn lightweight_composition_parser_matches_iced_line_boundaries() {
     ] {
         let content = Content::with_text(source);
         let normalized = content.text();
-        let (lines, parsed) = TextLines::parse(&normalized);
+        let parsed = TextLines::parse(&normalized);
+        let lines = Lines::new(&normalized, &parsed);
 
-        assert_eq!(lines, content_lines(&content), "{source:?}");
-        for (line, text) in lines.iter().enumerate() {
+        assert_eq!(
+            (0..lines.len()).map(|i| lines.get(i)).collect::<Vec<_>>(),
+            content_lines(&content),
+            "{source:?}"
+        );
+        for line in 0..lines.len() {
+            let text = lines.get(line);
             for column in [0, text.len()] {
                 let position = Position { line, column };
                 assert_eq!(

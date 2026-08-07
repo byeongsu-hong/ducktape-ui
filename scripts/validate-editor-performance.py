@@ -16,12 +16,8 @@ SCENARIOS = {
 METRICS = {
     "full_text_materializations",
     "materialized_source_bytes",
-    "parsed_line_strings",
-    "parsed_line_bytes",
     "composition_display_strings",
     "composition_display_bytes",
-    "composition_line_strings",
-    "composition_line_bytes",
     "mapping_line_comparisons",
     "styled_signature_comparisons",
     "newly_owned_styled_texts",

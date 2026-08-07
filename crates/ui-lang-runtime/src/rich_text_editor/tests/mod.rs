@@ -126,6 +126,25 @@ fn test_layout_style(width: f32) -> LineLayoutStyle {
     }
 }
 
+/// Lends owned test lines to the layout as a borrowed document, the way the
+/// widget lends its own source text.
+struct TestDoc {
+    text: String,
+    map: TextLines,
+}
+
+impl TestDoc {
+    fn new(lines: &[String]) -> Self {
+        let text = lines.join("\n");
+        let map = TextLines::parse(&text);
+        Self { text, map }
+    }
+
+    fn lines(&self) -> Lines<'_> {
+        Lines::new(&self.text, &self.map)
+    }
+}
+
 fn content_lines(content: &Content) -> Vec<String> {
     content.lines().map(|line| line.text.into_owned()).collect()
 }

@@ -38,7 +38,7 @@ fn line_padding_changes_wrapping_caret_and_hit_geometry() {
     };
     let mut document = DocumentLayout::default();
     document.update(
-        &content_lines(&source),
+        TestDoc::new(&content_lines(&source)).lines(),
         &mut WholeLine::default(),
         &|_| Format {
             line_highlight: Some(text::Highlight {
@@ -286,7 +286,7 @@ fn empty_formatted_lines_keep_their_rich_metrics() {
     };
     let mut document = DocumentLayout::default();
     let rebuilt = document.update(
-        &content_lines(&content),
+        TestDoc::new(&content_lines(&content)).lines(),
         &mut WholeLine::default(),
         &|_| format,
         test_layout_style(500.0),

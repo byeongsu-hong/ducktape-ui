@@ -32,7 +32,9 @@ impl CompositionLayout {
 }
 
 pub(super) struct CompositionDocument {
-    pub(super) lines: Vec<String>,
+    /// The document as the preedit makes it read. Its lines are borrowed out
+    /// of this string rather than copied into a parallel vector.
+    pub(super) display: String,
     pub(super) layout: CompositionLayout,
     #[cfg(test)]
     pub(super) display_bytes: usize,
@@ -61,7 +63,7 @@ impl CompositionDocument {
         display.push_str(&preedit.content);
         display.push_str(&source[source_range.end..]);
 
-        let (lines, display_lines) = TextLines::parse(&display);
+        let display_lines = TextLines::parse(&display);
         let display_range =
             source_range.start..source_range.start.saturating_add(preedit.content.len());
         let selection = preedit.selection.as_ref().map(|selection| {
@@ -88,10 +90,10 @@ impl CompositionDocument {
         };
 
         Some(Self {
-            lines,
-            layout,
             #[cfg(test)]
             display_bytes: display.len(),
+            display,
+            layout,
         })
     }
 }

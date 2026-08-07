@@ -12,7 +12,7 @@ fn ime_stages_rebuild_only_the_changed_line_in_a_long_document() {
     assert_eq!(
         document
             .update(
-                &lines,
+                TestDoc::new(&lines).lines(),
                 &mut highlighter,
                 &|_| Format::default(),
                 style,
@@ -28,7 +28,7 @@ fn ime_stages_rebuild_only_the_changed_line_in_a_long_document() {
         assert_eq!(
             document
                 .update(
-                    &lines,
+                    TestDoc::new(&lines).lines(),
                     &mut highlighter,
                     &|_| Format::default(),
                     style,
@@ -52,7 +52,7 @@ fn line_insertions_reuse_the_unchanged_suffix() {
     assert_eq!(
         document
             .update(
-                &lines,
+                TestDoc::new(&lines).lines(),
                 &mut highlighter,
                 &|_| Format::default(),
                 style,
@@ -67,7 +67,7 @@ fn line_insertions_reuse_the_unchanged_suffix() {
     assert_eq!(
         document
             .update(
-                &lines,
+                TestDoc::new(&lines).lines(),
                 &mut highlighter,
                 &|_| Format::default(),
                 style,
@@ -82,7 +82,7 @@ fn line_insertions_reuse_the_unchanged_suffix() {
     assert_eq!(
         document
             .update(
-                &lines,
+                TestDoc::new(&lines).lines(),
                 &mut highlighter,
                 &|_| Format::default(),
                 style,
@@ -101,7 +101,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
     let mut document = DocumentLayout::default();
     let original = vec!["first".to_owned(), "second".to_owned(), "third".to_owned()];
     document.update(
-        &original,
+        TestDoc::new(&original).lines(),
         &mut highlighter,
         &|_| Format::default(),
         style,
@@ -116,7 +116,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
 
     let replaced = vec!["first".to_owned(), "SECOND".to_owned(), "third".to_owned()];
     let update = document.update(
-        &replaced,
+        TestDoc::new(&replaced).lines(),
         &mut highlighter,
         &|_| Format::default(),
         style,
@@ -143,7 +143,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
         "third".to_owned(),
     ];
     let update = document.update(
-        &inserted,
+        TestDoc::new(&inserted).lines(),
         &mut highlighter,
         &|_| Format::default(),
         style,
@@ -157,7 +157,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
     assert_eq!(document.lines[3].identity, replaced_ids[2]);
 
     let update = document.update(
-        &replaced,
+        TestDoc::new(&replaced).lines(),
         &mut highlighter,
         &|_| Format::default(),
         style,
@@ -170,7 +170,7 @@ fn change_hint_maps_replacements_insertions_undo_and_redo_without_line_diffing()
     assert_eq!(document.lines[2].identity, replaced_ids[2]);
 
     let update = document.update(
-        &inserted,
+        TestDoc::new(&inserted).lines(),
         &mut highlighter,
         &|_| Format::default(),
         style,
@@ -194,7 +194,7 @@ fn invalid_change_hints_fall_back_to_exact_diffing() {
         let mut highlighter = WholeLine::default();
         let mut document = DocumentLayout::default();
         document.update(
-            &["first".to_owned(), "second".to_owned(), "third".to_owned()],
+            TestDoc::new(&["first".to_owned(), "second".to_owned(), "third".to_owned()]).lines(),
             &mut highlighter,
             &|_| Format::default(),
             style,
@@ -203,7 +203,7 @@ fn invalid_change_hints_fall_back_to_exact_diffing() {
         );
         let changed = ["first".to_owned(), "SECOND".to_owned(), "third".to_owned()];
         let update = document.update(
-            &changed,
+            TestDoc::new(&changed).lines(),
             &mut highlighter,
             &|_| Format::default(),
             style,
@@ -230,7 +230,7 @@ fn insertion_hint_keeps_an_identical_shifted_suffix_line_identity() {
         "last".to_owned(),
     ];
     document.update(
-        &original,
+        TestDoc::new(&original).lines(),
         &mut highlighter,
         &|_| Format::default(),
         style,
@@ -246,7 +246,7 @@ fn insertion_hint_keeps_an_identical_shifted_suffix_line_identity() {
         "last".to_owned(),
     ];
     let update = document.update(
-        &inserted,
+        TestDoc::new(&inserted).lines(),
         &mut highlighter,
         &|_| Format::default(),
         style,
@@ -265,7 +265,7 @@ fn change_hint_restarts_stateful_highlighting_at_the_changed_line() {
     let mut highlighter = <ToggleHighlighter as text::Highlighter>::new(&());
     let mut document = DocumentLayout::default();
     document.update(
-        &["before".to_owned(), "middle".to_owned(), "after".to_owned()],
+        TestDoc::new(&["before".to_owned(), "middle".to_owned(), "after".to_owned()]).lines(),
         &mut highlighter,
         &|inside| Format {
             color: inside.then_some(Color::BLACK),
@@ -278,7 +278,7 @@ fn change_hint_restarts_stateful_highlighting_at_the_changed_line() {
 
     let changed = ["before".to_owned(), "toggle".to_owned(), "after".to_owned()];
     let update = document.update(
-        &changed,
+        TestDoc::new(&changed).lines(),
         &mut highlighter,
         &|inside| Format {
             color: inside.then_some(Color::BLACK),
@@ -334,8 +334,6 @@ fn widget_change_hint_separates_materialization_diff_and_shaping_metrics() {
         state.metrics.materialized_source_bytes,
         "first\nseXcond\nthird".len()
     );
-    assert_eq!(state.metrics.parsed_line_strings, 3);
-    assert_eq!(state.metrics.parsed_line_bytes, "firstseXcondthird".len());
     assert_eq!(state.metrics.mapping_line_comparisons, 0);
     assert_eq!(state.metrics.styled_signature_comparisons, 2);
     assert_eq!(state.metrics.newly_owned_styled_texts, 1);
@@ -605,7 +603,6 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
     );
     assert_eq!(state.metrics.full_text_materializations, 1);
     assert_eq!(state.metrics.materialized_source_bytes, source.len() + 1);
-    assert_eq!(state.metrics.parsed_line_strings, 100_001);
     assert_eq!(state.metrics.mapping_line_comparisons, 0);
     // The caret sits on line 50_000 but no layout ran after it moved there,
     // so the viewport is still parked ~47k lines below, where the caret loop
@@ -825,7 +822,6 @@ fn performance_contract_100k_hangul_ime_sequence() {
     eprintln!("100k IME={elapsed:?}, metrics={:?}", state.metrics);
     assert_eq!(state.metrics.full_text_materializations, 0);
     assert_eq!(state.metrics.composition_display_strings, 3);
-    assert_eq!(state.metrics.composition_line_strings, 300_003);
     assert!(state.metrics.mapping_line_comparisons > 0);
     assert_eq!(state.metrics.styled_signature_comparisons, 99);
     assert_eq!(state.metrics.newly_owned_styled_texts, 3);
@@ -880,7 +876,6 @@ fn performance_contract_100k_format_key_only_layout() {
     eprintln!("100k format key={elapsed:?}, metrics={:?}", state.metrics);
     assert_eq!(state.metrics.full_text_materializations, 0);
     assert_eq!(state.metrics.materialized_source_bytes, 0);
-    assert_eq!(state.metrics.parsed_line_strings, 0);
     assert_eq!(state.metrics.mapping_line_comparisons, 0);
     // A format key changes how every line looks, but only the lines on
     // screen have to be re-highlighted and re-shaped now; the rest keep the
@@ -1019,12 +1014,8 @@ fn record_performance_metrics_to(
         "metrics": {
             "full_text_materializations": metrics.full_text_materializations,
             "materialized_source_bytes": metrics.materialized_source_bytes,
-            "parsed_line_strings": metrics.parsed_line_strings,
-            "parsed_line_bytes": metrics.parsed_line_bytes,
             "composition_display_strings": metrics.composition_display_strings,
             "composition_display_bytes": metrics.composition_display_bytes,
-            "composition_line_strings": metrics.composition_line_strings,
-            "composition_line_bytes": metrics.composition_line_bytes,
             "mapping_line_comparisons": metrics.mapping_line_comparisons,
             "styled_signature_comparisons": metrics.styled_signature_comparisons,
             "newly_owned_styled_texts": metrics.newly_owned_styled_texts,
