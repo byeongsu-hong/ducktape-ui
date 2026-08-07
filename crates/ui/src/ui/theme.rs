@@ -242,7 +242,7 @@ pub const DARK: Theme = Theme {
     spacing: SPACING,
     controls: CONTROLS,
     typography: TYPOGRAPHY,
-    glass: GLASS,
+    glass: DARK_GLASS,
     elevation: ELEVATION,
 };
 
@@ -462,6 +462,18 @@ const GLASS: Glass = Glass {
     sheet: rgba(0xfdfcfa, 0.86),
 };
 
+/// Glass is a TINT OF THE SURFACE IT FLOATS OVER, so it inverts with the theme
+/// exactly as `background` does — the shadcn pair already models this. `DARK`
+/// shared the cream `GLASS`, which painted every popover and menu built on
+/// `glass.regular` as a cream plate under dark-theme ink: a floating menu whose
+/// labels were the same value as the plate they sat on, legible only where an
+/// item carried its own danger colour.
+const DARK_GLASS: Glass = Glass {
+    thin: rgba(0x1b1a16, 0.50),
+    regular: rgba(0x1b1a16, 0.62),
+    sheet: rgba(0x1b1a16, 0.86),
+};
+
 const SHADCN_GLASS_LIGHT: Glass = Glass {
     thin: rgba(0xffffff, 0.80),
     regular: rgba(0xffffff, 0.90),
@@ -658,6 +670,18 @@ mod tests {
         );
         assert_eq!(LIGHT.glass, GLASS);
         assert_eq!(LIGHT.elevation, ELEVATION);
+        // Glass tints the surface it floats over, so it inverts with the theme.
+        // Sharing one constant across both put cream popovers under dark ink.
+        assert_eq!(DARK.glass, DARK_GLASS);
+        assert_ne!(DARK.glass, LIGHT.glass);
+        for (dark, light) in [
+            (DARK.glass.thin, LIGHT.glass.thin),
+            (DARK.glass.regular, LIGHT.glass.regular),
+            (DARK.glass.sheet, LIGHT.glass.sheet),
+        ] {
+            assert_eq!(dark.a, light.a, "the two themes share one alpha ladder");
+        }
+        assert_eq!(DARK_GLASS.regular.r, DARK.palette.background.r);
     }
 
     #[test]
