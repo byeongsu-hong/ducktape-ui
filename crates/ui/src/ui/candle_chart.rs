@@ -300,7 +300,10 @@ impl Chrome {
 #[derive(Clone)]
 struct Axes {
     ticks: Vec<f64>,
+    /// Decimals on axis tick labels.
     precision: usize,
+    /// Decimals on the last-price and crosshair tags.
+    tag_precision: usize,
     /// `(x, ts)` of each time tick.
     time_ticks: Vec<(f32, i64)>,
     time_step_secs: i64,
@@ -527,6 +530,7 @@ pub struct CandleChart<'a, Message> {
     width: Length,
     height: Length,
     initial_bars: usize,
+    precision: Option<usize>,
 }
 
 pub fn candle_chart<'a, Message>(
@@ -554,6 +558,7 @@ fn with_data<'a, Message>(data: Data<'a>, theme: &UiTheme) -> CandleChart<'a, Me
         width: Length::Fill,
         height: Length::Fixed(DEFAULT_HEIGHT),
         initial_bars: DEFAULT_BARS,
+        precision: None,
     }
 }
 
@@ -582,6 +587,14 @@ impl<'a, Message> CandleChart<'a, Message> {
         self.initial_bars = bars.max(MIN_SPAN as usize);
         self
     }
+
+    /// Fixes the price decimals to the instrument's tick size instead of
+    /// deriving them from the visible range.
+    #[must_use]
+    pub fn precision(mut self, decimals: usize) -> Self {
+        self.precision = Some(decimals.min(8));
+        self
+    }
 }
 
 impl<'a, Message> From<CandleChart<'a, Message>> for Element<'a, Message>
@@ -597,6 +610,7 @@ where
                 theme: chart.theme,
                 on_hover: chart.on_hover,
                 initial_bars: chart.initial_bars,
+                precision: chart.precision,
             })
             .width(width)
             .height(height),
@@ -647,6 +661,7 @@ struct CandleProgram<'a, Message> {
     theme: UiTheme,
     on_hover: Option<Rc<dyn Fn(Option<CandleHit>) -> Message + 'a>>,
     initial_bars: usize,
+    precision: Option<usize>,
 }
 
 impl<Message> CandleProgram<'_, Message> {
@@ -958,7 +973,8 @@ impl<Message> CandleProgram<'_, Message> {
         });
         Axes {
             ticks,
-            precision: decimals(step),
+            precision: self.precision.unwrap_or_else(|| decimals(step)),
+            tag_precision: self.precision.unwrap_or_else(|| decimals(step).max(2)),
             time_ticks,
             time_step_secs: time_step_secs(candles, range),
             last_close_y,
@@ -1077,7 +1093,7 @@ impl<Message> CandleProgram<'_, Message> {
             );
             self.tag(
                 frame,
-                &format_price(last.close, ctx.axes.precision.max(2)),
+                &format_price(last.close, ctx.axes.tag_precision),
                 y,
                 plot,
                 color,
@@ -1176,7 +1192,7 @@ impl<Message> CandleProgram<'_, Message> {
         let price = ctx.scale.price_at(plot, position.y);
         self.tag(
             frame,
-            &format_price(price, ctx.axes.precision.max(2)),
+            &format_price(price, ctx.axes.tag_precision),
             position.y,
             plot,
             palette.foreground,
@@ -1414,6 +1430,26 @@ mod tests {
     }
 
     #[test]
+    fn explicit_precision_overrides_derived_decimals() {
+        let data = candles(50);
+        let chrome = chrome(BOUNDS);
+        let viewport = Viewport::initial(50, DEFAULT_BARS);
+        let range = visible_indices(viewport, 50);
+        let scale = autoscale(&data, range.clone());
+
+        let derived = hover_program(&data);
+        let axes = derived.axes(&data, chrome, viewport, range.clone(), scale);
+        assert_eq!(axes.precision, 0);
+        assert_eq!(axes.tag_precision, 2);
+
+        let mut fixed = hover_program(&data);
+        fixed.precision = Some(4);
+        let axes = fixed.axes(&data, chrome, viewport, range, scale);
+        assert_eq!(axes.precision, 4);
+        assert_eq!(axes.tag_precision, 4);
+    }
+
+    #[test]
     fn prices_group_thousands() {
         assert_eq!(format_price(0.05, 2), "0.05");
         assert_eq!(format_price(999.0, 0), "999");
@@ -1438,6 +1474,7 @@ mod tests {
             theme: super::super::theme::LIGHT,
             on_hover: Some(Rc::new(|hit| hit)),
             initial_bars: DEFAULT_BARS,
+            precision: None,
         }
     }
 
@@ -1775,6 +1812,7 @@ mod tests {
                 theme,
                 on_hover: None,
                 initial_bars: DEFAULT_BARS,
+                precision: None,
             };
             let views = [
                 ("last-120", None),
