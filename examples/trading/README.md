@@ -209,6 +209,23 @@ The markets are three rather than one, for the same reason. A list of one
 answers no question a list is asked: which row is selected, what a search
 leaves behind, whether a price landed on the market it belongs to.
 
+## Two states nothing had drawn
+
+A position the venue reports no liquidation price for says `none` rather
+than printing a zero, and the rail beside it is empty because there is
+nothing to travel toward — not because nothing has been travelled. Those
+read the same and mean opposite things, so the fixture holds one.
+
+The crosshair's readout — open, high, low, close and volume of the candle
+under the pointer — had shipped without ever being captured. It is drawn
+from a candle taken out of the fixture tape, so what the row says is what
+the chart is drawing under it.
+
+Every capture now asserts the ticket does not say `market not loaded`. The
+handlers reprice, but a preset sets state directly and bypasses them, so
+each new fixture could reintroduce a bug that was fixed three cycles ago —
+and the one added in this cycle did, before the assertion caught it.
+
 ## A market worth a fraction of a cent
 
 Most of a perp venue is priced under a dollar, and every column here was

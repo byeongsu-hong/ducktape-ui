@@ -109,6 +109,22 @@ preset at_risk
     ticket_size = "5.00"
     quote = price_ticket("58,000.00", "5.00", "5", symbol_row(demo_symbols_at_risk(), "BTC"), true, 5.0)
 
+preset hovering
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    visible = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
+    live = true
+    hover = demo_hover()
+    quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
+
 preset penny
   state
     gate = false
@@ -1975,6 +1991,7 @@ test trading_browsing_without_an_address_renders
   expect text "Orders need an address."
   expect no text "EQUITY"
   expect no text "market not loaded"
+  expect no text "market not loaded"
   capture browsing
 
 test trading_a_loaded_market_is_priced_against_at_once
@@ -1990,6 +2007,7 @@ test trading_a_dead_feed_stops_the_price_looking_live
   viewport 1660 820
   expect text "NOT LIVE"
   expect text "Hyperliquid feed dropped"
+  expect no text "market not loaded"
   capture stalled
 
 test trading_an_account_against_its_engine_renders_as_such
@@ -1998,6 +2016,7 @@ test trading_an_account_against_its_engine_renders_as_such
   expect text "91%"
   expect text "57,924.05"
   expect text "91% → 100%"
+  expect no text "market not loaded"
   capture at_risk
 
 test trading_a_market_worth_a_fraction_of_a_cent_renders
@@ -2005,7 +2024,14 @@ test trading_a_market_worth_a_fraction_of_a_cent_renders
   viewport 1660 820
   expect text "0.008421"
   expect text "0.008422"
+  expect no text "market not loaded"
   capture penny
+
+test trading_the_crosshair_reads_out_the_candle_under_it
+  preset hovering
+  viewport 1660 820
+  expect no text "market not loaded"
+  capture hovering
 
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
@@ -2026,6 +2052,7 @@ test trading_the_whole_terminal_renders_from_fixtures
   expect text "SOL"
   expect text "148.620"
   expect text "3,526.53"
+  expect no text "market not loaded"
   capture terminal
 
 test trading_a_search_narrows_the_list_and_keeps_the_selection

@@ -2017,6 +2017,11 @@ pub fn demo_positions() -> Vec<Position> {
         // ever drawn: an isolated long most of the way to its cliff.
         // Isolated, so the cross maintenance the equity bar reads is its own.
         demo_position("ETH", 40.0, 3_600.0, 3_540.0, 25.0, None, -142.0),
+        // Small enough against the account that the venue reports no cliff
+        // for it at all. The column says so rather than printing a zero, and
+        // the rail beside it is empty because there is nothing to travel
+        // toward — not because nothing has been travelled.
+        demo_position("SOL", 12.0, 151.4, 148.62, 20.0, Some(0.0), -8.0),
     ]
 }
 
@@ -2118,6 +2123,24 @@ pub fn demo_account() -> Account {
 /// against it, on collateral that cannot absorb much more. The equity bar is
 /// the account's own distance to the margin engine, and until this fixture
 /// existed no capture had drawn it anywhere but at rest.
+/// A candle out of the fixture tape, for rendering the readout the crosshair
+/// fills. Taken from the tape rather than invented, so what the row says is
+/// what the chart is drawing under it.
+pub fn demo_hover() -> Option<CandleHit> {
+    let tape = demo_candles();
+    let candles = lock(&tape.candles);
+    let candle = candles.get(60)?;
+    Some(CandleHit {
+        index: 60,
+        ts: candle.ts,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+    })
+}
+
 pub fn demo_positions_at_risk() -> Vec<Position> {
     demo_account_at_risk().positions
 }
@@ -2470,6 +2493,12 @@ mod tests {
                 "{coin}: the rail is drawn {} wide of {RISK_RAIL_WIDTH}",
                 held.risk
             );
+            if held.liq <= 0.0 {
+                // No cliff reported, so there is no distance to it: the rail
+                // must read empty rather than full.
+                assert_eq!(held.risk, 0.0, "{coin}: a rail toward nothing");
+                continue;
+            }
             // A long is liquidated below its entry and a short above it.
             assert_eq!(
                 held.liq < held.entry,
