@@ -7,6 +7,12 @@ publish = false
 
 [dependencies]
 ducktape-ui = { workspace = true, features = ["candle-chart"] }
+# Thomas Pornin's reference ECgFp5, pinned by revision. This is the
+# implementation Lighter's own open signer cites as the design and first
+# implementation of the curve, it has no dependencies of its own, and it is
+# MIT. See the header of `src/lighter_sign.rs` for what a git dependency costs
+# here and why it won over crates.io's `plonky2_ecgfp5` and vendoring.
+ecgfp5 = { git = "https://github.com/pornin/ecgfp5", rev = "ce059c6d1e1662db437aecbf3db6bb67fe63c716" }
 # Randomness for the agent key. Already in the tree as a transitive dependency,
 # so naming it here costs a line and no build time.
 getrandom = "0.3"

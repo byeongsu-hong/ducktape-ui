@@ -1600,6 +1600,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecgfp5"
+version = "0.1.0"
+source = "git+https://github.com/pornin/ecgfp5?rev=ce059c6d1e1662db437aecbf3db6bb67fe63c716#ce059c6d1e1662db437aecbf3db6bb67fe63c716"
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6013,6 +6018,7 @@ name = "trading-example"
 version = "0.1.0"
 dependencies = [
  "ducktape-ui",
+ "ecgfp5",
  "getrandom 0.3.4",
  "hex",
  "iced",

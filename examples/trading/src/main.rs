@@ -2,6 +2,7 @@
 mod frame_probe;
 mod hyperliquid;
 mod lighter;
+mod lighter_sign;
 mod session;
 mod signing;
 mod venue;
