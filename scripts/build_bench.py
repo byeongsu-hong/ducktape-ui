@@ -11,6 +11,10 @@ Three numbers per package, each the median of `--runs` samples:
   edit     one byte changed in a root `.ice`, so build.rs reruns AND rustc
            recompiles the crate. This is what an author actually waits for;
            `edit - script` is rustc's share.
+  handler  the same, but the byte lands in a handler fragment instead. Where
+           an edit lands decides what rustc re-checks, so one anchor is not
+           the edit loop: on showcase these two have differed by 30%. Skipped
+           for apps with no handler fragment.
 
 Run it before and after a change; `--json out.json` writes a baseline that
 `--compare baseline.json` reads back.
@@ -31,16 +35,33 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# package -> (root .ice relative to ROOT, literal edited to force a rebuild)
+# package -> root .ice relative to ROOT, the literal edited to force a rebuild
+# (None discovers a `title`/`id` line), and the handler fragment plus its own
+# literal, where the app has one.
 PACKAGES = {
-    "showcase": ("examples/showcase/src/ui/app.ice", 'title "ducktape-ui · Ice"'),
-    "iced-app": ("examples/iced-app/src/ui/tasks.ice", 'id "dev.ducktape.ice.tasks"'),
-    "trading-example": ("examples/trading/src/ui/app.ice", None),
-    "music-example": ("examples/apple-music/src/ui/app.ice", None),
-    "markdown-example": ("examples/markdown-editor/src/ui/app.ice", None),
-    "candles-example": ("examples/candles/src/ui/app.ice", None),
-    "terminal-example": ("examples/terminal/src/ui/app.ice", None),
+    "showcase": {
+        "root": "examples/showcase/src/ui/app.ice",
+        "anchor": 'title "ducktape-ui · Ice"',
+        "handler": ("examples/showcase/src/ui/handlers/app.ice", '"cancelled"'),
+    },
+    "iced-app": {
+        "root": "examples/iced-app/src/ui/tasks.ice",
+        "anchor": 'id "dev.ducktape.ice.tasks"',
+    },
+    "trading-example": {"root": "examples/trading/src/ui/app.ice"},
+    "music-example": {
+        "root": "examples/apple-music/src/ui/app.ice",
+        "handler": ("examples/apple-music/src/ui/handlers/app.ice", '"Sign In"'),
+    },
+    "markdown-example": {
+        "root": "examples/markdown-editor/src/ui/app.ice",
+        "handler": ("examples/markdown-editor/src/ui/handlers/app.ice", '"Untitled.md"'),
+    },
+    "candles-example": {"root": "examples/candles/src/ui/app.ice"},
+    "terminal-example": {"root": "examples/terminal/src/ui/app.ice"},
 }
+
+PHASES = ("noop", "script", "edit", "handler")
 
 
 def anchor(source: Path, configured: str | None) -> str:
@@ -99,26 +120,47 @@ def build(package: str, env: dict[str, str] | None = None) -> float:
     return elapsed
 
 
-def measure(package: str, runs: int) -> dict[str, float]:
-    source = ROOT / PACKAGES[package][0]
-    original = source.read_text()
-    literal = anchor(source, PACKAGES[package][1])
+def edit_pair(path: Path, literal: str) -> tuple[str, str]:
+    """The file's text with and without a trailing space inside `literal`."""
+    original = path.read_text()
     if literal not in original:
-        raise SystemExit(f"{source}: anchor {literal!r} not found")
-    edited = original.replace(literal, literal[:-1] + ' "', 1)
+        raise SystemExit(f"{path}: anchor {literal!r} not found")
+    return original, original.replace(literal, literal[:-1] + ' "', 1)
+
+
+def measure(package: str, runs: int) -> dict[str, float]:
+    entry = PACKAGES[package]
+    source = ROOT / entry["root"]
+    original, edited = edit_pair(source, anchor(source, entry.get("anchor")))
+
+    handler = entry.get("handler")
+    if handler:
+        handler_source = ROOT / handler[0]
+        handler_original, handler_edited = edit_pair(handler_source, handler[1])
 
     build(package)  # warm: leave nothing dirty behind
-    samples: dict[str, list[float]] = {"noop": [], "script": [], "edit": []}
+    samples: dict[str, list[float]] = {phase: [] for phase in PHASES}
     try:
         for run in range(runs):
             samples["noop"].append(build(package))
             samples["script"].append(build_script(package))
             source.write_text(edited if run % 2 == 0 else original)
             samples["edit"].append(build(package))
+            if handler:
+                handler_source.write_text(
+                    handler_edited if run % 2 == 0 else handler_original
+                )
+                samples["handler"].append(build(package))
     finally:
         source.write_text(original)
+        if handler:
+            handler_source.write_text(handler_original)
         build(package)
-    return {phase: statistics.median(values) for phase, values in samples.items()}
+    return {
+        phase: statistics.median(values)
+        for phase, values in samples.items()
+        if values
+    }
 
 
 def main() -> None:
@@ -143,7 +185,9 @@ def main() -> None:
 
 def report(package: str, result: dict[str, float], before: dict[str, float] | None) -> None:
     print(f"\n{package}")
-    for phase in ("noop", "script", "edit"):
+    for phase in PHASES:
+        if phase not in result:
+            continue
         line = f"  {phase:8s} {result[phase]:6.2f}s"
         if before and phase in before:
             ratio = result[phase] / before[phase] if before[phase] else float("inf")

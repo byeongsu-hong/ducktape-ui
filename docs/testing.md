@@ -596,6 +596,17 @@ edit stops re-checking the view:
 
 Fragment edits and top-of-app edits do not move, and are not claimed to.
 
+`scripts/build_bench.py` now measures both anchors — a `handler` phase beside
+`edit` — because documenting the hazard would not have stopped the next person
+quoting one number. On every app that has a handler fragment the two differ,
+and which one is worse changed with this fix:
+
+| | root edit | handler edit |
+| --- | --- | --- |
+| showcase | 3.54s | 2.79s |
+| music-example | 2.50s | 1.97s |
+| markdown-example | 1.92s | 1.77s |
+
 ### Two ways these numbers went wrong first
 
 Both mistakes produced clean-looking tables, so they are worth naming.
@@ -615,3 +626,45 @@ side and produced a 4.81s baseline against a 2.64s result for an edit that in
 truth does not move at all. Interleaving the sides — A, B, A, B — and pooling
 each side's samples is what settled it. When a result is large and one side's
 spread is much wider than the other's, the spread is the finding.
+
+### Splitting the groups finer buys nothing
+
+Component methods are grouped per source fragment, which on showcase makes the
+default component library one 8728-line module. rustc partitions codegen units
+by module, so a single component's edit looked like it should be re-codegening
+the whole library — `codegen_crate` plus `LLVM_passes` is 1.30s on that edit,
+against 0.04s of type checking.
+
+Grouping per component instead splits that module into about fifty, and the
+generated file count goes from 12 to 60. Interleaved, under a quiet machine:
+
+| edit | per fragment | per component |
+| --- | --- | --- |
+| `crates/ui/src/ice/components.ice` | 2.38s | 2.35s |
+| `components/navigation.ice` (control) | 2.55s | 2.61s |
+
+Nothing. Whatever decides the codegen cost of an edit here, it is not the
+module the outlined methods sit in — rustc's unit partitioning does its own
+merging and splitting at 256 units and does not follow the module tree that
+literally. Reverted; the fragment grouping stands.
+
+### Where the loop stands
+
+Per `scripts/build_bench.py`, three runs each, on one warm target directory:
+
+| package | noop | script | root edit | handler edit |
+| --- | --- | --- | --- | --- |
+| showcase | 0.20s | 0.40s | 3.54s | 2.79s |
+| trading-example | 0.20s | 0.31s | 2.86s | — |
+| music-example | 0.20s | 0.35s | 2.50s | 1.97s |
+| iced-app | 0.24s | 0.56s | 2.39s | — |
+| markdown-example | 0.19s | 0.33s | 1.92s | 1.77s |
+| terminal-example | 0.20s | 0.07s | 1.49s | — |
+| candles-example | 0.20s | 0.13s | 1.41s | — |
+
+The Ice compiler itself (`script`) is never the cost. What is left is rustc's
+floor: link, codegen and LLVM, and the monomorphization walk plus unit
+partitioning plus dep-graph serialization — roughly 0.6s, 0.9s and 0.6s of a
+2.4s rebuild, all of which scale with the whole crate rather than with the
+edit. Cutting further means generating fewer monomorphizations, not shuffling
+the ones there are.
