@@ -967,3 +967,51 @@ nothing), and the boundary always falls between whole items:
 The control matters: a handler edit already lands in the `__app_update` group
 file, so it should not move, and it does not. The win is proportional to what
 is left in the root — a small app has little there and gains little.
+
+### How much of a view actually reloads
+
+A hot reload is only as wide as the published template, so the number worth
+tracking is not "does this root publish one" but "how much of it is data".
+Every root publishes something; a construct the vocabulary cannot model
+becomes a `subtree` hole, and a hole at the root swallows the whole view.
+
+`cargo ice expand` is the instrument — the published form is a `&str` literal
+in the generated Rust:
+
+```
+cargo ice expand examples/terminal/src/ui/app.ice \
+  | grep -o '__ICE_TEMPLATE_JSON: &str = .*'
+```
+
+Counting `subtree` and `group` nodes in that JSON across every root in
+`examples/`, over the two changes that widened the vocabulary:
+
+| | padding refused | padding published | `if` became a group | overlay published |
+| --- | --- | --- | --- | --- |
+| roots publishing a template | 65 | 65 | 65 | 66 |
+| roots that are *only* a hole | 43 | 19 | 9 | **6** |
+| roots with no hole at all | 13 | **28** | 28 | 28 |
+| published nodes | — | 223 | 333 | **367** |
+
+The first row is why the second one is the measurement. `p=16.0` on a root
+`col` refused the node, the refusal became a hole, and the hole was the entire
+application — 24 roots reported a healthy template that reloaded nothing.
+
+So read the hole count, not the template's existence, and expect the blockers
+to be shallow and near the root. What refuses today, in descending order of
+what it costs: components, which are 16 of the remaining holes and take a
+whole subtree each — and `mount`ed ones keep a view off the template path
+entirely; the contents of a group, since a branch publishes its structure but
+not what is inside it (this is what still holds `trading` to three nodes); and
+`lazy`, whose whole purpose is to keep its subtree out of a rebuild.
+
+One trap this measurement set off, worth knowing before the next widening: the
+id-to-source map that gives a captured widget its `.ice` line used to reset on
+the first render-source guard pushed onto an empty stack. A view fills its slot
+table — where every compiled hole builds its widgets and registers their ids —
+before the renderer walks the node tree and pushes a guard for the root, so
+that walk counted as a new pass and discarded the registrations moments before
+they were read. It only surfaced once a template root had both a source of its
+own and a named widget inside a hole, and it surfaced as one null in a manifest
+against thousands of matching pixels. The pass now begins where the frame does,
+in `Slots::with_capacity`.

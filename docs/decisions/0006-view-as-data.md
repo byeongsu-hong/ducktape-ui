@@ -44,15 +44,23 @@ A construct the vocabulary does not model becomes a **hole**: the compiler
 renders that subtree exactly as before and hands it to the renderer through the
 slot table, and the structure around it stays data. Falling back per subtree
 rather than per view is what lets real applications reload at all — one `if` no
-longer costs a whole screen its template. This is the permanent boundary, not
-scaffolding: control flow, components, and native `extern` surfaces are
-expected to stay compiled, and what is inside a hole reloads only when the
-binary does.
+longer costs a whole screen its template. This is a boundary, not scaffolding:
+what is inside a hole reloads only when the binary does, and components and
+native `extern` surfaces are expected to stay behind it.
 
-`if`, `for`, and `match` are the exception, because they contribute a variable
-number of children to their parent rather than rendering as one element. A
-layout containing any of them becomes the hole instead, so the fallback
-boundary rises to the nearest enclosing layout.
+Which constructs land there is not fixed, and the measurement to widen it by is
+the hole count rather than the number of roots publishing a template — a root
+whose only node is a hole publishes one and reloads nothing. `docs/testing.md`
+records how to read it.
+
+`if`, `for`, and `match` contribute a variable number of children to their
+parent rather than rendering as one element, so a hole — which holds exactly
+one — cannot carry them. They get a **group** instead: a hole whose slot holds
+the child list the frame built, spliced into the layout's own children where it
+was written. The layout stays data, and only what is inside the branch stays
+compiled. The alternative, making the enclosing layout the hole, put the
+fallback boundary at the root `col` of most real applications and cost them the
+whole view.
 
 A running process may accept a new template when, and only when, the slot table
 it fills each frame is unchanged — same expressions, in the same order,

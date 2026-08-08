@@ -1,0 +1,2 @@
+E015
+tray icon dimensions must be positive integers

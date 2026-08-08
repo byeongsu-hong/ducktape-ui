@@ -278,6 +278,7 @@ pub(crate) enum ResolvedTestExpectation {
 
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedTestStepKind {
+    TrayClick,
     Click {
         target: ResolvedTestTargetRef,
         button: ResolvedTestMouseButton,
@@ -1184,6 +1185,8 @@ pub(crate) enum ResolvedPaneOperation {
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedWindowOperation {
     Open(Option<u32>),
+    /// Closes the tray popover, which no window id in scope can name.
+    TrayClose,
     Oldest,
     Latest,
     Close,
@@ -1944,6 +1947,7 @@ fn resolved_handler_operation_contract(
                 ),
                 ResolvedWindowOperation::Oldest => CheckedWindowOperation::Oldest,
                 ResolvedWindowOperation::Latest => CheckedWindowOperation::Latest,
+                ResolvedWindowOperation::TrayClose => CheckedWindowOperation::TrayClose,
                 ResolvedWindowOperation::Close => CheckedWindowOperation::Close,
                 ResolvedWindowOperation::Drag => CheckedWindowOperation::Drag,
                 ResolvedWindowOperation::DragResize(direction) => {
@@ -2447,6 +2451,7 @@ impl LoweredProgram {
                         ResolvedWindowOperation::Open(_)
                         | ResolvedWindowOperation::Oldest
                         | ResolvedWindowOperation::Latest
+                        | ResolvedWindowOperation::TrayClose
                         | ResolvedWindowOperation::Close
                         | ResolvedWindowOperation::Drag
                         | ResolvedWindowOperation::DragResize(_)
@@ -3877,6 +3882,14 @@ impl CheckedExpressionOwnerPolicy for ViewWidgetExpressionPolicy<'_> {
                 {
                     return Ok(checked.ty.clone());
                 }
+                if view == self.view
+                    && role == CheckedViewLocalRole::TrayPopover
+                    && self.lowerer.facts.tray_popover_local() == Some(local)
+                    && checked.name == "popover"
+                    && checked.ty == Type::Bool
+                {
+                    return Ok(checked.ty.clone());
+                }
                 let mut current = Some(self.view);
                 let mut found = false;
                 while let Some(id) = current {
@@ -4249,6 +4262,12 @@ impl CheckedExpressionOwnerPolicy for TestExpressionPolicy<'_> {
                 && self.lowerer.facts.daemon_window_local() == Some(id)
                 && local.name == "window"
                 && local.ty == Type::WindowId => {}
+            CheckedLocalOwner::View {
+                role: crate::check::CheckedViewLocalRole::TrayPopover,
+                ..
+            } if self.lowerer.facts.tray_popover_local() == Some(id)
+                && local.name == "popover"
+                && local.ty == Type::Bool => {}
             CheckedLocalOwner::ExpressionBinding { expression, .. }
                 if expression == self.use_id => {}
             CheckedLocalOwner::ExpressionBinding { .. } => {
@@ -8521,6 +8540,7 @@ impl Lowerer {
             ),
             WindowOperation::Oldest => ResolvedWindowOperation::Oldest,
             WindowOperation::Latest => ResolvedWindowOperation::Latest,
+            WindowOperation::TrayClose => ResolvedWindowOperation::TrayClose,
             WindowOperation::Close => ResolvedWindowOperation::Close,
             WindowOperation::Drag => ResolvedWindowOperation::Drag,
             WindowOperation::DragResize(direction) => {
@@ -10061,7 +10081,7 @@ mod tests {
     use crate::{analyze, analyze_file};
     use std::fmt::Write as _;
     use std::fs;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant};
 
     const THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
@@ -10524,10 +10544,7 @@ view
 
     #[test]
     fn imported_handler_origins_reach_lowered_hir_and_generated_source_markers() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-handler-hir-origins-{}-{nonce}",
             std::process::id()
@@ -11996,10 +12013,7 @@ view
 
     #[test]
     fn imported_overlay_keeps_physical_origins_and_generated_source_markers() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-overlay-hir-origins-{}-{nonce}",
             std::process::id()
@@ -12201,10 +12215,7 @@ view
 
     #[test]
     fn imported_container_keeps_physical_origin_and_generated_source_marker() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-container-hir-origins-{}-{nonce}",
             std::process::id()
@@ -12407,10 +12418,7 @@ view
 
     #[test]
     fn imported_layout_keeps_physical_origins_and_generated_source_marker() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-layout-hir-origins-{}-{nonce}",
             std::process::id()
@@ -12656,10 +12664,7 @@ view
 
     #[test]
     fn imported_rich_text_keeps_root_span_and_route_physical_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-text-hir-origins-{}-{nonce}",
             std::process::id()
@@ -12995,10 +13000,7 @@ view
 
     #[test]
     fn imported_input_keeps_widget_icon_status_and_route_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-input-hir-origins-{}-{nonce}",
             std::process::id()
@@ -13309,10 +13311,7 @@ view
 
     #[test]
     fn imported_pick_list_keeps_exact_widget_handle_status_menu_and_route_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-selection-hir-origins-{}-{nonce}",
             std::process::id()
@@ -13561,10 +13560,7 @@ view
 
     #[test]
     fn imported_button_keeps_widget_status_and_route_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-button-hir-origins-{}-{nonce}",
             std::process::id()
@@ -13862,10 +13858,7 @@ view
     #[test]
     fn imported_boolean_control_keeps_exact_expression_route_extern_font_theme_and_status_origins()
     {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-boolean-hir-origins-{}-{nonce}",
             std::process::id()
@@ -14241,10 +14234,7 @@ view
 
     #[test]
     fn imported_extern_component_keeps_origins_source_marker_and_hir_diagnostic() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-extern-component-hir-origins-{}-{nonce}",
             std::process::id()
@@ -14681,10 +14671,7 @@ view
 
     #[test]
     fn imported_themer_and_shader_keep_origins_markers_and_e196_paths() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-extern-view-hir-origins-{}-{nonce}",
             std::process::id()
@@ -15055,10 +15042,7 @@ view
 
     #[test]
     fn imported_markdown_keeps_content_expression_style_route_and_source_map_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-markdown-hir-origins-{}-{nonce}",
             std::process::id()
@@ -15265,10 +15249,7 @@ view
 
     #[test]
     fn imported_text_editor_keeps_widget_and_status_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-text-editor-hir-origins-{}-{nonce}",
             std::process::id()
@@ -16215,10 +16196,7 @@ view
 
     #[test]
     fn source_merged_pane_styles_are_owned_before_origins_remap_to_physical_lines() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-pane-style-origins-{}-{nonce}",
             std::process::id()
@@ -16262,10 +16240,7 @@ view
 
     #[test]
     fn pane_grid_keeps_hir_origins_source_marker_and_diagnostics() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-pane-grid-hir-origins-{}-{nonce}",
             std::process::id()
@@ -16412,10 +16387,7 @@ view
 
     #[test]
     fn imported_table_keeps_hir_origins_source_marker_and_diagnostics() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-table-hir-origins-{}-{nonce}",
             std::process::id()
@@ -16856,10 +16828,7 @@ view
 
     #[test]
     fn imported_remaining_controls_keep_origins_and_source_map_hir_failures() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-remaining-control-hir-origins-{}-{nonce}",
             std::process::id()
@@ -16963,10 +16932,7 @@ view
 
     #[test]
     fn imported_match_keeps_hir_origins_source_marker_and_diagnostics() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-match-hir-origins-{}-{nonce}",
             std::process::id()
@@ -17038,10 +17004,7 @@ view
 
     #[test]
     fn imported_for_keeps_hir_origin_source_marker_and_diagnostic() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-for-hir-origins-{}-{nonce}",
             std::process::id()
@@ -17087,10 +17050,7 @@ view
 
     #[test]
     fn imported_if_keeps_hir_origin_source_marker_and_diagnostic() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-if-hir-origins-{}-{nonce}",
             std::process::id()
@@ -17136,10 +17096,7 @@ view
 
     #[test]
     fn imported_keyed_column_keeps_hir_origin_source_marker_and_diagnostic() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-keyed-hir-origins-{}-{nonce}",
             std::process::id()
@@ -17183,10 +17140,7 @@ view
 
     #[test]
     fn imported_lazy_keeps_hir_origin_source_marker_and_diagnostic() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-lazy-hir-origins-{}-{nonce}",
             std::process::id()
@@ -17230,10 +17184,7 @@ view
 
     #[test]
     fn imported_responsive_keeps_hir_origin_source_marker_and_diagnostic() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-responsive-hir-origins-{}-{nonce}",
             std::process::id()
@@ -17279,10 +17230,7 @@ view
 
     #[test]
     fn imported_pin_keeps_hir_origin_source_marker_and_diagnostic() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-pin-hir-origins-{}-{nonce}",
             std::process::id()
@@ -17491,7 +17439,12 @@ view
         let generated = crate::codegen::generate(&program, "overlay-scale.ice").unwrap();
         let elapsed = started.elapsed();
         assert_eq!(program.overlays.len(), OVERLAYS);
-        assert_eq!(generated.matches("let __overlay_stack").count(), OVERLAYS);
+        // Overlays are published, so the count to check is the node the
+        // template carries, not the inline `Stack` it replaced.
+        assert_eq!(
+            generated.matches(r#"\"kind\": \"overlay\""#).count(),
+            OVERLAYS
+        );
         eprintln!("4k normalized overlays lowered and emitted in {elapsed:?}");
         assert!(
             elapsed.as_secs_f64() < 2.0,
@@ -18697,10 +18650,7 @@ view
 
     #[test]
     fn imported_forward_routes_validate_stable_outer_contracts_and_callback_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-component-forward-hir-origins-{}-{nonce}",
             std::process::id()
@@ -18943,10 +18893,7 @@ view
 
     #[test]
     fn imported_component_call_routes_keep_origins_markers_and_hir_diagnostics() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-component-route-hir-origins-{}-{nonce}",
             std::process::id()
@@ -19844,10 +19791,7 @@ view
 
     #[test]
     fn resolves_namespaced_import_calls_and_their_physical_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-lowered-origins-{}-{nonce}",
             std::process::id()
@@ -20310,10 +20254,7 @@ view
 
     #[test]
     fn imported_nested_theme_keeps_origins_markers_and_e196_paths() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-nested-theme-hir-origins-{}-{nonce}",
             std::process::id()
@@ -20553,10 +20494,7 @@ view
 
     #[test]
     fn resolves_namespaced_recipe_origins_without_losing_the_physical_file() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-style-origins-{}-{nonce}",
             std::process::id()
@@ -20644,10 +20582,7 @@ view
 
     #[test]
     fn imported_setting_dependencies_keep_origins_and_generated_source_markers() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-setting-origins-{}-{nonce}",
             std::process::id()
@@ -21217,10 +21152,7 @@ test stable_flow
 
     #[test]
     fn imported_ranges_keep_expression_route_extern_theme_and_status_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-range-hir-origins-{}-{nonce}",
             std::process::id()
@@ -21626,10 +21558,7 @@ test stable_flow
 
     #[test]
     fn imported_content_primitives_keep_exact_expression_and_theme_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-content-primitive-hir-origins-{}-{nonce}",
             std::process::id()

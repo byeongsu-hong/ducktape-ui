@@ -664,16 +664,12 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     struct Fixture(PathBuf);
 
     impl Fixture {
         fn new() -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
+            let nonce = crate::test_support::unique_nonce();
             let path =
                 std::env::temp_dir().join(format!("ui-lang-source-{}-{nonce}", std::process::id()));
             fs::create_dir_all(&path).unwrap();

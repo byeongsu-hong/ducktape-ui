@@ -139,6 +139,8 @@ pub enum TestStepKind {
         handler: String,
         args: Vec<Expr>,
     },
+    /// Presses the tray's status item, the way a user opens the popover.
+    TrayClick,
     Expect(TestExpectation),
 }
 
@@ -397,6 +399,7 @@ pub(crate) fn test_step_expression_roots(step: &TestStep) -> Vec<&Expr> {
         | TestStepKind::FileLeave
         | TestStepKind::Wait(_)
         | TestStepKind::Advance(_)
+        | TestStepKind::TrayClick
         | TestStepKind::Idle
         | TestStepKind::Capture(_) => {}
     }
@@ -578,6 +581,7 @@ pub(crate) fn test_step_semantic_key(step: &TestStep) -> String {
         TestStepKind::FileLeave => "file-leave".into(),
         TestStepKind::Wait(duration) => format!("wait:{duration}"),
         TestStepKind::Advance(duration) => format!("advance:{duration}"),
+        TestStepKind::TrayClick => "tray-click".into(),
         TestStepKind::Idle => "idle".into(),
         TestStepKind::Capture(name) => format!("capture:{name}"),
         TestStepKind::Accessibility { action, target } => format!(
@@ -754,6 +758,7 @@ pub(crate) fn test_step_source(step: &TestStep) -> String {
         TestStepKind::FileLeave => "file-leave".into(),
         TestStepKind::Wait(duration) => format!("wait {duration}ms"),
         TestStepKind::Advance(duration) => format!("advance {duration}ms"),
+        TestStepKind::TrayClick => "tray click".into(),
         TestStepKind::Idle => "idle".into(),
         TestStepKind::Capture(name) => format!("capture {name}"),
         TestStepKind::Accessibility { action, target } => format!(

@@ -1051,6 +1051,7 @@ pub(crate) enum CheckedPaneOperation {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedWindowOperation {
+    TrayClose,
     Open(Option<String>),
     Oldest,
     Latest,

@@ -123,6 +123,7 @@ pub(crate) enum CheckedLocalOwner {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CheckedViewLocalRole {
     DaemonWindow,
+    TrayPopover,
     ForItem,
     MatchPayload(u32),
     KeyedItem,
@@ -2051,6 +2052,21 @@ impl CheckedFacts {
             .map(|index| CheckedLocalId(index as u32))
     }
 
+    pub(crate) fn tray_popover_local(&self) -> Option<CheckedLocalId> {
+        self.locals
+            .iter()
+            .position(|local| {
+                matches!(
+                    local.owner,
+                    CheckedLocalOwner::View {
+                        role: CheckedViewLocalRole::TrayPopover,
+                        ..
+                    }
+                )
+            })
+            .map(|index| CheckedLocalId(index as u32))
+    }
+
     pub(crate) fn local_by_owner(&self, owner: CheckedLocalOwner) -> Option<CheckedLocalId> {
         self.locals_by_owner.get(&owner).copied()
     }
@@ -3789,6 +3805,22 @@ impl<'a> FactsBuilder<'a> {
                 CheckedPathRoot::Local(local),
                 Type::WindowId,
             );
+        }
+        if self.tray_popover_declared() {
+            let view = self
+                .declarations
+                .view_id(self.document.view.span())
+                .ok_or_else(|| {
+                    self.invariant(self.document.view.span(), "tray root has no view ID")
+                })?;
+            let local = self.push_view_local(
+                "popover",
+                Type::Bool,
+                view,
+                CheckedViewLocalRole::TrayPopover,
+                self.document.view.span(),
+            );
+            app_env.insert("popover".into(), CheckedPathRoot::Local(local), Type::Bool);
         }
         self.lower_view_expression_tree(&self.document.view, &app_env)?;
 
@@ -8845,6 +8877,7 @@ impl<'a> FactsBuilder<'a> {
             WindowOperation::Open(_)
             | WindowOperation::Oldest
             | WindowOperation::Latest
+            | WindowOperation::TrayClose
             | WindowOperation::Close
             | WindowOperation::Drag
             | WindowOperation::DragResize(_)
@@ -9464,6 +9497,16 @@ impl<'a> FactsBuilder<'a> {
         });
         self.facts.locals_by_owner.insert(owner, id);
         id
+    }
+
+    /// Whether the root declares a tray popover, which is what makes the
+    /// read-only `popover` view binding exist.
+    fn tray_popover_declared(&self) -> bool {
+        self.document
+            .settings
+            .tray
+            .as_ref()
+            .is_some_and(|tray| tray.popover.is_some())
     }
 
     fn push_view_local(
@@ -11656,7 +11699,7 @@ mod tests {
     use crate::{analyze, analyze_file, lower};
     use std::fmt::Write as _;
     use std::fs;
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::time::Instant;
 
     const THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
@@ -13985,10 +14028,7 @@ view
 
     #[test]
     fn imported_expression_origins_keep_their_physical_file() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-checked-facts-{}-{nonce}",
             std::process::id()
@@ -14061,10 +14101,7 @@ view
 
     #[test]
     fn imported_view_expression_origins_keep_physical_parent_chains() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-view-expression-origins-{}-{nonce}",
             std::process::id()
@@ -14108,10 +14145,7 @@ view
 
     #[test]
     fn imported_semantic_declarations_keep_physical_and_parent_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-declaration-origins-{}-{nonce}",
             std::process::id()
