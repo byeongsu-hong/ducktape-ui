@@ -153,7 +153,7 @@ preset busy
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape_full()
-    fills = demo_fills()
+    fills = demo_fills_many(200)
     orders = demo_orders()
     alerts = add_alert(add_alert(demo_alerts(), "BTC", "64,400.00", 64000.0), "BTC", "63,700.00", 64000.0)
     live = true
@@ -2097,11 +2097,13 @@ test trading_a_search_that_matches_nothing_says_so
   focus search
   type "ZZZ"
   expect text "No market matches that."
-  expect no text "AVAX"
+  // Scoped to the market list, because this account has traded AVAX and the
+  // fills panel goes on saying so while the search narrows the universe.
+  expect no text "AVAX" within markets
   type "!"
   expect text "No market matches that."
   key escape
-  expect text "AVAX"
+  expect text "AVAX" within markets
   expect no text "No market matches that."
 
 test trading_escape_clears_a_search

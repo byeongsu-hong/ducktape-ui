@@ -982,22 +982,31 @@ fn parse_trades(value: &Value, coin: &str) -> Vec<Trade> {
     tape
 }
 
+/// A fill the exchange did not give a trade id to is dropped rather than
+/// listed. `tid` is this row's identity — the key `push_fills` dedupes on and
+/// the key its `lazy` row is cached and parked under — and a missing one reads
+/// as `0`, which every such fill would then share. Listing them would collapse
+/// them into each other; not listing them loses a row the exchange never
+/// identified. `userFills` always carries one, so this is a malformed payload
+/// either way.
 fn parse_fills(value: &Value, heat: i64) -> Vec<Fill> {
     value
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default()
         .iter()
-        .map(|fill| Fill {
-            coin: text(fill, "coin"),
-            ts: value_i64(fill, "time") / 1_000,
-            price: num(fill, "px"),
-            size: num(fill, "sz"),
-            // "B" is a buy, "A" hits the ask side and is a sell.
-            buy: text(fill, "side") == "B",
-            closed_pnl: num(fill, "closedPnl"),
-            heat,
-            tid: value_i64(fill, "tid"),
+        .filter_map(|fill| {
+            Some(Fill {
+                coin: text(fill, "coin"),
+                ts: value_i64(fill, "time") / 1_000,
+                price: num(fill, "px"),
+                size: num(fill, "sz"),
+                // "B" is a buy, "A" hits the ask side and is a sell.
+                buy: text(fill, "side") == "B",
+                closed_pnl: num(fill, "closedPnl"),
+                heat,
+                tid: fill.get("tid").and_then(Value::as_i64)?,
+            })
         })
         .collect()
 }
@@ -1705,11 +1714,21 @@ pub fn symbol_row(rows: Vec<SymbolRow>, coin: String) -> Option<SymbolRow> {
 /// newest first, ignoring any the opening snapshot had already shown, and
 /// capped so the list builds a bounded number of rows however long the
 /// account trades for.
+///
+/// Every fill the app lists comes through here, so this is where the list's
+/// one invariant is enforced: **no two listed fills share a `tid`**. The rows
+/// are `lazy`, keyed and parked by that id, and a repeat is not merely a
+/// duplicate on screen — the second row displaces the first in the memo lot.
+/// `trading_a_fill_without_an_id_is_not_listed` and
+/// `push_fills_lists_each_trade_id_once` hold both halves down.
 pub fn push_fills(history: Vec<Fill>, incoming: Vec<Fill>, limit: i64) -> Vec<Fill> {
-    let held: HashSet<i64> = history.iter().map(|fill| fill.tid).collect();
+    // Seeded from the history — which is a previous result of this function,
+    // and unique by induction — then grown as each incoming fill is admitted,
+    // so a batch that repeats a trade id lists it once.
+    let mut seen: HashSet<i64> = history.iter().map(|fill| fill.tid).collect();
     let mut rows: Vec<Fill> = incoming
         .into_iter()
-        .filter(|fill| !held.contains(&fill.tid))
+        .filter(|fill| seen.insert(fill.tid))
         .chain(history)
         .collect();
     rows.sort_by_key(|fill| std::cmp::Reverse(fill.ts));
@@ -2546,6 +2565,40 @@ pub fn demo_fills() -> Vec<Fill> {
         fill(2, 63_940.0, 0.50, true, 0.0, 1),
         fill(3, 63_880.0, 0.75, true, 0.0, 0),
     ]
+}
+
+/// A trading history filling the list to its cap, every fill different from
+/// every other one.
+///
+/// The rows are `lazy`, cached and parked under `tid`, so a fixture that
+/// repeats a fill measures a list of repeats: it shares one cache entry
+/// between every row that repeats it, and parks one subtree where a real list
+/// parks that many. Nothing here repeats — not the id, not the timestamp, not
+/// the money, and not the coin, whose `String` the row's hash walks.
+pub fn demo_fills_many(count: i64) -> Vec<Fill> {
+    const COINS: [&str; 8] = ["BTC", "ETH", "SOL", "HYPE", "AVAX", "LINK", "ARB", "SUI"];
+    (0..count.max(0))
+        .map(|step| {
+            let coin = COINS[step as usize % COINS.len()];
+            // Prices that belong to their market, so a row formats the way the
+            // real one does — six figures for BTC, cents for the small caps.
+            let base = 64_000.0 / (1.0 + (step % COINS.len() as i64) as f64 * 3.7);
+            Fill {
+                coin: coin.to_owned(),
+                ts: 1_786_110_000 - step * 37,
+                price: base + step as f64 * 0.31,
+                size: 0.05 + step as f64 * 0.017,
+                buy: step % 3 != 0,
+                closed_pnl: if step % 4 == 0 {
+                    0.0
+                } else {
+                    (step as f64 * 13.7) % 900.0 - 400.0
+                },
+                heat: (FLASH_STEPS - step).max(0),
+                tid: 4_000_000 + step,
+            }
+        })
+        .collect()
 }
 
 pub fn demo_orders() -> Vec<Order> {
@@ -4843,6 +4896,42 @@ mod tests {
         // Two beats of decay put the highlight out.
         let cooled = cool_fills(cool_fills(capped));
         assert!(!any_hot(cooled), "nothing stays lit");
+    }
+
+    /// The listed fills' one invariant: a trade id appears once. The rows are
+    /// `lazy`, keyed on that id, so a repeat is not a cosmetic duplicate — the
+    /// two rows share a cache entry and a parking slot.
+    #[test]
+    fn push_fills_lists_each_trade_id_once() {
+        let listed = push_fills(
+            vec![fill(10, 1, 0)],
+            // One repeat of the history, and one repeat inside the batch.
+            vec![fill(10, 1, 0), fill(20, 2, 0), fill(21, 2, 0)],
+            10,
+        );
+        let mut ids: Vec<i64> = listed.iter().map(|fill| fill.tid).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2], "two trade ids, two rows");
+    }
+
+    /// A payload with no trade id has no identity to list the row under, and
+    /// `unwrap_or_default` would give every such fill the id `0` — one shared
+    /// row identity for unrelated trades. It is dropped instead.
+    #[test]
+    fn a_fill_without_a_trade_id_is_not_listed() {
+        let fills = parse_fills(
+            &json!([
+                { "coin": "BTC", "px": "64000.0", "sz": "0.1", "side": "B", "time": 1_786_092_480_123i64, "closedPnl": "0.0", "tid": 7 },
+                { "coin": "BTC", "px": "64500.0", "sz": "0.1", "side": "A", "time": 1_786_092_540_000i64, "closedPnl": "50.0" },
+                { "coin": "ETH", "px": "3100.0", "sz": "2.0", "side": "B", "time": 1_786_092_600_000i64, "closedPnl": "0.0" },
+            ]),
+            0,
+        );
+        assert_eq!(
+            fills.iter().map(|fill| fill.tid).collect::<Vec<_>>(),
+            vec![7],
+            "the two without an id would have shared the id 0"
+        );
     }
 
     #[test]

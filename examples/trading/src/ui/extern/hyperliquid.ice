@@ -48,6 +48,7 @@ extern crate::hyperliquid
   sync demo_positions_at_risk() -> [Position]
   sync demo_symbols_at_risk() -> [SymbolRow]
   sync demo_fills() -> [Fill]
+  sync demo_fills_many(count:i64) -> [Fill]
   sync demo_orders() -> [Order]
   sync demo_alerts() -> [Alert]
   sync demo_book() -> Book

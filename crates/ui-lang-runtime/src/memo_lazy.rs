@@ -85,7 +85,7 @@ fn reclaim(site: u64, hash: u64) -> Option<Box<dyn Any>> {
 }
 
 fn park(site: u64, hash: u64, subtree: Box<dyn Any>) {
-    let evicted = PARKING
+    let displaced = PARKING
         .try_with(|parking| {
             let mut parking = parking.borrow_mut();
             parking.clock += 1;
@@ -102,12 +102,23 @@ fn park(site: u64, hash: u64, subtree: Box<dyn Any>) {
             } else {
                 None
             };
-            parking.entries.insert((site, hash), (stamp, subtree));
-            evicted
+            // Two live subtrees can share a key — a list whose rows are not
+            // distinct parks them all under one hash — and the loser of that
+            // race is dropped here. Carried out with the evicted one rather
+            // than dropped in place, because either drop re-enters the lot.
+            let replaced = parking.entries.insert((site, hash), (stamp, subtree));
+            (evicted, replaced)
         })
-        .ok()
-        .flatten();
-    drop(evicted);
+        .ok();
+    drop(displaced);
+}
+
+/// How many unmounted subtrees the lot is holding, for probes that price it.
+/// The lot is per-thread and capped at [`PARKING_CAP`].
+pub fn parked_subtrees() -> usize {
+    PARKING
+        .try_with(|parking| parking.borrow().entries.len())
+        .unwrap_or(0)
 }
 
 /// A widget that only rebuilds — and only re-lays — its contents when
@@ -713,5 +724,57 @@ mod tests {
                 &filler as &dyn Widget<(), iced::Theme, iced::Renderer>,
             ));
         }
+    }
+
+    /// Rows that are not distinct hash alike, so a list of them unmounts into
+    /// one key and every park after the first displaces a live subtree. That
+    /// displaced subtree parks its own nested lazy state, so it has the same
+    /// re-entry hazard eviction has — and unlike eviction it needs no full lot
+    /// to reach: two rows are enough.
+    #[test]
+    fn parking_a_key_twice_reparks_the_subtree_it_displaces() {
+        let nested = || -> TestLazy<'static> {
+            memo_lazy(
+                1,
+                |value: &i32| {
+                    let inner: TestLazy<'static> = memo_lazy(
+                        *value,
+                        |value: &i32| Element::from(iced::widget::text(value.to_string())),
+                        911,
+                    );
+                    Element::from(inner)
+                },
+                910,
+            )
+        };
+
+        // Both mounted before either unmounts, so the second park displaces
+        // the first rather than reclaiming it.
+        let (first, second) = (nested(), nested());
+        let first = Tree::new(&first as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        let second = Tree::new(&second as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        drop(first);
+        drop(second);
+    }
+
+    /// The lot holds one entry per distinct `(site, dependency)` that has
+    /// unmounted — so a list of rows that are not distinct parks a fraction of
+    /// itself, and the rest is thrown away.
+    #[test]
+    fn a_list_of_repeated_rows_parks_one_entry_per_distinct_row() {
+        let before = parked_subtrees();
+
+        let rows: Vec<TestLazy<'static>> = (0..20).map(|index| widget(index % 3, 920)).collect();
+        let trees: Vec<Tree> = rows
+            .iter()
+            .map(|row| Tree::new(row as &dyn Widget<(), iced::Theme, iced::Renderer>))
+            .collect();
+        drop(trees);
+
+        assert_eq!(
+            parked_subtrees() - before,
+            3,
+            "twenty rows over three distinct values park three subtrees, not twenty"
+        );
     }
 }

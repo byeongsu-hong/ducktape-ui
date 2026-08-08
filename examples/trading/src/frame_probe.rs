@@ -145,17 +145,19 @@ fn account(held: Vec<Position>) -> Account {
     }
 }
 
-/// `Fill` and `Trade` both hold a private exchange id, so neither can be built
-/// from outside the adapter. The fixtures are repeated up to the cap instead,
-/// which is the same widget count and the same formatter work per row.
+/// Every fill different from every other one. This used to cycle the
+/// three-fill demo fixture up to the cap, which is the same widget count and
+/// the same formatter work per row — and the wrong thing to measure the moment
+/// the rows went behind a `lazy` keyed on the fill: 200 rows over three values
+/// share three cache entries, and park three subtrees where a real list parks
+/// two hundred. Every fills number in `docs/testing.md` is against this.
 fn fills(count: usize) -> Vec<Fill> {
-    hyperliquid::demo_fills()
-        .into_iter()
-        .cycle()
-        .take(count)
-        .collect()
+    hyperliquid::demo_fills_many(count as i64)
 }
 
+/// The tape is not behind a boundary and `Trade` holds a private exchange id,
+/// so its rows are still the demo fixture repeated: the same widget count and
+/// the same formatter work per row, which is all this panel's cost depends on.
 fn prints(count: usize) -> Vec<hyperliquid::Trade> {
     hyperliquid::demo_tape_full()
         .into_iter()
@@ -309,9 +311,27 @@ fn frame_cost() {
         driver.redraw(here());
     }
 
+    // The same screen with the fills taken off it, driven in the same rounds.
+    // Comparing this probe across two builds of the app is comparing two
+    // compilations, and the whole `__view` is one enormous function: adding or
+    // removing a boundary anywhere in it re-optimizes all of it, which showed
+    // up as a ~0.5ms difference between two binaries on a screen holding no
+    // fills at all. Only `full - no fills` is a number about the fills. The
+    // absolute rows are worth nothing across binaries and are printed as
+    // context, not as a result.
+    let mut bare = Driver::new(
+        Trading::__program(),
+        Config::new("frame_cost").viewport(VIEWPORT.0, VIEWPORT.1),
+    );
+    *bare.state_mut() = app(Screen { fills: 0, ..DENSE });
+    for _ in 0..WARMUP {
+        bare.redraw(here());
+    }
+
     let state = app(DENSE);
     let mut view_only = Vec::with_capacity(ROUNDS);
     let mut idle = Vec::with_capacity(ROUNDS);
+    let mut no_fills = Vec::with_capacity(ROUNDS);
     let mut cursor = Vec::with_capacity(ROUNDS);
     for _ in 0..WARMUP {
         std::hint::black_box(state.__view(window));
@@ -321,9 +341,26 @@ fn frame_cost() {
         std::hint::black_box(state.__view(window));
         view_only.push(started.elapsed().as_micros());
 
-        let started = Instant::now();
-        driver.redraw(here());
-        idle.push(started.elapsed().as_micros());
+        // Paired inside the round, alternating which goes first, so the
+        // difference is taken under one moment of a shared machine and the
+        // allocator's warmth lands on both.
+        let (full, empty) = if round % 2 == 0 {
+            let started = Instant::now();
+            driver.redraw(here());
+            let full = started.elapsed().as_micros();
+            let started = Instant::now();
+            bare.redraw(here());
+            (full, started.elapsed().as_micros())
+        } else {
+            let started = Instant::now();
+            bare.redraw(here());
+            let empty = started.elapsed().as_micros();
+            let started = Instant::now();
+            driver.redraw(here());
+            (started.elapsed().as_micros(), empty)
+        };
+        idle.push(full);
+        no_fills.push(empty);
 
         let y = 200.0 + (round % 400) as f32;
         let started = Instant::now();
@@ -336,14 +373,41 @@ fn frame_cost() {
         VIEWPORT.0, VIEWPORT.1, DENSE.symbols, DENSE.fills, DENSE.prints
     );
     eprintln!("{:<32} {cold:>10}us (first redraw)", "cold redraw");
+    let mut paired: Vec<i128> = idle
+        .iter()
+        .zip(&no_fills)
+        .map(|(full, empty)| *full as i128 - *empty as i128)
+        .collect();
     let build = report("__view build only", view_only);
-    let frame = report("idle redraw (build + layout)", idle);
+    let frame = report("idle redraw, END TO END", idle);
+    let empty = report("idle redraw, no fills", no_fills);
     report("cursor move", cursor);
     eprintln!(
-        "{:<32} {:>7}us  ({:.0}% of the frame is layout)",
-        "layout and event walk",
+        "{:<32} {:>7}us  ({:.0}% of the frame)",
+        "everything after the build",
         frame.saturating_sub(build),
         (frame.saturating_sub(build)) as f64 / frame as f64 * 100.0
+    );
+    let (low, mid, high) = signed_quantiles(&mut paired);
+    eprintln!(
+        "{:<32} {mid:>7}us [{low}..{high}] paired, {:>7}us unpaired",
+        format!("what the {} fill rows cost", DENSE.fills),
+        frame.saturating_sub(empty)
+    );
+    eprintln!(
+        "\nTwo readings on this table are not what they look like.\n\n\
+         `__view build only` is NOT the frame's share of generated code, and a\n\
+         change to it is not a change to the frame. `lazy` lowers to a widget\n\
+         holding a closure and its dependency: building the view stores those,\n\
+         and the row itself is built — or found cached — later, in the tree\n\
+         walk inside the redraw. Work that moves across that line leaves the\n\
+         build and arrives in the frame. `idle redraw` is the only number here\n\
+         that counts a whole frame.\n\n\
+         And an absolute number is not comparable across two builds of the app.\n\
+         `__view` is one function; a boundary added anywhere in it re-optimizes\n\
+         all of it, worth ~0.5ms between two binaries on a screen with no fills\n\
+         at all. Compare `what the fill rows cost`, which is a difference taken\n\
+         inside one binary."
     );
 }
 
@@ -909,18 +973,89 @@ fn fills_stay_memoized_performance_contract() {
     );
 
     // The one-sentence invalidation, executed: a row is rebuilt exactly when
-    // the fill it draws changes, the heat countdown included.
-    driver.state_mut().fills[0].heat += 1;
-    driver.redraw(here());
-    let touched = FILL_LABELS.swap(0, Relaxed);
-    assert_eq!(
-        touched, 1,
-        "moving one fill must rebuild that row and no other"
-    );
+    // the fill it draws changes. Every field the fill has is moved in turn,
+    // because a `Hash` that skipped one would leave rows showing a number the
+    // state no longer holds — and a contract that moved only `heat` would pass
+    // just the same.
+    let moves: &[(&str, fn(&mut Fill))] = &[
+        ("coin", |fill| fill.coin.push('X')),
+        ("ts", |fill| fill.ts += 1),
+        ("price", |fill| fill.price += 0.5),
+        ("size", |fill| fill.size += 0.5),
+        ("buy", |fill| fill.buy = !fill.buy),
+        ("closed_pnl", |fill| fill.closed_pnl += 0.5),
+        ("heat", |fill| fill.heat += 1),
+        ("tid", |fill| fill.tid += 1_000_000),
+    ];
+    for (field, move_it) in moves {
+        move_it(&mut driver.state_mut().fills[0]);
+        driver.redraw(here());
+        let touched = FILL_LABELS.swap(0, Relaxed);
+        assert_eq!(
+            touched, 1,
+            "moving a fill's {field} must rebuild that row and no other — \
+             a row identity or a Hash that does not cover {field} shows a stale one"
+        );
+    }
 
     eprintln!(
-        "\n{} fills: {first} rows built cold, {unchanged} on an unchanged redraw, {touched} after one fill moved",
-        DENSE.fills
+        "\n{} fills: {first} rows built cold, {unchanged} on an unchanged redraw, \
+         1 after each of the {} fields of one fill moved",
+        DENSE.fills,
+        moves.len()
+    );
+}
+
+/// What the memo parking lot costs and whether it grows.
+///
+/// The fills boundary feeds it: every unmount parks one subtree per row under
+/// `(codegen site, dependency hash)`, and a remount with the same key reclaims
+/// it. The lot is per-thread and outlives every screen on that thread, so this
+/// prices a mount/unmount cycle against a cold lot and against a warm one, and
+/// prints how large the lot is after each.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints parking-lot size and cost, asserts nothing"]
+fn memo_parking_cost() {
+    let mut mount = Vec::with_capacity(ROUNDS);
+    let mut sizes = Vec::with_capacity(ROUNDS);
+    let mut first = 0;
+    for round in 0..ROUNDS {
+        let mut driver = Driver::new(
+            Trading::__program(),
+            Config::new("memo_parking").viewport(VIEWPORT.0, VIEWPORT.1),
+        );
+        *driver.state_mut() = app(DENSE);
+
+        let started = Instant::now();
+        driver.redraw(here());
+        let cost = started.elapsed().as_micros();
+        if round == 0 {
+            first = cost;
+        } else {
+            mount.push(cost);
+        }
+        drop(driver);
+        sizes.push(ui_lang_runtime::parked_subtrees());
+    }
+
+    eprintln!(
+        "\nthe memo parking lot, {} markets / {} fills, {ROUNDS} mount+unmount cycles",
+        DENSE.symbols, DENSE.fills
+    );
+    eprintln!(
+        "{:<32} {first:>7}us (lot empty: every row cold-builds)",
+        "first mount"
+    );
+    report("mount off a warm lot", mount);
+    eprintln!(
+        "{:<32} {:>7} after 1, {:>7} after {ROUNDS}",
+        "parked subtrees",
+        sizes[0],
+        sizes[sizes.len() - 1]
+    );
+    eprintln!(
+        "{:<32} {:>7} (the runtime's flat cap)",
+        "lot capacity", 1024
     );
 }
 
