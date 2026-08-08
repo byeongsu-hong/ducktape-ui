@@ -551,3 +551,55 @@ the published binary from 14.1 MB to 9.7 MB.
 `strip = "symbols"` is the one setting with a cost that is not build time: a
 release panic backtrace loses its symbol names. Worth it at 8 MB a binary,
 and debug builds are untouched.
+
+### One anchor is not the edit loop
+
+Every build number in this file came from `scripts/build_bench.py`, which
+edits one configured literal per app — for showcase, the window `title`. That
+is one anchor, and it turns out the cost of an edit depends on which part of
+the app it lands in. Splitting the same rebuild four ways with `-Ztime-passes`:
+
+| edit | rustc total | `type_check_crate` | `MIR_borrow_checking` |
+| --- | --- | --- | --- |
+| `app.ice` window title | 3.11s | 0.77s | 0.21s |
+| `app.ice` window id | 3.25s | 0.83s | 0.20s |
+| a component fragment | 2.48s | 0.04s | 0.02s |
+| `handlers/app.ice` | **4.22s** | **0.93s** | **0.37s** |
+
+The benchmark's anchor was neither the worst case nor a typical one. Editing a
+handler — which is ordinary work, not a corner — cost the most, and almost all
+of the excess was type and borrow checking.
+
+`__update` and `__view` were the reason. They are the two large items a
+generated app has, they answer to different sources, and they sat in the same
+generated file. Each now gets its own fenced group, which `ui-lang-build`
+splits into its own file, exactly as component methods already were. A handler
+edit stops re-checking the view:
+
+| | before | after |
+| --- | --- | --- |
+| `handlers/app.ice` edit | 3.77s | **2.90s** |
+| `type_check_crate` | 0.93s | 0.04s |
+| `MIR_borrow_checking` | 0.37s | 0.03s |
+
+Fragment edits and top-of-app edits do not move, and are not claimed to.
+
+### Two ways these numbers went wrong first
+
+Both mistakes produced clean-looking tables, so they are worth naming.
+
+**A leftover anchor.** One script flipped several anchors in sequence and left
+the tree dirty; the next measurement compared a build that still carried three
+edits against a clean one. The tell was a diff of generated output showing
+changes nobody had asked for.
+
+**A flag change between the seed and the measurement.** A reset build run
+without `-Ztime-passes`, between two builds that had it, discards the
+incremental cache — the next "incremental" edit measured 11s instead of 3s.
+Every build in a series has to carry identical flags.
+
+And the machine is shared. A blocked A/B run put a load spike entirely on one
+side and produced a 4.81s baseline against a 2.64s result for an edit that in
+truth does not move at all. Interleaving the sides — A, B, A, B — and pooling
+each side's samples is what settled it. When a result is large and one side's
+spread is much wider than the other's, the spread is the finding.

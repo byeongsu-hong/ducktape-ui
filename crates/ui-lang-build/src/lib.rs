@@ -924,6 +924,11 @@ mod tests {
         ))
     }
 
+    /// Files one root produces: the root itself plus one per fenced group.
+    /// The fixture apps have no fragments, so the groups are exactly the two
+    /// the generator always fences out — `__update` and `__view`.
+    const FILES_PER_ROOT: usize = 3;
+
     fn app_source(name: &str, text: &str) -> String {
         format!(
             concat!(
@@ -1217,10 +1222,10 @@ mod tests {
         compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
         assert_eq!(
             generated_writes(),
-            3,
+            2 * FILES_PER_ROOT + 1,
             "a malformed manifest must regenerate every root and the manifest"
         );
-        assert_eq!(read_manifest(&out_dir).outputs.len(), 2);
+        assert_eq!(read_manifest(&out_dir).outputs.len(), 2 * FILES_PER_ROOT);
 
         let interrupted = generated_path(&out_dir, "src/ui/first.ice").unwrap();
         fs::write(&interrupted, "partially replaced output").unwrap();
@@ -1241,13 +1246,13 @@ mod tests {
         compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
         assert_eq!(
             generated_writes(),
-            3,
+            2 * FILES_PER_ROOT + 1,
             "an interrupted output replacement must invalidate the complete cache"
         );
         assert!(!stale_transaction.exists());
         assert!(!stale_atomic.exists());
         assert_no_temporary_entries(&out_dir);
-        assert_eq!(read_manifest(&out_dir).outputs.len(), 2);
+        assert_eq!(read_manifest(&out_dir).outputs.len(), 2 * FILES_PER_ROOT);
         fs::remove_dir_all(fixture).unwrap();
     }
 
@@ -1338,7 +1343,7 @@ mod tests {
         second.join().unwrap();
 
         let generated_manifest = read_manifest(&out_dir);
-        assert_eq!(generated_manifest.outputs.len(), 2);
+        assert_eq!(generated_manifest.outputs.len(), 2 * FILES_PER_ROOT);
         assert!(
             generated_path(&out_dir, "src/ui/first.ice")
                 .unwrap()
@@ -1398,7 +1403,7 @@ mod tests {
         let started = Instant::now();
         compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
         let cold = started.elapsed();
-        assert_eq!(generated_writes(), ROOTS + 1);
+        assert_eq!(generated_writes(), ROOTS * FILES_PER_ROOT + 1);
         assert!(
             cold <= COLD_BUDGET,
             "cold AOT codegen for {ROOTS} roots took {cold:?}; budget is {COLD_BUDGET:?}"
