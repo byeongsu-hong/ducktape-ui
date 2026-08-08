@@ -618,6 +618,15 @@ pub fn ticket_seed(book: Option<Book>, focus: Option<SymbolRow>) -> String {
     }
 }
 
+/// The menu bar mini status: the focused market's coin and last price, or
+/// just the coin while the market list is still loading.
+pub fn tray_status(coin: String, focus: Option<SymbolRow>) -> String {
+    match focus.filter(|row| row.price > 0.0) {
+        Some(row) => format!("{coin} {}", fmt_px(row.price)),
+        None => coin,
+    }
+}
+
 /// A number as typed into a ticket field. Anything that is not one reads as
 /// zero, which every figure downstream already treats as "not yet".
 fn amount(typed: &str) -> f64 {

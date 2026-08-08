@@ -1,6 +1,11 @@
 app Trading
   title "Ducktape Trading"
   id "dev.ducktape.ice.trading"
+  tray
+    icon-rgba "../../assets/tray-icon.rgba" 22 22
+    icon-template true
+    label tray_status(coin, focus)
+    tooltip "Ducktape Trading"
   font "../../../../assets/fonts/IBMPlexSansKR-Regular.ttf"
   font "../../../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
   font "../../../../assets/fonts/MonoplexKR-Regular.ttf"

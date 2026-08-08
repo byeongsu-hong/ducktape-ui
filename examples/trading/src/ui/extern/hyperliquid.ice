@@ -29,6 +29,7 @@ extern crate::hyperliquid
   sync filter_symbols(rows:[SymbolRow], query:str, coin:str) -> [SymbolRow]
   sync symbol_row(rows:[SymbolRow], coin:str) -> SymbolRow?
   sync ticket_seed(book:Book?, focus:SymbolRow?) -> str
+  sync tray_status(coin:str, focus:SymbolRow?) -> str
   sync price_ticket(price:str, size:str, leverage:str, market:SymbolRow?, buy:bool, held:f64) -> Ticket
   sync push_trades(tape:[Trade], tick:MarketTick, limit:i64) -> [Trade]
   sync push_fills(history:[Fill], incoming:[Fill], limit:i64) -> [Fill]

@@ -24,6 +24,29 @@ blames the exchange for something you just typed.
 
 ![Trading](screenshots/trading.png)
 
+## The menu bar mini status
+
+On macOS the terminal also lives in the menu bar. The main app declares a
+`tray` block that keeps the focused market's coin and last price as the status
+item's label; clicking the item restores and focuses the terminal window.
+
+A second binary is the same idea without the terminal: a `daemon` whose only
+window is a popover anchored under the status item, showing the focused
+market's price, 24h change, and the volume/OI/funding row, fed by the same
+Hyperliquid externs.
+
+```bash
+cargo run -p trading-example --bin menubar
+```
+
+Left-clicking the status item toggles the popover; clicking anywhere else
+dismisses it (`subscribe window unfocused` → `task window close`). **Quit**
+inside the panel exits the daemon. On other platforms both binaries build and
+run with the tray as a no-op.
+
+![Menubar popover, loading](screenshots/menubar-panel.png)
+![Menubar popover, focused market](screenshots/menubar-market.png)
+
 ## Design
 
 The screen is an instrument panel, so it is set like one. Every figure is
