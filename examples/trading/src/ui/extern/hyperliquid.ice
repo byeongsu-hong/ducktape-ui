@@ -56,6 +56,7 @@ extern crate::hyperliquid
   sync demo_candles_for(coin:str, last:f64) -> Tape
   sync demo_hover() -> CandleHit?
   sync demo_tick() -> MarketTick
+  sync demo_tick_at(btc:f64) -> MarketTick
   sync demo_feed_error() -> HlError
   sync demo_symbols_many() -> [SymbolRow]
   sync demo_tape_full() -> [Trade]
