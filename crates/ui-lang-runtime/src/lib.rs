@@ -25,6 +25,7 @@ pub mod testing;
 #[cfg(not(feature = "test-runtime"))]
 #[path = "testing_minimal.rs"]
 pub mod testing;
+pub mod tray;
 #[cfg(feature = "virtual-list")]
 mod tree_view;
 #[cfg(feature = "virtual-list")]
