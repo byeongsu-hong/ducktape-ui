@@ -4461,6 +4461,37 @@ fn rendered_text_exists<Renderer: 'static>(
     expected: &str,
     within: Option<Rectangle>,
 ) -> Result<bool, &'static str> {
+    // A primitive holding the whole string answers most queries, and answers
+    // them without reading the rest of the screen.
+    let mut singles = Vec::new();
+    let found = for_each_visible_text(renderer, within, |paint| {
+        if paint.content.as_deref() == Some(expected) {
+            return true;
+        }
+        if paint
+            .content
+            .as_deref()
+            .is_some_and(|content| crate::graphemes(content).count() == 1)
+        {
+            singles.push(paint);
+        }
+        false
+    })?;
+    if found {
+        return Ok(true);
+    }
+    // Otherwise it may be drawn one grapheme at a time, and only the
+    // graphemes collected on the way past can say so.
+    Ok(tracked_runs(&singles).iter().any(|run| run == expected))
+}
+
+/// Walks every text primitive that is actually on screen, stopping early when
+/// `visit` is satisfied.
+fn for_each_visible_text<Renderer: 'static>(
+    renderer: &mut Renderer,
+    within: Option<Rectangle>,
+    mut visit: impl FnMut(TextPaint) -> bool,
+) -> Result<bool, &'static str> {
     let renderer = tiny_skia_renderer(renderer)?;
     for layer in renderer.layers() {
         for group in &layer.text {
@@ -4474,10 +4505,10 @@ fn rendered_text_exists<Renderer: 'static>(
                 else {
                     continue;
                 };
-                if text_paint(text, transformation, bounds).is_some_and(|text| {
-                    within.is_none_or(|within| within.contains(text.bounds.center()))
-                        && text.content.as_deref() == Some(expected)
-                }) {
+                if let Some(paint) = text_paint(text, transformation, bounds)
+                    && within.is_none_or(|within| within.contains(paint.bounds.center()))
+                    && visit(paint)
+                {
                     return Ok(true);
                 }
             }
@@ -4485,6 +4516,92 @@ fn rendered_text_exists<Renderer: 'static>(
     }
     Ok(false)
 }
+
+/// Text drawn with `tracking=` is one widget per grapheme, so no primitive
+/// ever holds the whole string. Rebuilding those runs is what lets a question
+/// about what is on screen be answered for tracked text at all — including
+/// its negative form, which would otherwise pass for a label that is plainly
+/// there.
+///
+/// A run is consecutive single-grapheme primitives that share a baseline and
+/// a style and are evenly spaced. Even spacing is what separates one tracked
+/// label from the next along the same row, where baseline and style match but
+/// the layout gap does not. A gap wider than the run's own by about a space
+/// is a space: the character paints nothing, so it arrives as a hole rather
+/// than a primitive.
+fn tracked_runs(texts: &[TextPaint]) -> Vec<String> {
+    let mut buckets: Vec<(f64, Color, f64, Font, Vec<&TextPaint>)> = Vec::new();
+    for text in texts {
+        let (Some(baseline), Some(size), Some(font)) = (text.baseline, text.size, text.font) else {
+            continue;
+        };
+        if text
+            .content
+            .as_deref()
+            .is_none_or(|content| crate::graphemes(content).count() != 1)
+        {
+            continue;
+        }
+        if let Some(bucket) = buckets.iter_mut().find(|(at, color, at_size, at_font, _)| {
+            (at - baseline).abs() < 0.5
+                && *color == text.color
+                && (at_size - size).abs() < 0.01
+                && *at_font == font
+        }) {
+            bucket.4.push(text);
+        } else {
+            buckets.push((baseline, text.color, size, font, vec![text]));
+        }
+    }
+
+    let mut runs = Vec::new();
+    for (_, _, size, _, mut row) in buckets {
+        row.sort_by(|a, b| a.bounds.x.total_cmp(&b.bounds.x));
+        let mut run = String::new();
+        let mut end: Option<f32> = None;
+        let mut spacing: Option<f32> = None;
+        for text in row {
+            let Some(content) = text.content.as_deref() else {
+                continue;
+            };
+            let gap = end.map(|end| text.bounds.x - end);
+            match gap {
+                // A gap this run has not established yet sets its spacing;
+                // one that matches continues it; one about a space wider
+                // crosses a space; anything else is the next label along.
+                Some(gap) if spacing.is_none_or(|spacing| close(gap, spacing)) => {
+                    spacing.get_or_insert(gap);
+                }
+                Some(gap) if spacing.is_some_and(|spacing| is_space(gap - spacing, size)) => {
+                    run.push(' ');
+                }
+                Some(_) => {
+                    runs.push(std::mem::take(&mut run));
+                    spacing = None;
+                }
+                None => {}
+            }
+            run.push_str(content);
+            end = Some(text.bounds.x + text.bounds.width);
+        }
+        runs.push(run);
+    }
+    runs.retain(|run| !run.is_empty());
+    runs
+}
+
+fn close(gap: f32, spacing: f32) -> bool {
+    (gap - spacing).abs() <= TRACKED_GAP_TOLERANCE
+}
+
+/// A space paints nothing, so it shows up as extra room between two painted
+/// graphemes. No font puts a space outside this band of its size.
+fn is_space(extra: f32, size: f64) -> bool {
+    let size = size as f32;
+    (0.15 * size..=0.75 * size).contains(&extra)
+}
+
+const TRACKED_GAP_TOLERANCE: f32 = 0.75;
 
 fn tiny_skia_renderer<Renderer: 'static>(
     renderer: &mut Renderer,
@@ -5122,6 +5239,90 @@ fn write_png(path: &std::path::Path, rgba: &[u8], width: u32, height: u32) -> Re
         .map_err(|error| error.to_string())?;
     writer.finish().map_err(|error| error.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tracked_text {
+    use super::*;
+
+    /// Lays out `label` the way tracked text renders: one primitive per
+    /// grapheme, `spacing` apart, with spaces leaving a hole because they
+    /// paint nothing.
+    fn tracked(label: &str, x: f32, baseline: f64, spacing: f32, size: f64) -> Vec<TextPaint> {
+        let advance = size as f32 * 0.6;
+        let mut painted = Vec::new();
+        let mut at = x;
+        for grapheme in crate::graphemes(label) {
+            if grapheme == " " {
+                at += advance * 0.5 + spacing;
+                continue;
+            }
+            painted.push(TextPaint {
+                content: Some(grapheme.to_owned()),
+                bounds: Rectangle {
+                    x: at,
+                    y: baseline as f32 - size as f32,
+                    width: advance,
+                    height: size as f32,
+                },
+                color: Color::WHITE,
+                size: Some(size),
+                font: Some(Font::DEFAULT),
+                line_height: None,
+                baseline: Some(baseline),
+            });
+            at += advance + spacing;
+        }
+        painted
+    }
+
+    #[test]
+    fn a_tracked_label_is_rebuilt_from_its_graphemes() {
+        let runs = tracked_runs(&tracked("ORDER", 10.0, 40.0, 1.1, 10.0));
+        assert_eq!(runs, vec!["ORDER".to_owned()]);
+    }
+
+    #[test]
+    fn a_space_paints_nothing_and_is_recovered_from_the_hole_it_leaves() {
+        let runs = tracked_runs(&tracked("READ ONLY", 10.0, 40.0, 1.1, 10.0));
+        assert_eq!(runs, vec!["READ ONLY".to_owned()]);
+    }
+
+    /// The case that makes even spacing the rule rather than the baseline:
+    /// two labels in one row share everything but the gap between them.
+    #[test]
+    fn two_labels_along_a_row_do_not_merge_into_one() {
+        let mut row = tracked("MARKET", 10.0, 40.0, 1.1, 10.0);
+        row.extend(tracked("LAST", 120.0, 40.0, 1.1, 10.0));
+        let runs = tracked_runs(&row);
+        assert_eq!(runs, vec!["MARKET".to_owned(), "LAST".to_owned()]);
+    }
+
+    #[test]
+    fn a_different_line_or_style_is_a_different_run() {
+        let mut screen = tracked("TOP", 10.0, 40.0, 1.1, 10.0);
+        screen.extend(tracked("LOW", 10.0, 80.0, 1.1, 10.0));
+        let mut bigger = tracked("BIG", 10.0, 40.0, 1.1, 13.0);
+        for text in &mut bigger {
+            text.baseline = Some(40.0);
+        }
+        screen.extend(bigger);
+        let runs = tracked_runs(&screen);
+        assert_eq!(runs.len(), 3, "{runs:?}");
+        for expected in ["TOP", "LOW", "BIG"] {
+            assert!(runs.iter().any(|run| run == expected), "{runs:?}");
+        }
+    }
+
+    /// Ordinary text is one primitive holding the whole string, and joining
+    /// two of those into a word that is not on screen would be a lie.
+    #[test]
+    fn untracked_text_is_never_joined() {
+        let mut plain = tracked("AB", 10.0, 40.0, 1.1, 10.0);
+        plain[0].content = Some("SPREAD".to_owned());
+        plain[1].content = Some("0.3 bps".to_owned());
+        assert!(tracked_runs(&plain).is_empty());
+    }
 }
 
 #[cfg(test)]

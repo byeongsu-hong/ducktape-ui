@@ -128,6 +128,18 @@ Each target generated from an Ice view also records its originating `.ice`
 path, line, and column. A target constructed wholly inside a Rust widget may
 report no finer provenance.
 
+`expect text` asks what is painted, and text drawn with `tracking=` is painted
+one widget per grapheme — iced has no letter-spacing, so the lowering spaces a
+row of them. No primitive holds the whole string. The query rebuilds those
+runs: consecutive single-grapheme primitives sharing a baseline and a style
+and evenly spaced, with a gap about one space wider than the run's own read as
+a space, because a space paints nothing and arrives as a hole. Even spacing is
+what keeps two tracked labels along the same row from merging.
+
+This matters most for the negative form. Before the runs were rebuilt,
+`expect no text` passed for any tracked label — an assertion that could not
+fail, on text that was plainly on screen.
+
 ## Captures and evidence
 
 `capture` writes a PNG and structured JSON frame manifest to
