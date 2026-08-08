@@ -54,13 +54,13 @@ pub(in crate::codegen) fn generate_view(
     if mounted.is_empty() && daemon {
         writeln!(
             out,
-            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root: __IceElement<'_, {message}> = {rendered_root}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root: __IceElement<'_, {message}> = {rendered_root}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     } else if mounted.is_empty() {
         writeln!(
             out,
-            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into(); ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into(); ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     } else {
@@ -89,7 +89,7 @@ pub(in crate::codegen) fn generate_view(
         };
         writeln!(
             out,
-            "fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root_scope = {root_scope_code}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} let __ice_root: __IceElement<'_, {message}> = {result}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root_scope = {root_scope_code}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} let __ice_root: __IceElement<'_, {message}> = {result}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     }
