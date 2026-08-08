@@ -315,6 +315,12 @@ slot with. None of those reach the network, so they run wherever the rest does.
 One test reads the palette out of `theme.ice` and holds the chart to it, because
 the chart is drawn in Rust and would otherwise drift in silence.
 
+One market and one position live in the source as fixtures, behind a named
+preset. Everything that only exists when an account does — the ticket's
+figures, what an order would do to a position, what it asks for in margin —
+is asserted against them, so the readings that were only ever visible in a
+picture are now checked without one.
+
 Two tests talk to the live exchange — one per endpoint shape, so the subscription names and payloads
 are checked against Hyperliquid rather than against a recording, and the
 account's own marks are fed back through the valuation to prove they are a

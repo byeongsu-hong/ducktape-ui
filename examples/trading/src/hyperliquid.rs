@@ -1647,6 +1647,43 @@ pub fn fmt_age(ts: i64) -> String {
     }
 }
 
+/// One market and one position, so the panels that only exist when an account
+/// does can be rendered and asserted without an exchange. The spec puts
+/// deterministic test behaviour behind a named preset, and a preset needs its
+/// state from somewhere; these are that somewhere. Two bugs in this panel were
+/// only ever visible in a picture, and a picture needs data.
+pub fn demo_symbols() -> Vec<SymbolRow> {
+    vec![SymbolRow {
+        name: "BTC".to_owned(),
+        price: 64_000.0,
+        change_pct: 1.25,
+        volume: 1_300_000_000.0,
+        funding_pct: 0.00125,
+        leverage: 40.0,
+        open_interest: 35_000.0,
+        prev: 63_210.0,
+        maintenance: 1.0 / 80.0,
+        selected: true,
+    }]
+}
+
+pub fn demo_positions() -> Vec<Position> {
+    vec![Position {
+        coin: "BTC".to_owned(),
+        size: -30.0,
+        entry: 81_461.5,
+        mark: 64_000.0,
+        liq: 174_000.0,
+        pnl: 523_845.0,
+        roe_pct: 811.79,
+        margin: 61_096.0,
+        risk: liquidation_travel(81_461.5, 64_000.0, 174_000.0) * RISK_RAIL_WIDTH,
+        leverage: 40.0,
+        margin_mode: "cross".to_owned(),
+        funding: -3_309_304.0,
+    }]
+}
+
 /// Left gap the header keeps clear so its content never sits under the macOS
 /// traffic lights, which float over the fullsize content view. The rightmost
 /// button ends near 74pt; everywhere else the header owns its full width.

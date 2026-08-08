@@ -34,6 +34,8 @@ extern crate::hyperliquid
   sync cool_fills(rows:[Fill]) -> [Fill]
   sync any_hot(rows:[Fill]) -> bool
   sync valid_address(address:str) -> bool
+  sync demo_symbols() -> [SymbolRow]
+  sync demo_positions() -> [Position]
   sync position_held(positions:[Position], coin:str) -> f64
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   sync order_label(order:Order) -> str

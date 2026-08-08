@@ -59,6 +59,14 @@ preset terminal
   state
     gate = false
 
+preset held
+  state
+    gate = false
+    symbols = demo_symbols()
+    visible = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+
 preset failing
   state
     gate = false
@@ -1718,3 +1726,15 @@ test trading_says_what_broke_without_spending_a_money_colour
   viewport 1400 900
   expect text "Hyperliquid unreachable"
   expect no text "Loading candles"
+
+test trading_a_closing_order_asks_for_no_margin
+  preset held
+  viewport 1400 900
+  dispatch open_ticket
+  dispatch close_held
+  expect ticket
+  expect ticket_size == "30.00"
+  expect ticket_buy
+  expect quote.ready
+  expect quote.margin ~= 0.0
+  expect quote.liquidation ~= 0.0
