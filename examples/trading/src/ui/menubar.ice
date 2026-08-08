@@ -60,14 +60,8 @@ on market_ticked(tick)
 on failed(reason)
   error = reason.message
 
-on popover_unfocused(id)
-  task window close target=id
-
 on quit
   exit
-
-subscribe
-  window unfocused with-id -> popover_unfocused _
 
 view
   box #status-panel
@@ -181,7 +175,7 @@ view
           w=fill
           gap=8.0
           align=center
-        text "Click the menu bar item to dismiss."
+        text "Click away, or the menu bar item, to dismiss."
           with
             size=10.0
             w=fill

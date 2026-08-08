@@ -39,10 +39,14 @@ Hyperliquid externs.
 cargo run -p trading-example --bin menubar
 ```
 
-Left-clicking the status item toggles the popover; clicking anywhere else
-dismisses it (`subscribe window unfocused` → `task window close`). **Quit**
-inside the panel exits the daemon. On other platforms both binaries build and
-run with the tray as a no-op.
+Left-clicking the status item toggles the popover, and clicking anywhere else
+dismisses it — the `popover` block owns that, so the daemon subscribes to
+nothing for it. **Quit** inside the panel exits the daemon. On other platforms
+both binaries build and run with the tray as a no-op.
+
+If the status item ever looks inert, `ICE_TRAY_DEBUG=1 cargo run -p
+trading-example --bin menubar` traces the native boundary: whether the click
+arrived, and where the panel was placed.
 
 ![Menubar popover, loading](screenshots/menubar-panel.png)
 ![Menubar popover, focused market](screenshots/menubar-market.png)

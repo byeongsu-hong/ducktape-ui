@@ -620,7 +620,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     {
         writeln!(
             out,
-            "pub(crate) __ice_tray_popover: ::std::option::Option<::iced::window::Id>,\npub(crate) __ice_tray_dismissed: ::std::option::Option<::iced::time::Instant>,"
+            "pub(crate) __ice_tray_popover: ::std::option::Option<::iced::window::Id>,\npub(crate) __ice_tray_popover_shown: bool,\npub(crate) __ice_tray_dismissed: ::std::option::Option<::iced::time::Instant>,"
         )
         .unwrap();
     }
@@ -711,7 +711,11 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     if let Some(tray) = &program.settings().tray {
         writeln!(out, "__TrayEvent(::ui_lang_runtime::tray::TrayEvent),").unwrap();
         if tray.popover.is_some() {
-            writeln!(out, "__TrayPopoverClosed(::iced::window::Id),").unwrap();
+            writeln!(
+                out,
+                "__TrayPopoverClosed(::iced::window::Id),\n__TrayPopoverFocused(::iced::window::Id),\n__TrayPopoverUnfocused(::iced::window::Id),"
+            )
+            .unwrap();
         }
     }
     for handler in program.app_handlers() {

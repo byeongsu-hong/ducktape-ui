@@ -62,7 +62,7 @@ pub(in crate::codegen) fn generate_subscription(
         if tray.popover.is_some() {
             writeln!(
                 out,
-                "::iced::window::close_events().map({message}::__TrayPopoverClosed),"
+                "::iced::window::close_events().map({message}::__TrayPopoverClosed),\n::iced::event::listen_with(|__event, _, __id| match __event {{ ::iced::Event::Window(::iced::window::Event::Focused) => ::std::option::Option::Some(true), ::iced::Event::Window(::iced::window::Event::Unfocused) => ::std::option::Option::Some(false), _ => ::std::option::Option::None }}.map(|__focused| (__id, __focused))).map(|(__id, __focused)| if __focused {{ {message}::__TrayPopoverFocused(__id) }} else {{ {message}::__TrayPopoverUnfocused(__id) }}),"
             )
             .unwrap();
         }

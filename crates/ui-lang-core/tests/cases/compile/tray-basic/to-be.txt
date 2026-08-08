@@ -15,3 +15,7 @@ Self::__window_0()
 self.__tray_sync();
 pub(crate) __ice_tray_dismissed: ::std::option::Option<::iced::time::Instant>,
 self.__ice_tray_dismissed.take().is_some_and(|__at| __at.elapsed() < ::iced::time::Duration::from_millis(200))
+__TrayPopoverFocused(::iced::window::Id),
+__TrayPopoverUnfocused(::iced::window::Id),
+pub(crate) __ice_tray_popover_shown: bool,
+&& self.__ice_tray_popover_shown

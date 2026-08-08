@@ -1605,6 +1605,10 @@ view
 
     assert!(generated.contains("__TrayEvent(::ui_lang_runtime::tray::TrayEvent),"));
     assert!(generated.contains("__TrayPopoverClosed(::iced::window::Id),"));
+    assert!(generated.contains("__TrayPopoverFocused(::iced::window::Id),"));
+    assert!(generated.contains("__TrayPopoverUnfocused(::iced::window::Id),"));
+    assert!(generated.contains("pub(crate) __ice_tray_popover_shown: bool,"));
+    assert!(generated.contains("&& self.__ice_tray_popover_shown"));
     assert!(
         generated
             .contains("pub(crate) __ice_tray_popover: ::std::option::Option<::iced::window::Id>,")
