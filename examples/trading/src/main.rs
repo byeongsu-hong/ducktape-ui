@@ -27,6 +27,7 @@ mod tests {
             open_interest: 0.0,
             prev: 1.0,
             maintenance: 0.0,
+            size_decimals: 2,
             selected: false,
         }
     }
