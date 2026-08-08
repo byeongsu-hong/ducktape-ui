@@ -636,6 +636,7 @@ pub fn price_ticket(
     leverage: String,
     market: Option<SymbolRow>,
     buy: bool,
+    held: f64,
 ) -> Ticket {
     let (max_leverage, maintenance) =
         market.map_or((0.0, 0.0), |row| (row.leverage, row.maintenance));
@@ -648,12 +649,26 @@ pub fn price_ticket(
     };
     let leverage = amount(&leverage).clamp(0.0, ceiling);
     let notional = price * size;
+    // Only the part of the order that is not closing something opens a
+    // position, and only an opened position ties up margin or has a cliff.
+    // Selling into a long releases margin; quoting a requirement for it, and a
+    // liquidation for a position that would not exist, is the panel describing
+    // the wrong trade.
+    let opening = if held == 0.0 || (held > 0.0) == buy {
+        size
+    } else {
+        (size - held.abs()).max(0.0)
+    };
     let ready = price > 0.0 && size > 0.0 && leverage > 0.0;
     let known = maintenance > 0.0;
     Ticket {
         notional,
-        margin: if ready { notional / leverage } else { 0.0 },
-        liquidation: if ready && known {
+        margin: if ready {
+            price * opening / leverage
+        } else {
+            0.0
+        },
+        liquidation: if ready && known && opening > 0.0 {
             ticket_liquidation(price, leverage, maintenance, buy)
         } else {
             0.0
@@ -1537,6 +1552,157 @@ pub fn position_label(held: Position) -> String {
     format!("{} {side} {}", held.coin, fmt_size(held.size))
 }
 
+/// A level somebody asked to be told about. Which side it is waiting on is
+/// not asked for: a level above the mark can only be reached from below, and
+/// one below it from above, so the direction is a fact about the price rather
+/// than a question for the person setting it.
+#[derive(Clone, PartialEq)]
+pub struct Alert {
+    pub coin: String,
+    pub price: f64,
+    pub above: bool,
+    pub fired: bool,
+}
+
+pub fn add_alert(alerts: Vec<Alert>, coin: String, price: String, mark: f64) -> Vec<Alert> {
+    let price = amount(&price);
+    let mut alerts = alerts;
+    // A level at the mark has already happened, and a duplicate is not a
+    // second alert.
+    if coin.is_empty() || price <= 0.0 || mark <= 0.0 || (price - mark).abs() < f64::EPSILON {
+        return alerts;
+    }
+    if alerts
+        .iter()
+        .any(|held| held.coin == coin && (held.price - price).abs() < f64::EPSILON)
+    {
+        return alerts;
+    }
+    alerts.push(Alert {
+        coin,
+        price,
+        above: price > mark,
+        fired: false,
+    });
+    alerts
+}
+
+/// Marks every level the market has reached. Firing is one-way: a level that
+/// was touched stays touched, so a price wobbling across it does not chime
+/// twice and does not un-chime.
+pub fn check_alerts(alerts: Vec<Alert>, tick: MarketTick) -> Vec<Alert> {
+    alerts
+        .into_iter()
+        .map(|alert| {
+            let Some(mark) = tick.mids.get(&alert.coin).copied() else {
+                return alert;
+            };
+            let reached = if alert.above {
+                mark >= alert.price
+            } else {
+                mark <= alert.price
+            };
+            Alert {
+                fired: alert.fired || reached,
+                ..alert
+            }
+        })
+        .collect()
+}
+
+/// How many are still waiting, which is the only count worth a header.
+pub fn waiting_alerts(alerts: Vec<Alert>) -> i64 {
+    alerts.iter().filter(|alert| !alert.fired).count() as i64
+}
+
+pub fn drop_alert(alerts: Vec<Alert>, coin: String, price: f64) -> Vec<Alert> {
+    alerts
+        .into_iter()
+        .filter(|alert| alert.coin != coin || (alert.price - price).abs() >= f64::EPSILON)
+        .collect()
+}
+
+/// The market's price, or zero when it has not loaded — what an alert is set
+/// relative to.
+pub fn mark_price(market: Option<SymbolRow>) -> f64 {
+    market.map_or(0.0, |row| row.price)
+}
+
+/// An alert names the level and which way the market has to go to reach it.
+pub fn alert_label(alert: Alert) -> String {
+    let state = if alert.fired {
+        "reached"
+    } else if alert.above {
+        "waiting above"
+    } else {
+        "waiting below"
+    };
+    format!("{} {state} {}", alert.coin, fmt_px(alert.price))
+}
+
+pub fn alert_arrow(alert: Alert) -> String {
+    if alert.above { "▲" } else { "▼" }.to_owned()
+}
+
+/// A size the account could actually put on: a share of what is free to
+/// withdraw, levered, at the price in the ticket. Free margin rather than
+/// equity, because equity already has positions standing on it.
+pub fn ticket_afford(
+    account: Option<Account>,
+    price: String,
+    leverage: String,
+    share: f64,
+) -> String {
+    let free = account.map_or(0.0, |held| held.withdrawable);
+    let price = amount(&price);
+    let leverage = amount(&leverage);
+    if free <= 0.0 || price <= 0.0 || leverage <= 0.0 || share <= 0.0 {
+        return String::new();
+    }
+    fmt_size(free * share.min(1.0) * leverage / price)
+}
+
+/// What an order would do to what you already hold. Opening and closing are
+/// different acts on the same ticket, and the difference is the sign of a
+/// number two panels apart — the size you typed here and the position sitting
+/// in the panel below.
+pub fn ticket_effect(positions: Vec<Position>, coin: String, size: String, buy: bool) -> String {
+    let size = amount(&size).abs();
+    if size <= 0.0 {
+        return String::new();
+    }
+    let held = positions
+        .into_iter()
+        .find(|position| position.coin == coin)
+        .map_or(0.0, |position| position.size);
+    let side = if buy { "long" } else { "short" };
+    // A buy against a short reduces it, and so does a sell against a long.
+    if held == 0.0 || (held > 0.0) == buy {
+        return format!("Opens {} {side}", fmt_size(size));
+    }
+    let open = held.abs();
+    let holding = if held > 0.0 { "long" } else { "short" };
+    if size < open {
+        format!("Reduces your {holding} to {}", fmt_size(open - size))
+    } else if size > open {
+        format!(
+            "Closes your {holding} and opens {} {side}",
+            fmt_size(size - open)
+        )
+    } else {
+        format!("Closes your {holding}")
+    }
+}
+
+/// The signed size held in one market, or zero when none is. Signed, because
+/// the ticket needs both how much to close and which way that trade goes.
+pub fn position_held(positions: Vec<Position>, coin: String) -> f64 {
+    positions
+        .into_iter()
+        .find(|position| position.coin == coin)
+        .map_or(0.0, |position| position.size)
+}
+
 /// A resting order names its side, its size and the price it waits at.
 pub fn order_label(order: Order) -> String {
     let side = if order.buy { "buy" } else { "sell" };
@@ -1589,6 +1755,196 @@ pub fn fmt_age(ts: i64) -> String {
         3_600..86_400 => format!("{}h", seconds / 3_600),
         _ => format!("{}d", seconds / 86_400),
     }
+}
+
+/// One market and one position, so the panels that only exist when an account
+/// does can be rendered and asserted without an exchange. The spec puts
+/// deterministic test behaviour behind a named preset, and a preset needs its
+/// state from somewhere; these are that somewhere. Two bugs in this panel were
+/// only ever visible in a picture, and a picture needs data.
+pub fn demo_symbols() -> Vec<SymbolRow> {
+    vec![SymbolRow {
+        name: "BTC".to_owned(),
+        price: 64_000.0,
+        change_pct: 1.25,
+        volume: 1_300_000_000.0,
+        funding_pct: 0.00125,
+        leverage: 40.0,
+        open_interest: 35_000.0,
+        prev: 63_210.0,
+        maintenance: 1.0 / 80.0,
+        selected: true,
+    }]
+}
+
+pub fn demo_positions() -> Vec<Position> {
+    vec![Position {
+        coin: "BTC".to_owned(),
+        size: -30.0,
+        entry: 81_461.5,
+        mark: 64_000.0,
+        liq: 174_000.0,
+        pnl: 523_845.0,
+        roe_pct: 811.79,
+        margin: 61_096.0,
+        risk: liquidation_travel(81_461.5, 64_000.0, 174_000.0) * RISK_RAIL_WIDTH,
+        leverage: 40.0,
+        margin_mode: "cross".to_owned(),
+        funding: -3_309_304.0,
+    }]
+}
+
+/// A tape with candles already in it, focused on the market the other
+/// fixtures describe. The chart is the largest panel here and the only one
+/// that never appeared in a deterministic render, because its candles live
+/// behind a lock the feed fills rather than in app state.
+pub fn demo_candles() -> Tape {
+    let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+    let mut candles = Vec::new();
+    let mut close = 63_800.0;
+    for step in 0..120 {
+        // A shape rather than a straight line, so the moving averages have
+        // something to say and the plot is not a diagonal.
+        let drift = ((step as f64) / 9.0).sin() * 520.0;
+        let open = close;
+        close = 63_900.0 + drift + (step as f64) * 1.5;
+        candles.push(Candle {
+            ts: 1_786_110_000 + step * 60,
+            open,
+            high: open.max(close) + 60.0,
+            low: open.min(close) - 60.0,
+            close,
+            volume: 40.0 + drift.abs(),
+        });
+    }
+    *lock(&tape.candles) = candles;
+    tape
+}
+
+/// The account those positions belong to. Built the way a parsed one is, so
+/// the rail and its percentage cannot disagree with the equity beside them.
+pub fn demo_account() -> Account {
+    let positions = demo_positions();
+    let value = 3_761_182.51;
+    let maintenance = 1_418_309.0;
+    Account {
+        value,
+        pnl: positions.iter().map(|position| position.pnl).sum(),
+        withdrawable: 2_200.0,
+        notional: positions
+            .iter()
+            .map(|position| position.mark * position.size.abs())
+            .sum(),
+        maintenance,
+        health: margin_load(value, maintenance) * RISK_RAIL_WIDTH,
+        margin_pct: margin_load(value, maintenance) * 100.0,
+        positions,
+    }
+}
+
+/// Fills and resting orders, including one fill still lit, so the flash a
+/// just-printed fill wears is drawn rather than only decayed in a unit test.
+pub fn demo_fills() -> Vec<Fill> {
+    let fill = |tid: i64, price: f64, size: f64, buy: bool, closed_pnl: f64, heat: i64| Fill {
+        coin: "BTC".to_owned(),
+        // Inside the candle window `demo_candles` builds, so each lands on
+        // its own candle rather than piling onto the last one.
+        ts: 1_786_110_000 + (7 - tid) * 900,
+        price,
+        size,
+        buy,
+        closed_pnl,
+        heat,
+        tid,
+    };
+    vec![
+        fill(1, 64_010.0, 0.25, false, 1_240.0, FLASH_STEPS),
+        fill(2, 63_940.0, 0.50, true, 0.0, 1),
+        fill(3, 63_880.0, 0.75, true, 0.0, 0),
+    ]
+}
+
+pub fn demo_orders() -> Vec<Order> {
+    vec![
+        Order {
+            coin: "BTC".to_owned(),
+            buy: true,
+            price: 63_600.0,
+            size: 1.5,
+            ts: now_ms() / 1_000 - 7_200,
+        },
+        Order {
+            coin: "BTC".to_owned(),
+            buy: false,
+            price: 64_440.0,
+            size: 0.8,
+            ts: now_ms() / 1_000 - 240,
+        },
+    ]
+}
+
+/// One level already reached, so the panel's two readings both draw.
+pub fn demo_alerts() -> Vec<Alert> {
+    vec![
+        Alert {
+            coin: "BTC".to_owned(),
+            price: 64_100.0,
+            above: true,
+            fired: true,
+        },
+        // A level on a market the list is not showing. Alerts outlive the
+        // market they were set from, so a row has to say which one it means.
+        Alert {
+            coin: "ETH".to_owned(),
+            price: 3_400.0,
+            above: true,
+            fired: false,
+        },
+    ]
+}
+
+/// A book and a tape to go with them, so the whole terminal renders from
+/// fixtures rather than from an exchange.
+pub fn demo_book() -> Book {
+    let level = |price: f64, size: f64, total: f64, deepest: f64| Level {
+        price,
+        size,
+        total,
+        bar: total / deepest * BOOK_BAR_WIDTH,
+    };
+    Book {
+        bids: vec![
+            level(63_999.0, 1.4, 1.4, 6.0),
+            level(63_998.0, 2.1, 3.5, 6.0),
+            level(63_997.0, 2.5, 6.0, 6.0),
+        ],
+        // Reversed, as the feed leaves them: the best ask sits last, against
+        // the spread, so the panel walks both lists top to bottom.
+        asks: vec![
+            level(64_003.0, 3.0, 7.0, 7.0),
+            level(64_002.0, 2.2, 4.0, 7.0),
+            level(64_001.0, 1.8, 1.8, 7.0),
+        ],
+        spread: 2.0,
+        spread_pct: 2.0 / 64_000.0 * 100.0,
+        mid: 64_000.0,
+    }
+}
+
+pub fn demo_tape() -> Vec<Trade> {
+    let print = |tid: i64, price: f64, size: f64, buy: bool, sweep: i64| Trade {
+        ts: 1_786_117_888 - tid,
+        price,
+        size,
+        buy,
+        sweep,
+        tid,
+    };
+    vec![
+        print(1, 64_001.0, 0.53, true, 2),
+        print(2, 63_999.0, 1.20, false, 1),
+        print(3, 64_001.0, 0.08, true, 1),
+    ]
 }
 
 /// Left gap the header keeps clear so its content never sits under the macOS
@@ -2135,6 +2491,86 @@ mod tests {
     /// palette exists twice: once as tokens in `theme.ice` and once as the
     /// literals below. Nothing makes them agree, and the chart is half the
     /// screen — a drift would be obvious at runtime and invisible until then.
+    /// Everything the extern block declares, the view has to read. A field
+    /// Rust needs and Ice does not belongs in the struct and not in the
+    /// declaration — `Fill.tid` is the pattern. A `sync` nothing calls is
+    /// worse: it means an edit that was supposed to wire it up matched
+    /// nothing, which has happened here four times, twice without a single
+    /// test noticing, because a test can cover a function the screen never
+    /// reaches.
+    #[test]
+    fn the_boundary_declares_only_what_the_view_reads() {
+        const EXTERN: &str = include_str!("ui/extern/hyperliquid.ice");
+        const APP: &str = include_str!("ui/app.ice");
+
+        let mut dead: Vec<String> = Vec::new();
+        for line in EXTERN.lines() {
+            let line = line.trim_end();
+            let Some(body) = line.strip_prefix("  ") else {
+                continue;
+            };
+            if let Some(rest) = body
+                .strip_prefix("sync ")
+                .or(body.strip_prefix("component "))
+            {
+                let name = rest.split('(').next().unwrap_or(rest);
+                if !APP.contains(&format!("{name}(")) {
+                    dead.push(format!("`sync {name}` is declared and never called"));
+                }
+                continue;
+            }
+            // A struct: `Name(field:type, ...)`.
+            let Some((name, fields)) = body.split_once('(') else {
+                continue;
+            };
+            if !name.chars().next().is_some_and(char::is_uppercase) {
+                continue;
+            }
+            for field in fields.trim_end_matches(')').split(", ") {
+                let Some((field, _)) = field.split_once(':') else {
+                    continue;
+                };
+                if !APP.contains(&format!(".{field}")) {
+                    dead.push(format!("`{name}.{field}` is declared and never read"));
+                }
+            }
+        }
+        assert!(
+            dead.is_empty(),
+            "the boundary carries what nothing reads:\n  {}",
+            dead.join("\n  ")
+        );
+
+        // A handler the app never routes to is dead however many tests
+        // dispatch it. `dispatch` reaches anything by name, so a handler can
+        // outlive the control that called it and still look exercised.
+        let routed: Vec<&str> = APP
+            .lines()
+            .flat_map(|line| {
+                // `| name _` is the error route of a `run` or a `stream`.
+                [
+                    "-> ", "| ", "change=", "submit=", "drag=", "dismiss=", "paste=",
+                ]
+                .iter()
+                .filter_map(move |form| {
+                    let at = line.find(form)? + form.len();
+                    Some(line[at..].split([' ', '(']).next().unwrap_or_default())
+                })
+            })
+            .collect();
+        let orphans: Vec<&str> = APP
+            .lines()
+            .filter_map(|line| line.strip_prefix("on "))
+            .map(|rest| rest.split('(').next().unwrap_or(rest).trim())
+            .filter(|handler| *handler != "mount" && !routed.contains(handler))
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "handlers nothing routes to: {}",
+            orphans.join(", ")
+        );
+    }
+
     #[test]
     fn the_chart_wears_the_same_palette_as_the_panels() {
         const THEME: &str = include_str!("ui/theme.ice");
@@ -2261,6 +2697,11 @@ mod tests {
         // No trades is not a one-sided market, and must not divide by zero.
         assert_eq!(tape_pressure(Vec::new()), 50.0);
         assert_eq!(tape_pressure(vec![print(0.0, true)]), 50.0);
+        assert_eq!(
+            fmt_share(tape_pressure(demo_tape())),
+            "34%",
+            "the fixture tape"
+        );
     }
 
     #[test]
@@ -2356,6 +2797,7 @@ mod tests {
                 leverage.into(),
                 Some(market(40.0)),
                 buy,
+                0.0,
             )
         };
 
@@ -2418,7 +2860,7 @@ mod tests {
         // not quote a cliff. Treating an unknown requirement as zero puts the
         // liquidation further from the entry than it really is, which is the
         // one direction a risk number must never be wrong in.
-        let unknown = price_ticket("100".into(), "2".into(), "10".into(), None, true);
+        let unknown = price_ticket("100".into(), "2".into(), "10".into(), None, true, 0.0);
         assert!(unknown.ready, "the order is still describable");
         assert_eq!(unknown.notional, 200.0);
         assert_eq!(unknown.margin, 20.0);
@@ -2438,10 +2880,244 @@ mod tests {
             maintenance: 1.0 / 40.0,
             ..market(40.0)
         };
-        let quoted_strict = price_ticket("100".into(), "2".into(), "10".into(), Some(strict), true);
+        let quoted_strict = price_ticket(
+            "100".into(),
+            "2".into(),
+            "10".into(),
+            Some(strict),
+            true,
+            0.0,
+        );
         assert!(
             quoted_strict.liquidation > quoted("100", "2", "10", true).liquidation,
             "a heavier requirement moves the cliff toward the entry"
+        );
+    }
+
+    #[test]
+    fn an_alert_knows_which_way_the_market_has_to_go() {
+        let beat = |price: f64| MarketTick {
+            mids: [("BTC".to_owned(), price)].into_iter().collect(),
+            ..MarketTick::default()
+        };
+        let set = |price: &str, mark: f64| add_alert(Vec::new(), "BTC".into(), price.into(), mark);
+
+        // Nobody is asked which side to wait on: a level above the mark can
+        // only be reached from below, and one below it from above.
+        assert!(set("65000", 64_000.0)[0].above);
+        assert!(!set("63000", 64_000.0)[0].above);
+
+        // It fires when the market gets there, and not before.
+        let above = set("65000", 64_000.0);
+        assert!(!check_alerts(above.clone(), beat(64_900.0))[0].fired);
+        assert!(
+            check_alerts(above.clone(), beat(65_000.0))[0].fired,
+            "at the level"
+        );
+        // And stays fired, so a price wobbling across it chimes once.
+        let hit = check_alerts(above, beat(65_100.0));
+        assert!(
+            check_alerts(hit, beat(64_000.0))[0].fired,
+            "firing is one-way"
+        );
+
+        // A market the beat says nothing about is left alone.
+        let quiet = check_alerts(set("65000", 64_000.0), MarketTick::default());
+        assert!(!quiet[0].fired);
+
+        // A level at the mark has already happened; a duplicate is not a
+        // second alert; nothing to price against is nothing to watch.
+        assert!(set("64000", 64_000.0).is_empty(), "already there");
+        assert_eq!(
+            add_alert(
+                set("65000", 64_000.0),
+                "BTC".into(),
+                "65000".into(),
+                64_000.0
+            )
+            .len(),
+            1
+        );
+        assert!(set("", 64_000.0).is_empty());
+        assert!(set("65000", 0.0).is_empty(), "no mark to compare against");
+
+        let watched = set("65000", 64_000.0);
+        assert_eq!(waiting_alerts(watched.clone()), 1);
+        assert_eq!(
+            waiting_alerts(check_alerts(watched.clone(), beat(65_000.0))),
+            0
+        );
+        assert_eq!(
+            alert_label(watched[0].clone()),
+            "BTC waiting above 65,000.00"
+        );
+        assert!(drop_alert(watched, "BTC".into(), 65_000.0).is_empty());
+    }
+
+    #[test]
+    fn a_share_button_sizes_against_free_margin_not_equity() {
+        let held = |withdrawable: f64| {
+            Some(Account {
+                value: 100_000.0,
+                pnl: 0.0,
+                withdrawable,
+                notional: 0.0,
+                maintenance: 0.0,
+                health: 0.0,
+                margin_pct: 0.0,
+                positions: Vec::new(),
+            })
+        };
+        let size = |share: f64| ticket_afford(held(10_000.0), "100".into(), "5".into(), share);
+
+        // 10,000 free at 5x is 50,000 of notional; a quarter of it at 100 is
+        // 125. Equity is 100,000 and would say ten times that, which is the
+        // point: equity already has positions standing on it.
+        assert_eq!(size(0.25), "125.00");
+        assert_eq!(size(1.0), "500.00");
+        assert_eq!(size(2.0), "500.00", "past everything is everything");
+
+        // Nothing to deploy, nothing to price against, nothing levered.
+        assert_eq!(size(0.0), "");
+        assert_eq!(ticket_afford(held(0.0), "100".into(), "5".into(), 0.5), "");
+        assert_eq!(
+            ticket_afford(held(10_000.0), "".into(), "5".into(), 0.5),
+            ""
+        );
+        assert_eq!(
+            ticket_afford(held(10_000.0), "100".into(), "".into(), 0.5),
+            ""
+        );
+        assert_eq!(
+            ticket_afford(None, "100".into(), "5".into(), 0.5),
+            "",
+            "no account"
+        );
+    }
+
+    #[test]
+    fn the_ticket_says_whether_it_opens_or_closes() {
+        let short = |size: f64| Position {
+            coin: "BTC".into(),
+            size,
+            entry: 60_000.0,
+            mark: 60_000.0,
+            liq: 0.0,
+            pnl: 0.0,
+            roe_pct: 0.0,
+            margin: 0.0,
+            risk: 0.0,
+            leverage: 20.0,
+            margin_mode: "cross".into(),
+            funding: 0.0,
+        };
+        let held = vec![short(-30.0)];
+        let effect =
+            |size: &str, buy: bool| ticket_effect(held.clone(), "BTC".into(), size.into(), buy);
+
+        // A buy against a short is the interesting case: the same ticket that
+        // opens a position on one side closes one on the other, and the only
+        // thing that says which is a sign two panels apart.
+        assert_eq!(effect("10", true), "Reduces your short to 20.00");
+        assert_eq!(effect("30", true), "Closes your short");
+        assert_eq!(effect("50", true), "Closes your short and opens 20.00 long");
+        assert_eq!(effect("10", false), "Opens 10.00 short", "same side, adds");
+
+        // A market you hold nothing in, and a market that is not this one.
+        assert_eq!(
+            ticket_effect(held.clone(), "ETH".into(), "1".into(), true),
+            "Opens 1.00 long"
+        );
+        assert_eq!(
+            ticket_effect(Vec::new(), "BTC".into(), "1".into(), true),
+            "Opens 1.00 long"
+        );
+        // Nothing typed is not an order, and says nothing.
+        assert_eq!(effect("", true), "");
+        assert_eq!(effect("0", true), "");
+    }
+
+    #[test]
+    fn a_closing_order_ties_up_nothing_and_has_no_cliff() {
+        let quote = |size: &str, buy: bool, held: f64| {
+            price_ticket(
+                "100".into(),
+                size.into(),
+                "10".into(),
+                Some(SymbolRow {
+                    name: "BTC".into(),
+                    price: 100.0,
+                    change_pct: 0.0,
+                    volume: 0.0,
+                    funding_pct: 0.0,
+                    leverage: 40.0,
+                    open_interest: 0.0,
+                    prev: 100.0,
+                    maintenance: 1.0 / 80.0,
+                    selected: false,
+                }),
+                buy,
+                held,
+            )
+        };
+
+        // Buying against a 30 short: the trade is worth its notional, but it
+        // opens nothing, so it requires no margin and has no cliff. Quoting
+        // one describes a position that would not exist.
+        let closing = quote("30", true, -30.0);
+        assert_eq!(closing.notional, 3_000.0, "the trade still has a value");
+        assert_eq!(closing.margin, 0.0, "closing releases margin, not ties it");
+        assert_eq!(closing.liquidation, 0.0, "and leaves nothing to liquidate");
+
+        // A partial close is the same: still no new exposure.
+        assert_eq!(quote("10", true, -30.0).margin, 0.0);
+
+        // Past the position, only the excess opens.
+        let flipped = quote("50", true, -30.0);
+        assert_eq!(flipped.notional, 5_000.0, "all of it trades");
+        assert_eq!(flipped.margin, 200.0, "20 of it opens, at 10x on 100");
+        assert!(flipped.liquidation > 0.0, "and that part can be liquidated");
+
+        // Adding to the same side opens all of it, as before.
+        let adding = quote("30", false, -30.0);
+        assert_eq!(adding.margin, 300.0);
+        assert!(adding.liquidation > 0.0);
+        assert_eq!(quote("30", true, 0.0).margin, 300.0, "nothing held");
+    }
+
+    #[test]
+    fn closing_a_position_is_its_size_and_the_other_side() {
+        let at = |coin: &str, size: f64| Position {
+            coin: coin.into(),
+            size,
+            entry: 60_000.0,
+            mark: 60_000.0,
+            liq: 0.0,
+            pnl: 0.0,
+            roe_pct: 0.0,
+            margin: 0.0,
+            risk: 0.0,
+            leverage: 20.0,
+            margin_mode: "cross".into(),
+            funding: 0.0,
+        };
+        let book = vec![at("BTC", -30.0), at("ETH", 5.0)];
+
+        // Signed, because the ticket needs both the size to fill and the side
+        // that closing takes — and they come from the same number.
+        assert_eq!(position_held(book.clone(), "BTC".into()), -30.0);
+        assert_eq!(position_held(book.clone(), "ETH".into()), 5.0);
+        assert_eq!(position_held(book.clone(), "SOL".into()), 0.0, "none held");
+        assert_eq!(position_held(Vec::new(), "BTC".into()), 0.0);
+
+        // What the panel then fills: an unsigned size, and the opposite side.
+        let short = position_held(book.clone(), "BTC".into());
+        assert_eq!(fmt_size(short), "30.00", "the field takes no sign");
+        assert!(short < 0.0, "so closing a short buys");
+        // And the effect line agrees with what the button just did.
+        assert_eq!(
+            ticket_effect(book, "BTC".into(), fmt_size(short), short < 0.0),
+            "Closes your short"
         );
     }
 

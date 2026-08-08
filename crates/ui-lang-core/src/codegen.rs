@@ -47,6 +47,12 @@ fn source_marker_for_origin(program: &LoweredProgram, origin: crate::hir::Origin
 /// short stable hash of the full path (stems repeat — `chat.ice` lives under
 /// screens/, components/, and handlers/ in the ducktape app). Origins inside
 /// the root document itself collapse to "root".
+/// Group slugs for the app's own two large functions. A fragment slug is
+/// either `root` or `<stem>_<8 hex digits>`, so neither of these can collide
+/// with one.
+const APP_UPDATE_GROUP: &str = "app_update";
+const APP_VIEW_GROUP: &str = "app_view";
+
 fn origin_fragment_slug(program: &LoweredProgram, origin: crate::hir::OriginId) -> String {
     let origin = program.origin(origin);
     let path = origin.path.clone().or_else(|| {
@@ -892,11 +898,21 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_theme(&mut out, program)?;
     generate_boot(&mut out, program, &message)?;
     generate_presets(&mut out, program, &message)?;
-    generate_update(&mut out, program, &message)?;
+    // `__update` and `__view` are the two items in a generated app large
+    // enough for their spans to matter, and they answer to different sources:
+    // handlers write one, the view tree the other. Left side by side in the
+    // root file, a one-character edit at the top of the app re-checks both
+    // for nothing (measured on showcase: 0.77s of `type_check_crate` where a
+    // view edit costs 0.04s). Each gets its own group, hence its own file.
+    let mut update = String::new();
+    generate_update(&mut update, program, &message)?;
     generate_subscription(&mut out, program, &message)?;
     let outline_guard = outline::enable_for_view();
-    generate_view(&mut out, program, &message, source_path)?;
+    let mut view = String::new();
+    generate_view(&mut view, program, &message, source_path)?;
     let mut outlined = outline::drain_outlined_methods();
+    outlined.push((APP_UPDATE_GROUP.to_owned(), update));
+    outlined.push((APP_VIEW_GROUP.to_owned(), view));
     drop(outline_guard);
     let outline_guard = outline::enable_for_test_mounts();
     generate_test_mounts(&mut out, program, &message, source_path)?;

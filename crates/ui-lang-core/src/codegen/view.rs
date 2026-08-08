@@ -84,6 +84,7 @@ pub(in crate::codegen) fn component_slot_context(
                 name: slot.name.clone(),
                 view: content,
                 env: env.snapshot(),
+                recorder: innermost_recorder(),
             });
         }
     }

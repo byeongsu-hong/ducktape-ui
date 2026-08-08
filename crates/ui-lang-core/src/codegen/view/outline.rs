@@ -11,8 +11,10 @@
 //! stays at the call site, so scopes chained through `for` keys still work.
 //!
 //! Uses that resolve any local binding (loop variables, lazy dependencies,
-//! slot content, an enclosing component's context) render inline exactly as
-//! before, as does everything inside a `lazy` closure: its content must be
+//! an enclosing component's context) render inline exactly as before — as
+//! does a use whose slot content reaches back to such a binding at the call
+//! site, since the content is emitted inside the method the body moved to.
+//! So does everything inside a `lazy` closure: its content must be
 //! `'static` and an outlined method borrows `self`. Outlining is only active
 //! while `__view` is generated — test mounts re-expand inline under
 //! `#[cfg(test)]`, which keeps every outlined method reachable from the

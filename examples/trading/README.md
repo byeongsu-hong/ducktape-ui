@@ -31,8 +31,11 @@ Monoplex KR and every word is IBM Plex Sans KR — the same skeleton drawn twice
 one monospaced so a column of prices aligns on its digits, one proportional for
 prose. The ground is a warm ink-black rather than the blue-black every exchange
 ships, and the two money colours are a ledger green and an oxide red: printer's
-inks, not phosphor. Nothing else on screen — no button, border, tab, or rule —
-is allowed to be green or red, so long and short read at a glance.
+inks, not phosphor. They mean one thing and are spent nowhere else: which way
+money went, which side an order takes, and how far a position has run toward
+losing all of it. A border, a tab, a rule, a heading, a failure — none of them
+may be either colour, so long and short read at a glance. A feed that dropped
+is the app's problem and not the market's, so it says so in plain ink.
 
 The one thing this layout gives you that an exchange table does not is the
 **risk rail** under each liquidation price: a bar showing how far the mark has
@@ -103,7 +106,9 @@ first.
 
 ## The ticket sends nothing
 
-**NEW ORDER** on the book opens a ticket that prices an order and stops there.
+The ticket is a rail beside the book, not a dialog over it. An order is priced
+against what the book is doing, and a modal that covers the book to ask about
+it has the relationship backwards. It prices an order and stops there.
 It seeds the limit price from the book's mid, takes a size and a leverage held
 inside what the market allows, and answers the only three questions worth
 asking before an order exists: what it is worth, what it ties up, and where it
@@ -117,11 +122,31 @@ displays, and a position row its side and size rather than its ticker. A row
 carrying five figures is worth more than one of them to somebody who cannot
 see the other four.
 
-A level in the book opens it already filled: clicking an ask starts a buy at
-that price, clicking a bid a sell, because the side you want is the side you
-just clicked across. The size is cleared whenever it opens — 0.5 means a
-different order on every market, and carrying it over is how you place one you
-did not mean.
+A level in the book fills it: clicking an ask starts a buy at that price,
+clicking a bid a sell, because the side you want is the side you just clicked
+across. Changing market resets it — 0.5 means a different order on every one
+of them, and carrying it over is how you place an order you did not mean.
+
+Four rails need width the old minimum did not have. The window asks for 1660
+now, which is what the columns actually measure: 610 for the positions row,
+310 for the fills, and 719 for the market list, the book and the ticket.
+
+An order that closes something ties up nothing and has no cliff, and the panel
+says so: the trade still has a value, but the margin is zero and there is no
+liquidation to quote, because nothing was opened. Past the position it is both
+at once — all of it trades, only the excess opens, and only the excess can be
+liquidated.
+
+A position in this market puts a **close** on the ticket, which fills the size
+that flattens it and takes the side that does — both read off the same signed
+number, which is the only place the two agree by construction rather than by
+you doing the sign in your head.
+
+It also says what the order would do to what you already hold. Opening and
+closing are different acts on the same ticket, and the only thing that
+separates them is the sign of a number two panels away — so the ticket reads it
+for you: a buy against a short reduces it, closes it, or closes it and opens
+the other way.
 
 A market the app has not read yet gets no cliff quoted at all. What an order
 is worth and what it ties up are multiplication and always answerable, but the
@@ -152,6 +177,64 @@ a market's maximum leverage, and another exchange holds something else. So the
 market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
+
+## A price that has stopped arriving
+
+The dangerous state in a terminal is not an error, it is data that has gone
+still while still looking current. When the feed dropped, the mark stayed
+green, the change stayed at +1.25%, the book and the tape kept their last
+values, and the only two signs were a dash in the far corner and a line of
+11px text in the positions gutter.
+
+The mark now stops being coloured as a move, and says `NOT LIVE` beside
+itself, because that is where the number is read. One feed drives the mark,
+the book, the tape and the chart, so one badge qualifies all of them; marking
+every cell would be the same statement, repeated until it is ignored.
+
+It is a flag rather than a latency reading. A venue fast enough to report 0ms
+would otherwise read as a venue that had stopped.
+
+## Levels worth being told about
+
+**WATCH THIS LEVEL** puts the ticket's price on a list under the book. Nobody
+is asked which side it is waiting on, because that is a fact rather than a
+question: a level above the mark can only be reached from below.
+
+Firing is one-way. A price that touches a level and wobbles back has still
+touched it, so a level chimes once and then reads as reached rather than
+flickering with the tape. The header counts what is still waiting, which is
+the only number a header can act on.
+
+The alerts live where the market is, not where the account is: the same rail
+as the book and the tape, because they are watching a price rather than a
+position. They outlive the market they were set from, so every row names its
+own — and dismisses by it, rather than by whatever is on screen.
+
+## What a second venue has to provide
+
+The panels, the folds, the ticket's arithmetic, the formatters and the chart
+adapter do not know which exchange they are looking at. What does is a short
+list, and it is the whole of a second adapter:
+
+| | |
+| --- | --- |
+| Two endpoints | one REST, one websocket |
+| Six requests | the universe, a candle window, an account, its resting orders, and whatever the websocket needs to open |
+| Five channels | mids, book, market context, candles, and this account's fills |
+| One field map per response | every number arrives as a string here; another venue will disagree about names and types both |
+| One margin rule | the share of a position's value held against it — Hyperliquid keeps half the margin at the market's maximum leverage; the market carries the answer, so nothing shared learns the rule |
+| One interval vocabulary | `1m`, `5m`, `1h` are this venue's spelling |
+| One side encoding | `B` and `A` here, for both fills and prints |
+
+Everything else is already venue-neutral, and the boundary test keeps it that
+way: `SymbolRow`, `Position`, `Account`, `Book`, `Trade`, `Fill`, `Order` and
+`Ticket` are shapes the panels read, not shapes Hyperliquid returns.
+
+The one thing not yet done is the module split that would put those two halves
+in separate files. It is mechanical — the venue half needs `Tape.candles`,
+`MarketTick.mids`, `MarketTick.context` and `Fill.tid` visible to the crate,
+because the venue writes what the panels read — and it is worth doing when
+there is a second adapter to shape it against.
 
 ## What talks to the exchange
 
@@ -271,7 +354,10 @@ renders the chart from the tape plus the current fills, positions, and orders.
 Candles never cross into Ice; everything the panels list does, because the
 panels list it — and only that. A struct crossing the boundary carries the
 fields the screen reads and no others, so the extern block stays a description
-of the interface rather than of the exchange.
+of the interface rather than of the exchange. A test holds it to that, because
+the rule does not hold itself: five fields and one whole `sync` had drifted
+across it before the test existed, and a declared function nothing calls is
+how you find out that the edit meant to wire it up matched nothing.
 
 The chart adapter reports back one `ChartSignal`: the candle under the cursor,
 and whether the view has reached the oldest candle loaded. One handler reads
@@ -294,6 +380,12 @@ so when there is none; and a failure outranks the progress line it shares a
 slot with. None of those reach the network, so they run wherever the rest does.
 One test reads the palette out of `theme.ice` and holds the chart to it, because
 the chart is drawn in Rust and would otherwise drift in silence.
+
+One market, one position, a book and a few prints live in the source as
+fixtures, behind a named preset. Everything that only exists when an account does — the ticket's
+figures, what an order would do to a position, what it asks for in margin —
+is asserted against them, so the readings that were only ever visible in a
+picture are now checked without one.
 
 Two tests talk to the live exchange — one per endpoint shape, so the subscription names and payloads
 are checked against Hyperliquid rather than against a recording, and the
