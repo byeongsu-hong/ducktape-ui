@@ -41,13 +41,17 @@ extern crate::hyperliquid
   sync demo_symbols() -> [SymbolRow]
   sync demo_positions() -> [Position]
   sync demo_candles() -> Tape
+  sync demo_candles_at(last:f64) -> Tape
   sync demo_account() -> Account
   sync demo_account_at_risk() -> Account
   sync demo_positions_at_risk() -> [Position]
+  sync demo_symbols_at_risk() -> [SymbolRow]
   sync demo_fills() -> [Fill]
   sync demo_orders() -> [Order]
   sync demo_alerts() -> [Alert]
   sync demo_book() -> Book
+  sync demo_book_at(mid:f64) -> Book
+  sync demo_tape_at(mid:f64) -> [Trade]
   sync demo_tape() -> [Trade]
   sync position_held(positions:[Position], coin:str) -> f64
   sync mark_price(market:SymbolRow?) -> f64
@@ -59,6 +63,7 @@ extern crate::hyperliquid
   sync drop_alert(alerts:[Alert], coin:str, price:f64) -> [Alert]
   sync ticket_afford(account:Account?, price:str, leverage:str, share:f64) -> str
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
+  sync order_load(account:Account?, coin:str, size:str, buy:bool, market:SymbolRow?) -> str
   sync order_label(order:Order) -> str
   sync fill_label(fill:Fill) -> str
   sync book_label(price:f64, buy:bool) -> str
