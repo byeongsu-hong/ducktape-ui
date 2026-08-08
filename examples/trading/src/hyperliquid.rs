@@ -1765,6 +1765,51 @@ pub fn ticket_afford(
 /// different acts on the same ticket, and the difference is the sign of a
 /// number two panels apart — the size you typed here and the position sitting
 /// in the panel below.
+/// Where this order leaves the account, against the engine: the margin load
+/// now and the load once the order is on. Reads "1% → 4%".
+///
+/// The panel already says what an order costs in margin. It did not say what
+/// it costs in distance, which is the figure a cross account is actually
+/// liquidated on — and the one a reader has to be able to see before sending,
+/// not after.
+///
+/// Only cross positions are counted, because only they are held against the
+/// account. An isolated order changes nothing here and says so.
+pub fn order_load(
+    account: Option<Account>,
+    coin: String,
+    size: String,
+    buy: bool,
+    market: Option<SymbolRow>,
+) -> String {
+    let Some(account) = account else {
+        return String::new();
+    };
+    let size = amount(&size).abs();
+    let Some(market) = market else {
+        return String::new();
+    };
+    if size <= 0.0 || account.value <= 0.0 || market.price <= 0.0 {
+        return String::new();
+    }
+    let now = cross_maintenance(&account.positions);
+    let held = account
+        .positions
+        .iter()
+        .find(|position| position.margin_mode == "cross" && position.coin == coin)
+        .map_or(0.0, |position| position.size);
+    let after_size = held + if buy { size } else { -size };
+    // The order replaces this market's contribution with what it leaves.
+    let fraction = market.maintenance;
+    let after =
+        now - held.abs() * market.price * fraction + after_size.abs() * market.price * fraction;
+    format!(
+        "{} → {}",
+        fmt_share(margin_load(account.value, now) * 100.0),
+        fmt_share(margin_load(account.value, after.max(0.0)) * 100.0)
+    )
+}
+
 pub fn ticket_effect(positions: Vec<Position>, coin: String, size: String, buy: bool) -> String {
     let size = amount(&size).abs();
     if size <= 0.0 {
@@ -1862,6 +1907,18 @@ pub fn fmt_age(ts: i64) -> String {
 /// state from somewhere; these are that somewhere. Two bugs in this panel were
 /// only ever visible in a picture, and a picture needs data.
 pub fn demo_symbols() -> Vec<SymbolRow> {
+    demo_symbols_priced(64_000.0, 63_210.0)
+}
+
+/// The same markets with bitcoin marked where the account against the engine
+/// is marked. A position's mark is the feed's price for its market — the app
+/// sets one from the other every beat — so a fixture that priced them apart
+/// would be a state no beat could produce.
+pub fn demo_symbols_at_risk() -> Vec<SymbolRow> {
+    demo_symbols_priced(58_000.0, 64_000.0)
+}
+
+fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
     // More than one, because a list of one hides every question worth asking
     // of a list: which row is selected, what a search leaves, and whether a
     // price landed on the market it belongs to. Volume descending, as the
@@ -1869,13 +1926,13 @@ pub fn demo_symbols() -> Vec<SymbolRow> {
     vec![
         SymbolRow {
             name: "BTC".to_owned(),
-            price: 64_000.0,
-            change_pct: change_pct(64_000.0, 63_210.0),
+            price: btc,
+            change_pct: change_pct(btc, btc_prev),
             volume: 1_300_000_000.0,
             funding_pct: 0.00125,
             leverage: 40.0,
             open_interest: 35_000.0,
-            prev: 63_210.0,
+            prev: btc_prev,
             maintenance: 1.0 / 80.0,
             selected: true,
         },
@@ -1971,15 +2028,24 @@ fn demo_position(
 /// that never appeared in a deterministic render, because its candles live
 /// behind a lock the feed fills rather than in app state.
 pub fn demo_candles() -> Tape {
+    demo_candles_at(64_000.0)
+}
+
+/// Candles that end where the market is quoting. A chart drawn around another
+/// price is a chart of another market, and it is the largest panel on screen.
+pub fn demo_candles_at(last: f64) -> Tape {
     let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
     let mut candles = Vec::new();
-    let mut close = 63_800.0;
+    // The walk below lands its last close at `base + 519.5 * ...`; starting
+    // from what that leaves puts the tip on the price the market quotes.
+    let base = last - (119.0_f64 / 9.0).sin() * 520.0 - 119.0 * 1.5;
+    let mut close = base - 100.0;
     for step in 0..120 {
         // A shape rather than a straight line, so the moving averages have
         // something to say and the plot is not a diagonal.
         let drift = ((step as f64) / 9.0).sin() * 520.0;
         let open = close;
-        close = 63_900.0 + drift + (step as f64) * 1.5;
+        close = base + drift + (step as f64) * 1.5;
         candles.push(Candle {
             ts: 1_786_110_000 + step * 60,
             open,
@@ -2031,9 +2097,9 @@ pub fn demo_account_at_risk() -> Account {
 /// The maintenance requirement an account is actually held to, summed from
 /// the positions that are held against the whole account rather than against
 /// their own margin. An isolated position dies alone and does not enter it.
-fn cross_maintenance(positions: &[Position]) -> f64 {
+fn cross_maintenance<'a>(positions: impl IntoIterator<Item = &'a Position>) -> f64 {
     positions
-        .iter()
+        .into_iter()
         .filter(|held| held.margin_mode == "cross")
         .map(|held| held.mark * held.size.abs() * maintenance_fraction(held.leverage))
         .sum()
@@ -2120,6 +2186,14 @@ pub fn demo_alerts() -> Vec<Alert> {
 /// A book and a tape to go with them, so the whole terminal renders from
 /// fixtures rather than from an exchange.
 pub fn demo_book() -> Book {
+    demo_book_at(64_000.0)
+}
+
+/// A book around the price its market is quoting. Depth that sat at another
+/// price would be a book from another market: the panel walks it to say what
+/// crossing costs, and the answer would be about a price nothing is trading
+/// at.
+pub fn demo_book_at(mid: f64) -> Book {
     let level = |price: f64, size: f64, total: f64, deepest: f64| Level {
         price,
         size,
@@ -2128,24 +2202,28 @@ pub fn demo_book() -> Book {
     };
     Book {
         bids: vec![
-            level(63_999.0, 1.4, 1.4, 6.0),
-            level(63_998.0, 2.1, 3.5, 6.0),
-            level(63_997.0, 2.5, 6.0, 6.0),
+            level(mid - 1.0, 1.4, 1.4, 6.0),
+            level(mid - 2.0, 2.1, 3.5, 6.0),
+            level(mid - 3.0, 2.5, 6.0, 6.0),
         ],
         // Reversed, as the feed leaves them: the best ask sits last, against
         // the spread, so the panel walks both lists top to bottom.
         asks: vec![
-            level(64_003.0, 3.0, 7.0, 7.0),
-            level(64_002.0, 2.2, 4.0, 7.0),
-            level(64_001.0, 1.8, 1.8, 7.0),
+            level(mid + 3.0, 3.0, 7.0, 7.0),
+            level(mid + 2.0, 2.2, 4.0, 7.0),
+            level(mid + 1.0, 1.8, 1.8, 7.0),
         ],
         spread: 2.0,
-        spread_pct: 2.0 / 64_000.0 * 100.0,
-        mid: 64_000.0,
+        spread_pct: 2.0 / mid * 100.0,
+        mid,
     }
 }
 
 pub fn demo_tape() -> Vec<Trade> {
+    demo_tape_at(64_000.0)
+}
+
+pub fn demo_tape_at(mid: f64) -> Vec<Trade> {
     let print = |tid: i64, price: f64, size: f64, buy: bool, sweep: i64| Trade {
         ts: 1_786_117_888 - tid,
         price,
@@ -2155,9 +2233,9 @@ pub fn demo_tape() -> Vec<Trade> {
         tid,
     };
     vec![
-        print(1, 64_001.0, 0.53, true, 2),
-        print(2, 63_999.0, 1.20, false, 1),
-        print(3, 64_001.0, 0.08, true, 1),
+        print(1, mid + 1.0, 0.53, true, 2),
+        print(2, mid - 1.0, 1.20, false, 1),
+        print(3, mid + 1.0, 0.08, true, 1),
     ]
 }
 
@@ -2312,6 +2390,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_order_says_where_it_leaves_the_account_against_the_engine() {
+        let account = demo_account_at_risk();
+        let btc = symbol_row(demo_symbols_at_risk(), "BTC".to_owned());
+        let load = |size: &str, buy: bool, market: Option<SymbolRow>| {
+            order_load(
+                Some(account.clone()),
+                market
+                    .as_ref()
+                    .map_or_else(String::new, |row| row.name.clone()),
+                size.to_owned(),
+                buy,
+                market,
+            )
+        };
+
+        // Five bitcoin long already, ninety one percent of the way there.
+        // Another five doubles what the account is held to, and it was
+        // already past what its equity covers.
+        assert_eq!(load("5", true, btc.clone()), "91% → 100%");
+        // Selling into it is the way back: half the position, half the
+        // requirement.
+        assert_eq!(load("2.5", false, btc.clone()), "91% → 45%");
+        // Closing it leaves nothing to be held to.
+        assert_eq!(load("5", false, btc.clone()), "91% → 0%");
+
+        // A different market adds its own requirement at its own rate, and
+        // the isolated position already open there is not the account's to
+        // answer for, so it is not what the order is measured against.
+        let eth = symbol_row(demo_symbols_at_risk(), "ETH".to_owned());
+        assert_eq!(load("1", true, eth), "91% → 92%");
+
+        // Nothing to say without an account, a size, or a market.
+        assert!(order_load(None, "BTC".to_owned(), "5".to_owned(), true, btc.clone()).is_empty());
+        assert!(load("", true, btc).is_empty());
+        assert!(load("5", true, None).is_empty());
+    }
+
     /// The equity bar is the account's distance to the margin engine, and it
     /// has to be the distance these positions actually put it at. A hand-typed
     /// requirement read 38% loaded beside a cross position whose own rail read
@@ -2348,6 +2464,70 @@ mod tests {
             .collect();
         assert!(!isolated.is_empty(), "the fixture holds one to check");
         assert_eq!(cross_maintenance(&isolated), 0.0);
+
+        // A position's mark is the feed's price for its market — every beat
+        // sets one from the other — so a fixture that priced them apart is a
+        // state no beat could produce. It read as an order halving a
+        // requirement that had been summed at a different price.
+        for (account, markets) in [
+            (demo_account(), demo_symbols()),
+            (demo_account_at_risk(), demo_symbols_at_risk()),
+        ] {
+            for held in &account.positions {
+                let market = markets
+                    .iter()
+                    .find(|row| row.name == held.coin)
+                    .unwrap_or_else(|| panic!("{} is held but not listed", held.coin));
+                assert!(
+                    (held.mark - market.price).abs() < 0.01,
+                    "{}: marked at {} while the market says {}",
+                    held.coin,
+                    held.mark,
+                    market.price
+                );
+            }
+        }
+
+        // The chart is the largest panel on screen, and one drawn around
+        // another price is a chart of another market.
+        for (price, tape) in [
+            (64_000.0, demo_candles()),
+            (58_000.0, demo_candles_at(58_000.0)),
+        ] {
+            let candles = lock(&tape.candles);
+            let last = candles.last().expect("the fixture tape has candles");
+            assert!(
+                (last.close - price).abs() < 0.01,
+                "the tape ends at {} beside a market at {price}",
+                last.close
+            );
+        }
+
+        // The book and the tape belong to the market they are shown beside.
+        // Depth at another price answers what crossing costs with a number
+        // about a price nothing is trading at.
+        for (markets, book, prints) in [
+            (demo_symbols(), demo_book(), demo_tape()),
+            (
+                demo_symbols_at_risk(),
+                demo_book_at(58_000.0),
+                demo_tape_at(58_000.0),
+            ),
+        ] {
+            let price = markets[0].price;
+            assert!(
+                (book.mid - price).abs() <= book.spread,
+                "the book sits at {} beside a market at {price}",
+                book.mid
+            );
+            for print in &prints {
+                assert!(
+                    (print.price - price).abs() <= book.spread,
+                    "a print at {} beside a market at {price}",
+                    print.price
+                );
+            }
+        }
 
         // At rest and at risk are genuinely different readings, or the
         // fixture pair is only one fixture.

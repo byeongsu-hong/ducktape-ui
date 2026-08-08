@@ -209,6 +209,30 @@ The markets are three rather than one, for the same reason. A list of one
 answers no question a list is asked: which row is selected, what a search
 leaves behind, whether a price landed on the market it belongs to.
 
+## One market on the screen at a time
+
+Every panel is quoting the same market, so a fixture has to price them
+together: the mark a position is held at is the feed's price for its market,
+the book sits inside a spread of it, the tape prints against it, and the chart
+ends on it. Each of those is one number appearing in several places, and a
+fixture that let them drift showed a book from one market beside a chart of
+another — convincingly, because each panel was internally fine.
+
+The at-risk fixture is where that first bit: it moved bitcoin to 58,000 and
+left the book, the tape and the chart at 64,000. So the fixtures take the
+price they are drawn around, and a test walks each pair.
+
+## The order, against the engine
+
+`AGAINST THE ENGINE` reads `91% → 100%`: where the account stands against its
+maintenance requirement now, and where this order leaves it. The panel already
+said what an order costs in margin; it did not say what it costs in distance,
+which is the figure a cross account is actually liquidated on — and the one
+that has to be readable before sending rather than after.
+
+Only cross positions count. An isolated one is liquidated against its own
+margin and asks nothing of the account.
+
 ## The other price
 
 The ticket quotes a price the reader typed. `IF YOU CROSS` is the other one:
