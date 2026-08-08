@@ -80,6 +80,7 @@ extern crate::hyperliquid
   sync book_label(price:f64, buy:bool) -> str
   sync position_label(held:Position) -> str
   sync interval_label(interval:str, shown:bool) -> str
+  sync page_label(page:str, shown:bool) -> str
   sync hit_open(hit:CandleHit) -> f64
   sync hit_high(hit:CandleHit) -> f64
   sync hit_low(hit:CandleHit) -> f64

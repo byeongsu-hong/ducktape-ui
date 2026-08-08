@@ -12,10 +12,10 @@ cargo test -p trading-example
 
 The app opens on an address prompt, prefilled with a well-known account so
 there is something to look at on the first run. Press **Connect** to read it,
-type your own, or **Browse markets** to use market data only; the positions
-panel offers the prompt again if you change your mind. Browsing without one,
-the three panels that need an account say so rather than reporting that the
-account has nothing in it.
+type your own, or **Browse markets** to use market data only; the portfolio's
+positions panel offers the prompt again if you change your mind, and so does
+the settings page. Browsing without one, the three panels that need an account
+say so rather than reporting that the account has nothing in it.
 
 An address is checked before it is sent, because the exchange answers a
 malformed one with a plain-text parser complaint rather than JSON — so without
@@ -46,6 +46,75 @@ run with the tray as a no-op.
 
 ![Menubar popover, loading](screenshots/menubar-panel.png)
 ![Menubar popover, focused market](screenshots/menubar-market.png)
+
+## Four pages
+
+Every panel used to be on one screen, and that screen was full: the window
+declared a 1660×820 minimum, which is a size a laptop does not have. The panels
+are the same panels. They are dealt onto four pages now, and each one has the
+room the single screen could not give it.
+
+| Page | What it holds |
+| --- | --- |
+| **Trade** | the chart with its intervals, the book, the tape, the levels being watched, and the order ticket |
+| **Markets** | every market the venue lists, six columns wide: price, 24h, volume, open interest, funding, maximum leverage |
+| **Portfolio** | the account summary, the open positions, the resting orders and the recent fills |
+| **Settings** | the address being read, what the feed is doing, and what this app will and will not do |
+
+The split falls on what the reader is doing, not on what the data is. Trading
+one market is the chart, the book, the tape and the ticket, and they belong
+together because the ticket is priced against the book while the tape says
+whether anything is happening at all. Choosing which market to trade is a
+different act, and it wants a table rather than a 232pt rail. Reading an
+account is a third, and it is the one that was worst served: positions, orders
+and fills shared a strip under the chart, three lists in the space of one.
+
+`Page` is an enum and the view is a `match` over it. There is no router,
+because there is nothing to route: no history to walk, no path to parse, and
+no state a page holds that the app does not already hold.
+
+The header stays on all four. It carries the market, the account's equity and
+the feed's round trip, and those three are true wherever you are standing —
+a price that only exists on the trade page is a price you have to navigate to
+read. The page tabs live in it, named by the act like every other control
+here: `Show the portfolio page`, and the page already drawn appends
+`, already showing` rather than renaming itself, because a button carries no
+state a reader can hear.
+
+Nothing lost a home in the split:
+
+- **The market rail became the markets page** and gained four columns —
+  volume, open interest, funding and maximum leverage. Those four were in the
+  header, for the selected market alone; a market you have not selected is
+  exactly the one you are comparing. So the header gave them up, and got back
+  the width that lowered the minimum.
+- **The interval tabs went with the chart**, into a bar above it with the
+  crosshair readout, the progress line and the two failure lines. They are
+  chart controls: an interval tab on the settings page draws nothing. That is
+  what makes the header page-independent rather than mostly page-independent.
+- **The resting orders left the book rail** for the portfolio, where the
+  account's other lists are, and the alerts took the fixed slot they leave
+  behind. The book rail is the market's; the portfolio is the account's.
+- **The drag divider went with the lower pane.** It used to size positions
+  against the chart; on the portfolio it sizes the orders and fills against the
+  positions, which is the same argument — some days are worth more rows than
+  others — between the two lists that now share a page.
+- **DEMO ONLY is a statement rather than a badge.** It was a label at the top
+  of the ticket and a box at the bottom of it, which is twice on one screen and
+  nothing on the other three. It is a paragraph on settings now, next to what
+  the app does read, and a test holds that no other page says it.
+
+Picking a market goes to the trade page — from the market list, and from any
+position, order or fill row, which have always been ways back to a market. A
+row that answers a request by leaving you where you were has not answered it.
+
+The window's minimum is **1180×720** now, which fits a 1366×768 laptop with the
+system's own chrome around it. It is the widest page that sets it: the trade
+page needs 232 for the book, 252 for the ticket and the rest for the chart,
+and the header needs its market, four tabs, the equity block and the feed. The
+old 1660 was the lower pane's seven columns and the fills' three beside the
+market rail, the book and the ticket — five panels across, which is the thing
+pages exist to stop.
 
 ## Design
 
@@ -100,7 +169,8 @@ took and marked with how many it took. A sweep is the thing worth seeing, and
 it is exactly what a raw message-per-row tape buries.
 
 The tape takes whatever height the rail has left, because it is the panel that
-gets better with more rows. Resting orders are few and keep a fixed slot.
+gets better with more rows. The levels being watched are few and keep a fixed
+slot under it.
 
 A fill the account just printed is pushed onto the top of the list wearing its
 side's colour, which fades over two beats and leaves the row cold. It is the
@@ -127,9 +197,10 @@ be the one control on screen named for what it reads.
 Funding is the one figure here written to four decimals. Two is what every
 other number wants, and it is exactly what funding cannot use: the hourly rate
 is a hundredth of a percent on most of the exchange, so 166 of the 177 funded
-markets would print the identical `+0.00%`. The header pays for those two
-digits by calling volume `VOL` and open interest `OI`, which is what a book
-calls them anyway, and it fits the window's own 1400pt minimum again.
+markets would print the identical `+0.00%`. A column of them on the markets
+page is what those digits are for: four decimals down a column separates the
+markets that pay from the markets that do not, and two decimals would draw the
+same figure 166 times.
 
 The book quotes its spread in basis points rather than in dollars, because a
 spread only means something against the price under it: two dollars is the
@@ -160,9 +231,8 @@ clicking a bid a sell, because the side you want is the side you just clicked
 across. Changing market resets it — 0.5 means a different order on every one
 of them, and carrying it over is how you place an order you did not mean.
 
-Four rails need width the old minimum did not have. The window asks for 1660
-now, which is what the columns actually measure: 610 for the positions row,
-310 for the fills, and 719 for the market list, the book and the ticket.
+The ticket is 252 wide beside a 232 book, and it is one of the two panels that
+set the trade page's share of the window's minimum.
 
 An order that closes something ties up nothing and has no cliff, and the panel
 says so: the trade still has a value, but the margin is zero and there is no
@@ -193,8 +263,8 @@ take the whole size away, and then the button offers nothing rather than `0`:
 an order for none of the instrument is not a size the panel may fill in.
 
 The same number may not be written two ways on one screen. The header's PnL is
-the sum of the positions under it, so with one position open it is that
-position's PnL — and it was exact where the row beside it was compact,
+the sum of the positions the portfolio lists, so with one position open it is
+that position's PnL — and it was exact where the row beside it was compact,
 `-$30,000.00` above `-$30.0K`. Both are written by the rule the fills already
 used: exact while it is small enough to read, compact once it is not.
 
@@ -223,14 +293,17 @@ and the panel showed one number while using another.
 
 Escape closes it, and the subscription that listens for Escape exists only
 while it is open. Escape with a search in the box clears the search instead,
-on its own subscription with its own condition, so neither key listener exists
-when there is nothing for it to do.
+on its own subscription with its own condition — the markets page, showing,
+with something typed — so neither key listener exists when there is nothing
+for it to do, and Escape on the chart does not clear a box that is not there.
 
-Nothing is signed and nothing is sent, and the panel says so in the place a
-submit button would be. Sending would mean this app holding the key that signs
-an EIP-712 order, which is not a thing an example should ask for. The boundary
-is the interesting part: everything up to the signature is arithmetic worth
-having, and the signature is where a real client starts.
+Nothing is signed and nothing is sent, and the ticket says so where a submit
+button would be a heading: it opens by naming what it does and what it does
+not, rather than closing with a badge. The reason lives on the settings page,
+once. Sending would mean this app holding the key that signs an EIP-712 order,
+which is not a thing an example should ask for. The boundary is the
+interesting part: everything up to the signature is arithmetic worth having,
+and the signature is where a real client starts.
 
 The one figure in that arithmetic that is not arithmetic is the maintenance
 requirement, and it belongs to the venue: Hyperliquid holds half the margin at
@@ -322,7 +395,7 @@ Leaving an address is the same rule against a different clock. The gate opens
 over the terminal rather than replacing it, so whatever the last address put
 on screen is still drawn behind it — which is why going back to the prompt
 clears the fills, the orders, the positions, the account, the live badge and
-its round trip. Both lines under the positions header go with them. The feed's
+its round trip. Both lines in the chart's own bar go with them. The feed's
 complaint describes a socket that `abort feeds` is closing on the way out, and
 a request's failure names the address the request was made for: every fetch
 this app makes is made for one account, so `Hyperliquid unreachable` about the
@@ -344,7 +417,9 @@ drawing in the wrong order, quietly.
 
 Nothing was clipped. The book, the tape, the alerts, the orders and the
 market list each scroll inside their own bounds, and the half row at a
-boundary is the affordance saying so.
+boundary is the affordance saying so. It is captured twice now, once on the
+trade page for the tape and once on the markets page for the list, because
+they no longer share a screen to be clipped on.
 
 ## Two states nothing had drawn
 
@@ -460,7 +535,7 @@ The dangerous state in a terminal is not an error, it is data that has gone
 still while still looking current. When the feed dropped, the mark stayed
 green, the change stayed at +1.25%, the book and the tape kept their last
 values, and the only two signs were a dash in the far corner and a line of
-11px text in the positions gutter.
+11px text in the bar under the chart.
 
 The mark now stops being coloured as a move, and says `NOT LIVE` beside
 itself, because that is where the number is read. One feed drives the mark,
@@ -572,7 +647,7 @@ into at most one message per beat, and each one holds the latest of everything
 rather than only what changed, so a handler can assign it without asking which
 kind of update it was.
 
-A failure and a progress message share one slot under the positions header,
+A failure and a progress message share one slot in the bar above the chart,
 and a failure wins it. They are different things: "Loading candles" is the app
 working and "Hyperliquid unreachable" is the app stopped, so they are separate
 state and only one of them is red. The slot is also the chart's hover readout,
@@ -655,6 +730,12 @@ survives being typed and clears on Escape; the panels that need an account say
 so when there is none; and a failure outranks the progress line it shares a
 slot with, in the terminal's plain ink rather than in either money colour.
 None of those reach the network, so they run wherever the rest does.
+
+There is one test per page, and each one navigates to its page and asks for
+something only that page draws — a test that asserted the header would pass on
+all four, which is the failure a navigation test exists to catch. They run at
+1180×720, the window's own minimum, because that is the size the app promises
+to be usable at and nothing else here checks it. Each captures its page.
 One test reads the palette out of `theme.ice` and holds the chart to it, because
 the chart is drawn in Rust and would otherwise drift in silence.
 
