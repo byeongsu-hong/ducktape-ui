@@ -294,6 +294,11 @@ pub struct Trade {
 }
 
 /// One executed trade, which is what the chart marks.
+///
+/// `Hash` is hand-written for the same reason `SymbolRow`'s is: the fills list
+/// is a `lazy` boundary keyed on the fill it draws, and the money on a fill is
+/// `f64`. A row's cache is invalidated by any change to that fill, the heat
+/// countdown included, which is exactly what the row renders.
 #[derive(Clone, PartialEq)]
 pub struct Fill {
     pub coin: String,
@@ -306,8 +311,23 @@ pub struct Fill {
     /// down to zero by the app. Fills already on the books arrive cold.
     pub heat: i64,
     /// The exchange's trade id, which is how a fill pushed by the feed is
-    /// recognised as one the snapshot already listed.
-    tid: i64,
+    /// recognised as one the snapshot already listed, and — because a `lazy`
+    /// subtree cannot see which iteration built it — the identity its row is
+    /// listed under.
+    pub tid: i64,
+}
+
+impl Hash for Fill {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.coin.hash(state);
+        self.ts.hash(state);
+        self.buy.hash(state);
+        self.heat.hash(state);
+        self.tid.hash(state);
+        for value in [self.price, self.size, self.closed_pnl] {
+            hash_f64(value, state);
+        }
+    }
 }
 
 /// One resting order, listed and drawn on the chart as a level.
@@ -2070,9 +2090,18 @@ pub fn order_label(order: Order) -> String {
     )
 }
 
+/// One call per fill row rendered, which is what
+/// `fills_stay_memoized_performance_contract` counts: a redraw that rebuilds a
+/// memoized row shows up here and nowhere else.
+#[cfg(test)]
+pub(crate) static FILL_LABELS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 /// A fill names what it did and where. Its realized PnL is the point when it
 /// closed something, and its size when it opened.
 pub fn fill_label(fill: Fill) -> String {
+    #[cfg(test)]
+    FILL_LABELS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let side = if fill.buy { "bought" } else { "sold" };
     let outcome = if fill.closed_pnl == 0.0 {
         fmt_size(fill.size)
@@ -2744,9 +2773,221 @@ pub fn chart(
         .into()
 }
 
+/// Traffic in the shape one connection carries, for probes that need a beat
+/// larger than the fixtures. A `MarketTick` holds private fields on purpose —
+/// the app folds one rather than building one — so the way to a real beat is
+/// to drive the real reader over real-shaped JSON, which is also the only way
+/// to price the reader itself.
+#[cfg(test)]
+pub(crate) mod probe {
+    use super::*;
+
+    pub(crate) fn market(index: usize) -> String {
+        if index == 0 {
+            "BTC".to_owned()
+        } else {
+            format!("SYM{index}")
+        }
+    }
+
+    /// Every mid on the exchange, as decimal strings. This is the whole
+    /// `allMids` payload, and it arrives on every beat whatever moved.
+    pub(crate) fn all_mids(markets: usize, mid: f64) -> Value {
+        let mids: serde_json::Map<String, Value> = (0..markets)
+            .map(|index| {
+                (
+                    market(index),
+                    Value::String(format!("{:.4}", mid + index as f64)),
+                )
+            })
+            .collect();
+        json!({ "mids": mids })
+    }
+
+    pub(crate) fn l2_book(coin: &str, depth: usize, mid: f64) -> Value {
+        let side = |sign: f64| -> Vec<Value> {
+            (1..=depth)
+                .map(|step| {
+                    json!({
+                        "px": format!("{:.1}", mid + sign * step as f64),
+                        "sz": "1.7",
+                        "n": 3,
+                    })
+                })
+                .collect()
+        };
+        json!({
+            "coin": coin,
+            "time": 1_786_117_888_000_i64,
+            "levels": [side(-1.0), side(1.0)],
+        })
+    }
+
+    pub(crate) fn prints(coin: &str, count: usize, mid: f64) -> Value {
+        Value::Array(
+            (0..count)
+                .map(|step| {
+                    json!({
+                        "coin": coin,
+                        "side": if step % 3 == 1 { "A" } else { "B" },
+                        "px": format!("{:.1}", mid + (step % 3) as f64),
+                        "sz": "0.42",
+                        "time": 1_786_117_888_000_i64 + step as i64,
+                        "hash": format!("0x{step:064x}"),
+                        "tid": 900_000 + step as i64,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    pub(crate) fn context(coin: &str, mid: f64) -> Value {
+        json!({
+            "coin": coin,
+            "ctx": {
+                "markPx": format!("{mid:.1}"),
+                "prevDayPx": format!("{:.1}", mid - 400.0),
+                "dayNtlVlm": "1284000000.0",
+                "funding": "0.0000125",
+                "openInterest": "24000.0",
+            },
+        })
+    }
+
+    /// Drives the real reader through one beat's traffic and returns the beat
+    /// it publishes.
+    pub(crate) fn beat(markets: usize, depth: usize, count: usize, mid: f64) -> MarketTick {
+        let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+        let mut read = market_reader(tape);
+        let (mids, book) = (all_mids(markets, mid), l2_book("BTC", depth, mid));
+        let (tape_prints, ctx) = (prints("BTC", count, mid), context("BTC", mid));
+        read(Event::Beat);
+        read(Event::Payload("allMids", &mids));
+        read(Event::Payload("l2Book", &book));
+        read(Event::Payload("activeAssetCtx", &ctx));
+        read(Event::Payload("trades", &tape_prints));
+        read(Event::Pong(42));
+        read(Event::Beat).expect("a beat that carried traffic publishes a tick")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Median nanoseconds per call over `rounds` batches. Batched because the
+    /// cheap end of this boundary is faster than the clock reads.
+    #[cfg(not(debug_assertions))]
+    fn per_call(batch: usize, rounds: usize, mut call: impl FnMut()) -> f64 {
+        for _ in 0..8 {
+            call();
+        }
+        let mut samples: Vec<u128> = (0..rounds)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                for _ in 0..batch {
+                    call();
+                }
+                started.elapsed().as_nanos()
+            })
+            .collect();
+        samples.sort_unstable();
+        samples[rounds / 2] as f64 / batch as f64
+    }
+
+    /// What one connection's traffic costs before the app ever sees it.
+    ///
+    ///     cargo test --release -p trading-example -- --ignored --nocapture feed_cost
+    #[test]
+    #[ignore = "feed-cost probe, run explicitly: prints per-message costs, asserts nothing"]
+    #[cfg(not(debug_assertions))]
+    fn feed_cost() {
+        const MARKETS: usize = 200;
+        const ROUNDS: usize = 40;
+        let mid = 64_000.0;
+
+        let mids = probe::all_mids(MARKETS, mid);
+        let book = probe::l2_book("BTC", BOOK_DEPTH, mid);
+        let trades = probe::prints("BTC", 8, mid);
+        let ctx = probe::context("BTC", mid);
+        let mids_text = mids.to_string();
+        let book_text = book.to_string();
+
+        eprintln!("\nhyperliquid feed, {MARKETS} markets, book depth {BOOK_DEPTH}");
+        eprintln!(
+            "{:<34} {:>7} bytes",
+            "allMids payload on the wire",
+            mids_text.len()
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  serde_json::from_str",
+            "allMids parse to Value",
+            per_call(200, ROUNDS, || {
+                std::hint::black_box(serde_json::from_str::<Value>(&mids_text).unwrap());
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  serde_json::from_str",
+            "l2Book parse to Value",
+            per_call(2_000, ROUNDS, || {
+                std::hint::black_box(serde_json::from_str::<Value>(&book_text).unwrap());
+            })
+        );
+
+        // What the reader makes of each message, given the Value.
+        let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+        let mut read = market_reader(tape.clone());
+        read(Event::Beat);
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, allMids",
+            "allMids fold to mids map",
+            per_call(200, ROUNDS, || {
+                std::hint::black_box(read(Event::Payload("allMids", &mids)));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, l2Book",
+            "l2Book fold to a Book",
+            per_call(2_000, ROUNDS, || {
+                std::hint::black_box(read(Event::Payload("l2Book", &book)));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, trades",
+            "trades fold to prints",
+            per_call(2_000, ROUNDS, || {
+                std::hint::black_box(read(Event::Payload("trades", &trades)));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, activeAssetCtx",
+            "activeAssetCtx fold",
+            per_call(2_000, ROUNDS, || {
+                std::hint::black_box(read(Event::Payload("activeAssetCtx", &ctx)));
+            })
+        );
+
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, every message + publish",
+            "one whole beat, folded",
+            per_call(200, ROUNDS, || {
+                read(Event::Payload("allMids", &mids));
+                read(Event::Payload("l2Book", &book));
+                read(Event::Payload("activeAssetCtx", &ctx));
+                read(Event::Payload("trades", &trades));
+                read(Event::Pong(42));
+                std::hint::black_box(read(Event::Beat));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  from_str on both payloads",
+            "one whole beat, parsed",
+            per_call(200, ROUNDS, || {
+                std::hint::black_box(serde_json::from_str::<Value>(&mids_text).unwrap());
+                std::hint::black_box(serde_json::from_str::<Value>(&book_text).unwrap());
+            })
+        );
+    }
 
     /// A fixture is read as evidence, so it has to be a state the exchange
     /// could actually report. Five of this loop's bugs were impossible states

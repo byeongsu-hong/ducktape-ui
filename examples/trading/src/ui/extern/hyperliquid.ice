@@ -5,7 +5,7 @@ extern crate::hyperliquid
   Position(coin:str, size:f64, entry:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
   Account(value:f64, pnl:f64, withdrawable:f64, notional:f64, health:f64, margin_pct:f64, positions:[Position])
   Trade(ts:i64, price:f64, size:f64, buy:bool, sweep:i64)
-  Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, heat:i64)
+  Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, heat:i64, tid:i64)
   Order(coin:str, buy:bool, price:f64, size:f64, ts:i64)
   Level(price:f64, size:f64, bar:f64)
   Book(bids:[Level], asks:[Level], spread_pct:f64, mid:f64)

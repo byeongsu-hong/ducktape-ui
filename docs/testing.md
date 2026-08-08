@@ -354,9 +354,66 @@ the weather.
 
 Two things this does not show. The universe is rebuilt on every market tick, so
 a row whose price moved misses its cache and re-lays-out — the win is on frames
-where the data holds still, which is most of them. And the remaining 1274us of
-chrome has no boundary in it at all; that, not the rows, is now the largest
-single number on this screen.
+where the data holds still, which is most of them. And the chrome around the
+lists has no boundary in it at all.
+
+### The other list, and what an unbounded list is worth
+
+The claim that the chrome was then the largest number was wrong, because only
+the market list had been measured. `frame_panels` prices every panel by paired
+ablation, and on a connected account the **recent-fills list** — 200 rows, the
+cap `push_fills` imposes — was larger than the market list had ever been:
+2557us of a 7061us frame, 12.8us a row against the market rows' 3.1us behind
+their boundary.
+
+It took the same three things the market list took, and one more:
+
+- **`Hash` on `Fill`**, over the float bits, like `SymbolRow`'s.
+- **The whole row as the dependency.** A fill row already read nothing but its
+  fill, so no field had to move onto it.
+- **An identity that comes from the row, not from the loop.** This is the one
+  the market list hid. A `lazy` subtree is built from its dependency alone, so
+  the generated body cannot see which iteration mounted it and the enclosing
+  `@for:(index)` scope is not in scope inside it. Rows that carry their own id
+  — `#market(market.name)`, `#position(held.coin)` — never noticed. A fill has
+  no natural name, so all 200 rows landed on one runtime id and every `capture`
+  in the suite failed as `E194`-shaped ambiguity. The fix is to publish the
+  exchange trade id `push_fills` already dedupes on and spell the row
+  `#fill(printed.tid)`. **A list going behind `lazy` needs a per-row id drawn
+  from the row.**
+
+Measured as fifteen interleaved runs of `frame_cost` per binary, alternating
+which binary goes first, on a box under load 13:
+
+| | before | after |
+|---|---|---|
+| `__view` build | 2875us [2757..3238] | 1400us [1328..1585] |
+| idle redraw | 5346us [4946..5845] | 3692us [3341..3947] |
+
+**31% off the whole frame**, and the paired ablation puts it where it belongs:
+the fills' own cost fell from 2557us to 728us in the frame and from 1792us to
+194us of the build, n=300 pairs, reproduced three times. `fill_label` stopped
+being 200 calls a frame at the same time, because a memoized row calls nothing.
+
+`fills_stay_memoized_performance_contract` holds it down with a count rather
+than a clock: `fill_label` runs once per fill row actually built, so a cold
+redraw is 200, an unchanged redraw is 0, and moving one fill is 1. That last
+number is the invalidation rule executed — a row rebuilds exactly when the fill
+it draws changes, its heat countdown included.
+
+What is left is inherent, and worth naming so nobody re-measures it:
+
+- **The chrome is 44% of the frame and has no boundary available.** The ticket
+  panel is the largest block in it and holds four `input`s, which `lazy` rejects
+  outright — *input cannot live in lazy because iced text input borrows app
+  state*, `check/options.rs`; the header strip and the
+  ticket's quote both move on every beat, so a boundary there would miss every
+  time it mattered.
+- **The frame after a beat still costs ~2.1ms more than an idle one**, before
+  and after this change alike (n=12 interleaved runs of `beat_cost` each).
+  `allMids` republishes every market, so in the probe's worst case all 200 rows
+  genuinely changed and all 200 memos correctly missed. Only mounting fewer
+  rows — `virtual_list`, not `lazy` — moves that one.
 
 Two controls in that probe are there to foreclose the easy explanations, and
 both come back negative:

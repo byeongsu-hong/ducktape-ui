@@ -2003,9 +2003,14 @@ of rebuilding and re-shaping — a screen switch pays only for content that
 actually changed. The dependency may be bool, i64, str, an extern type
 implementing Rust `Hash + Clone`, or a recursive list/optional of those. Only
 the owned `cached` alias is visible inside the subtree as a value, which
-statically enforces iced's `Element<'static>` contract. Input, combo, named QR
-data, and a slot from an enclosing component are rejected because those forms
-borrow app-owned data. Components and structured children remain usable when
+statically enforces iced's `Element<'static>` contract. The enclosing `for`
+scope is not visible either: the subtree is built from its dependency alone, so
+it carries no iteration index and every row of a `lazy` list otherwise renders
+under one runtime id. A `lazy` inside a `for` therefore needs an `id` derived
+from the row — `#market(market.name)` — or its rows are indistinguishable to
+targets, captures, and the accessibility tree. Input, combo, named QR data, and
+a slot from an enclosing component are rejected because those forms borrow
+app-owned data. Components and structured children remain usable when
 their complete expanded tree satisfies the same static rule. The enclosing
 component's routing context is preserved: routes inside the subtree resolve
 the component's own handlers, and `forward` and `emit` deliver component

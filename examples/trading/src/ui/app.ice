@@ -1478,9 +1478,10 @@ view
                                   align-y=center
                                 text "Fills need an address." size=12.0 @text-faint
                             for fill in fills
-                              FillRow fill=fill
-                                events
-                                  pick -> pick_symbol _
+                              lazy fill as printed
+                                FillRow fill=printed #fill(printed.tid)
+                                  events
+                                    pick -> pick_symbol _
                 rule vertical thickness=1.0 color=edge
                 box #book
                   with
