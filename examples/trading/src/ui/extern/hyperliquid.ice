@@ -71,7 +71,7 @@ extern crate::hyperliquid
   sync check_alerts(alerts:[Alert], tick:MarketTick) -> [Alert]
   sync waiting_alerts(alerts:[Alert]) -> i64
   sync drop_alert(alerts:[Alert], coin:str, price:f64) -> [Alert]
-  sync ticket_afford(account:Account?, price:str, leverage:str, share:f64) -> str
+  sync ticket_afford(account:Account?, price:str, leverage:f64, share:f64) -> str
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   sync order_load(account:Account?, coin:str, size:str, buy:bool, market:SymbolRow?) -> str
   sync funding_day(market:SymbolRow?, price:str, size:str, buy:bool) -> str

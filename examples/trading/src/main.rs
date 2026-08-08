@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod frame_probe;
 mod hyperliquid;
+mod lighter;
+mod session;
+mod venue;
 
 ui_lang::include_app!("src/ui/app.ice");
 
