@@ -44,10 +44,14 @@ A construct the vocabulary does not model becomes a **hole**: the compiler
 renders that subtree exactly as before and hands it to the renderer through the
 slot table, and the structure around it stays data. Falling back per subtree
 rather than per view is what lets real applications reload at all — one `if` no
-longer costs a whole screen its template. This is the permanent boundary, not
-scaffolding: control flow, components, and native `extern` surfaces are
-expected to stay compiled, and what is inside a hole reloads only when the
-binary does.
+longer costs a whole screen its template. This is a boundary, not scaffolding:
+what is inside a hole reloads only when the binary does, and components and
+native `extern` surfaces are expected to stay behind it.
+
+Which constructs land there is not fixed, and the measurement to widen it by is
+the hole count rather than the number of roots publishing a template — a root
+whose only node is a hole publishes one and reloads nothing. `docs/testing.md`
+records how to read it.
 
 `if`, `for`, and `match` contribute a variable number of children to their
 parent rather than rendering as one element, so a hole — which holds exactly
