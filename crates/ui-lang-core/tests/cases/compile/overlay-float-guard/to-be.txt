@@ -1,2 +1,3 @@
 mouse_area(__overlay_floated)
-let __overlay_panel = __overlay_layer;
+let __overlay_layer: __IceElement<'_, __DemoMessage> = {
+__overlay_layer.into()

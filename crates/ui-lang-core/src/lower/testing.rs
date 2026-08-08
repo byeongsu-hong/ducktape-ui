@@ -529,6 +529,7 @@ impl Lowerer {
             TestStepKind::FileLeave => ResolvedTestStepKind::FileLeave,
             TestStepKind::Wait(duration) => ResolvedTestStepKind::Wait(*duration),
             TestStepKind::Advance(duration) => ResolvedTestStepKind::Advance(*duration),
+            TestStepKind::TrayClick => ResolvedTestStepKind::TrayClick,
             TestStepKind::Idle => ResolvedTestStepKind::Idle,
             TestStepKind::Capture(name) => ResolvedTestStepKind::Capture(name.clone()),
             TestStepKind::Accessibility {

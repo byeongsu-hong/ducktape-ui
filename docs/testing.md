@@ -642,26 +642,31 @@ Relatedly, never `rm -rf` a package's `OUT_DIR` to force regeneration: cargo's
 fingerprint then skips re-running the build script and `include_app!` fails
 with "generated Rust is missing". Touch `build.rs` instead.
 
-**An environment variable that no fingerprint tracks.** `ICE_TEMPLATE_VIEW=0`
-was the switch that forced a view back onto the compiled path, so that a
-capture from it could be diffed against the published path. It does not work
-by itself. Cargo does not rerun a build script for an environment variable
-nobody declared `rerun-if-env-changed` on, and touching `build.rs` is not
-enough either, because `ui-lang-build` then compares its own input fingerprint
-— which the variable is also not part of — and keeps the output it already
-has. Setting the variable, touching `build.rs`, and rebuilding produced a
-byte-identical generated view three times running: with the switch on, off,
-and unset.
+**An environment variable that no fingerprint tracks.** Anything read at
+codegen time is a build input, and a build input nothing tracks is not a
+switch — it is a switch-shaped thing that does nothing. Cargo does not rerun a
+build script for a variable nobody declared `rerun-if-env-changed` on, and
+touching `build.rs` is not enough either, because `ui-lang-build` then compares
+its own input fingerprint and keeps the output it already has when the `.ice`
+sources have not moved.
 
-The failure is silent and it flatters you. Both captures come from whichever
-path the directory happened to hold, they are byte-identical because they are
-the same program, and the diff reads as proof of parity. A capture comparison
-across the two paths is only meaningful from two separate target directories,
-one built from scratch under each setting. Verify which path a build actually
-took by grepping the generated Rust for `__ICE_TEMPLATE_JSON` rather than by
-trusting the variable — and grep every file in `ui-lang-generated/`, since the
-view lives in its own `*__app_view.rs` and `ls -t | head -1` will hand you the
-update phase instead.
+`ICE_TEMPLATE_VIEW=0` was such a switch, meant to force a view back onto the
+compiled path so a capture from it could be diffed against the published one.
+Setting it, touching `build.rs` and rebuilding produced a byte-identical
+generated view three times running — on, off, and unset. The failure is silent
+and it flatters you: both captures come from whichever path the directory
+happened to hold, they are byte-identical because they are the same program,
+and the diff reads as proof of parity. That result was produced and retracted,
+and the switch was deleted rather than repaired, because `main` is now the
+parity reference — diff against a revision where the node kind is not yet
+published.
+
+The general rule outlives the variable. To compare two codegen configurations,
+give each its own target directory and build from scratch; a shared one carries
+the other's output. And confirm which path a build actually took by grepping
+the generated Rust for `__ICE_TEMPLATE_JSON`, across every file in
+`ui-lang-generated/` — the view has its own `*__app_view.rs`, so
+`ls -t | head -1` hands you the update phase instead.
 
 And the machine is shared. A blocked A/B run put a load spike entirely on one
 side and produced a 4.81s baseline against a 2.64s result for an edit that in
@@ -796,3 +801,51 @@ nothing), and the boundary always falls between whole items:
 The control matters: a handler edit already lands in the `__app_update` group
 file, so it should not move, and it does not. The win is proportional to what
 is left in the root — a small app has little there and gains little.
+
+### How much of a view actually reloads
+
+A hot reload is only as wide as the published template, so the number worth
+tracking is not "does this root publish one" but "how much of it is data".
+Every root publishes something; a construct the vocabulary cannot model
+becomes a `subtree` hole, and a hole at the root swallows the whole view.
+
+`cargo ice expand` is the instrument — the published form is a `&str` literal
+in the generated Rust:
+
+```
+cargo ice expand examples/terminal/src/ui/app.ice \
+  | grep -o '__ICE_TEMPLATE_JSON: &str = .*'
+```
+
+Counting `subtree` and `group` nodes in that JSON across every root in
+`examples/`, over the two changes that widened the vocabulary:
+
+| | padding refused | padding published | `if` became a group | overlay published |
+| --- | --- | --- | --- | --- |
+| roots publishing a template | 65 | 65 | 65 | 66 |
+| roots that are *only* a hole | 43 | 19 | 9 | **6** |
+| roots with no hole at all | 13 | **28** | 28 | 28 |
+| published nodes | — | 223 | 333 | **367** |
+
+The first row is why the second one is the measurement. `p=16.0` on a root
+`col` refused the node, the refusal became a hole, and the hole was the entire
+application — 24 roots reported a healthy template that reloaded nothing.
+
+So read the hole count, not the template's existence, and expect the blockers
+to be shallow and near the root. What refuses today, in descending order of
+what it costs: components, which are 16 of the remaining holes and take a
+whole subtree each — and `mount`ed ones keep a view off the template path
+entirely; the contents of a group, since a branch publishes its structure but
+not what is inside it (this is what still holds `trading` to three nodes); and
+`lazy`, whose whole purpose is to keep its subtree out of a rebuild.
+
+One trap this measurement set off, worth knowing before the next widening: the
+id-to-source map that gives a captured widget its `.ice` line used to reset on
+the first render-source guard pushed onto an empty stack. A view fills its slot
+table — where every compiled hole builds its widgets and registers their ids —
+before the renderer walks the node tree and pushes a guard for the root, so
+that walk counted as a new pass and discarded the registrations moments before
+they were read. It only surfaced once a template root had both a source of its
+own and a named widget inside a hole, and it surfaced as one null in a manifest
+against thousands of matching pixels. The pass now begins where the frame does,
+in `Slots::with_capacity`.

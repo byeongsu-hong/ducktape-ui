@@ -537,6 +537,8 @@ fn parse_test_step(
         TestStepKind::Capture(name)
     } else if let Some(value) = line.text.strip_prefix("a11y ") {
         parse_accessibility_action(value, line, scope, targets)?
+    } else if line.text == "tray click" {
+        TestStepKind::TrayClick
     } else if let Some(call) = line.text.strip_prefix("dispatch ") {
         let call = call.trim();
         let (handler, args) = if call.contains('(') {
