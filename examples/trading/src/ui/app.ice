@@ -48,6 +48,7 @@ state
   error = ""
   feeds:task-handle? = none
   latency = 0
+  live = false
   flashing = false
   loading_history = false
   lower_height = 232.0
@@ -74,6 +75,7 @@ preset held
     alerts = add_alert(add_alert(demo_alerts(), "BTC", "64,400.00", 64000.0), "BTC", "63,700.00", 64000.0)
     fills = demo_fills()
     orders = demo_orders()
+    live = true
     ticket_price = "64,000.00"
     quote = price_ticket("64,000.00", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
 
@@ -87,6 +89,26 @@ preset browsing
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape()
+    live = true
+
+preset stalled
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    visible = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
+    fills = demo_fills()
+    orders = demo_orders()
+    ticket_price = "64,000.00"
+    quote = price_ticket("64,000.00", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
+    error = "Hyperliquid feed dropped"
+    latency = 0
 
 preset failing
   state
@@ -781,6 +803,7 @@ on orders_loaded(rows)
 on market_ticked(tick)
   book = tick.book
   latency = tick.latency
+  live = true
   symbols = apply_feed(symbols, tick)
   visible = filter_symbols(symbols, query, coin)
   focus = symbol_row(symbols, coin)
@@ -797,6 +820,7 @@ on failed(reason)
 on feed_failed(reason)
   error = reason.message
   latency = 0
+  live = false
 
 on chart_signalled(signal)
   hover = signal.hover
@@ -858,24 +882,42 @@ view
               match focus
                 some(row)
                   row gap=14.0 align=center
-                    if row.change_pct >= 0.0
+                    if live && row.change_pct >= 0.0
                       text fmt_px(row.price)
                         with
                           size=20.0
                           font=digits
                           @text-up
-                    if row.change_pct < 0.0
+                    if live && row.change_pct < 0.0
                       text fmt_px(row.price)
                         with
                           size=20.0
                           font=digits
                           @text-down
+                    if !live
+                      text fmt_px(row.price)
+                        with
+                          size=20.0
+                          font=digits
+                          @text-faint
                     Delta
                       with
                         value=fmt_pct(row.change_pct)
                         up=(row.change_pct >= 0.0)
                         size=12.0
                         width=64.0
+                    if !live
+                      box #stale
+                        with
+                          px=8.0
+                          py=3.0
+                          bg=down
+                          r=2.0
+                        text "NOT LIVE"
+                          with
+                            size=9.0
+                            tracking=1.1
+                            @text-fg
                     rule vertical thickness=1.0 color=edge
                     row gap=14.0 align=center
                       Stat name="VOL" value=fmt_volume(row.volume)
@@ -1858,6 +1900,13 @@ test trading_a_loaded_market_is_priced_against_at_once
   expect quote.known
   expect no text "market not loaded"
 
+test trading_a_dead_feed_stops_the_price_looking_live
+  preset stalled
+  viewport 1660 820
+  expect text "NOT LIVE"
+  expect text "Hyperliquid feed dropped"
+  capture stalled
+
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
   viewport 1660 820
@@ -1868,4 +1917,5 @@ test trading_the_whole_terminal_renders_from_fixtures
   expect no text "No data"
   expect text "38%"
   expect text "34%"
+  expect no text "NOT LIVE"
   capture terminal

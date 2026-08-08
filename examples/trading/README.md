@@ -178,6 +178,22 @@ market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
 
+## A price that has stopped arriving
+
+The dangerous state in a terminal is not an error, it is data that has gone
+still while still looking current. When the feed dropped, the mark stayed
+green, the change stayed at +1.25%, the book and the tape kept their last
+values, and the only two signs were a dash in the far corner and a line of
+11px text in the positions gutter.
+
+The mark now stops being coloured as a move, and says `NOT LIVE` beside
+itself, because that is where the number is read. One feed drives the mark,
+the book, the tape and the chart, so one badge qualifies all of them; marking
+every cell would be the same statement, repeated until it is ignored.
+
+It is a flag rather than a latency reading. A venue fast enough to report 0ms
+would otherwise read as a venue that had stopped.
+
 ## Levels worth being told about
 
 **WATCH THIS LEVEL** puts the ticket's price on a list under the book. Nobody
