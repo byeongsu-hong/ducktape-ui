@@ -15,6 +15,7 @@ on:
       - crates/ui-lang-build/**
       - crates/ui-lang-core/**
       - crates/ui-lang-runtime/**
+      - crates/ui-lang-template/**
   push:
     tags: ["v*"]
 

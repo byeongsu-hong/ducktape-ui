@@ -5903,6 +5903,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
+ "ui-lang-template",
 ]
 
 [[package]]
@@ -5924,7 +5925,16 @@ dependencies = [
  "stacker",
  "stats_alloc",
  "tray-icon",
+ "ui-lang-template",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "ui-lang-template"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

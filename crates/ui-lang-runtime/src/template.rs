@@ -1,19 +1,21 @@
 //! View-as-data: the template renderer.
 //!
 //! An Ice view compiles to two halves. The static half — widget structure,
-//! literals, style tables, accessibility segments — is this module's [`Node`]
-//! tree, published as data rather than Rust. The dynamic half — anything that
-//! reads application state or names a message — stays compiled, and reaches
-//! the renderer as a positional [`Slot`] table the generated `__view` fills in
-//! each frame.
+//! literals, style tables, accessibility segments — is the node tree defined in
+//! `ui_lang_template` and published as data rather than Rust. The dynamic half
+//! — anything that reads application state or names a message — stays compiled,
+//! and reaches the renderer as a positional [`Slot`] table the generated
+//! `__view` fills in each frame.
 //!
-//! The split is what makes a running app reloadable: replacing the [`Node`]
-//! tree needs no compiler as long as the slot table still satisfies it.
+//! The split is what makes a running app reloadable: replacing the node tree
+//! needs no compiler as long as the slot table still satisfies it.
 //!
-//! The modelled vocabulary is layouts, containers, text, inputs, and buttons.
-//! Anything else becomes a [`Node::Subtree`] hole that the compiler fills
-//! through the slot table, so an unmodelled construct costs only its own
-//! subtree its reloadability rather than costing the whole view its template.
+//! This module is the reading half only. The format itself — and the
+//! compatibility rule that decides whether an edited template can be accepted
+//! without a rebuild — lives in `ui_lang_template`, so the generator that
+//! writes a template and the runtime that renders it share one definition
+//! rather than two that can drift apart. It is re-exported here, which is why
+//! `ui_lang_runtime::template::Template` still names it.
 
 use std::borrow::Cow;
 
@@ -22,7 +24,8 @@ use iced::{
     alignment::{Horizontal, Vertical},
     widget,
 };
-use serde::{Deserialize, Serialize};
+
+pub use ui_lang_template::*;
 
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
@@ -71,314 +74,68 @@ impl<Message> Slot<'_, Message> {
     }
 }
 
-/// A string that is either baked into the template or supplied by a slot.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum Value {
-    Literal(String),
-    Slot(usize),
-}
+// The template's vocabulary, converted into iced's. These are free functions
+// rather than `From` impls because both sides are foreign to this crate: the
+// format belongs to `ui_lang_template` and the widget types to `iced`.
 
-impl Value {
-    /// Resolves to an owned string. Literals are cloned out of the template so
-    /// the returned element never borrows it, which is what lets a reload
-    /// swap the template while the previous frame's element is still alive.
-    fn resolve<Message>(&self, slots: &[Slot<'_, Message>]) -> String {
-        match self {
-            Self::Literal(value) => value.clone(),
-            Self::Slot(index) => slots.get(*index).map(Slot::as_str).unwrap_or("").to_owned(),
-        }
+fn length(size: Size) -> Length {
+    match size {
+        Size::Fill => Length::Fill,
+        Size::Shrink => Length::Shrink,
+        Size::Fixed(value) => Length::Fixed(value),
     }
 }
 
-/// A color drawn from the app's compiled palette, optionally faded.
+fn horizontal(align: AlignX) -> Horizontal {
+    match align {
+        AlignX::Left => Horizontal::Left,
+        AlignX::Center => Horizontal::Center,
+        AlignX::Right => Horizontal::Right,
+    }
+}
+
+fn vertical(align: AlignY) -> Vertical {
+    match align {
+        AlignY::Top => Vertical::Top,
+        AlignY::Center => Vertical::Center,
+        AlignY::Bottom => Vertical::Bottom,
+    }
+}
+
+fn edge_padding(edges: Edges) -> Padding {
+    bounded_padding(edges.top, edges.right, edges.bottom, edges.left)
+}
+
+/// Resolves a template string to an owned one.
 ///
-/// Palettes stay compiled: they are fixed-size arrays whose type changes with
-/// the token list, so the template refers to them by index the same way the
-/// inline path does.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-pub struct ColorRef {
-    pub index: usize,
-    #[serde(default)]
-    pub alpha: Option<f32>,
-}
-
-impl ColorRef {
-    fn resolve(&self, palette: &[Color]) -> Color {
-        let mut color = palette.get(self.index).copied().unwrap_or(Color::BLACK);
-        if let Some(alpha) = self.alpha {
-            color.a = alpha;
-        }
-        color
+/// Literals are cloned out of the template so the returned element never
+/// borrows it, which is what lets a reload swap the template while the previous
+/// frame's element is still alive.
+fn resolve_value<Message>(value: &Value, slots: &[Slot<'_, Message>]) -> String {
+    match value {
+        Value::Literal(value) => value.clone(),
+        Value::Slot(index) => slots.get(*index).map(Slot::as_str).unwrap_or("").to_owned(),
     }
 }
 
-/// A width or height. Mirrors the `w=`/`h=` vocabulary.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum Size {
-    Fill,
-    Shrink,
-    Fixed(f32),
-}
-
-impl From<Size> for Length {
-    fn from(size: Size) -> Self {
-        match size {
-            Size::Fill => Length::Fill,
-            Size::Shrink => Length::Shrink,
-            Size::Fixed(value) => Length::Fixed(value),
-        }
+fn resolve_color(reference: ColorRef, palette: &[Color]) -> Color {
+    let mut color = palette
+        .get(reference.index)
+        .copied()
+        .unwrap_or(Color::BLACK);
+    if let Some(alpha) = reference.alpha {
+        color.a = alpha;
     }
+    color
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum AlignX {
-    Left,
-    Center,
-    Right,
-}
-
-impl From<AlignX> for Horizontal {
-    fn from(align: AlignX) -> Self {
-        match align {
-            AlignX::Left => Horizontal::Left,
-            AlignX::Center => Horizontal::Center,
-            AlignX::Right => Horizontal::Right,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum AlignY {
-    Top,
-    Center,
-    Bottom,
-}
-
-impl From<AlignY> for Vertical {
-    fn from(align: AlignY) -> Self {
-        match align {
-            AlignY::Top => Vertical::Top,
-            AlignY::Center => Vertical::Center,
-            AlignY::Bottom => Vertical::Bottom,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
-pub struct Edges {
-    pub top: f64,
-    pub right: f64,
-    pub bottom: f64,
-    pub left: f64,
-}
-
-impl From<Edges> for Padding {
-    fn from(edges: Edges) -> Self {
-        bounded_padding(edges.top, edges.right, edges.bottom, edges.left)
-    }
-}
-
-/// The visual properties a button status can override.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
-pub struct ButtonFace {
-    #[serde(default)]
-    pub background: Option<ColorRef>,
-    #[serde(default)]
-    pub text_color: Option<ColorRef>,
-    #[serde(default)]
-    pub radius: Option<f32>,
-}
-
-/// Per-status button styling, flattened the same way the inline path flattens
-/// `active`/`hovered`/`pressed` into one closure.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
-pub struct ButtonStyle {
-    #[serde(default)]
-    pub active: ButtonFace,
-    #[serde(default)]
-    pub hovered: Option<ButtonFace>,
-    #[serde(default)]
-    pub pressed: Option<ButtonFace>,
-}
-
-/// Which direction a linear layout stacks, and how a single child fills it.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum Axis {
-    Column,
-    Row,
-}
-
-/// The accessibility identity of a node.
-///
-/// `segment` is appended to the parent's path at render time rather than
-/// stored whole, so a subtree keeps its identity when an ancestor moves.
-///
-/// Only an author's `#name` opens a scope for descendants. An unnamed node
-/// still gets a path of its own, built from its source line, but its children
-/// hang off the nearest named ancestor — so inserting a bare wrapper around a
-/// widget does not rename every selector beneath it.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct A11y {
-    pub segment: String,
-    #[serde(default)]
-    pub named: bool,
-    /// Where this node was written, so a rendered widget can still be traced
-    /// back to its `.ice` line the way the compiled path traces it.
-    ///
-    /// The file is an index into the caller's path table rather than a string:
-    /// paths must be `&'static str`, and a reload therefore cannot introduce a
-    /// file the compiled binary does not already name.
-    #[serde(default)]
-    pub source: Option<Source>,
-}
-
-/// A `.ice` coordinate, with its file named indirectly.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-pub struct Source {
-    pub path: usize,
-    pub line: usize,
-    pub column: usize,
-}
-
-impl Source {
-    fn location(&self, paths: &[&'static str]) -> Option<crate::testing::Location> {
-        Some(crate::testing::Location::new(
-            paths.get(self.path)?,
-            self.line,
-            self.column,
-            "rendered view node",
-        ))
-    }
-}
-
-impl A11y {
-    /// This node's own accessibility path.
-    fn key(&self, parent: &str) -> String {
-        format!("{parent}/{}", self.segment)
-    }
-
-    /// The path descendants hang off.
-    fn scope<'a>(&self, parent: &'a str, key: &'a str) -> &'a str {
-        if self.named { key } else { parent }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Node {
-    Container {
-        a11y: A11y,
-        #[serde(default)]
-        width: Option<Size>,
-        #[serde(default)]
-        height: Option<Size>,
-        #[serde(default)]
-        padding: Option<Edges>,
-        #[serde(default)]
-        align_x: Option<AlignX>,
-        #[serde(default)]
-        align_y: Option<AlignY>,
-        #[serde(default)]
-        background: Option<ColorRef>,
-        content: Box<Node>,
-    },
-    Linear {
-        a11y: A11y,
-        axis: Axis,
-        #[serde(default)]
-        spacing: Option<f64>,
-        #[serde(default)]
-        width: Option<Size>,
-        #[serde(default)]
-        height: Option<Size>,
-        #[serde(default)]
-        align_x: Option<AlignX>,
-        #[serde(default)]
-        align_y: Option<AlignY>,
-        children: Vec<Node>,
-    },
-    Text {
-        a11y: A11y,
-        value: Value,
-        #[serde(default)]
-        size: Option<f32>,
-        #[serde(default)]
-        color: Option<ColorRef>,
-    },
-    Input {
-        a11y: A11y,
-        label: String,
-        /// Slot holding the current value; must be [`Slot::Borrowed`].
-        value: usize,
-        /// Slot holding the `fn(String) -> Message` the edit routes through.
-        on_input: usize,
-        #[serde(default)]
-        width: Option<Size>,
-        #[serde(default)]
-        secure: bool,
-    },
-    Button {
-        a11y: A11y,
-        label: String,
-        /// Slot holding the message an activation delivers.
-        on_press: usize,
-        #[serde(default)]
-        style: ButtonStyle,
-    },
-    /// A hole the compiler fills, holding a construct the template vocabulary
-    /// does not model. Everything around it still reloads; what is inside
-    /// changes only when the binary does.
-    Subtree { slot: usize },
-}
-
-/// Stands in for a compiled subtree, which composes its own accessibility path
-/// and pushes its own source location.
-static EMPTY_A11Y: A11y = A11y {
-    segment: String::new(),
-    named: false,
-    source: None,
-};
-
-impl Node {
-    fn a11y(&self) -> &A11y {
-        match self {
-            Self::Container { a11y, .. }
-            | Self::Linear { a11y, .. }
-            | Self::Text { a11y, .. }
-            | Self::Input { a11y, .. }
-            | Self::Button { a11y, .. } => a11y,
-            // A compiled subtree carries its own identity and provenance.
-            Self::Subtree { .. } => &EMPTY_A11Y,
-        }
-    }
-}
-
-/// A whole view: the node tree plus the slot count it expects.
-///
-/// `slots` is the compatibility contract. A running process can accept any
-/// template whose slot count and kinds its compiled `__view` still satisfies;
-/// anything else needs a rebuild.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct Template {
-    pub root: Node,
-    pub slots: usize,
-}
-
-impl Template {
-    /// Parses a template from the JSON codegen publishes.
-    pub fn from_json(source: &str) -> Result<Self, String> {
-        serde_json::from_str(source).map_err(|error| error.to_string())
-    }
-
-    /// Serializes a template to the JSON form codegen publishes.
-    pub fn to_json(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(self).map_err(|error| error.to_string())
-    }
+fn source_location(source: Source, paths: &[&'static str]) -> Option<crate::testing::Location> {
+    Some(crate::testing::Location::new(
+        paths.get(source.path)?,
+        source.line,
+        source.column,
+        "rendered view node",
+    ))
 }
 
 /// Renders a template against this frame's slot table.
@@ -415,7 +172,7 @@ where
     let _source = node
         .a11y()
         .source
-        .and_then(|source| source.location(paths))
+        .and_then(|source| source_location(source, paths))
         .map(crate::testing::push_render_source);
     match node {
         Node::Container {
@@ -432,22 +189,22 @@ where
             let inner = render_node(content, slots, palette, a11y.scope(parent_key, &key), paths);
             let mut container = widget::container(inner).id(widget::Id::from(key.clone()));
             if let Some(padding) = padding {
-                container = container.padding(Padding::from(*padding));
+                container = container.padding(edge_padding(*padding));
             }
             if let Some(width) = width {
-                container = container.width(Length::from(*width));
+                container = container.width(length(*width));
             }
             if let Some(height) = height {
-                container = container.height(Length::from(*height));
+                container = container.height(length(*height));
             }
             if let Some(align) = align_x {
-                container = container.align_x(Horizontal::from(*align));
+                container = container.align_x(horizontal(*align));
             }
             if let Some(align) = align_y {
-                container = container.align_y(Vertical::from(*align));
+                container = container.align_y(vertical(*align));
             }
             if let Some(background) = background {
-                let color = background.resolve(palette);
+                let color = resolve_color(*background, palette);
                 container = container.style(move |_theme| widget::container::Style {
                     background: Some(Background::Color(color)),
                     ..widget::container::Style::default()
@@ -469,7 +226,7 @@ where
         } => {
             let key = a11y.key(parent_key);
             let scope = a11y.scope(parent_key, &key);
-            let horizontal = matches!(axis, Axis::Row);
+            let is_row = matches!(axis, Axis::Row);
             let count = children.len();
             let rendered = children
                 .iter()
@@ -477,7 +234,7 @@ where
                     bounded_fill_element(
                         render_node(child, slots, palette, scope, paths),
                         count,
-                        horizontal,
+                        is_row,
                     )
                 })
                 .collect::<Vec<_>>();
@@ -486,26 +243,26 @@ where
                 Axis::Column => {
                     let mut column = widget::column(rendered).spacing(spacing);
                     if let Some(width) = width {
-                        column = column.width(Length::from(*width));
+                        column = column.width(length(*width));
                     }
                     if let Some(height) = height {
-                        column = column.height(Length::from(*height));
+                        column = column.height(length(*height));
                     }
                     if let Some(align) = align_x {
-                        column = column.align_x(Horizontal::from(*align));
+                        column = column.align_x(horizontal(*align));
                     }
                     column.into()
                 }
                 Axis::Row => {
                     let mut row = widget::row(rendered).spacing(spacing);
                     if let Some(width) = width {
-                        row = row.width(Length::from(*width));
+                        row = row.width(length(*width));
                     }
                     if let Some(height) = height {
-                        row = row.height(Length::from(*height));
+                        row = row.height(length(*height));
                     }
                     if let Some(align) = align_y {
-                        row = row.align_y(Vertical::from(*align));
+                        row = row.align_y(vertical(*align));
                     }
                     row.into()
                 }
@@ -525,13 +282,13 @@ where
             color,
         } => {
             let key = a11y.key(parent_key);
-            let resolved = value.resolve(slots);
+            let resolved = resolve_value(value, slots);
             let mut text = widget::text(resolved.clone());
             if let Some(size) = size {
                 text = text.size(size.clamp(f32::EPSILON, f32::MAX));
             }
             if let Some(color) = color {
-                text = text.color(color.resolve(palette));
+                text = text.color(resolve_color(*color, palette));
             }
             accessible(
                 crate::selectable_text(text),
@@ -572,7 +329,7 @@ where
                 .id(widget::Id::from(key.clone()))
                 .secure(secure);
             if let Some(width) = width {
-                input = input.width(Length::from(*width));
+                input = input.width(length(*width));
             }
             let input = accessible(input.on_input_maybe(handler), id, role)
                 .logical_id(key.clone())
@@ -637,8 +394,8 @@ struct ResolvedFace {
 
 fn resolve_face(face: &ButtonFace, palette: &[Color]) -> ResolvedFace {
     ResolvedFace {
-        background: face.background.map(|color| color.resolve(palette)),
-        text_color: face.text_color.map(|color| color.resolve(palette)),
+        background: face.background.map(|color| resolve_color(color, palette)),
+        text_color: face.text_color.map(|color| resolve_color(color, palette)),
         radius: face.radius,
     }
 }
@@ -816,37 +573,6 @@ pub fn changes() -> iced::Subscription<()> {
     })
 }
 
-/// Reports whether a compiled process can accept `candidate` without being
-/// rebuilt: the slot table it fills each frame must still line up.
-///
-/// This is the whole reload decision. Structure, literals, colors, spacing and
-/// accessibility segments may all change freely; the moment a view needs a
-/// slot the binary does not have, only a rebuild can supply it.
-pub fn accepts(compiled: &Template, candidate: &Template) -> bool {
-    compiled.slots == candidate.slots && slot_uses(&candidate.root, compiled.slots)
-}
-
-fn slot_uses(node: &Node, available: usize) -> bool {
-    let value_ok = |value: &Value| match value {
-        Value::Literal(_) => true,
-        Value::Slot(index) => *index < available,
-    };
-    match node {
-        Node::Container { content, .. } => slot_uses(content, available),
-        Node::Linear { children, .. } => children.iter().all(|child| slot_uses(child, available)),
-        Node::Text { value, .. } => value_ok(value),
-        Node::Input {
-            value, on_input, ..
-        } => *value < available && *on_input < available,
-        Node::Button { on_press, .. } => *on_press < available,
-        Node::Subtree { slot } => *slot < available,
-    }
-}
-
-/// Borrowed form used when a caller wants to hand the renderer a template it
-/// does not own.
-pub type SharedTemplate = std::rc::Rc<Template>;
-
 impl<'a, Message> From<&'a str> for Slot<'a, Message> {
     fn from(value: &'a str) -> Self {
         Self::Borrowed(value)
@@ -873,121 +599,36 @@ impl<'a, Message> From<Cow<'a, str>> for Slot<'a, Message> {
 mod tests {
     use super::*;
 
-    fn a11y(segment: &str) -> A11y {
-        A11y {
-            segment: segment.to_owned(),
-            named: true,
-            source: None,
-        }
-    }
-
-    fn text_node(segment: &str, value: Value) -> Node {
-        Node::Text {
-            a11y: a11y(segment),
-            value,
-            size: None,
-            color: None,
-        }
-    }
-
-    fn template(root: Node, slots: usize) -> Template {
-        Template { root, slots }
-    }
-
-    #[test]
-    fn json_round_trips() {
-        let original = template(
-            Node::Linear {
-                a11y: a11y("content"),
-                axis: Axis::Column,
-                spacing: Some(16.0),
-                width: Some(Size::Fill),
-                height: None,
-                align_x: Some(AlignX::Center),
-                align_y: None,
-                children: vec![
-                    text_node("title", Value::Literal("Ice".into())),
-                    text_node("count", Value::Slot(0)),
-                ],
-            },
-            1,
-        );
-        let json = original.to_json().expect("template serializes");
-        assert_eq!(Template::from_json(&json).expect("parses"), original);
-    }
-
     #[test]
     fn literals_and_slots_resolve() {
         let slots: Vec<Slot<'_, ()>> = vec![Slot::Owned("42".into())];
-        assert_eq!(Value::Literal("Ice".into()).resolve(&slots), "Ice");
-        assert_eq!(Value::Slot(0).resolve(&slots), "42");
+        assert_eq!(resolve_value(&Value::Literal("Ice".into()), &slots), "Ice");
+        assert_eq!(resolve_value(&Value::Slot(0), &slots), "42");
         // An out-of-range slot renders empty rather than panicking: a stale
         // template must not take the window down mid-reload.
-        assert_eq!(Value::Slot(7).resolve(&slots), "");
-    }
-
-    #[test]
-    fn reload_accepts_only_a_satisfiable_slot_table() {
-        let compiled = template(text_node("count", Value::Slot(0)), 1);
-
-        // Restructuring and re-literalling the same slots is reloadable.
-        let restructured = template(
-            Node::Linear {
-                a11y: a11y("content"),
-                axis: Axis::Row,
-                spacing: Some(8.0),
-                width: None,
-                height: None,
-                align_x: None,
-                align_y: None,
-                children: vec![
-                    text_node("label", Value::Literal("Total".into())),
-                    text_node("count", Value::Slot(0)),
-                ],
-            },
-            1,
-        );
-        assert!(accepts(&compiled, &restructured));
-
-        // Needing a slot the binary does not fill requires a rebuild.
-        let extra_slot = template(text_node("count", Value::Slot(1)), 2);
-        assert!(!accepts(&compiled, &extra_slot));
-    }
-
-    #[test]
-    fn only_named_nodes_open_a_scope_for_descendants() {
-        let named = a11y("content");
-        let key = named.key("Starter/app");
-        assert_eq!(key, "Starter/app/content");
-        assert_eq!(named.scope("Starter/app", &key), "Starter/app/content");
-
-        // An unnamed wrapper still has a path, but its children keep hanging
-        // off the nearest named ancestor.
-        let unnamed = A11y {
-            named: false,
-            ..a11y("@layout:36")
-        };
-        let key = unnamed.key("Starter/app");
-        assert_eq!(key, "Starter/app/@layout:36");
-        assert_eq!(unnamed.scope("Starter/app", &key), "Starter/app");
+        assert_eq!(resolve_value(&Value::Slot(7), &slots), "");
     }
 
     #[test]
     fn palette_reference_applies_alpha() {
         let palette = [Color::from_rgba(0.2, 0.4, 0.6, 1.0)];
-        let faded = ColorRef {
-            index: 0,
-            alpha: Some(0.5),
-        }
-        .resolve(&palette);
+        let faded = resolve_color(
+            ColorRef {
+                index: 0,
+                alpha: Some(0.5),
+            },
+            &palette,
+        );
         assert_eq!(faded.a, 0.5);
         assert_eq!(faded.r, 0.2);
         // An index the palette does not have must not panic during a reload.
-        let missing = ColorRef {
-            index: 9,
-            alpha: None,
-        }
-        .resolve(&palette);
+        let missing = resolve_color(
+            ColorRef {
+                index: 9,
+                alpha: None,
+            },
+            &palette,
+        );
         assert_eq!(missing, Color::BLACK);
     }
 
