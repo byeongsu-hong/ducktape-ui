@@ -35,6 +35,7 @@ state
   positions:[Position] = []
   fills:[Fill] = []
   tape_prints:[Trade] = []
+  alerts:[Alert] = []
   ticket_buy = true
   ticket_price = ""
   ticket_size = ""
@@ -70,6 +71,7 @@ preset held
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape()
+    alerts = add_alert(add_alert(demo_alerts(), "BTC", "64,400.00", 64000.0), "BTC", "63,700.00", 64000.0)
     fills = demo_fills()
     orders = demo_orders()
     ticket_price = "64,000.00"
@@ -124,6 +126,45 @@ component Stat(name:str, value:str)
         size=11.0
         font=digits
         @text-muted
+
+component AlertRow(alert:Alert)
+  emits
+    drop(f64)
+  button #root -> emit(drop, alert.price)
+    with
+      label=alert_label(alert)
+      w=fill
+      p=0.0
+    active bg=panel r=0.0
+    hovered bg=raised r=0.0
+    row
+      with
+        w=fill
+        h=22.0
+        pl=14.0
+        pr=14.0
+        gap=8.0
+        align=center
+      if alert.fired
+        text "HIT"
+          with
+            size=9.0
+            w=26.0
+            tracking=1.1
+            @text-fg
+      if !alert.fired
+        text alert_arrow(alert)
+          with
+            size=9.0
+            w=26.0
+            @text-faint
+      text fmt_px(alert.price)
+        with
+          size=11.0
+          w=fill
+          align-x=right
+          font=digits
+          @text-muted
 
 component Share(label:str, share:f64)
   emits
@@ -633,6 +674,12 @@ on close_held
   ticket_size = fmt_size(held)
   quote = price_ticket(ticket_price, fmt_size(held), ticket_leverage, focus, held < 0.0, held)
 
+on add_alert_here
+  alerts = add_alert(alerts, coin, ticket_price, mark_price(focus))
+
+on drop_alert_at(price)
+  alerts = drop_alert(alerts, coin, price)
+
 on size_share(share)
   let sized = ticket_afford(account, ticket_price, ticket_leverage, share)
   return if empty(sized)
@@ -722,6 +769,7 @@ on market_ticked(tick)
   positions = mark_positions(positions, tick)
   account = mark_account(account, positions)
   tape_prints = push_trades(tape_prints, tick, 60)
+  alerts = check_alerts(alerts, tick)
 
 on failed(reason)
   error = reason.message
@@ -1284,6 +1332,44 @@ view
                     pr=14.0
                     gap=10.0
                     align=center
+                  Label value="ALERTS"
+                  space w=fill
+                  Label value=fmt_count(waiting_alerts(alerts))
+                rule horizontal thickness=1.0 color=edge
+                scroll #alert-list
+                  with
+                    h=88.0
+                    bar-w=6.0
+                    bar-m=2.0
+                    scroller-w=6.0
+                  active
+                    y-rail bg=panel
+                    y-scroller bg=edge r=3.0
+                  hovered
+                    y-rail bg=panel
+                    y-scroller bg=faint r=3.0
+                  col w=fill
+                    if empty(alerts)
+                      box
+                        with
+                          w=fill
+                          h=56.0
+                          align-x=center
+                          align-y=center
+                        text "No levels watched." size=11.0 @text-faint
+                    for alert in alerts
+                      AlertRow alert=alert
+                        events
+                          drop -> drop_alert_at _
+                rule horizontal thickness=1.0 color=edge
+                row
+                  with
+                    w=fill
+                    h=32.0
+                    pl=14.0
+                    pr=14.0
+                    gap=10.0
+                    align=center
                   Label value="OPEN ORDERS"
                   space w=fill
                   Label value=fmt_count(len(orders))
@@ -1465,6 +1551,20 @@ view
                       text-size=12.0
                       font=digits
                     focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                  button #alert-here -> add_alert_here
+                    with
+                      label="Watch this level"
+                      w=fill
+                      p=5.0
+                    active bg=raised text=muted r=3.0
+                    hovered bg=edge text=fg r=3.0
+                    text "WATCH THIS LEVEL"
+                      with
+                        size=9.0
+                        w=fill
+                        align-x=center
+                        tracking=1.1
+                        @text-muted
                 col gap=8.0 w=fill
                   row gap=6.0 align=center
                     Label value="SIZE"

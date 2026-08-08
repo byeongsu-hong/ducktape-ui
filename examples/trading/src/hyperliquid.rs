@@ -1552,6 +1552,98 @@ pub fn position_label(held: Position) -> String {
     format!("{} {side} {}", held.coin, fmt_size(held.size))
 }
 
+/// A level somebody asked to be told about. Which side it is waiting on is
+/// not asked for: a level above the mark can only be reached from below, and
+/// one below it from above, so the direction is a fact about the price rather
+/// than a question for the person setting it.
+#[derive(Clone, PartialEq)]
+pub struct Alert {
+    pub coin: String,
+    pub price: f64,
+    pub above: bool,
+    pub fired: bool,
+}
+
+pub fn add_alert(alerts: Vec<Alert>, coin: String, price: String, mark: f64) -> Vec<Alert> {
+    let price = amount(&price);
+    let mut alerts = alerts;
+    // A level at the mark has already happened, and a duplicate is not a
+    // second alert.
+    if coin.is_empty() || price <= 0.0 || mark <= 0.0 || (price - mark).abs() < f64::EPSILON {
+        return alerts;
+    }
+    if alerts
+        .iter()
+        .any(|held| held.coin == coin && (held.price - price).abs() < f64::EPSILON)
+    {
+        return alerts;
+    }
+    alerts.push(Alert {
+        coin,
+        price,
+        above: price > mark,
+        fired: false,
+    });
+    alerts
+}
+
+/// Marks every level the market has reached. Firing is one-way: a level that
+/// was touched stays touched, so a price wobbling across it does not chime
+/// twice and does not un-chime.
+pub fn check_alerts(alerts: Vec<Alert>, tick: MarketTick) -> Vec<Alert> {
+    alerts
+        .into_iter()
+        .map(|alert| {
+            let Some(mark) = tick.mids.get(&alert.coin).copied() else {
+                return alert;
+            };
+            let reached = if alert.above {
+                mark >= alert.price
+            } else {
+                mark <= alert.price
+            };
+            Alert {
+                fired: alert.fired || reached,
+                ..alert
+            }
+        })
+        .collect()
+}
+
+/// How many are still waiting, which is the only count worth a header.
+pub fn waiting_alerts(alerts: Vec<Alert>) -> i64 {
+    alerts.iter().filter(|alert| !alert.fired).count() as i64
+}
+
+pub fn drop_alert(alerts: Vec<Alert>, coin: String, price: f64) -> Vec<Alert> {
+    alerts
+        .into_iter()
+        .filter(|alert| alert.coin != coin || (alert.price - price).abs() >= f64::EPSILON)
+        .collect()
+}
+
+/// The market's price, or zero when it has not loaded — what an alert is set
+/// relative to.
+pub fn mark_price(market: Option<SymbolRow>) -> f64 {
+    market.map_or(0.0, |row| row.price)
+}
+
+/// An alert names the level and which way the market has to go to reach it.
+pub fn alert_label(alert: Alert) -> String {
+    let state = if alert.fired {
+        "reached"
+    } else if alert.above {
+        "waiting above"
+    } else {
+        "waiting below"
+    };
+    format!("{} {state} {}", alert.coin, fmt_px(alert.price))
+}
+
+pub fn alert_arrow(alert: Alert) -> String {
+    if alert.above { "▲" } else { "▼" }.to_owned()
+}
+
 /// A size the account could actually put on: a share of what is free to
 /// withdraw, levered, at the price in the ticket. Free margin rather than
 /// equity, because equity already has positions standing on it.
@@ -1789,6 +1881,16 @@ pub fn demo_orders() -> Vec<Order> {
             ts: now_ms() / 1_000 - 240,
         },
     ]
+}
+
+/// One level already reached, so the panel's two readings both draw.
+pub fn demo_alerts() -> Vec<Alert> {
+    vec![Alert {
+        coin: "BTC".to_owned(),
+        price: 64_100.0,
+        above: true,
+        fired: true,
+    }]
 }
 
 /// A book and a tape to go with them, so the whole terminal renders from
@@ -2780,6 +2882,66 @@ mod tests {
             quoted_strict.liquidation > quoted("100", "2", "10", true).liquidation,
             "a heavier requirement moves the cliff toward the entry"
         );
+    }
+
+    #[test]
+    fn an_alert_knows_which_way_the_market_has_to_go() {
+        let beat = |price: f64| MarketTick {
+            mids: [("BTC".to_owned(), price)].into_iter().collect(),
+            ..MarketTick::default()
+        };
+        let set = |price: &str, mark: f64| add_alert(Vec::new(), "BTC".into(), price.into(), mark);
+
+        // Nobody is asked which side to wait on: a level above the mark can
+        // only be reached from below, and one below it from above.
+        assert!(set("65000", 64_000.0)[0].above);
+        assert!(!set("63000", 64_000.0)[0].above);
+
+        // It fires when the market gets there, and not before.
+        let above = set("65000", 64_000.0);
+        assert!(!check_alerts(above.clone(), beat(64_900.0))[0].fired);
+        assert!(
+            check_alerts(above.clone(), beat(65_000.0))[0].fired,
+            "at the level"
+        );
+        // And stays fired, so a price wobbling across it chimes once.
+        let hit = check_alerts(above, beat(65_100.0));
+        assert!(
+            check_alerts(hit, beat(64_000.0))[0].fired,
+            "firing is one-way"
+        );
+
+        // A market the beat says nothing about is left alone.
+        let quiet = check_alerts(set("65000", 64_000.0), MarketTick::default());
+        assert!(!quiet[0].fired);
+
+        // A level at the mark has already happened; a duplicate is not a
+        // second alert; nothing to price against is nothing to watch.
+        assert!(set("64000", 64_000.0).is_empty(), "already there");
+        assert_eq!(
+            add_alert(
+                set("65000", 64_000.0),
+                "BTC".into(),
+                "65000".into(),
+                64_000.0
+            )
+            .len(),
+            1
+        );
+        assert!(set("", 64_000.0).is_empty());
+        assert!(set("65000", 0.0).is_empty(), "no mark to compare against");
+
+        let watched = set("65000", 64_000.0);
+        assert_eq!(waiting_alerts(watched.clone()), 1);
+        assert_eq!(
+            waiting_alerts(check_alerts(watched.clone(), beat(65_000.0))),
+            0
+        );
+        assert_eq!(
+            alert_label(watched[0].clone()),
+            "BTC waiting above 65,000.00"
+        );
+        assert!(drop_alert(watched, "BTC".into(), 65_000.0).is_empty());
     }
 
     #[test]

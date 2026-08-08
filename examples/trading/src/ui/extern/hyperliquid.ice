@@ -9,6 +9,7 @@ extern crate::hyperliquid
   Order(coin:str, buy:bool, price:f64, size:f64, ts:i64)
   Level(price:f64, size:f64, bar:f64)
   Book(bids:[Level], asks:[Level], spread_pct:f64, mid:f64)
+  Alert(coin:str, price:f64, fired:bool)
   Ticket(notional:f64, margin:f64, liquidation:f64, leverage:f64, ready:bool, known:bool)
   CandleHit(ts:i64, open:f64, high:f64, low:f64, close:f64, volume:f64)
   MarketTick(book:Book?, latency:i64)
@@ -40,9 +41,17 @@ extern crate::hyperliquid
   sync demo_account() -> Account
   sync demo_fills() -> [Fill]
   sync demo_orders() -> [Order]
+  sync demo_alerts() -> [Alert]
   sync demo_book() -> Book
   sync demo_tape() -> [Trade]
   sync position_held(positions:[Position], coin:str) -> f64
+  sync mark_price(market:SymbolRow?) -> f64
+  sync alert_label(alert:Alert) -> str
+  sync alert_arrow(alert:Alert) -> str
+  sync add_alert(alerts:[Alert], coin:str, price:str, mark:f64) -> [Alert]
+  sync check_alerts(alerts:[Alert], tick:MarketTick) -> [Alert]
+  sync waiting_alerts(alerts:[Alert]) -> i64
+  sync drop_alert(alerts:[Alert], coin:str, price:f64) -> [Alert]
   sync ticket_afford(account:Account?, price:str, leverage:str, share:f64) -> str
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   sync order_label(order:Order) -> str

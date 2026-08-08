@@ -178,6 +178,21 @@ market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
 
+## Levels worth being told about
+
+**WATCH THIS LEVEL** puts the ticket's price on a list under the book. Nobody
+is asked which side it is waiting on, because that is a fact rather than a
+question: a level above the mark can only be reached from below.
+
+Firing is one-way. A price that touches a level and wobbles back has still
+touched it, so a level chimes once and then reads as reached rather than
+flickering with the tape. The header counts what is still waiting, which is
+the only number a header can act on.
+
+The alerts live where the market is, not where the account is: the same rail
+as the book and the tape, because they are watching a price rather than a
+position.
+
 ## What a second venue has to provide
 
 The panels, the folds, the ticket's arithmetic, the formatters and the chart
