@@ -1684,6 +1684,50 @@ pub fn demo_positions() -> Vec<Position> {
     }]
 }
 
+/// A book and a tape to go with them, so the whole terminal renders from
+/// fixtures rather than from an exchange.
+pub fn demo_book() -> Book {
+    let level = |price: f64, size: f64, total: f64, deepest: f64| Level {
+        price,
+        size,
+        total,
+        bar: total / deepest * BOOK_BAR_WIDTH,
+    };
+    Book {
+        bids: vec![
+            level(63_999.0, 1.4, 1.4, 6.0),
+            level(63_998.0, 2.1, 3.5, 6.0),
+            level(63_997.0, 2.5, 6.0, 6.0),
+        ],
+        // Reversed, as the feed leaves them: the best ask sits last, against
+        // the spread, so the panel walks both lists top to bottom.
+        asks: vec![
+            level(64_003.0, 3.0, 7.0, 7.0),
+            level(64_002.0, 2.2, 4.0, 7.0),
+            level(64_001.0, 1.8, 1.8, 7.0),
+        ],
+        spread: 2.0,
+        spread_pct: 2.0 / 64_000.0 * 100.0,
+        mid: 64_000.0,
+    }
+}
+
+pub fn demo_tape() -> Vec<Trade> {
+    let print = |tid: i64, price: f64, size: f64, buy: bool, sweep: i64| Trade {
+        ts: 1_786_117_888 - tid,
+        price,
+        size,
+        buy,
+        sweep,
+        tid,
+    };
+    vec![
+        print(1, 64_001.0, 0.53, true, 2),
+        print(2, 63_999.0, 1.20, false, 1),
+        print(3, 64_001.0, 0.08, true, 1),
+    ]
+}
+
 /// Left gap the header keeps clear so its content never sits under the macOS
 /// traffic lights, which float over the fullsize content view. The rightmost
 /// button ends near 74pt; everywhere else the header owns its full width.

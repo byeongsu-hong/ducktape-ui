@@ -36,6 +36,8 @@ extern crate::hyperliquid
   sync valid_address(address:str) -> bool
   sync demo_symbols() -> [SymbolRow]
   sync demo_positions() -> [Position]
+  sync demo_book() -> Book
+  sync demo_tape() -> [Trade]
   sync position_held(positions:[Position], coin:str) -> f64
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   sync order_label(order:Order) -> str

@@ -62,10 +62,13 @@ preset terminal
 preset held
   state
     gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
     symbols = demo_symbols()
     visible = demo_symbols()
     focus = symbol_row(demo_symbols(), "BTC")
     positions = demo_positions()
+    book = some(demo_book())
+    tape_prints = demo_tape()
 
 preset failing
   state
@@ -1738,3 +1741,11 @@ test trading_a_closing_order_asks_for_no_margin
   expect quote.ready
   expect quote.margin ~= 0.0
   expect quote.liquidation ~= 0.0
+
+test trading_the_whole_terminal_renders_from_fixtures
+  preset held
+  viewport 1400 900
+  expect text "64,001.00"
+  expect text "0.3 bps"
+  expect no text "Connect an address"
+  capture terminal
