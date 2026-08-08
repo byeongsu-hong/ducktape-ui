@@ -764,14 +764,56 @@ impl TemplateSource {
     }
 }
 
-/// Whether a dev runner has published a template for this process to watch.
+/// Emits an event whenever the published template file changes.
 ///
-/// Generated code subscribes to a redraw tick only when this is true, so a
-/// release build carries no polling at all. Without such a tick a rewritten
-/// template would sit unread: iced rebuilds the view only when something asks
-/// it to, and an idle window never asks.
-pub fn watching() -> bool {
-    std::env::var_os("ICE_TEMPLATE_PATH").is_some()
+/// Without this a rewritten template would sit unread: iced rebuilds the view
+/// only when something asks it to, and an idle window never asks.
+///
+/// The watch runs on a plain OS thread rather than a timer subscription, for
+/// two reasons. `iced::time::every` exists only when the application enables
+/// `tokio` or `smol`, and requiring that of every Ice application to support a
+/// development feature is the wrong trade. And a thread can compare timestamps
+/// itself, so it sends only when the file actually moves — an idle window
+/// rebuilds its view zero times rather than once per tick.
+///
+/// The subscription is inert when no dev runner has set `ICE_TEMPLATE_PATH`,
+/// so a release build spawns nothing and subscribes to nothing.
+pub fn changes() -> iced::Subscription<()> {
+    if std::env::var_os("ICE_TEMPLATE_PATH").is_none() {
+        return iced::Subscription::none();
+    }
+    iced::Subscription::run(|| {
+        let (mut sender, receiver) = iced::futures::channel::mpsc::channel(1);
+        std::thread::spawn(move || {
+            let Some(path) = std::env::var_os("ICE_TEMPLATE_PATH").map(std::path::PathBuf::from)
+            else {
+                return;
+            };
+            let stamp = |path: &std::path::Path| {
+                std::fs::metadata(path)
+                    .and_then(|meta| meta.modified())
+                    .ok()
+            };
+            let mut seen = stamp(&path);
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let current = stamp(&path);
+                if current == seen {
+                    continue;
+                }
+                seen = current;
+                // A full channel means the previous change has not been
+                // rendered yet, and a second notification would tell the view
+                // nothing new. A closed one means the window is gone.
+                match sender.try_send(()) {
+                    Ok(()) => {}
+                    Err(error) if error.is_full() => {}
+                    Err(_) => return,
+                }
+            }
+        });
+        receiver
+    })
 }
 
 /// Reports whether a compiled process can accept `candidate` without being

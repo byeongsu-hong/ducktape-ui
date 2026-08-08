@@ -43,14 +43,13 @@ pub(in crate::codegen) fn generate_subscription(
             "::iced::window::events().map(|(__id, __event)| {message}::__AccessibilityWindow(__id, __event)),"
         )
         .unwrap();
-        // Wakes the event loop while a dev runner is republishing the view.
-        // Without it a rewritten template sits unread: iced rebuilds the view
-        // only when something asks it to, and an idle window never asks. The
-        // tick exists only when a template file is published, so a release
-        // build subscribes to nothing.
+        // Wakes the event loop when a dev runner republishes the view. The
+        // runtime owns the watching, so this costs nothing — and requires
+        // nothing of the application's iced features — when no template file
+        // is published.
         writeln!(
             out,
-            "if ::ui_lang_runtime::template::watching() {{ ::iced::time::every(::std::time::Duration::from_millis(150)).map(|_| {message}::__TemplateChanged) }} else {{ ::iced::Subscription::none() }},"
+            "::ui_lang_runtime::template::changes().map(|()| {message}::__TemplateChanged),"
         )
         .unwrap();
     }
