@@ -40,7 +40,7 @@ state
   ticket_price = ""
   ticket_size = ""
   ticket_leverage = "5"
-  quote:Ticket = price_ticket("", "", "5", none, true)
+  quote:Ticket = price_ticket("", "", "5", none, true, 0.0)
   orders:[Order] = []
   book:Book? = none
   hover:CandleHit? = none
@@ -58,6 +58,18 @@ derived
 preset terminal
   state
     gate = false
+
+preset held
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    visible = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    book = some(demo_book())
+    tape_prints = demo_tape()
 
 preset failing
   state
@@ -573,7 +585,7 @@ on open_ticket
   ticket = true
   ticket_price = seed
   ticket_size = ""
-  quote = price_ticket(seed, "", ticket_leverage, focus, ticket_buy)
+  quote = price_ticket(seed, "", ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on seed_ticket(price, buy)
   let seed = fmt_px(price)
@@ -581,19 +593,19 @@ on seed_ticket(price, buy)
   ticket_buy = buy
   ticket_price = seed
   ticket_size = ""
-  quote = price_ticket(seed, "", ticket_leverage, focus, buy)
+  quote = price_ticket(seed, "", ticket_leverage, focus, buy, position_held(positions, coin))
 
 on ticket_priced(typed)
   ticket_price = typed
-  quote = price_ticket(typed, ticket_size, ticket_leverage, focus, ticket_buy)
+  quote = price_ticket(typed, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_sized(typed)
   ticket_size = typed
-  quote = price_ticket(ticket_price, typed, ticket_leverage, focus, ticket_buy)
+  quote = price_ticket(ticket_price, typed, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_levered(typed)
   ticket_leverage = typed
-  quote = price_ticket(ticket_price, ticket_size, typed, focus, ticket_buy)
+  quote = price_ticket(ticket_price, ticket_size, typed, focus, ticket_buy, position_held(positions, coin))
 
 on close_ticket
   ticket = false
@@ -607,9 +619,16 @@ on search_key(event)
   query = ""
   visible = filter_symbols(symbols, "", coin)
 
+on close_held
+  let held = position_held(positions, coin)
+  return if held == 0.0
+  ticket_buy = held < 0.0
+  ticket_size = fmt_size(held)
+  quote = price_ticket(ticket_price, fmt_size(held), ticket_leverage, focus, held < 0.0, held)
+
 on ticket_side(buy)
   ticket_buy = buy
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, buy)
+  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, buy, position_held(positions, coin))
 
 on reopen
   draft = address
@@ -954,7 +973,7 @@ view
                           Label value="POSITIONS"
                           Label value=fmt_count(len(positions))
                           if !empty(error)
-                            text error size=11.0 @text-down
+                            text error size=11.0 @text-fg
                           if empty(error) && !empty(status)
                             text status size=11.0 @text-faint
                           if empty(error) && empty(status)
@@ -1238,6 +1257,13 @@ view
                         align=center
                       Label value="TAPE"
                       space w=fill
+                      if !empty(tape_prints)
+                        Delta
+                          with
+                            value=fmt_share(tape_pressure(tape_prints))
+                            up=(tape_pressure(tape_prints) >= 50.0)
+                            size=10.0
+                            width=34.0
                       Label value=coin
                     rule horizontal thickness=1.0 color=edge
                     scroll #tape-list
@@ -1489,6 +1515,28 @@ view
                       w=fill
                       align-x=center
                       @text-muted
+          if position_held(positions, coin) != 0.0
+            button #close-held -> close_held
+              with
+                label="Fill the size that closes this position"
+                w=fill
+                p=8.0
+              active bg=raised text=muted r=4.0
+              hovered bg=edge text=fg r=4.0
+              text "CLOSE POSITION"
+                with
+                  size=10.0
+                  w=fill
+                  align-x=center
+                  tracking=1.1
+                  @text-muted
+          if !empty(ticket_effect(positions, coin, ticket_size, ticket_buy))
+            text ticket_effect(positions, coin, ticket_size, ticket_buy)
+              with
+                size=11.0
+                w=fill
+                wrap=word
+                @text-muted
           col gap=8.0 w=fill
             Label value="LIMIT PRICE"
             input "" #ticket-price <-> ticket_price
@@ -1683,3 +1731,32 @@ test trading_shows_the_failure_not_the_progress
   viewport 1400 900
   expect text "Hyperliquid unreachable"
   expect no text "Loading candles"
+
+test trading_says_what_broke_without_spending_a_money_colour
+  preset failing
+  viewport 1400 900
+  expect text "Hyperliquid unreachable"
+  expect no text "Loading candles"
+
+test trading_a_closing_order_asks_for_no_margin
+  preset held
+  viewport 1400 900
+  dispatch open_ticket
+  dispatch close_held
+  expect ticket
+  expect ticket_size == "30.00"
+  expect ticket_buy
+  expect quote.ready
+  expect quote.margin ~= 0.0
+  expect quote.liquidation ~= 0.0
+
+test trading_the_whole_terminal_renders_from_fixtures
+  preset held
+  viewport 1400 900
+  expect text "64,001.00"
+  expect text "0.3 bps"
+  expect no text "Connect an address"
+  expect no text "READ ONLY"
+  expect text "38%"
+  expect text "34%"
+  capture terminal

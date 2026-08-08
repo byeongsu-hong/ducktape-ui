@@ -90,7 +90,9 @@ absolute.
 
 An absolute path reaches what the tested view exposes at its top; a layout ID
 nested below that is reached by chaining from an alias, not by spelling out a
-longer `#` path. Given a dialog holding a button, `#connect` and `#gate/connect`
+longer `#` path. The chain names every identified ancestor, not only the
+outermost — an alias does not reach past an intervening ID. Given a dialog
+holding a button, `#connect` and `#gate/connect`
 are both `E194 unknown rendered widget target`, and this is the form that
 resolves:
 
@@ -102,7 +104,19 @@ focus field
 ```
 
 Actions and assertions take the alias too, so `focus #address-input` fails for
-the same reason `target` did. Geometry assertions use logical-pixel bounds; paint assertions
+the same reason `target` did.
+
+Deeper in a real view the chain grows to match. A message rendered inside a
+column inside a panel is reached one identified ancestor at a time, and
+skipping a middle name fails as though the ID were missing rather than as
+though the path were short:
+
+```ice
+target app = #app
+target lower = app/lower
+target pos = lower/positions
+target line = pos/failure
+``` Geometry assertions use logical-pixel bounds; paint assertions
 inspect unambiguous tiny-skia quad or text commands for backgrounds, borders,
 radii, shadows, colors, fonts, sizes, and line heights without comparing
 screenshots. Primitive counts, text/image bounds, shaped text baseline,

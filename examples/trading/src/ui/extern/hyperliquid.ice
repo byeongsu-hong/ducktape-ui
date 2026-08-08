@@ -1,16 +1,16 @@
 extern crate::hyperliquid
   Tape()
   HlError(message:str)
-  SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, prev:f64, maintenance:f64, selected:bool)
-  Position(coin:str, size:f64, entry:f64, mark:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
-  Account(value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, margin_pct:f64, positions:[Position])
+  SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, selected:bool)
+  Position(coin:str, size:f64, entry:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
+  Account(value:f64, pnl:f64, withdrawable:f64, notional:f64, health:f64, margin_pct:f64, positions:[Position])
   Trade(ts:i64, price:f64, size:f64, buy:bool, sweep:i64)
   Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, heat:i64)
   Order(coin:str, buy:bool, price:f64, size:f64, ts:i64)
   Level(price:f64, size:f64, bar:f64)
   Book(bids:[Level], asks:[Level], spread_pct:f64, mid:f64)
   Ticket(notional:f64, margin:f64, liquidation:f64, leverage:f64, ready:bool, known:bool)
-  CandleHit(index:i64, ts:i64, open:f64, high:f64, low:f64, close:f64, volume:f64)
+  CandleHit(ts:i64, open:f64, high:f64, low:f64, close:f64, volume:f64)
   MarketTick(book:Book?, latency:i64)
   ChartSignal(hover:CandleHit?, older:bool)
   sync tape_new() -> Tape
@@ -28,12 +28,19 @@ extern crate::hyperliquid
   sync filter_symbols(rows:[SymbolRow], query:str, coin:str) -> [SymbolRow]
   sync symbol_row(rows:[SymbolRow], coin:str) -> SymbolRow?
   sync ticket_seed(book:Book?, focus:SymbolRow?) -> str
-  sync price_ticket(price:str, size:str, leverage:str, market:SymbolRow?, buy:bool) -> Ticket
+  sync price_ticket(price:str, size:str, leverage:str, market:SymbolRow?, buy:bool, held:f64) -> Ticket
   sync push_trades(tape:[Trade], tick:MarketTick, limit:i64) -> [Trade]
   sync push_fills(history:[Fill], incoming:[Fill], limit:i64) -> [Fill]
   sync cool_fills(rows:[Fill]) -> [Fill]
   sync any_hot(rows:[Fill]) -> bool
   sync valid_address(address:str) -> bool
+  sync demo_symbols() -> [SymbolRow]
+  sync demo_positions() -> [Position]
+  sync demo_account() -> Account
+  sync demo_book() -> Book
+  sync demo_tape() -> [Trade]
+  sync position_held(positions:[Position], coin:str) -> f64
+  sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   sync order_label(order:Order) -> str
   sync fill_label(fill:Fill) -> str
   sync book_label(price:f64, buy:bool) -> str

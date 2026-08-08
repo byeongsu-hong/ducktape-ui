@@ -31,8 +31,11 @@ Monoplex KR and every word is IBM Plex Sans KR — the same skeleton drawn twice
 one monospaced so a column of prices aligns on its digits, one proportional for
 prose. The ground is a warm ink-black rather than the blue-black every exchange
 ships, and the two money colours are a ledger green and an oxide red: printer's
-inks, not phosphor. Nothing else on screen — no button, border, tab, or rule —
-is allowed to be green or red, so long and short read at a glance.
+inks, not phosphor. They mean one thing and are spent nowhere else: which way
+money went, which side an order takes, and how far a position has run toward
+losing all of it. A border, a tab, a rule, a heading, a failure — none of them
+may be either colour, so long and short read at a glance. A feed that dropped
+is the app's problem and not the market's, so it says so in plain ink.
 
 The one thing this layout gives you that an exchange table does not is the
 **risk rail** under each liquidation price: a bar showing how far the mark has
@@ -122,6 +125,23 @@ that price, clicking a bid a sell, because the side you want is the side you
 just clicked across. The size is cleared whenever it opens — 0.5 means a
 different order on every market, and carrying it over is how you place one you
 did not mean.
+
+An order that closes something ties up nothing and has no cliff, and the panel
+says so: the trade still has a value, but the margin is zero and there is no
+liquidation to quote, because nothing was opened. Past the position it is both
+at once — all of it trades, only the excess opens, and only the excess can be
+liquidated.
+
+A position in this market puts a **close** on the ticket, which fills the size
+that flattens it and takes the side that does — both read off the same signed
+number, which is the only place the two agree by construction rather than by
+you doing the sign in your head.
+
+It also says what the order would do to what you already hold. Opening and
+closing are different acts on the same ticket, and the only thing that
+separates them is the sign of a number two panels away — so the ticket reads it
+for you: a buy against a short reduces it, closes it, or closes it and opens
+the other way.
 
 A market the app has not read yet gets no cliff quoted at all. What an order
 is worth and what it ties up are multiplication and always answerable, but the
@@ -271,7 +291,10 @@ renders the chart from the tape plus the current fills, positions, and orders.
 Candles never cross into Ice; everything the panels list does, because the
 panels list it — and only that. A struct crossing the boundary carries the
 fields the screen reads and no others, so the extern block stays a description
-of the interface rather than of the exchange.
+of the interface rather than of the exchange. A test holds it to that, because
+the rule does not hold itself: five fields and one whole `sync` had drifted
+across it before the test existed, and a declared function nothing calls is
+how you find out that the edit meant to wire it up matched nothing.
 
 The chart adapter reports back one `ChartSignal`: the candle under the cursor,
 and whether the view has reached the oldest candle loaded. One handler reads
@@ -294,6 +317,12 @@ so when there is none; and a failure outranks the progress line it shares a
 slot with. None of those reach the network, so they run wherever the rest does.
 One test reads the palette out of `theme.ice` and holds the chart to it, because
 the chart is drawn in Rust and would otherwise drift in silence.
+
+One market, one position, a book and a few prints live in the source as
+fixtures, behind a named preset. Everything that only exists when an account does — the ticket's
+figures, what an order would do to a position, what it asks for in margin —
+is asserted against them, so the readings that were only ever visible in a
+picture are now checked without one.
 
 Two tests talk to the live exchange — one per endpoint shape, so the subscription names and payloads
 are checked against Hyperliquid rather than against a recording, and the
