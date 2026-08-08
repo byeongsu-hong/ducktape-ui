@@ -1552,6 +1552,116 @@ pub fn position_label(held: Position) -> String {
     format!("{} {side} {}", held.coin, fmt_size(held.size))
 }
 
+/// A level somebody asked to be told about. Which side it is waiting on is
+/// not asked for: a level above the mark can only be reached from below, and
+/// one below it from above, so the direction is a fact about the price rather
+/// than a question for the person setting it.
+#[derive(Clone, PartialEq)]
+pub struct Alert {
+    pub coin: String,
+    pub price: f64,
+    pub above: bool,
+    pub fired: bool,
+}
+
+pub fn add_alert(alerts: Vec<Alert>, coin: String, price: String, mark: f64) -> Vec<Alert> {
+    let price = amount(&price);
+    let mut alerts = alerts;
+    // A level at the mark has already happened, and a duplicate is not a
+    // second alert.
+    if coin.is_empty() || price <= 0.0 || mark <= 0.0 || (price - mark).abs() < f64::EPSILON {
+        return alerts;
+    }
+    if alerts
+        .iter()
+        .any(|held| held.coin == coin && (held.price - price).abs() < f64::EPSILON)
+    {
+        return alerts;
+    }
+    alerts.push(Alert {
+        coin,
+        price,
+        above: price > mark,
+        fired: false,
+    });
+    alerts
+}
+
+/// Marks every level the market has reached. Firing is one-way: a level that
+/// was touched stays touched, so a price wobbling across it does not chime
+/// twice and does not un-chime.
+pub fn check_alerts(alerts: Vec<Alert>, tick: MarketTick) -> Vec<Alert> {
+    alerts
+        .into_iter()
+        .map(|alert| {
+            let Some(mark) = tick.mids.get(&alert.coin).copied() else {
+                return alert;
+            };
+            let reached = if alert.above {
+                mark >= alert.price
+            } else {
+                mark <= alert.price
+            };
+            Alert {
+                fired: alert.fired || reached,
+                ..alert
+            }
+        })
+        .collect()
+}
+
+/// How many are still waiting, which is the only count worth a header.
+pub fn waiting_alerts(alerts: Vec<Alert>) -> i64 {
+    alerts.iter().filter(|alert| !alert.fired).count() as i64
+}
+
+pub fn drop_alert(alerts: Vec<Alert>, coin: String, price: f64) -> Vec<Alert> {
+    alerts
+        .into_iter()
+        .filter(|alert| alert.coin != coin || (alert.price - price).abs() >= f64::EPSILON)
+        .collect()
+}
+
+/// The market's price, or zero when it has not loaded — what an alert is set
+/// relative to.
+pub fn mark_price(market: Option<SymbolRow>) -> f64 {
+    market.map_or(0.0, |row| row.price)
+}
+
+/// An alert names the level and which way the market has to go to reach it.
+pub fn alert_label(alert: Alert) -> String {
+    let state = if alert.fired {
+        "reached"
+    } else if alert.above {
+        "waiting above"
+    } else {
+        "waiting below"
+    };
+    format!("{} {state} {}", alert.coin, fmt_px(alert.price))
+}
+
+pub fn alert_arrow(alert: Alert) -> String {
+    if alert.above { "▲" } else { "▼" }.to_owned()
+}
+
+/// A size the account could actually put on: a share of what is free to
+/// withdraw, levered, at the price in the ticket. Free margin rather than
+/// equity, because equity already has positions standing on it.
+pub fn ticket_afford(
+    account: Option<Account>,
+    price: String,
+    leverage: String,
+    share: f64,
+) -> String {
+    let free = account.map_or(0.0, |held| held.withdrawable);
+    let price = amount(&price);
+    let leverage = amount(&leverage);
+    if free <= 0.0 || price <= 0.0 || leverage <= 0.0 || share <= 0.0 {
+        return String::new();
+    }
+    fmt_size(free * share.min(1.0) * leverage / price)
+}
+
 /// What an order would do to what you already hold. Opening and closing are
 /// different acts on the same ticket, and the difference is the sign of a
 /// number two panels apart — the size you typed here and the position sitting
@@ -1695,14 +1805,14 @@ pub fn demo_candles() -> Tape {
     for step in 0..120 {
         // A shape rather than a straight line, so the moving averages have
         // something to say and the plot is not a diagonal.
-        let drift = ((step as f64) / 9.0).sin() * 120.0;
+        let drift = ((step as f64) / 9.0).sin() * 520.0;
         let open = close;
         close = 63_900.0 + drift + (step as f64) * 1.5;
         candles.push(Candle {
             ts: 1_786_110_000 + step * 60,
             open,
-            high: open.max(close) + 25.0,
-            low: open.min(close) - 25.0,
+            high: open.max(close) + 60.0,
+            low: open.min(close) - 60.0,
             close,
             volume: 40.0 + drift.abs(),
         });
@@ -1730,6 +1840,67 @@ pub fn demo_account() -> Account {
         margin_pct: margin_load(value, maintenance) * 100.0,
         positions,
     }
+}
+
+/// Fills and resting orders, including one fill still lit, so the flash a
+/// just-printed fill wears is drawn rather than only decayed in a unit test.
+pub fn demo_fills() -> Vec<Fill> {
+    let fill = |tid: i64, price: f64, size: f64, buy: bool, closed_pnl: f64, heat: i64| Fill {
+        coin: "BTC".to_owned(),
+        // Inside the candle window `demo_candles` builds, so each lands on
+        // its own candle rather than piling onto the last one.
+        ts: 1_786_110_000 + (7 - tid) * 900,
+        price,
+        size,
+        buy,
+        closed_pnl,
+        heat,
+        tid,
+    };
+    vec![
+        fill(1, 64_010.0, 0.25, false, 1_240.0, FLASH_STEPS),
+        fill(2, 63_940.0, 0.50, true, 0.0, 1),
+        fill(3, 63_880.0, 0.75, true, 0.0, 0),
+    ]
+}
+
+pub fn demo_orders() -> Vec<Order> {
+    vec![
+        Order {
+            coin: "BTC".to_owned(),
+            buy: true,
+            price: 63_600.0,
+            size: 1.5,
+            ts: now_ms() / 1_000 - 7_200,
+        },
+        Order {
+            coin: "BTC".to_owned(),
+            buy: false,
+            price: 64_440.0,
+            size: 0.8,
+            ts: now_ms() / 1_000 - 240,
+        },
+    ]
+}
+
+/// One level already reached, so the panel's two readings both draw.
+pub fn demo_alerts() -> Vec<Alert> {
+    vec![
+        Alert {
+            coin: "BTC".to_owned(),
+            price: 64_100.0,
+            above: true,
+            fired: true,
+        },
+        // A level on a market the list is not showing. Alerts outlive the
+        // market they were set from, so a row has to say which one it means.
+        Alert {
+            coin: "ETH".to_owned(),
+            price: 3_400.0,
+            above: true,
+            fired: false,
+        },
+    ]
 }
 
 /// A book and a tape to go with them, so the whole terminal renders from
@@ -2369,6 +2540,35 @@ mod tests {
             "the boundary carries what nothing reads:\n  {}",
             dead.join("\n  ")
         );
+
+        // A handler the app never routes to is dead however many tests
+        // dispatch it. `dispatch` reaches anything by name, so a handler can
+        // outlive the control that called it and still look exercised.
+        let routed: Vec<&str> = APP
+            .lines()
+            .flat_map(|line| {
+                // `| name _` is the error route of a `run` or a `stream`.
+                [
+                    "-> ", "| ", "change=", "submit=", "drag=", "dismiss=", "paste=",
+                ]
+                .iter()
+                .filter_map(move |form| {
+                    let at = line.find(form)? + form.len();
+                    Some(line[at..].split([' ', '(']).next().unwrap_or_default())
+                })
+            })
+            .collect();
+        let orphans: Vec<&str> = APP
+            .lines()
+            .filter_map(|line| line.strip_prefix("on "))
+            .map(|rest| rest.split('(').next().unwrap_or(rest).trim())
+            .filter(|handler| *handler != "mount" && !routed.contains(handler))
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "handlers nothing routes to: {}",
+            orphans.join(", ")
+        );
     }
 
     #[test]
@@ -2691,6 +2891,107 @@ mod tests {
         assert!(
             quoted_strict.liquidation > quoted("100", "2", "10", true).liquidation,
             "a heavier requirement moves the cliff toward the entry"
+        );
+    }
+
+    #[test]
+    fn an_alert_knows_which_way_the_market_has_to_go() {
+        let beat = |price: f64| MarketTick {
+            mids: [("BTC".to_owned(), price)].into_iter().collect(),
+            ..MarketTick::default()
+        };
+        let set = |price: &str, mark: f64| add_alert(Vec::new(), "BTC".into(), price.into(), mark);
+
+        // Nobody is asked which side to wait on: a level above the mark can
+        // only be reached from below, and one below it from above.
+        assert!(set("65000", 64_000.0)[0].above);
+        assert!(!set("63000", 64_000.0)[0].above);
+
+        // It fires when the market gets there, and not before.
+        let above = set("65000", 64_000.0);
+        assert!(!check_alerts(above.clone(), beat(64_900.0))[0].fired);
+        assert!(
+            check_alerts(above.clone(), beat(65_000.0))[0].fired,
+            "at the level"
+        );
+        // And stays fired, so a price wobbling across it chimes once.
+        let hit = check_alerts(above, beat(65_100.0));
+        assert!(
+            check_alerts(hit, beat(64_000.0))[0].fired,
+            "firing is one-way"
+        );
+
+        // A market the beat says nothing about is left alone.
+        let quiet = check_alerts(set("65000", 64_000.0), MarketTick::default());
+        assert!(!quiet[0].fired);
+
+        // A level at the mark has already happened; a duplicate is not a
+        // second alert; nothing to price against is nothing to watch.
+        assert!(set("64000", 64_000.0).is_empty(), "already there");
+        assert_eq!(
+            add_alert(
+                set("65000", 64_000.0),
+                "BTC".into(),
+                "65000".into(),
+                64_000.0
+            )
+            .len(),
+            1
+        );
+        assert!(set("", 64_000.0).is_empty());
+        assert!(set("65000", 0.0).is_empty(), "no mark to compare against");
+
+        let watched = set("65000", 64_000.0);
+        assert_eq!(waiting_alerts(watched.clone()), 1);
+        assert_eq!(
+            waiting_alerts(check_alerts(watched.clone(), beat(65_000.0))),
+            0
+        );
+        assert_eq!(
+            alert_label(watched[0].clone()),
+            "BTC waiting above 65,000.00"
+        );
+        assert!(drop_alert(watched, "BTC".into(), 65_000.0).is_empty());
+    }
+
+    #[test]
+    fn a_share_button_sizes_against_free_margin_not_equity() {
+        let held = |withdrawable: f64| {
+            Some(Account {
+                value: 100_000.0,
+                pnl: 0.0,
+                withdrawable,
+                notional: 0.0,
+                maintenance: 0.0,
+                health: 0.0,
+                margin_pct: 0.0,
+                positions: Vec::new(),
+            })
+        };
+        let size = |share: f64| ticket_afford(held(10_000.0), "100".into(), "5".into(), share);
+
+        // 10,000 free at 5x is 50,000 of notional; a quarter of it at 100 is
+        // 125. Equity is 100,000 and would say ten times that, which is the
+        // point: equity already has positions standing on it.
+        assert_eq!(size(0.25), "125.00");
+        assert_eq!(size(1.0), "500.00");
+        assert_eq!(size(2.0), "500.00", "past everything is everything");
+
+        // Nothing to deploy, nothing to price against, nothing levered.
+        assert_eq!(size(0.0), "");
+        assert_eq!(ticket_afford(held(0.0), "100".into(), "5".into(), 0.5), "");
+        assert_eq!(
+            ticket_afford(held(10_000.0), "".into(), "5".into(), 0.5),
+            ""
+        );
+        assert_eq!(
+            ticket_afford(held(10_000.0), "100".into(), "".into(), 0.5),
+            ""
+        );
+        assert_eq!(
+            ticket_afford(None, "100".into(), "5".into(), 0.5),
+            "",
+            "no account"
         );
     }
 

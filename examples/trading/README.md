@@ -106,7 +106,9 @@ first.
 
 ## The ticket sends nothing
 
-**NEW ORDER** on the book opens a ticket that prices an order and stops there.
+The ticket is a rail beside the book, not a dialog over it. An order is priced
+against what the book is doing, and a modal that covers the book to ask about
+it has the relationship backwards. It prices an order and stops there.
 It seeds the limit price from the book's mid, takes a size and a leverage held
 inside what the market allows, and answers the only three questions worth
 asking before an order exists: what it is worth, what it ties up, and where it
@@ -120,11 +122,14 @@ displays, and a position row its side and size rather than its ticker. A row
 carrying five figures is worth more than one of them to somebody who cannot
 see the other four.
 
-A level in the book opens it already filled: clicking an ask starts a buy at
-that price, clicking a bid a sell, because the side you want is the side you
-just clicked across. The size is cleared whenever it opens — 0.5 means a
-different order on every market, and carrying it over is how you place one you
-did not mean.
+A level in the book fills it: clicking an ask starts a buy at that price,
+clicking a bid a sell, because the side you want is the side you just clicked
+across. Changing market resets it — 0.5 means a different order on every one
+of them, and carrying it over is how you place an order you did not mean.
+
+Four rails need width the old minimum did not have. The window asks for 1660
+now, which is what the columns actually measure: 610 for the positions row,
+310 for the fills, and 719 for the market list, the book and the ticket.
 
 An order that closes something ties up nothing and has no cliff, and the panel
 says so: the trade still has a value, but the margin is zero and there is no
@@ -172,6 +177,48 @@ a market's maximum leverage, and another exchange holds something else. So the
 market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
+
+## Levels worth being told about
+
+**WATCH THIS LEVEL** puts the ticket's price on a list under the book. Nobody
+is asked which side it is waiting on, because that is a fact rather than a
+question: a level above the mark can only be reached from below.
+
+Firing is one-way. A price that touches a level and wobbles back has still
+touched it, so a level chimes once and then reads as reached rather than
+flickering with the tape. The header counts what is still waiting, which is
+the only number a header can act on.
+
+The alerts live where the market is, not where the account is: the same rail
+as the book and the tape, because they are watching a price rather than a
+position. They outlive the market they were set from, so every row names its
+own — and dismisses by it, rather than by whatever is on screen.
+
+## What a second venue has to provide
+
+The panels, the folds, the ticket's arithmetic, the formatters and the chart
+adapter do not know which exchange they are looking at. What does is a short
+list, and it is the whole of a second adapter:
+
+| | |
+| --- | --- |
+| Two endpoints | one REST, one websocket |
+| Six requests | the universe, a candle window, an account, its resting orders, and whatever the websocket needs to open |
+| Five channels | mids, book, market context, candles, and this account's fills |
+| One field map per response | every number arrives as a string here; another venue will disagree about names and types both |
+| One margin rule | the share of a position's value held against it — Hyperliquid keeps half the margin at the market's maximum leverage; the market carries the answer, so nothing shared learns the rule |
+| One interval vocabulary | `1m`, `5m`, `1h` are this venue's spelling |
+| One side encoding | `B` and `A` here, for both fills and prints |
+
+Everything else is already venue-neutral, and the boundary test keeps it that
+way: `SymbolRow`, `Position`, `Account`, `Book`, `Trade`, `Fill`, `Order` and
+`Ticket` are shapes the panels read, not shapes Hyperliquid returns.
+
+The one thing not yet done is the module split that would put those two halves
+in separate files. It is mechanical — the venue half needs `Tape.candles`,
+`MarketTick.mids`, `MarketTick.context` and `Fill.tid` visible to the crate,
+because the venue writes what the panels read — and it is worth doing when
+there is a second adapter to shape it against.
 
 ## What talks to the exchange
 
