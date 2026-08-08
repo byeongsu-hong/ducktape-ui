@@ -19,3 +19,4 @@ __TrayPopoverFocused(::iced::window::Id),
 __TrayPopoverUnfocused(::iced::window::Id),
 pub(crate) __ice_tray_popover_shown: bool,
 && self.__ice_tray_popover_shown
+self.__ice_tray_dismissed = ::std::option::Option::Some(::iced::time::Instant::now());
