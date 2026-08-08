@@ -507,3 +507,47 @@ Outlining is not free at runtime — each use becomes a call through
 `__view build only` on showcase reads 707/709/719/731us across four runs
 against a 715us baseline: no change that the run-to-run spread does not
 already cover.
+
+### What the release profile was leaving on the table
+
+Everything above is about the debug profile, because that is what the edit
+loop uses. The release profile had no settings at all — `opt-level = 3`,
+`lto = false`, `strip = "none"`, sixteen codegen units — and it turned out to
+be the cheapest remaining lever on both axes at once.
+
+Measured on showcase and trading, each configuration built from an emptied
+release directory:
+
+| Release profile | showcase | trading |
+| --- | --- | --- |
+| stock | 33.0 MB | 35.6 MB |
+| `strip` | 25.4 MB | 29.2 MB |
+| `strip` + `lto = "thin"` + `codegen-units = 1` | 22.3 MB | 26.6 MB |
+| `strip` + `lto = "fat"` + `codegen-units = 1` | **20.5 MB** | **24.5 MB** |
+
+Size alone would not settle the choice, because LTO also changes the frame,
+so the probe was run under each. Thin LTO moves nothing a re-run does not
+cover. Fat LTO does, and the two distributions do not overlap:
+
+| showcase, p50 over three runs | stock | `lto = "fat"` |
+| --- | --- | --- |
+| `__view` build only | 736 / 735 / 721us | 657 / 637 / 646us |
+| idle redraw | 3491 / 3448 / 3496us | 3026 / 3041 / 3020us |
+| click + redraw | 13711 / 13851 / 13845us | 12267 / 12287 / 12221us |
+| click + redraw, p95 | 15987 / 16557 / 15549us | 13283 / 13108 / 13095us |
+
+Eleven to thirteen percent off every phase, and eighteen percent off the p95
+of the worst one. That shape is what a generated view should give LTO: the
+frame is thousands of tiny calls across the crate boundary into iced, and
+inlining across that boundary is the whole point of the pass.
+
+The bill is release build time, 2.2x — showcase and trading together go from
+77.8s to 173.9s from an empty release directory. Nothing in the edit loop
+pays it. CI pays it in one place, the performance-contracts job, whose test
+binaries go from 34.2s to 95.8s: about a minute on a job that runs thirteen.
+`cargo-ice` release builds (tag publishes only) go from 47.5s to 123.7s, and
+the published binary from 14.1 MB to 9.7 MB.
+
+`strip = "symbols"` is the one setting with a cost that is not build time: a
+release panic backtrace loses its symbol names. Worth it at 8 MB a binary,
+and debug builds are untouched.
