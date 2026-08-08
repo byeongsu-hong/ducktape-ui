@@ -82,14 +82,22 @@ pub struct RenderSourceGuard;
 /// Enters one generated `.ice` view-node source while its widget is constructed.
 #[doc(hidden)]
 pub fn push_render_source(source: Location) -> RenderSourceGuard {
-    RENDER_SOURCE_STACK.with(|stack| {
-        let mut stack = stack.borrow_mut();
-        if stack.is_empty() {
-            RENDER_SOURCES.with(|sources| sources.borrow_mut().clear());
-        }
-        stack.push(source);
-    });
+    RENDER_SOURCE_STACK.with(|stack| stack.borrow_mut().push(source));
     RenderSourceGuard
+}
+
+/// Opens a render pass, discarding the id-to-source map the previous one built.
+///
+/// The boundary is the view function, not the first guard on an empty stack.
+/// A view fills its slot table first — that is where every compiled hole
+/// constructs its widgets and registers their ids — and only then does the
+/// renderer walk the node tree, pushing a guard of its own for the root. On
+/// the old boundary that walk counted as a new pass and threw the slot table's
+/// registrations away moments before they were read, so a named widget inside
+/// a hole lost its `.ice` line.
+#[doc(hidden)]
+pub fn begin_render_pass() {
+    RENDER_SOURCES.with(|sources| sources.borrow_mut().clear());
 }
 
 impl Drop for RenderSourceGuard {

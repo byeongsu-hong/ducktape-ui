@@ -49,10 +49,14 @@ scaffolding: control flow, components, and native `extern` surfaces are
 expected to stay compiled, and what is inside a hole reloads only when the
 binary does.
 
-`if`, `for`, and `match` are the exception, because they contribute a variable
-number of children to their parent rather than rendering as one element. A
-layout containing any of them becomes the hole instead, so the fallback
-boundary rises to the nearest enclosing layout.
+`if`, `for`, and `match` contribute a variable number of children to their
+parent rather than rendering as one element, so a hole — which holds exactly
+one — cannot carry them. They get a **group** instead: a hole whose slot holds
+the child list the frame built, spliced into the layout's own children where it
+was written. The layout stays data, and only what is inside the branch stays
+compiled. The alternative, making the enclosing layout the hole, put the
+fallback boundary at the root `col` of most real applications and cost them the
+whole view.
 
 A running process may accept a new template when, and only when, the slot table
 it fills each frame is unchanged — same expressions, in the same order,

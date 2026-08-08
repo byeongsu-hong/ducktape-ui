@@ -15,7 +15,10 @@
 //! The modelled vocabulary is layouts, containers, text, inputs, and buttons.
 //! Anything else becomes a [`Node::Subtree`] hole the compiler fills through
 //! the slot table, so an unmodelled construct costs only its own subtree its
-//! reloadability rather than costing the whole view its template.
+//! reloadability rather than costing the whole view its template. The `if`,
+//! `for` and `match` that a layout splices into its child list get a
+//! [`Node::Group`] instead, which holds however many children the frame built
+//! rather than exactly one.
 
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +53,16 @@ pub struct HandlerSlot(pub usize);
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SubtreeSlot(pub usize);
 
+/// A position in the table of compiled *child lists*.
+///
+/// Separate from [`SubtreeSlot`] because the count is not known until the
+/// frame runs: `if`, `for` and `match` contribute however many children their
+/// condition, iteration or arm produces. A subtree hole holds exactly one
+/// element and cannot express that, which is why a layout containing one used
+/// to become the hole itself.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct GroupSlot(pub usize);
+
 /// How many slots of each kind a view expects.
 ///
 /// This is the reload contract. A running process can accept any template
@@ -67,6 +80,8 @@ pub struct SlotCounts {
     pub handlers: usize,
     #[serde(default)]
     pub subtrees: usize,
+    #[serde(default)]
+    pub groups: usize,
 }
 
 /// A string that is either baked into the template or supplied by a slot.
@@ -265,6 +280,16 @@ pub enum Node {
     /// does not model. Everything around it still reloads; what is inside
     /// changes only when the binary does.
     Subtree { slot: SubtreeSlot },
+    /// A hole that contributes however many children the frame produces, for
+    /// the `if`, `for` and `match` that a layout splices into its own child
+    /// list.
+    ///
+    /// Only [`Node::Linear`] expands one: it is the only node whose child
+    /// count is a list rather than a single content. Anywhere else a group
+    /// renders as nothing, which is the same treatment an out-of-range slot
+    /// gets — those states mean a stale template mid-reload, not a view worth
+    /// taking the window down for.
+    Group { slot: GroupSlot },
 }
 
 /// Stands in for a compiled subtree, which composes its own accessibility path
@@ -284,8 +309,8 @@ impl Node {
             | Self::Text { a11y, .. }
             | Self::Input { a11y, .. }
             | Self::Button { a11y, .. } => a11y,
-            // A compiled subtree carries its own identity and provenance.
-            Self::Subtree { .. } => &EMPTY_A11Y,
+            // Compiled children carry their own identity and provenance.
+            Self::Subtree { .. } | Self::Group { .. } => &EMPTY_A11Y,
         }
     }
 }
@@ -340,6 +365,9 @@ fn slot_uses(node: &Node, available: SlotCounts) -> bool {
         Node::Subtree {
             slot: SubtreeSlot(slot),
         } => *slot < available.subtrees,
+        Node::Group {
+            slot: GroupSlot(slot),
+        } => *slot < available.groups,
     }
 }
 

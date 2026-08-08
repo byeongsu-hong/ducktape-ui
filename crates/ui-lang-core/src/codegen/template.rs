@@ -18,8 +18,8 @@
 
 use super::*;
 use ui_lang_template::{
-    A11y, AlignX, AlignY, Axis, ButtonFace, ButtonStyle, ColorRef, Edges, HandlerSlot, MessageSlot,
-    Node, Size, SlotCounts, Source, StateSlot, SubtreeSlot, Template, TextSlot, Value,
+    A11y, AlignX, AlignY, Axis, ButtonFace, ButtonStyle, ColorRef, Edges, GroupSlot, HandlerSlot,
+    MessageSlot, Node, Size, SlotCounts, Source, StateSlot, SubtreeSlot, Template, TextSlot, Value,
 };
 
 /// A view published as data, with the compiled expressions that feed it.
@@ -146,6 +146,13 @@ impl Builder<'_> {
         SubtreeSlot(index)
     }
 
+    fn push_group(&mut self, code: String) -> GroupSlot {
+        let index = self.counts.groups;
+        self.counts.groups += 1;
+        self.slots.push(format!("__ice_slots.push_group({code});"));
+        GroupSlot(index)
+    }
+
     /// Interns a `.ice` path and returns its index in the emitted table.
     fn path_index(&mut self, path: String) -> usize {
         match self.paths.iter().position(|known| known == &path) {
@@ -226,8 +233,9 @@ impl Builder<'_> {
     /// rather than rendering as one element.
     ///
     /// `if`, `for`, and `match` are lowered as layout children precisely
-    /// because their child count is not known until they run. A hole holds one
-    /// element, so a layout containing any of them becomes the hole instead.
+    /// because their child count is not known until they run. A layout gives
+    /// each of them a group slot; anything else that can hold only one child
+    /// refuses the node, and becomes a subtree hole itself.
     fn splices_into_parent(&self, id: ViewId) -> Result<bool, Error> {
         Ok(matches!(
             self.program.resolved_view(id)?.kind,
@@ -249,6 +257,34 @@ impl Builder<'_> {
         let rendered = render_node(id, self.program, self.message, self.env, scope, None)?;
         Ok(Node::Subtree {
             slot: self.push_subtree(rendered),
+        })
+    }
+
+    /// Emits the compiled child list a spliced construct produces into a slot,
+    /// and returns the group that reads it.
+    ///
+    /// This is the same code the inline emitter writes for an `if`, `for` or
+    /// `match` among a layout's children — the statements that append to
+    /// `__children` — captured into a vector instead of a surrounding layout's
+    /// own. Reusing it is the point: the branch renders exactly as before, and
+    /// only the layout around it becomes data.
+    fn group(&mut self, id: ViewId, scope: &str) -> Result<Node, Error> {
+        let mut body = format!(
+            "{{ let mut __children: ::std::vec::Vec<__IceElement<'_, {}>> = ::std::vec::Vec::new();",
+            self.message
+        );
+        render_children(
+            &mut body,
+            &[id],
+            self.program,
+            self.message,
+            self.env,
+            scope,
+            None,
+        )?;
+        body.push_str(" __children }");
+        Ok(Node::Group {
+            slot: self.push_group(body),
         })
     }
 
@@ -356,11 +392,6 @@ impl Builder<'_> {
             (Axis::Row, Some(align)) => (None, Some(align_y(align))),
             (_, None) => (None, None),
         };
-        for child in children {
-            if self.splices_into_parent(*child)? {
-                return Ok(None);
-            }
-        }
         let child_scope = self.child_scope(view, scope)?;
         let mut rendered = Vec::with_capacity(children.len());
         for child in children {
@@ -369,7 +400,11 @@ impl Builder<'_> {
             if self.is_omitted(*child)? {
                 continue;
             }
-            rendered.push(self.node(*child, &child_scope)?);
+            rendered.push(if self.splices_into_parent(*child)? {
+                self.group(*child, &child_scope)?
+            } else {
+                self.node(*child, &child_scope)?
+            });
         }
         Ok(Some(Node::Linear {
             a11y,
