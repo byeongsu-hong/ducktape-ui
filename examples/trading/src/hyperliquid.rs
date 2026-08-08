@@ -679,6 +679,105 @@ pub fn price_ticket(
     }
 }
 
+/// What crossing the spread right now would actually cost: the size walked
+/// through the resting side of the book, level by level, at the prices that
+/// are really there.
+///
+/// The ticket quotes a price the reader typed. This is the other price — the
+/// one a market order gets — and the difference between them is the whole
+/// question of whether to cross or to rest.
+#[derive(Clone, PartialEq)]
+pub struct Impact {
+    /// Size-weighted price the walk actually pays.
+    pub paid: f64,
+    /// How far that is from the mid, the wrong way, as a percent.
+    pub slippage_pct: f64,
+    /// How much of the size the visible book could fill.
+    pub filled: f64,
+    /// The book ran out before the size did.
+    pub short: bool,
+    pub ready: bool,
+}
+
+pub fn book_impact(book: Option<Book>, size: String, buy: bool) -> Impact {
+    let empty = Impact {
+        paid: 0.0,
+        slippage_pct: 0.0,
+        filled: 0.0,
+        short: false,
+        ready: false,
+    };
+    let wanted = amount(&size).abs();
+    let Some(book) = book else {
+        return empty;
+    };
+    // A buy lifts the asks and a sell hits the bids: the side that is resting
+    // is the other one. The asks arrive reversed, because the panel draws them
+    // downward into the spread, so the best of them is the last — and a walk
+    // that started at the front would sweep from the worst price in the book.
+    let side: Vec<&Level> = if buy {
+        book.asks.iter().rev().collect()
+    } else {
+        book.bids.iter().collect()
+    };
+    if wanted <= 0.0 || side.is_empty() || book.mid <= 0.0 {
+        return empty;
+    }
+    let mut left = wanted;
+    let mut notional = 0.0;
+    for level in side {
+        if left <= 0.0 {
+            break;
+        }
+        let taken = level.size.min(left);
+        notional += taken * level.price;
+        left -= taken;
+    }
+    let filled = wanted - left;
+    if filled <= 0.0 {
+        return empty;
+    }
+    let paid = notional / filled;
+    // Slippage is what the crossing costs, so it reads positive either way.
+    let slippage_pct = if buy {
+        (paid - book.mid) / book.mid * 100.0
+    } else {
+        (book.mid - paid) / book.mid * 100.0
+    };
+    Impact {
+        paid,
+        slippage_pct,
+        filled,
+        short: left > 0.0,
+        ready: true,
+    }
+}
+
+/// What crossing right now would pay, as the panel reads it. Three thin
+/// readings rather than one struct: the boundary carries what the view draws,
+/// and the view draws a price, a distance, and a warning.
+pub fn impact_price(book: Option<Book>, size: String, buy: bool) -> String {
+    let impact = book_impact(book, size, buy);
+    if impact.ready {
+        fmt_px(impact.paid)
+    } else {
+        "—".to_owned()
+    }
+}
+
+pub fn impact_slippage(book: Option<Book>, size: String, buy: bool) -> String {
+    let impact = book_impact(book, size, buy);
+    if impact.ready {
+        fmt_bps(impact.slippage_pct)
+    } else {
+        String::new()
+    }
+}
+
+pub fn impact_short(book: Option<Book>, size: String, buy: bool) -> bool {
+    book_impact(book, size, buy).short
+}
+
 /// The share of the entry-to-liquidation distance the mark has already
 /// covered: 0 at the entry price, 1 at the cliff. Works for either side
 /// because both endpoints flip together, and reads 0 when the position has
@@ -2057,6 +2156,61 @@ pub fn chart(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The book the fixture holds: bids 63,999/998/997 at 1.4/2.1/2.5 and
+    /// asks 64,001/002/003 at 1.8/2.2/3.0, around a 64,000 mid.
+    #[test]
+    fn crossing_the_spread_is_priced_at_the_levels_that_are_there() {
+        let book = || Some(demo_book());
+
+        // Inside the best ask: one level, one price, and the slippage is the
+        // half spread and nothing else.
+        let small = book_impact(book(), "1.0".to_owned(), true);
+        assert!(small.ready && !small.short);
+        assert!((small.paid - 64_001.0).abs() < 1e-9);
+        assert!((small.filled - 1.0).abs() < 1e-9);
+        assert!((small.slippage_pct - (1.0 / 64_000.0 * 100.0)).abs() < 1e-9);
+
+        // Through two levels: 1.8 at 64,001 and 1.2 at 64,002.
+        let deeper = book_impact(book(), "3.0".to_owned(), true);
+        let expected = (1.8 * 64_001.0 + 1.2 * 64_002.0) / 3.0;
+        assert!((deeper.paid - expected).abs() < 1e-9, "{}", deeper.paid);
+        assert!(deeper.paid > small.paid, "depth costs more, never less");
+
+        // Selling walks the bids down, and the slippage still reads positive:
+        // it is what the crossing costs, not which way the price went.
+        let sold = book_impact(book(), "2.0".to_owned(), false);
+        let expected = (1.4 * 63_999.0 + 0.6 * 63_998.0) / 2.0;
+        assert!((sold.paid - expected).abs() < 1e-9);
+        assert!(sold.slippage_pct > 0.0);
+    }
+
+    /// The walk must start at the best price. The asks are stored reversed for
+    /// the panel to draw downward, so a walk that trusted the order would
+    /// quote the worst level in the book as the first one filled.
+    #[test]
+    fn a_sweep_starts_at_the_best_price_not_the_first_row() {
+        let impact = book_impact(Some(demo_book()), "0.5".to_owned(), true);
+        assert!(
+            (impact.paid - 64_001.0).abs() < 1e-9,
+            "a small buy pays the best ask, not {}",
+            impact.paid
+        );
+    }
+
+    #[test]
+    fn a_size_the_book_cannot_fill_says_so_rather_than_inventing_depth() {
+        let impact = book_impact(Some(demo_book()), "100".to_owned(), true);
+        assert!(impact.short, "7.0 of asks cannot fill 100");
+        assert!((impact.filled - 7.0).abs() < 1e-9);
+        assert!(
+            (impact.paid - (1.8 * 64_001.0 + 2.2 * 64_002.0 + 3.0 * 64_003.0) / 7.0).abs() < 1e-9,
+            "and it is priced over what is actually there"
+        );
+
+        assert!(!book_impact(Some(demo_book()), "0".to_owned(), true).ready);
+        assert!(!book_impact(None, "1".to_owned(), true).ready);
+    }
 
     /// The address the app opens on, which is a real account with real
     /// positions to check the valuation arithmetic against.
