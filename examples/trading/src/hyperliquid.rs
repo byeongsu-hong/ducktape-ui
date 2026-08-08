@@ -1552,6 +1552,24 @@ pub fn position_label(held: Position) -> String {
     format!("{} {side} {}", held.coin, fmt_size(held.size))
 }
 
+/// A size the account could actually put on: a share of what is free to
+/// withdraw, levered, at the price in the ticket. Free margin rather than
+/// equity, because equity already has positions standing on it.
+pub fn ticket_afford(
+    account: Option<Account>,
+    price: String,
+    leverage: String,
+    share: f64,
+) -> String {
+    let free = account.map_or(0.0, |held| held.withdrawable);
+    let price = amount(&price);
+    let leverage = amount(&leverage);
+    if free <= 0.0 || price <= 0.0 || leverage <= 0.0 || share <= 0.0 {
+        return String::new();
+    }
+    fmt_size(free * share.min(1.0) * leverage / price)
+}
+
 /// What an order would do to what you already hold. Opening and closing are
 /// different acts on the same ticket, and the difference is the sign of a
 /// number two panels apart — the size you typed here and the position sitting
@@ -2761,6 +2779,47 @@ mod tests {
         assert!(
             quoted_strict.liquidation > quoted("100", "2", "10", true).liquidation,
             "a heavier requirement moves the cliff toward the entry"
+        );
+    }
+
+    #[test]
+    fn a_share_button_sizes_against_free_margin_not_equity() {
+        let held = |withdrawable: f64| {
+            Some(Account {
+                value: 100_000.0,
+                pnl: 0.0,
+                withdrawable,
+                notional: 0.0,
+                maintenance: 0.0,
+                health: 0.0,
+                margin_pct: 0.0,
+                positions: Vec::new(),
+            })
+        };
+        let size = |share: f64| ticket_afford(held(10_000.0), "100".into(), "5".into(), share);
+
+        // 10,000 free at 5x is 50,000 of notional; a quarter of it at 100 is
+        // 125. Equity is 100,000 and would say ten times that, which is the
+        // point: equity already has positions standing on it.
+        assert_eq!(size(0.25), "125.00");
+        assert_eq!(size(1.0), "500.00");
+        assert_eq!(size(2.0), "500.00", "past everything is everything");
+
+        // Nothing to deploy, nothing to price against, nothing levered.
+        assert_eq!(size(0.0), "");
+        assert_eq!(ticket_afford(held(0.0), "100".into(), "5".into(), 0.5), "");
+        assert_eq!(
+            ticket_afford(held(10_000.0), "".into(), "5".into(), 0.5),
+            ""
+        );
+        assert_eq!(
+            ticket_afford(held(10_000.0), "100".into(), "".into(), 0.5),
+            ""
+        );
+        assert_eq!(
+            ticket_afford(None, "100".into(), "5".into(), 0.5),
+            "",
+            "no account"
         );
     }
 

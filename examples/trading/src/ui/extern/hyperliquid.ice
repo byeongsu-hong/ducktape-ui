@@ -43,6 +43,7 @@ extern crate::hyperliquid
   sync demo_book() -> Book
   sync demo_tape() -> [Trade]
   sync position_held(positions:[Position], coin:str) -> f64
+  sync ticket_afford(account:Account?, price:str, leverage:str, share:f64) -> str
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   sync order_label(order:Order) -> str
   sync fill_label(fill:Fill) -> str

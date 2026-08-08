@@ -125,6 +125,24 @@ component Stat(name:str, value:str)
         font=digits
         @text-muted
 
+component Share(label:str, share:f64)
+  emits
+    pick(f64)
+  button #root -> emit(pick, share)
+    with
+      label=label
+      w=fill
+      p=5.0
+    active bg=raised text=muted r=3.0
+    hovered bg=edge text=fg r=3.0
+    text label
+      with
+        size=10.0
+        w=fill
+        align-x=center
+        font=digits
+        @text-muted
+
 component Head(name:str, width:f64, right:bool)
   col #root w=width
     if right
@@ -614,6 +632,12 @@ on close_held
   ticket_buy = held < 0.0
   ticket_size = fmt_size(held)
   quote = price_ticket(ticket_price, fmt_size(held), ticket_leverage, focus, held < 0.0, held)
+
+on size_share(share)
+  let sized = ticket_afford(account, ticket_price, ticket_leverage, share)
+  return if empty(sized)
+  ticket_size = sized
+  quote = price_ticket(ticket_price, sized, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_side(buy)
   ticket_buy = buy
@@ -1453,6 +1477,19 @@ view
                       text-size=12.0
                       font=digits
                     focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                row gap=4.0 w=fill
+                  Share label="25%" share=0.25
+                    events
+                      pick -> size_share _
+                  Share label="50%" share=0.5
+                    events
+                      pick -> size_share _
+                  Share label="75%" share=0.75
+                    events
+                      pick -> size_share _
+                  Share label="MAX" share=1.0
+                    events
+                      pick -> size_share _
                 col gap=8.0 w=fill
                   row gap=6.0 align=center
                     Label value="LEVERAGE"
