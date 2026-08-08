@@ -100,8 +100,50 @@ fn agent() -> &'static ureq::Agent {
     })
 }
 
+/// Whether this build may reach the exchange.
+///
+/// Closed under test, and opened only by the tests whose whole subject is the
+/// live API. A test drives the real program, subscriptions included, so the
+/// five-second account poll fires inside whichever test the suite's own load
+/// stretches past five seconds, and that test then asserts against whatever
+/// the exchange happened to be holding. The tests own their fixtures; the wire
+/// is not one of them.
+///
+/// The opt-in is explicit rather than an environment variable because
+/// `--ignored` runs those tests and nothing else, so nothing can be reading
+/// this while they flip it.
+#[cfg(test)]
+static WIRE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+fn wire_is_open() -> bool {
+    WIRE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(not(test))]
+fn wire_is_open() -> bool {
+    true
+}
+
+/// Let this test reach the exchange. Only a test whose subject is the live API
+/// may call it, and it says so by calling it.
+#[cfg(test)]
+fn open_the_wire() {
+    WIRE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Everything the exchange can tell us goes through this one endpoint.
 async fn info(body: Value) -> Result<Value, HlError> {
+    // A test drives the real program, subscriptions included, so the 5s account
+    // poll fires inside any test the suite's own load stretches past five
+    // seconds and this endpoint answers it from the live exchange. Whichever
+    // test that lands in then asserts against whatever the exchange happened to
+    // hold. The tests own their fixtures; the wire is not one of them.
+    if !wire_is_open() {
+        return Err(HlError::new(
+            "Hyperliquid unreachable: no wire under test".to_owned(),
+        ));
+    }
     smol::unblock(move || {
         let mut response = agent()
             .post(INFO_URL)
@@ -2033,6 +2075,14 @@ pub fn interval_label(interval: String, shown: bool) -> String {
     format!("Show {interval} candles{state}")
 }
 
+/// A page tab by the same rule. The tab draws its page's name in capitals
+/// because it is a heading for the surface it opens; the name a reader hears
+/// is the act, in the sentence the tab would be if it had room for one.
+pub fn page_label(page: String, shown: bool) -> String {
+    let state = if shown { ", already showing" } else { "" };
+    format!("Show the {} page{state}", page.to_lowercase())
+}
+
 /// A hovered candle's figures, one per cell of the crosshair readout. The demo
 /// tape walks a sine, so a test can only name the candle under the crosshair by
 /// asking the fixture for it; transcribed numbers would check the arithmetic
@@ -3590,6 +3640,46 @@ mod tests {
         );
     }
 
+    /// The trading app as one string. `app.ice` is a shell of `use` lines, so
+    /// the view, the handlers and the tests it pulls in are where the boundary
+    /// is actually read; scanning the root alone would call the whole boundary
+    /// dead. The directory is walked rather than listed so a fragment added
+    /// later is covered without anyone remembering this test.
+    fn trading_ice() -> String {
+        use std::path::Path;
+
+        fn walk(directory: &Path, source: &mut String) {
+            let mut entries: Vec<_> = std::fs::read_dir(directory)
+                .expect("read the Ice source directory")
+                .map(|entry| entry.expect("a directory entry").path())
+                .collect();
+            entries.sort();
+            for path in entries {
+                if path.is_dir() {
+                    walk(&path, source);
+                    continue;
+                }
+                if path.extension().and_then(std::ffi::OsStr::to_str) != Some("ice") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).expect("read an Ice source");
+                source.push_str(&text);
+                source.push('\n');
+            }
+        }
+
+        let mut source = String::new();
+        walk(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui"),
+            &mut source,
+        );
+        assert!(
+            source.contains("daemon Trading\n"),
+            "the walk did not reach src/ui/app.ice, so everything below reads as dead"
+        );
+        source
+    }
+
     /// The chart is drawn by Rust and the panels around it by Ice, so the
     /// palette exists twice: once as tokens in `theme.ice` and once as the
     /// literals below. Nothing makes them agree, and the chart is half the
@@ -3604,7 +3694,8 @@ mod tests {
     #[test]
     fn the_boundary_declares_only_what_the_view_reads() {
         const EXTERN: &str = include_str!("ui/extern/hyperliquid.ice");
-        const APP: &str = include_str!("ui/app.ice");
+        let graph = trading_ice();
+        let app = graph.as_str();
 
         let mut dead: Vec<String> = Vec::new();
         for line in EXTERN.lines() {
@@ -3617,7 +3708,7 @@ mod tests {
                 .or(body.strip_prefix("component "))
             {
                 let name = rest.split('(').next().unwrap_or(rest);
-                if !APP.contains(&format!("{name}(")) {
+                if !app.contains(&format!("{name}(")) {
                     dead.push(format!("`sync {name}` is declared and never called"));
                 }
                 continue;
@@ -3633,7 +3724,7 @@ mod tests {
                 let Some((field, _)) = field.split_once(':') else {
                     continue;
                 };
-                if !APP.contains(&format!(".{field}")) {
+                if !app.contains(&format!(".{field}")) {
                     dead.push(format!("`{name}.{field}` is declared and never read"));
                 }
             }
@@ -3647,7 +3738,7 @@ mod tests {
         // A handler the app never routes to is dead however many tests
         // dispatch it. `dispatch` reaches anything by name, so a handler can
         // outlive the control that called it and still look exercised.
-        let routed: Vec<&str> = APP
+        let routed: Vec<&str> = app
             .lines()
             .flat_map(|line| {
                 // `| name _` is the error route of a `run` or a `stream`.
@@ -3661,7 +3752,7 @@ mod tests {
                 })
             })
             .collect();
-        let orphans: Vec<&str> = APP
+        let orphans: Vec<&str> = app
             .lines()
             .filter_map(|line| line.strip_prefix("on "))
             .map(|rest| rest.split('(').next().unwrap_or(rest).trim())
@@ -3767,6 +3858,18 @@ mod tests {
             position_label(held(-30.0)),
             "BTC short 30",
             "the size reads unsigned; the word carries the side"
+        );
+
+        // A page tab draws a heading and is heard as the act, and the page
+        // already on screen is a button like the other three: which one that
+        // is has to be in the name, because nothing else about a button is.
+        assert_eq!(
+            page_label("PORTFOLIO".into(), false),
+            "Show the portfolio page"
+        );
+        assert_eq!(
+            page_label("PORTFOLIO".into(), true),
+            "Show the portfolio page, already showing"
         );
     }
 
@@ -4665,6 +4768,7 @@ mod tests {
     #[test]
     #[ignore = "hits the live Hyperliquid API"]
     fn live_api_matches_the_shapes_parsed_here() {
+        open_the_wire();
         smol::block_on(async {
             let symbols = hl_symbols().await.expect("symbol list");
             assert!(symbols.len() > 20, "got {} markets", symbols.len());
@@ -4765,6 +4869,7 @@ mod tests {
     #[test]
     #[ignore = "hits the live Hyperliquid API"]
     fn the_live_feed_fills_the_tape_and_the_book() {
+        open_the_wire();
         let tape = tape_focus(tape_new(), "BTC".into(), "1m".into());
         let feed = hl_market_feed(tape.clone());
         let deadline = Instant::now() + Duration::from_secs(45);
