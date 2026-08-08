@@ -209,6 +209,22 @@ The markets are three rather than one, for the same reason. A list of one
 answers no question a list is asked: which row is selected, what a search
 leaves behind, whether a price landed on the market it belongs to.
 
+## A failure that ends when the thing it describes ends
+
+The feed's failure is the feed's, so it is held apart from the errors a
+request returns and cleared by the next beat. It used to share one field with
+them, and nothing on the beat path cleared it: the socket would come back,
+prices would move, the NOT LIVE badge would go, and the message saying the
+feed had dropped would sit there until a poll happened to overwrite it —
+sixty seconds with no address to poll for.
+
+Two statements on one screen contradicting each other, which is the same
+shape as an equity bar reading 38% beside a rail reading nothing travelled.
+
+A message about a live socket cannot outlive the socket being dead, so the
+badge and the message now go together, and a dispatched beat in the test
+proves it.
+
 ## Lists longer than the panels that hold them
 
 Every capture held four markets and three prints, and a list that fits
