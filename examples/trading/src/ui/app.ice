@@ -2086,6 +2086,24 @@ test trading_lists_longer_than_their_panels_render
   expect no text "market not loaded"
   capture busy
 
+test trading_a_beat_moves_the_price_the_position_and_the_levels
+  preset held
+  viewport 1660 820
+  expect text "64,000.00"
+  expect text "64,400.00"
+  expect text "+$523.8K"
+  expect text "▲"
+  dispatch market_ticked(demo_tick_at(64500.0))
+  expect text "64,500.00"
+  expect no text "+$523.8K"
+  expect text "+$508.8K"
+  expect no text "▲"
+  dispatch market_ticked(demo_tick_at(63000.0))
+  expect text "63,000.00"
+  expect text "+$553.8K"
+  expect no text "▲"
+  expect text "▼"
+
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
   viewport 1660 820

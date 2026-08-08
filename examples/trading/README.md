@@ -209,6 +209,20 @@ The markets are three rather than one, for the same reason. A list of one
 answers no question a list is asked: which row is selected, what a search
 leaves behind, whether a price landed on the market it belongs to.
 
+## What a beat does
+
+A beat is where most of this app happens: it applies every mid, re-marks
+every position, folds the prints into the tape, checks the levels, and
+reprices the ticket. None of that had been walked, because a beat needs a
+`MarketTick` and nothing could produce one outside the feed.
+
+A fixture beat can, so a test moves bitcoin to 64,500 and then to 63,000 and
+reads the screen. The mark follows, the short's unrealized goes from
++$523.8K to +$508.8K to +$553.8K, and the level waiting at 64,400 loses its
+arrow on the way up and does not get it back on the way down. That last part
+is the one-way firing rule, and until now it had only been checked as
+arithmetic.
+
 ## A failure that ends when the thing it describes ends
 
 The feed's failure is the feed's, so it is held apart from the errors a

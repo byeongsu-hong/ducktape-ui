@@ -2191,10 +2191,19 @@ pub fn demo_feed_error() -> HlError {
 }
 
 pub fn demo_tick() -> MarketTick {
+    demo_tick_at(64_000.0)
+}
+
+/// A beat that moves bitcoin somewhere, for walking what a beat does: the
+/// prices it applies, the positions it re-marks, the levels it fires.
+pub fn demo_tick_at(btc: f64) -> MarketTick {
     MarketTick {
         mids: demo_symbols()
             .into_iter()
-            .map(|row| (row.name, row.price))
+            .map(|row| {
+                let price = if row.name == "BTC" { btc } else { row.price };
+                (row.name, price)
+            })
             .collect(),
         trades: Vec::new(),
         book: Some(demo_book()),
