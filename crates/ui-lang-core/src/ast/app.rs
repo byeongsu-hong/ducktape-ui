@@ -151,6 +151,7 @@ pub struct AppSettings {
     pub scale_factor: Option<AppExpression>,
     pub window: Option<WindowSettings>,
     pub windows: Vec<NamedWindow>,
+    pub tray: Option<TraySettings>,
     pub setting_spans: BTreeMap<String, Span>,
     pub span: Span,
 }
@@ -173,6 +174,32 @@ impl Default for AppSettings {
             scale_factor: None,
             window: None,
             windows: Vec::new(),
+            tray: None,
+            setting_spans: BTreeMap::new(),
+            span: Span::line(1),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TraySettings {
+    pub icon: Option<WindowIcon>,
+    pub icon_template: Option<bool>,
+    pub label: Option<AppExpression>,
+    pub tooltip: Option<AppExpression>,
+    pub popover: Option<String>,
+    pub setting_spans: BTreeMap<String, Span>,
+    pub span: Span,
+}
+
+impl Default for TraySettings {
+    fn default() -> Self {
+        Self {
+            icon: None,
+            icon_template: None,
+            label: None,
+            tooltip: None,
+            popover: None,
             setting_spans: BTreeMap::new(),
             span: Span::line(1),
         }
