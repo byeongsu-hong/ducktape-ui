@@ -64,6 +64,7 @@ extern crate::hyperliquid
   sync ticket_afford(account:Account?, price:str, leverage:str, share:f64) -> str
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   sync order_load(account:Account?, coin:str, size:str, buy:bool, market:SymbolRow?) -> str
+  sync funding_day(market:SymbolRow?, price:str, size:str, buy:bool) -> str
   sync order_label(order:Order) -> str
   sync fill_label(fill:Fill) -> str
   sync book_label(price:f64, buy:bool) -> str

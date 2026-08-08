@@ -1810,6 +1810,29 @@ pub fn order_load(
     )
 }
 
+/// What holding this order costs, or pays, in a day at the current funding
+/// rate. Perpetuals have no expiry, so the position is rented rather than
+/// bought, and the rent is the part of the cost that never appears on the
+/// ticket — it arrives hourly, forever, and is the reason a carry that looks
+/// free is not.
+///
+/// Longs pay a positive rate and shorts are paid it, so a long reads negative
+/// when the rate is positive, and a short reads positive.
+pub fn funding_day(market: Option<SymbolRow>, price: String, size: String, buy: bool) -> String {
+    let Some(market) = market else {
+        return String::new();
+    };
+    let notional = amount(&price).max(0.0) * amount(&size).abs();
+    if notional <= 0.0 {
+        return String::new();
+    }
+    // `funding_pct` is a percentage charged hourly.
+    let hourly = market.funding_pct / 100.0 * notional;
+    let daily = hourly * 24.0;
+    let signed = if buy { -daily } else { daily };
+    format!("{}/day", fmt_signed_usd(signed))
+}
+
 pub fn ticket_effect(positions: Vec<Position>, coin: String, size: String, buy: bool) -> String {
     let size = amount(&size).abs();
     if size <= 0.0 {
@@ -2391,6 +2414,33 @@ mod tests {
     }
 
     #[test]
+    fn an_order_is_rented_by_the_hour_and_the_ticket_says_what_that_costs() {
+        let btc = symbol_row(demo_symbols(), "BTC".to_owned());
+        // 0.00125% an hour on 192,000 of notional is 2.40 an hour, 57.60 a
+        // day. A long pays it and a short is paid it.
+        assert_eq!(
+            funding_day(btc.clone(), "64,000.00".to_owned(), "3".to_owned(), true),
+            "-$57.60/day"
+        );
+        assert_eq!(
+            funding_day(btc.clone(), "64,000.00".to_owned(), "3".to_owned(), false),
+            "+$57.60/day"
+        );
+
+        // A negative rate turns it around: shorts pay and longs are paid.
+        let sol = symbol_row(demo_symbols(), "SOL".to_owned());
+        let paid = funding_day(sol, "148.62".to_owned(), "100".to_owned(), true);
+        assert!(
+            paid.starts_with('+'),
+            "a long is paid a negative rate: {paid}"
+        );
+
+        // Nothing to say without a market or a size.
+        assert!(funding_day(None, "1".to_owned(), "1".to_owned(), true).is_empty());
+        assert!(funding_day(btc, "64,000.00".to_owned(), "".to_owned(), true).is_empty());
+    }
+
+    #[test]
     fn an_order_says_where_it_leaves_the_account_against_the_engine() {
         let account = demo_account_at_risk();
         let btc = symbol_row(demo_symbols_at_risk(), "BTC".to_owned());
@@ -2527,6 +2577,41 @@ mod tests {
                     print.price
                 );
             }
+        }
+
+        // A resting order is one the book has not reached: a buy above the
+        // market or a sell below it would have filled, and a terminal showing
+        // one is showing an order that does not exist.
+        let market = demo_symbols()[0].price;
+        for order in demo_orders() {
+            assert_eq!(
+                order.price < market,
+                order.buy,
+                "a resting {} at {} against a market at {market}",
+                if order.buy { "buy" } else { "sell" },
+                order.price
+            );
+        }
+
+        // An alert that has not fired is one the mark has not reached. One
+        // waiting above a mark already past it would have gone off.
+        for alert in demo_alerts() {
+            if alert.fired {
+                continue;
+            }
+            let mark = demo_symbols()
+                .into_iter()
+                .find(|row| row.name == alert.coin)
+                .map(|row| row.price)
+                .unwrap_or_else(|| panic!("{} is watched but not listed", alert.coin));
+            assert_eq!(
+                alert.price > mark,
+                alert.above,
+                "{} waits {} {} with the mark at {mark}",
+                alert.coin,
+                if alert.above { "above" } else { "below" },
+                alert.price
+            );
         }
 
         // At rest and at risk are genuinely different readings, or the

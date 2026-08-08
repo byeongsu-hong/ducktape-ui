@@ -1746,6 +1746,14 @@ view
                           font=digits
                           @text-muted
                     row w=fill align=center
+                      Label value="RENT PER DAY"
+                      space w=fill
+                      text funding_day(focus, ticket_price, ticket_size, ticket_buy)
+                        with
+                          size=12.0
+                          font=digits
+                          @text-muted
+                    row w=fill align=center
                       Label value="AGAINST THE ENGINE"
                       space w=fill
                       text order_load(account, coin, ticket_size, ticket_buy, focus)
@@ -1989,6 +1997,8 @@ test trading_the_whole_terminal_renders_from_fixtures
   expect text "IF YOU CROSS"
   expect text "64,001.40"
   expect no text "The book on screen cannot fill that size."
+  expect text "RENT PER DAY"
+  expect text "-$57.60/day"
   expect text "SOL"
   expect text "148.620"
   expect text "3,526.53"
