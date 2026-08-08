@@ -128,7 +128,7 @@ preset hovering
     book = some(demo_book())
     tape_prints = demo_tape()
     live = true
-    hover = demo_hover()
+    hover = some(demo_hover())
     quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
 
 preset busy
@@ -324,7 +324,7 @@ component IntervalTab(name:str, current:str)
     if name == current
       button #tab-on -> emit(pick, name)
         with
-          label=name
+          label=interval_label(name, true)
           w=38.0
           p=5.0
         active bg=raised text=fg r=4.0
@@ -339,7 +339,7 @@ component IntervalTab(name:str, current:str)
     if name != current
       button #tab-off -> emit(pick, name)
         with
-          label=name
+          label=interval_label(name, false)
           w=38.0
           p=5.0
         active bg=panel text=muted r=4.0
@@ -720,7 +720,7 @@ component PositionRow(held:Position)
       col gap=1.0 w=104.0
         Delta
           with
-            value=fmt_compact_usd(held.pnl)
+            value=fmt_pnl(held.pnl)
             up=(held.pnl >= 0.0)
             size=14.0
             width=104.0
@@ -796,7 +796,7 @@ on drop_alert_at(at_coin, price)
   alerts = drop_alert(alerts, at_coin, price)
 
 on size_share(share)
-  let sized = ticket_afford(account, ticket_price, quote.leverage, share)
+  let sized = ticket_afford(account, ticket_price, focus, quote.leverage, share)
   return if empty(sized)
   ticket_size = sized
   quote = price_ticket(ticket_price, sized, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
@@ -816,6 +816,16 @@ on reopen
   positions = []
   account = none
   flashing = false
+  // The feed the gate opens over is about to be aborted, so its last reading
+  // describes nothing: left alone, the terminal behind the gate goes on
+  // claiming a live price at whatever the round trip was when it died.
+  live = false
+  latency = 0
+  feed_error = ""
+  // A request's failure names the address it was made for, and it is drawn in
+  // the same strip as the feed's. Kept, the account that could not be read is
+  // reported over the next account's positions.
+  error = ""
   abort feeds
 
 on pick_symbol(name)
@@ -961,7 +971,7 @@ view
                 gap=18.0
                 align=center
               row gap=10.0 align=center
-                text coin
+                text coin #coin-name
                   with
                     size=20.0
                     @text-fg
@@ -1016,22 +1026,22 @@ view
                   text "Loading markets" size=11.0 @text-faint
               space w=fill
               row #intervals gap=2.0 align=center
-                IntervalTab name="1m" current=interval
+                IntervalTab name="1m" current=interval #interval-1m
                   events
                     pick -> pick_interval _
-                IntervalTab name="5m" current=interval
+                IntervalTab name="5m" current=interval #interval-5m
                   events
                     pick -> pick_interval _
-                IntervalTab name="15m" current=interval
+                IntervalTab name="15m" current=interval #interval-15m
                   events
                     pick -> pick_interval _
-                IntervalTab name="1h" current=interval
+                IntervalTab name="1h" current=interval #interval-1h
                   events
                     pick -> pick_interval _
-                IntervalTab name="4h" current=interval
+                IntervalTab name="4h" current=interval #interval-4h
                   events
                     pick -> pick_interval _
-                IntervalTab name="1d" current=interval
+                IntervalTab name="1d" current=interval #interval-1d
                   events
                     pick -> pick_interval _
               rule vertical thickness=1.0 color=edge
@@ -1065,7 +1075,7 @@ view
                       Label value="PNL"
                       Delta
                         with
-                          value=fmt_signed_usd(held.pnl)
+                          value=fmt_pnl(held.pnl)
                           up=(held.pnl >= 0.0)
                           size=13.0
                           width=104.0
@@ -1178,45 +1188,26 @@ view
                       Label value="POSITIONS"
                       Label value=fmt_count(len(positions))
                       if !empty(error)
-                        text error size=11.0 @text-fg
+                        text error #alarm size=11.0 @text-fg
                       if empty(error) && !empty(feed_error)
-                        text feed_error size=11.0 @text-down
+                        text feed_error #feed-alarm size=11.0 @text-fg
                       if empty(error) && empty(feed_error) && !empty(status)
                         text status size=11.0 @text-faint
                       if empty(error) && empty(feed_error) && empty(status)
                         match hover
                           some(hit)
                             row #readout gap=10.0 align=center
-                              Label value="O"
-                              text fmt_px(hit.open)
-                                with
-                                  size=11.0
-                                  font=digits
-                                  @text-muted
-                              Label value="H"
-                              text fmt_px(hit.high)
-                                with
-                                  size=11.0
-                                  font=digits
-                                  @text-muted
-                              Label value="L"
-                              text fmt_px(hit.low)
-                                with
-                                  size=11.0
-                                  font=digits
-                                  @text-muted
-                              Label value="C"
-                              text fmt_px(hit.close)
-                                with
-                                  size=11.0
-                                  font=digits
-                                  @text-fg
-                              Label value="VOL"
-                              text fmt_volume(hit.volume)
-                                with
-                                  size=11.0
-                                  font=digits
-                                  @text-muted
+                              Stat name="O" value=fmt_px(hit.open) #cell-open
+                              Stat name="H" value=fmt_px(hit.high) #cell-high
+                              Stat name="L" value=fmt_px(hit.low) #cell-low
+                              row #cell-close gap=6.0 align=center
+                                Label value="C"
+                                text fmt_px(hit.close)
+                                  with
+                                    size=11.0
+                                    font=digits
+                                    @text-fg
+                              Stat name="VOL" value=fmt_volume(hit.volume) #cell-volume
                           none
                             text status size=11.0 @text-faint
                     row
@@ -1509,7 +1500,7 @@ view
                           align-y=center
                         text "No levels watched." size=11.0 @text-faint
                     for alert in alerts
-                      AlertRow alert=alert
+                      AlertRow alert=alert #alert(fmt_px(alert.price))
                         events
                           drop -> drop_alert_at _ _
                 rule horizontal thickness=1.0 color=edge
@@ -2012,21 +2003,48 @@ test trading_shows_the_failure_not_the_progress
   expect text "Hyperliquid unreachable"
   expect no text "Loading candles"
 
+// A failure is not a price move. The two money colours are the only thing on
+// this screen that means direction, so the line saying the app has stopped is
+// written in the same plain text as the market's own name. Both failures share
+// that slot and both are the app's own, so the rule is held against each: the
+// request's, and the feed's underneath it once the request's is cleared.
 test trading_says_what_broke_without_spending_a_money_colour
   preset failing
   viewport 1660 900
+  target app = #app
+  target header = app/header
+  target lower = app/lower
+  target gutter = lower/positions
+  target alarm = gutter/alarm
+  target dropped = gutter/feed-alarm
+  target plain = header/coin-name
   expect text "Hyperliquid unreachable"
-  expect no text "Loading candles"
+  expect alarm.text_color == plain.text_color
+  dispatch feed_failed(demo_feed_error())
+  dispatch candles_loaded(0)
+  expect text "Hyperliquid unreachable"
+  expect dropped.text_color == plain.text_color
 
 test trading_a_closing_order_asks_for_no_margin
   preset held
   viewport 1660 900
   dispatch close_held
-  expect ticket_size == "30.00"
+  expect ticket_size == "30"
   expect ticket_buy
   expect quote.ready
   expect quote.margin ~= 0.0
   expect quote.liquidation ~= 0.0
+
+// The whole row is the button that drops the level, and a reader who cannot
+// see the list arrives on it hearing only its label.
+test trading_an_alert_row_says_that_pressing_it_drops_the_level
+  preset held
+  viewport 1660 820
+  target app = #app
+  target rail = app/book
+  target watched = rail/alert-list
+  target press = watched/alert("64,400.00")/root
+  expect a11y press name "Stop watching BTC above 64,400.00"
 
 test trading_an_alert_says_which_market_it_watches
   preset held
@@ -2080,6 +2098,22 @@ test trading_an_account_against_its_engine_renders_as_such
   expect no text "market not loaded"
   capture at_risk
 
+// Six tabs carry the same six words whichever one is drawn, so which timeframe
+// the chart is showing was said in highlight colour and nowhere else. All six
+// are named by the act, so the one the chart already draws is only told apart
+// by what it appends — which is nothing an assertion on that one tab alone can
+// see.
+test trading_the_interval_tabs_say_which_one_the_chart_draws
+  preset browsing
+  viewport 1660 820
+  target app = #app
+  target header = app/header
+  target tabs = header/intervals
+  target showing = tabs/interval-1m/root/tab-on
+  target offered = tabs/interval-5m/root/tab-off
+  expect a11y showing name "Show 1m candles, already showing"
+  expect a11y offered name "Show 5m candles"
+
 test trading_a_market_worth_a_fraction_of_a_cent_renders
   preset penny
   viewport 1660 820
@@ -2088,9 +2122,33 @@ test trading_a_market_worth_a_fraction_of_a_cent_renders
   expect no text "market not loaded"
   capture penny
 
+// Five figures in one strip, and four of them are prices a few dollars apart:
+// asking the strip whether it holds them all passes just as well with the open
+// under the C and the close under the O. Each cell is asked for its own letter
+// and its own figure instead, so a readout that labels its close an open fails
+// rather than captures.
 test trading_the_crosshair_reads_out_the_candle_under_it
   preset hovering
   viewport 1660 820
+  target app = #app
+  target lower = app/lower
+  target gutter = lower/positions
+  target readout = gutter/readout
+  target opened = readout/cell-open/root
+  target highest = readout/cell-high/root
+  target lowest = readout/cell-low/root
+  target closed = readout/cell-close
+  target traded = readout/cell-volume/root
+  expect text "O" within opened
+  expect text fmt_px(hit_open(demo_hover())) within opened
+  expect text "H" within highest
+  expect text fmt_px(hit_high(demo_hover())) within highest
+  expect text "L" within lowest
+  expect text fmt_px(hit_low(demo_hover())) within lowest
+  expect text "C" within closed
+  expect text fmt_px(hit_close(demo_hover())) within closed
+  expect text "VOL" within traded
+  expect text fmt_volume(hit_volume(demo_hover())) within traded
   expect no text "market not loaded"
   capture hovering
 
@@ -2146,6 +2204,34 @@ test trading_connecting_again_does_not_inherit_the_last_accounts_trades
   expect no text "15:10:00"
   expect no text "3,526.53"
 
+// The gate opens over the terminal rather than replacing it, so a reading the
+// aborted feed left behind is still on screen: a price coloured live and a
+// round trip to an exchange nothing is listening to any more.
+test trading_leaving_an_address_leaves_its_feed_reading_behind
+  preset held
+  viewport 1660 820
+  dispatch market_ticked(demo_tick())
+  expect text "42ms"
+  expect no text "NOT LIVE"
+  dispatch reopen
+  expect text "NOT LIVE"
+  expect no text "42ms"
+  expect !live
+
+// Both lines under the positions header belong to the address being left: the
+// feed's to a socket that is aborted on the way out, the request's to a
+// request made for that address and no other. Either one kept is a failure
+// about the last account drawn over the next one's positions.
+test trading_leaving_an_address_takes_its_failures_with_it
+  preset stalled
+  viewport 1660 820
+  expect text "Hyperliquid feed dropped"
+  dispatch failed(demo_feed_error())
+  expect text "Hyperliquid unreachable"
+  dispatch reopen
+  expect no text "Hyperliquid unreachable"
+  expect no text "Hyperliquid feed dropped"
+
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
   viewport 1660 820
@@ -2180,6 +2266,45 @@ test trading_a_search_narrows_the_list_and_keeps_the_selection
   expect no text "3,540.00"
   key escape
   expect text "3,540.00"
+
+// The header totals the positions under it, so with one position open the
+// account's PnL and that position's PnL are the same number twice on one
+// screen. They were written by two different formatters: the header exact and
+// the row compact, so 30,000 dollars lost read as "-$30,000.00" above
+// "-$30.0K".
+test trading_one_pnl_reads_the_same_in_both_places
+  preset at_risk
+  viewport 1660 820
+  expect text "-$30.0K"
+  expect no text "-$30,000.00"
+
+// The same rule holds a row on its own. With the header far above ten thousand
+// and the rows under it far below, only the rows say which formatter wrote
+// them: a position down 2,400 dollars read "-$2.4K" while a fill of the same
+// size two panels away read the cents.
+test trading_a_position_row_quotes_its_own_pnl_to_the_cent
+  preset held
+  viewport 1660 820
+  expect text "-$2,400.00"
+  expect no text "-$2.4K"
+  expect text "-$33.36"
+
+// The margin and the liquidation beside it are priced from the leverage that
+// was typed, so the readout has to be that leverage and not a rounding of it.
+// The field is free text, though, and the cell it reads into is a fixed width:
+// a fraction typed out to thirteen places is not a leverage, and it may not
+// render as thirteen places of one.
+test trading_priced_at_quotes_the_leverage_it_priced_with
+  preset held
+  viewport 1660 820
+  dispatch ticket_levered("2.5")
+  expect quote.leverage ~= 2.5
+  expect text "2.5x"
+  expect no text "3x"
+  dispatch ticket_levered("2.3456789012345")
+  expect quote.leverage ~= 2.3456789012345
+  expect text "2.35x"
+  expect no text "2.3456789012345x"
 
 test trading_a_size_past_the_book_says_so
   preset held

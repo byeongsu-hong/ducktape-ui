@@ -114,6 +114,16 @@ A row that names a market is a way back to it — a position, a resting order, a
 fill. An account holding a hundred of them has no other route to any but the
 one already charted.
 
+A control is named by what pressing it does, not by what it currently reads. An
+alert row is the button that drops the level, so it says `Stop watching BTC
+above 64,400.00` rather than describing the level it is about to delete. The
+interval tabs read by the same rule: six tabs spelled the same, all six named
+`Show 1m candles` for the act. Which one the chart is drawing was said in
+highlight colour and nowhere else, and that is a state rather than a second
+act — a button carries no state a reader can hear — so the drawn one appends
+it: `Show 1m candles, already showing`. Naming that one `Showing` instead would
+be the one control on screen named for what it reads.
+
 Funding is the one figure here written to four decimals. Two is what every
 other number wants, and it is exactly what funding cannot use: the hourly rate
 is a hundredth of a percent on most of the exchange, so 166 of the 177 funded
@@ -165,6 +175,29 @@ that flattens it and takes the side that does — both read off the same signed
 number, which is the only place the two agree by construction rather than by
 you doing the sign in your head.
 
+That fill only closes the position if the size survives being written down. A
+size is quoted at the precision it carries, never at one picked from how large
+it is: the venue quantizes a size to the instrument's step before it sends it,
+so every digit that arrives is the market's and none of them may be dropped.
+The old rule dropped them by magnitude — two decimals above 1, three above a
+thousandth — so a market quoted a small size more finely than a large one, and
+**close** on a position of 30.12345 filled in 30.12 and left a residual open.
+Past the position the same rounding is a flip into the other side.
+
+The one size this app works out rather than reads is the share buttons', and
+that one is put back on the instrument's step: the market carries its
+`szDecimals` beside its maximum leverage, because a step is the asset's fact
+and not the day's. It rounds down, because a MAX rounded up is an order the
+margin engine refuses. On a market that trades in whole units that rounding can
+take the whole size away, and then the button offers nothing rather than `0`:
+an order for none of the instrument is not a size the panel may fill in.
+
+The same number may not be written two ways on one screen. The header's PnL is
+the sum of the positions under it, so with one position open it is that
+position's PnL — and it was exact where the row beside it was compact,
+`-$30,000.00` above `-$30.0K`. Both are written by the rule the fills already
+used: exact while it is small enough to read, compact once it is not.
+
 It also says what the order would do to what you already hold. Opening and
 closing are different acts on the same ticket, and the only thing that
 separates them is the sign of a number two panels away — so the ticket reads it
@@ -181,7 +214,12 @@ not know.
 Leverage is reported as it was priced rather than as it was typed. The field
 takes anything; the market does not, so a 400 typed into a 5x market is held at
 5 and the ticket says 5. A liquidation quoted at a leverage the panel is not
-showing is the one number here that must never be wrong.
+showing is the one number here that must never be wrong — which is why the
+readout is written to the leverage that priced it, decimals and all, out to the
+hundredth — the field is free text and the cell is a fixed width, so the digits
+stop where a leverage stops being one. It used to round to a whole number, so a
+ticket levered at 2.5 said `3x` beside a margin and a cliff computed from 2.5,
+and the panel showed one number while using another.
 
 Escape closes it, and the subscription that listens for Escape exists only
 while it is open. Escape with a search in the box clears the search instead,
@@ -280,6 +318,17 @@ A message about a live socket cannot outlive the socket being dead, so the
 badge and the message now go together, and a dispatched beat in the test
 proves it.
 
+Leaving an address is the same rule against a different clock. The gate opens
+over the terminal rather than replacing it, so whatever the last address put
+on screen is still drawn behind it — which is why going back to the prompt
+clears the fills, the orders, the positions, the account, the live badge and
+its round trip. Both lines under the positions header go with them. The feed's
+complaint describes a socket that `abort feeds` is closing on the way out, and
+a request's failure names the address the request was made for: every fetch
+this app makes is made for one account, so `Hyperliquid unreachable` about the
+account you just left is a failure reported over the next one's positions.
+That is the same defect twice, and the same fix.
+
 ## Lists longer than the panels that hold them
 
 Every capture held four markets and three prints, and a list that fits
@@ -308,6 +357,15 @@ The crosshair's readout — open, high, low, close and volume of the candle
 under the pointer — had shipped without ever being captured. It is drawn
 from a candle taken out of the fixture tape, so what the row says is what
 the chart is drawing under it.
+
+A picture is not an assertion, though, and the fixture tape walks a sine: five
+figures a test could only agree with by transcribing them, and a transcription
+checks the arithmetic against a copy of itself. The test asks the fixture for
+the candle instead. It asks each cell rather than the strip, too: four of the
+five are prices a few dollars apart, so a strip that holds all five holds them
+just as convincingly with the close under the `O`. Each cell is asked for its
+own letter and its own figure, so the readout labelling its close as an open
+fails rather than captures.
 
 Every capture now asserts the ticket does not say `market not loaded`. The
 handlers reprice, but a preset sets state directly and bypasses them, so
@@ -595,7 +653,8 @@ It also drives the app. The address prompt refuses a malformed address; the
 ticket takes a price and a size, prices them, and closes on Escape; a search
 survives being typed and clears on Escape; the panels that need an account say
 so when there is none; and a failure outranks the progress line it shares a
-slot with. None of those reach the network, so they run wherever the rest does.
+slot with, in the terminal's plain ink rather than in either money colour.
+None of those reach the network, so they run wherever the rest does.
 One test reads the palette out of `theme.ice` and holds the chart to it, because
 the chart is drawn in Rust and would otherwise drift in silence.
 

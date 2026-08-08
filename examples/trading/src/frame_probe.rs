@@ -62,6 +62,7 @@ fn frame_cost() {
             open_interest: 250_000.0 * (index % 11) as f64,
             prev: 99.0 + index as f64,
             maintenance: 1.0 / 80.0,
+            size_decimals: 2,
             selected: index == 0,
         })
         .collect();

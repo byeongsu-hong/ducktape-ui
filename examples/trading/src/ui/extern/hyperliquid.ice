@@ -55,7 +55,7 @@ extern crate::hyperliquid
   sync demo_book_ticked(mid:f64, tick:f64) -> Book
   sync demo_tape_ticked(mid:f64, tick:f64) -> [Trade]
   sync demo_candles_for(coin:str, last:f64) -> Tape
-  sync demo_hover() -> CandleHit?
+  sync demo_hover() -> CandleHit
   sync demo_tick() -> MarketTick
   sync demo_tick_at(btc:f64) -> MarketTick
   sync demo_feed_error() -> HlError
@@ -71,7 +71,7 @@ extern crate::hyperliquid
   sync check_alerts(alerts:[Alert], tick:MarketTick) -> [Alert]
   sync waiting_alerts(alerts:[Alert]) -> i64
   sync drop_alert(alerts:[Alert], coin:str, price:f64) -> [Alert]
-  sync ticket_afford(account:Account?, price:str, leverage:f64, share:f64) -> str
+  sync ticket_afford(account:Account?, price:str, market:SymbolRow?, leverage:f64, share:f64) -> str
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   sync order_load(account:Account?, coin:str, size:str, buy:bool, market:SymbolRow?) -> str
   sync funding_day(market:SymbolRow?, price:str, size:str, buy:bool) -> str
@@ -79,13 +79,18 @@ extern crate::hyperliquid
   sync fill_label(fill:Fill) -> str
   sync book_label(price:f64, buy:bool) -> str
   sync position_label(held:Position) -> str
+  sync interval_label(interval:str, shown:bool) -> str
+  sync hit_open(hit:CandleHit) -> f64
+  sync hit_high(hit:CandleHit) -> f64
+  sync hit_low(hit:CandleHit) -> f64
+  sync hit_close(hit:CandleHit) -> f64
+  sync hit_volume(hit:CandleHit) -> f64
   sync tape_pressure(prints:[Trade]) -> f64
   sync fmt_age(ts:i64) -> str
   sync pane_height(wanted:f64) -> f64
   sync header_inset() -> f64
   sync fmt_px(value:f64) -> str
   sync fmt_usd(value:f64) -> str
-  sync fmt_signed_usd(value:f64) -> str
   sync fmt_pct(value:f64) -> str
   sync fmt_size(value:f64) -> str
   sync fmt_volume(value:f64) -> str

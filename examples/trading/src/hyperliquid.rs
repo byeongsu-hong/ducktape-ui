@@ -55,6 +55,11 @@ const LOWER_MIN: f64 = 120.0;
 const LOWER_MAX: f64 = 560.0;
 /// Pixel width of the risk rail drawn under a position's liquidation price.
 const RISK_RAIL_WIDTH: f64 = 80.0;
+/// The finest step any Hyperliquid market quotes a size to. A size is never
+/// rounded past this, because below it the digits are the exchange's own; and
+/// never quoted beyond it, because past it there is nothing but the noise of
+/// subtracting two of them.
+const SIZE_DECIMALS: usize = 8;
 
 fn rgb(hex: u32) -> Color {
     Color::from_rgb8(
@@ -193,6 +198,11 @@ pub struct SymbolRow {
     /// rather than to arithmetic, so the venue publishes it per market and
     /// the shared math never learns one exchange's rule.
     pub maintenance: f64,
+    /// How finely this market quotes a size. It is the instrument's, not the
+    /// size's: the venue accepts the same step whether you trade a thousandth
+    /// of a coin or a thousand of them, so a size the app works out for itself
+    /// is rounded to this rather than to how large it came out.
+    pub size_decimals: usize,
     /// Whether this row is the market on screen. Carried on the row rather than
     /// read from app state beside it so the row is the whole dependency of its
     /// own subtree, which is what lets the view cache it.
@@ -210,6 +220,7 @@ impl Hash for SymbolRow {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
         self.selected.hash(state);
+        self.size_decimals.hash(state);
         for value in [
             self.price,
             self.change_pct,
@@ -506,6 +517,7 @@ fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
         .map(|(asset, context)| SymbolRow {
             leverage: max_leverage(asset),
             maintenance: maintenance_fraction(max_leverage(asset)),
+            size_decimals: size_decimals(asset),
             ..parse_context(text(asset, "name"), context)
         })
         .collect();
@@ -526,10 +538,12 @@ fn parse_context(name: String, context: &Value) -> SymbolRow {
         change_pct: change_pct(price, previous),
         volume: num(context, "dayNtlVlm"),
         funding_pct: num(context, "funding") * 100.0,
-        // The streamed context does not restate the asset's maximum, so the
-        // universe's reading of both is kept by the caller.
+        // The streamed context does not restate the asset's maximum or its
+        // size step, so the universe's reading of all three is kept by the
+        // caller.
         leverage: 0.0,
         maintenance: 0.0,
+        size_decimals: 0,
         open_interest: num(context, "openInterest"),
         prev: previous,
         selected: false,
@@ -541,6 +555,17 @@ fn max_leverage(asset: &Value) -> f64 {
         .get("maxLeverage")
         .and_then(Value::as_f64)
         .unwrap_or(0.0)
+}
+
+/// The market's own size step. A market that does not publish one is quoted at
+/// the finest step there is, because rounding a size the venue would have
+/// accepted is the failure this reading exists to prevent.
+fn size_decimals(asset: &Value) -> usize {
+    asset
+        .get("szDecimals")
+        .and_then(Value::as_u64)
+        .map_or(SIZE_DECIMALS, |decimals| decimals as usize)
+        .min(SIZE_DECIMALS)
 }
 
 pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
@@ -1225,7 +1250,8 @@ pub struct MarketTick {
     mids: HashMap<String, f64>,
     /// Prints on the charted market since the last beat, oldest first.
     trades: Vec<Trade>,
-    /// The charted market's republished context, when it arrived.
+    /// A republished market context, when one arrived. It names the market it
+    /// describes, and `apply_feed` writes it to the row of that name.
     context: Option<SymbolRow>,
 }
 
@@ -1235,13 +1261,6 @@ pub struct MarketTick {
 /// repaint beat without an app message per tick.
 pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
     let subscriptions = tape.clone();
-    let mut tick = MarketTick::default();
-    let mut changed = false;
-    // Which market the per-market fields belong to. The book and the context
-    // are the focused market's, and the app can move that focus between two
-    // beats: without this the next beat republishes the book of the market
-    // the reader just left, over the top of the one they are looking at.
-    let mut held: Option<(String, String)> = None;
     feed(
         move || {
             let mut wanted = vec![json!({ "type": "allMids" })];
@@ -1253,79 +1272,105 @@ pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
             }
             wanted
         },
-        move |event| match event {
-            Event::Payload("allMids", data) => {
-                tick.mids = data
-                    .get("mids")
-                    .and_then(Value::as_object)?
-                    .iter()
-                    .filter_map(|(coin, price)| Some((coin.clone(), price.as_str()?.parse().ok()?)))
-                    .collect();
-                changed = true;
-                None
-            }
-            Event::Beat if tape.focus() != held => {
-                held = tape.focus();
-                tick.book = None;
-                tick.context = None;
-                tick.trades.clear();
-                changed = false;
-                None
-            }
-            Event::Payload("l2Book", data) => {
-                let mut book = parse_book(data);
-                // The book renders from the top down, so the asks are
-                // reversed here and the view just walks both lists.
-                book.asks.reverse();
-                changed |= tick.book.as_ref() != Some(&book);
-                tick.book = Some(book);
-                None
-            }
-            Event::Payload("activeAssetCtx", data) => {
-                let context = parse_context(text(data, "coin"), data.get("ctx")?);
-                changed |= tick.context.as_ref() != Some(&context);
-                tick.context = Some(context);
-                None
-            }
-            Event::Payload("trades", data) => {
-                let (held, _) = tape.focus()?;
-                let fresh = parse_trades(data, &held);
-                changed |= !fresh.is_empty();
-                tick.trades.extend(fresh);
-                None
-            }
-            Event::Payload("candle", data) => {
-                // A candle for the market the app just left would corrupt
-                // the tape it is drawing now.
-                let held = tape.focus()?;
-                if held != (text(data, "s"), text(data, "i")) {
-                    return None;
-                }
-                merge(&mut lock(&tape.candles), vec![parse_candle(data)]);
-                None
-            }
-            Event::Payload(..) => None,
-            Event::Pong(round_trip) => {
-                changed |= tick.latency != round_trip;
-                tick.latency = round_trip;
-                None
-            }
-            Event::Beat => {
-                let ready = changed;
-                changed = false;
-                // Nothing moved: an unchanged message would rebuild the view
-                // for no reason.
-                ready.then(|| MarketTick {
-                    // Both are consumed once: the app folds them into what it
-                    // already holds, so replaying them on a quiet beat would
-                    // re-apply prices and repeat the tape.
-                    mids: std::mem::take(&mut tick.mids),
-                    trades: std::mem::take(&mut tick.trades),
-                    ..tick.clone()
-                })
-            }
-        },
+        market_reader(tape),
     )
+}
+
+/// What the market feed makes of one connection's traffic. It is apart from
+/// the socket so that a test can walk it through the sequence a market switch
+/// produces, which is the only way to reach these arms without the exchange.
+fn market_reader(tape: Tape) -> impl FnMut(Event<'_>) -> Option<MarketTick> + Send + 'static {
+    let mut tick = MarketTick::default();
+    let mut changed = false;
+    // Which market the per-market fields belong to. The book is the focused
+    // market's and carries nothing that says so once parsed, and the app can
+    // move that focus between two beats: without this the next beat
+    // republishes the book of the market the reader just left, over the top
+    // of the one they are looking at. The context is the exception and needs
+    // no coin guard: it keeps the coin it names and lands on that row.
+    let mut held: Option<(String, String)> = None;
+    move |event| match event {
+        Event::Payload("allMids", data) => {
+            tick.mids = data
+                .get("mids")
+                .and_then(Value::as_object)?
+                .iter()
+                .filter_map(|(coin, price)| Some((coin.clone(), price.as_str()?.parse().ok()?)))
+                .collect();
+            changed = true;
+            None
+        }
+        Event::Beat if tape.focus() != held => {
+            held = tape.focus();
+            tick.book = None;
+            tick.context = None;
+            tick.trades.clear();
+            changed = false;
+            None
+        }
+        Event::Payload("l2Book", data) => {
+            // A book for the market the app just left would be read as
+            // this one's. Clearing the held book on the switch is not
+            // enough on its own: the socket keeps serving the old
+            // subscription until the unsubscribe takes effect, so a book
+            // that arrives after the switch has to be turned away by the
+            // coin it names.
+            let (coin, _) = tape.focus()?;
+            if text(data, "coin") != coin {
+                return None;
+            }
+            let mut book = parse_book(data);
+            // The book renders from the top down, so the asks are
+            // reversed here and the view just walks both lists.
+            book.asks.reverse();
+            changed |= tick.book.as_ref() != Some(&book);
+            tick.book = Some(book);
+            None
+        }
+        Event::Payload("activeAssetCtx", data) => {
+            let context = parse_context(text(data, "coin"), data.get("ctx")?);
+            changed |= tick.context.as_ref() != Some(&context);
+            tick.context = Some(context);
+            None
+        }
+        Event::Payload("trades", data) => {
+            let (held, _) = tape.focus()?;
+            let fresh = parse_trades(data, &held);
+            changed |= !fresh.is_empty();
+            tick.trades.extend(fresh);
+            None
+        }
+        Event::Payload("candle", data) => {
+            // A candle for the market the app just left would corrupt
+            // the tape it is drawing now.
+            let held = tape.focus()?;
+            if held != (text(data, "s"), text(data, "i")) {
+                return None;
+            }
+            merge(&mut lock(&tape.candles), vec![parse_candle(data)]);
+            None
+        }
+        Event::Payload(..) => None,
+        Event::Pong(round_trip) => {
+            changed |= tick.latency != round_trip;
+            tick.latency = round_trip;
+            None
+        }
+        Event::Beat => {
+            let ready = changed;
+            changed = false;
+            // Nothing moved: an unchanged message would rebuild the view
+            // for no reason.
+            ready.then(|| MarketTick {
+                // Both are consumed once: the app folds them into what it
+                // already holds, so replaying them on a quiet beat would
+                // re-apply prices and repeat the tape.
+                mids: std::mem::take(&mut tick.mids),
+                trades: std::mem::take(&mut tick.trades),
+                ..tick.clone()
+            })
+        }
+    }
 }
 
 /// This account's fills as they print. The exchange opens with a snapshot of
@@ -1358,10 +1403,11 @@ pub fn apply_feed(rows: Vec<SymbolRow>, tick: MarketTick) -> Vec<SymbolRow> {
         && let Some(row) = rows.iter_mut().find(|row| row.name == context.name)
     {
         *row = SymbolRow {
-            // Both belong to the asset rather than to the day, and the
+            // All three belong to the asset rather than to the day, and the
             // streamed context does not carry them.
             leverage: row.leverage,
             maintenance: row.maintenance,
+            size_decimals: row.size_decimals,
             ..context
         };
     }
@@ -1487,8 +1533,18 @@ pub fn fmt_pct(value: f64) -> String {
     format!("{sign}{value:.2}%")
 }
 
+/// A size, quoted at the precision it actually carries. The exchange quantizes
+/// a size to the instrument's step before it sends it, so the digits a size
+/// arrives with are the market's and none of them may be dropped: a quote that
+/// coarsened as the size grew seeded CLOSE POSITION with a size that no longer
+/// closes the position, leaving a residual open or flipping into the other
+/// side. Trailing zeros go because a size of thirty is thirty, not thirty
+/// dollars and no cents.
 pub fn fmt_size(value: f64) -> String {
-    format_price(value.abs(), price_decimals(value * 1_000.0))
+    format_price(value.abs(), SIZE_DECIMALS)
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_owned()
 }
 
 pub fn fmt_volume(value: f64) -> String {
@@ -1506,8 +1562,15 @@ pub fn fmt_time(ts: i64) -> String {
     )
 }
 
+/// Leverage as it was actually used, to the hundredth. Rounding it to a whole
+/// number printed a figure the margin and the liquidation beside it were never
+/// computed from: a ticket levered at 2.5 said 3x while pricing at 2.5. The
+/// digits still have to stop somewhere: the field is free text, the cell is a
+/// fixed width, and a fraction typed out to fifteen places renders as a string
+/// as long as it was typed.
 pub fn fmt_leverage(value: f64) -> String {
-    format!("{value:.0}x")
+    let value = format!("{value:.2}");
+    format!("{}x", value.trim_end_matches('0').trim_end_matches('.'))
 }
 
 /// The round trip to the exchange, as the feed's own readout. A dash until
@@ -1561,8 +1624,10 @@ pub fn fmt_count(value: i64) -> String {
     value.to_string()
 }
 
-/// A single fill's realized PnL: exact while it is small enough to read,
-/// compact once it is not.
+/// One rule for every PnL on screen — the account header, the position rows
+/// and the fills: exact while it is small enough to read, compact once it is
+/// not. Two formatters printed the same number twice on one screen, so an
+/// account down thirty thousand read "-$30,000.00" above "-$30.0K".
 pub fn fmt_pnl(value: f64) -> String {
     if value.abs() < 10_000.0 {
         fmt_signed_usd(value)
@@ -1772,16 +1837,23 @@ pub fn mark_price(market: Option<SymbolRow>) -> f64 {
     market.map_or(0.0, |row| row.price)
 }
 
-/// An alert names the level and which way the market has to go to reach it.
+/// The whole row is the button that drops the alert, so its label has to say
+/// that. A status line — "BTC waiting above 64,400" — reads as something to
+/// look at, and this one deletes the level it names when it is pressed.
 pub fn alert_label(alert: Alert) -> String {
-    let state = if alert.fired {
-        "reached"
+    // A level that has already been reached has no side left to wait on.
+    let side = if alert.fired {
+        "at"
     } else if alert.above {
-        "waiting above"
+        "above"
     } else {
-        "waiting below"
+        "below"
     };
-    format!("{} {state} {}", alert.coin, fmt_px(alert.price))
+    format!(
+        "Stop watching {} {side} {}",
+        alert.coin,
+        fmt_px(alert.price)
+    )
 }
 
 pub fn alert_arrow(alert: Alert) -> String {
@@ -1795,13 +1867,31 @@ pub fn alert_arrow(alert: Alert) -> String {
 /// typed. Every other figure in the panel is quoted at the market's cap, and a
 /// share button that levered at the typed number would fill in a size the
 /// margin engine refuses — by exactly the factor the typed number overshot.
-pub fn ticket_afford(account: Option<Account>, price: String, leverage: f64, share: f64) -> String {
+/// This is the only size the app works out rather than reads, so it is the
+/// only one that has to be put back on the instrument's step. Downward: a size
+/// rounded up asks the margin engine for more than the account has free, by
+/// however much the step is worth. On a market that trades in whole units that
+/// floor can land on nothing, and a MAX that fills in "0" offers to send an
+/// order for none of the instrument: there is no size to offer, and this says
+/// so the same way it says the account has nothing free.
+pub fn ticket_afford(
+    account: Option<Account>,
+    price: String,
+    market: Option<SymbolRow>,
+    leverage: f64,
+    share: f64,
+) -> String {
     let free = account.map_or(0.0, |held| held.withdrawable);
     let price = amount(&price);
     if free <= 0.0 || price <= 0.0 || leverage <= 0.0 || share <= 0.0 {
         return String::new();
     }
-    fmt_size(free * share.min(1.0) * leverage / price)
+    let step = 10_f64.powi(market.map_or(SIZE_DECIMALS, |row| row.size_decimals) as i32);
+    let size = (free * share.min(1.0) * leverage / price * step).floor() / step;
+    if size <= 0.0 {
+        return String::new();
+    }
+    fmt_size(size)
 }
 
 /// What an order would do to what you already hold. Opening and closing are
@@ -1915,6 +2005,42 @@ pub fn position_held(positions: Vec<Position>, coin: String) -> f64 {
         .map_or(0.0, |position| position.size)
 }
 
+/// A tab is named by what pressing it does, like every other control here, so
+/// all six say `Show`. Which one the chart is already drawing is a state
+/// rather than a different act — and a button carries no state a reader can
+/// hear — so it is said after that name rather than in place of it: the
+/// answer used to live in the highlight colour and nowhere else.
+pub fn interval_label(interval: String, shown: bool) -> String {
+    let state = if shown { ", already showing" } else { "" };
+    format!("Show {interval} candles{state}")
+}
+
+/// A hovered candle's figures, one per cell of the crosshair readout. The demo
+/// tape walks a sine, so a test can only name the candle under the crosshair by
+/// asking the fixture for it; transcribed numbers would check the arithmetic
+/// against a copy of itself. They take the candle rather than a hover, because
+/// the readout is drawn inside `some(hit)`: a figure answered for no hover
+/// would be answering a test and nothing else.
+pub fn hit_open(hit: CandleHit) -> f64 {
+    hit.open
+}
+
+pub fn hit_high(hit: CandleHit) -> f64 {
+    hit.high
+}
+
+pub fn hit_low(hit: CandleHit) -> f64 {
+    hit.low
+}
+
+pub fn hit_close(hit: CandleHit) -> f64 {
+    hit.close
+}
+
+pub fn hit_volume(hit: CandleHit) -> f64 {
+    hit.volume
+}
+
 /// A resting order names its side, its size and the price it waits at.
 pub fn order_label(order: Order) -> String {
     let side = if order.buy { "buy" } else { "sell" };
@@ -2002,6 +2128,7 @@ fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
             open_interest: 35_000.0,
             prev: btc_prev,
             maintenance: 1.0 / 80.0,
+            size_decimals: 5,
             selected: true,
         },
         SymbolRow {
@@ -2014,6 +2141,7 @@ fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
             open_interest: 410_000.0,
             prev: 3_500.0,
             maintenance: 1.0 / 50.0,
+            size_decimals: 4,
             selected: false,
         },
         SymbolRow {
@@ -2026,6 +2154,7 @@ fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
             open_interest: 2_900_000.0,
             prev: 152.0,
             maintenance: 1.0 / 40.0,
+            size_decimals: 2,
             selected: false,
         },
         // A market priced in fractions of a cent, which most of a perp venue
@@ -2040,6 +2169,8 @@ fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
             open_interest: 4_100_000_000.0,
             prev: 0.007933,
             maintenance: 1.0 / 20.0,
+            // A coin worth a fraction of a cent trades in whole units.
+            size_decimals: 0,
             selected: false,
         },
     ]
@@ -2197,6 +2328,7 @@ pub fn demo_symbols_many() -> Vec<SymbolRow> {
             open_interest: 120_000.0 * (step + 1.0),
             prev,
             maintenance: maintenance_fraction(leverage),
+            size_decimals: 2,
             selected: false,
         });
     }
@@ -2255,11 +2387,11 @@ pub fn demo_tick_at(btc: f64) -> MarketTick {
     }
 }
 
-pub fn demo_hover() -> Option<CandleHit> {
+pub fn demo_hover() -> CandleHit {
     let tape = demo_candles();
     let candles = lock(&tape.candles);
-    let candle = candles.get(60)?;
-    Some(CandleHit {
+    let candle = &candles[60];
+    CandleHit {
         index: 60,
         ts: candle.ts,
         open: candle.open,
@@ -2267,7 +2399,7 @@ pub fn demo_hover() -> Option<CandleHit> {
         low: candle.low,
         close: candle.close,
         volume: candle.volume,
-    })
+    }
 }
 
 pub fn demo_positions_at_risk() -> Vec<Position> {
@@ -3159,7 +3291,7 @@ mod tests {
         );
         assert_eq!(markers[0].shape, MarkerShape::ArrowUp, "a buy points up");
         assert_eq!(markers[0].ts, 100);
-        assert_eq!(markers[0].label.as_deref(), Some("0.500"));
+        assert_eq!(markers[0].label.as_deref(), Some("0.5"));
         assert_eq!(
             markers[1].shape,
             MarkerShape::ArrowDown,
@@ -3578,7 +3710,7 @@ mod tests {
         };
         // A row carrying a side, a size, an entry, a cliff and a PnL is worth
         // more than its ticker to somebody who cannot see the rest of it.
-        assert_eq!(position_label(held(30.0)), "BTC long 30.00");
+        assert_eq!(position_label(held(30.0)), "BTC long 30");
 
         let order = Order {
             coin: "BTC".into(),
@@ -3587,13 +3719,13 @@ mod tests {
             size: 0.5,
             ts: 0,
         };
-        assert_eq!(order_label(order.clone()), "BTC buy 0.500 at 60,000.00");
+        assert_eq!(order_label(order.clone()), "BTC buy 0.5 at 60,000.00");
         assert_eq!(
             order_label(Order {
                 buy: false,
                 ..order
             }),
-            "BTC sell 0.500 at 60,000.00"
+            "BTC sell 0.5 at 60,000.00"
         );
 
         let fill = |closed_pnl: f64, buy: bool| Fill {
@@ -3612,10 +3744,10 @@ mod tests {
             fill_label(fill(250.0, false)),
             "BTC sold +$250.00 at 64,000.00"
         );
-        assert_eq!(fill_label(fill(0.0, true)), "BTC bought 0.500 at 64,000.00");
+        assert_eq!(fill_label(fill(0.0, true)), "BTC bought 0.5 at 64,000.00");
         assert_eq!(
             position_label(held(-30.0)),
-            "BTC short 30.00",
+            "BTC short 30",
             "the size reads unsigned; the word carries the side"
         );
     }
@@ -3699,6 +3831,7 @@ mod tests {
             open_interest: 0.0,
             prev: 100.0,
             maintenance: 1.0 / 80.0,
+            size_decimals: 5,
             selected: false,
         };
         // `activeAssetCtx` restates the day's figures and not the asset's, so
@@ -3739,6 +3872,7 @@ mod tests {
             funding_pct: 0.0,
             leverage: max_leverage,
             maintenance: 1.0 / (2.0 * max_leverage),
+            size_decimals: 5,
             open_interest: 0.0,
             prev: 100.0,
             selected: false,
@@ -3900,9 +4034,16 @@ mod tests {
             waiting_alerts(check_alerts(watched.clone(), beat(65_000.0))),
             0
         );
+        // The row deletes the level it names, so its label says so rather than
+        // reading as a status line.
         assert_eq!(
             alert_label(watched[0].clone()),
-            "BTC waiting above 65,000.00"
+            "Stop watching BTC above 65,000.00"
+        );
+        assert_eq!(
+            alert_label(check_alerts(watched.clone(), beat(65_000.0))[0].clone()),
+            "Stop watching BTC at 65,000.00",
+            "a level already reached has no side left to wait on"
         );
         assert!(drop_alert(watched, "BTC".into(), 65_000.0).is_empty());
     }
@@ -3922,24 +4063,48 @@ mod tests {
                 positions: Vec::new(),
             })
         };
-        let size = |share: f64| ticket_afford(held(10_000.0), "100".into(), 5.0, share);
+        let btc = symbol_row(demo_symbols(), "BTC".into());
+        let size =
+            |share: f64| ticket_afford(held(10_000.0), "100".into(), btc.clone(), 5.0, share);
 
         // 10,000 free at 5x is 50,000 of notional; a quarter of it at 100 is
         // 125. Equity is 100,000 and would say ten times that, which is the
         // point: equity already has positions standing on it.
-        assert_eq!(size(0.25), "125.00");
-        assert_eq!(size(1.0), "500.00");
-        assert_eq!(size(2.0), "500.00", "past everything is everything");
+        assert_eq!(size(0.25), "125");
+        assert_eq!(size(1.0), "500");
+        assert_eq!(size(2.0), "500", "past everything is everything");
 
         // Nothing to deploy, nothing to price against, nothing levered.
         assert_eq!(size(0.0), "");
-        assert_eq!(ticket_afford(held(0.0), "100".into(), 5.0, 0.5), "");
-        assert_eq!(ticket_afford(held(10_000.0), "".into(), 5.0, 0.5), "");
-        assert_eq!(ticket_afford(held(10_000.0), "100".into(), 0.0, 0.5), "");
         assert_eq!(
-            ticket_afford(None, "100".into(), 5.0, 0.5),
+            ticket_afford(held(0.0), "100".into(), btc.clone(), 5.0, 0.5),
+            ""
+        );
+        assert_eq!(
+            ticket_afford(held(10_000.0), "".into(), btc.clone(), 5.0, 0.5),
+            ""
+        );
+        assert_eq!(
+            ticket_afford(held(10_000.0), "100".into(), btc.clone(), 0.0, 0.5),
+            ""
+        );
+        assert_eq!(
+            ticket_afford(None, "100".into(), btc, 5.0, 0.5),
             "",
             "no account"
+        );
+
+        // A size that does not divide evenly lands on the market's own step,
+        // and lands below what the account can afford rather than above it: a
+        // MAX rounded up is an order the margin engine refuses.
+        let sol = symbol_row(demo_symbols(), "SOL".into()).expect("a market");
+        let exact = 10_000.0 * 5.0 / 148.62;
+        let filled = ticket_afford(held(10_000.0), "148.62".into(), Some(sol.clone()), 5.0, 1.0);
+        assert_eq!(sol.size_decimals, 2, "the venue quotes SOL to a hundredth");
+        assert_eq!(filled, "336.42");
+        assert!(
+            amount(&filled) <= exact,
+            "MAX filled {filled} of a {exact} the account can afford"
         );
 
         // The leverage handed in is the one the ticket was priced at, which is
@@ -3956,8 +4121,40 @@ mod tests {
         );
         assert_eq!(capped.leverage, 10.0, "the market caps it at ten");
         assert_eq!(
-            ticket_afford(held(10_000.0), "100".into(), capped.leverage, 1.0),
-            "1,000.00"
+            ticket_afford(
+                held(10_000.0),
+                "100".into(),
+                symbol_row(demo_symbols(), "kPEPE".into()),
+                capped.leverage,
+                1.0
+            ),
+            "1,000"
+        );
+
+        // A market that trades in whole units, priced above what the account
+        // can put up: the floor lands on nothing. "0" is a size, and a MAX
+        // that fills one in offers to send an order for none of the
+        // instrument. There is nothing to offer, and it says so the same way
+        // it says the account has nothing free.
+        let whole = SymbolRow {
+            size_decimals: 0,
+            ..symbol_row(demo_symbols(), "BTC".into()).expect("a market")
+        };
+        assert_eq!(
+            ticket_afford(
+                held(10_000.0),
+                "64,000".into(),
+                Some(whole.clone()),
+                5.0,
+                1.0
+            ),
+            "",
+            "10,000 free at 5x buys 0.78 of a coin that only trades whole"
+        );
+        // Enough for one, and there is a size to offer again.
+        assert_eq!(
+            ticket_afford(held(13_000.0), "64,000".into(), Some(whole), 5.0, 1.0),
+            "1"
         );
     }
 
@@ -3984,19 +4181,19 @@ mod tests {
         // A buy against a short is the interesting case: the same ticket that
         // opens a position on one side closes one on the other, and the only
         // thing that says which is a sign two panels apart.
-        assert_eq!(effect("10", true), "Reduces your short to 20.00");
+        assert_eq!(effect("10", true), "Reduces your short to 20");
         assert_eq!(effect("30", true), "Closes your short");
-        assert_eq!(effect("50", true), "Closes your short and opens 20.00 long");
-        assert_eq!(effect("10", false), "Opens 10.00 short", "same side, adds");
+        assert_eq!(effect("50", true), "Closes your short and opens 20 long");
+        assert_eq!(effect("10", false), "Opens 10 short", "same side, adds");
 
         // A market you hold nothing in, and a market that is not this one.
         assert_eq!(
             ticket_effect(held.clone(), "ETH".into(), "1".into(), true),
-            "Opens 1.00 long"
+            "Opens 1 long"
         );
         assert_eq!(
             ticket_effect(Vec::new(), "BTC".into(), "1".into(), true),
-            "Opens 1.00 long"
+            "Opens 1 long"
         );
         // Nothing typed is not an order, and says nothing.
         assert_eq!(effect("", true), "");
@@ -4020,6 +4217,7 @@ mod tests {
                     open_interest: 0.0,
                     prev: 100.0,
                     maintenance: 1.0 / 80.0,
+                    size_decimals: 5,
                     selected: false,
                 }),
                 buy,
@@ -4078,11 +4276,59 @@ mod tests {
 
         // What the panel then fills: an unsigned size, and the opposite side.
         let short = position_held(book.clone(), "BTC".into());
-        assert_eq!(fmt_size(short), "30.00", "the field takes no sign");
+        assert_eq!(fmt_size(short), "30", "the field takes no sign");
         assert!(short < 0.0, "so closing a short buys");
         // And the effect line agrees with what the button just did.
         assert_eq!(
             ticket_effect(book, "BTC".into(), fmt_size(short), short < 0.0),
+            "Closes your short"
+        );
+    }
+
+    /// A size is the instrument's number and the panel may not round it. The
+    /// quote used to follow the magnitude instead — two decimals above 1, three
+    /// above a thousandth — so a position of 30.12345 seeded CLOSE POSITION
+    /// with 30.12, and the order that button fills in left a residual open. The
+    /// same rule quoted a small size more finely than a large one on the very
+    /// same market, which no venue does.
+    #[test]
+    fn a_size_keeps_every_digit_it_carries_however_large_it_is() {
+        // Bitcoin trades to a hundred-thousandth, at any magnitude.
+        assert_eq!(fmt_size(0.00001), "0.00001");
+        assert_eq!(fmt_size(30_000.000_01), "30,000.00001");
+        // And a size with nothing after the point is a whole number of coins.
+        assert_eq!(fmt_size(30.0), "30");
+        assert_eq!(fmt_size(-0.5), "0.5", "the field takes no sign");
+        // Subtracting two of the venue's own sizes leaves float noise that is
+        // not a size, and the quote stops where the venue's digits do.
+        assert_eq!(fmt_size(0.3 - 0.1), "0.2");
+
+        let held = -30.12345;
+        let seeded = fmt_size(held);
+        assert_eq!(seeded, "30.12345");
+        assert_eq!(
+            amount(&seeded),
+            held.abs(),
+            "the seeded order is the position, to the digit"
+        );
+        let position = Position {
+            coin: "BTC".into(),
+            size: held,
+            entry: 60_000.0,
+            mark: 60_000.0,
+            liq: 0.0,
+            pnl: 0.0,
+            roe_pct: 0.0,
+            margin: 0.0,
+            risk: 0.0,
+            leverage: 20.0,
+            margin_mode: "cross".into(),
+            funding: 0.0,
+        };
+        // What CLOSE POSITION fills in has to close the position: a rounded
+        // seed reads back as a partial close, or past the position as a flip.
+        assert_eq!(
+            ticket_effect(vec![position], "BTC".into(), seeded, held < 0.0),
             "Closes your short"
         );
     }
@@ -4104,6 +4350,7 @@ mod tests {
             funding_pct: 0.0,
             leverage: 40.0,
             maintenance: 1.0 / (2.0 * 40.0),
+            size_decimals: 5,
             open_interest: 0.0,
             prev: 0.0,
             selected: false,
@@ -4195,6 +4442,93 @@ mod tests {
         let empty = parse_book(&json!({ "levels": [[], []] }));
         assert_eq!(empty.spread, 0.0);
         assert_eq!(empty.mid, 0.0);
+    }
+
+    /// A one-level book, so the market it names is the only thing under test.
+    fn book_payload(coin: &str, bid: f64, ask: f64) -> Value {
+        json!({
+            "coin": coin,
+            "levels": [
+                [{ "px": bid.to_string(), "sz": "1.0", "n": 1 }],
+                [{ "px": ask.to_string(), "sz": "1.0", "n": 1 }],
+            ]
+        })
+    }
+
+    /// Switching markets re-subscribes on the socket that is already open, so
+    /// the exchange goes on serving the market being left until it acts on
+    /// the unsubscribe. Everything that arrives in that window names the old
+    /// coin, and the app has no way to tell what it is looking at apart from
+    /// what the feed publishes.
+    #[test]
+    fn a_book_from_the_market_the_reader_left_is_never_published_as_this_ones() {
+        let tape = tape_focus(tape_new(), "ETH".into(), "1m".into());
+        let mut read = market_reader(tape);
+        let (bid, ask) = (64_848.0, 64_850.0);
+
+        // The beat that takes up the focus, so what follows is the steady
+        // state rather than the reader's first pass.
+        assert!(read(Event::Beat).is_none());
+
+        assert!(read(Event::Payload("l2Book", &book_payload("BTC", bid, ask))).is_none());
+        assert!(
+            read(Event::Beat).is_none(),
+            "a book from another market is not news about this one"
+        );
+        // A pong moves the beat on its own, so the beat below publishes for a
+        // reason that has nothing to do with the book it carries.
+        read(Event::Pong(7));
+        let tick = read(Event::Beat).expect("a fresh round trip is worth a beat");
+        assert!(
+            tick.book.is_none(),
+            "the beat published a book for a market the reader is not on"
+        );
+
+        read(Event::Payload("l2Book", &book_payload("ETH", bid, ask)));
+        let tick = read(Event::Beat).expect("the focused market's book is worth a beat");
+        assert_eq!(
+            tick.book.expect("the focused market's book").mid,
+            (bid + ask) / 2.0
+        );
+    }
+
+    /// A book is stored as *the* book, so one from the market being left has
+    /// to be turned away by the coin it names. `activeAssetCtx` needs no such
+    /// guard, and this is the whole reason why: a context keeps the coin it
+    /// describes and is folded into the row of that name, so one that arrives
+    /// in the switch window restates its own market rather than the one on
+    /// screen.
+    #[test]
+    fn a_context_is_folded_into_the_market_it_names_not_the_one_on_screen() {
+        let row = |name: &str, price: f64| SymbolRow {
+            name: name.into(),
+            price,
+            change_pct: 0.0,
+            volume: 0.0,
+            funding_pct: 0.0,
+            leverage: 40.0,
+            open_interest: 0.0,
+            prev: price,
+            maintenance: 1.0 / 80.0,
+            size_decimals: 5,
+            selected: false,
+        };
+        // The reader has moved to BTC and the socket serves one more context
+        // for the market it just left.
+        let beat = MarketTick {
+            context: Some(parse_context(
+                "ETH".into(),
+                &json!({ "markPx": "3540.0", "prevDayPx": "3500.0", "dayNtlVlm": "9.0" }),
+            )),
+            ..MarketTick::default()
+        };
+        let rows = apply_feed(vec![row("BTC", 64_000.0), row("ETH", 3_500.0)], beat);
+
+        assert_eq!(rows[0].price, 64_000.0, "the market on screen is untouched");
+        assert_eq!(
+            rows[1].price, 3_540.0,
+            "the context restated its own market"
+        );
     }
 
     #[test]
@@ -4547,6 +4881,7 @@ mod tests {
                 funding_pct: 0.0,
                 leverage: 40.0,
                 maintenance: 1.0 / (2.0 * 40.0),
+                size_decimals: 5,
                 open_interest: 0.0,
                 prev: 1.0,
                 selected: false,
@@ -4559,6 +4894,7 @@ mod tests {
                 funding_pct: 0.0,
                 leverage: 25.0,
                 maintenance: 1.0 / (2.0 * 25.0),
+                size_decimals: 4,
                 open_interest: 0.0,
                 prev: 1.0,
                 selected: false,
