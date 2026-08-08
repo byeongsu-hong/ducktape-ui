@@ -8,9 +8,6 @@ enum Page
   settings
 
 state
-  // The terminal window, opened on mount. A daemon starts with none, and the
-  // view needs to know which of its windows it is drawing.
-  main:window-id? = none
   page:Page = Page.trade
   gate = true
   address = ""

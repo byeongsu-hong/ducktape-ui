@@ -951,7 +951,7 @@ fn sync_cost() {
 #[test]
 #[ignore = "performance contract, run explicitly: counts fill rows rebuilt per redraw"]
 fn fills_stay_memoized_performance_contract() {
-    use std::sync::atomic::Ordering::Relaxed;
+    use std::cell::Cell;
 
     use crate::hyperliquid::FILL_LABELS;
 
@@ -961,9 +961,9 @@ fn fills_stay_memoized_performance_contract() {
     );
     *driver.state_mut() = app(DENSE);
 
-    FILL_LABELS.store(0, Relaxed);
+    FILL_LABELS.with(Cell::take);
     driver.redraw(here());
-    let first = FILL_LABELS.swap(0, Relaxed);
+    let first = FILL_LABELS.with(Cell::take);
     // A redraw is not one view build. How many it is belongs to the runtime and
     // moves when the view is restructured — the page split turned it from one
     // into several — so this contract measures rows against that number rather
@@ -981,7 +981,7 @@ fn fills_stay_memoized_performance_contract() {
     // it buys.
 
     driver.redraw(here());
-    let unchanged = FILL_LABELS.swap(0, Relaxed);
+    let unchanged = FILL_LABELS.with(Cell::take);
     assert_eq!(
         unchanged, 0,
         "a redraw of {} unchanged fills must rebuild none of them",
@@ -1006,11 +1006,11 @@ fn fills_stay_memoized_performance_contract() {
     for (field, move_it) in moves {
         move_it(&mut driver.state_mut().fills[0]);
         driver.redraw(here());
-        let touched = FILL_LABELS.swap(0, Relaxed);
         assert_eq!(
-            touched, 1,
+            FILL_LABELS.with(Cell::take),
+            1,
             "moving a fill's {field} must rebuild that row and no other — \
-             a row identity or a Hash that does not cover {field} shows a stale one"
+             a `Hash` that does not cover {field} leaves the row showing a stale one"
         );
     }
 
@@ -1018,6 +1018,72 @@ fn fills_stay_memoized_performance_contract() {
         "\n{} fills: {first} rows built cold, {unchanged} on an unchanged redraw, \
          1 after each of the {} fields of one fill moved",
         DENSE.fills,
+        moves.len()
+    );
+}
+
+/// The same contract for the market list, which has been behind a `lazy`
+/// boundary far longer than the fills have and whose `SymbolRow` carries eleven
+/// fields into a hand-written `Hash`. Counted through `fmt_leverage`, which
+/// draws the MARKET LEVERAGE column and, on the markets page, nothing else —
+/// the cold assertion below is what holds that true.
+#[test]
+#[ignore = "performance contract, run explicitly: counts market rows rebuilt per redraw"]
+fn markets_stay_memoized_performance_contract() {
+    use std::cell::Cell;
+
+    use crate::hyperliquid::MARKET_ROWS;
+
+    let mut driver = Driver::new(
+        Trading::__program(),
+        Config::new("markets_stay_memoized").viewport(VIEWPORT.0, VIEWPORT.1),
+    );
+    *driver.state_mut() = app(DENSE);
+    driver.state_mut().page = crate::Page::Markets;
+
+    MARKET_ROWS.with(Cell::take);
+    driver.redraw(here());
+    let first = MARKET_ROWS.with(Cell::take);
+    let rows = DENSE.symbols;
+    assert!(
+        first > 0 && first % rows == 0,
+        "a cold redraw builds every market row a whole number of times: {first} for {rows} rows"
+    );
+
+    driver.redraw(here());
+    let unchanged = MARKET_ROWS.with(Cell::take);
+    assert_eq!(
+        unchanged, 0,
+        "a redraw of {rows} unchanged markets must rebuild none of them"
+    );
+
+    let moves: &[(&str, fn(&mut SymbolRow))] = &[
+        ("name", |row| row.name.push('X')),
+        ("price", |row| row.price += 0.5),
+        ("change_pct", |row| row.change_pct += 0.5),
+        ("volume", |row| row.volume += 0.5),
+        ("funding_pct", |row| row.funding_pct += 0.5),
+        ("leverage", |row| row.leverage += 0.5),
+        ("open_interest", |row| row.open_interest += 0.5),
+        ("prev", |row| row.prev += 0.5),
+        ("maintenance", |row| row.maintenance += 0.5),
+        ("size_decimals", |row| row.size_decimals += 1),
+        ("selected", |row| row.selected = !row.selected),
+    ];
+    for (field, move_it) in moves {
+        move_it(&mut driver.state_mut().visible[0]);
+        driver.redraw(here());
+        assert_eq!(
+            MARKET_ROWS.with(Cell::take),
+            1,
+            "moving a market's {field} must rebuild that row and no other — \
+             a `Hash` that does not cover {field} leaves the row showing a stale one"
+        );
+    }
+
+    eprintln!(
+        "\n{rows} markets: {first} rows built cold, {unchanged} on an unchanged redraw, \
+         1 after each of the {} fields of one market moved",
         moves.len()
     );
 }

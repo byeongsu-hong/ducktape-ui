@@ -1640,6 +1640,13 @@ pub fn fmt_time(ts: i64) -> String {
 /// fixed width, and a fraction typed out to fifteen places renders as a string
 /// as long as it was typed.
 pub fn fmt_leverage(value: f64) -> String {
+    // MAX LEVERAGE is the last column of a market row, and on the markets page
+    // nothing else draws it — which makes this the market list's row counter.
+    // `markets_stay_memoized_performance_contract` asserts the cold count is a
+    // whole multiple of the rows on screen, so a second caller appearing on
+    // that page fails the contract rather than quietly skewing it.
+    #[cfg(test)]
+    count(&MARKET_ROWS);
     let value = format!("{value:.2}");
     format!("{}x", value.trim_end_matches('0').trim_end_matches('.'))
 }
@@ -2159,18 +2166,36 @@ pub fn order_label(order: Order) -> String {
     )
 }
 
-/// One call per fill row rendered, which is what
-/// `fills_stay_memoized_performance_contract` counts: a redraw that rebuilds a
-/// memoized row shows up here and nowhere else.
+// One count per row built, on the thread that built it — which is what the
+// `lazy` boundaries in `frame_probe` are held down with: a redraw that rebuilds
+// a memoized row shows up in these counters and nowhere else.
+//
+// Per THREAD, not per process. libtest runs the probes concurrently and every
+// one of them builds the same 200-row screen, so a global counter reads its
+// neighbours' cold builds as its own — which is how the memo contract came to
+// report 85 rows rebuilt for a fill whose row rebuilt exactly once. The memo
+// parking lot in `ui-lang-runtime` is thread-local for the same reason.
 #[cfg(test)]
-pub(crate) static FILL_LABELS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    /// Fill rows built: `fill_label` is called once per `FillRow` and nowhere
+    /// else.
+    pub(crate) static FILL_LABELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Market rows built: on the markets page `fmt_leverage` is MarketRow's
+    /// alone.
+    pub(crate) static MARKET_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Adds one to a per-thread row counter. Reading one is `Cell::take`.
+#[cfg(test)]
+pub(crate) fn count(counter: &'static std::thread::LocalKey<std::cell::Cell<usize>>) {
+    counter.with(|rows| rows.set(rows.get() + 1));
+}
 
 /// A fill names what it did and where. Its realized PnL is the point when it
 /// closed something, and its size when it opened.
 pub fn fill_label(fill: Fill) -> String {
     #[cfg(test)]
-    FILL_LABELS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    count(&FILL_LABELS);
     let side = if fill.buy { "bought" } else { "sold" };
     let outcome = if fill.closed_pnl == 0.0 {
         fmt_size(fill.size)
