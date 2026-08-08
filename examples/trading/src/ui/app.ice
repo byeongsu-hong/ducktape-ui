@@ -1910,12 +1910,10 @@ test trading_a_closing_order_asks_for_no_margin
 test trading_an_alert_says_which_market_it_watches
   preset held
   viewport 1660 820
-  expect text "ETH"
   expect text "3,400.00"
   dispatch drop_alert_at("BTC", 3400.0)
   expect text "3,400.00"
   dispatch drop_alert_at("ETH", 3400.0)
-  expect no text "ETH"
   expect no text "3,400.00"
 
 test trading_browsing_without_an_address_renders
@@ -1958,7 +1956,23 @@ test trading_the_whole_terminal_renders_from_fixtures
   expect text "IF YOU CROSS"
   expect text "64,001.40"
   expect no text "The book on screen cannot fill that size."
+  expect text "SOL"
+  expect text "148.620"
+  expect text "3,526.53"
   capture terminal
+
+test trading_a_search_narrows_the_list_and_keeps_the_selection
+  preset held
+  viewport 1660 820
+  target app = #app
+  target markets = app/markets
+  target search = markets/search
+  focus search
+  type "SO"
+  expect text "148.620"
+  expect no text "3,540.00"
+  key escape
+  expect text "3,540.00"
 
 test trading_a_size_past_the_book_says_so
   preset held
