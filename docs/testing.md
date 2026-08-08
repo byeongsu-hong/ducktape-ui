@@ -128,6 +128,18 @@ Each target generated from an Ice view also records its originating `.ice`
 path, line, and column. A target constructed wholly inside a Rust widget may
 report no finer provenance.
 
+`expect text` asks what is painted, and text drawn with `tracking=` is painted
+one widget per grapheme — iced has no letter-spacing, so the lowering spaces a
+row of them. No primitive holds the whole string. The query rebuilds those
+runs: consecutive single-grapheme primitives sharing a baseline and a style
+and evenly spaced, with a gap about one space wider than the run's own read as
+a space, because a space paints nothing and arrives as a hole. Even spacing is
+what keeps two tracked labels along the same row from merging.
+
+This matters most for the negative form. Before the runs were rebuilt,
+`expect no text` passed for any tracked label — an assertion that could not
+fail, on text that was plainly on screen.
+
 ## Captures and evidence
 
 `capture` writes a PNG and structured JSON frame manifest to
@@ -444,35 +456,322 @@ dependency every contributor would have to install.
 
 ### Chasing the outlining 2x to its last blocker
 
-The 2x above is real but the sound path to it is narrow, and the search
-converged on one line. Recorded in full so the next attempt starts at the end
-of it rather than the beginning.
+The 2x above is real, and the search for it went through one wrong diagnosis
+before landing. Both are recorded, because the wrong one is easy to repeat.
 
-`RecordingEnv::record` decides whether a component use can move to its own
-method. Instrumenting every `hard_capture` setter (wrap the field write in a
-labelled helper — inserting statements before a `match` arm does not compile)
-says that on showcase **every** hard capture came from one binding:
-`__ice_reconciliation_scope`, falling into the catch-all arm because its
-`Binding` carries no `owner`. That is not a real capture — a scope is a scope
-local, and outlined methods already take those as parameters.
+Counting the decision directly — one line per component use, printing each
+clause of the gate — says that on showcase, of 164 uses in `__view`:
 
-Recording it as a scope local instead, plus narrowing `call.slots.is_empty()`
-to "unless the slot content actually reached a render-site local" (slot content
-is snapshotted at the call site and rendered from inside the body, so the call
-site has to be told what it touched through a shared cell), is sound: all eight
-examples build and the suite is green. It is also worth only ~5% — 6.27s to
-5.95s on the worst edit — because 74 of 94 slot renders still hard-capture.
+| Rejected by | Uses |
+| --- | --- |
+| `call.slots.is_empty()` | 90 |
+| a hard capture | 0 |
+| a render-site local value | 0 |
+| a callback with no signature marker | 0 |
 
-Instrumented again, those 74 land on the *new* branch: the reconciliation scope
-at a slot site is not a plain identifier but an expression, typically
-`format!("{}/root", __ice_use_scope)`. Passing an expression where a parameter
-name is expected is what the plain-identifier guard refuses.
+One clause. Everything the recorder was built to detect fires on nothing here.
 
-Most of those expressions would be valid verbatim inside the outlined method,
-because they reference only the method's own `__ice_use_scope` parameter. So
-the last mile is a judgement the current code does not make: whether a scope
-expression's free identifiers are all bindings the outlined method will have.
-A textual check over generated Rust is the wrong tool; the scope expression
-should carry that fact from where it is built.
+The earlier note in this file claimed the blocker was `__ice_reconciliation_scope`
+falling into `RecordingEnv::record`'s catch-all arm, and that the last mile was
+a judgement about whether a scope expression's free identifiers are available
+inside an outlined method. That was measured on a build that had *already*
+lifted the slot gate, so it described a consequence of the experiment rather
+than the state of the tree. There is no free-identifier judgement to make.
 
-Both attempts were reverted. Nothing from them ships, and the 6.27s stands.
+Lifting the gate outright breaks exactly one thing, in `iced-app`:
+`error[E0425]: cannot find value 'item'`. Slot content is snapshotted at the
+call site and rendered from inside the callee, so a call-site loop item it
+reads is not in scope in the method the body was moved to. The recorder never
+saw the read, because by render time the content's environment is a flat copy
+with nothing in front of it.
+
+So give the snapshot the recorder that stood at its call site, and replay its
+reads into it — no more and no less. Replaying into *every* open recorder
+instead is sound but over-blocks: a `lazy` dependency read by slot content is
+bound inside the enclosing component's body and travels with it, and blocking
+on it costs that component its own method (the `lazy-component-context`
+fixture catches this).
+
+The reconciliation scope then does surface in the catch-all — and it is not a
+capture at all. `set_reconciliation_scope` at a slot render site writes the
+scope the content renders under, which comes from the render site, not the
+call site. Reading it back is only a capture because the write went *under*
+the recorder. Layering it above instead makes the question disappear.
+
+That is the whole change: all 164 showcase uses outline, and the `.ice` edit
+falls from 5.91s to 3.49s — 41%, measured with `scripts/build_bench.py` in
+both directions on one warm target directory.
+
+| Package | edit before | edit after |
+| --- | --- | --- |
+| showcase | 5.91s | 3.49s |
+| music-example | 2.42s | 2.45s |
+| trading-example | 2.89s | 2.90s |
+| iced-app | 2.15s | 2.16s |
+
+Only showcase moves, and that is the expected shape rather than a
+disappointment: the other three already sit at the link-dominated floor
+measured above, where the type check is not what the wall clock is waiting on.
+Outlining buys nothing there, and showcase lands close to that same floor.
+
+Outlining is not free at runtime — each use becomes a call through
+`grow_stack` with its scope locals cloned in — so the frame was checked too.
+`__view build only` on showcase reads 707/709/719/731us across four runs
+against a 715us baseline: no change that the run-to-run spread does not
+already cover.
+
+### What the release profile was leaving on the table
+
+Everything above is about the debug profile, because that is what the edit
+loop uses. The release profile had no settings at all — `opt-level = 3`,
+`lto = false`, `strip = "none"`, sixteen codegen units — and it turned out to
+be the cheapest remaining lever on both axes at once.
+
+Measured on showcase and trading, each configuration built from an emptied
+release directory:
+
+| Release profile | showcase | trading |
+| --- | --- | --- |
+| stock | 33.0 MB | 35.6 MB |
+| `strip` | 25.4 MB | 29.2 MB |
+| `strip` + `lto = "thin"` + `codegen-units = 1` | 22.3 MB | 26.6 MB |
+| `strip` + `lto = "fat"` + `codegen-units = 1` | **20.5 MB** | **24.5 MB** |
+
+Size alone would not settle the choice, because LTO also changes the frame,
+so the probe was run under each. Thin LTO moves nothing a re-run does not
+cover. Fat LTO does, and the two distributions do not overlap:
+
+| showcase, p50 over three runs | stock | `lto = "fat"` |
+| --- | --- | --- |
+| `__view` build only | 736 / 735 / 721us | 657 / 637 / 646us |
+| idle redraw | 3491 / 3448 / 3496us | 3026 / 3041 / 3020us |
+| click + redraw | 13711 / 13851 / 13845us | 12267 / 12287 / 12221us |
+| click + redraw, p95 | 15987 / 16557 / 15549us | 13283 / 13108 / 13095us |
+
+Eleven to thirteen percent off every phase, and eighteen percent off the p95
+of the worst one. That shape is what a generated view should give LTO: the
+frame is thousands of tiny calls across the crate boundary into iced, and
+inlining across that boundary is the whole point of the pass.
+
+The bill is release build time, 2.2x — showcase and trading together go from
+77.8s to 173.9s from an empty release directory. Nothing in the edit loop
+pays it. CI pays it in one place, the performance-contracts job, whose test
+binaries go from 34.2s to 95.8s: about a minute on a job that runs thirteen.
+`cargo-ice` release builds (tag publishes only) go from 47.5s to 123.7s, and
+the published binary from 14.1 MB to 9.7 MB.
+
+`strip = "symbols"` is the one setting with a cost that is not build time: a
+release panic backtrace loses its symbol names. Worth it at 8 MB a binary,
+and debug builds are untouched.
+
+### One anchor is not the edit loop
+
+Every build number in this file came from `scripts/build_bench.py`, which
+edits one configured literal per app — for showcase, the window `title`. That
+is one anchor, and it turns out the cost of an edit depends on which part of
+the app it lands in. Splitting the same rebuild four ways with `-Ztime-passes`:
+
+| edit | rustc total | `type_check_crate` | `MIR_borrow_checking` |
+| --- | --- | --- | --- |
+| `app.ice` window title | 3.11s | 0.77s | 0.21s |
+| `app.ice` window id | 3.25s | 0.83s | 0.20s |
+| a component fragment | 2.48s | 0.04s | 0.02s |
+| `handlers/app.ice` | **4.22s** | **0.93s** | **0.37s** |
+
+The benchmark's anchor was neither the worst case nor a typical one. Editing a
+handler — which is ordinary work, not a corner — cost the most, and almost all
+of the excess was type and borrow checking.
+
+`__update` and `__view` were the reason. They are the two large items a
+generated app has, they answer to different sources, and they sat in the same
+generated file. Each now gets its own fenced group, which `ui-lang-build`
+splits into its own file, exactly as component methods already were. A handler
+edit stops re-checking the view:
+
+| | before | after |
+| --- | --- | --- |
+| `handlers/app.ice` edit | 3.77s | **2.90s** |
+| `type_check_crate` | 0.93s | 0.04s |
+| `MIR_borrow_checking` | 0.37s | 0.03s |
+
+Fragment edits and top-of-app edits do not move, and are not claimed to.
+
+`scripts/build_bench.py` now measures both anchors — a `handler` phase beside
+`edit` — because documenting the hazard would not have stopped the next person
+quoting one number. On every app that has a handler fragment the two differ,
+and which one is worse changed with this fix:
+
+| | root edit | handler edit |
+| --- | --- | --- |
+| showcase | 3.54s | 2.79s |
+| music-example | 2.50s | 1.97s |
+| markdown-example | 1.92s | 1.77s |
+
+### Two ways these numbers went wrong first
+
+Both mistakes produced clean-looking tables, so they are worth naming.
+
+**A leftover anchor.** One script flipped several anchors in sequence and left
+the tree dirty; the next measurement compared a build that still carried three
+edits against a clean one. The tell was a diff of generated output showing
+changes nobody had asked for.
+
+**A flag change between the seed and the measurement.** A reset build run
+without `-Ztime-passes`, between two builds that had it, discards the
+incremental cache — the next "incremental" edit measured 11s instead of 3s.
+Every build in a series has to carry identical flags.
+
+**A corrupted build cache, read as a flaky machine.** rustc takes intermittent
+SIGSEGVs on this box, and a process killed mid-write leaves artifacts behind
+that fail in ways that look like a real defect: `rust-lld: section has a
+sh_offset + sh_size that cannot be represented`, or `no method named to_owned
+found for reference &str` reported against a third-party crate. Retrying does
+not clear either — the corrupt file is an input to the next build. `cargo clean
+-p <package>` does, in seconds. Three times in one session the reflex to retry
+cost several full workspace builds before the error text got read properly. A
+transient failure moves around; a failure that reproduces on the same crate
+four times is not transient, whatever the signal number says.
+
+**A stale build directory.** `target/debug/build/<pkg>-*` matches several
+directories, and `ls ... | head -1` picks whichever sorts first, not the live
+one — so generated sizes and build-script timings come from an old build and
+look stable while the thing under test changes. `ls -t | head -1`. Two rounds
+of numbers on the hot-reload track were retracted for this, and the same glob
+appears in `scripts/build_bench.py`, which sorts by name and takes the last.
+Relatedly, never `rm -rf` a package's `OUT_DIR` to force regeneration: cargo's
+fingerprint then skips re-running the build script and `include_app!` fails
+with "generated Rust is missing". Touch `build.rs` instead.
+
+And the machine is shared. A blocked A/B run put a load spike entirely on one
+side and produced a 4.81s baseline against a 2.64s result for an edit that in
+truth does not move at all. Interleaving the sides — A, B, A, B — and pooling
+each side's samples is what settled it. When a result is large and one side's
+spread is much wider than the other's, the spread is the finding.
+
+### Splitting the groups finer buys nothing
+
+Component methods are grouped per source fragment, which on showcase makes the
+default component library one 8728-line module. rustc partitions codegen units
+by module, so a single component's edit looked like it should be re-codegening
+the whole library — `codegen_crate` plus `LLVM_passes` is 1.30s on that edit,
+against 0.04s of type checking.
+
+Grouping per component instead splits that module into about fifty, and the
+generated file count goes from 12 to 60. Interleaved, under a quiet machine:
+
+| edit | per fragment | per component |
+| --- | --- | --- |
+| `crates/ui/src/ice/components.ice` | 2.38s | 2.35s |
+| `components/navigation.ice` (control) | 2.55s | 2.61s |
+
+Nothing. Whatever decides the codegen cost of an edit here, it is not the
+module the outlined methods sit in — rustc's unit partitioning does its own
+merging and splitting at 256 units and does not follow the module tree that
+literally. Reverted; the fragment grouping stands.
+
+### Where the loop stands
+
+Per `scripts/build_bench.py`, three runs each, on one warm target directory:
+
+| package | noop | script | root edit | handler edit |
+| --- | --- | --- | --- | --- |
+| showcase | 0.18s | 0.30s | 2.44s | 2.41s |
+| trading-example | 0.21s | 0.27s | 2.81s | — |
+| iced-app | 0.25s | 0.46s | 2.19s | — |
+| music-example | 0.21s | 0.28s | 2.00s | 2.04s |
+| markdown-example | 0.20s | 0.27s | 1.75s | 1.79s |
+| terminal-example | 0.19s | 0.02s | 1.33s | — |
+| candles-example | 0.18s | 0.01s | 1.21s | — |
+
+The two anchors have converged everywhere, which is the result worth reading
+off this table: after the macro-invocation split there is no longer a part of
+an app that is expensive to edit. showcase started this work at 6.5s.
+
+The Ice compiler itself (`script`) is never the cost. What is left is rustc's
+floor: link, codegen and LLVM, and the monomorphization walk plus unit
+partitioning plus dep-graph serialization — roughly 0.6s, 0.9s and 0.6s of a
+2.4s rebuild, all of which scale with the whole crate rather than with the
+edit. Cutting further means generating fewer monomorphizations, not shuffling
+the ones there are.
+
+### The frame is one number, counted several times
+
+`examples/showcase/src/frame_probe.rs` prints seven phases, and reading them as
+seven costs is a mistake. The test driver simulates one event per
+`UserInterface` build, so that a test can observe the state between a press and
+a release; a running app batches a frame's events into one build. Every phase
+comes out an integer multiple of a single build:
+
+| phase | showcase | builds |
+| --- | --- | --- |
+| `__view` alone | 0.65ms | — |
+| idle redraw | 3.02ms | 1 |
+| cursor move | 3.07ms | 1 |
+| state update + redraw | 6.82ms | 2 |
+| scroll | 6.11ms | 2 |
+| click + redraw | 12.27ms | 4 |
+
+So the 12ms click is not a user-visible 12ms — a click costs an app two builds,
+not four. The labels now carry the count. There is one number to optimize:
+**one build and layout, 3.0ms**, of which `__view` is 0.65ms and the rest is
+layout. Layout does not shrink with the viewport (2.99ms at 480x320 against
+3.02ms at 1440x900), so it is the whole tree every time.
+
+The repo's two answers to that are `lazy` (which memoizes the layout node, not
+just the element) and `virtual_list`. Neither applies to showcase, and the
+reason is worth recording rather than rediscovering: its catalog is one
+`Catalog` component taking about fifty app-state parameters, so a `lazy` over
+it would depend on essentially all state, and several of those types are not
+hashable at all. The showcase view is a worst case by construction — every
+component in the library, wired to live state.
+
+`lazy` is also not free on the build side. Nothing inside a `lazy` closure
+outlines: its content has to be `'static` and an outlined method borrows
+`self`, so `outlining_active()` is false at any lazy depth. Wrapping a subtree
+to win frame time moves its component uses back inline, which is the cost the
+outlining work above removed. Measure both sides before taking that trade.
+
+### The unit rustc re-checks is the macro expansion
+
+After the outlining work and the `__update`/`__view` split, one number would
+not go away: any edit landing in the app's root generated file cost ~0.75s of
+`type_check_crate`, while the same size edit landing in a group file cost
+0.04s. Five hypotheses, four of them wrong, and the wrong ones are the useful
+part because each looked reasonable:
+
+| hypothesis | experiment | result |
+| --- | --- | --- |
+| `__program`'s RPIT inference | fence it into its own file | no change, slightly worse |
+| `include!` spans shifting the group files | emit the includes first | noise |
+| the `impl` block is the unit | close and reopen `impl` around one item | no change |
+| a fixed per-app cost | a 225-line root on another app | absent entirely |
+| **the lint macro invocation is the unit** | give one phase its own invocation | **0.69s to 0.05s** |
+
+Two of those experiments were wasted on the same unexamined assumption: they
+moved the *suspect* out of the root and left the thing being *edited* behind,
+so the edit still landed in the root either way. The experiment that settled it
+came from fencing something trivial — a one-line `__title` — and editing that:
+0.75s to 0.017s. If the cost follows a one-line function, it was never about
+what the function contains.
+
+The generator wraps everything it writes in one
+`__ice_generated_items_*! { ... }` invocation, which exists only to attach
+`#[allow(warnings, clippy::all)]` to each item — attributes on `include!` do
+not reach included items, and a module wrapper would change name resolution.
+But rustc re-checks a macro expansion as a unit, so every item in that
+invocation shares one fate. Group files sit outside it, which is why they were
+always cheap.
+
+The fix is to close the invocation and open the next one at each generation
+phase. `impl` blocks repeat freely (proven above by the experiment that found
+nothing), and the boundary always falls between whole items:
+
+| showcase edit | one invocation | per phase |
+| --- | --- | --- |
+| `app.ice` window title | 3.31s | **2.60s** |
+| `state.ice` | 3.32s | **2.17s** |
+| `handlers/app.ice` (control) | 2.56s | 2.60s |
+
+The control matters: a handler edit already lands in the `__app_update` group
+file, so it should not move, and it does not. The win is proportional to what
+is left in the root — a small app has little there and gains little.

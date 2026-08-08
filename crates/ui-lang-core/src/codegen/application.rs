@@ -523,7 +523,7 @@ pub(in crate::codegen) fn generate_update(
     };
     writeln!(
         out,
-        "#[allow(clippy::assign_op_pattern)]\nfn __update(&mut self, message: {message}) -> ::iced::Task<{message}> {{"
+        "#[allow(clippy::assign_op_pattern)]\npub(super) fn __update(&mut self, message: {message}) -> ::iced::Task<{message}> {{"
     )
     .unwrap();
     if program.settings().kind == ProgramKind::Application {

@@ -4,6 +4,7 @@ use crate::unqualified_name;
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
+use std::rc::Rc;
 
 pub(in crate::codegen) trait BindingEnvironment {
     fn get(&self, name: &str) -> Option<&Binding>;
@@ -43,63 +44,97 @@ pub(in crate::codegen) trait BindingEnvironment {
 ///   `String` parameter cloned at the call site.
 /// - Everything else (loop items, lazy dependencies, callback bindings,
 ///   slot-provided flags) is a **hard capture**: the use renders inline.
+///
+/// Slot content is written at the call site but rendered from inside the
+/// callee, out of reach of this chain — [`SlotRecordingEnv`] carries its
+/// reads back here so they weigh on the same decision.
 pub(in crate::codegen) struct RecordingEnv<'a> {
     base: &'a dyn BindingEnvironment,
+    sink: Rc<RecordingSink>,
+}
+
+#[derive(Default)]
+pub(in crate::codegen) struct RecordingSink {
     hard_capture: Cell<bool>,
     scope_locals: RefCell<BTreeSet<String>>,
     callback_uses: RefCell<BTreeSet<String>>,
     local_values: RefCell<BTreeSet<String>>,
 }
 
+thread_local! {
+    /// The sinks of every recorder currently open, outermost first. Slot
+    /// content is snapshotted at a component's call site and rendered from
+    /// inside the callee's body, so its reads bypass the recorder chain
+    /// entirely; [`innermost_recorder`] hands the snapshot the recorder that
+    /// stood in that chain, so the reads still reach it.
+    static OPEN_RECORDERS: RefCell<Vec<Rc<RecordingSink>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The recorder a lookup would have passed through right now — the component
+/// use whose body is innermost. A slot snapshot keeps it so its content's
+/// reads land where an ordinary read at the same point would have.
+pub(in crate::codegen) fn innermost_recorder() -> Option<Rc<RecordingSink>> {
+    OPEN_RECORDERS.with_borrow(|open| open.last().cloned())
+}
+
 impl<'a> RecordingEnv<'a> {
     pub(in crate::codegen) fn new(base: &'a dyn BindingEnvironment) -> Self {
-        Self {
-            base,
-            hard_capture: Cell::new(false),
-            scope_locals: RefCell::new(BTreeSet::new()),
-            callback_uses: RefCell::new(BTreeSet::new()),
-            local_values: RefCell::new(BTreeSet::new()),
-        }
+        let sink = Rc::<RecordingSink>::default();
+        OPEN_RECORDERS.with_borrow_mut(|open| open.push(Rc::clone(&sink)));
+        Self { base, sink }
     }
 
     pub(in crate::codegen) fn site_capturing(&self) -> bool {
-        self.hard_capture.get()
+        self.sink.hard_capture.get()
     }
 
     pub(in crate::codegen) fn scope_locals(&self) -> BTreeSet<String> {
-        self.scope_locals.borrow().clone()
+        self.sink.scope_locals.borrow().clone()
     }
 
     pub(in crate::codegen) fn callback_uses(&self) -> BTreeSet<String> {
-        self.callback_uses.borrow().clone()
+        self.sink.callback_uses.borrow().clone()
     }
 
     pub(in crate::codegen) fn touched_local_values(&self) -> bool {
-        !self.local_values.borrow().is_empty()
+        !self.sink.local_values.borrow().is_empty()
     }
 
     pub(in crate::codegen) fn absorb_locals(&self, other: &RecordingEnv<'_>) {
-        self.local_values
+        self.sink
+            .local_values
             .borrow_mut()
-            .extend(other.local_values.borrow().iter().cloned());
+            .extend(other.sink.local_values.borrow().iter().cloned());
     }
 
     /// Merges another recorder's findings into this one, EXCEPT its local
     /// values: an argument whose locals became value parameters covers them
     /// at the call site, so they must not block the enclosing decision.
     pub(in crate::codegen) fn absorb_non_locals(&self, other: &RecordingEnv<'_>) {
-        if other.hard_capture.get() {
-            self.hard_capture.set(true);
+        if other.sink.hard_capture.get() {
+            self.sink.hard_capture.set(true);
         }
-        self.scope_locals
+        self.sink
+            .scope_locals
             .borrow_mut()
-            .extend(other.scope_locals.borrow().iter().cloned());
-        self.callback_uses
+            .extend(other.sink.scope_locals.borrow().iter().cloned());
+        self.sink
+            .callback_uses
             .borrow_mut()
-            .extend(other.callback_uses.borrow().iter().cloned());
+            .extend(other.sink.callback_uses.borrow().iter().cloned());
     }
+}
 
-    fn record(&self, name: &str, binding: &Binding) {
+impl Drop for RecordingEnv<'_> {
+    fn drop(&mut self) {
+        // By identity, not by popping: recorders built as argument temporaries
+        // are not guaranteed to close in the order they opened.
+        OPEN_RECORDERS.with_borrow_mut(|open| open.retain(|sink| !Rc::ptr_eq(sink, &self.sink)));
+    }
+}
+
+impl RecordingSink {
+    fn record(&self, name: &str, binding: &Binding, base: &dyn BindingEnvironment) {
         // The context index holds the active component NAME, and self-backed
         // markers are stacked-recorder metadata — neither reaches emitted
         // code.
@@ -142,13 +177,13 @@ impl<'a> RecordingEnv<'a> {
                 self.local_values.borrow_mut().insert(binding.code.clone());
             }
             Some(BindingOwner::Value(ResolvedValueRef::ComponentParam(_))) => {
-                if self.base.contains_key(&value_param_key(name)) {
+                if base.contains_key(&value_param_key(name)) {
                     // The prop is a value parameter of the enclosing method
                     // — a local value of THIS render site.
                     self.local_values.borrow_mut().insert(binding.code.clone());
                     return;
                 }
-                match self.base.get(&self_backed_param_key(name)) {
+                match base.get(&self_backed_param_key(name)) {
                     // The marker's code lists the scope locals the baked
                     // argument expression itself references.
                     Some(marker) => {
@@ -170,7 +205,7 @@ impl<'a> RecordingEnv<'a> {
             }
             _ => {
                 if std::env::var_os("ICE_OUTLINE_DEBUG").is_some() {
-                    eprintln!("HARD get: {name}");
+                    eprintln!("HARD get: {name} => {}", binding.code);
                 }
                 self.hard_capture.set(true);
             }
@@ -182,7 +217,7 @@ impl BindingEnvironment for RecordingEnv<'_> {
     fn get(&self, name: &str) -> Option<&Binding> {
         let binding = self.base.get(name);
         if let Some(binding) = binding {
-            self.record(name, binding);
+            self.sink.record(name, binding, self.base);
         }
         binding
     }
@@ -194,14 +229,17 @@ impl BindingEnvironment for RecordingEnv<'_> {
         // a required scope-local parameter of an outlined method.
         self.base.visit(&mut |name, binding| {
             if let Some(StateBinding::Component { scope, .. }) = &binding.state {
-                self.scope_locals.borrow_mut().insert(scope.clone());
+                self.sink.scope_locals.borrow_mut().insert(scope.clone());
             }
             // Snapshots (slot contexts, route capture environments) copy
             // aliased callback bindings whose consumption happens outside
             // this recorder — collect them here so the binding `let`s /
             // method parameters always materialize.
             if is_component_callback_key(name) && binding.code.starts_with("__ice_cb_") {
-                self.callback_uses.borrow_mut().insert(binding.code.clone());
+                self.sink
+                    .callback_uses
+                    .borrow_mut()
+                    .insert(binding.code.clone());
             }
             visitor(name, binding);
         });
@@ -215,7 +253,7 @@ impl BindingEnvironment for RecordingEnv<'_> {
             if std::env::var_os("ICE_OUTLINE_DEBUG").is_some() {
                 eprintln!("HARD prefix: {prefix:?}");
             }
-            self.hard_capture.set(true);
+            self.sink.hard_capture.set(true);
         }
         binding
     }
@@ -225,7 +263,66 @@ impl BindingEnvironment for RecordingEnv<'_> {
         if let Some((_, binding)) = &context {
             // The context binding's code is the enclosing scope-local
             // identifier — passable as an outlined method parameter.
-            self.scope_locals.borrow_mut().insert(binding.code.clone());
+            self.sink
+                .scope_locals
+                .borrow_mut()
+                .insert(binding.code.clone());
+        }
+        context
+    }
+}
+
+/// Replays a slot content's reads into the recorder that stood at its call
+/// site.
+///
+/// Slot content is snapshotted where it is written and rendered later, from
+/// inside the callee's body — so by render time its environment is a flat
+/// copy with no recorder in front of it, and the use it was handed to cannot
+/// tell that the content reaches back into the call site. A loop item read
+/// this way is not in scope inside an outlined method, so the read has to
+/// reach the recorder it would have passed through had it happened at the
+/// call site, and no further out: bindings introduced deeper (a `lazy`
+/// dependency, an enclosing component's own locals) travel with the body and
+/// block nothing.
+pub(in crate::codegen) struct SlotRecordingEnv<'a> {
+    base: &'a dyn BindingEnvironment,
+    sink: Option<&'a Rc<RecordingSink>>,
+}
+
+impl<'a> SlotRecordingEnv<'a> {
+    pub(in crate::codegen) fn new(
+        base: &'a dyn BindingEnvironment,
+        sink: Option<&'a Rc<RecordingSink>>,
+    ) -> Self {
+        Self { base, sink }
+    }
+}
+
+impl BindingEnvironment for SlotRecordingEnv<'_> {
+    fn get(&self, name: &str) -> Option<&Binding> {
+        let binding = self.base.get(name);
+        if let (Some(binding), Some(sink)) = (binding, self.sink) {
+            sink.record(name, binding, self.base);
+        }
+        binding
+    }
+
+    fn visit(&self, visitor: &mut dyn FnMut(&str, &Binding)) {
+        self.base.visit(visitor);
+    }
+
+    fn binding_with_prefix(&self, prefix: &str) -> Option<&Binding> {
+        let binding = self.base.binding_with_prefix(prefix);
+        if let (Some(_), Some(sink)) = (binding, self.sink) {
+            sink.hard_capture.set(true);
+        }
+        binding
+    }
+
+    fn component_context(&self) -> Option<(&str, &Binding)> {
+        let context = self.base.component_context();
+        if let (Some((_, binding)), Some(sink)) = (&context, self.sink) {
+            sink.scope_locals.borrow_mut().insert(binding.code.clone());
         }
         context
     }

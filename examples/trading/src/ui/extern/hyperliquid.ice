@@ -30,6 +30,9 @@ extern crate::hyperliquid
   sync symbol_row(rows:[SymbolRow], coin:str) -> SymbolRow?
   sync ticket_seed(book:Book?, focus:SymbolRow?) -> str
   sync tray_status(coin:str, focus:SymbolRow?) -> str
+  sync impact_price(book:Book?, size:str, buy:bool) -> str
+  sync impact_slippage(book:Book?, size:str, buy:bool) -> str
+  sync impact_short(book:Book?, size:str, buy:bool) -> bool
   sync price_ticket(price:str, size:str, leverage:str, market:SymbolRow?, buy:bool, held:f64) -> Ticket
   sync push_trades(tape:[Trade], tick:MarketTick, limit:i64) -> [Trade]
   sync push_fills(history:[Fill], incoming:[Fill], limit:i64) -> [Fill]
@@ -39,11 +42,25 @@ extern crate::hyperliquid
   sync demo_symbols() -> [SymbolRow]
   sync demo_positions() -> [Position]
   sync demo_candles() -> Tape
+  sync demo_candles_at(last:f64) -> Tape
   sync demo_account() -> Account
+  sync demo_account_at_risk() -> Account
+  sync demo_positions_at_risk() -> [Position]
+  sync demo_symbols_at_risk() -> [SymbolRow]
   sync demo_fills() -> [Fill]
   sync demo_orders() -> [Order]
   sync demo_alerts() -> [Alert]
   sync demo_book() -> Book
+  sync demo_book_at(mid:f64) -> Book
+  sync demo_book_ticked(mid:f64, tick:f64) -> Book
+  sync demo_tape_ticked(mid:f64, tick:f64) -> [Trade]
+  sync demo_candles_for(coin:str, last:f64) -> Tape
+  sync demo_hover() -> CandleHit?
+  sync demo_tick() -> MarketTick
+  sync demo_feed_error() -> HlError
+  sync demo_symbols_many() -> [SymbolRow]
+  sync demo_tape_full() -> [Trade]
+  sync demo_tape_at(mid:f64) -> [Trade]
   sync demo_tape() -> [Trade]
   sync position_held(positions:[Position], coin:str) -> f64
   sync mark_price(market:SymbolRow?) -> f64
@@ -55,6 +72,8 @@ extern crate::hyperliquid
   sync drop_alert(alerts:[Alert], coin:str, price:f64) -> [Alert]
   sync ticket_afford(account:Account?, price:str, leverage:str, share:f64) -> str
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
+  sync order_load(account:Account?, coin:str, size:str, buy:bool, market:SymbolRow?) -> str
+  sync funding_day(market:SymbolRow?, price:str, size:str, buy:bool) -> str
   sync order_label(order:Order) -> str
   sync fill_label(fill:Fill) -> str
   sync book_label(price:f64, buy:bool) -> str

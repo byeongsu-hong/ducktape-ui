@@ -201,6 +201,185 @@ market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
 
+## Fixtures are read as evidence
+
+The account's requirement is summed from the positions held against the whole
+account, and an isolated one does not enter it — it dies alone. A hand-typed
+requirement had the equity bar reading 38% loaded beside a cross position
+whose own rail read nothing travelled: two risk figures on one screen, in
+disagreement, both drawn convincingly.
+
+The pair of account fixtures is at rest and against the engine, because a
+safety indicator that has only ever been rendered at rest has never been
+rendered.
+
+Every capture in this directory is an argument that the panel is right, so a
+fixture has to be a state the exchange could actually report. Five bugs in
+this example were impossible states drawn convincingly, and a wrong number in
+the right column is the one kind of wrong a render cannot show.
+
+So the fixture positions derive their figures from the four that are chosen,
+through the same arithmetic the panel uses, and a test holds the relations
+that survive: unrealized from entry, mark and size; margin from the leverage
+beside it; return on equity as that return over that equity; the rail as how
+far the mark has travelled; the cliff on the correct side of the entry.
+
+Writing that test found two numbers that had been on screen all along — a
+return on equity of 811.79% where the position's own pnl and margin say
+857.41%, and a 24h change rounded away from the prices it is computed from.
+
+The markets are three rather than one, for the same reason. A list of one
+answers no question a list is asked: which row is selected, what a search
+leaves behind, whether a price landed on the market it belongs to.
+
+## A failure that ends when the thing it describes ends
+
+The feed's failure is the feed's, so it is held apart from the errors a
+request returns and cleared by the next beat. It used to share one field with
+them, and nothing on the beat path cleared it: the socket would come back,
+prices would move, the NOT LIVE badge would go, and the message saying the
+feed had dropped would sit there until a poll happened to overwrite it —
+sixty seconds with no address to poll for.
+
+Two statements on one screen contradicting each other, which is the same
+shape as an equity bar reading 38% beside a rail reading nothing travelled.
+
+A message about a live socket cannot outlive the socket being dead, so the
+badge and the message now go together, and a dispatched beat in the test
+proves it.
+
+## Lists longer than the panels that hold them
+
+Every capture held four markets and three prints, and a list that fits
+answers nothing about a list that does not. There is a venue-sized fixture
+now — twenty four markets and a tape at the depth the feed keeps it — and
+the terminal is captured against it.
+
+The long list is generated rather than typed, and checked by the same test
+as the short one: volume descending, one selection, each maintenance half
+the margin at its cap, each change the price against its own close. A
+generated fixture that broke the ordering the panel assumes would be a panel
+drawing in the wrong order, quietly.
+
+Nothing was clipped. The book, the tape, the alerts, the orders and the
+market list each scroll inside their own bounds, and the half row at a
+boundary is the affordance saying so.
+
+## Two states nothing had drawn
+
+A position the venue reports no liquidation price for says `none` rather
+than printing a zero, and the rail beside it is empty because there is
+nothing to travel toward — not because nothing has been travelled. Those
+read the same and mean opposite things, so the fixture holds one.
+
+The crosshair's readout — open, high, low, close and volume of the candle
+under the pointer — had shipped without ever being captured. It is drawn
+from a candle taken out of the fixture tape, so what the row says is what
+the chart is drawing under it.
+
+Every capture now asserts the ticket does not say `market not loaded`. The
+handlers reprice, but a preset sets state directly and bypasses them, so
+each new fixture could reintroduce a bug that was fixed three cycles ago —
+and the one added in this cycle did, before the assertion caught it.
+
+## A market worth a fraction of a cent
+
+Most of a perp venue is priced under a dollar, and every column here was
+sized and formatted around bitcoin. The fixture holds one now — kPEPE at
+0.008421 — and the terminal is captured focused on it.
+
+It found the chart tagging the last price `0.00842` while every other panel
+said `0.008421`. The chart derived its decimals from the gridline step, which
+is enough to tell two gridlines apart and not enough to tell two ticks apart.
+Those are different questions: the axis answers "which line is this" and the
+tag answers "which price is this". The tag is written to the instrument's
+quote precision now, and the axis to whatever its own step needs.
+
+The book and the tape take a tick as well as a price. A dollar between levels
+is a reasonable book on bitcoin and the whole market on a coin worth a
+fraction of a cent.
+
+## One market on the screen at a time
+
+Every panel is quoting the same market, so a fixture has to price them
+together: the mark a position is held at is the feed's price for its market,
+the book sits inside a spread of it, the tape prints against it, and the chart
+ends on it. Each of those is one number appearing in several places, and a
+fixture that let them drift showed a book from one market beside a chart of
+another — convincingly, because each panel was internally fine.
+
+The at-risk fixture is where that first bit: it moved bitcoin to 58,000 and
+left the book, the tape and the chart at 64,000. So the fixtures take the
+price they are drawn around, and a test walks each pair.
+
+## What the position costs to keep
+
+A perpetual has no expiry, so a position is rented rather than bought, and
+the rent arrives hourly forever. `RENT PER DAY` is that rate against this
+order's notional: `-$57.60/day` on three bitcoin at the current funding.
+
+Longs pay a positive rate and shorts are paid it, so the sign is the reader's
+side rather than the venue's convention. It is the part of a carry that never
+appears on a ticket, and the reason one that looks free is not.
+
+Single-letter shortcuts for the side are not here. The market search listens
+to the same keys, and the app has no notion of which surface holds focus, so
+typing `b` to find bitcoin would flip the ticket to a buy instead.
+
+## The rate belongs to the market, not the position
+
+A market capped at 40x holds every position in it to half of that cap,
+whether the trader opened at 40x or at 2x. Reading the requirement off the
+position's chosen leverage overstates a conservative position by exactly the
+factor it was conservative by — a 5x position on a 40x market reads eight
+times closer to the engine than it is.
+
+Where the venue reports what an account is held to, that figure is used
+rather than reassembled. `AGAINST THE ENGINE` starts from
+`crossMaintenanceMarginUsed` and only computes the part the order changes.
+
+## The order, against the engine
+
+`AGAINST THE ENGINE` reads `91% → 100%`: where the account stands against its
+maintenance requirement now, and where this order leaves it. The panel already
+said what an order costs in margin; it did not say what it costs in distance,
+which is the figure a cross account is actually liquidated on — and the one
+that has to be readable before sending rather than after.
+
+Only cross positions count. An isolated one is liquidated against its own
+margin and asks nothing of the account.
+
+## The other price
+
+The ticket quotes a price the reader typed. `IF YOU CROSS` is the other one:
+the size walked through the resting side of the book, level by level, at the
+prices actually there, with the distance from the mid beside it. The gap
+between the two is the whole question of whether to cross or to rest.
+
+The walk starts at the best price, which is not the first row. The asks are
+stored reversed so the panel can draw them downward into the spread, and a
+walk that trusted the order would have quoted the worst level in the book as
+the first one filled. A test holds that, because nothing on screen would.
+
+When the size is past what the book holds, it says so rather than pricing
+depth that is not there.
+
+## A price that has stopped arriving
+
+The dangerous state in a terminal is not an error, it is data that has gone
+still while still looking current. When the feed dropped, the mark stayed
+green, the change stayed at +1.25%, the book and the tape kept their last
+values, and the only two signs were a dash in the far corner and a line of
+11px text in the positions gutter.
+
+The mark now stops being coloured as a move, and says `NOT LIVE` beside
+itself, because that is where the number is read. One feed drives the mark,
+the book, the tape and the chart, so one badge qualifies all of them; marking
+every cell would be the same statement, repeated until it is ignored.
+
+It is a flag rather than a latency reading. A venue fast enough to report 0ms
+would otherwise read as a venue that had stopped.
+
 ## Levels worth being told about
 
 **WATCH THIS LEVEL** puts the ticket's price on a list under the book. Nobody

@@ -47,6 +47,12 @@ fn source_marker_for_origin(program: &LoweredProgram, origin: crate::hir::Origin
 /// short stable hash of the full path (stems repeat — `chat.ice` lives under
 /// screens/, components/, and handlers/ in the ducktape app). Origins inside
 /// the root document itself collapse to "root".
+/// Group slugs for the app's own two large functions. A fragment slug is
+/// either `root` or `<stem>_<8 hex digits>`, so neither of these can collide
+/// with one.
+const APP_UPDATE_GROUP: &str = "app_update";
+const APP_VIEW_GROUP: &str = "app_view";
+
 fn origin_fragment_slug(program: &LoweredProgram, origin: crate::hir::OriginId) -> String {
     let origin = program.origin(origin);
     let path = origin.path.clone().or_else(|| {
@@ -777,7 +783,11 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         &extern_component_ids,
     );
     generate_editor_binding_mapper(&mut out, program, &extern_component_ids);
-    writeln!(out, "#[allow(unused_parens)]\nimpl {app_name} {{").unwrap();
+    writeln!(
+        out,
+        "}}\n{lint_macro}! {{\n#[allow(unused_parens)]\nimpl {app_name} {{"
+    )
+    .unwrap();
     let app_settings = program.settings();
     if let Some(font) = &app_settings.default_font {
         writeln!(out, "{}", source_marker_for_origin(program, font.origin)).unwrap();
@@ -868,15 +878,36 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     )
     .unwrap();
 
+    // rustc re-checks a macro expansion as a unit, so every item the generator
+    // writes into one `__ice_generated_items_*!` invocation shares one fate: a
+    // one-character edit anywhere in the app root re-type-checks all of them.
+    // Measured on showcase, splitting one phase out took `type_check_crate`
+    // from 0.69s to 0.05s and the rebuild from 3.41s to 2.60s. So each phase
+    // closes the invocation and opens the next; `impl` blocks repeat freely,
+    // and the boundary always lands between whole items.
+    let phase = format!("}}\n}}\n{lint_macro}! {{\n#[allow(unused_parens)]\nimpl {app_name} {{");
+    writeln!(out, "{phase}").unwrap();
     generate_theme(&mut out, program)?;
+    writeln!(out, "{phase}").unwrap();
     generate_boot(&mut out, program, &message, source_path)?;
     generate_tray(&mut out, program)?;
+    writeln!(out, "{phase}").unwrap();
     generate_presets(&mut out, program, &message, source_path)?;
-    generate_update(&mut out, program, &message)?;
+    writeln!(out, "{phase}").unwrap();
+    // `__update` and `__view` answer to different sources — handlers write
+    // one, the view tree the other — and are the two items large enough for
+    // that to matter. Each gets its own group, hence its own file, so an edit
+    // to one leaves the other's type check reusable.
+    let mut update = String::new();
+    generate_update(&mut update, program, &message)?;
     generate_subscription(&mut out, program, &message)?;
+    writeln!(out, "{phase}").unwrap();
     let outline_guard = outline::enable_for_view();
-    generate_view(&mut out, program, &message)?;
+    let mut view = String::new();
+    generate_view(&mut view, program, &message)?;
     let mut outlined = outline::drain_outlined_methods();
+    outlined.push((APP_UPDATE_GROUP.to_owned(), update));
+    outlined.push((APP_VIEW_GROUP.to_owned(), view));
     drop(outline_guard);
     let outline_guard = outline::enable_for_test_mounts();
     generate_test_mounts(&mut out, program, &message, source_path)?;
