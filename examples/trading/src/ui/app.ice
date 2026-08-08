@@ -584,12 +584,6 @@ on browse
     abortable feeds abort-on-drop
       stream hl_market_feed(tape) -> market_ticked _ | feed_failed _
 
-on reset_ticket
-  let seed = ticket_seed(book, focus)
-  ticket_price = seed
-  ticket_size = ""
-  quote = price_ticket(seed, "", ticket_leverage, focus, ticket_buy, position_held(positions, coin))
-
 on seed_ticket(price, buy)
   let seed = fmt_px(price)
   ticket_buy = buy
@@ -631,10 +625,12 @@ on reopen
   abort feeds
 
 on pick_symbol(name)
+  let market = symbol_row(symbols, name)
+  let seed = ticket_seed(book, market)
   coin = name
-  ticket_price = ticket_seed(book, symbol_row(symbols, name))
+  ticket_price = seed
   ticket_size = ""
-  quote = price_ticket(ticket_seed(book, symbol_row(symbols, name)), "", ticket_leverage, symbol_row(symbols, name), ticket_buy, position_held(positions, name))
+  quote = price_ticket(seed, "", ticket_leverage, market, ticket_buy, position_held(positions, name))
   visible = filter_symbols(symbols, query, name)
   tape_prints = []
   focus = symbol_row(symbols, name)
@@ -1669,7 +1665,6 @@ test trading_says_what_broke_without_spending_a_money_colour
 test trading_a_closing_order_asks_for_no_margin
   preset held
   viewport 1660 900
-  dispatch reset_ticket
   dispatch close_held
   expect ticket_size == "30.00"
   expect ticket_buy
@@ -1679,7 +1674,7 @@ test trading_a_closing_order_asks_for_no_margin
 
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
-  viewport 1660 900
+  viewport 1660 820
   expect text "64,001.00"
   expect text "0.3 bps"
   expect no text "Connect an address"

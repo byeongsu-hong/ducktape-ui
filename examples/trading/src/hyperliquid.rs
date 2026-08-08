@@ -2408,6 +2408,35 @@ mod tests {
             "the boundary carries what nothing reads:\n  {}",
             dead.join("\n  ")
         );
+
+        // A handler the app never routes to is dead however many tests
+        // dispatch it. `dispatch` reaches anything by name, so a handler can
+        // outlive the control that called it and still look exercised.
+        let routed: Vec<&str> = APP
+            .lines()
+            .flat_map(|line| {
+                // `| name _` is the error route of a `run` or a `stream`.
+                [
+                    "-> ", "| ", "change=", "submit=", "drag=", "dismiss=", "paste=",
+                ]
+                .iter()
+                .filter_map(move |form| {
+                    let at = line.find(form)? + form.len();
+                    Some(line[at..].split([' ', '(']).next().unwrap_or_default())
+                })
+            })
+            .collect();
+        let orphans: Vec<&str> = APP
+            .lines()
+            .filter_map(|line| line.strip_prefix("on "))
+            .map(|rest| rest.split('(').next().unwrap_or(rest).trim())
+            .filter(|handler| *handler != "mount" && !routed.contains(handler))
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "handlers nothing routes to: {}",
+            orphans.join(", ")
+        );
     }
 
     #[test]
