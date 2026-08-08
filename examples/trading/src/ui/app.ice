@@ -40,7 +40,7 @@ state
   ticket_price = ""
   ticket_size = ""
   ticket_leverage = "5"
-  quote:Ticket = price_ticket("", "", "5", none, true)
+  quote:Ticket = price_ticket("", "", "5", none, true, 0.0)
   orders:[Order] = []
   book:Book? = none
   hover:CandleHit? = none
@@ -573,7 +573,7 @@ on open_ticket
   ticket = true
   ticket_price = seed
   ticket_size = ""
-  quote = price_ticket(seed, "", ticket_leverage, focus, ticket_buy)
+  quote = price_ticket(seed, "", ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on seed_ticket(price, buy)
   let seed = fmt_px(price)
@@ -581,19 +581,19 @@ on seed_ticket(price, buy)
   ticket_buy = buy
   ticket_price = seed
   ticket_size = ""
-  quote = price_ticket(seed, "", ticket_leverage, focus, buy)
+  quote = price_ticket(seed, "", ticket_leverage, focus, buy, position_held(positions, coin))
 
 on ticket_priced(typed)
   ticket_price = typed
-  quote = price_ticket(typed, ticket_size, ticket_leverage, focus, ticket_buy)
+  quote = price_ticket(typed, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_sized(typed)
   ticket_size = typed
-  quote = price_ticket(ticket_price, typed, ticket_leverage, focus, ticket_buy)
+  quote = price_ticket(ticket_price, typed, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_levered(typed)
   ticket_leverage = typed
-  quote = price_ticket(ticket_price, ticket_size, typed, focus, ticket_buy)
+  quote = price_ticket(ticket_price, ticket_size, typed, focus, ticket_buy, position_held(positions, coin))
 
 on close_ticket
   ticket = false
@@ -612,11 +612,11 @@ on close_held
   return if held == 0.0
   ticket_buy = held < 0.0
   ticket_size = fmt_size(held)
-  quote = price_ticket(ticket_price, fmt_size(held), ticket_leverage, focus, held < 0.0)
+  quote = price_ticket(ticket_price, fmt_size(held), ticket_leverage, focus, held < 0.0, held)
 
 on ticket_side(buy)
   ticket_buy = buy
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, buy)
+  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, buy, position_held(positions, coin))
 
 on reopen
   draft = address

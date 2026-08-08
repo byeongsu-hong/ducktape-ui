@@ -126,6 +126,12 @@ just clicked across. The size is cleared whenever it opens — 0.5 means a
 different order on every market, and carrying it over is how you place one you
 did not mean.
 
+An order that closes something ties up nothing and has no cliff, and the panel
+says so: the trade still has a value, but the margin is zero and there is no
+liquidation to quote, because nothing was opened. Past the position it is both
+at once — all of it trades, only the excess opens, and only the excess can be
+liquidated.
+
 A position in this market puts a **close** on the ticket, which fills the size
 that flattens it and takes the side that does — both read off the same signed
 number, which is the only place the two agree by construction rather than by

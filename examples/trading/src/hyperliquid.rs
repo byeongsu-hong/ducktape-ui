@@ -636,6 +636,7 @@ pub fn price_ticket(
     leverage: String,
     market: Option<SymbolRow>,
     buy: bool,
+    held: f64,
 ) -> Ticket {
     let (max_leverage, maintenance) =
         market.map_or((0.0, 0.0), |row| (row.leverage, row.maintenance));
@@ -648,12 +649,26 @@ pub fn price_ticket(
     };
     let leverage = amount(&leverage).clamp(0.0, ceiling);
     let notional = price * size;
+    // Only the part of the order that is not closing something opens a
+    // position, and only an opened position ties up margin or has a cliff.
+    // Selling into a long releases margin; quoting a requirement for it, and a
+    // liquidation for a position that would not exist, is the panel describing
+    // the wrong trade.
+    let opening = if held == 0.0 || (held > 0.0) == buy {
+        size
+    } else {
+        (size - held.abs()).max(0.0)
+    };
     let ready = price > 0.0 && size > 0.0 && leverage > 0.0;
     let known = maintenance > 0.0;
     Ticket {
         notional,
-        margin: if ready { notional / leverage } else { 0.0 },
-        liquidation: if ready && known {
+        margin: if ready {
+            price * opening / leverage
+        } else {
+            0.0
+        },
+        liquidation: if ready && known && opening > 0.0 {
             ticket_liquidation(price, leverage, maintenance, buy)
         } else {
             0.0
@@ -2397,6 +2412,7 @@ mod tests {
                 leverage.into(),
                 Some(market(40.0)),
                 buy,
+                0.0,
             )
         };
 
@@ -2459,7 +2475,7 @@ mod tests {
         // not quote a cliff. Treating an unknown requirement as zero puts the
         // liquidation further from the entry than it really is, which is the
         // one direction a risk number must never be wrong in.
-        let unknown = price_ticket("100".into(), "2".into(), "10".into(), None, true);
+        let unknown = price_ticket("100".into(), "2".into(), "10".into(), None, true, 0.0);
         assert!(unknown.ready, "the order is still describable");
         assert_eq!(unknown.notional, 200.0);
         assert_eq!(unknown.margin, 20.0);
@@ -2479,7 +2495,14 @@ mod tests {
             maintenance: 1.0 / 40.0,
             ..market(40.0)
         };
-        let quoted_strict = price_ticket("100".into(), "2".into(), "10".into(), Some(strict), true);
+        let quoted_strict = price_ticket(
+            "100".into(),
+            "2".into(),
+            "10".into(),
+            Some(strict),
+            true,
+            0.0,
+        );
         assert!(
             quoted_strict.liquidation > quoted("100", "2", "10", true).liquidation,
             "a heavier requirement moves the cliff toward the entry"
@@ -2526,6 +2549,54 @@ mod tests {
         // Nothing typed is not an order, and says nothing.
         assert_eq!(effect("", true), "");
         assert_eq!(effect("0", true), "");
+    }
+
+    #[test]
+    fn a_closing_order_ties_up_nothing_and_has_no_cliff() {
+        let quote = |size: &str, buy: bool, held: f64| {
+            price_ticket(
+                "100".into(),
+                size.into(),
+                "10".into(),
+                Some(SymbolRow {
+                    name: "BTC".into(),
+                    price: 100.0,
+                    change_pct: 0.0,
+                    volume: 0.0,
+                    funding_pct: 0.0,
+                    leverage: 40.0,
+                    open_interest: 0.0,
+                    prev: 100.0,
+                    maintenance: 1.0 / 80.0,
+                    selected: false,
+                }),
+                buy,
+                held,
+            )
+        };
+
+        // Buying against a 30 short: the trade is worth its notional, but it
+        // opens nothing, so it requires no margin and has no cliff. Quoting
+        // one describes a position that would not exist.
+        let closing = quote("30", true, -30.0);
+        assert_eq!(closing.notional, 3_000.0, "the trade still has a value");
+        assert_eq!(closing.margin, 0.0, "closing releases margin, not ties it");
+        assert_eq!(closing.liquidation, 0.0, "and leaves nothing to liquidate");
+
+        // A partial close is the same: still no new exposure.
+        assert_eq!(quote("10", true, -30.0).margin, 0.0);
+
+        // Past the position, only the excess opens.
+        let flipped = quote("50", true, -30.0);
+        assert_eq!(flipped.notional, 5_000.0, "all of it trades");
+        assert_eq!(flipped.margin, 200.0, "20 of it opens, at 10x on 100");
+        assert!(flipped.liquidation > 0.0, "and that part can be liquidated");
+
+        // Adding to the same side opens all of it, as before.
+        let adding = quote("30", false, -30.0);
+        assert_eq!(adding.margin, 300.0);
+        assert!(adding.liquidation > 0.0);
+        assert_eq!(quote("30", true, 0.0).margin, 300.0, "nothing held");
     }
 
     #[test]
