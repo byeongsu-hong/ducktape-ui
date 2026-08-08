@@ -11699,7 +11699,7 @@ mod tests {
     use crate::{analyze, analyze_file, lower};
     use std::fmt::Write as _;
     use std::fs;
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::time::Instant;
 
     const THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
@@ -14028,10 +14028,7 @@ view
 
     #[test]
     fn imported_expression_origins_keep_their_physical_file() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-checked-facts-{}-{nonce}",
             std::process::id()
@@ -14104,10 +14101,7 @@ view
 
     #[test]
     fn imported_view_expression_origins_keep_physical_parent_chains() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-view-expression-origins-{}-{nonce}",
             std::process::id()
@@ -14151,10 +14145,7 @@ view
 
     #[test]
     fn imported_semantic_declarations_keep_physical_and_parent_origins() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nonce = crate::test_support::unique_nonce();
         let directory = std::env::temp_dir().join(format!(
             "ui-lang-declaration-origins-{}-{nonce}",
             std::process::id()

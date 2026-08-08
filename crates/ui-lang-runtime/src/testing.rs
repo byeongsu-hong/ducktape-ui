@@ -647,7 +647,12 @@ impl Config {
             name,
             source: None,
             viewport: Size::new(1024.0, 768.0),
-            timeout: Duration::from_secs(2),
+            // Long enough that a loaded machine running the whole workspace in
+            // parallel does not read scheduling delay as a stalled task: two
+            // seconds failed roughly one run in three while the same test
+            // settled in well under one when run alone. A test that wants a
+            // tighter bound says so with `timeout`.
+            timeout: Duration::from_secs(10),
             preset: None,
             theme: None,
             system_theme: ThemeMode::None,
