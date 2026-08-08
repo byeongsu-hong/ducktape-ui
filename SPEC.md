@@ -323,6 +323,12 @@ app_setting    = "title" expr | "theme" expr | "palette" expr
                | "text-size" number | "scale" expr
                | ("antialiasing" | "vsync") bool
                | window_decl
+               | tray_decl
+tray_decl      = "tray" INDENT tray_setting*
+tray_setting   = "icon-rgba" string u32 u32
+               | "icon-template" bool
+               | ("label" | "tooltip") expr
+               | "popover" name
 window_decl    = "window" name? INDENT window_setting*
 window_setting = ("size" | "min-size" | "max-size") number number
                | "icon-rgba" string u32 u32
@@ -1425,6 +1431,34 @@ codec; width and height are positive integers whose product fits the native
 `width × height × 4`. `cargo ice check` reports a
 mismatch at the icon declaration, and generated Rust repeats the check at
 compile time. Encoded icon formats remain outside 2.0.
+
+The `tray` block declares a system status item — on macOS, an `NSStatusItem`
+in the menu bar. `icon-rgba` is required and follows the window icon
+convention exactly: a relative raw RGBA file embedded without an image codec,
+byte length checked as `width × height × 4` at both check and compile time.
+`icon-template true` marks the icon as a macOS template image (black plus
+alpha, recolored by the system for light and dark menu bars; ignored
+elsewhere). `label` and `tooltip` are `str` expressions with app-`title`
+semantics: re-evaluated after every update, applied natively only when the
+value changed. `label` renders live text beside the icon.
+
+`popover name` names a window template declared on the same root and requires
+`daemon`, because iced renders one view per application window while daemon
+views branch per window. A left click on the status item toggles that window:
+opened hidden, positioned under the icon's screen rectangle (physical
+coordinates converted through the popover's scale factor, clamped to the
+monitor), then shown and focused; a second click — or any `task window close`
+— closes it, tracked through the window's close event. Without `popover`, a
+left click restores and focuses the program's oldest window, which suits an
+`app` whose tray is a live status readout. Only the left click is wired;
+right and middle clicks are ignored.
+
+Platform mapping: macOS is fully implemented. On every other target the same
+program compiles and runs with the tray as a runtime no-op; the native tray on
+Windows has no label text, so `label` is a macOS surface by nature. The
+dismiss-on-outside-click pattern is ordinary language surface —
+`subscribe window unfocused with-id` routed to `task window close target=id`
+— shown in the trading example's `menubar` binary.
 
 Use `daemon Name` instead of `app Name` for an iced daemon that starts without
 an initial window and remains alive after all windows close. A daemon rejects
