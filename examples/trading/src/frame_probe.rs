@@ -226,6 +226,11 @@ fn app(screen: Screen) -> Trading {
     let held = positions(screen.positions, &coin);
 
     state.gate = false;
+    // The fills, the positions and the orders live on the portfolio page since
+    // the terminal was split into pages, and the app opens on the trade page.
+    // A probe that measured the default page would measure a screen with no
+    // rows on it at all and report the memo as free.
+    state.page = crate::Page::Portfolio;
     state.address = ADDRESS.to_owned();
     state.live = true;
     state.latency = 42;
@@ -959,10 +964,21 @@ fn fills_stay_memoized_performance_contract() {
     FILL_LABELS.store(0, Relaxed);
     driver.redraw(here());
     let first = FILL_LABELS.swap(0, Relaxed);
-    assert_eq!(
-        first, DENSE.fills,
-        "a cold redraw builds every fill row exactly once"
+    // A redraw is not one view build. How many it is belongs to the runtime and
+    // moves when the view is restructured — the page split turned it from one
+    // into several — so this contract measures rows against that number rather
+    // than assuming it. What it holds is the invalidation rule, and the rule is
+    // per row: every row is built on the first redraw, none on a redraw that
+    // changed nothing, and exactly one when exactly one fill moves.
+    assert!(
+        first > 0 && first % DENSE.fills == 0,
+        "a cold redraw builds every fill row a whole number of times: {first} for {} rows",
+        DENSE.fills
     );
+    // Cold, a row is built once per pass the first redraw makes over it. Warm,
+    // a moved row is built exactly ONCE however many passes there are — which
+    // is the memo working, and the difference between the two numbers is what
+    // it buys.
 
     driver.redraw(here());
     let unchanged = FILL_LABELS.swap(0, Relaxed);
