@@ -17,14 +17,14 @@ on connect
   status = "Loading"
   tape = tape_focus(tape, coin, interval)
   parallel
-    run hl_symbols() -> symbols_loaded _ | failed _
-    run hl_candles(tape, coin, interval) -> candles_loaded _ | failed _
-    run hl_account(trim(draft)) -> account_loaded _ | failed _
-    run hl_orders(trim(draft)) -> orders_loaded _ | failed _
+    run venue_symbols(venue) -> symbols_loaded _ | failed _
+    run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
+    run venue_account(venue, trim(draft)) -> account_loaded _ | failed _
+    run venue_orders(venue, trim(draft)) -> orders_loaded _ | failed _
     abortable feeds abort-on-drop
       parallel
-        stream hl_market_feed(tape) -> market_ticked _ | feed_failed _
-        stream hl_fill_feed(trim(draft)) -> fills_streamed _ | failed _
+        stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
+        stream venue_fill_feed(venue, trim(draft)) -> fills_streamed _ | failed _
 
 on browse
   address = ""
@@ -32,10 +32,10 @@ on browse
   status = "Loading"
   tape = tape_focus(tape, coin, interval)
   parallel
-    run hl_symbols() -> symbols_loaded _ | failed _
-    run hl_candles(tape, coin, interval) -> candles_loaded _ | failed _
+    run venue_symbols(venue) -> symbols_loaded _ | failed _
+    run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
     abortable feeds abort-on-drop
-      stream hl_market_feed(tape) -> market_ticked _ | feed_failed _
+      stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
 
 on seed_ticket(price, buy)
   let seed = fmt_px(price)
@@ -128,7 +128,83 @@ on pick_symbol(name)
   status = "Loading candles"
   tape = tape_focus(tape, name, interval)
   loading_history = false
-  run hl_candles(tape, name, interval) -> candles_loaded _ | failed _
+  run venue_candles(venue, tape, name, interval) -> candles_loaded _ | failed _
+
+// A venue owns every panel on the screen, so this throws away at least what
+// `pick_symbol` throws away, plus everything that belongs to an account. Two
+// exchanges list different markets under different tickers, hold a position to
+// different margin, and know nothing of each other's orders — so a row kept
+// across the switch is the exchange being left, drawn under the name of the
+// one being opened, and it looks entirely plausible.
+on switch_venue(next)
+  return if next == venue
+  venue = next
+  // The universe and everything drawn from it. The focused row carries the
+  // cap and the maintenance the ticket prices against, so keeping it would
+  // quote one venue's liquidation on the other's market.
+  symbols = []
+  visible = []
+  focus = none
+  // The word in the search box was typed against the list it was narrowing,
+  // and it is the one thing here that would survive its own panel: `visible`
+  // is cleared, and then the next universe is filtered back down through this
+  // on arrival. A reader who typed "PEPE" at one exchange and switched would
+  // get the other exchange's markets hidden by a word nothing on screen shows.
+  query = ""
+  book = none
+  tape_prints = []
+  // A level worth being told about was worth it on one exchange, at one
+  // exchange's price.
+  alerts = []
+  // One address, two venues, two sets of positions. Fills and orders arrive as
+  // a snapshot the app folds into what it already holds, so anything kept here
+  // would be folded in with the next venue's.
+  account = none
+  positions = []
+  orders = []
+  fills = []
+  flashing = false
+  // The ticket was priced off the book of the venue being left, at a market
+  // the next one may not even list.
+  ticket_price = ""
+  ticket_size = ""
+  // The typed leverage stays, and it is the only typed field that does. A
+  // price and a size are readings of one market — the price came off a book
+  // and the size is denominated in a coin — but "5x" is how much risk the
+  // reader wants, which is theirs and means the same at either exchange. What
+  // it is *allowed* to be is the venue's, and that is already held: the ticket
+  // is priced at what the market permits rather than what the field says, the
+  // panel prints that figure as PRICED AT beside the market's own maximum, and
+  // the clamp is re-applied the moment `symbols_loaded` brings a row to clamp
+  // against. Resetting it here would also mean resetting it in `pick_symbol`,
+  // which changes market and cap for the same reason and deliberately does not.
+  quote = price_ticket("", "", ticket_leverage, none, ticket_buy, 0.0)
+  hover = none
+  loading_history = false
+  // A fresh tape rather than a re-pointed one. `tape_focus` drops what is in
+  // flight by comparing the market it was asked for, and both venues would ask
+  // for the same market at the same width — so the feed being aborted, which
+  // holds a clone of the tape, would go on merging its own candles into the
+  // chart the next venue is drawing until its thread noticed. Nothing reads
+  // the old tape once this replaces it.
+  tape = tape_focus(tape_new(), coin, interval)
+  // The strip above the chart describes reads that are being abandoned: a
+  // round trip to a socket about to be dropped, and a failure that named the
+  // venue being left.
+  live = false
+  latency = 0
+  feed_error = ""
+  error = ""
+  status = "Loading"
+  parallel
+    run venue_symbols(venue) -> symbols_loaded _ | failed _
+    run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
+    run venue_account(venue, address) -> account_loaded _ | failed _
+    run venue_orders(venue, address) -> orders_loaded _ | failed _
+    abortable feeds abort-on-drop
+      parallel
+        stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
+        stream venue_fill_feed(venue, address) -> fills_streamed _ | failed _
 
 on pick_interval(next)
   interval = next
@@ -136,40 +212,68 @@ on pick_interval(next)
   status = "Loading candles"
   tape = tape_focus(tape, coin, next)
   loading_history = false
-  run hl_candles(tape, coin, next) -> candles_loaded _ | failed _
+  run venue_candles(venue, tape, coin, next) -> candles_loaded _ | failed _
 
 on search(typed)
   query = typed
   visible = filter_symbols(symbols, typed, coin)
 
 on tick_universe
-  run hl_symbols() -> symbols_loaded _ | failed _
+  run venue_symbols(venue) -> symbols_loaded _ | failed _
 
 on tick_account
   parallel
-    run hl_account(address) -> account_loaded _ | failed _
-    run hl_orders(address) -> orders_loaded _ | failed _
+    run venue_account(venue, address) -> account_loaded _ | failed _
+    run venue_orders(venue, address) -> orders_loaded _ | failed _
 
 on cool_flash
   fills = cool_fills(fills)
   flashing = any_hot(fills)
 
+// A universe is the first thing that can say whether the market on screen
+// exists here. The ticker does not travel: the venues list different markets
+// under different spellings, so the one being carried in — across a switch,
+// through the gate, or from before a delisting the 60-second poll has just
+// read — may name nothing in these rows. `listed_coin` keeps it when it is
+// listed and lands on the venue's busiest market when it is not, and this is
+// the one place every caller of `venue_symbols` routes through.
 on symbols_loaded(rows)
+  let landed = listed_coin(rows, coin)
+  let moved = landed != coin
   error = ""
   symbols = rows
-  visible = filter_symbols(rows, query, coin)
-  focus = symbol_row(rows, coin)
+  coin = landed
+  visible = filter_symbols(rows, query, landed)
+  focus = symbol_row(rows, landed)
   status = ""
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
+  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, landed))
+  return if !moved
+  // Past here the market changed under the reader, so this owes what
+  // `pick_symbol` owes: the book, the prints and the typed order belong to the
+  // market being left, and the chart has to be re-read for the one being
+  // landed on. Not folded into `switch_venue`, because the switch is only one
+  // of the ways a universe arrives that does not list what is on screen.
+  book = none
+  tape_prints = []
+  ticket_price = ""
+  ticket_size = ""
+  quote = price_ticket("", "", ticket_leverage, focus, ticket_buy, position_held(positions, landed))
+  hover = none
+  status = "Loading candles"
+  tape = tape_focus(tape, landed, interval)
+  loading_history = false
+  run venue_candles(venue, tape, landed, interval) -> candles_loaded _ | failed _
 
 on candles_loaded(_count)
   error = ""
   status = ""
 
+// An account read with no address to make it for answers nothing rather than
+// failing, so this is also how the app comes back to holding no account at all.
 on account_loaded(next)
   error = ""
-  account = some(next)
-  positions = next.positions
+  account = next
+  positions = held_positions(next)
   quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on fills_streamed(rows)
@@ -209,7 +313,7 @@ on chart_signalled(signal)
   return if loading_history
   loading_history = true
   status = "Loading history"
-  run hl_history(tape, coin, interval) -> history_loaded _ | failed _
+  run venue_history(venue, tape, coin, interval) -> history_loaded _ | failed _
 
 on history_loaded(_count)
   error = ""
