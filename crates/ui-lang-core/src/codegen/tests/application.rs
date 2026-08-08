@@ -1651,4 +1651,6 @@ view
     assert!(generated.contains("fn __tray_sync(&self)"));
     assert!(!generated.contains("::ui_lang_runtime::tray::set_tooltip"));
     assert!(!generated.contains("close_events"));
+    assert!(generated.contains("::iced::window::minimize(__id, false)"));
+    assert!(generated.contains("::iced::window::gain_focus(__id)"));
 }

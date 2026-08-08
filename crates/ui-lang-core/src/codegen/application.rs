@@ -556,7 +556,7 @@ pub(in crate::codegen) fn generate_update(
         } else {
             writeln!(
                 out,
-                "{message}::__TrayEvent(__event) => {{ let _ = __event; return ::iced::Task::none(); }},"
+                "{message}::__TrayEvent(__event) => {{ let _ = __event; return ::iced::window::oldest().then(|__id| match __id {{ ::std::option::Option::Some(__id) => ::iced::window::minimize(__id, false).chain(::iced::window::gain_focus(__id)), ::std::option::Option::None => ::iced::Task::none(), }}); }},"
             )
             .unwrap();
         }
