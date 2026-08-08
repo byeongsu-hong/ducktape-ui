@@ -54,6 +54,7 @@ extern crate::hyperliquid
   sync demo_book_ticked(mid:f64, tick:f64) -> Book
   sync demo_tape_ticked(mid:f64, tick:f64) -> [Trade]
   sync demo_candles_for(coin:str, last:f64) -> Tape
+  sync demo_hover() -> CandleHit?
   sync demo_tape_at(mid:f64) -> [Trade]
   sync demo_tape() -> [Trade]
   sync position_held(positions:[Position], coin:str) -> f64
