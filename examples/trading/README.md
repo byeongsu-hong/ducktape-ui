@@ -173,6 +173,32 @@ market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
 
+## What a second venue has to provide
+
+The panels, the folds, the ticket's arithmetic, the formatters and the chart
+adapter do not know which exchange they are looking at. What does is a short
+list, and it is the whole of a second adapter:
+
+| | |
+| --- | --- |
+| Two endpoints | one REST, one websocket |
+| Six requests | the universe, a candle window, an account, its resting orders, and whatever the websocket needs to open |
+| Five channels | mids, book, market context, candles, and this account's fills |
+| One field map per response | every number arrives as a string here; another venue will disagree about names and types both |
+| One margin rule | the share of a position's value held against it — Hyperliquid keeps half the margin at the market's maximum leverage; the market carries the answer, so nothing shared learns the rule |
+| One interval vocabulary | `1m`, `5m`, `1h` are this venue's spelling |
+| One side encoding | `B` and `A` here, for both fills and prints |
+
+Everything else is already venue-neutral, and the boundary test keeps it that
+way: `SymbolRow`, `Position`, `Account`, `Book`, `Trade`, `Fill`, `Order` and
+`Ticket` are shapes the panels read, not shapes Hyperliquid returns.
+
+The one thing not yet done is the module split that would put those two halves
+in separate files. It is mechanical — the venue half needs `Tape.candles`,
+`MarketTick.mids`, `MarketTick.context` and `Fill.tid` visible to the crate,
+because the venue writes what the panels read — and it is worth doing when
+there is a second adapter to shape it against.
+
 ## What talks to the exchange
 
 Everything the exchange pushes arrives on a websocket; everything it only
