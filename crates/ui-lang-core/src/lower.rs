@@ -1279,7 +1279,6 @@ pub(crate) struct ResolvedTraySettings {
     pub(crate) label: Option<ResolvedAppExpression>,
     pub(crate) tooltip: Option<ResolvedAppExpression>,
     pub(crate) popover: Option<NamedWindowId>,
-    pub(crate) field_origins: HashMap<String, OriginId>,
     pub(crate) origin: OriginId,
 }
 #[derive(Clone, Debug)]
@@ -4824,7 +4823,6 @@ impl Lowerer {
                     label,
                     tooltip,
                     popover,
-                    field_origins: self.lower_setting_origins(&tray.setting_spans, origin),
                     origin,
                 })
             })
@@ -19501,7 +19499,7 @@ view
         let source = format!(
             "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    label describe(count)\n    tooltip \"Demo\"\n    popover status\n  window status\n    size 320 240\nextern crate::backend\n  sync describe(value:i64) -> str\nstate\n  count = 1\n{THEME}view\n  text count\n"
         );
-        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let program = lower(analyze(&source).unwrap()).unwrap();
         let settings = program.settings();
         let tray = settings.tray.as_ref().unwrap();
         assert_eq!(tray.icon.path, "assets/tray.rgba");
