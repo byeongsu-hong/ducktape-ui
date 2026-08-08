@@ -2126,6 +2126,59 @@ pub fn demo_account() -> Account {
 /// A candle out of the fixture tape, for rendering the readout the crosshair
 /// fills. Taken from the tape rather than invented, so what the row says is
 /// what the chart is drawing under it.
+/// A venue's worth of markets, so the list is longer than the panel that
+/// holds it. Every capture so far held four, and a list that fits answers
+/// nothing about a list that does not.
+///
+/// Generated rather than typed, so the ordering and the arithmetic the
+/// fixture tests check hold by construction however many there are.
+pub fn demo_symbols_many() -> Vec<SymbolRow> {
+    const NAMES: [&str; 20] = [
+        "AVAX", "LINK", "ARB", "OP", "SUI", "TIA", "SEI", "INJ", "APT", "DOT", "ATOM", "NEAR",
+        "LDO", "AAVE", "CRV", "MKR", "RUNE", "FTM", "GALA", "IMX",
+    ];
+    let mut rows = demo_symbols();
+    let floor = rows.last().map_or(1.0e8, |row| row.volume);
+    for (step, name) in NAMES.iter().enumerate() {
+        let step = step as f64;
+        let price = 42.5 / (1.0 + step * 0.35);
+        let prev = price * (1.0 - 0.004 * (step % 7.0 - 3.0));
+        let leverage = 20.0 - (step % 3.0) * 5.0;
+        rows.push(SymbolRow {
+            name: (*name).to_owned(),
+            price,
+            change_pct: change_pct(price, prev),
+            volume: floor * 0.94_f64.powf(step + 1.0),
+            funding_pct: 0.0008 - 0.00021 * (step % 5.0),
+            leverage,
+            open_interest: 120_000.0 * (step + 1.0),
+            prev,
+            maintenance: maintenance_fraction(leverage),
+            selected: false,
+        });
+    }
+    rows
+}
+
+/// A tape at the depth the feed keeps it, rather than three prints.
+pub fn demo_tape_full() -> Vec<Trade> {
+    let mid = 64_000.0;
+    (0..60)
+        .map(|step| {
+            let tid = step + 1;
+            let up = step % 3 != 1;
+            Trade {
+                ts: 1_786_117_888 - tid,
+                price: if up { mid + 1.0 } else { mid - 1.0 },
+                size: 0.05 + (step % 9) as f64 * 0.17,
+                buy: up,
+                sweep: if step % 7 == 0 { 3 } else { 1 },
+                tid,
+            }
+        })
+        .collect()
+}
+
 pub fn demo_hover() -> Option<CandleHit> {
     let tape = demo_candles();
     let candles = lock(&tape.candles);
@@ -2734,6 +2787,41 @@ mod tests {
         // fixture pair is only one fixture.
         assert!(demo_account().margin_pct < 5.0);
         assert!(demo_account_at_risk().margin_pct > 50.0);
+    }
+
+    /// The long list is generated, so it is checked the same way rather than
+    /// trusted: a list that breaks the ordering the panel assumes is a list
+    /// the panel draws in the wrong order, quietly.
+    #[test]
+    fn the_long_market_list_is_the_same_shape_as_the_short_one() {
+        let rows = demo_symbols_many();
+        assert!(rows.len() > 20, "longer than any panel that holds it");
+        for pair in rows.windows(2) {
+            assert!(
+                pair[0].volume >= pair[1].volume,
+                "{} outranks {} on volume",
+                pair[1].name,
+                pair[0].name
+            );
+        }
+        for row in &rows {
+            assert!(row.price > 0.0 && row.leverage > 0.0, "{}", row.name);
+            assert!(
+                (row.maintenance - maintenance_fraction(row.leverage)).abs() < 1e-12,
+                "{}: maintenance is half the margin at the cap",
+                row.name
+            );
+            assert!(
+                (row.change_pct - change_pct(row.price, row.prev)).abs() < 1e-9,
+                "{}: the change is not this price against that close",
+                row.name
+            );
+        }
+        assert_eq!(
+            rows.iter().filter(|row| row.selected).count(),
+            1,
+            "one market is the one being watched"
+        );
     }
 
     /// The fixture markets have to be the shape the parser leaves: volume

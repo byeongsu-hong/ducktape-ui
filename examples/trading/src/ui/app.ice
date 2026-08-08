@@ -125,6 +125,26 @@ preset hovering
     hover = demo_hover()
     quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
 
+preset busy
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols_many()
+    visible = demo_symbols_many()
+    focus = symbol_row(demo_symbols_many(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape_full()
+    fills = demo_fills()
+    orders = demo_orders()
+    alerts = add_alert(add_alert(demo_alerts(), "BTC", "64,400.00", 64000.0), "BTC", "63,700.00", 64000.0)
+    live = true
+    ticket_price = "64,000.00"
+    ticket_size = "3.00"
+    quote = price_ticket("64,000.00", "3.00", "5", symbol_row(demo_symbols_many(), "BTC"), true, -30.0)
+
 preset penny
   state
     gate = false
@@ -1939,6 +1959,22 @@ test trading_browse_says_what_needs_an_address
   expect no text "No fills on this account yet."
   expect no text "No resting orders."
 
+test trading_a_search_that_matches_nothing_says_so
+  preset busy
+  viewport 1660 820
+  target app = #app
+  target markets = app/markets
+  target search = markets/search
+  focus search
+  type "ZZZ"
+  expect text "No market matches that."
+  expect no text "AVAX"
+  type "!"
+  expect text "No market matches that."
+  key escape
+  expect text "AVAX"
+  expect no text "No market matches that."
+
 test trading_escape_clears_a_search
   preset terminal
   viewport 1660 900
@@ -2032,6 +2068,13 @@ test trading_the_crosshair_reads_out_the_candle_under_it
   viewport 1660 820
   expect no text "market not loaded"
   capture hovering
+
+test trading_lists_longer_than_their_panels_render
+  preset busy
+  viewport 1660 820
+  expect text "AVAX"
+  expect no text "market not loaded"
+  capture busy
 
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
