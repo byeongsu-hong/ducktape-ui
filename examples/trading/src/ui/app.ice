@@ -67,6 +67,7 @@ preset held
     visible = demo_symbols()
     focus = symbol_row(demo_symbols(), "BTC")
     positions = demo_positions()
+    account = some(demo_account())
     book = some(demo_book())
     tape_prints = demo_tape()
 
@@ -1256,6 +1257,13 @@ view
                         align=center
                       Label value="TAPE"
                       space w=fill
+                      if !empty(tape_prints)
+                        Delta
+                          with
+                            value=fmt_share(tape_pressure(tape_prints))
+                            up=(tape_pressure(tape_prints) >= 50.0)
+                            size=10.0
+                            width=34.0
                       Label value=coin
                     rule horizontal thickness=1.0 color=edge
                     scroll #tape-list
@@ -1748,4 +1756,7 @@ test trading_the_whole_terminal_renders_from_fixtures
   expect text "64,001.00"
   expect text "0.3 bps"
   expect no text "Connect an address"
+  expect no text "READ ONLY"
+  expect text "38%"
+  expect text "34%"
   capture terminal

@@ -1684,6 +1684,27 @@ pub fn demo_positions() -> Vec<Position> {
     }]
 }
 
+/// The account those positions belong to. Built the way a parsed one is, so
+/// the rail and its percentage cannot disagree with the equity beside them.
+pub fn demo_account() -> Account {
+    let positions = demo_positions();
+    let value = 3_761_182.51;
+    let maintenance = 1_418_309.0;
+    Account {
+        value,
+        pnl: positions.iter().map(|position| position.pnl).sum(),
+        withdrawable: 2_200.0,
+        notional: positions
+            .iter()
+            .map(|position| position.mark * position.size.abs())
+            .sum(),
+        maintenance,
+        health: margin_load(value, maintenance) * RISK_RAIL_WIDTH,
+        margin_pct: margin_load(value, maintenance) * 100.0,
+        positions,
+    }
+}
+
 /// A book and a tape to go with them, so the whole terminal renders from
 /// fixtures rather than from an exchange.
 pub fn demo_book() -> Book {
@@ -2398,6 +2419,11 @@ mod tests {
         // No trades is not a one-sided market, and must not divide by zero.
         assert_eq!(tape_pressure(Vec::new()), 50.0);
         assert_eq!(tape_pressure(vec![print(0.0, true)]), 50.0);
+        assert_eq!(
+            fmt_share(tape_pressure(demo_tape())),
+            "34%",
+            "the fixture tape"
+        );
     }
 
     #[test]
