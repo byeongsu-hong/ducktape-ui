@@ -1,6 +1,8 @@
 view
+  // Two windows, one view: `popover` is true only for the window the status
+  // item opened.
   col w=fill h=fill
-    if panel_preview || (main != none && main != some(window))
+    if popover
       MiniStatus
         with
           coin=coin
@@ -9,7 +11,7 @@ view
           error=error
         events
           quit -> quit
-    if !panel_preview && (main == none || main == some(window))
+    if !popover
       overlay
         with
           when=gate

@@ -1138,10 +1138,10 @@ view
     text "Muted" @text-primary/50
 "#;
     let generated = compile(source, "typography.ice").unwrap();
-    // A transparent literal has no palette index, so that text keeps its
-    // compiled rendering; a token with opacity travels as an index and alpha.
-    assert!(generated.contains(".color(::iced::Color::from_rgba8(0, 0, 0, 0.000000))"));
-    assert!(generated.contains(r#"\"index\": 2"#));
+    // Both travel as data: a colour that is not themed at all is named
+    // outright, and a token with opacity keeps its index and its alpha.
+    assert!(generated.contains(r#"\"base\": \"transparent\""#));
+    assert!(generated.contains(r#"\"token\": 2"#));
     assert!(generated.contains(r#"\"alpha\": 0.5"#));
 }
 

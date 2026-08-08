@@ -201,6 +201,7 @@ fn test_paint_span(test: &TestDecl) -> Option<&Span> {
                 | TestStepKind::FileLeave
                 | TestStepKind::Wait(_)
                 | TestStepKind::Advance(_)
+                | TestStepKind::TrayClick
                 | TestStepKind::Idle
                 | TestStepKind::Capture(_) => false,
             };
@@ -401,6 +402,7 @@ fn check_test_step(
         | TestStepKind::FileLeave
         | TestStepKind::Wait(_)
         | TestStepKind::Advance(_)
+        | TestStepKind::TrayClick
         | TestStepKind::Idle
         | TestStepKind::Capture(_) => {}
         TestStepKind::Type(value)

@@ -128,11 +128,13 @@ fn a_modelled_view_is_published_as_data() {
 }
 
 #[test]
-fn an_unmodelled_construct_becomes_a_hole_the_compiler_fills() {
-    // `if` has no template node. It does not cost the view its template: the
-    // enclosing layout falls back to a compiled subtree, and everything
-    // outside that subtree still reloads. Whole-view fallback would mean one
-    // conditional stops a whole screen from reloading.
+fn a_conditional_is_a_group_its_layout_still_publishes_around() {
+    // `if` has no template node, and it cannot be an ordinary hole either: it
+    // contributes however many children its condition produces, and a hole
+    // holds exactly one element. It gets a group slot instead, so the layout
+    // holding it stays data. Making the layout the hole would mean one
+    // conditional stops a whole screen from reloading — which is what the
+    // root `col` of a real app is.
     let source = APP.replace(
         "      text count #count\n",
         "      if count > 0\n        text count #count\n",
@@ -145,11 +147,21 @@ fn an_unmodelled_construct_becomes_a_hole_the_compiler_fills() {
         .expect("an unmodelled node does not cost the view its template");
 
     assert!(
-        template.json.contains(r#""kind": "subtree""#),
+        template.json.contains(r#""kind": "group""#),
+        "the conditional did not become a group: {}",
+        template.json
+    );
+    assert!(
+        !template.json.contains(r#""kind": "subtree""#),
         "the conditional's layout became a hole: {}",
         template.json
     );
-    // The structure around the hole is still data, so it still reloads.
+    assert!(
+        template.json.contains(r#""groups": 1"#),
+        "{}",
+        template.json
+    );
+    // The layout around it is still data, siblings included, so it reloads.
     assert!(template.json.contains(r#""literal": "Sample""#));
     assert!(template.json.contains(r#""segment": "greeting""#));
 }

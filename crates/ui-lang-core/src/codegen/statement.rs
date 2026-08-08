@@ -891,6 +891,13 @@ pub(in crate::codegen) fn generate_statements(
                             resolved_route_code(route, &["value"], env, program, message)?;
                         format!("::iced::window::{function}().map(move |value| {message_code})")
                     }
+                    ResolvedWindowOperation::TrayClose => {
+                        // No window id in scope names the popover, so the
+                        // generated state is the only thing that can close it.
+                        format!(
+                            "match self.__ice_tray_popover.take() {{ ::std::option::Option::Some(__popover) => {{ self.__ice_tray_popover_shown = false; self.__ice_tray_dismissed = ::std::option::Option::Some(::iced::time::Instant::now()); ::iced::window::close::<{message}>(__popover) }}, ::std::option::Option::None => ::iced::Task::none() }}"
+                        )
+                    }
                     ResolvedWindowOperation::Close => {
                         format!("::iced::window::close::<{message}>({id})")
                     }
@@ -1121,6 +1128,7 @@ pub(in crate::codegen) fn generate_statements(
                         ResolvedWindowOperation::Open(_)
                             | ResolvedWindowOperation::Oldest
                             | ResolvedWindowOperation::Latest
+                            | ResolvedWindowOperation::TrayClose
                             | ResolvedWindowOperation::AutomaticTabbing(_)
                     ) {
                     task

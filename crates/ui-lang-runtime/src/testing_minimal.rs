@@ -50,3 +50,6 @@ pub struct RenderSourceGuard;
 pub const fn push_render_source(_source: Location) -> RenderSourceGuard {
     RenderSourceGuard
 }
+
+#[doc(hidden)]
+pub const fn begin_render_pass() {}

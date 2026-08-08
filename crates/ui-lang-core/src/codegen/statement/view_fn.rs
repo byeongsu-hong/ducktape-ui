@@ -68,8 +68,14 @@ fn template_render_code(
 /// The `SlotCounts` literal the generated view sizes its tables from.
 fn slot_counts_code(counts: &ui_lang_template::SlotCounts) -> String {
     format!(
-        "::ui_lang_runtime::template::SlotCounts {{ texts: {}, states: {}, messages: {}, handlers: {}, subtrees: {} }}",
-        counts.texts, counts.states, counts.messages, counts.handlers, counts.subtrees,
+        "::ui_lang_runtime::template::SlotCounts {{ texts: {}, states: {}, messages: {}, handlers: {}, subtrees: {}, groups: {}, bools: {} }}",
+        counts.texts,
+        counts.states,
+        counts.messages,
+        counts.handlers,
+        counts.subtrees,
+        counts.groups,
+        counts.bools,
     )
 }
 
@@ -98,6 +104,29 @@ pub(in crate::codegen) fn generate_view(
                 owner: program
                     .expressions()
                     .daemon_window_local()
+                    .map(BindingOwner::Local),
+            },
+        );
+    }
+    if program
+        .settings()
+        .tray
+        .as_ref()
+        .is_some_and(|tray| tray.popover.is_some())
+    {
+        // True only while the view is drawing the window the status item
+        // opened, so one view can answer for the panel and the app's own
+        // windows without the app tracking window ids itself.
+        env.insert(
+            "popover".into(),
+            Binding {
+                code: "(self.__ice_tray_popover == ::std::option::Option::Some(window))".into(),
+                ty: Type::Bool,
+                local: true,
+                state: None,
+                owner: program
+                    .expressions()
+                    .tray_popover_local()
                     .map(BindingOwner::Local),
             },
         );

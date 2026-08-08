@@ -121,7 +121,7 @@ view
     assert!(generated.contains("text: __ice_palette.colors[1]"));
     // `box bg=surface` is modelled, so its background travels as a palette
     // index rather than a generated colour expression.
-    assert!(generated.contains(r#"\"background\": {\n      \"index\": 4"#));
+    assert!(generated.contains(r#"\"background\": {\n      \"base\": {\n        \"token\": 4"#));
     assert!(
         generated.contains("dynamic_themer(::std::option::Option::Some(__ice_app_theme.clone())")
     );

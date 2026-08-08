@@ -148,8 +148,9 @@ test trading_funding_reads_as_money_that_moved_not_as_a_charge
   expect text "+$8"
 
 test trading_menu_bar_panel_shows_the_focused_market
-  preset panel
+  preset held
   viewport 300 236
+  tray click
   expect text "PERP"
   expect text "64,000.00"
   expect text "FUNDING"

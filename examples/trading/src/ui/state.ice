@@ -17,8 +17,9 @@ enum Venue
   lighter
 
 state
+  // The terminal window, opened on mount. A daemon starts with none, and the
+  // view needs to know which of its windows it is drawing.
   main:window-id? = none
-  panel_preview = false
   page:Page = Page.trade
   venue:Venue = Venue.hyperliquid
   gate = true
@@ -232,15 +233,6 @@ preset stalled
     quote = price_ticket("64,000.00", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
     feed_error = "Hyperliquid feed dropped"
     latency = 0
-
-preset panel
-  state
-    gate = false
-    panel_preview = true
-    symbols = demo_symbols()
-    visible = demo_symbols()
-    focus = symbol_row(demo_symbols(), "BTC")
-    live = true
 
 preset failing
   state
