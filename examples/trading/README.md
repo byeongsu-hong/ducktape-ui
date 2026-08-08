@@ -106,7 +106,9 @@ first.
 
 ## The ticket sends nothing
 
-**NEW ORDER** on the book opens a ticket that prices an order and stops there.
+The ticket is a rail beside the book, not a dialog over it. An order is priced
+against what the book is doing, and a modal that covers the book to ask about
+it has the relationship backwards. It prices an order and stops there.
 It seeds the limit price from the book's mid, takes a size and a leverage held
 inside what the market allows, and answers the only three questions worth
 asking before an order exists: what it is worth, what it ties up, and where it
@@ -120,11 +122,14 @@ displays, and a position row its side and size rather than its ticker. A row
 carrying five figures is worth more than one of them to somebody who cannot
 see the other four.
 
-A level in the book opens it already filled: clicking an ask starts a buy at
-that price, clicking a bid a sell, because the side you want is the side you
-just clicked across. The size is cleared whenever it opens — 0.5 means a
-different order on every market, and carrying it over is how you place one you
-did not mean.
+A level in the book fills it: clicking an ask starts a buy at that price,
+clicking a bid a sell, because the side you want is the side you just clicked
+across. Changing market resets it — 0.5 means a different order on every one
+of them, and carrying it over is how you place an order you did not mean.
+
+Four rails need width the old minimum did not have. The window asks for 1660
+now, which is what the columns actually measure: 610 for the positions row,
+310 for the fills, and 719 for the market list, the book and the ticket.
 
 An order that closes something ties up nothing and has no cliff, and the panel
 says so: the trade still has a value, but the margin is zero and there is no
