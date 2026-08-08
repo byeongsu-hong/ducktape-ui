@@ -222,6 +222,20 @@ The at-risk fixture is where that first bit: it moved bitcoin to 58,000 and
 left the book, the tape and the chart at 64,000. So the fixtures take the
 price they are drawn around, and a test walks each pair.
 
+## What the position costs to keep
+
+A perpetual has no expiry, so a position is rented rather than bought, and
+the rent arrives hourly forever. `RENT PER DAY` is that rate against this
+order's notional: `-$57.60/day` on three bitcoin at the current funding.
+
+Longs pay a positive rate and shorts are paid it, so the sign is the reader's
+side rather than the venue's convention. It is the part of a carry that never
+appears on a ticket, and the reason one that looks free is not.
+
+Single-letter shortcuts for the side are not here. The market search listens
+to the same keys, and the app has no notion of which surface holds focus, so
+typing `b` to find bitcoin would flip the ticket to a buy instead.
+
 ## The order, against the engine
 
 `AGAINST THE ENGINE` reads `91% → 100%`: where the account stands against its
