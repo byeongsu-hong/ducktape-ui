@@ -1,0 +1,15 @@
+__TrayEvent(::ui_lang_runtime::tray::TrayEvent),
+__TrayPopoverClosed(::iced::window::Id),
+pub(crate) __ice_tray_popover: ::std::option::Option<::iced::window::Id>,
+::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig
+include_bytes!("assets/tray.rgba")
+icon_width: 2u32, icon_height: 2u32, icon_template: true,
+::ui_lang_runtime::tray::events().map(__TrayBasicMessage::__TrayEvent),
+::iced::window::close_events().map(__TrayBasicMessage::__TrayPopoverClosed),
+fn __tray_sync(&self)
+::ui_lang_runtime::tray::set_label
+::ui_lang_runtime::tray::set_tooltip
+::ui_lang_runtime::tray::anchor_position
+Self::__window_0()
+::iced::window::set_mode(__id, ::iced::window::Mode::Windowed)
+self.__tray_sync();
