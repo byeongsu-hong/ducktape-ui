@@ -2293,6 +2293,57 @@ mod tests {
     /// palette exists twice: once as tokens in `theme.ice` and once as the
     /// literals below. Nothing makes them agree, and the chart is half the
     /// screen — a drift would be obvious at runtime and invisible until then.
+    /// Everything the extern block declares, the view has to read. A field
+    /// Rust needs and Ice does not belongs in the struct and not in the
+    /// declaration — `Fill.tid` is the pattern. A `sync` nothing calls is
+    /// worse: it means an edit that was supposed to wire it up matched
+    /// nothing, which has happened here four times, twice without a single
+    /// test noticing, because a test can cover a function the screen never
+    /// reaches.
+    #[test]
+    fn the_boundary_declares_only_what_the_view_reads() {
+        const EXTERN: &str = include_str!("ui/extern/hyperliquid.ice");
+        const APP: &str = include_str!("ui/app.ice");
+
+        let mut dead: Vec<String> = Vec::new();
+        for line in EXTERN.lines() {
+            let line = line.trim_end();
+            let Some(body) = line.strip_prefix("  ") else {
+                continue;
+            };
+            if let Some(rest) = body
+                .strip_prefix("sync ")
+                .or(body.strip_prefix("component "))
+            {
+                let name = rest.split('(').next().unwrap_or(rest);
+                if !APP.contains(&format!("{name}(")) {
+                    dead.push(format!("`sync {name}` is declared and never called"));
+                }
+                continue;
+            }
+            // A struct: `Name(field:type, ...)`.
+            let Some((name, fields)) = body.split_once('(') else {
+                continue;
+            };
+            if !name.chars().next().is_some_and(char::is_uppercase) {
+                continue;
+            }
+            for field in fields.trim_end_matches(')').split(", ") {
+                let Some((field, _)) = field.split_once(':') else {
+                    continue;
+                };
+                if !APP.contains(&format!(".{field}")) {
+                    dead.push(format!("`{name}.{field}` is declared and never read"));
+                }
+            }
+        }
+        assert!(
+            dead.is_empty(),
+            "the boundary carries what nothing reads:\n  {}",
+            dead.join("\n  ")
+        );
+    }
+
     #[test]
     fn the_chart_wears_the_same_palette_as_the_panels() {
         const THEME: &str = include_str!("ui/theme.ice");

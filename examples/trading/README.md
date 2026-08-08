@@ -291,7 +291,10 @@ renders the chart from the tape plus the current fills, positions, and orders.
 Candles never cross into Ice; everything the panels list does, because the
 panels list it — and only that. A struct crossing the boundary carries the
 fields the screen reads and no others, so the extern block stays a description
-of the interface rather than of the exchange.
+of the interface rather than of the exchange. A test holds it to that, because
+the rule does not hold itself: five fields and one whole `sync` had drifted
+across it before the test existed, and a declared function nothing calls is
+how you find out that the edit meant to wire it up matched nothing.
 
 The chart adapter reports back one `ChartSignal`: the candle under the cursor,
 and whether the view has reached the oldest candle loaded. One handler reads
