@@ -399,6 +399,8 @@ pub enum WidgetSelector {
 #[derive(Clone, Debug)]
 pub enum WindowOperation {
     Open(Option<String>),
+    /// Closes the tray popover, which no window id in scope can name.
+    TrayClose,
     Oldest,
     Latest,
     Close,

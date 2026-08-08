@@ -13,13 +13,30 @@ ducktape-ui = { workspace = true, features = ["candle-chart"] }
 # MIT. See the header of `src/lighter_sign.rs` for what a git dependency costs
 # here and why it won over crates.io's `plonky2_ecgfp5` and vendoring.
 ecgfp5 = { git = "https://github.com/pornin/ecgfp5", rev = "ce059c6d1e1662db437aecbf3db6bb67fe63c716" }
+# Randomness for the agent key. Already in the tree as a transitive dependency,
+# so naming it here costs a line and no build time.
+getrandom = "0.3"
+hex = "0.4"
 iced = { version = "=0.14.0", features = ["smol"] }
+# secp256k1 with public-key recovery, which is the whole of what an Ethereum
+# r/s/v needs. Pure Rust, and it shares the sha2/digest/zeroize already in the
+# lockfile; the C-binding alternative would drag a build script and a compiler.
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 serde_json = "1"
+# keccak256. `sha2` is already here but SHA-3 and SHA-2 share nothing but a
+# name; this is the same RustCrypto `digest` traits, so it adds one small crate.
+sha3 = "0.10"
 smol = "2"
 tungstenite = { version = "0.30.0", default-features = false, features = ["rustls-tls-webpki-roots", "handshake"] }
 ui-lang.workspace = true
 ui-lang-runtime.workspace = true
 ureq = { version = "3", features = ["json"] }
+
+# The Keychain, and only where there is one. `OSX_10_15` is not a nicety: it is
+# the flag gating `use_protected_keychain`, and without the data-protection
+# keychain macOS ignores `kSecAttrAccessible*` outright — see `src/session.rs`.
+[target."cfg(target_os = \"macos\")".dependencies]
+security-framework = { version = "3.7", default-features = false, features = ["OSX_10_15"] }
 
 [build-dependencies]
 ui-lang-build.workspace = true

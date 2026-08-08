@@ -397,7 +397,7 @@ view
 }
 
 #[test]
-fn lowers_structured_overlays_to_native_overlay_widgets() {
+fn publishes_a_structured_overlay_as_data() {
     let source = r#"app Dialog
 theme contract AppTheme
   bg
@@ -422,12 +422,59 @@ view
         text "Dialog"
 "#;
     let generated = compile(source, "dialog.ice").unwrap();
+    // The overlay is modelled, so its geometry, backdrop and alignment travel
+    // as data. Only the panel stays compiled.
+    assert!(generated.contains(r#"\"kind\": \"overlay\""#));
+    assert!(generated.contains(r#"\"base\": \"black\""#));
+    assert!(generated.contains(r#"\"alpha\": 0.6"#));
+    assert!(generated.contains(r#"\"padding\": 24.0"#));
+    assert!(generated.contains(r#"\"align_x\": \"center\""#));
+    assert!(generated.contains(r#"\"align_y\": \"bottom\""#));
+    // The dismiss route and the no-op it pairs with are the compiled half.
+    assert!(generated.contains("__ice_slots.messages.push(__DialogMessage::Close);"));
+    assert!(generated.contains("__ice_slots.messages.push(__DialogMessage::__ExternNoop);"));
+    // And the panel is built only on the frames the overlay is open, so a shut
+    // dialog costs one `space` rather than its whole contents.
+    assert!(generated.contains("__ice_slots.bools.push(self.shown);"));
     assert!(generated.contains("if self.shown"));
+    assert!(generated.contains("} else { ::iced::widget::Space::new().into() }"));
+}
+
+#[test]
+fn lowers_a_spliced_overlay_to_native_overlay_widgets() {
+    // An overlay inside a conditional is inside a group, so it is compiled
+    // rather than published — the path a real application takes when its
+    // modal hangs off an `if`.
+    let source = r#"app Dialog
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  shown = true
+on close
+  shown = false
+view
+  col
+    if shown
+      overlay when=shown dismiss=close backdrop=black/60 p=24.0 align-x=center align-y=end
+        content
+          text "Page"
+        layer
+          box w=320.0 p=16.0 bg=bg r=10.0
+            text "Dialog"
+"#;
+    let generated = compile(source, "dialog.ice").unwrap();
     assert!(generated.contains(
         "let __overlay_stack = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_base); if self.shown"
     ));
     assert!(generated.contains("else { __overlay_stack.into() }"));
-    assert!(generated.contains("::iced::widget::Stack::new()"));
     assert!(generated.contains("::iced::widget::float(__overlay_surface)"));
     assert!(generated.contains("::core::f32::EPSILON"));
     assert!(generated.contains("__color.a = 0.600000"));

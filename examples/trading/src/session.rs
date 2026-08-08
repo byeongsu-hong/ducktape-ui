@@ -71,9 +71,15 @@ impl fmt::Debug for Secret {
 }
 
 impl Drop for Secret {
+    /// **Nothing in this file can show that this runs.** It is a write to
+    /// memory nothing reads again, which the optimiser is entitled to delete,
+    /// and no test can look at the freed buffer to check: replace this body
+    /// with `{}` and every test below still passes, today and after any test
+    /// anyone adds. Read it as hygiene against a heap that later gets reused or
+    /// dumped, not as a guarantee — the guarantee costs the `zeroize`
+    /// dependency, which is the upgrade if that day comes.
     fn drop(&mut self) {
-        // ponytail: a plain overwrite the optimiser is free to elide; `zeroize`
-        // is the upgrade if a dependency is ever worth it here.
+        // ponytail: unverifiable best-effort wipe; `zeroize` is the upgrade.
         self.0.fill(0);
     }
 }
@@ -84,12 +90,19 @@ pub enum Unlock {
     /// The prompt was declined or dismissed. Nothing was released, and trying
     /// again is a reasonable thing for the user to do.
     Locked,
+    /// There is nothing stored for this account yet, so there was never a
+    /// prompt to decline — a first run. Kept apart from `Locked` because the
+    /// two need opposite things on screen: asking again fetches this same
+    /// answer forever, and `store` is the only thing that changes it.
+    Unenrolled,
     /// Touch ID or the passkey answered and the keychain handed back what it
     /// held. Carries nothing: the secret goes to the caller that asked for it,
     /// never into the state machine.
     Platform,
-    /// There is no platform keychain in this build. Retrying cannot fix that,
-    /// which is exactly why it does not read as `Locked`.
+    /// There is no keychain this session can use: either the build has none, or
+    /// the one this machine has failed for a reason that is not the user's to
+    /// answer. Retrying cannot fix either, which is exactly why it does not
+    /// read as `Locked`.
     Unavailable(String),
 }
 
@@ -143,6 +156,11 @@ pub enum Session {
     /// Holding nothing.
     #[default]
     Locked,
+    /// Nothing has ever been stored for this account, so there is no prompt to
+    /// put up. Not the user's to retry the way `Locked` is: enrolling — a
+    /// `store`, which happens outside this model — is what leaves it, and a
+    /// `Prompt` after that works exactly as it does from `Locked`.
+    Unenrolled,
     /// The platform's prompt is up; waiting on the user's finger.
     Unlocking,
     /// The keychain let us in, so the account can be read. Nothing has been
@@ -193,7 +211,10 @@ pub fn step(state: Session, event: Event) -> Session {
         // that is mid-trade is a way to lose an order, not to gain security.
         // `Unavailable` is left out on purpose: the keystore is chosen at
         // compile time, so a second prompt would only fetch the same refusal.
-        (Session::Locked, Event::Prompt) => Session::Unlocking,
+        // `Unenrolled` is in, because the thing that fixes it — storing a
+        // secret — happens outside this model, and the prompt after it must
+        // work.
+        (Session::Locked | Session::Unenrolled, Event::Prompt) => Session::Unlocking,
 
         // An answer is only an answer to a prompt that is still up. A slow
         // Touch ID landing after the user locked the app must not re-open it.
@@ -202,6 +223,7 @@ pub fn step(state: Session, event: Event) -> Session {
             // nothing there is anything to do with.
             Unlock::Platform if !account.is_empty() => Session::Unlocked { account },
             Unlock::Platform | Unlock::Locked => Session::Locked,
+            Unlock::Unenrolled => Session::Unenrolled,
             Unlock::Unavailable(reason) => Session::Unavailable { reason },
         },
 
@@ -303,50 +325,351 @@ impl KeystoreError {
     }
 }
 
+/// What reading the keychain for an account produced.
+///
+/// Three answers rather than an `Option`, because reading is *also* what raises
+/// the Touch ID sheet — the bytes cannot come back until the guard is
+/// satisfied. So a decline reaches `load` as a status code just as it reaches
+/// `prompt`, and it is neither a secret nor an empty keychain. `Option` had
+/// nowhere to put it, which is how it ended up reported as a broken keychain.
+#[derive(Debug)]
+pub enum Held {
+    /// The keychain released the bytes.
+    Secret(Secret),
+    /// Nothing stored for this account yet — a first run. `store` is the fix.
+    Missing,
+    /// The user declined the sheet the read raised, or could not prove it was
+    /// them. Nothing is broken, and asking again is reasonable.
+    Declined,
+}
+
 /// The three things a platform has to be able to do for the app to have an
 /// unlock at all. Nothing else in this file touches the platform, which is why
 /// everything else in this file is decidable on any machine.
 ///
-/// `prompt` returns an `Unlock` rather than a `Result` on purpose: a declined
-/// prompt and a missing keychain are both already variants of it, and two ways
-/// to say no is one too many for a caller to get right.
+/// The return types *are* the seam. A keystore says no for three different
+/// reasons and only one of them is a fault: the user declined (ask again),
+/// nothing has been stored for this account yet (the state every install starts
+/// in), and the keychain itself failed. Both readers say all three —
+/// `Unlock::Locked` / `Unlock::Unenrolled` / `Unlock::Unavailable` for the door,
+/// `Held::Declined` / `Held::Missing` / `Err` for the bytes. Collapsing any two
+/// of them leaves the app either nagging about a fault that is not one, or
+/// swallowing one that is.
 pub trait Keystore {
     /// Put the platform's own prompt on screen — Touch ID, or the passkey
-    /// sheet — and report what came of it. `reason` is the line the OS shows.
-    fn prompt(&self, reason: &str) -> Unlock;
+    /// sheet — and report what came of it.
+    ///
+    /// Takes the account because macOS has no free-standing "prove it is you"
+    /// dialog to raise: the sheet appears *because* something touched a guarded
+    /// item, so which item is part of the asking. `reason` names what the app
+    /// was trying to do, for the message a failure carries.
+    fn prompt(&self, account: &str, reason: &str) -> Unlock;
+    /// Replace whatever is stored for this account. Must not lose the secret it
+    /// was asked to replace when it fails — see the macOS impl for the price of
+    /// that.
     fn store(&self, account: &str, secret: &Secret) -> Result<(), KeystoreError>;
-    fn load(&self, account: &str) -> Result<Secret, KeystoreError>;
+    /// Read the secret, raising whatever prompt guards it. `Err` is the
+    /// keychain itself failing and only that; a first run and a decline are
+    /// `Held::Missing` and `Held::Declined`, because they are answers, not
+    /// faults, and the app acts differently on each.
+    fn load(&self, account: &str) -> Result<Held, KeystoreError>;
 }
 
 /// Whichever keystore this build actually has. The app names this one type;
 /// which implementation answers is the platform's business.
 pub struct PlatformKeystore;
 
-/// macOS: the Keychain, guarded by the Secure Enclave, which is where this
-/// belongs.
-///
-/// Not wired. Reaching the Keychain needs the `security-framework` crate, and
-/// that crate is not in this workspace's lockfile — adding a dependency is not
-/// a decision this file gets to make. Until it is added every operation says so
-/// plainly: an unavailable keystore is a state the session model already
-/// handles and tests, whereas a `todo!()` here would take the app down on its
-/// first launch on the one platform this was written for.
-#[cfg(target_os = "macos")]
-const UNAVAILABLE: &str = "macOS Keychain not wired: needs the security-framework crate, which this workspace does not depend on";
+/// Why a keychain call came back with nothing, in the only three flavours the
+/// app can act on differently. Sorting a status code into one of these is the
+/// entire judgement this file makes about the platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Refusal {
+    /// No item for this account.
+    Missing,
+    /// The user said no, could not prove it was them, or there was no way to
+    /// ask. All three are "not now", and all three are worth asking again.
+    Declined,
+    /// The keychain itself is unhappy. Nothing the user does at a sheet changes
+    /// it, so re-prompting only burns their patience.
+    Failed,
+}
 
-/// Everywhere else: there is no keychain to ask, and pretending otherwise
-/// would mean inventing somewhere to keep a secret. The session model has a
-/// state for this, so the app can say why it cannot trade instead of failing
-/// at the moment somebody clicks buy.
+/// `OSStatus` values from `<Security/SecBase.h>`, which `security-framework`
+/// does not re-export.
+///
+/// Written out here, outside any `cfg`, rather than taken from
+/// `security-framework-sys`: the classification below is the part of this file
+/// a decline or a first run turns on, and keeping it platform-free is what lets
+/// it be tested on a machine that has no Keychain to ask.
+const ITEM_NOT_FOUND: i32 = -25300;
+const USER_CANCELED: i32 = -128;
+const AUTH_FAILED: i32 = -25293;
+const INTERACTION_NOT_ALLOWED: i32 = -25308;
+
+fn refusal(status: i32) -> Refusal {
+    match status {
+        ITEM_NOT_FOUND => Refusal::Missing,
+        USER_CANCELED | AUTH_FAILED | INTERACTION_NOT_ALLOWED => Refusal::Declined,
+        _ => Refusal::Failed,
+    }
+}
+
+/// A read that released nothing, as the unlock the session model consumes.
+///
+/// The one rule this whole seam exists for: a user declining the sheet is
+/// `Locked`, which the app can offer to retry, and never `Unavailable`, which
+/// it cannot. A first run is its own answer again — the door is shut either
+/// way, but "try again" is wrong advice for an account that has nothing behind
+/// the door yet, and `store` rather than a second sheet is what fixes it.
+fn unlock(refusal: Refusal, failure: String) -> Unlock {
+    match refusal {
+        Refusal::Missing => Unlock::Unenrolled,
+        Refusal::Declined => Unlock::Locked,
+        Refusal::Failed => Unlock::Unavailable(failure),
+    }
+}
+
+/// The same sorting for the caller that wanted the bytes rather than the door.
+///
+/// It lives here, beside `unlock`, rather than inline in the macOS `load`,
+/// because these two are the only places a status code becomes an outcome and
+/// both must be checkable on a machine with no Keychain. Inline, the arm that
+/// turned a decline into an error was invisible to every test on this box.
+fn held(refusal: Refusal, failure: String) -> Result<Held, KeystoreError> {
+    match refusal {
+        Refusal::Missing => Ok(Held::Missing),
+        Refusal::Declined => Ok(Held::Declined),
+        Refusal::Failed => Err(KeystoreError::new(failure)),
+    }
+}
+
+/// macOS: one generic-password item per account, in the data-protection
+/// keychain, guarded so that reading it costs a Touch ID and so that the item
+/// never leaves this Mac.
+///
+/// Three choices, none of them decoration:
+///
+/// - `use_protected_keychain` asks for the data-protection keychain. On the
+///   legacy file keychain macOS ignores `kSecAttrAccessible*` outright, so
+///   without it the "this device only" half below would be silently dropped and
+///   the secret would be free to ride a Migration Assistant transfer onto the
+///   next Mac. That call is what the dependency's `OSX_10_15` feature is for.
+/// - `AccessibleWhenUnlockedThisDeviceOnly` keeps the item out of iCloud
+///   Keychain and out of every backup and transfer, and unreadable while the
+///   screen is locked.
+/// - `USER_PRESENCE` is `kSecAccessControlUserPresence`: biometry, falling back
+///   to the passcode. Deliberately not `BIOMETRY_CURRENT_SET`, which destroys
+///   the item the moment a finger is enrolled or removed. The agent key behind
+///   this is cheap to re-approve, but silently losing the app's own unlock
+///   because somebody added a thumb is a support ticket, not a security win.
+///
+/// `reason` reaches the user only inside a failure message. The sheet's own
+/// wording is the system's, because choosing it means setting
+/// `kSecUseOperationPrompt` in a query dictionary built by hand — raw FFI, and
+/// this crate forbids `unsafe`.
+#[cfg(target_os = "macos")]
+mod keychain {
+    use super::{
+        Held, Keystore, KeystoreError, PlatformKeystore, Refusal, Secret, Unlock, held, refusal,
+        unlock,
+    };
+
+    use security_framework::access_control::{ProtectionMode, SecAccessControl};
+    use security_framework::base::Error;
+    use security_framework::passwords::{
+        AccessControlOptions, PasswordOptions, delete_generic_password_options, generic_password,
+        set_generic_password_options,
+    };
+
+    /// What the item is filed under, and what a user poking around Keychain
+    /// Access sees.
+    const SERVICE: &str = "dev.ducktape.trading";
+    const LABEL: &str = "Ducktape trading unlock";
+
+    /// Service, account, and the two attributes that decide *which* keychain is
+    /// being addressed. Every call goes through here, because a read that
+    /// forgot `use_protected_keychain` would look in the legacy keychain and
+    /// report "nothing stored" for an item that is sitting right there.
+    fn query(account: &str) -> PasswordOptions {
+        let mut options = PasswordOptions::new_generic_password(SERVICE, account);
+        options.use_protected_keychain();
+        options.set_access_synchronized(Some(false));
+        options
+    }
+
+    /// Reading is what raises the prompt: the bytes cannot come back until the
+    /// access control is satisfied. `Err` carries the raw `OSStatus` and
+    /// nothing else, so deciding what one *means* stays in `refusal`, where a
+    /// machine with no Keychain can still test it.
+    fn read(account: &str) -> Result<Vec<u8>, i32> {
+        generic_password(query(account)).map_err(Error::code)
+    }
+
+    /// The system's own wording for a status, next to what we were doing when
+    /// it came back. A bare `-25308` in a log is a puzzle; the pair is a cause.
+    fn describe(status: i32, doing: &str) -> String {
+        format!("{doing}: {} ({status})", Error::from_code(status))
+    }
+
+    /// One item, built the way *this* code says it should be: the guard is made
+    /// fresh each call because `set_access_control` consumes one, and putting a
+    /// replaced secret back needs its own.
+    fn add(account: &str, secret: &Secret) -> Result<(), KeystoreError> {
+        let guard = SecAccessControl::create_with_protection(
+            Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
+            AccessControlOptions::USER_PRESENCE.bits(),
+        )
+        .map_err(|error| {
+            KeystoreError::new(describe(error.code(), "building the Touch ID guard"))
+        })?;
+
+        let mut options = query(account);
+        options.set_label(LABEL);
+        options.set_access_control(guard);
+        set_generic_password_options(secret.expose(), options)
+            .map_err(|error| KeystoreError::new(describe(error.code(), "storing the secret")))
+    }
+
+    /// Written on Linux, type-checked for `aarch64-apple-darwin`, never once
+    /// run. Everything below is a claim about a machine this was not built on,
+    /// so it lives here rather than in a pull request nobody reads twice.
+    ///
+    /// A macOS machine still has to demonstrate all of this:
+    ///
+    /// 1. The sheet appears at all, and it is Touch ID with a passcode fallback
+    ///    — not the password dialog the legacy login keychain puts up, which
+    ///    would mean `use_protected_keychain` did not take.
+    /// 2. Declining it yields `Unlock::Locked` from `prompt` and
+    ///    `Held::Declined` from `load` — never an error from either — and a
+    ///    later `prompt` still succeeds. Which status a declined sheet actually
+    ///    returns — `-128`, `-25293`, or something this file does not name — is
+    ///    the assumption `refusal` rests on, and a wrong guess shows up only as
+    ///    a user saying no that the app reports as a broken keychain.
+    /// 3. For an account that was never stored, `load` is `Ok(Held::Missing)`
+    ///    and `prompt` is `Unlock::Unenrolled` — neither is an error, and
+    ///    neither is the same answer a decline gives.
+    /// 4. Whether `prompt` immediately followed by `load` raises one sheet or
+    ///    two. Two is a real UX bug, and the fix is a shared `LAContext` — a
+    ///    second dependency, and one this change would not add on a guess.
+    /// 5. `store` twice for one account leaves exactly one item, and the
+    ///    survivor carries the access control *this* code asked for rather than
+    ///    the one the first item was born with. That is what the delete-then-add
+    ///    below is for.
+    /// 6. What that replace costs in sheets. `store` over an existing item
+    ///    reads it first so a failing add cannot destroy it, and that read is a
+    ///    guarded read: expect a sheet on re-enrolment and none on a first run,
+    ///    and confirm the delete itself raises no second one.
+    /// 7. That the preserve actually preserves. Force the add to fail — store a
+    ///    secret, then store again with the keychain made to refuse — and check
+    ///    the previous secret still loads and the error says it was put back.
+    ///    This is the one claim in `store` that no Linux test can reach.
+    /// 8. The entitlement question. The data-protection keychain expects a
+    ///    signed binary carrying `keychain-access-groups`; an unsigned
+    ///    `cargo run` may get `-34018` (`errSecMissingEntitlement`), which this
+    ///    file reports as a plain keychain failure. If that is what an ordinary
+    ///    `cargo run` hits, the fix belongs in the bundle's entitlements, not
+    ///    here.
+    /// 9. The item does not appear on a second Mac signed into the same iCloud
+    ///    account, and does not survive Migration Assistant.
+    impl Keystore for PlatformKeystore {
+        fn prompt(&self, account: &str, reason: &str) -> Unlock {
+            match read(account) {
+                // Straight into a `Secret` on its way to being dropped, so the
+                // copy the Keychain handed back is overwritten before this
+                // returns. `prompt` answers whether the user is there, never
+                // with what they unlocked.
+                Ok(bytes) => {
+                    drop(Secret::new(bytes));
+                    Unlock::Platform
+                }
+                Err(status) => unlock(refusal(status), describe(status, reason)),
+            }
+        }
+
+        /// Replace rather than update, and hold the old secret across the gap.
+        ///
+        /// The delete is deliberate: `set_generic_password_options` falls back
+        /// to `SecItemUpdate` on a duplicate, which keeps whatever access
+        /// control the *existing* item was born with, so a build that tightened
+        /// the guard would silently not apply it to anyone who already had a
+        /// secret. There is no atomic way to do that — the item is keyed by
+        /// service and account, so the old one has to be gone before the new
+        /// one can land — which leaves a window where a failing add would have
+        /// left the account holding nothing at all.
+        ///
+        /// So the old bytes are read out first and put back if the add fails.
+        /// Reading them raises the same sheet a `load` does, and that is the
+        /// honest price: an item guarded by user presence cannot be preserved
+        /// without presence. It buys the two outcomes worth having — a decline
+        /// aborts the replace with the old secret untouched, and a failed add
+        /// is followed by a restore.
+        fn store(&self, account: &str, secret: &Secret) -> Result<(), KeystoreError> {
+            let previous = match read(account) {
+                Ok(bytes) => Some(Secret::new(bytes)),
+                Err(status) if refusal(status) == Refusal::Missing => None,
+                // ponytail: an item this process cannot read is an item it will
+                // not overwrite either, so a keychain that fails or declines
+                // here wedges `store` until the user retries or deletes the item
+                // in Keychain Access. Refusing beats deleting a secret to find
+                // out whether the add would have worked.
+                Err(status) => {
+                    return Err(KeystoreError::new(describe(
+                        status,
+                        "reading the secret being replaced",
+                    )));
+                }
+            };
+
+            // A delete that fails is not worth reporting on its own: there was
+            // either nothing there, or the add below is about to fail with the
+            // real reason.
+            let _ = delete_generic_password_options(query(account));
+
+            let Err(failure) = add(account, secret) else {
+                return Ok(());
+            };
+            let Some(previous) = previous else {
+                return Err(failure);
+            };
+            // Put back exactly what was replaced. If even that fails the secret
+            // really is gone, and the only thing left to do about it is say so
+            // in words a caller can act on.
+            match add(account, &previous) {
+                Ok(()) => Err(KeystoreError::new(format!(
+                    "{}; the secret it replaced is still there",
+                    failure.message
+                ))),
+                Err(restore) => Err(KeystoreError::new(format!(
+                    "{}; and {} — the secret it replaced is gone and has to be stored again",
+                    failure.message, restore.message
+                ))),
+            }
+        }
+
+        fn load(&self, account: &str) -> Result<Held, KeystoreError> {
+            match read(account) {
+                Ok(bytes) => Ok(Held::Secret(Secret::new(bytes))),
+                // Reading is what raised the sheet, so `held` — not an `Err` —
+                // is what a decline comes back through.
+                Err(status) => held(refusal(status), describe(status, "reading the secret")),
+            }
+        }
+    }
+}
+
+/// Everywhere else: there is no keychain to ask, and pretending otherwise would
+/// mean inventing somewhere to keep a secret. The session model has a state for
+/// this, so the app can say why it cannot trade instead of failing at the
+/// moment somebody clicks buy.
+///
+/// `load` refuses rather than answering `Held::Missing`: "nothing stored yet" is
+/// an invitation to store one, and there is nowhere here to put it.
 #[cfg(not(target_os = "macos"))]
 const UNAVAILABLE: &str = "no platform keychain on this build";
 
-/// One impl, because until a keychain is actually wired both platforms do the
-/// same thing — refuse, and say which reason it is. The tests read
-/// `UNAVAILABLE` rather than repeating its text, so changing the wording of a
-/// refusal cannot leave a test asserting a string nothing produces any more.
+#[cfg(not(target_os = "macos"))]
 impl Keystore for PlatformKeystore {
-    fn prompt(&self, _reason: &str) -> Unlock {
+    fn prompt(&self, _account: &str, _reason: &str) -> Unlock {
         Unlock::Unavailable(UNAVAILABLE.to_owned())
     }
 
@@ -354,7 +677,7 @@ impl Keystore for PlatformKeystore {
         Err(KeystoreError::new(UNAVAILABLE.to_owned()))
     }
 
-    fn load(&self, _account: &str) -> Result<Secret, KeystoreError> {
+    fn load(&self, _account: &str) -> Result<Held, KeystoreError> {
         Err(KeystoreError::new(UNAVAILABLE.to_owned()))
     }
 }
@@ -383,7 +706,7 @@ mod tests {
     }
 
     impl Keystore for Memory {
-        fn prompt(&self, _reason: &str) -> Unlock {
+        fn prompt(&self, _account: &str, _reason: &str) -> Unlock {
             self.answer.clone()
         }
 
@@ -394,14 +717,18 @@ mod tests {
             Ok(())
         }
 
-        fn load(&self, account: &str) -> Result<Secret, KeystoreError> {
-            self.held
-                .borrow()
-                .get(account)
-                .map(|bytes| Secret::new(bytes.clone()))
-                .ok_or_else(|| KeystoreError::new(format!("nothing stored for {account}")))
+        fn load(&self, account: &str) -> Result<Held, KeystoreError> {
+            Ok(match self.held.borrow().get(account) {
+                Some(bytes) => Held::Secret(Secret::new(bytes.clone())),
+                None => Held::Missing,
+            })
         }
     }
+
+    /// Any old reason string, for the states that only need to hold one. The
+    /// text a real refusal carries is the platform's and is checked where the
+    /// platform is.
+    const NO_KEYCHAIN: &str = "no platform keychain on this build";
 
     const HOUR: i64 = 3_600_000;
     const DAY: i64 = 24 * HOUR;
@@ -766,6 +1093,7 @@ mod tests {
     fn re_locking_discards_the_key() {
         let ready = Session::Ready { key: key() };
         for state in [
+            Session::Unenrolled,
             Session::Unlocking,
             Session::Unlocked {
                 account: ACCOUNT.to_owned(),
@@ -773,7 +1101,7 @@ mod tests {
             ready,
             Session::Expired { key: lapsed() },
             Session::Unavailable {
-                reason: UNAVAILABLE.to_owned(),
+                reason: NO_KEYCHAIN.to_owned(),
             },
         ] {
             let after = step(state.clone(), Event::Lock);
@@ -835,14 +1163,14 @@ mod tests {
         let unavailable = run(vec![
             Event::Prompt,
             Event::Unlocked {
-                outcome: Unlock::Unavailable(UNAVAILABLE.to_owned()),
+                outcome: Unlock::Unavailable(NO_KEYCHAIN.to_owned()),
                 account: String::new(),
             },
         ]);
         assert_eq!(
             unavailable,
             Session::Unavailable {
-                reason: UNAVAILABLE.to_owned()
+                reason: NO_KEYCHAIN.to_owned()
             }
         );
         // Nothing but a lock leaves. Not a perfectly good approval — there is
@@ -862,16 +1190,19 @@ mod tests {
         }
     }
 
-    /// Whatever platform this suite runs on, the answer has to be
-    /// "unavailable" rather than a stub that quietly succeeds, because a
-    /// keystore that lies is worse than one that is missing. The reason is
-    /// compared against the constant the impl uses, not against a copy of its
-    /// text: a copy would keep passing after somebody reworded the refusal, or
-    /// wired a real Keychain, which is exactly when this should stop.
+    /// On a platform with no keychain the answer has to be "unavailable" rather
+    /// than a stub that quietly succeeds, because a keystore that lies is worse
+    /// than one that is missing. The reason is compared against the constant
+    /// the impl uses, not against a copy of its text: a copy would keep passing
+    /// after somebody reworded the refusal.
+    ///
+    /// macOS is excluded because macOS now has a real Keychain, and what it
+    /// does can only be found out on one — see the list on the impl.
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn this_build_has_no_keychain_and_says_so() {
         let keystore = PlatformKeystore;
-        let Unlock::Unavailable(reason) = keystore.prompt("Unlock trading") else {
+        let Unlock::Unavailable(reason) = keystore.prompt(ACCOUNT, "Unlock trading") else {
             panic!("a build with no keychain claimed one");
         };
         assert_eq!(reason, UNAVAILABLE, "unavailable for an unexpected reason");
@@ -886,6 +1217,8 @@ mod tests {
                 .message,
             UNAVAILABLE
         );
+        // Not `Ok(None)`: "nothing stored yet" invites the app to store one,
+        // and there is nowhere here to put it.
         assert_eq!(
             keystore
                 .load(ACCOUNT)
@@ -898,7 +1231,7 @@ mod tests {
         let after = run(vec![
             Event::Prompt,
             Event::Unlocked {
-                outcome: keystore.prompt("Unlock trading"),
+                outcome: keystore.prompt(ACCOUNT, "Unlock trading"),
                 account: String::new(),
             },
         ]);
@@ -910,20 +1243,184 @@ mod tests {
     fn the_keystore_round_trips_a_secret_under_its_account() {
         let keystore = Memory::new(Unlock::Platform);
         let bytes = b"agent-key-seed".to_vec();
+        assert!(
+            matches!(
+                keystore
+                    .load(ACCOUNT)
+                    .expect("an empty keychain is not a broken one"),
+                Held::Missing
+            ),
+            "a first run must read as nothing stored yet, not as a failure"
+        );
         keystore
             .store(ACCOUNT, &Secret::new(bytes.clone()))
             .expect("the in-memory keychain stores");
-        assert_eq!(
-            keystore
-                .load(ACCOUNT)
-                .expect("stored secrets load")
-                .expose(),
-            bytes
-        );
+        let Held::Secret(stored) = keystore.load(ACCOUNT).expect("stored secrets load") else {
+            panic!("a stored secret is there");
+        };
+        assert_eq!(stored.expose(), bytes);
         assert!(
-            keystore.load(OTHER).is_err(),
+            matches!(
+                keystore
+                    .load(OTHER)
+                    .expect("another account missing is not a failure either"),
+                Held::Missing
+            ),
             "one account's secret must not answer for another's"
         );
+    }
+
+    /// The distinction the platform half of this file exists to make, checked
+    /// at *both* consumers. Every status here is a keychain saying no; only one
+    /// flavour of no is the app's problem, and getting that backwards is either
+    /// an app that nags about a fault the user cannot fix or one that shrugs
+    /// off a real one.
+    ///
+    /// `load` is in here because reading the item is what raises the sheet, so
+    /// a decline arrives there exactly as it arrives at `prompt`. That arm used
+    /// to be written inline inside the `cfg(target_os = "macos")` block, where
+    /// no test on this box could see it — and it read a declined sheet as a
+    /// broken keychain, the one mistake the whole seam exists to prevent.
+    /// Inverting any single arm of `refusal`, `unlock`, or `held` now fails
+    /// here.
+    ///
+    /// The codes are `OSStatus` values, so only macOS can produce them — but
+    /// sorting them is arithmetic, which is why all three functions live
+    /// outside the `cfg` and can be checked here.
+    #[test]
+    fn a_decline_and_a_first_run_are_not_a_broken_keychain() {
+        for status in [USER_CANCELED, AUTH_FAILED, INTERACTION_NOT_ALLOWED] {
+            assert_eq!(refusal(status), Refusal::Declined, "status {status}");
+            assert_eq!(
+                unlock(refusal(status), NO_KEYCHAIN.to_owned()),
+                Unlock::Locked,
+                "status {status} turned a user saying no into a broken keychain"
+            );
+            assert!(
+                matches!(
+                    held(refusal(status), NO_KEYCHAIN.to_owned()),
+                    Ok(Held::Declined)
+                ),
+                "status {status} turned a declined read into a broken keychain"
+            );
+        }
+
+        assert_eq!(refusal(ITEM_NOT_FOUND), Refusal::Missing);
+        assert_eq!(
+            unlock(refusal(ITEM_NOT_FOUND), NO_KEYCHAIN.to_owned()),
+            Unlock::Unenrolled,
+            "a first run is an install to finish, not a sheet to try again"
+        );
+        assert!(
+            matches!(
+                held(refusal(ITEM_NOT_FOUND), NO_KEYCHAIN.to_owned()),
+                Ok(Held::Missing)
+            ),
+            "an empty keychain read as something other than empty"
+        );
+
+        // errSecNotAvailable, errSecMissingEntitlement, errSecIO, and a code
+        // from nowhere: none of them are anything a user can answer at a sheet.
+        for status in [-25291, -34018, -36, 1] {
+            assert_eq!(refusal(status), Refusal::Failed, "status {status}");
+            assert_eq!(
+                unlock(refusal(status), NO_KEYCHAIN.to_owned()),
+                Unlock::Unavailable(NO_KEYCHAIN.to_owned()),
+                "status {status} was written off as the user's doing"
+            );
+            assert_eq!(
+                held(refusal(status), NO_KEYCHAIN.to_owned())
+                    .expect_err("a broken keychain answered a read")
+                    .message,
+                NO_KEYCHAIN,
+                "status {status} was written off as the user's doing on a read"
+            );
+        }
+    }
+
+    /// The three refusals stay three all the way through. Each one lands the
+    /// session somewhere with a different next move: enrol, ask again, or give
+    /// up — and no two of them are the same state, which is the property that
+    /// broke when `Missing` and `Declined` shared an answer.
+    #[test]
+    fn a_first_run_a_decline_and_a_fault_are_three_different_sessions() {
+        let after = |status| {
+            run(vec![
+                Event::Prompt,
+                Event::Unlocked {
+                    outcome: unlock(refusal(status), NO_KEYCHAIN.to_owned()),
+                    account: String::new(),
+                },
+            ])
+        };
+
+        let fresh = after(ITEM_NOT_FOUND);
+        let declined = after(USER_CANCELED);
+        let faulted = after(-36);
+        assert_eq!(fresh, Session::Unenrolled);
+        assert_eq!(declined, Session::Locked);
+        assert_eq!(
+            faulted,
+            Session::Unavailable {
+                reason: NO_KEYCHAIN.to_owned()
+            }
+        );
+        assert_ne!(
+            fresh, declined,
+            "a first install and a user saying no are not the same fact"
+        );
+
+        for state in [&fresh, &declined, &faulted] {
+            assert!(!can_trade(state, NOW));
+            assert_eq!(account(state), None);
+        }
+
+        // And the next move differs. Enrolling happens outside this model — a
+        // `store` — so the prompt after it has to work, exactly as it does for
+        // a decline; a fault stays put however often it is asked.
+        assert_eq!(step(fresh, Event::Prompt), Session::Unlocking);
+        assert_eq!(step(declined, Event::Prompt), Session::Unlocking);
+        assert_eq!(step(faulted.clone(), Event::Prompt), faulted);
+    }
+
+    /// And why the distinction is worth the enum: the two answers land the
+    /// session in states with opposite futures. A decline can be asked again;
+    /// a fault is the end of the road until something outside the app changes.
+    #[test]
+    fn a_declined_session_can_be_asked_again_and_a_faulted_one_cannot() {
+        let declined = run(vec![
+            Event::Prompt,
+            Event::Unlocked {
+                outcome: unlock(refusal(USER_CANCELED), NO_KEYCHAIN.to_owned()),
+                account: String::new(),
+            },
+        ]);
+        assert_eq!(declined, Session::Locked);
+        assert_eq!(
+            step(declined, Event::Prompt),
+            Session::Unlocking,
+            "declining once must not lock the user out of asking twice"
+        );
+
+        let faulted = run(vec![
+            Event::Prompt,
+            Event::Unlocked {
+                outcome: unlock(refusal(-36), NO_KEYCHAIN.to_owned()),
+                account: String::new(),
+            },
+        ]);
+        assert_eq!(
+            faulted,
+            Session::Unavailable {
+                reason: NO_KEYCHAIN.to_owned()
+            }
+        );
+        assert_eq!(
+            step(faulted.clone(), Event::Prompt),
+            faulted,
+            "re-prompting a broken keychain only burns the user's patience"
+        );
+        assert!(!can_trade(&faulted, NOW));
     }
 
     #[test]
@@ -940,6 +1437,7 @@ mod tests {
     fn every_state() -> Vec<Session> {
         vec![
             Session::Locked,
+            Session::Unenrolled,
             Session::Unlocking,
             Session::Unlocked {
                 account: ACCOUNT.to_owned(),
@@ -947,7 +1445,7 @@ mod tests {
             Session::Ready { key: key() },
             Session::Expired { key: lapsed() },
             Session::Unavailable {
-                reason: UNAVAILABLE.to_owned(),
+                reason: NO_KEYCHAIN.to_owned(),
             },
         ]
     }
@@ -972,7 +1470,11 @@ mod tests {
                 account: String::new(),
             },
             Event::Unlocked {
-                outcome: Unlock::Unavailable(UNAVAILABLE.to_owned()),
+                outcome: Unlock::Unenrolled,
+                account: String::new(),
+            },
+            Event::Unlocked {
+                outcome: Unlock::Unavailable(NO_KEYCHAIN.to_owned()),
                 account: String::new(),
             },
             Event::Approved {

@@ -30,3 +30,8 @@ pub fn phase(running: bool, remaining: i64) -> String {
         "PAUSED".to_owned()
     }
 }
+
+/// A session length as it reads on a button.
+pub fn minute_label(minutes: i64) -> String {
+    format!("{minutes}m")
+}

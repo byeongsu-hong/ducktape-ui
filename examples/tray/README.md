@@ -35,6 +35,12 @@ from the one file. The icon itself is raw RGBA — `width × height × 4` bytes,
 checked when the app is compiled — because an image codec is not something a
 UI language needs to own.
 
+The panel is two pages — the timer and a session length — chosen by ordinary
+state, because a popover is a window like any other and its view branches the
+way any view does. Picking a length calls `task tray close`, which is the only
+way a handler can put the panel away: no window id in scope names the popover,
+and an untargeted `task window close` would act on the oldest window instead.
+
 `popover panel` is the whole interaction: the left click opens that window
 under the icon, a second click closes it, and clicking anywhere else dismisses
 it. The view knows which window it is drawing through the read-only `popover`
@@ -57,6 +63,7 @@ test tray_panel_opens_from_the_status_item
 
 ![Ready](screenshots/panel.png)
 ![Running](screenshots/running.png)
+![Session length](screenshots/settings.png)
 
 Everything above is macOS. On other targets the same source compiles and runs
 against no-op stubs — the panel simply never opens. `ICE_TRAY_DEBUG=1` traces

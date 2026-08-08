@@ -18,8 +18,9 @@
 
 use super::*;
 use ui_lang_template::{
-    A11y, AlignX, AlignY, Axis, ButtonFace, ButtonStyle, ColorRef, Edges, HandlerSlot, MessageSlot,
-    Node, Size, SlotCounts, Source, StateSlot, SubtreeSlot, Template, TextSlot, Value,
+    A11y, AlignX, AlignY, Axis, BoolSlot, ButtonFace, ButtonStyle, ColorBase, ColorRef, Edges,
+    GroupSlot, HandlerSlot, MessageSlot, Node, Size, SlotCounts, Source, StateSlot, SubtreeSlot,
+    Template, TextSlot, Value,
 };
 
 /// A view published as data, with the compiled expressions that feed it.
@@ -146,6 +147,20 @@ impl Builder<'_> {
         SubtreeSlot(index)
     }
 
+    fn push_bool(&mut self, code: String) -> BoolSlot {
+        let index = self.counts.bools;
+        self.counts.bools += 1;
+        self.slots.push(format!("__ice_slots.bools.push({code});"));
+        BoolSlot(index)
+    }
+
+    fn push_group(&mut self, code: String) -> GroupSlot {
+        let index = self.counts.groups;
+        self.counts.groups += 1;
+        self.slots.push(format!("__ice_slots.push_group({code});"));
+        GroupSlot(index)
+    }
+
     /// Interns a `.ice` path and returns its index in the emitted table.
     fn path_index(&mut self, path: String) -> usize {
         match self.paths.iter().position(|known| known == &path) {
@@ -208,6 +223,9 @@ impl Builder<'_> {
             ResolvedViewKind::Text => self.text(id, view)?,
             ResolvedViewKind::Input => self.input(id, view)?,
             ResolvedViewKind::Button { content } => self.button(id, view, content.as_ref())?,
+            ResolvedViewKind::Overlay { content, layer } => {
+                self.overlay(id, view, *content, *layer, scope)?
+            }
             _ => None,
         };
         match modelled {
@@ -226,8 +244,9 @@ impl Builder<'_> {
     /// rather than rendering as one element.
     ///
     /// `if`, `for`, and `match` are lowered as layout children precisely
-    /// because their child count is not known until they run. A hole holds one
-    /// element, so a layout containing any of them becomes the hole instead.
+    /// because their child count is not known until they run. A layout gives
+    /// each of them a group slot; anything else that can hold only one child
+    /// refuses the node, and becomes a subtree hole itself.
     fn splices_into_parent(&self, id: ViewId) -> Result<bool, Error> {
         Ok(matches!(
             self.program.resolved_view(id)?.kind,
@@ -249,6 +268,34 @@ impl Builder<'_> {
         let rendered = render_node(id, self.program, self.message, self.env, scope, None)?;
         Ok(Node::Subtree {
             slot: self.push_subtree(rendered),
+        })
+    }
+
+    /// Emits the compiled child list a spliced construct produces into a slot,
+    /// and returns the group that reads it.
+    ///
+    /// This is the same code the inline emitter writes for an `if`, `for` or
+    /// `match` among a layout's children — the statements that append to
+    /// `__children` — captured into a vector instead of a surrounding layout's
+    /// own. Reusing it is the point: the branch renders exactly as before, and
+    /// only the layout around it becomes data.
+    fn group(&mut self, id: ViewId, scope: &str) -> Result<Node, Error> {
+        let mut body = format!(
+            "{{ let mut __children: ::std::vec::Vec<__IceElement<'_, {}>> = ::std::vec::Vec::new();",
+            self.message
+        );
+        render_children(
+            &mut body,
+            &[id],
+            self.program,
+            self.message,
+            self.env,
+            scope,
+            None,
+        )?;
+        body.push_str(" __children }");
+        Ok(Node::Group {
+            slot: self.push_group(body),
         })
     }
 
@@ -356,11 +403,6 @@ impl Builder<'_> {
             (Axis::Row, Some(align)) => (None, Some(align_y(align))),
             (_, None) => (None, None),
         };
-        for child in children {
-            if self.splices_into_parent(*child)? {
-                return Ok(None);
-            }
-        }
         let child_scope = self.child_scope(view, scope)?;
         let mut rendered = Vec::with_capacity(children.len());
         for child in children {
@@ -369,7 +411,11 @@ impl Builder<'_> {
             if self.is_omitted(*child)? {
                 continue;
             }
-            rendered.push(self.node(*child, &child_scope)?);
+            rendered.push(if self.splices_into_parent(*child)? {
+                self.group(*child, &child_scope)?
+            } else {
+                self.node(*child, &child_scope)?
+            });
         }
         Ok(Some(Node::Linear {
             a11y,
@@ -381,6 +427,72 @@ impl Builder<'_> {
             align_x,
             align_y,
             children: rendered,
+        }))
+    }
+
+    /// Publishes an overlay, keeping only its panel compiled.
+    ///
+    /// The base is the whole application beneath the modal, so publishing it
+    /// is the point: an overlay is usually the outermost node of a real view,
+    /// and leaving it unmodelled cost that view its entire template. The panel
+    /// stays a hole — and stays lazy, built only on the frames the overlay is
+    /// open, exactly as the inline path builds it.
+    fn overlay(
+        &mut self,
+        id: ViewId,
+        view: &ResolvedView,
+        content: ViewId,
+        layer: ViewId,
+        scope: &str,
+    ) -> Result<Option<Node>, Error> {
+        let overlay = self.program.resolved_overlay(id)?;
+        let Some(backdrop) = color_ref(&overlay.backdrop) else {
+            return Ok(None);
+        };
+        let Some(padding) = self.literal_f64(overlay.padding) else {
+            return Ok(None);
+        };
+        let Some(a11y) = self.segment(view.identity.as_ref(), "overlay", overlay.origin) else {
+            return Ok(None);
+        };
+        if self.splices_into_parent(content)? || self.is_omitted(content)? {
+            return Ok(None);
+        }
+        let child_scope = self.child_scope(view, scope)?;
+        let visible =
+            resolved_expr_use_code(self.program, overlay.visible, self.env, ValueMode::Owned)?;
+        let (layer_code, panel_code) = overlay_layer_and_panel(
+            layer,
+            self.program,
+            self.message,
+            self.env,
+            &child_scope,
+            None,
+        )?;
+        let dismiss = match overlay.dismiss.as_ref() {
+            Some(route) => {
+                resolved_interaction_route_code(route, &[], self.env, self.program, self.message)?
+            }
+            None => format!("{}::__ExternNoop", self.message),
+        };
+        let message = self.message;
+        // Built only while the overlay is open, so a shut modal costs one
+        // `space` rather than its whole panel.
+        let panel = format!(
+            "{{ let __overlay_panel: __IceElement<'_, {message}> = if {visible} {{              let __overlay_layer: __IceElement<'_, {message}> = {layer_code}; {panel_code}.into()              }} else {{ ::iced::widget::Space::new().into() }}; __overlay_panel }}"
+        );
+        let content = self.node(content, &child_scope)?;
+        Ok(Some(Node::Overlay {
+            a11y,
+            visible: self.push_bool(visible.clone()),
+            backdrop,
+            padding: padding as f32,
+            align_x: overlay_align_x(overlay.align_x),
+            align_y: overlay_align_y(overlay.align_y),
+            dismiss: self.push_message(dismiss),
+            noop: self.push_message(format!("{message}::__ExternNoop")),
+            content: Box::new(content),
+            panel: self.push_subtree(panel),
         }))
     }
 
@@ -699,12 +811,31 @@ impl Builder<'_> {
 
 /// The template addresses the palette by index, so only token colours are
 /// expressible; a literal colour refuses the view rather than render wrong.
+fn overlay_align_x(align: ResolvedOverlayAlignment) -> AlignX {
+    match align {
+        ResolvedOverlayAlignment::Start => AlignX::Left,
+        ResolvedOverlayAlignment::Center => AlignX::Center,
+        ResolvedOverlayAlignment::End => AlignX::Right,
+    }
+}
+
+fn overlay_align_y(align: ResolvedOverlayAlignment) -> AlignY {
+    match align {
+        ResolvedOverlayAlignment::Start => AlignY::Top,
+        ResolvedOverlayAlignment::Center => AlignY::Center,
+        ResolvedOverlayAlignment::End => AlignY::Bottom,
+    }
+}
+
 fn color_ref(color: &ResolvedThemeColor) -> Option<ColorRef> {
-    let ResolvedThemeColorBase::Token(token) = color.base else {
-        return None;
+    let base = match color.base {
+        ResolvedThemeColorBase::Token(token) => ColorBase::Token(token.index as usize),
+        ResolvedThemeColorBase::White => ColorBase::White,
+        ResolvedThemeColorBase::Black => ColorBase::Black,
+        ResolvedThemeColorBase::Transparent => ColorBase::Transparent,
     };
     Some(ColorRef {
-        index: token.index as usize,
+        base,
         alpha: color.opacity.map(|opacity| opacity as f32 / 100.0),
     })
 }

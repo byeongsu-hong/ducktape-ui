@@ -17,3 +17,13 @@ macro_rules! example {
 }
 
 pub(crate) use example;
+
+/// A nonce no other fixture in this process shares. Fixture directories used
+/// to be named from `SystemTime::now().as_nanos()`, which two threads
+/// starting together can read identically — both then built the same path and
+/// the first to finish deleted the directory out from under the second,
+/// failing an unrelated test roughly one full run in three.
+pub(crate) fn unique_nonce() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
