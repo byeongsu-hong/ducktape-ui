@@ -145,6 +145,27 @@ Layers touched: `parser/settings.rs` → `ast/app.rs` (`TraySettings`) →
 - RGBA byte length ≠ `w × h × 4` → reuse the existing window-icon error.
 - `label` / `tooltip` must type-check as `str` (existing expression checking).
 
+## Spike findings (2026-08-08, validated on this machine)
+
+- Creating the `TrayIcon` inside iced's `boot` works: iced calls boot after
+  `EventLoop::build()` (NSApplication initialized) and the status item lands in
+  the menubar — verified via `TrayIcon::rect()` returning real screen
+  coordinates, and `set_title` updates live from `update`.
+- tray-icon `Rect` is **physical** pixels (`LogicalPosition * backingScaleFactor`
+  in its macOS source; empirically menubar height 60 phys = 30 logical × scale
+  2.0). iced `Position::Specific`/`move_to` take **logical** points.
+- Anchoring therefore uses: open popover `visible: false` at default position →
+  `iced::window::scale_factor(id)` → logical anchor = physical / scale →
+  `move_to` → `set_mode(Mode::Windowed)` (source-verified to call
+  `set_visible(true)`) → `gain_focus`. `&dyn iced::window::Window` exposes only
+  raw handles, so it cannot help here.
+- `iced::window::close_events() -> Subscription<Id>` and `Task::discard` exist
+  in iced 0.14 — used for popover close tracking and the open task.
+- tray-icon pinned at 0.24 (latest; safe public API).
+- Known limitation (documented): with mixed-DPI multi-monitor setups the scale
+  is read from the popover's initial monitor, which matches the menubar's
+  monitor in the common case.
+
 ## Testing & evidence
 
 - Fixtures (auto-discovered): `cases/compile/tray-basic/` golden codegen;
