@@ -1684,6 +1684,33 @@ pub fn demo_positions() -> Vec<Position> {
     }]
 }
 
+/// A tape with candles already in it, focused on the market the other
+/// fixtures describe. The chart is the largest panel here and the only one
+/// that never appeared in a deterministic render, because its candles live
+/// behind a lock the feed fills rather than in app state.
+pub fn demo_candles() -> Tape {
+    let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+    let mut candles = Vec::new();
+    let mut close = 63_800.0;
+    for step in 0..120 {
+        // A shape rather than a straight line, so the moving averages have
+        // something to say and the plot is not a diagonal.
+        let drift = ((step as f64) / 9.0).sin() * 120.0;
+        let open = close;
+        close = 63_900.0 + drift + (step as f64) * 1.5;
+        candles.push(Candle {
+            ts: 1_786_110_000 + step * 60,
+            open,
+            high: open.max(close) + 25.0,
+            low: open.min(close) - 25.0,
+            close,
+            volume: 40.0 + drift.abs(),
+        });
+    }
+    *lock(&tape.candles) = candles;
+    tape
+}
+
 /// The account those positions belong to. Built the way a parsed one is, so
 /// the rail and its percentage cannot disagree with the equity beside them.
 pub fn demo_account() -> Account {
