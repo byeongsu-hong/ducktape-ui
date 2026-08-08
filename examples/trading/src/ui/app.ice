@@ -712,8 +712,8 @@ component PositionRow(held:Position)
             space w=fill h=fill
       Delta
         with
-          value=fmt_compact_usd(held.funding)
-          up=(held.funding >= 0.0)
+          value=fmt_funding_flow(held.funding)
+          up=funding_received(held.funding)
           size=11.0
           width=72.0
       space w=fill
@@ -2231,6 +2231,15 @@ test trading_leaving_an_address_takes_its_failures_with_it
   dispatch reopen
   expect no text "Hyperliquid unreachable"
   expect no text "Hyperliquid feed dropped"
+
+test trading_funding_reads_as_money_that_moved_not_as_a_charge
+  preset held
+  viewport 1660 820
+  // The fixture positions have all been PAID funding, which is money in.
+  expect text "+$3.3M"
+  expect no text "-$3.3M"
+  expect text "+$142"
+  expect text "+$8"
 
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
