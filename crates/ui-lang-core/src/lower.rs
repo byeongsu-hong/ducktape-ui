@@ -1185,6 +1185,8 @@ pub(crate) enum ResolvedPaneOperation {
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedWindowOperation {
     Open(Option<u32>),
+    /// Closes the tray popover, which no window id in scope can name.
+    TrayClose,
     Oldest,
     Latest,
     Close,
@@ -1945,6 +1947,7 @@ fn resolved_handler_operation_contract(
                 ),
                 ResolvedWindowOperation::Oldest => CheckedWindowOperation::Oldest,
                 ResolvedWindowOperation::Latest => CheckedWindowOperation::Latest,
+                ResolvedWindowOperation::TrayClose => CheckedWindowOperation::TrayClose,
                 ResolvedWindowOperation::Close => CheckedWindowOperation::Close,
                 ResolvedWindowOperation::Drag => CheckedWindowOperation::Drag,
                 ResolvedWindowOperation::DragResize(direction) => {
@@ -2448,6 +2451,7 @@ impl LoweredProgram {
                         ResolvedWindowOperation::Open(_)
                         | ResolvedWindowOperation::Oldest
                         | ResolvedWindowOperation::Latest
+                        | ResolvedWindowOperation::TrayClose
                         | ResolvedWindowOperation::Close
                         | ResolvedWindowOperation::Drag
                         | ResolvedWindowOperation::DragResize(_)
@@ -8536,6 +8540,7 @@ impl Lowerer {
             ),
             WindowOperation::Oldest => ResolvedWindowOperation::Oldest,
             WindowOperation::Latest => ResolvedWindowOperation::Latest,
+            WindowOperation::TrayClose => ResolvedWindowOperation::TrayClose,
             WindowOperation::Close => ResolvedWindowOperation::Close,
             WindowOperation::Drag => ResolvedWindowOperation::Drag,
             WindowOperation::DragResize(direction) => {

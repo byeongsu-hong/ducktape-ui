@@ -552,6 +552,7 @@ statement      = "let" name "=" expr
                | "task widget" widget_operation ("->" route)?
                | "pane" "#" name pane_operation ("->" route)?
                | window_task
+               | tray_task
 task_group     = ("parallel" | "sequential") INDENT task_member+
 abortable_task = "abortable" name ("abort-on-drop")? INDENT task_member
 sip_task       = "sip" call INDENT sip_route+
@@ -590,6 +591,7 @@ native_task    = "task time now" "->" route
                | "task widget" widget_operation ("->" route)?
                | "pane" "#" name pane_operation ("->" route)?
                | window_task
+               | tray_task
 widget_operation = "focus-prev" | "focus-next"
                  | ("focus" | "focused" | "cursor-front" | "cursor-end"
                    | "select-all" | "snap-end") widget_target
@@ -610,6 +612,7 @@ pane_operation = "maximize" name | "restore" | "maximized"
                | "split" name name ("horizontal" | "vertical")
                  ("ratio=" expr)?
 pane_edge      = "top" | "left" | "right" | "bottom"
+tray_task      = "task tray close"
 window_task    = "task window" window_operation ("target=" expr)? ("->" route)?
 window_operation = "open" name? | "oldest" | "latest"
                  | "close" | "drag" | "toggle-maximize" | "toggle-decorations"
@@ -1458,6 +1461,12 @@ unfocused while it is still being created, before it has ever been on screen,
 so a dismissal that trusted the first report would close the panel before it
 was drawn and a click on the item would look like nothing at all. Only a
 popover that actually took focus can be dismissed by losing it.
+
+`task tray close` puts the popover away from a handler. No window id in scope
+names it — an untargeted `task window close` acts on the oldest window, which
+in an application that also opens its own windows is the wrong one — so this
+is the only way a handler can dismiss the panel, and it is rejected unless the
+tray declares a popover.
 
 A declared `popover` also adds the read-only `popover` binding: a `bool`,
 true only while the view is drawing the window the status item opened. One

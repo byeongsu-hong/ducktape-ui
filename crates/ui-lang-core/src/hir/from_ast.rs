@@ -1260,6 +1260,7 @@ pub(crate) fn handler_operation_contract(
                 WindowOperation::Open(name) => CheckedWindowOperation::Open(name.clone()),
                 WindowOperation::Oldest => CheckedWindowOperation::Oldest,
                 WindowOperation::Latest => CheckedWindowOperation::Latest,
+                WindowOperation::TrayClose => CheckedWindowOperation::TrayClose,
                 WindowOperation::Close => CheckedWindowOperation::Close,
                 WindowOperation::Drag => CheckedWindowOperation::Drag,
                 WindowOperation::DragResize(direction) => {

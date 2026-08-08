@@ -8877,6 +8877,7 @@ impl<'a> FactsBuilder<'a> {
             WindowOperation::Open(_)
             | WindowOperation::Oldest
             | WindowOperation::Latest
+            | WindowOperation::TrayClose
             | WindowOperation::Close
             | WindowOperation::Drag
             | WindowOperation::DragResize(_)
