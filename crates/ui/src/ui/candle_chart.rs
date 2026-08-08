@@ -173,6 +173,64 @@ fn prepended(candles: &[Candle], seen_first_ts: Option<i64>) -> usize {
     seen_first_ts.map_or(0, |seen| candles.partition_point(|candle| candle.ts < seen))
 }
 
+/// Whether `candles` is still the series the view was pinned to, grown at
+/// either end: the candle that used to be oldest is where the prepend count
+/// says it is, and nothing was dropped off the back.
+///
+/// Another market or another interval fails both halves. Its indices mean
+/// nothing here, and a view carried over would clamp against the new length
+/// and strand the tape at the left edge of an otherwise empty plot.
+fn continues(
+    candles: &[Candle],
+    seen_first_ts: Option<i64>,
+    seen_len: usize,
+    loaded: usize,
+) -> bool {
+    let Some(seen) = seen_first_ts else {
+        return true;
+    };
+    candles.get(loaded).is_some_and(|candle| candle.ts == seen)
+        && candles.len() >= seen_len + loaded
+}
+
+/// Brings the pinned view up to date with a tape that has changed under it,
+/// before anything is measured against it. `candles` must not be empty.
+///
+/// Candles loaded in front of the tape shift every index behind them, so the
+/// view moves by as much to stay on the bars it was showing, and that shift
+/// counts into `seen_len` so the auto-follow only sees genuine appends. A
+/// tape that is not the same series at all keeps none of it.
+fn reconcile(state: &CandleState, candles: &[Candle]) {
+    let seen_first_ts = state.seen_first_ts.get();
+    let loaded = prepended(candles, seen_first_ts);
+    if continues(candles, seen_first_ts, state.seen_len.get(), loaded) {
+        if loaded > 0 {
+            if let Some(pinned) = state.viewport.get() {
+                state
+                    .viewport
+                    .set(Some(pinned.pan(loaded as f64, candles.len())));
+            }
+            state.seen_len.set(state.seen_len.get() + loaded);
+        }
+        if let Some(pinned) = state.viewport.get() {
+            let followed = follow_appended(pinned, state.seen_len.get(), candles.len());
+            if followed != pinned {
+                state.viewport.set(Some(followed));
+            }
+        }
+    } else {
+        // A different market or interval. Everything pinned to the old series
+        // — the view, the walked cursor, the history request it already spent
+        // — describes candles that are not here, so this one opens at its own
+        // tip.
+        state.viewport.set(None);
+        state.key_cursor.set(None);
+        state.requested_len.set(None);
+    }
+    state.seen_first_ts.set(Some(candles[0].ts));
+    state.seen_len.set(candles.len());
+}
+
 /// Bottom-right chip that resumes following the latest candle.
 fn latest_chip(plot: Rectangle) -> Rectangle {
     Rectangle {
@@ -1603,27 +1661,7 @@ impl<Message> CandleProgram<'_, Message> {
         if chrome.plot.width < 16.0 || chrome.plot.height < 16.0 {
             return Vec::new();
         }
-        // Candles loaded in front of the tape shift every index behind them.
-        // Move the pinned view by as much so the screen stays on the bars it
-        // was showing, and count the shift into `seen_len` so the auto-follow
-        // below still only sees genuine appends.
-        let loaded = prepended(candles, state.seen_first_ts.get());
-        if loaded > 0 {
-            if let Some(pinned) = state.viewport.get() {
-                state
-                    .viewport
-                    .set(Some(pinned.pan(loaded as f64, candles.len())));
-            }
-            state.seen_len.set(state.seen_len.get() + loaded);
-        }
-        state.seen_first_ts.set(Some(candles[0].ts));
-        if let Some(pinned) = state.viewport.get() {
-            let followed = follow_appended(pinned, state.seen_len.get(), candles.len());
-            if followed != pinned {
-                state.viewport.set(Some(followed));
-            }
-        }
-        state.seen_len.set(candles.len());
+        reconcile(state, candles);
         let viewport = self.viewport(candles, state);
         let range = visible_indices(viewport, candles.len());
 
@@ -2619,6 +2657,131 @@ mod tests {
             (moved.from, moved.to),
             (110.0, 160.0),
             "the view follows its candles across the prepend"
+        );
+    }
+
+    /// Switching the interval replaces the tape. The view that was following
+    /// the old one clamps against the new length and leaves the whole tape
+    /// squeezed against the left edge — an all but empty chart.
+    #[test]
+    fn a_replaced_tape_is_not_a_continuation_of_the_old_one() {
+        let minutes = candles(1_000);
+        // The same window at a coarser interval: fewer bars, reaching further
+        // back, and sharing no timestamp with the tape it replaces.
+        let days: Vec<Candle> = candles(300)
+            .iter()
+            .map(|candle| Candle {
+                ts: candle.ts - 500 * 86_400 + 37,
+                ..*candle
+            })
+            .collect();
+
+        assert!(
+            !continues(&days, Some(minutes[0].ts), minutes.len(), 0),
+            "another interval is another series"
+        );
+        let loaded = prepended(&days, Some(minutes[0].ts));
+        assert!(
+            !continues(&days, Some(minutes[0].ts), minutes.len(), loaded),
+            "and it is not a history load either, however far back it reaches"
+        );
+
+        // What carrying the view over would have done: the clamp drags the
+        // view to the far end of the shorter tape, leaving a handful of
+        // candles hard against the left edge and the rest of the plot empty.
+        let pinned = Viewport {
+            from: 880.0,
+            to: 1_000.0,
+        };
+        let carried = visible_indices(pinned.clamped(days.len()), days.len());
+        assert!(
+            carried.len() <= MIN_EDGE_BARS as usize + 1,
+            "the bug this test is here for: {} of {} candles left on screen",
+            carried.len(),
+            days.len()
+        );
+        assert_eq!(carried.end, days.len(), "and they are the newest ones");
+
+        // Starting over puts the newest candle back on the right.
+        let opened = Viewport::initial(days.len(), 120);
+        assert!(
+            opened.to >= days.len() as f64 - 1.5,
+            "a fresh view opens at the tip"
+        );
+        assert!(
+            visible_indices(opened, days.len()).len() > 100,
+            "and shows a chart, not two bars"
+        );
+    }
+
+    /// The sequence a user performs: watch one interval, switch to another.
+    /// Between the two the tape is emptied and refilled, and what the chart
+    /// remembers about the old one has to not survive that.
+    #[test]
+    fn switching_interval_reopens_the_chart_at_the_tip() {
+        let state = CandleState::default();
+        let minutes = candles(1_000);
+        reconcile(&state, &minutes);
+        // Settled on the tip of the minutes, as the first draw leaves it.
+        state
+            .viewport
+            .set(Some(Viewport::initial(minutes.len(), 120)));
+        state.key_cursor.set(Some(990));
+        state.requested_len.set(Some(minutes.len()));
+
+        let days: Vec<Candle> = candles(300)
+            .iter()
+            .map(|candle| Candle {
+                ts: candle.ts - 500 * 86_400 + 37,
+                ..*candle
+            })
+            .collect();
+        reconcile(&state, &days);
+
+        assert_eq!(state.viewport.get(), None, "the old view is not reused");
+        assert_eq!(state.seen_len.get(), days.len());
+        assert_eq!(state.key_cursor.get(), None, "nor the walked candle");
+        assert_eq!(
+            state.requested_len.get(),
+            None,
+            "and the new tape may ask for its own history"
+        );
+
+        let opened = Viewport::initial(days.len(), 120).clamped(days.len());
+        assert!(
+            visible_indices(opened, days.len()).len() > 100,
+            "the chart opens full, not squeezed against the left edge"
+        );
+    }
+
+    #[test]
+    fn growing_at_either_end_is_still_the_same_series() {
+        let data = candles(300);
+        let older: Vec<Candle> = candles(100)
+            .iter()
+            .map(|candle| Candle {
+                ts: candle.ts - 100 * 86_400,
+                ..*candle
+            })
+            .chain(data.iter().copied())
+            .collect();
+
+        assert!(continues(&data, None, 0, 0), "nothing seen yet");
+        assert!(
+            continues(&data, Some(data[0].ts), 300, 0),
+            "a redraw of the same tape"
+        );
+        assert!(
+            continues(&data, Some(data[0].ts), 290, 0),
+            "an append keeps the front"
+        );
+        assert!(
+            continues(&older, Some(data[0].ts), 300, 100),
+            "a history load moves the front and the view with it"
+        );
+        assert!(
+            !continues(&data[..200], Some(data[0].ts), 300, 0),
+            "a tape that lost its back is not the one that was pinned"
         );
     }
 
