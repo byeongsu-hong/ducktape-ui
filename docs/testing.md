@@ -817,15 +817,15 @@ cargo ice expand examples/terminal/src/ui/app.ice \
   | grep -o '__ICE_TEMPLATE_JSON: &str = .*'
 ```
 
-Counting `subtree` nodes in that JSON across every root in `examples/`, before
-and after teaching the template a linear layout's padding:
+Counting `subtree` and `group` nodes in that JSON across every root in
+`examples/`, over the two changes that widened the vocabulary:
 
-| | before | after |
-| --- | --- | --- |
-| roots publishing a template | 65 | 65 |
-| roots that are *only* a hole | 43 | **19** |
-| roots with no hole at all | 13 | **28** |
-| published template bytes | 28,216 | **60,656** |
+| | a layout's padding refused | padding published | `if` became a group |
+| --- | --- | --- | --- |
+| roots publishing a template | 65 | 65 | 65 |
+| roots that are *only* a hole | 43 | 19 | **9** |
+| roots with no hole at all | 13 | **28** | 28 |
+| published nodes | — | 223 | **333** |
 
 The first row is why the second one is the measurement. `p=16.0` on a root
 `col` refused the node, the refusal became a hole, and the hole was the entire
@@ -833,6 +833,17 @@ application — 24 roots reported a healthy template that reloaded nothing.
 
 So read the hole count, not the template's existence, and expect the blockers
 to be shallow and near the root. What refuses today, in descending order of
-what it costs: `if`/`for`/`match` among a layout's children (they contribute a
-variable number of children, so the enclosing layout becomes the hole),
-`overlay`, and a container carrying a border.
+what it costs: `overlay` (`markdown-editor` and `apple-music` are each one
+hole because of it), a container carrying a border, and mounted components,
+which keep a view off the template path entirely.
+
+One trap this measurement set off, worth knowing before the next widening: the
+id-to-source map that gives a captured widget its `.ice` line used to reset on
+the first render-source guard pushed onto an empty stack. A view fills its slot
+table — where every compiled hole builds its widgets and registers their ids —
+before the renderer walks the node tree and pushes a guard for the root, so
+that walk counted as a new pass and discarded the registrations moments before
+they were read. It only surfaced once a template root had both a source of its
+own and a named widget inside a hole, and it surfaced as one null in a manifest
+against thousands of matching pixels. The pass now begins where the frame does,
+in `Slots::with_capacity`.

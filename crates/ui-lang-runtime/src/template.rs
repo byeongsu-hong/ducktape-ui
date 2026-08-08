@@ -61,6 +61,10 @@ pub struct Slots<'a, Message> {
     /// references each subtree exactly once. A stale template that names one
     /// twice gets an empty second reading rather than a panic.
     pub subtrees: Vec<std::cell::RefCell<Option<IceElement<'a, Message>>>>,
+    /// Child lists the compiler built, for the `if`, `for` and `match` a
+    /// layout splices into its own children. Taken like `subtrees`, and for
+    /// the same reason.
+    pub groups: Vec<std::cell::RefCell<Vec<IceElement<'a, Message>>>>,
 }
 
 impl<Message> Default for Slots<'_, Message> {
@@ -71,6 +75,7 @@ impl<Message> Default for Slots<'_, Message> {
             messages: Vec::new(),
             handlers: Vec::new(),
             subtrees: Vec::new(),
+            groups: Vec::new(),
         }
     }
 }
@@ -78,13 +83,19 @@ impl<Message> Default for Slots<'_, Message> {
 impl<'a, Message> Slots<'a, Message> {
     /// Allocates each table to the size the template declares, so filling them
     /// costs no reallocation on a frame.
+    ///
+    /// This is also where a render pass begins: generated code builds one of
+    /// these before it fills a single slot, which makes it the one point that
+    /// sees the whole frame — slot filling and the renderer's walk alike.
     pub fn with_capacity(counts: SlotCounts) -> Self {
+        crate::testing::begin_render_pass();
         Self {
             texts: Vec::with_capacity(counts.texts),
             states: Vec::with_capacity(counts.states),
             messages: Vec::with_capacity(counts.messages),
             handlers: Vec::with_capacity(counts.handlers),
             subtrees: Vec::with_capacity(counts.subtrees),
+            groups: Vec::with_capacity(counts.groups),
         }
     }
 
@@ -92,6 +103,11 @@ impl<'a, Message> Slots<'a, Message> {
     pub fn push_subtree(&mut self, element: impl Into<IceElement<'a, Message>>) {
         self.subtrees
             .push(std::cell::RefCell::new(Some(element.into())));
+    }
+
+    /// Appends a compiled child list to the group table.
+    pub fn push_group(&mut self, children: Vec<IceElement<'a, Message>>) {
+        self.groups.push(std::cell::RefCell::new(children));
     }
 }
 
@@ -249,16 +265,27 @@ where
             let key = a11y.key(parent_key);
             let scope = a11y.scope(parent_key, &key);
             let is_row = matches!(axis, Axis::Row);
-            let count = children.len();
-            let rendered = children
+            // A group contributes however many children it built this frame,
+            // so the count the fill and spacing are bounded by is only known
+            // after expansion — exactly as the inline path counts `__children`
+            // after its `if`s have run.
+            let expanded = children
                 .iter()
-                .map(|child| {
-                    bounded_fill_element(
-                        render_node(child, slots, palette, scope, paths),
-                        count,
-                        is_row,
-                    )
+                .flat_map(|child| match child {
+                    Node::Group {
+                        slot: GroupSlot(slot),
+                    } => slots
+                        .groups
+                        .get(*slot)
+                        .map(|cell| std::mem::take(&mut *cell.borrow_mut()))
+                        .unwrap_or_default(),
+                    child => vec![render_node(child, slots, palette, scope, paths)],
                 })
+                .collect::<Vec<_>>();
+            let count = expanded.len();
+            let rendered = expanded
+                .into_iter()
+                .map(|child| bounded_fill_element(child, count, is_row))
                 .collect::<Vec<_>>();
             let spacing = bounded_spacing(spacing.unwrap_or(0.0), count);
             let layout: IceElement<'a, Message> = match axis {
@@ -370,6 +397,8 @@ where
             .get(*slot)
             .and_then(|cell| cell.borrow_mut().take())
             .unwrap_or_else(|| widget::Space::new().into()),
+        // Only a layout expands a group into its child list; see `Node::Group`.
+        Node::Group { .. } => widget::Space::new().into(),
         Node::Button {
             a11y,
             label,
