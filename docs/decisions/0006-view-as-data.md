@@ -166,6 +166,15 @@ no generated Rust to map, so that safety net shrinks to the compiled half. The
 pixel-diff evidence in `cargo ice review` becomes the load-bearing check, and
 widening the vocabulary must be gated on it.
 
+The two sides of that diff come from `cargo ice review --baseline` against a
+revision where the node kind is not yet published — ordinarily `main`. They do
+not come from a build-time switch. The proof-of-concept carried one,
+`ICE_TEMPLATE_VIEW=0`, which is deleted: an environment variable read during
+codegen is a build input, and neither cargo's build-script fingerprint nor
+`ui-lang-build`'s own tracked it, so toggling it changed nothing while
+appearing to work. A capture diff taken that way compares one path against
+itself and reports parity. See `docs/testing.md`.
+
 Node kinds must be implemented once in the renderer and once in the emitter.
 The *format* they meet on is shared — `ui-lang-template` holds the node types,
 their serde representation, and the reload-compatibility rule, so a field one

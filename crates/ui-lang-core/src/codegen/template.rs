@@ -50,12 +50,6 @@ pub(in crate::codegen) fn emit(
     source_path: &str,
     root_scope: &str,
 ) -> Result<Option<TemplateEmission>, Error> {
-    // Proof-of-concept instrument: forcing the inline path is how a capture
-    // from the compiled tree is produced to diff the template against. It
-    // comes out once the two are proven equivalent.
-    if std::env::var_os("ICE_TEMPLATE_VIEW").is_some_and(|value| value == "0") {
-        return Ok(None);
-    }
     // Mounted components carry per-scope retained state that the template
     // vocabulary has no node for, so those views stay inline wholesale.
     if program
