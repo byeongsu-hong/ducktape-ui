@@ -696,6 +696,7 @@ test_step      = "click" test_target test_pointer_button?
                | "focus-next"
                | "focus-previous"
                | "blur"
+               | "tray click"
                | "window" ("focus" | "blur" | "close-request"
                             | "opened" | "closed" | "redraw")
                | "window" "move" expr expr
@@ -1457,6 +1458,13 @@ unfocused while it is still being created, before it has ever been on screen,
 so a dismissal that trusted the first report would close the panel before it
 was drawn and a click on the item would look like nothing at all. Only a
 popover that actually took focus can be dismissed by losing it.
+
+A declared `popover` also adds the read-only `popover` binding: a `bool`,
+true only while the view is drawing the window the status item opened. One
+view answers for the panel and for the application's own windows without the
+application tracking window IDs to tell them apart, and state may not be named
+`popover` while it exists. `tray click` presses the status item from a `test`,
+so a panel is exercised through the same open-and-anchor path a press takes.
 
 Pressing the item unfocuses the popover first, so the dismissal runs before
 the click is delivered; a press within 200ms of the popover closing therefore

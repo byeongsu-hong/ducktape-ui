@@ -15,6 +15,7 @@ members = [
     "examples/showcase",
     "examples/starter",
     "examples/terminal",
+    "examples/tray",
     "examples/trading",
     "conformance/ice",
 ]

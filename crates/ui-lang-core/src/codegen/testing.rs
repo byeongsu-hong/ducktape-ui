@@ -609,6 +609,17 @@ fn generate_test(
                 )
                 .unwrap();
             }
+            ResolvedTestStepKind::TrayClick => {
+                // The status item's own rect, the way the platform reports it:
+                // physical pixels on a 2x menu bar. Driving the real message
+                // means the test walks the same open-and-anchor path a press
+                // does rather than a fixture standing in for it.
+                writeln!(
+                    out,
+                    "let __message = {message}::__TrayEvent(::ui_lang_runtime::tray::TrayEvent::LeftClick {{ icon: ::ui_lang_runtime::tray::TrayRect {{ x: 2164.0, y: 0.0, width: 172.0, height: 78.0 }} }}); __test.dispatch(__message, {location});"
+                )
+                .unwrap();
+            }
             ResolvedTestStepKind::Dispatch {
                 handler,
                 handler_name,

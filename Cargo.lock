@@ -5800,6 +5800,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tray-example"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "tray-icon"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
