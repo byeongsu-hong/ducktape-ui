@@ -7,11 +7,21 @@ enum Page
   portfolio
   settings
 
+// Which exchange the terminal is reading. Not a build-time choice and not a
+// filter over one exchange's data: every panel on screen was read from a
+// venue, and the two disagree about which markets exist, what they are called,
+// and what the engine holds against a position in them. So it is state, and
+// switching it is `switch_venue` throwing all of it away.
+enum Venue
+  hyperliquid
+  lighter
+
 state
   // The terminal window, opened on mount. A daemon starts with none, and the
   // view needs to know which of its windows it is drawing.
   main:window-id? = none
   page:Page = Page.trade
+  venue:Venue = Venue.hyperliquid
   gate = true
   address = ""
   draft = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
@@ -73,6 +83,55 @@ preset held
     ticket_price = "64,000.00"
     ticket_size = "3.00"
     quote = price_ticket("64,000.00", "3.00", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
+
+// The terminal as the other venue actually leaves it, which is the whole point
+// of having the fixture: markets, a book, a tape and an account, and nothing
+// in the three panels Lighter does not serve. No candles either — the tape is
+// the state default, empty, because Lighter publishes no history to fill it.
+//
+// Every panel here is a `*_lighter` fixture, and every one of those is a
+// captured Lighter response through the parser the live read uses. A Lighter
+// screen drawn from Hyperliquid's fixtures is the exact mistake the switch is
+// being made to stop, and it is invisible: an equity figure, a position and a
+// book from the wrong exchange are all just numbers. The address is the one
+// that owns the captured account, so the screen is drawn for a reader who
+// genuinely has a book here rather than for one the venue answers "account not
+// found" about.
+preset lighter
+  state
+    gate = false
+    venue = Venue.lighter
+    address = demo_address_lighter()
+    symbols = demo_symbols_lighter()
+    visible = demo_symbols_lighter()
+    focus = symbol_row(demo_symbols_lighter(), "BTC")
+    positions = demo_positions_lighter()
+    account = some(demo_account_lighter())
+    book = some(demo_book_lighter())
+    tape_prints = demo_tape_lighter()
+    live = true
+    ticket_price = "64,970.00"
+    ticket_size = "3.00"
+    quote = price_ticket("64,970.00", "3.00", "5", symbol_row(demo_symbols_lighter(), "BTC"), true, position_held(demo_positions_lighter(), "BTC"))
+
+// The same terminal, read for an address that has no account on this venue —
+// which is the ordinary shape of one address read at two exchanges rather than
+// anything broken. This is the other venue's demo address, and Lighter answers
+// `code 21100 account not found` for it live while Hyperliquid answers it a
+// seven-figure book. So there is no `account` and no `positions`, and the
+// panels the address does reach are unaffected: the markets, the book and the
+// tape are the venue's and are still there.
+preset unbanked
+  state
+    gate = false
+    venue = Venue.lighter
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols_lighter()
+    visible = demo_symbols_lighter()
+    focus = symbol_row(demo_symbols_lighter(), "BTC")
+    book = some(demo_book_lighter())
+    tape_prints = demo_tape_lighter()
+    live = true
 
 preset browsing
   state

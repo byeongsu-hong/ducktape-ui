@@ -37,7 +37,7 @@ view
                     h=fill
                     px=16.0
                     pl=(16.0 + header_inset())
-                    gap=18.0
+                    gap=13.0
                     align=center
                   row gap=10.0 align=center
                     text coin #coin-name
@@ -88,6 +88,16 @@ view
                     none
                       text "Loading markets" size=11.0 @text-faint
                   space w=fill
+                  // Stacked rather than side by side: the header is at its
+                  // tightest at the window's own minimum, and two names of this
+                  // length in a row took the width the account strip needs.
+                  col #venues w=84.0 gap=2.0
+                    VenueTab #venue-hyperliquid target=Venue.hyperliquid current=venue
+                      events
+                        pick -> switch_venue _
+                    VenueTab #venue-lighter target=Venue.lighter current=venue
+                      events
+                        pick -> switch_venue _
                   row #pages gap=4.0 align=center
                     NavTab #page-trade
                       with
@@ -119,6 +129,11 @@ view
                         pick -> navigate _
                   space w=fill
                   rule vertical thickness=1.0 color=edge
+                  // Equity, the rail and the PnL: the three figures that move
+                  // between polls. What is withdrawable does not — the margin
+                  // engine answers it once every five seconds and it is a
+                  // column on the portfolio page — so it is the one this strip
+                  // gave up when the venue switch arrived beside the tabs.
                   match account
                     some(held)
                       row gap=14.0 align=center
@@ -153,8 +168,12 @@ view
                               up=(held.pnl >= 0.0)
                               size=13.0
                               width=104.0
-                        Stat name="FREE" value=fmt_compact_usd(held.withdrawable)
                     none
+                      // The same badge whether or not an address is connected,
+                      // because this one says what the app does rather than
+                      // what the venue answered. Why there is no equity is a
+                      // sentence, and it is on the portfolio page beside the
+                      // account it is about.
                       Label value="READ ONLY"
                   rule vertical thickness=1.0 color=edge
                   Stat name="FEED" value=fmt_latency(latency)
@@ -222,6 +241,11 @@ view
                               events
                                 pick -> pick_interval _
                           rule vertical thickness=1.0 color=edge
+                          // A chart of one bar reads as a market that has not
+                          // traded, so the venue that cannot backfill says so
+                          // beside the widths it is being asked for.
+                          if !empty(venue_chart_note(venue))
+                            text venue_chart_note(venue) #chart-note size=10.0 @text-faint
                           match hover
                             some(hit)
                               row #readout gap=10.0 align=center
@@ -661,7 +685,7 @@ view
                                   font=digits
                                   @text-faint
                             if !quote.known
-                              text "market not loaded"
+                              text liquidation_gap(focus, !empty(symbols))
                                 with
                                   size=11.0
                                   font=digits
@@ -801,10 +825,7 @@ view
                               Stat name="POSITION VALUE" value=fmt_usd(held.notional)
                               Stat name="MAINTENANCE" value=fmt_share(held.margin_pct)
                           none
-                            text "No account is being read. Settings takes an address."
-                              with
-                                size=12.0
-                                @text-faint
+                            text venue_account_note(venue, watching) size=12.0 @text-faint
                         space w=fill
                     rule horizontal thickness=1.0 color=edge
                     col #positions w=fill h=fill
@@ -881,7 +902,10 @@ view
                           y-rail bg=panel
                           y-scroller bg=faint r=3.0
                         col w=fill
-                          if empty(positions) && watching
+                          // Only when there is an account to hold nothing.
+                          // With none, the strip above has already said so and
+                          // this would name an account that does not exist.
+                          if empty(positions) && watching && account_read(account)
                             box
                               with
                                 w=fill
@@ -976,22 +1000,26 @@ view
                               y-rail bg=panel
                               y-scroller bg=faint r=3.0
                             col w=fill
-                              if empty(orders) && watching
+                              // An empty list reads as "nothing has happened",
+                              // which on a venue that will not answer for this
+                              // account is a lie: nothing can happen. The
+                              // sentence the venue owes lands here, where the
+                              // reader is already looking for the rows.
+                              if empty(orders)
                                 box
                                   with
                                     w=fill
                                     h=72.0
+                                    p=12.0
                                     align-x=center
                                     align-y=center
-                                  text "No resting orders." size=11.0 @text-faint
-                              if !watching
-                                box
-                                  with
-                                    w=fill
-                                    h=72.0
-                                    align-x=center
-                                    align-y=center
-                                  text "Orders need an address." size=11.0 @text-faint
+                                  text venue_orders_note(venue, watching)
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      align-x=center
+                                      wrap=word
+                                      @text-faint
                               for order in orders
                                 OrderRow order=order
                                   events
@@ -1061,22 +1089,21 @@ view
                               y-rail bg=panel
                               y-scroller bg=faint r=3.0
                             col w=fill
-                              if empty(fills) && watching
+                              if empty(fills)
                                 box
                                   with
                                     w=fill
                                     h=100.0
+                                    p=12.0
                                     align-x=center
                                     align-y=center
-                                  text "No fills on this account yet." size=12.0 @text-faint
-                              if !watching
-                                box
-                                  with
-                                    w=fill
-                                    h=100.0
-                                    align-x=center
-                                    align-y=center
-                                  text "Fills need an address." size=12.0 @text-faint
+                                  text venue_fills_note(venue, watching)
+                                    with
+                                      size=12.0
+                                      w=fill
+                                      align-x=center
+                                      wrap=word
+                                      @text-faint
                               for fill in fills
                                 FillRow fill=fill
                                   events
@@ -1126,6 +1153,40 @@ view
                             hovered bg=edge text=fg r=4.0
                             text "Connect a different address" size=12.0
                         rule horizontal thickness=1.0 color=edge
+                        // What this exchange will and will not answer, stated
+                        // where the app's own facts are stated. A gap named
+                        // only in the panel it empties is a gap the reader
+                        // finds by going looking for rows that are not coming.
+                        col gap=10.0 w=fill
+                          Label value="VENUE"
+                          text venue_name(venue) #settings-venue
+                            with
+                              size=16.0
+                              w=fill
+                              wrap=word
+                              @text-fg
+                              @font-bold
+                          text "The switch beside the page tabs points every panel at the other exchange and throws away what this one filled them with."
+                            with
+                              size=12.0
+                              w=fill
+                              wrap=word
+                              @text-muted
+                          if !empty(venue_chart_note(venue))
+                            text venue_chart_note(venue)
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                          if !empty(venue_account_gap(venue))
+                            text venue_account_gap(venue)
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                        rule horizontal thickness=1.0 color=edge
                         col gap=10.0 w=fill
                           Label value="FEED"
                           Stat name="ROUND TRIP" value=fmt_latency(latency)
@@ -1152,13 +1213,13 @@ view
                             wrap=word
                             @text-fg
                             @font-bold
-                        text "This app reads Hyperliquid and prices orders against the margin engine's own arithmetic, which is the whole of what it does."
+                        text "This app reads the venue named beside this and prices orders against that margin engine's own arithmetic, which is the whole of what it does."
                           with
                             size=12.0
                             w=fill
                             wrap=word
                             @text-muted
-                        text "It reads: the tradeable universe, candles, the book, the public tape, and — for the address beside this — that account's equity, positions, resting orders and fills."
+                        text "It reads: the tradeable universe, candles, the book, the public tape, and — for the address beside this — that account's equity, positions, resting orders and fills. What a venue will not answer is said above and in the panel it empties."
                           with
                             size=12.0
                             w=fill
@@ -1181,7 +1242,10 @@ view
               border=edge
             col gap=20.0 w=fill
               col gap=8.0 w=fill
-                Label value="HYPERLIQUID"
+                // The venue survives a trip back to the gate, so the exchange
+                // this address is about to be read on is the one the terminal
+                // is holding rather than the one it booted on.
+                Label value=venue_name(venue)
                 text "Read an account"
                   with
                     size=22.0

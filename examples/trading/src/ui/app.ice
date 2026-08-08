@@ -27,7 +27,9 @@ daemon Trading
 
 use "theme.ice"
 use "extern/hyperliquid.ice"
+use "extern/lighter.ice"
 use "state.ice"
+use "extern/venue.ice"
 use "components/cells.ice"
 use "components/controls.ice"
 use "components/market_rows.ice"
@@ -41,6 +43,7 @@ use "tests/markets.ice"
 use "tests/alerts.ice"
 use "tests/ticket.ice"
 use "tests/feed.ice"
+use "tests/venues.ice"
 use "tests/render.ice"
 
 font plex family="IBM Plex Sans KR" default=true

@@ -54,6 +54,47 @@ component NavTab(name:str, target:Page, current:Page)
             tracking=1.1
             @text-faint
 
+// One tab per exchange, named by the act of reading it. By the same rule the
+// page tabs follow: the venue already being read is still a button, and a
+// button carries no state a reader can hear, so it says which it is by
+// appending it to its own name rather than by being the highlighted one.
+//
+// It sits with the page tabs because it belongs to the same question — what am
+// I looking at — and it is the outer half of it: the page picks a surface, this
+// picks the exchange every one of those surfaces was read from.
+component VenueTab(target:Venue, current:Venue)
+  emits
+    pick(Venue)
+  col #root w=fill
+    if target == current
+      button #tab-on -> emit(pick, target)
+        with
+          label=venue_label(target, true)
+          w=fill
+          p=5.0
+        active bg=raised text=fg r=3.0
+        hovered bg=raised text=fg r=3.0
+        text venue_name(target)
+          with
+            size=9.0
+            w=fill
+            tracking=1.0
+            @text-fg
+    if target != current
+      button #tab-off -> emit(pick, target)
+        with
+          label=venue_label(target, false)
+          w=fill
+          p=5.0
+        active bg=panel text=muted r=3.0
+        hovered bg=raised text=fg r=3.0
+        text venue_name(target)
+          with
+            size=9.0
+            w=fill
+            tracking=1.0
+            @text-faint
+
 component IntervalTab(name:str, current:str)
   emits
     pick(str)
