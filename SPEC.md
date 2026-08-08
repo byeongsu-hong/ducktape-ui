@@ -1449,20 +1449,30 @@ opened hidden, positioned under the icon's screen rectangle (physical
 coordinates converted through the popover's scale factor, clamped to that
 display when the icon is on it), then shown and focused; a second click — or
 any `task window close` — closes it, tracked through the window's close event.
-Pressing the item unfocuses the popover first, so an app that dismisses on
-unfocus closes it before the click is delivered; a press within 200ms of the
-popover closing therefore counts as that dismissal rather than a request to
-reopen. Without `popover`, a
+
+The popover owns its own dismissal: once it has taken focus, losing focus
+closes it, so clicking anywhere outside puts it away without the application
+subscribing to anything. That gate is not decoration. A window reports itself
+unfocused while it is still being created, before it has ever been on screen,
+so a dismissal that trusted the first report would close the panel before it
+was drawn and a click on the item would look like nothing at all. Only a
+popover that actually took focus can be dismissed by losing it.
+
+Pressing the item unfocuses the popover first, so the dismissal runs before
+the click is delivered; a press within 200ms of the popover closing therefore
+counts as that dismissal rather than a request to reopen. Without `popover`, a
 left click restores and focuses the program's oldest window, which suits an
 `app` whose tray is a live status readout. Only the left click is wired;
 right and middle clicks are ignored.
 
 Platform mapping: macOS is fully implemented. On every other target the same
 program compiles and runs with the tray as a runtime no-op; the native tray on
-Windows has no label text, so `label` is a macOS surface by nature. The
-dismiss-on-outside-click pattern is ordinary language surface —
-`subscribe window unfocused with-id` routed to `task window close target=id`
-— shown in the trading example's `menubar` binary.
+Windows has no label text, so `label` is a macOS surface by nature. Setting
+`ICE_TRAY_DEBUG` traces the native boundary — status item creation, each
+platform event, whether the click reached the subscription, and the anchor it
+resolved to — because a status item that does nothing looks the same whether
+the platform never delivered the click, the bridge dropped it, or the panel
+landed off-screen.
 
 Use `daemon Name` instead of `app Name` for an iced daemon that starts without
 an initial window and remains alive after all windows close. A daemon rejects
