@@ -835,7 +835,7 @@ view
 fn parses_tray_settings() {
     let source = SOURCE.replace(
         "app Demo",
-        r#"app Demo
+        r#"daemon Demo
   tray
     icon-rgba "assets/tray.rgba" 22 22
     icon-template true
@@ -892,4 +892,15 @@ fn requires_tray_icon() {
     let error = parse(&source).unwrap_err();
     assert_eq!(error.code, "E015");
     assert!(error.message.contains("tray requires `icon-rgba`"));
+}
+
+#[test]
+fn rejects_tray_popover_outside_daemon() {
+    let source = SOURCE.replace(
+        "app Demo",
+        "app Demo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    popover status\n  window status\n    size 320 240",
+    );
+    let error = parse(&source).unwrap_err();
+    assert_eq!(error.code, "E014");
+    assert!(error.message.contains("tray popover requires a daemon"));
 }

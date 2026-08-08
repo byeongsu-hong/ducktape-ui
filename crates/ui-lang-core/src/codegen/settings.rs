@@ -129,6 +129,37 @@ pub(in crate::codegen) fn app_settings_code(
     }
 }
 
+pub(in crate::codegen) fn tray_init_code(
+    program: &LoweredProgram,
+    settings: &ResolvedAppSettings,
+    source_path: &str,
+) -> String {
+    let Some(tray) = &settings.tray else {
+        return String::new();
+    };
+    let parent = Path::new(source_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let path = parent.join(&tray.icon.path).display().to_string();
+    let sync = if tray.label.is_some() || tray.tooltip.is_some() {
+        "\nstate.__tray_sync();"
+    } else {
+        ""
+    };
+    marked_setting(
+        program,
+        tray.origin,
+        format!(
+            "#[cfg(not(test))]\n{{\n::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig {{ icon_rgba: {{ const __ICE_TRAY_RGBA: &[u8] = include_bytes!({}); const _: () = ::std::assert!(__ICE_TRAY_RGBA.len() == {}, \"tray icon RGBA byte length does not match width × height × 4\"); __ICE_TRAY_RGBA }}, icon_width: {}u32, icon_height: {}u32, icon_template: {}, }});{sync}\n}}",
+            rust_string(&path),
+            tray.icon.byte_len,
+            tray.icon.width,
+            tray.icon.height,
+            tray.icon_template,
+        ),
+    )
+}
+
 pub(in crate::codegen) fn window_settings_code(
     program: &LoweredProgram,
     settings: &ResolvedWindowSettings,

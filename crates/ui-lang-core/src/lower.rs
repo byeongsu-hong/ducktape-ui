@@ -19499,7 +19499,7 @@ view
     #[test]
     fn lowers_tray_settings_with_popover_reference() {
         let source = format!(
-            "app TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    label describe(count)\n    tooltip \"Demo\"\n    popover status\n  window status\n    size 320 240\nextern crate::backend\n  sync describe(value:i64) -> str\nstate\n  count = 1\n{THEME}view\n  text count\n"
+            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    label describe(count)\n    tooltip \"Demo\"\n    popover status\n  window status\n    size 320 240\nextern crate::backend\n  sync describe(value:i64) -> str\nstate\n  count = 1\n{THEME}view\n  text count\n"
         );
         let mut program = lower(analyze(&source).unwrap()).unwrap();
         let settings = program.settings();
@@ -19516,7 +19516,7 @@ view
     #[test]
     fn rejects_tray_topology_mutations_with_e196() {
         let source = format!(
-            "app TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    popover status\n  window status\n    size 320 240\n{THEME}view\n  text \"ready\"\n"
+            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    popover status\n  window status\n    size 320 240\n{THEME}view\n  text \"ready\"\n"
         );
 
         let mut checked = analyze(&source).unwrap();

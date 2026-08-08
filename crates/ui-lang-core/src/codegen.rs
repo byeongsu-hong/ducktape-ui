@@ -567,6 +567,18 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         "pub(crate) __ice_accessibility: ::ui_lang_runtime::Bridge<{message}>,"
     )
     .unwrap();
+    if program
+        .settings()
+        .tray
+        .as_ref()
+        .is_some_and(|tray| tray.popover.is_some())
+    {
+        writeln!(
+            out,
+            "pub(crate) __ice_tray_popover: ::std::option::Option<::iced::window::Id>,"
+        )
+        .unwrap();
+    }
     if program.settings().kind == ProgramKind::Application {
         writeln!(
             out,
@@ -651,6 +663,12 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,"
     )
     .unwrap();
+    if let Some(tray) = &program.settings().tray {
+        writeln!(out, "__TrayEvent(::ui_lang_runtime::tray::TrayEvent),").unwrap();
+        if tray.popover.is_some() {
+            writeln!(out, "__TrayPopoverClosed(::iced::window::Id),").unwrap();
+        }
+    }
     for handler in program.app_handlers() {
         if handler.name == "mount" {
             continue;
@@ -851,8 +869,9 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     .unwrap();
 
     generate_theme(&mut out, program)?;
-    generate_boot(&mut out, program, &message)?;
-    generate_presets(&mut out, program, &message)?;
+    generate_boot(&mut out, program, &message, source_path)?;
+    generate_tray(&mut out, program)?;
+    generate_presets(&mut out, program, &message, source_path)?;
     generate_update(&mut out, program, &message)?;
     generate_subscription(&mut out, program, &message)?;
     let outline_guard = outline::enable_for_view();

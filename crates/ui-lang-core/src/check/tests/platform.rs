@@ -817,7 +817,7 @@ view
 
 #[test]
 fn accepts_a_full_tray_declaration() {
-    let source = r#"app Demo
+    let source = r#"daemon Demo
   tray
     icon-rgba "assets/tray.rgba" 2 2
     icon-template true
@@ -900,7 +900,7 @@ view
 
 #[test]
 fn rejects_a_tray_popover_without_a_matching_window() {
-    let source = r#"app Demo
+    let source = r#"daemon Demo
   tray
     icon-rgba "assets/tray.rgba" 2 2
     popover missing

@@ -1556,3 +1556,99 @@ view
     assert!(generated.contains("self.count = times;"));
     assert!(generated.contains("self.cursor = times;"));
 }
+
+#[test]
+fn wires_tray_boot_subscription_and_popover_toggle() {
+    let source = r#"daemon Tray
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    icon-template true
+    label describe(count)
+    tooltip "Tray demo"
+    popover status
+  window status
+    size 320 240
+extern crate::backend
+  sync describe(value:i64) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+on bump
+  count = count + 1
+view
+  button "Bump" -> bump
+"#;
+    let generated = compile(source, "tray.ice").unwrap();
+
+    assert!(generated.contains("__TrayEvent(::ui_lang_runtime::tray::TrayEvent),"));
+    assert!(generated.contains("__TrayPopoverClosed(::iced::window::Id),"));
+    assert!(
+        generated
+            .contains("pub(crate) __ice_tray_popover: ::std::option::Option<::iced::window::Id>,")
+    );
+    assert!(generated.contains("__ice_tray_popover: ::std::option::Option::None,"));
+    assert!(
+        generated.contains("::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig")
+    );
+    assert!(generated.contains("include_bytes!(\"assets/tray.rgba\")"));
+    assert!(generated.contains("icon_width: 2u32, icon_height: 2u32, icon_template: true,"));
+    assert!(
+        generated.contains("::ui_lang_runtime::tray::events().map(__TrayMessage::__TrayEvent),")
+    );
+    assert!(
+        generated
+            .contains("::iced::window::close_events().map(__TrayMessage::__TrayPopoverClosed),")
+    );
+    assert!(generated.contains("fn __tray_sync(&self)"));
+    assert!(generated.contains("::ui_lang_runtime::tray::set_label"));
+    assert!(generated.contains("::ui_lang_runtime::tray::set_tooltip"));
+    assert!(generated.contains("::ui_lang_runtime::tray::anchor_position"));
+    assert!(generated.contains("Self::__window_0()"));
+    assert!(generated.contains("::iced::window::set_mode(__id, ::iced::window::Mode::Windowed)"));
+    assert!(generated.contains("self.__tray_sync();"));
+}
+
+#[test]
+fn wires_tray_without_popover_in_an_application() {
+    let source = r#"app Status
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    label describe(count)
+extern crate::backend
+  sync describe(value:i64) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+view
+  text count
+"#;
+    let generated = compile(source, "status.ice").unwrap();
+
+    assert!(generated.contains("__TrayEvent(::ui_lang_runtime::tray::TrayEvent),"));
+    assert!(!generated.contains("__TrayPopoverClosed"));
+    assert!(!generated.contains("__ice_tray_popover"));
+    assert!(
+        generated.contains("::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig")
+    );
+    assert!(generated.contains("fn __tray_sync(&self)"));
+    assert!(!generated.contains("::ui_lang_runtime::tray::set_tooltip"));
+    assert!(!generated.contains("close_events"));
+}
