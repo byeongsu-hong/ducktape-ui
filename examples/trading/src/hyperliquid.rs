@@ -1695,14 +1695,14 @@ pub fn demo_candles() -> Tape {
     for step in 0..120 {
         // A shape rather than a straight line, so the moving averages have
         // something to say and the plot is not a diagonal.
-        let drift = ((step as f64) / 9.0).sin() * 120.0;
+        let drift = ((step as f64) / 9.0).sin() * 520.0;
         let open = close;
         close = 63_900.0 + drift + (step as f64) * 1.5;
         candles.push(Candle {
             ts: 1_786_110_000 + step * 60,
             open,
-            high: open.max(close) + 25.0,
-            low: open.min(close) - 25.0,
+            high: open.max(close) + 60.0,
+            low: open.min(close) - 60.0,
             close,
             volume: 40.0 + drift.abs(),
         });
@@ -1759,14 +1759,14 @@ pub fn demo_orders() -> Vec<Order> {
         Order {
             coin: "BTC".to_owned(),
             buy: true,
-            price: 62_500.0,
+            price: 63_600.0,
             size: 1.5,
             ts: now_ms() / 1_000 - 7_200,
         },
         Order {
             coin: "BTC".to_owned(),
             buy: false,
-            price: 66_000.0,
+            price: 64_440.0,
             size: 0.8,
             ts: now_ms() / 1_000 - 240,
         },
