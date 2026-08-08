@@ -209,6 +209,24 @@ The markets are three rather than one, for the same reason. A list of one
 answers no question a list is asked: which row is selected, what a search
 leaves behind, whether a price landed on the market it belongs to.
 
+## The equity the engine can actually spend
+
+A cross position is liquidated against the account's cross equity, not its
+total. Margin posted behind an isolated position is not money the cross engine
+can call on, and dividing the cross requirement by the total reads an account
+at its cliff as comfortable by however much is locked away. The venue reports
+both — `crossMarginSummary.accountValue` beside `marginSummary.accountValue` —
+and the rail takes the first while the EQUITY figure keeps the second.
+
+## What the reader typed, and what they were quoted
+
+Every figure on the ticket is priced at the market's cap, because that is what
+the margin engine will hold the order to. The share buttons were the exception:
+they levered at the number typed into the field, so MAX on a market capped at
+10x with 40 typed filled in four times what the account could deploy. They take
+the leverage the ticket was priced at now, and it is an `f64` rather than the
+raw string, so the old form no longer compiles.
+
 ## What a beat does
 
 A beat is where most of this app happens: it applies every mid, re-marks

@@ -791,7 +791,7 @@ on drop_alert_at(at_coin, price)
   alerts = drop_alert(alerts, at_coin, price)
 
 on size_share(share)
-  let sized = ticket_afford(account, ticket_price, ticket_leverage, share)
+  let sized = ticket_afford(account, ticket_price, quote.leverage, share)
   return if empty(sized)
   ticket_size = sized
   quote = price_ticket(ticket_price, sized, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
@@ -803,10 +803,21 @@ on ticket_side(buy)
 on reopen
   draft = address
   gate = true
+  // Whatever is on screen belongs to the address being left. Fills and orders
+  // arrive as a snapshot the app folds into what it already holds, so anything
+  // kept here would be folded in with the next account's.
+  fills = []
+  orders = []
+  positions = []
+  account = none
+  flashing = false
   abort feeds
 
 on pick_symbol(name)
   let market = symbol_row(symbols, name)
+  // The book on screen belongs to the market being left. Clearing it first is
+  // what stops the new ticket opening at the old market's price.
+  book = none
   let seed = ticket_seed(book, market)
   coin = name
   ticket_price = seed
@@ -818,7 +829,6 @@ on pick_symbol(name)
   hover = none
   status = "Loading candles"
   tape = tape_focus(tape, name, interval)
-  book = none
   loading_history = false
   run hl_candles(tape, name, interval) -> candles_loaded _ | failed _
 
@@ -2103,6 +2113,33 @@ test trading_a_beat_moves_the_price_the_position_and_the_levels
   expect text "+$553.8K"
   expect no text "▲"
   expect text "▼"
+
+test trading_a_new_market_opens_at_its_own_price
+  preset held
+  viewport 1660 820
+  expect ticket_price == "64,000.00"
+  dispatch pick_symbol("SOL")
+  expect ticket_price == "148.620"
+  dispatch pick_symbol("kPEPE")
+  expect ticket_price == "0.008421"
+
+test trading_a_share_button_sizes_at_the_price_the_ticket_was_quoted_at
+  preset held
+  viewport 1660 820
+  dispatch pick_symbol("kPEPE")
+  dispatch ticket_levered("40")
+  expect quote.leverage ~= 10.0
+  dispatch size_share(1.0)
+  expect quote.notional <= 22100.0
+
+test trading_connecting_again_does_not_inherit_the_last_accounts_trades
+  preset held
+  viewport 1660 820
+  expect text "15:10:00"
+  expect text "POSITIONS"
+  dispatch reopen
+  expect no text "15:10:00"
+  expect no text "3,526.53"
 
 test trading_the_whole_terminal_renders_from_fixtures
   preset held

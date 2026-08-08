@@ -248,6 +248,10 @@ pub struct Position {
 #[derive(Clone, PartialEq)]
 pub struct Account {
     pub value: f64,
+    /// Equity the cross engine can actually spend: the total less whatever is
+    /// posted behind isolated positions. This is what the maintenance
+    /// requirement is measured against.
+    pub cross_value: f64,
     pub pnl: f64,
     pub withdrawable: f64,
     pub notional: f64,
@@ -828,15 +832,26 @@ fn parse_account(value: &Value) -> Account {
         })
         .collect();
     let equity = num(&summary, "accountValue");
+    // The requirement is the cross one, so the equity it is measured against
+    // has to be the cross one too. Total equity carries the margin posted
+    // behind isolated positions, which the cross engine cannot spend and does
+    // not count: dividing by it reads an account at its cliff as comfortable,
+    // by however much is locked away.
+    let cross = value
+        .get("crossMarginSummary")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let cross_value = num(&cross, "accountValue");
     let maintenance = num(value, "crossMaintenanceMarginUsed");
     Account {
         value: equity,
+        cross_value,
         pnl: positions.iter().map(|position| position.pnl).sum(),
         withdrawable: num(value, "withdrawable"),
         notional: num(&summary, "totalNtlPos"),
         maintenance,
-        health: margin_load(equity, maintenance) * RISK_RAIL_WIDTH,
-        margin_pct: margin_load(equity, maintenance) * 100.0,
+        health: margin_load(cross_value, maintenance) * RISK_RAIL_WIDTH,
+        margin_pct: margin_load(cross_value, maintenance) * 100.0,
         positions,
     }
 }
@@ -1213,6 +1228,11 @@ pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
     let subscriptions = tape.clone();
     let mut tick = MarketTick::default();
     let mut changed = false;
+    // Which market the per-market fields belong to. The book and the context
+    // are the focused market's, and the app can move that focus between two
+    // beats: without this the next beat republishes the book of the market
+    // the reader just left, over the top of the one they are looking at.
+    let mut held: Option<(String, String)> = None;
     feed(
         move || {
             let mut wanted = vec![json!({ "type": "allMids" })];
@@ -1233,6 +1253,14 @@ pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
                     .filter_map(|(coin, price)| Some((coin.clone(), price.as_str()?.parse().ok()?)))
                     .collect();
                 changed = true;
+                None
+            }
+            Event::Beat if tape.focus() != held => {
+                held = tape.focus();
+                tick.book = None;
+                tick.context = None;
+                tick.trades.clear();
+                changed = false;
                 None
             }
             Event::Payload("l2Book", data) => {
@@ -1394,18 +1422,26 @@ pub fn mark_positions(positions: Vec<Position>, tick: MarketTick) -> Vec<Positio
 pub fn mark_account(account: Option<Account>, positions: Vec<Position>) -> Option<Account> {
     let account = account?;
     let pnl: f64 = positions.iter().map(|position| position.pnl).sum();
+    let cross_pnl = |rows: &[Position]| -> f64 {
+        rows.iter()
+            .filter(|held| held.margin_mode == "cross")
+            .map(|held| held.pnl)
+            .sum()
+    };
     let value = account.value - account.pnl + pnl;
+    // Only the cross positions move the equity the cross engine measures; an
+    // isolated one gains and loses against its own posted margin.
+    let cross_value = account.cross_value - cross_pnl(&account.positions) + cross_pnl(&positions);
     Some(Account {
         value,
+        cross_value,
         pnl,
+        health: margin_load(cross_value, account.maintenance) * RISK_RAIL_WIDTH,
+        margin_pct: margin_load(cross_value, account.maintenance) * 100.0,
         notional: positions
             .iter()
             .map(|position| position.mark * position.size.abs())
             .sum(),
-        // The requirement itself waits for the poll, but the equity it is
-        // measured against does not, so the rail closes as the account loses.
-        health: margin_load(value, account.maintenance) * RISK_RAIL_WIDTH,
-        margin_pct: margin_load(value, account.maintenance) * 100.0,
         positions,
         ..account
     })
@@ -1746,15 +1782,13 @@ pub fn alert_arrow(alert: Alert) -> String {
 /// A size the account could actually put on: a share of what is free to
 /// withdraw, levered, at the price in the ticket. Free margin rather than
 /// equity, because equity already has positions standing on it.
-pub fn ticket_afford(
-    account: Option<Account>,
-    price: String,
-    leverage: String,
-    share: f64,
-) -> String {
+/// `leverage` is the one the ticket was priced at, not the one that was
+/// typed. Every other figure in the panel is quoted at the market's cap, and a
+/// share button that levered at the typed number would fill in a size the
+/// margin engine refuses — by exactly the factor the typed number overshot.
+pub fn ticket_afford(account: Option<Account>, price: String, leverage: f64, share: f64) -> String {
     let free = account.map_or(0.0, |held| held.withdrawable);
     let price = amount(&price);
-    let leverage = amount(&leverage);
     if free <= 0.0 || price <= 0.0 || leverage <= 0.0 || share <= 0.0 {
         return String::new();
     }
@@ -1789,7 +1823,7 @@ pub fn order_load(
     let Some(market) = market else {
         return String::new();
     };
-    if size <= 0.0 || account.value <= 0.0 || market.price <= 0.0 {
+    if size <= 0.0 || account.cross_value <= 0.0 || market.price <= 0.0 {
         return String::new();
     }
     // The venue reports what this account is held to, so the reading starts
@@ -1807,8 +1841,8 @@ pub fn order_load(
         now - held.abs() * market.price * fraction + after_size.abs() * market.price * fraction;
     format!(
         "{} → {}",
-        fmt_share(margin_load(account.value, now) * 100.0),
-        fmt_share(margin_load(account.value, after.max(0.0)) * 100.0)
+        fmt_share(margin_load(account.cross_value, now) * 100.0),
+        fmt_share(margin_load(account.cross_value, after.max(0.0)) * 100.0)
     )
 }
 
@@ -2282,8 +2316,15 @@ fn demo_account_of(
     withdrawable: f64,
 ) -> Account {
     let maintenance = cross_maintenance(&positions, &markets);
+    let isolated: f64 = positions
+        .iter()
+        .filter(|held| held.margin_mode == "isolated")
+        .map(|held| held.margin)
+        .sum();
+    let cross_value = value - isolated;
     Account {
         value,
+        cross_value,
         pnl: positions.iter().map(|position| position.pnl).sum(),
         withdrawable,
         notional: positions
@@ -2291,8 +2332,8 @@ fn demo_account_of(
             .map(|position| position.mark * position.size.abs())
             .sum(),
         maintenance,
-        health: margin_load(value, maintenance) * RISK_RAIL_WIDTH,
-        margin_pct: margin_load(value, maintenance) * 100.0,
+        health: margin_load(cross_value, maintenance) * RISK_RAIL_WIDTH,
+        margin_pct: margin_load(cross_value, maintenance) * 100.0,
         positions,
     }
 }
@@ -2680,7 +2721,8 @@ mod tests {
                 "the requirement is not what these positions are held to"
             );
             assert!(
-                (account.margin_pct - margin_load(account.value, account.maintenance) * 100.0)
+                (account.margin_pct
+                    - margin_load(account.cross_value, account.maintenance) * 100.0)
                     .abs()
                     < 1e-9,
                 "the figure and the bar disagree"
@@ -3262,6 +3304,7 @@ mod tests {
 
         let account = parse_account(&json!({
             "marginSummary": { "accountValue": "10000.0", "totalMarginUsed": "3000.0" },
+            "crossMarginSummary": { "accountValue": "10000.0", "totalMarginUsed": "3000.0" },
             "crossMaintenanceMarginUsed": "2000.0",
             "withdrawable": "7000.0",
             "assetPositions": [
@@ -3282,6 +3325,25 @@ mod tests {
         // The rail is a length, and a length is not readable aloud. The same
         // reading has to exist as a number for the accessibility tree.
         assert_eq!(account.margin_pct, 20.0);
+
+        // The requirement is the cross one, so the equity beside it has to be
+        // the cross one. An account holding most of its money as margin behind
+        // isolated positions has far less to meet the call with than its total
+        // says, and dividing by the total reads it as comfortable while the
+        // engine is one tick away.
+        let locked = parse_account(&json!({
+            "marginSummary": { "accountValue": "10000.0", "totalMarginUsed": "9900.0" },
+            "crossMarginSummary": { "accountValue": "1000.0", "totalMarginUsed": "900.0" },
+            "crossMaintenanceMarginUsed": "900.0",
+            "withdrawable": "100.0",
+            "assetPositions": []
+        }));
+        assert_eq!(locked.value, 10_000.0, "the equity readout is the total");
+        assert_eq!(locked.cross_value, 1_000.0);
+        assert_eq!(
+            locked.margin_pct, 90.0,
+            "ninety percent gone, not the nine the total would say"
+        );
         assert_eq!(fmt_share(account.margin_pct), "20%");
 
         // The requirement waits for the next poll, but the equity it is
@@ -3841,6 +3903,7 @@ mod tests {
         let held = |withdrawable: f64| {
             Some(Account {
                 value: 100_000.0,
+                cross_value: 100_000.0,
                 pnl: 0.0,
                 withdrawable,
                 notional: 0.0,
@@ -3850,7 +3913,7 @@ mod tests {
                 positions: Vec::new(),
             })
         };
-        let size = |share: f64| ticket_afford(held(10_000.0), "100".into(), "5".into(), share);
+        let size = |share: f64| ticket_afford(held(10_000.0), "100".into(), 5.0, share);
 
         // 10,000 free at 5x is 50,000 of notional; a quarter of it at 100 is
         // 125. Equity is 100,000 and would say ten times that, which is the
@@ -3861,19 +3924,31 @@ mod tests {
 
         // Nothing to deploy, nothing to price against, nothing levered.
         assert_eq!(size(0.0), "");
-        assert_eq!(ticket_afford(held(0.0), "100".into(), "5".into(), 0.5), "");
+        assert_eq!(ticket_afford(held(0.0), "100".into(), 5.0, 0.5), "");
+        assert_eq!(ticket_afford(held(10_000.0), "".into(), 5.0, 0.5), "");
+        assert_eq!(ticket_afford(held(10_000.0), "100".into(), 0.0, 0.5), "");
         assert_eq!(
-            ticket_afford(held(10_000.0), "".into(), "5".into(), 0.5),
-            ""
-        );
-        assert_eq!(
-            ticket_afford(held(10_000.0), "100".into(), "".into(), 0.5),
-            ""
-        );
-        assert_eq!(
-            ticket_afford(None, "100".into(), "5".into(), 0.5),
+            ticket_afford(None, "100".into(), 5.0, 0.5),
             "",
             "no account"
+        );
+
+        // The leverage handed in is the one the ticket was priced at, which is
+        // the market's cap when the reader typed past it. Sizing at the typed
+        // number would fill in an order the margin engine refuses, by exactly
+        // the factor it overshot.
+        let capped = price_ticket(
+            "100".into(),
+            "".into(),
+            "40".into(),
+            symbol_row(demo_symbols(), "kPEPE".into()),
+            true,
+            0.0,
+        );
+        assert_eq!(capped.leverage, 10.0, "the market caps it at ten");
+        assert_eq!(
+            ticket_afford(held(10_000.0), "100".into(), capped.leverage, 1.0),
+            "1,000.00"
         );
     }
 
