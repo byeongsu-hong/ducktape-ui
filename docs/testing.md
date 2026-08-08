@@ -621,6 +621,16 @@ without `-Ztime-passes`, between two builds that had it, discards the
 incremental cache — the next "incremental" edit measured 11s instead of 3s.
 Every build in a series has to carry identical flags.
 
+**A stale build directory.** `target/debug/build/<pkg>-*` matches several
+directories, and `ls ... | head -1` picks whichever sorts first, not the live
+one — so generated sizes and build-script timings come from an old build and
+look stable while the thing under test changes. `ls -t | head -1`. Two rounds
+of numbers on the hot-reload track were retracted for this, and the same glob
+appears in `scripts/build_bench.py`, which sorts by name and takes the last.
+Relatedly, never `rm -rf` a package's `OUT_DIR` to force regeneration: cargo's
+fingerprint then skips re-running the build script and `include_app!` fails
+with "generated Rust is missing". Touch `build.rs` instead.
+
 And the machine is shared. A blocked A/B run put a load spike entirely on one
 side and produced a 4.81s baseline against a 2.64s result for an edit that in
 truth does not move at all. Interleaving the sides — A, B, A, B — and pooling
@@ -668,3 +678,40 @@ partitioning plus dep-graph serialization — roughly 0.6s, 0.9s and 0.6s of a
 2.4s rebuild, all of which scale with the whole crate rather than with the
 edit. Cutting further means generating fewer monomorphizations, not shuffling
 the ones there are.
+
+### The frame is one number, counted several times
+
+`examples/showcase/src/frame_probe.rs` prints seven phases, and reading them as
+seven costs is a mistake. The test driver simulates one event per
+`UserInterface` build, so that a test can observe the state between a press and
+a release; a running app batches a frame's events into one build. Every phase
+comes out an integer multiple of a single build:
+
+| phase | showcase | builds |
+| --- | --- | --- |
+| `__view` alone | 0.65ms | — |
+| idle redraw | 3.02ms | 1 |
+| cursor move | 3.07ms | 1 |
+| state update + redraw | 6.82ms | 2 |
+| scroll | 6.11ms | 2 |
+| click + redraw | 12.27ms | 4 |
+
+So the 12ms click is not a user-visible 12ms — a click costs an app two builds,
+not four. The labels now carry the count. There is one number to optimize:
+**one build and layout, 3.0ms**, of which `__view` is 0.65ms and the rest is
+layout. Layout does not shrink with the viewport (2.99ms at 480x320 against
+3.02ms at 1440x900), so it is the whole tree every time.
+
+The repo's two answers to that are `lazy` (which memoizes the layout node, not
+just the element) and `virtual_list`. Neither applies to showcase, and the
+reason is worth recording rather than rediscovering: its catalog is one
+`Catalog` component taking about fifty app-state parameters, so a `lazy` over
+it would depend on essentially all state, and several of those types are not
+hashable at all. The showcase view is a worst case by construction — every
+component in the library, wired to live state.
+
+`lazy` is also not free on the build side. Nothing inside a `lazy` closure
+outlines: its content has to be `'static` and an outlined method borrows
+`self`, so `outlining_active()` is false at any lazy depth. Wrapping a subtree
+to win frame time moves its component uses back inline, which is the cost the
+outlining work above removed. Measure both sides before taking that trade.

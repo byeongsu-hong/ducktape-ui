@@ -78,8 +78,12 @@ def anchor(source: Path, configured: str | None) -> str:
 def build_script(package: str) -> float:
     """Time the package's own build script: the Ice compiler with no cargo around it."""
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "debug" / "build"
-    binaries = sorted(target.glob(f"{package}-*/build-script-build"))
-    out_dirs = sorted(target.glob(f"{package}-*/out/ui-lang-generated"))
+    # By mtime, not by name: a package matches several build directories and
+    # the newest is the live one. Sorting by name reads a stale build script
+    # against a stale OUT_DIR, which times a build nobody is running.
+    newest = lambda path: path.stat().st_mtime
+    binaries = sorted(target.glob(f"{package}-*/build-script-build"), key=newest)
+    out_dirs = sorted(target.glob(f"{package}-*/out/ui-lang-generated"), key=newest)
     if not binaries or not out_dirs:
         raise SystemExit(f"{package}: no build script or OUT_DIR under {target}; build it first")
     manifest = next(
