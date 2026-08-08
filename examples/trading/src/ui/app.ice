@@ -71,6 +71,8 @@ preset held
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape()
+    fills = demo_fills()
+    orders = demo_orders()
 
 preset failing
   state

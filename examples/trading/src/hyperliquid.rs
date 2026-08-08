@@ -1732,6 +1732,45 @@ pub fn demo_account() -> Account {
     }
 }
 
+/// Fills and resting orders, including one fill still lit, so the flash a
+/// just-printed fill wears is drawn rather than only decayed in a unit test.
+pub fn demo_fills() -> Vec<Fill> {
+    let fill = |tid: i64, price: f64, size: f64, buy: bool, closed_pnl: f64, heat: i64| Fill {
+        coin: "BTC".to_owned(),
+        ts: 1_786_117_200 - tid * 40,
+        price,
+        size,
+        buy,
+        closed_pnl,
+        heat,
+        tid,
+    };
+    vec![
+        fill(1, 64_010.0, 0.25, false, 1_240.0, FLASH_STEPS),
+        fill(2, 63_940.0, 0.50, true, 0.0, 1),
+        fill(3, 63_880.0, 0.75, true, 0.0, 0),
+    ]
+}
+
+pub fn demo_orders() -> Vec<Order> {
+    vec![
+        Order {
+            coin: "BTC".to_owned(),
+            buy: true,
+            price: 62_500.0,
+            size: 1.5,
+            ts: now_ms() / 1_000 - 7_200,
+        },
+        Order {
+            coin: "BTC".to_owned(),
+            buy: false,
+            price: 66_000.0,
+            size: 0.8,
+            ts: now_ms() / 1_000 - 240,
+        },
+    ]
+}
+
 /// A book and a tape to go with them, so the whole terminal renders from
 /// fixtures rather than from an exchange.
 pub fn demo_book() -> Book {

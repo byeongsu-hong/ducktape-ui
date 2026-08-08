@@ -38,6 +38,8 @@ extern crate::hyperliquid
   sync demo_positions() -> [Position]
   sync demo_candles() -> Tape
   sync demo_account() -> Account
+  sync demo_fills() -> [Fill]
+  sync demo_orders() -> [Order]
   sync demo_book() -> Book
   sync demo_tape() -> [Trade]
   sync position_held(positions:[Position], coin:str) -> f64
