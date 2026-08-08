@@ -399,13 +399,29 @@ pub struct PrivateKey(Scalar);
 
 impl PrivateKey {
     pub fn from_hex(text: &str) -> Result<Self, SignError> {
-        let bytes = unhex(text).ok_or(SignError::PrivateKey)?;
+        let mut bytes = unhex(text).ok_or(SignError::PrivateKey)?;
         if bytes.len() != 40 {
             return Err(SignError::PrivateKey);
         }
         // The venue reduces rather than rejects here, so a key it accepts is a
-        // key this accepts.
-        Ok(Self(Scalar::decode_reduce(&bytes)))
+        // key this accepts — with one exception, below.
+        let scalar = Scalar::decode_reduce(&bytes);
+        // The decode ran through the heap; that copy is wiped before the
+        // allocation goes back to the allocator. See the note on `Drop`.
+        bytes.fill(0);
+        std::hint::black_box(&mut bytes);
+
+        // Zero is not a key. Its public key is `0*G`, the neutral, and every
+        // pair `(s, H(s*G || m))` closes the verification equation there — so
+        // a zero key mints tokens that verify against nothing and identify
+        // nobody. It is also the shape an uninitialised or half-written buffer
+        // takes, which is how one gets here in practice. Every multiple of the
+        // group order reduces to zero too, so the test is on the reduced
+        // scalar rather than on the bytes.
+        if scalar.iszero() != 0 {
+            return Err(SignError::PrivateKey);
+        }
+        Ok(Self(scalar))
     }
 
     /// The public key: `sk*G` compressed to one Fp5 element.
@@ -445,7 +461,7 @@ impl PrivateKey {
     /// challenge's is ten, so the two hashes cannot be handed the same input;
     /// the secret limbs in the middle are what make the result unguessable.
     fn nonce(&self, message: Digest) -> Scalar {
-        let key = self.0.encode();
+        let mut key = self.0.encode();
         let mut preimage = [GFp::ZERO; 11];
         preimage[0] = GFp::from_u64_reduce(NONCE_DOMAIN);
         for (i, chunk) in key.chunks(8).enumerate() {
@@ -459,7 +475,19 @@ impl PrivateKey {
         for (i, limb) in wide.iter().enumerate() {
             bytes[i * 8..i * 8 + 8].copy_from_slice(&limb.to_u64().to_le_bytes());
         }
-        Scalar::decode_reduce(&bytes)
+        let nonce = Scalar::decode_reduce(&bytes);
+
+        // `key` and the first six limbs of `preimage` are the key; `wide` and
+        // `bytes` are the nonce, which publishes the key if it is ever seen
+        // beside a signature. All four are named locals, so all four are
+        // wiped. See the note on `Drop` for what is not.
+        key.fill(0);
+        preimage.fill(GFp::ZERO);
+        wide.fill(GFp::ZERO);
+        bytes.fill(0);
+        std::hint::black_box((&mut key, &mut preimage, &mut wide, &mut bytes));
+
+        nonce
     }
 }
 
@@ -473,6 +501,25 @@ impl fmt::Debug for PrivateKey {
     }
 }
 
+/// Overwrites the one copy of the key this type owns.
+///
+/// It is worth being exact about what that is and is not, because "the key is
+/// zeroized" is a larger claim than anything here can deliver:
+///
+/// - **Wiped.** This scalar; the heap `Vec` `from_hex` decodes through (the
+///   only copy that outlives a stack frame, and the one an allocator can hand
+///   to the next caller); the byte and limb buffers in `nonce`.
+/// - **Not wiped, and unreachable.** `Scalar` is `Copy`, so `self.0` is copied
+///   by value into `Point::mulgen`, into `e * self.0`, and into every
+///   intermediate the reference crate builds from those. Where those copies
+///   live — registers, spill slots, a `memcpy` of the argument — is the
+///   optimiser's choice, and safe Rust cannot name them, let alone write over
+///   them. A `zeroize` dependency would not reach them either; it wipes what
+///   it is handed, which is the same set as above.
+///
+/// So this destructor bounds the copies the module *names*, not the ones the
+/// machine makes. Its other job is structural and does hold absolutely: while
+/// it exists, `PrivateKey` cannot be `Copy`.
 impl Drop for PrivateKey {
     fn drop(&mut self) {
         self.0 = Scalar::ZERO;
@@ -492,7 +539,9 @@ fn challenge(r: GFp5, message: Digest) -> Scalar {
 ///
 /// `s*G + e*pk` is recomputed and rehashed; the signature is good when the
 /// challenge falls out again. ECgFp5 has prime order, so a point that decodes
-/// is a group element and there is no subgroup check to forget.
+/// is a group element and there is no subgroup check to forget — the one
+/// element that still has to be turned away is the neutral, which is a group
+/// element and not a key.
 pub fn verify(public_key: &[u8; 40], message: Digest, signature: &[u8; 80]) -> bool {
     let (s, s_ok) = Scalar::decode(&signature[..40]);
     let (e, e_ok) = Scalar::decode(&signature[40..]);
@@ -504,6 +553,17 @@ pub fn verify(public_key: &[u8; 40], message: Digest, signature: &[u8; 80]) -> b
     }
     let (encoded, key_ok) = GFp5::decode(public_key);
     if key_ok == 0 {
+        return false;
+    }
+    // The neutral is `0*G`, and under it `s*G + e*pk` is just `s*G`: `e` loses
+    // its only tie to the key, so any `(s, H(s*G || m))` verifies with nothing
+    // signed. Its encoding is the all-zero field element, which is the shape
+    // of an uninitialised buffer, so it is a likely thing to be handed.
+    //
+    // Refused here, on the encoding, rather than after the decode: a key that
+    // is no point at all decodes to the neutral too, so a check on the decoded
+    // point would answer for both and leave the decode check below untestable.
+    if encoded.iszero() != 0 {
         return false;
     }
     let (point, point_ok) = Point::decode(encoded);
@@ -532,7 +592,7 @@ pub enum SignError {
 impl fmt::Display for SignError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::PrivateKey => "private key must be 40 bytes of hex",
+            Self::PrivateKey => "private key must be 40 bytes of hex, and not zero mod the order",
             Self::Message => "auth message is not a canonical field element",
             Self::DeadlinePassed => "deadline is not in the future",
             Self::DeadlineTooFar => "deadline is more than 8h ahead",
@@ -635,6 +695,53 @@ mod tests {
         bytes(OFFICIAL_SIGNATURE)
     }
 
+    /// The group order n, little-endian limbs.
+    ///
+    /// The curve crate keeps its own copy private on purpose ("this constant
+    /// MUST NOT leak outside the API"), so this is a transcription, and every
+    /// use below asserts what it means rather than trusting it: `0 + n`
+    /// reduces to zero, and `s + n` reduces to `s`.
+    const ORDER: [u64; 5] = [
+        0xE80F_D996_948B_FFE1,
+        0xE888_5C39_D724_A09C,
+        0x7FFF_FFE6_CFB8_0639,
+        0x7FFF_FFF1_0000_0016,
+        0x7FFF_FFFD_8000_0007,
+    ];
+
+    /// `value + n` in the same 40 bytes: a second encoding of the same scalar.
+    /// Every scalar is below n and n is below 2^319, so the sum never leaves
+    /// the encoding — asserted, not assumed.
+    fn plus_order(value: &[u8]) -> [u8; 40] {
+        let mut out = [0u8; 40];
+        let mut carry = 0u64;
+        for (i, order) in ORDER.iter().enumerate() {
+            let limb = u64::from_le_bytes(value[i * 8..i * 8 + 8].try_into().expect("eight bytes"));
+            let (sum, over) = limb.overflowing_add(*order);
+            let (sum, wrapped) = sum.overflowing_add(carry);
+            carry = u64::from(over | wrapped);
+            out[i * 8..i * 8 + 8].copy_from_slice(&sum.to_le_bytes());
+        }
+        assert_eq!(carry, 0, "value + n does not fit 40 bytes");
+        out
+    }
+
+    /// A signature that closes the verification equation at the neutral point
+    /// without signing anything: there `s*G + e*pk` is just `s*G`, so
+    /// `(s, H(s*G || m))` verifies for any `s` at all — here `s = 1`.
+    ///
+    /// It is the forgery a public key gets to accept if it is the neutral, or
+    /// if a key that fails to decode falls through to the neutral. Offering it
+    /// is what makes those two tests fail when the refusals are removed;
+    /// against a real key it is refused for the ordinary reason.
+    fn neutral_forgery(message: Digest) -> [u8; 80] {
+        let s = Scalar::ONE;
+        let mut out = [0u8; 80];
+        out[..40].copy_from_slice(&s.encode());
+        out[40..].copy_from_slice(&challenge(Point::mulgen(s).encode(), message).encode());
+        out
+    }
+
     /// The whole hash stack in one number. `HashToQuinticExtension` over the
     /// ASCII preimage, chunked eight bytes at a time into Goldilocks limbs, has
     /// to land on the digest the venue's signer computed for the same string —
@@ -712,30 +819,108 @@ mod tests {
         assert!(!verify(&other.public_key(), message, &official_signature()));
     }
 
-    /// Malleability: `s` and `e` are scalars mod n, so `s + n` names the same
-    /// signature. Accepting both would give every token a second spelling.
+    /// Malleability, and the module's one deliberate divergence from the
+    /// venue: `s` and `e` are integers mod n, so `s + n` is a second encoding
+    /// of the same signature, which the venue reduces and accepts and this
+    /// refuses.
+    ///
+    /// So the input has to be that second encoding and not merely a corrupt
+    /// one — garbage in `s` is refused by the signature equation whether
+    /// anything checks canonicity or not, and proves nothing about the check.
+    /// The two premises are asserted here: `s + n` is not canonical, and it
+    /// reduces back to `s`. A verifier that reduced first would therefore
+    /// accept it, and only one that checks canonicity refuses.
     #[test]
     fn a_non_canonical_scalar_is_refused() {
-        let mut signature = official_signature();
-        signature[..40].copy_from_slice(&[0xff; 40]);
-        assert!(!verify(
-            &bytes(PUBLIC_KEY),
-            digest(MESSAGE).expect("ASCII is canonical"),
-            &signature,
-        ));
+        let message = digest(MESSAGE).expect("ASCII is canonical");
+        for half in [0, 40] {
+            let mut signature = official_signature();
+            let shifted = plus_order(&signature[half..half + 40]);
+            assert_eq!(
+                Scalar::decode(&shifted).1,
+                0,
+                "premise: the shifted scalar is not canonical"
+            );
+            assert_eq!(
+                &Scalar::decode_reduce(&shifted).encode()[..],
+                &signature[half..half + 40],
+                "premise: the shifted scalar reduces to the original"
+            );
+
+            signature[half..half + 40].copy_from_slice(&shifted);
+            assert!(
+                !verify(&bytes(PUBLIC_KEY), message, &signature),
+                "a second encoding of the signature was accepted at byte {half}"
+            );
+        }
     }
 
     /// A public key that is not on the curve has to be refused rather than
     /// decoded to the neutral point and hashed anyway.
+    ///
+    /// Flipping a bit of the real key is not this test: half of all field
+    /// elements decode, and that one does, so it only ever exercised the
+    /// ordinary mismatch. The key here is the field element 1, which is
+    /// canonical (asserted) and is the encoding of no point (asserted), and
+    /// the signature offered with it is the one that satisfies the equation at
+    /// the neutral — so falling through to the neutral accepts a forgery.
     #[test]
     fn a_public_key_that_does_not_decode_is_refused() {
-        let mut public_key: [u8; 40] = bytes(PUBLIC_KEY);
-        public_key[0] ^= 1;
-        assert!(!verify(
-            &public_key,
-            digest(MESSAGE).expect("ASCII is canonical"),
-            &official_signature(),
-        ));
+        let mut public_key = [0u8; 40];
+        public_key[0] = 1;
+        let (element, canonical) = GFp5::decode(&public_key);
+        assert_ne!(canonical, 0, "premise: the limbs are canonical");
+        assert_eq!(Point::validate(element), 0, "premise: w = 1 is not a point");
+
+        let message = digest(MESSAGE).expect("ASCII is canonical");
+        assert!(!verify(&public_key, message, &neutral_forgery(message)));
+    }
+
+    /// The neutral is the other half of that: it *does* decode, so the decode
+    /// check alone lets it past, and it is `0*G` — the public key of the zero
+    /// private key, and the all-zero buffer besides. Under it the verification
+    /// equation loses the key entirely and accepts a signature over nothing.
+    #[test]
+    fn the_neutral_public_key_is_refused() {
+        let (element, canonical) = GFp5::decode(&[0u8; 40]);
+        assert_ne!(canonical, 0, "premise: the limbs are canonical");
+        assert_ne!(
+            Point::validate(element),
+            0,
+            "premise: the neutral decodes, which is why it needs its own check"
+        );
+
+        let message = digest(MESSAGE).expect("ASCII is canonical");
+        assert!(!verify(&[0u8; 40], message, &neutral_forgery(message)));
+    }
+
+    /// A private key that reduces to zero is refused at the door.
+    ///
+    /// Zero is the shape of an uninitialised or half-written buffer, and it is
+    /// the one scalar with no key in it: `0*G` is the neutral, so the token it
+    /// signs verifies against a public key that identifies nobody and accepts
+    /// anybody. `from_hex` reduces its input, so the check has to be on the
+    /// reduced scalar — n itself is 40 bytes of ordinary-looking hex.
+    #[test]
+    fn a_private_key_that_reduces_to_zero_is_refused() {
+        let order = plus_order(&[0u8; 40]);
+        assert_ne!(
+            Scalar::decode_reduce(&order).iszero(),
+            0,
+            "premise: n reduces to zero, so the transcribed order is right"
+        );
+
+        for text in ["00".repeat(40), hex(&order)] {
+            assert_eq!(
+                PrivateKey::from_hex(&text).unwrap_err(),
+                SignError::PrivateKey,
+                "accepted a private key that is zero mod the order"
+            );
+        }
+        assert!(
+            PrivateKey::from_hex(PRIVATE_KEY).is_ok(),
+            "a real key still"
+        );
     }
 
     fn now() -> u64 {
@@ -793,12 +978,39 @@ mod tests {
     /// a key may quote it back. `Debug` is the accident waiting to happen: a
     /// derive here would put five secret limbs into any log line that formats
     /// a struct holding one.
+    ///
+    /// The guarantee is stated as *`Debug` tells two keys apart in no way*,
+    /// because a scan for the key's own spelling does not state it: a derive
+    /// prints the limbs in decimal, and a scan for the hex the key was typed
+    /// in walks straight past that. Pinning the redaction's exact text does
+    /// not state it either — that catches an edit to the string and calls it a
+    /// leak. Formatting two different keys and comparing is spelling-proof and
+    /// says the thing: whatever `Debug` prints, none of it came from the key.
+    ///
+    /// The substring scan stays for the paths that take the key as *text* —
+    /// `from_hex`'s error, which must not echo what it rejected — and it scans
+    /// both spellings, hex as typed and limbs in decimal.
     #[test]
     fn no_printable_path_carries_key_material() {
         let key = key();
-        assert_eq!(format!("{key:?}"), "PrivateKey(<redacted>)");
+        let other = PrivateKey::from_hex(&"11".repeat(40)).expect("40 bytes of hex");
+        assert_eq!(
+            format!("{key:?}"),
+            format!("{other:?}"),
+            "Debug distinguishes two keys, so it is carrying some of them"
+        );
 
         let stripped = PRIVATE_KEY.trim_start_matches("0x");
+        let mut secrets: Vec<String> = Vec::new();
+        for spelling in [stripped, &stripped.to_uppercase()] {
+            secrets.extend((0..spelling.len() - 8).map(|start| spelling[start..start + 8].into()));
+        }
+        secrets.extend(
+            bytes::<40>(PRIVATE_KEY)
+                .chunks(8)
+                .map(|limb| u64::from_le_bytes(limb.try_into().expect("eight bytes")).to_string()),
+        );
+
         for text in [
             format!("{key:?}"),
             SignError::PrivateKey.to_string(),
@@ -806,21 +1018,28 @@ mod tests {
             format!("{:?}", PrivateKey::from_hex(stripped).map(|_| ())),
             format!("{:?}", PrivateKey::from_hex("not hex").unwrap_err()),
         ] {
-            for start in 0..stripped.len() - 8 {
-                assert!(
-                    !text.contains(&stripped[start..start + 8]),
-                    "leaked: {text}"
-                );
+            for secret in &secrets {
+                assert!(!text.contains(secret), "leaked {secret}: {text}");
             }
         }
     }
 
-    /// A key that can be duplicated is a key with a second place to leak from.
-    /// `Clone` is absent, which the compiler enforces at every call site; the
-    /// part with no call site to fail is the destructor, and while it exists
-    /// `Copy` cannot be derived either.
+    /// What the destructor is checkable for, which is less than its name used
+    /// to claim.
+    ///
+    /// Checked here: `PrivateKey` has drop glue. That is the structural half,
+    /// and it is exact — a type with a destructor cannot be `Copy`, and with
+    /// no `Clone` either that leaves one live copy of the scalar per key,
+    /// enforced by the compiler at every call site.
+    ///
+    /// Not checked, by anything, anywhere: that the destructor's overwrite
+    /// reaches memory. Once the value drops it is unnameable, and reading the
+    /// freed frame back needs `unsafe`, which this workspace forbids — so
+    /// gutting the body of `Drop` fails no test in this file. The note on
+    /// `Drop` says which copies that overwrite is aimed at and which ones no
+    /// safe implementation could reach.
     #[test]
-    fn the_private_key_is_overwritten_when_it_is_dropped() {
+    fn the_private_key_has_a_destructor_so_it_cannot_be_copy() {
         assert!(
             std::mem::needs_drop::<PrivateKey>(),
             "PrivateKey lost its Drop, so it can be made Copy and its limbs outlive it"
@@ -829,12 +1048,21 @@ mod tests {
 
     /// Past every format gate the venue has, with nothing behind the last one.
     ///
-    /// The key is registered on no account, so the venue can only answer
-    /// `29500 invalid signature` — and it can only get that far if the
-    /// deadline, both indices and the 80-byte length all parsed. Anything
-    /// malformed answers `20013` instead, so 29500 is the strongest evidence
-    /// obtainable without a real key, and 20013 here means this module built a
-    /// token the venue cannot read.
+    /// What 29500 discriminates, exactly: the venue parsed four
+    /// colon-separated fields, accepted the deadline as a number inside its
+    /// own window, accepted both indices, and unhexed 80 bytes — then failed
+    /// the signature. A token this module cannot spell right answers 20013
+    /// instead, so 29500 is evidence about the token's *shape*, and that is
+    /// all it is.
+    ///
+    /// It is not evidence that the signature is any good. The key is
+    /// registered on no account, so a correct signature and 80 random bytes
+    /// both land on 29500; nothing reachable without a registered key tells
+    /// them apart. The cryptography is pinned offline instead, against the
+    /// venue's own signer, by `the_digest_matches_the_official_signer`,
+    /// `the_public_key_derives_from_the_private_key` and
+    /// `a_signature_from_the_official_signer_verifies`. This test covers the
+    /// one thing those cannot: that the venue reads what this module writes.
     ///
     /// Ignored: it is the only test that touches the network, and it opens its
     /// own connection so it does not depend on any other test having run. It
