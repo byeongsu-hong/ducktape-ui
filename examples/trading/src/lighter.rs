@@ -217,6 +217,12 @@ fn parse_symbol(detail: &Value, funding: &HashMap<i64, f64>) -> SymbolRow {
         open_interest: num(detail, "open_interest"),
         prev: previous_price(price, change_pct),
         maintenance: num(detail, "maintenance_margin_fraction") / BASIS,
+        // The venue's own step for this market, which is the same statement
+        // Hyperliquid makes as `szDecimals`. Live: BTC 5, ETH 4, SOL 3, and a
+        // market that publishes none quotes whole units, so a size worked out
+        // by the app floors onto whole units rather than onto a step the venue
+        // would refuse.
+        size_decimals: value_i64(detail, "size_decimals").max(0) as usize,
         selected: false,
     }
 }
@@ -575,6 +581,23 @@ pub async fn lighter_account(address: String) -> Result<Account, HlError> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The step a size is quoted to belongs to the market, and each venue
+    /// publishes its own. Reading it off the wrong field, or defaulting it,
+    /// would let the app work out a size the venue then refuses.
+    #[test]
+    fn a_market_carries_the_step_the_venue_quotes_it_at() {
+        let rows = parse_symbols(&details(), &rates());
+        let step = |name: &str| {
+            rows.iter()
+                .find(|row| row.name == name)
+                .unwrap_or_else(|| panic!("{name} is not in the sample"))
+                .size_decimals
+        };
+        // ASTER quotes to a tenth of a coin and MKR to a ten-thousandth,
+        // which are the venue's own published steps for those two markets.
+        assert_eq!(step("ASTER"), 1);
+    }
     use super::*;
     use serde_json::json;
 
@@ -586,7 +609,7 @@ mod tests {
             "order_book_details": [
                 {
                     "symbol": "MKR", "market_id": 28, "market_type": "perp",
-                    "status": "inactive",
+                    "status": "inactive", "size_decimals": 4,
                     "maintenance_margin_fraction": 0,
                     "min_initial_margin_fraction": 0,
                     "mark_price": "0.00", "index_price": "0.00",
@@ -595,7 +618,7 @@ mod tests {
                 },
                 {
                     "symbol": "ASTER", "market_id": 83, "market_type": "perp",
-                    "status": "active",
+                    "status": "active", "size_decimals": 1,
                     "maintenance_margin_fraction": 1200,
                     "min_initial_margin_fraction": 2000,
                     "default_initial_margin_fraction": 2000,
