@@ -801,3 +801,38 @@ nothing), and the boundary always falls between whole items:
 The control matters: a handler edit already lands in the `__app_update` group
 file, so it should not move, and it does not. The win is proportional to what
 is left in the root — a small app has little there and gains little.
+
+### How much of a view actually reloads
+
+A hot reload is only as wide as the published template, so the number worth
+tracking is not "does this root publish one" but "how much of it is data".
+Every root publishes something; a construct the vocabulary cannot model
+becomes a `subtree` hole, and a hole at the root swallows the whole view.
+
+`cargo ice expand` is the instrument — the published form is a `&str` literal
+in the generated Rust:
+
+```
+cargo ice expand examples/terminal/src/ui/app.ice \
+  | grep -o '__ICE_TEMPLATE_JSON: &str = .*'
+```
+
+Counting `subtree` nodes in that JSON across every root in `examples/`, before
+and after teaching the template a linear layout's padding:
+
+| | before | after |
+| --- | --- | --- |
+| roots publishing a template | 65 | 65 |
+| roots that are *only* a hole | 43 | **19** |
+| roots with no hole at all | 13 | **28** |
+| published template bytes | 28,216 | **60,656** |
+
+The first row is why the second one is the measurement. `p=16.0` on a root
+`col` refused the node, the refusal became a hole, and the hole was the entire
+application — 24 roots reported a healthy template that reloaded nothing.
+
+So read the hole count, not the template's existence, and expect the blockers
+to be shallow and near the root. What refuses today, in descending order of
+what it costs: `if`/`for`/`match` among a layout's children (they contribute a
+variable number of children, so the enclosing layout becomes the hole),
+`overlay`, and a container carrying a border.
