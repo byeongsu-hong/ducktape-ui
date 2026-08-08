@@ -621,6 +621,17 @@ without `-Ztime-passes`, between two builds that had it, discards the
 incremental cache — the next "incremental" edit measured 11s instead of 3s.
 Every build in a series has to carry identical flags.
 
+**A corrupted build cache, read as a flaky machine.** rustc takes intermittent
+SIGSEGVs on this box, and a process killed mid-write leaves artifacts behind
+that fail in ways that look like a real defect: `rust-lld: section has a
+sh_offset + sh_size that cannot be represented`, or `no method named to_owned
+found for reference &str` reported against a third-party crate. Retrying does
+not clear either — the corrupt file is an input to the next build. `cargo clean
+-p <package>` does, in seconds. Three times in one session the reflex to retry
+cost several full workspace builds before the error text got read properly. A
+transient failure moves around; a failure that reproduces on the same crate
+four times is not transient, whatever the signal number says.
+
 **A stale build directory.** `target/debug/build/<pkg>-*` matches several
 directories, and `ls ... | head -1` picks whichever sorts first, not the live
 one — so generated sizes and build-script timings come from an old build and
@@ -664,13 +675,17 @@ Per `scripts/build_bench.py`, three runs each, on one warm target directory:
 
 | package | noop | script | root edit | handler edit |
 | --- | --- | --- | --- | --- |
-| showcase | 0.20s | 0.40s | 3.54s | 2.79s |
-| trading-example | 0.20s | 0.31s | 2.86s | — |
-| music-example | 0.20s | 0.35s | 2.50s | 1.97s |
-| iced-app | 0.24s | 0.56s | 2.39s | — |
-| markdown-example | 0.19s | 0.33s | 1.92s | 1.77s |
-| terminal-example | 0.20s | 0.07s | 1.49s | — |
-| candles-example | 0.20s | 0.13s | 1.41s | — |
+| showcase | 0.18s | 0.30s | 2.44s | 2.41s |
+| trading-example | 0.21s | 0.27s | 2.81s | — |
+| iced-app | 0.25s | 0.46s | 2.19s | — |
+| music-example | 0.21s | 0.28s | 2.00s | 2.04s |
+| markdown-example | 0.20s | 0.27s | 1.75s | 1.79s |
+| terminal-example | 0.19s | 0.02s | 1.33s | — |
+| candles-example | 0.18s | 0.01s | 1.21s | — |
+
+The two anchors have converged everywhere, which is the result worth reading
+off this table: after the macro-invocation split there is no longer a part of
+an app that is expensive to edit. showcase started this work at 6.5s.
 
 The Ice compiler itself (`script`) is never the cost. What is left is rustc's
 floor: link, codegen and LLVM, and the monomorphization walk plus unit
