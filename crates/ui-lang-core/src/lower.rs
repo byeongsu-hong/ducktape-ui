@@ -1273,6 +1273,16 @@ pub(crate) struct ResolvedNamedWindow {
     pub(crate) origin: OriginId,
 }
 #[derive(Clone, Debug)]
+pub(crate) struct ResolvedTraySettings {
+    pub(crate) icon: ResolvedWindowIcon,
+    pub(crate) icon_template: bool,
+    pub(crate) label: Option<ResolvedAppExpression>,
+    pub(crate) tooltip: Option<ResolvedAppExpression>,
+    pub(crate) popover: Option<NamedWindowId>,
+    pub(crate) field_origins: HashMap<String, OriginId>,
+    pub(crate) origin: OriginId,
+}
+#[derive(Clone, Debug)]
 pub(crate) struct ResolvedAppSettings {
     #[cfg(test)]
     pub(crate) settings_id: AppSettingsId,
@@ -1293,6 +1303,7 @@ pub(crate) struct ResolvedAppSettings {
     pub(crate) scale_factor: Option<ResolvedAppExpression>,
     pub(crate) primary_window: ResolvedWindowSettings,
     pub(crate) named_windows: Vec<ResolvedNamedWindow>,
+    pub(crate) tray: Option<ResolvedTraySettings>,
     pub(crate) field_origins: HashMap<String, OriginId>,
     pub(crate) origin: OriginId,
 }
@@ -4756,6 +4767,68 @@ impl Lowerer {
                 )
             })
             .collect();
+        let tray = source
+            .tray
+            .as_ref()
+            .map(|tray| -> Result<ResolvedTraySettings, Error> {
+                let origin = self.push_origin(&tray.span, Some(declaration.origin));
+                let icon = tray.icon.as_ref().ok_or_else(|| {
+                    self.invariant(&tray.span, "checked tray settings lost their icon")
+                })?;
+                let label = tray
+                    .label
+                    .as_ref()
+                    .map(|setting| {
+                        self.checked_app_setting_expression(
+                            AppSettingExprId::TrayLabel,
+                            &setting.span,
+                        )
+                    })
+                    .transpose()?;
+                let tooltip = tray
+                    .tooltip
+                    .as_ref()
+                    .map(|setting| {
+                        self.checked_app_setting_expression(
+                            AppSettingExprId::TrayTooltip,
+                            &setting.span,
+                        )
+                    })
+                    .transpose()?;
+                let popover = tray
+                    .popover
+                    .as_ref()
+                    .map(|name| {
+                        source
+                            .windows
+                            .iter()
+                            .position(|window| window.name == *name)
+                            .map(|index| NamedWindowId(index as u32))
+                            .ok_or_else(|| {
+                                self.invariant(
+                                    &tray.span,
+                                    "checked tray popover references an unknown window",
+                                )
+                            })
+                    })
+                    .transpose()?;
+                Ok(ResolvedTraySettings {
+                    icon: ResolvedWindowIcon {
+                        path: icon.path.clone(),
+                        width: icon.width,
+                        height: icon.height,
+                        byte_len: icon.byte_len,
+                        origin: self.push_origin(&icon.span, Some(origin)),
+                    },
+                    icon_template: tray.icon_template.unwrap_or(false),
+                    label,
+                    tooltip,
+                    popover,
+                    field_origins: self.lower_setting_origins(&tray.setting_spans, origin),
+                    origin,
+                })
+            })
+            .transpose()?;
         Ok(ResolvedAppSettings {
             #[cfg(test)]
             settings_id: declaration.id,
@@ -4801,6 +4874,7 @@ impl Lowerer {
             scale_factor,
             primary_window,
             named_windows,
+            tray,
             field_origins,
             origin: declaration.origin,
         })
@@ -4832,7 +4906,8 @@ impl Lowerer {
             && current.antialiasing == settings.antialiasing
             && current.vsync == settings.vsync
             && current.window == settings.window
-            && current.windows == settings.windows;
+            && current.windows == settings.windows
+            && tray_static_fields_match(current.tray.as_ref(), settings.tray.as_ref());
         let mut current_default_fonts = self.document.fonts.iter().filter(|font| font.default);
         let current_default_font = current_default_fonts.next();
         let duplicate_default_font = current_default_fonts.next();
@@ -4870,6 +4945,31 @@ impl Lowerer {
         }
         if let Some(window) = &settings.window {
             self.validate_checked_window_settings(window, &window.span)?;
+        }
+        if let Some(tray) = &settings.tray {
+            let Some(icon) = &tray.icon else {
+                return Err(self.invariant(&tray.span, "checked tray settings lost their icon"));
+            };
+            let expected = (icon.width as usize)
+                .checked_mul(icon.height as usize)
+                .and_then(|pixels| pixels.checked_mul(4));
+            if icon.width == 0 || icon.height == 0 || expected != Some(icon.byte_len) {
+                return Err(self.invariant(
+                    &icon.span,
+                    "checked tray icon dimensions do not match its byte length",
+                ));
+            }
+            if let Some(popover) = &tray.popover
+                && !settings
+                    .windows
+                    .iter()
+                    .any(|window| window.name == *popover)
+            {
+                return Err(self.invariant(
+                    &tray.span,
+                    "checked tray popover references an unknown window",
+                ));
+            }
         }
         Ok(())
     }
@@ -9681,6 +9781,21 @@ fn valid_f32(value: f64) -> bool {
 
 fn valid_positive_f32(value: f64) -> bool {
     value > 0.0 && valid_f32(value)
+}
+
+fn tray_static_fields_match(
+    current: Option<&TraySettings>,
+    checked: Option<&TraySettings>,
+) -> bool {
+    match (current, checked) {
+        (None, None) => true,
+        (Some(current), Some(checked)) => {
+            current.icon == checked.icon
+                && current.icon_template == checked.icon_template
+                && current.popover == checked.popover
+        }
+        _ => false,
+    }
 }
 
 fn first_changed_static_setting_span<'a>(
@@ -19379,6 +19494,40 @@ view
                 .message
                 .contains("outside its lexical scoped-value body")
         );
+    }
+
+    #[test]
+    fn lowers_tray_settings_with_popover_reference() {
+        let source = format!(
+            "app TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    label describe(count)\n    tooltip \"Demo\"\n    popover status\n  window status\n    size 320 240\nextern crate::backend\n  sync describe(value:i64) -> str\nstate\n  count = 1\n{THEME}view\n  text count\n"
+        );
+        let mut program = lower(analyze(&source).unwrap()).unwrap();
+        let settings = program.settings();
+        let tray = settings.tray.as_ref().unwrap();
+        assert_eq!(tray.icon.path, "assets/tray.rgba");
+        assert_eq!((tray.icon.width, tray.icon.height), (2, 2));
+        assert_eq!(tray.icon.byte_len, 16);
+        assert!(tray.icon_template);
+        assert!(tray.label.is_some());
+        assert!(tray.tooltip.is_some());
+        assert_eq!(tray.popover, Some(NamedWindowId(0)));
+    }
+
+    #[test]
+    fn rejects_tray_topology_mutations_with_e196() {
+        let source = format!(
+            "app TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    popover status\n  window status\n    size 320 240\n{THEME}view\n  text \"ready\"\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.tray.as_mut().unwrap().popover = Some("missing".into());
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.tray = None;
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
     }
 
     #[test]
