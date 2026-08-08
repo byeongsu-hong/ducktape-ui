@@ -3564,6 +3564,12 @@ impl<'a> FactsBuilder<'a> {
             && self.document.settings.background.is_none()
             && self.document.settings.text_color.is_none()
             && self.document.settings.scale_factor.is_none()
+            && self
+                .document
+                .settings
+                .tray
+                .as_ref()
+                .is_none_or(|tray| tray.label.is_none() && tray.tooltip.is_none())
         {
             return Ok(());
         }
@@ -3630,6 +3636,24 @@ impl<'a> FactsBuilder<'a> {
                     &app_env,
                     &setting.span,
                 )?;
+            }
+        }
+
+        if let Some(tray) = &self.document.settings.tray {
+            for (id, setting) in [
+                (AppSettingExprId::TrayLabel, &tray.label),
+                (AppSettingExprId::TrayTooltip, &tray.tooltip),
+            ] {
+                if let Some(setting) = setting {
+                    lower(
+                        self,
+                        id,
+                        &setting.value,
+                        &Type::Str,
+                        &app_env,
+                        &setting.span,
+                    )?;
+                }
             }
         }
 

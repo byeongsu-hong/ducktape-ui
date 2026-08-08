@@ -4941,6 +4941,16 @@ impl Lowerer {
                 expected.insert(id);
             }
         }
+        if let Some(tray) = &source.tray {
+            for (id, setting) in [
+                (AppSettingExprId::TrayLabel, &tray.label),
+                (AppSettingExprId::TrayTooltip, &tray.tooltip),
+            ] {
+                if setting.is_some() {
+                    expected.insert(id);
+                }
+            }
+        }
         if let Some(checked) = self.facts.app_theme_factory() {
             let Some(AppExpression {
                 value: Expr::Call { name, args },
@@ -5077,6 +5087,12 @@ impl Lowerer {
             AppSettingExprId::Background => source.background.as_ref(),
             AppSettingExprId::TextColor => source.text_color.as_ref(),
             AppSettingExprId::ScaleFactor => source.scale_factor.as_ref(),
+            AppSettingExprId::TrayLabel => {
+                source.tray.as_ref().and_then(|tray| tray.label.as_ref())
+            }
+            AppSettingExprId::TrayTooltip => {
+                source.tray.as_ref().and_then(|tray| tray.tooltip.as_ref())
+            }
         };
         setting.map(|setting| &setting.span).ok_or_else(|| {
             self.invariant(
@@ -5096,7 +5112,9 @@ impl Lowerer {
             AppSettingExprId::Title
             | AppSettingExprId::Theme
             | AppSettingExprId::Background
-            | AppSettingExprId::TextColor => Type::Str,
+            | AppSettingExprId::TextColor
+            | AppSettingExprId::TrayLabel
+            | AppSettingExprId::TrayTooltip => Type::Str,
             AppSettingExprId::ScaleFactor => Type::F64,
             AppSettingExprId::Palette => match &expression.destination {
                 Type::Palette(contract) => Type::Palette(contract.clone()),

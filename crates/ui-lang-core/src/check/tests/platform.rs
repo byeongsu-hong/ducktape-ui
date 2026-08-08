@@ -814,3 +814,110 @@ view
         analyze(&source.replace("cursor=(cursor_state)", "cursor=(\"bogus\")")).unwrap_err();
     assert!(error.message.contains("unknown canvas cursor"));
 }
+
+#[test]
+fn accepts_a_full_tray_declaration() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    icon-template true
+    label describe(count)
+    tooltip "Demo"
+    popover status
+  window status
+    size 320 240
+extern crate::backend
+  sync describe(value:i64) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+view
+  text count
+"#;
+    analyze(source).unwrap();
+}
+
+#[test]
+fn rejects_a_non_str_tray_label() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    label count
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+view
+  text count
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E101");
+    assert!(error.message.contains("expected `str`"));
+}
+
+#[test]
+fn rejects_a_non_str_tray_tooltip() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    tooltip count
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+view
+  text count
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E101");
+    assert!(error.message.contains("expected `str`"));
+}
+
+#[test]
+fn rejects_a_tray_popover_without_a_matching_window() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    popover missing
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  text "hi"
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E173");
+    assert!(error.message.contains("unknown app window `missing`"));
+}
