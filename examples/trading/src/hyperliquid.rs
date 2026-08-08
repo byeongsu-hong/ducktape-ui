@@ -1862,35 +1862,108 @@ pub fn fmt_age(ts: i64) -> String {
 /// state from somewhere; these are that somewhere. Two bugs in this panel were
 /// only ever visible in a picture, and a picture needs data.
 pub fn demo_symbols() -> Vec<SymbolRow> {
-    vec![SymbolRow {
-        name: "BTC".to_owned(),
-        price: 64_000.0,
-        change_pct: 1.25,
-        volume: 1_300_000_000.0,
-        funding_pct: 0.00125,
-        leverage: 40.0,
-        open_interest: 35_000.0,
-        prev: 63_210.0,
-        maintenance: 1.0 / 80.0,
-        selected: true,
-    }]
+    // More than one, because a list of one hides every question worth asking
+    // of a list: which row is selected, what a search leaves, and whether a
+    // price landed on the market it belongs to. Volume descending, as the
+    // parser leaves them.
+    vec![
+        SymbolRow {
+            name: "BTC".to_owned(),
+            price: 64_000.0,
+            change_pct: change_pct(64_000.0, 63_210.0),
+            volume: 1_300_000_000.0,
+            funding_pct: 0.00125,
+            leverage: 40.0,
+            open_interest: 35_000.0,
+            prev: 63_210.0,
+            maintenance: 1.0 / 80.0,
+            selected: true,
+        },
+        SymbolRow {
+            name: "ETH".to_owned(),
+            price: 3_540.0,
+            change_pct: change_pct(3_540.0, 3_500.0),
+            volume: 890_000_000.0,
+            funding_pct: 0.0009,
+            leverage: 25.0,
+            open_interest: 410_000.0,
+            prev: 3_500.0,
+            maintenance: 1.0 / 50.0,
+            selected: false,
+        },
+        SymbolRow {
+            name: "SOL".to_owned(),
+            price: 148.62,
+            change_pct: change_pct(148.62, 152.0),
+            volume: 410_000_000.0,
+            funding_pct: -0.00042,
+            leverage: 20.0,
+            open_interest: 2_900_000.0,
+            prev: 152.0,
+            maintenance: 1.0 / 40.0,
+            selected: false,
+        },
+    ]
 }
 
 pub fn demo_positions() -> Vec<Position> {
-    vec![Position {
-        coin: "BTC".to_owned(),
-        size: -30.0,
-        entry: 81_461.5,
-        mark: 64_000.0,
-        liq: 174_000.0,
-        pnl: 523_845.0,
-        roe_pct: 811.79,
-        margin: 61_096.0,
-        risk: liquidation_travel(81_461.5, 64_000.0, 174_000.0) * RISK_RAIL_WIDTH,
-        leverage: 40.0,
-        margin_mode: "cross".to_owned(),
-        funding: -3_309_304.0,
-    }]
+    vec![
+        demo_position(
+            "BTC",
+            -30.0,
+            81_461.5,
+            64_000.0,
+            40.0,
+            Some(174_000.0),
+            -3_309_304.0,
+        ),
+        // The state the risk rail exists for, and the one no capture had
+        // ever drawn: an isolated long most of the way to its cliff.
+        // Isolated, so the cross maintenance the equity bar reads is its own.
+        demo_position("ETH", 40.0, 3_600.0, 3_540.0, 25.0, None, -142.0),
+    ]
+}
+
+/// A fixture position whose figures follow from the ones that are chosen,
+/// through the same arithmetic the panel uses. Hand-typed money drifts from
+/// the fields beside it and reads exactly as plausibly as the correct value.
+fn demo_position(
+    coin: &str,
+    size: f64,
+    entry: f64,
+    mark: f64,
+    leverage: f64,
+    reported_liq: Option<f64>,
+    funding: f64,
+) -> Position {
+    // A cross position is liquidated against the whole account, so its cliff
+    // is the exchange's to report and arrives with it; an isolated one is
+    // liquidated against its own margin and has the closed form. Which of the
+    // two a position is, is that same fact, so it is not asked for twice.
+    let mode = if reported_liq.is_some() {
+        "cross"
+    } else {
+        "isolated"
+    };
+    let maintenance = 1.0 / (leverage * 2.0);
+    let liq = reported_liq
+        .unwrap_or_else(|| ticket_liquidation(entry, leverage, maintenance, size > 0.0));
+    let pnl = (mark - entry) * size;
+    let margin = entry * size.abs() / leverage;
+    Position {
+        coin: coin.to_owned(),
+        size,
+        entry,
+        mark,
+        liq,
+        pnl,
+        roe_pct: pnl / margin * 100.0,
+        margin,
+        risk: liquidation_travel(entry, mark, liq) * RISK_RAIL_WIDTH,
+        leverage,
+        margin_mode: mode.to_owned(),
+        funding,
+    }
 }
 
 /// A tape with candles already in it, focused on the market the other
@@ -1996,7 +2069,7 @@ pub fn demo_alerts() -> Vec<Alert> {
         Alert {
             coin: "ETH".to_owned(),
             price: 3_400.0,
-            above: true,
+            above: false,
             fired: false,
         },
     ]
@@ -2156,6 +2229,74 @@ pub fn chart(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fixture is read as evidence, so it has to be a state the exchange
+    /// could actually report. Five of this loop's bugs were impossible states
+    /// drawn convincingly, and a wrong number in the right column is the one
+    /// kind of wrong a render cannot show.
+    #[test]
+    fn the_fixture_positions_are_arithmetically_possible() {
+        for held in demo_positions() {
+            let coin = &held.coin;
+            assert!(
+                (held.pnl - (held.mark - held.entry) * held.size).abs() < 0.01,
+                "{coin}: unrealized does not follow from entry, mark and size"
+            );
+            assert!(
+                (held.margin - held.entry * held.size.abs() / held.leverage).abs() < 0.01,
+                "{coin}: margin does not follow from the leverage beside it"
+            );
+            assert!(
+                (held.roe_pct - held.pnl / held.margin * 100.0).abs() < 0.01,
+                "{coin}: return on equity is not that return over that equity"
+            );
+            assert!(
+                (held.risk - liquidation_travel(held.entry, held.mark, held.liq) * RISK_RAIL_WIDTH)
+                    .abs()
+                    < 1e-9,
+                "{coin}: the risk rail is not how far the mark has travelled"
+            );
+            assert!(
+                (0.0..=RISK_RAIL_WIDTH).contains(&held.risk),
+                "{coin}: the rail is drawn {} wide of {RISK_RAIL_WIDTH}",
+                held.risk
+            );
+            // A long is liquidated below its entry and a short above it.
+            assert_eq!(
+                held.liq < held.entry,
+                held.size > 0.0,
+                "{coin}: the cliff is on the wrong side of the entry"
+            );
+        }
+    }
+
+    /// The fixture markets have to be the shape the parser leaves: volume
+    /// descending, one selection, and a maintenance that matches the cap.
+    #[test]
+    fn the_fixture_markets_are_the_shape_the_parser_leaves() {
+        let rows = demo_symbols();
+        assert!(rows.len() > 1, "a list of one hides what a list does");
+        for pair in rows.windows(2) {
+            assert!(
+                pair[0].volume >= pair[1].volume,
+                "{} outranks {} on volume",
+                pair[1].name,
+                pair[0].name
+            );
+        }
+        for row in &rows {
+            assert!(
+                (row.maintenance - 1.0 / (row.leverage * 2.0)).abs() < 1e-12,
+                "{}: maintenance is half the margin at the cap",
+                row.name
+            );
+            assert!(
+                (row.change_pct - change_pct(row.price, row.prev)).abs() < 1e-9,
+                "{}: the change is not this price against that close",
+                row.name
+            );
+        }
+    }
 
     /// The book the fixture holds: bids 63,999/998/997 at 1.4/2.1/2.5 and
     /// asks 64,001/002/003 at 1.8/2.2/3.0, around a 64,000 mid.

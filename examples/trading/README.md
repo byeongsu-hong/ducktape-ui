@@ -178,6 +178,27 @@ market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
 
+## Fixtures are read as evidence
+
+Every capture in this directory is an argument that the panel is right, so a
+fixture has to be a state the exchange could actually report. Five bugs in
+this example were impossible states drawn convincingly, and a wrong number in
+the right column is the one kind of wrong a render cannot show.
+
+So the fixture positions derive their figures from the four that are chosen,
+through the same arithmetic the panel uses, and a test holds the relations
+that survive: unrealized from entry, mark and size; margin from the leverage
+beside it; return on equity as that return over that equity; the rail as how
+far the mark has travelled; the cliff on the correct side of the entry.
+
+Writing that test found two numbers that had been on screen all along — a
+return on equity of 811.79% where the position's own pnl and margin say
+857.41%, and a 24h change rounded away from the prices it is computed from.
+
+The markets are three rather than one, for the same reason. A list of one
+answers no question a list is asked: which row is selected, what a search
+leaves behind, whether a price landed on the market it belongs to.
+
 ## The other price
 
 The ticket quotes a price the reader typed. `IF YOU CROSS` is the other one:
