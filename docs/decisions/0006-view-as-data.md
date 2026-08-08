@@ -40,11 +40,19 @@ There is one renderer, used in development and in release. The prior attempt's
 failure mode was two implementations diverging; the defence is not to have a
 second one. A dev-only interpreter is explicitly rejected.
 
-Emission is all-or-nothing per view. A view containing any construct the
-template vocabulary does not model keeps its compiled tree entirely, so a
-partially-modelled view can never render. This is the permanent boundary, not
+A construct the vocabulary does not model becomes a **hole**: the compiler
+renders that subtree exactly as before and hands it to the renderer through the
+slot table, and the structure around it stays data. Falling back per subtree
+rather than per view is what lets real applications reload at all — one `if` no
+longer costs a whole screen its template. This is the permanent boundary, not
 scaffolding: control flow, components, and native `extern` surfaces are
-expected to stay compiled.
+expected to stay compiled, and what is inside a hole reloads only when the
+binary does.
+
+`if`, `for`, and `match` are the exception, because they contribute a variable
+number of children to their parent rather than rendering as one element. A
+layout containing any of them becomes the hole instead, so the fallback
+boundary rises to the nearest enclosing layout.
 
 A running process may accept a new template when, and only when, the slot table
 it fills each frame is unchanged — same expressions, in the same order,
@@ -56,14 +64,18 @@ rebuild-and-restart path decision 0004's tooling already provides.
 ## Evidence from the proof of concept
 
 Scope: layouts, containers, text, inputs, and buttons — 5 of 41 view node
-kinds. These cover 13 of the repository's 67 app roots outright.
+kinds, with everything else falling back per subtree. **60 of the repository's
+67 app roots publish a template**; 2 keep a fully compiled view (mounted
+components), and 5 are fragments that do not analyse standalone.
 
-- **Rendering is identical.** `cargo ice inspect` captures of `starter` on the
-  template path and the compiled path produce byte-identical PNGs (0 changed
-  pixels of 786,432) and zero manifest differences, including source
-  provenance. The first draft failed this check on accessibility paths, which
-  is how the oracle earned its keep: only an author's `#name` opens a scope for
-  descendants, and the template initially opened one for every node.
+- **Rendering is identical.** `cargo ice inspect` captures on the template path
+  and the compiled path produce byte-identical PNGs and zero manifest
+  differences, including source provenance — for `starter`, and for
+  `markdown-editor`, a real application whose view is largely holes. The whole
+  workspace suite passes with 60 roots on the template path. The first draft
+  failed the capture check on accessibility paths, which is how the oracle
+  earned its keep: only an author's `#name` opens a scope for descendants, and
+  the template initially opened one for every node.
 - **A binary renders a template it was never built against.** Editing the
   emitted JSON — new heading, larger type, wider spacing, a reversed row, a
   restyled button — and pointing the compiled `starter` at it renders every
@@ -71,13 +83,31 @@ kinds. These cover 13 of the repository's 67 app roots outright.
 - **The reload path costs ~0.6ms** (parse, check, lower, emit), against ~1.0s
   for the rebuild it replaces on that app. Diagnostics are unaffected: the
   reload path runs the same front end.
-- **Generated view code drops to nothing.** `starter`'s generated Rust falls
-  from 393 to 305 lines, and its 21 in-view iced widget constructions to zero.
+- **Rebuilds roughly halve at scale.** A generated probe of rows built from the
+  modelled vocabulary, rebuilt after touching its `.ice`:
 
-What the proof of concept does **not** establish: the build-time win. `starter`
-rebuilds in ~1.0s either way, because it is too small for monomorphization to
-dominate. Demonstrating the effect needs enough node coverage to template a
-`showcase`-scale app.
+  | probe | compiled path | template path |
+  | --- | --- | --- |
+  | 200 rows (600 slots) | 7.23 s | **3.65 s** |
+  | 600 rows (1800 slots) | 23.5 s | **13.0 s** |
+
+  Generated Rust for the 200-row probe falls from 1.63 MB carrying 2,007 iced
+  widget constructions to 0.67 MB carrying none.
+
+Two things this does **not** establish, both worth naming.
+
+The remaining template cost is not the published JSON. A 1.9 MB string literal
+compiles in 0.03 s standalone, and a 1.57 MB template with **no** slots rebuilds
+in 3.40 s against a 1.35 s floor. What costs is the slot table: 1,800 slot
+expressions in one `__view` body account for ~9.5 s, and emitting them as
+statements rather than as one array literal recovered only ~2.5 s of that. The
+compiled path already solves this problem — `codegen::view::outline` moves large
+views into per-fragment methods precisely because type and borrow checking are
+superlinear in function size — and the slot table needs the same treatment.
+Until it gets it, the measured win understates what the design can reach.
+
+Nor does it establish anything about a `showcase`-scale application, whose views
+are built from components. A component is a hole today.
 
 ## Rejected alternatives
 

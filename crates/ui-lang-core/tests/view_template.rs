@@ -118,20 +118,51 @@ fn a_modelled_view_is_published_as_data() {
 }
 
 #[test]
-fn a_view_the_runtime_cannot_render_stays_compiled() {
-    // `if` has no template node, so the whole view must fall back rather than
-    // publish a tree the renderer would silently drop a branch from.
+fn an_unmodelled_construct_becomes_a_hole_the_compiler_fills() {
+    // `if` has no template node. It does not cost the view its template: the
+    // enclosing layout falls back to a compiled subtree, and everything
+    // outside that subtree still reloads. Whole-view fallback would mean one
+    // conditional stops a whole screen from reloading.
     let source = APP.replace(
         "      text count #count\n",
         "      if count > 0\n        text count #count\n",
     );
-    let (_directory, path) = write_app(&source, "refuses");
+    let (_directory, path) = write_app(&source, "hole");
     let mut db = ui_lang_core::AnalysisDb::default();
-    let template = db.view_template(&path).expect("the variant analyzes");
+    let template = db
+        .view_template(&path)
+        .expect("the variant analyzes")
+        .expect("an unmodelled node does not cost the view its template");
+
     assert!(
-        template.is_none(),
-        "a view with an unmodelled node must keep its compiled path"
+        template.json.contains(r#""kind": "subtree""#),
+        "the conditional's layout became a hole: {}",
+        template.json
     );
+    // The structure around the hole is still data, so it still reloads.
+    assert!(template.json.contains(r#""literal": "Sample""#));
+    assert!(template.json.contains(r#""segment": "greeting""#));
+}
+
+#[test]
+fn a_view_of_only_unmodelled_nodes_is_one_hole() {
+    // The root itself can be the hole. Nothing about the view reloads, but the
+    // published shape stays uniform rather than becoming a special case.
+    let source = APP
+        .split("view\n")
+        .next()
+        .expect("the app has a view")
+        .to_owned()
+        + "view\n  rich-text #banner\n    span \"Only a hole\"\n";
+    let (_directory, path) = write_app(&source, "root-hole");
+    let mut db = ui_lang_core::AnalysisDb::default();
+    if let Some(template) = db.view_template(&path).expect("the variant analyzes") {
+        assert!(
+            template.json.contains(r#""kind": "subtree""#),
+            "an unmodelled root is published as a hole: {}",
+            template.json
+        );
+    }
 }
 
 #[test]

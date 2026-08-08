@@ -5,13 +5,11 @@
 //! JSON half that `ui_lang_runtime::template` renders, plus the Rust
 //! expressions that fill the slot table each frame.
 //!
-//! The rule that keeps the two honest: emission is all-or-nothing. A view
-//! containing any construct this module does not model returns `None` and
-//! keeps its inline path, so a partially-modelled view can never render.
-//!
-//! The node vocabulary is deliberately narrow for now — layouts, containers,
-//! text, inputs, buttons. Widening it is the work of moving Ice's view surface
-//! out of the compiler's output and into the runtime.
+//! The node vocabulary is deliberately narrow — layouts, containers, text,
+//! inputs, buttons. A construct outside it is not a failure: it becomes a hole
+//! whose subtree the inline emitter renders as before, spliced back through
+//! the slot table. Widening the vocabulary shrinks the holes; it is never
+//! required for a view to publish.
 
 use super::*;
 use serde::Serialize;
@@ -180,15 +178,22 @@ enum Node {
         on_press: usize,
         style: ButtonStyle,
     },
+    Subtree {
+        slot: usize,
+    },
 }
 
-/// Publishes `program`'s app view as a template, or reports `None` when the
-/// view uses anything outside the modelled vocabulary.
+/// Publishes `program`'s app view as a template.
+///
+/// `None` means this view has no published form at all — it renders nothing,
+/// or the app retains mounted component state the vocabulary cannot express.
+/// An ordinary unmodelled construct does not land here; it becomes a hole.
 pub(in crate::codegen) fn emit(
     program: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
     source_path: &str,
+    root_scope: &str,
 ) -> Result<Option<TemplateEmission>, Error> {
     // Proof-of-concept instrument: forcing the inline path is how a capture
     // from the compiled tree is produced to diff the template against. It
@@ -213,9 +218,10 @@ pub(in crate::codegen) fn emit(
         paths: Vec::new(),
         source_path,
     };
-    let Some(root) = builder.node(program.app_view())? else {
+    if builder.is_omitted(program.app_view())? {
         return Ok(None);
-    };
+    }
+    let root = builder.node(program.app_view(), root_scope)?;
     let template = Template {
         root,
         slots: builder.slots.len(),
@@ -300,16 +306,64 @@ impl Builder<'_> {
         }
     }
 
-    fn node(&mut self, id: ViewId) -> Result<Option<Node>, Error> {
+    /// Publishes a node as data, or — when the vocabulary cannot express it —
+    /// as a hole the compiled tree fills.
+    ///
+    /// Falling back per subtree rather than per view is what lets a real app
+    /// reload at all: one `if` no longer forces its whole screen back onto the
+    /// compiled path, it just stops that branch's contents from reloading.
+    fn node(&mut self, id: ViewId, scope: &str) -> Result<Node, Error> {
         let view = self.program.resolved_view(id)?;
-        match &view.kind {
-            ResolvedViewKind::Container { content } => self.container(id, view, *content),
-            ResolvedViewKind::Layout { children } => self.linear(id, view, children),
-            ResolvedViewKind::Text => self.text(id, view),
-            ResolvedViewKind::Input => self.input(id, view),
-            ResolvedViewKind::Button { content } => self.button(id, view, content.as_ref()),
-            _ => Ok(None),
+        let modelled = match &view.kind {
+            ResolvedViewKind::Container { content } => self.container(id, view, *content, scope)?,
+            ResolvedViewKind::Layout { children } => self.linear(id, view, children, scope)?,
+            ResolvedViewKind::Text => self.text(id, view)?,
+            ResolvedViewKind::Input => self.input(id, view)?,
+            ResolvedViewKind::Button { content } => self.button(id, view, content.as_ref())?,
+            _ => None,
+        };
+        match modelled {
+            Some(node) => Ok(node),
+            None => self.subtree(id, scope),
         }
+    }
+
+    /// Whether a node renders nothing — an optional slot with no content, or
+    /// a wrapper around one.
+    fn is_omitted(&self, id: ViewId) -> Result<bool, Error> {
+        node_is_omitted(id, self.program, self.env, None)
+    }
+
+    /// Whether a node contributes a variable number of children to its parent
+    /// rather than rendering as one element.
+    ///
+    /// `if`, `for`, and `match` are lowered as layout children precisely
+    /// because their child count is not known until they run. A hole holds one
+    /// element, so a layout containing any of them becomes the hole instead.
+    fn splices_into_parent(&self, id: ViewId) -> Result<bool, Error> {
+        Ok(matches!(
+            self.program.resolved_view(id)?.kind,
+            ResolvedViewKind::If { .. }
+                | ResolvedViewKind::Match { .. }
+                | ResolvedViewKind::For { .. }
+        ))
+    }
+
+    /// The scope a node's descendants render under. Mirrors the inline
+    /// emitter: only an identified node extends the path.
+    fn child_scope(&self, view: &ResolvedView, scope: &str) -> Result<String, Error> {
+        rendered_child_scope(view.identity.as_ref(), scope, self.env, self.program)
+    }
+
+    /// Emits the compiled rendering of a whole subtree into a slot, and
+    /// returns the hole that reads it.
+    fn subtree(&mut self, id: ViewId, scope: &str) -> Result<Node, Error> {
+        let rendered = render_node(id, self.program, self.message, self.env, scope, None)?;
+        Ok(Node::Subtree {
+            slot: self.push_slot(format!(
+                "::ui_lang_runtime::template::Slot::subtree({rendered})"
+            )),
+        })
     }
 
     fn container(
@@ -317,6 +371,7 @@ impl Builder<'_> {
         id: ViewId,
         view: &ResolvedView,
         content: ViewId,
+        scope: &str,
     ) -> Result<Option<Node>, Error> {
         let container = self.program.resolved_container(id)?;
         // Anything beyond geometry and a flat background still needs compiled
@@ -352,9 +407,11 @@ impl Builder<'_> {
             Some(_) => return Ok(None),
             None => None,
         };
-        let Some(content) = self.node(content)? else {
+        if self.splices_into_parent(content)? || self.is_omitted(content)? {
             return Ok(None);
-        };
+        }
+        let child_scope = self.child_scope(view, scope)?;
+        let content = self.node(content, &child_scope)?;
         Ok(Some(Node::Container {
             a11y,
             width,
@@ -372,6 +429,7 @@ impl Builder<'_> {
         id: ViewId,
         view: &ResolvedView,
         children: &[ViewId],
+        scope: &str,
     ) -> Result<Option<Node>, Error> {
         let layout = self.program.resolved_layout(id)?;
         let ResolvedLayoutMode::Linear(linear) = &layout.mode else {
@@ -417,12 +475,20 @@ impl Builder<'_> {
             (Axis::Row, Some(align)) => (None, Some(align_y(align))),
             (_, None) => (None, None),
         };
+        for child in children {
+            if self.splices_into_parent(*child)? {
+                return Ok(None);
+            }
+        }
+        let child_scope = self.child_scope(view, scope)?;
         let mut rendered = Vec::with_capacity(children.len());
         for child in children {
-            let Some(child) = self.node(*child)? else {
-                return Ok(None);
-            };
-            rendered.push(child);
+            // An unsupplied optional slot renders nothing, and the layout's
+            // spacing and fill are computed from the surviving child count.
+            if self.is_omitted(*child)? {
+                continue;
+            }
+            rendered.push(self.node(*child, &child_scope)?);
         }
         Ok(Some(Node::Linear {
             a11y,
@@ -447,7 +513,9 @@ impl Builder<'_> {
             || options.align_y.is_some()
             || options.shaping.is_some()
             || options.wrapping.is_some()
-            || options.tracking.is_some()
+            // Zero tracking is the absence of tracking: the inline path emits
+            // one plain widget for it, so the template can carry it too.
+            || options.tracking.is_some_and(|tracking| tracking != 0.0)
             || options.custom_style.is_some()
             || !style_is_only_text_color(&text.utility_style)
         {

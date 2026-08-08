@@ -119,7 +119,9 @@ view
     assert!(generated.contains("crate::backend::native_theme(self.dark)"));
     assert!(generated.contains("background: __ice_palette.colors[0]"));
     assert!(generated.contains("text: __ice_palette.colors[1]"));
-    assert!(generated.contains("::iced::Background::Color(__ice_palette.colors[4])"));
+    // `box bg=surface` is modelled, so its background travels as a palette
+    // index rather than a generated colour expression.
+    assert!(generated.contains(r#"\"background\": {\n      \"index\": 4"#));
     assert!(
         generated.contains("dynamic_themer(::std::option::Option::Some(__ice_app_theme.clone())")
     );
@@ -1322,15 +1324,11 @@ view
         "::ui_lang_runtime::Bridge<__AccessibleMessage>",
         "::ui_lang_runtime::snapshot::<__AccessibleMessage>(\"Accessible\")",
         "::ui_lang_runtime::navigation(",
-        "::ui_lang_runtime::Role::TextInput",
-        "::ui_lang_runtime::Role::Label",
-        "let __text_value = (42).to_string()",
-        ".value(__text_value)",
-        "::ui_lang_runtime::Role::GenericContainer",
-        "::ui_lang_runtime::Role::Button",
+        // Checkbox and image are not modelled, so they keep their generated
+        // semantics; text, input, and button are published as data and the
+        // renderer assigns their roles.
         "::ui_lang_runtime::Role::CheckBox",
         "::ui_lang_runtime::Role::Image",
-        ".label(\"Full name\".to_owned())",
         ".description(\"Profile portrait\".to_owned())",
         ".chain(::ui_lang_runtime::snapshot",
         "let __refresh = matches!(__request.action, ::ui_lang_runtime::Action::Focus)",
@@ -1353,6 +1351,15 @@ view
     }
     assert!(!generated.contains("dispatch(__request).chain"));
     assert!(!generated.contains("claim_window"));
+
+    // The one modelled widget here carries its accessibility contract in the
+    // published data. The input and button are not modelled, because explicit
+    // `label=`/`description=` have no template field yet, so they keep their
+    // generated semantics.
+    assert!(generated.contains(r#"\"kind\": \"text\""#));
+    assert!(generated.contains("::ui_lang_runtime::Role::TextInput"));
+    assert!(generated.contains("::ui_lang_runtime::Role::Button"));
+    assert!(generated.contains(".label(\"Full name\".to_owned())"));
 }
 
 #[test]

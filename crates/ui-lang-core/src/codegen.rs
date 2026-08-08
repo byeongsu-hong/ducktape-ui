@@ -426,16 +426,19 @@ pub fn view_template(
     let app_name = program.app_name();
     let message = format!("__{app_name}Message");
     let env = checked_state_env(program, "self");
+    let root_scope = rust_string(program.app_name());
     Ok(
-        template::emit(program, &message, &env, source_path)?.map(|emission| ViewTemplate {
-            slot_fingerprint: {
-                use sha2::Digest;
-                sha2::Sha256::digest(emission.slots.join("\u{1f}"))
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect()
-            },
-            json: emission.json,
+        template::emit(program, &message, &env, source_path, &root_scope)?.map(|emission| {
+            ViewTemplate {
+                slot_fingerprint: {
+                    use sha2::Digest;
+                    sha2::Sha256::digest(emission.slots.join("\u{1f}"))
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect()
+                },
+                json: emission.json,
+            }
         }),
     )
 }

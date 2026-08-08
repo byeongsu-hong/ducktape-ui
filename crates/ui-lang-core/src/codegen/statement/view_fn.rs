@@ -70,18 +70,19 @@ pub(in crate::codegen) fn generate_view(
     };
     // A view the template vocabulary covers is published as data and rendered
     // by the runtime; anything else keeps its compiled tree.
-    let rendered_root = match crate::codegen::template::emit(program, message, &env, source_path)? {
-        Some(emission) => template_render_code(&emission, message, &root_scope),
-        None => render_node_if_present(
-            program.app_view(),
-            program,
-            message,
-            &env,
-            &root_scope,
-            None,
-        )?
-        .unwrap_or_else(|| "::iced::widget::Column::new().into()".into()),
-    };
+    let rendered_root =
+        match crate::codegen::template::emit(program, message, &env, source_path, &root_scope)? {
+            Some(emission) => template_render_code(&emission, message, &root_scope),
+            None => render_node_if_present(
+                program.app_view(),
+                program,
+                message,
+                &env,
+                &root_scope,
+                None,
+            )?
+            .unwrap_or_else(|| "::iced::widget::Column::new().into()".into()),
+        };
     let window_arg = if daemon {
         ", window: ::iced::window::Id"
     } else {

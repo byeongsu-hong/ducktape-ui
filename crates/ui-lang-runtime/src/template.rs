@@ -10,9 +10,10 @@
 //! The split is what makes a running app reloadable: replacing the [`Node`]
 //! tree needs no compiler as long as the slot table still satisfies it.
 //!
-//! This is the proof-of-concept subset — layouts, containers, text, inputs,
-//! and buttons. Codegen emits a template only when every node in a view is
-//! representable here, so an unsupported view keeps its inline Rust path.
+//! The modelled vocabulary is layouts, containers, text, inputs, and buttons.
+//! Anything else becomes a [`Node::Subtree`] hole that the compiler fills
+//! through the slot table, so an unmodelled construct costs only its own
+//! subtree its reloadability rather than costing the whole view its template.
 
 use std::borrow::Cow;
 
@@ -24,6 +25,9 @@ use iced::{
 use serde::{Deserialize, Serialize};
 
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
+
+/// The element type generated applications render into.
+pub type IceElement<'a, Message> = Element<'a, Message, iced::Theme, iced::Renderer>;
 
 /// The dynamic half of a view, evaluated fresh by generated code each frame.
 ///
@@ -41,6 +45,20 @@ pub enum Slot<'a, Message> {
     /// A message constructor for widgets that report a value, such as the
     /// two-way binding behind `<->`.
     TextHandler(fn(String) -> Message),
+    /// A whole subtree the compiler built, for the constructs the template
+    /// vocabulary does not model — control flow, components, native surfaces.
+    ///
+    /// Taken rather than cloned: an element is not `Clone`, and a template
+    /// references each subtree exactly once. A stale template that names one
+    /// twice gets an empty second reading rather than a panic.
+    Subtree(std::cell::RefCell<Option<IceElement<'a, Message>>>),
+}
+
+impl<'a, Message> Slot<'a, Message> {
+    /// Wraps a compiled subtree for the slot table.
+    pub fn subtree(element: impl Into<IceElement<'a, Message>>) -> Self {
+        Self::Subtree(std::cell::RefCell::new(Some(element.into())))
+    }
 }
 
 impl<Message> Slot<'_, Message> {
@@ -48,7 +66,7 @@ impl<Message> Slot<'_, Message> {
         match self {
             Self::Owned(value) => value,
             Self::Borrowed(value) => value,
-            Self::Message(_) | Self::TextHandler(_) => "",
+            Self::Message(_) | Self::TextHandler(_) | Self::Subtree(_) => "",
         }
     }
 }
@@ -312,7 +330,19 @@ pub enum Node {
         #[serde(default)]
         style: ButtonStyle,
     },
+    /// A hole the compiler fills, holding a construct the template vocabulary
+    /// does not model. Everything around it still reloads; what is inside
+    /// changes only when the binary does.
+    Subtree { slot: usize },
 }
+
+/// Stands in for a compiled subtree, which composes its own accessibility path
+/// and pushes its own source location.
+static EMPTY_A11Y: A11y = A11y {
+    segment: String::new(),
+    named: false,
+    source: None,
+};
 
 impl Node {
     fn a11y(&self) -> &A11y {
@@ -322,6 +352,8 @@ impl Node {
             | Self::Text { a11y, .. }
             | Self::Input { a11y, .. }
             | Self::Button { a11y, .. } => a11y,
+            // A compiled subtree carries its own identity and provenance.
+            Self::Subtree { .. } => &EMPTY_A11Y,
         }
     }
 }
@@ -348,8 +380,6 @@ impl Template {
         serde_json::to_string_pretty(self).map_err(|error| error.to_string())
     }
 }
-
-type IceElement<'a, Message> = Element<'a, Message, iced::Theme, iced::Renderer>;
 
 /// Renders a template against this frame's slot table.
 ///
@@ -554,6 +584,13 @@ where
                 .spacing(6)
                 .into()
         }
+        Node::Subtree { slot } => match slots.get(*slot) {
+            Some(Slot::Subtree(cell)) => cell
+                .borrow_mut()
+                .take()
+                .unwrap_or_else(|| widget::Space::new().into()),
+            _ => widget::Space::new().into(),
+        },
         Node::Button {
             a11y,
             label,
@@ -750,6 +787,7 @@ fn slot_uses(node: &Node, available: usize) -> bool {
             value, on_input, ..
         } => *value < available && *on_input < available,
         Node::Button { on_press, .. } => *on_press < available,
+        Node::Subtree { slot } => *slot < available,
     }
 }
 

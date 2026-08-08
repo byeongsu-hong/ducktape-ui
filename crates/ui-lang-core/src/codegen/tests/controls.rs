@@ -976,18 +976,23 @@ view
     assert!(generated.contains(
         "::iced::widget::container(__run).width(::iced::Fill).align_x(::iced::alignment::Horizontal::Center)"
     ));
-    // Absent and zero tracking stay one plain text widget.
-    let plain = "let __text_value = (\"PLAIN\").to_string(); let __text = ::iced::widget::text(__text_value.clone()).size(";
-    let zero = plain.replace("PLAIN", "ZERO");
-    assert!(generated.contains(plain));
-    assert!(generated.contains(&zero));
-    // A tracked run is a row, not an iced Text paragraph, so only the plain
-    // and zero-tracking widgets can use the native selection wrapper.
+    // Absent and zero tracking stay one plain text widget, which the template
+    // vocabulary models — so they leave the compiled tree entirely and travel
+    // as data. Only the tracked run still generates Rust.
+    for literal in ["PLAIN", "ZERO"] {
+        assert!(
+            generated.contains(&format!(r#"\"literal\": \"{literal}\""#)),
+            "missing template literal {literal}"
+        );
+    }
+    // A tracked run is a row of glyph widgets, not an iced Text paragraph, so
+    // it cannot use the native selection wrapper; the two modelled texts are
+    // no longer generated at all.
     assert_eq!(
         generated
             .matches("::ui_lang_runtime::selectable_text(__text)")
             .count(),
-        2
+        0
     );
 }
 
@@ -1133,10 +1138,11 @@ view
     text "Muted" @text-primary/50
 "#;
     let generated = compile(source, "typography.ice").unwrap();
+    // A transparent literal has no palette index, so that text keeps its
+    // compiled rendering; a token with opacity travels as an index and alpha.
     assert!(generated.contains(".color(::iced::Color::from_rgba8(0, 0, 0, 0.000000))"));
-    assert!(generated.contains(
-        ".color({ let mut __color = __ice_palette.colors[2]; __color.a = 0.500000; __color })"
-    ));
+    assert!(generated.contains(r#"\"index\": 2"#));
+    assert!(generated.contains(r#"\"alpha\": 0.5"#));
 }
 
 #[test]
@@ -1182,8 +1188,9 @@ view
     let generated = compile(source, "identified.ice").unwrap();
 
     assert_eq!(generated.matches("let __identified:").count(), 6);
-    assert_eq!(generated.matches("let __identified_text").count(), 1);
-    assert!(generated.contains("let __a11y_key = format!(\"{}/plain\""));
+    // `text` is published as data, so its identity is a template segment
+    // rather than a generated key expression.
+    assert!(generated.contains(r#"\"segment\": \"plain\""#));
     assert!(generated.contains(".logical_id(__a11y_key.clone())"));
     for id in [
         "rich",
