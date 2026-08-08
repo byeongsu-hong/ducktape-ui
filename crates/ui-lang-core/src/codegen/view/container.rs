@@ -424,6 +424,55 @@ fn resolved_container_clamped_f32(
     Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
+/// A press guard: everything the target does not act on is swallowed rather
+/// than reaching what is drawn beneath it.
+fn overlay_press_guard(target: &str, message: &str) -> String {
+    let noop = format!("{message}::__ExternNoop");
+    format!(
+        "::iced::widget::mouse_area({target}).on_press({noop}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop})"
+    )
+}
+
+/// The overlay's layer element, and the expression that is the panel the user
+/// sees — the layer with its press guard in the right place.
+///
+/// The guard must wrap what the user SEES as the panel. A floated layer is
+/// re-hosted at its translated position in a nested overlay (iced `float`
+/// captures nothing at its layout slot), so a guard wrapped around the float
+/// would sit at the UNTRANSLATED layout position: the drawn panel would
+/// dismiss on any press its widgets don't capture, and the empty layout slot
+/// would eat clicks meant for the base. When the layer's root is a float, the
+/// guard rides inside it instead. (A float nested deeper than the layer root
+/// still escapes its guard — keep the float outermost in the layer.)
+///
+/// The published path calls this too, so a template's compiled panel is the
+/// same element the inline path would have built.
+pub(in crate::codegen) fn overlay_layer_and_panel(
+    layer: ViewId,
+    document: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    child_scope: &str,
+    slot: Option<&SlotContext>,
+) -> Result<(String, String), Error> {
+    let layer_view = document.resolved_view(layer)?;
+    if let ResolvedViewKind::Float { content: floated } = &layer_view.kind {
+        let floated = render_node(*floated, document, message, env, child_scope, slot)?;
+        let guarded = format!(
+            "{{ let __overlay_floated: __IceElement<'_, {message}> = {floated}; {}.into() }}",
+            overlay_press_guard("__overlay_floated", message)
+        );
+        let float = document.resolved_float(layer)?;
+        let rendered = structure::render_resolved_float(float, document, message, env, guarded)?;
+        let rendered =
+            source_mapped_expression_origin(rendered, document, layer_view.origin, message, false);
+        Ok((rendered, "__overlay_layer".to_string()))
+    } else {
+        let rendered = render_node(layer, document, message, env, child_scope, slot)?;
+        Ok((rendered, overlay_press_guard("__overlay_layer", message)))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_overlay(
     identity: Option<&ResolvedViewIdentity>,
@@ -439,37 +488,9 @@ pub(in crate::codegen) fn render_overlay(
     let program = document;
     let child_scope = rendered_child_scope(identity, scope, env, document)?;
     let content = render_node(content, document, message, env, &child_scope, slot)?;
+    let (layer, panel) =
+        overlay_layer_and_panel(layer, document, message, env, &child_scope, slot)?;
     let noop = format!("{message}::__ExternNoop");
-    let press_guard = |target: &str| {
-        format!(
-            "::iced::widget::mouse_area({target}).on_press({noop}).on_release({noop}).on_right_press({noop}).on_right_release({noop}).on_middle_press({noop}).on_middle_release({noop}).on_scroll(|_| {noop})"
-        )
-    };
-    // The press guard must wrap what the user SEES as the panel. A floated
-    // layer is re-hosted at its translated position in a nested overlay
-    // (iced `float` captures nothing at its layout slot), so a guard wrapped
-    // around the float would sit at the UNTRANSLATED layout position: the
-    // drawn panel would dismiss on any press its widgets don't capture, and
-    // the empty layout slot would eat clicks meant for the base. When the
-    // layer's root is a float, the guard rides inside it instead. (A float
-    // nested deeper than the layer root still escapes its guard — keep the
-    // float outermost in the layer.)
-    let layer_view = document.resolved_view(layer)?;
-    let (layer, panel) = if let ResolvedViewKind::Float { content: floated } = &layer_view.kind {
-        let floated = render_node(*floated, document, message, env, &child_scope, slot)?;
-        let guarded = format!(
-            "{{ let __overlay_floated: __IceElement<'_, {message}> = {floated}; {}.into() }}",
-            press_guard("__overlay_floated")
-        );
-        let float = program.resolved_float(layer)?;
-        let rendered = structure::render_resolved_float(float, program, message, env, guarded)?;
-        let rendered =
-            source_mapped_expression_origin(rendered, document, layer_view.origin, message, false);
-        (rendered, "__overlay_layer".to_string())
-    } else {
-        let rendered = render_node(layer, document, message, env, &child_scope, slot)?;
-        (rendered, press_guard("__overlay_layer"))
-    };
     let visible = resolved_expr_use_code(program, overlay.visible, env, ValueMode::Owned)?;
     let padding = resolved_expr_use_code(program, overlay.padding, env, ValueMode::Owned)?;
     let backdrop = resolved_theme_color(&overlay.backdrop);

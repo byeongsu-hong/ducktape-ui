@@ -68,13 +68,14 @@ fn template_render_code(
 /// The `SlotCounts` literal the generated view sizes its tables from.
 fn slot_counts_code(counts: &ui_lang_template::SlotCounts) -> String {
     format!(
-        "::ui_lang_runtime::template::SlotCounts {{ texts: {}, states: {}, messages: {}, handlers: {}, subtrees: {}, groups: {} }}",
+        "::ui_lang_runtime::template::SlotCounts {{ texts: {}, states: {}, messages: {}, handlers: {}, subtrees: {}, groups: {}, bools: {} }}",
         counts.texts,
         counts.states,
         counts.messages,
         counts.handlers,
         counts.subtrees,
         counts.groups,
+        counts.bools,
     )
 }
 

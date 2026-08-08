@@ -12,7 +12,8 @@
 //! producer and the consumer are the same types. Nothing here depends on a
 //! widget toolkit; rendering lives in `ui_lang_runtime::template`.
 //!
-//! The modelled vocabulary is layouts, containers, text, inputs, and buttons.
+//! The modelled vocabulary is layouts, containers, overlays, text, inputs, and
+//! buttons.
 //! Anything else becomes a [`Node::Subtree`] hole the compiler fills through
 //! the slot table, so an unmodelled construct costs only its own subtree its
 //! reloadability rather than costing the whole view its template. The `if`,
@@ -49,6 +50,14 @@ pub struct MessageSlot(pub usize);
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct HandlerSlot(pub usize);
 
+/// A position in the table of conditions the frame evaluates.
+///
+/// A view whose structure depends on state — an overlay that is open or shut —
+/// needs the answer, not the expression. The expression stays compiled; only
+/// the `bool` it produced crosses into the template.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct BoolSlot(pub usize);
+
 /// A position in the table of compiled subtrees that fill the template's holes.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SubtreeSlot(pub usize);
@@ -82,6 +91,8 @@ pub struct SlotCounts {
     pub subtrees: usize,
     #[serde(default)]
     pub groups: usize,
+    #[serde(default)]
+    pub bools: usize,
 }
 
 /// A string that is either baked into the template or supplied by a slot.
@@ -92,14 +103,24 @@ pub enum Value {
     Slot(TextSlot),
 }
 
-/// A color drawn from the app's compiled palette, optionally faded.
+/// Where a color comes from.
 ///
 /// Palettes stay compiled: they are fixed-size arrays whose type changes with
-/// the token list, so the template refers to them by index the same way the
-/// inline path does.
+/// the token list, so a themed color travels as the index the inline path uses
+/// too. The three colors that are not themed at all are named outright.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorBase {
+    Token(usize),
+    White,
+    Black,
+    Transparent,
+}
+
+/// A color, optionally faded.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ColorRef {
-    pub index: usize,
+    pub base: ColorBase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha: Option<f32>,
 }
@@ -276,6 +297,30 @@ pub enum Node {
         #[serde(default)]
         style: ButtonStyle,
     },
+    /// A modal surface floated over the view beneath it.
+    ///
+    /// The base is data all the way down, which is the point: an overlay is
+    /// usually the outermost node of a real application, so leaving it
+    /// unmodelled cost the entire view its template. The panel is a hole —
+    /// its contents are as varied as any other subtree — and the compiler
+    /// leaves it empty while the overlay is shut, so a closed modal still
+    /// costs only what it did before.
+    Overlay {
+        a11y: A11y,
+        /// Whether the panel is showing this frame.
+        visible: BoolSlot,
+        backdrop: ColorRef,
+        padding: f32,
+        align_x: AlignX,
+        align_y: AlignY,
+        /// The message a press on the backdrop delivers.
+        dismiss: MessageSlot,
+        /// A message that means nothing, for the presses the panel and the
+        /// backdrop swallow rather than act on.
+        noop: MessageSlot,
+        content: Box<Node>,
+        panel: SubtreeSlot,
+    },
     /// A hole the compiler fills, holding a construct the template vocabulary
     /// does not model. Everything around it still reloads; what is inside
     /// changes only when the binary does.
@@ -308,7 +353,8 @@ impl Node {
             | Self::Linear { a11y, .. }
             | Self::Text { a11y, .. }
             | Self::Input { a11y, .. }
-            | Self::Button { a11y, .. } => a11y,
+            | Self::Button { a11y, .. }
+            | Self::Overlay { a11y, .. } => a11y,
             // Compiled children carry their own identity and provenance.
             Self::Subtree { .. } | Self::Group { .. } => &EMPTY_A11Y,
         }
@@ -368,6 +414,20 @@ fn slot_uses(node: &Node, available: SlotCounts) -> bool {
         Node::Group {
             slot: GroupSlot(slot),
         } => *slot < available.groups,
+        Node::Overlay {
+            visible: BoolSlot(visible),
+            dismiss: MessageSlot(dismiss),
+            noop: MessageSlot(noop),
+            content,
+            panel: SubtreeSlot(panel),
+            ..
+        } => {
+            *visible < available.bools
+                && *dismiss < available.messages
+                && *noop < available.messages
+                && *panel < available.subtrees
+                && slot_uses(content, available)
+        }
     }
 }
 

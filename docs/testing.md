@@ -820,12 +820,12 @@ cargo ice expand examples/terminal/src/ui/app.ice \
 Counting `subtree` and `group` nodes in that JSON across every root in
 `examples/`, over the two changes that widened the vocabulary:
 
-| | a layout's padding refused | padding published | `if` became a group |
-| --- | --- | --- | --- |
-| roots publishing a template | 65 | 65 | 65 |
-| roots that are *only* a hole | 43 | 19 | **9** |
-| roots with no hole at all | 13 | **28** | 28 |
-| published nodes | — | 223 | **333** |
+| | padding refused | padding published | `if` became a group | overlay published |
+| --- | --- | --- | --- | --- |
+| roots publishing a template | 65 | 65 | 65 | 66 |
+| roots that are *only* a hole | 43 | 19 | 9 | **6** |
+| roots with no hole at all | 13 | **28** | 28 | 28 |
+| published nodes | — | 223 | 333 | **367** |
 
 The first row is why the second one is the measurement. `p=16.0` on a root
 `col` refused the node, the refusal became a hole, and the hole was the entire
@@ -833,9 +833,11 @@ application — 24 roots reported a healthy template that reloaded nothing.
 
 So read the hole count, not the template's existence, and expect the blockers
 to be shallow and near the root. What refuses today, in descending order of
-what it costs: `overlay` (`markdown-editor` and `apple-music` are each one
-hole because of it), a container carrying a border, and mounted components,
-which keep a view off the template path entirely.
+what it costs: components, which are 16 of the remaining holes and take a
+whole subtree each — and `mount`ed ones keep a view off the template path
+entirely; the contents of a group, since a branch publishes its structure but
+not what is inside it (this is what still holds `trading` to three nodes); and
+`lazy`, whose whole purpose is to keep its subtree out of a rebuild.
 
 One trap this measurement set off, worth knowing before the next widening: the
 id-to-source map that gives a captured widget its `.ice` line used to reset on
