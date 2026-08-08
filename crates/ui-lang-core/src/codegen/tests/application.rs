@@ -1192,7 +1192,8 @@ view
         "level: ::iced::window::Level::AlwaysOnTop",
         "const __ICE_RGBA: &[u8] = include_bytes!(\"assets/app.rgba\")",
         "__ICE_RGBA.len() == 8",
-        "window::icon::from_rgba(__ICE_RGBA.to_vec(), 2, 1)",
+        "__ICE_RGBA }.to_vec(), 2, 1)",
+        "__ICE_RGBA.len() == 8, \"window icon RGBA byte length does not match width × height × 4\"",
         "exit_on_close_request: false",
         "__platform.application_id = \"dev.example.configured\".to_owned()",
         "__platform.override_redirect = true",
@@ -1615,6 +1616,15 @@ view
     assert!(generated.contains("Self::__window_0()"));
     assert!(generated.contains("::iced::window::set_mode(__id, ::iced::window::Mode::Windowed)"));
     assert!(generated.contains("self.__tray_sync();"));
+    assert!(generated.contains(
+        "pub(crate) __ice_tray_dismissed: ::std::option::Option<::iced::time::Instant>,"
+    ));
+    assert!(generated.contains(
+        "self.__ice_tray_dismissed.take().is_some_and(|__at| __at.elapsed() < ::iced::time::Duration::from_millis(200))"
+    ));
+    assert!(generated.contains(
+        "self.__ice_tray_dismissed = ::std::option::Option::Some(::iced::time::Instant::now());"
+    ));
 }
 
 #[test]

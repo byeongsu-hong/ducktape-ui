@@ -3569,7 +3569,7 @@ impl<'a> FactsBuilder<'a> {
                 .settings
                 .tray
                 .as_ref()
-                .is_none_or(|tray| tray.label.is_none() && tray.tooltip.is_none())
+                .is_none_or(|tray| !tray.has_text())
         {
             return Ok(());
         }

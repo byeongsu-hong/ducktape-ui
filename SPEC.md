@@ -1446,9 +1446,13 @@ value changed. `label` renders live text beside the icon.
 `daemon`, because iced renders one view per application window while daemon
 views branch per window. A left click on the status item toggles that window:
 opened hidden, positioned under the icon's screen rectangle (physical
-coordinates converted through the popover's scale factor, clamped to the
-monitor), then shown and focused; a second click — or any `task window close`
-— closes it, tracked through the window's close event. Without `popover`, a
+coordinates converted through the popover's scale factor, clamped to that
+display when the icon is on it), then shown and focused; a second click — or
+any `task window close` — closes it, tracked through the window's close event.
+Pressing the item unfocuses the popover first, so an app that dismisses on
+unfocus closes it before the click is delivered; a press within 200ms of the
+popover closing therefore counts as that dismissal rather than a request to
+reopen. Without `popover`, a
 left click restores and focuses the program's oldest window, which suits an
 `app` whose tray is a live status readout. Only the left click is wired;
 right and middle clicks are ignored.

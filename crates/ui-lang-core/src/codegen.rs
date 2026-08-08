@@ -575,7 +575,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     {
         writeln!(
             out,
-            "pub(crate) __ice_tray_popover: ::std::option::Option<::iced::window::Id>,"
+            "pub(crate) __ice_tray_popover: ::std::option::Option<::iced::window::Id>,\npub(crate) __ice_tray_dismissed: ::std::option::Option<::iced::time::Instant>,"
         )
         .unwrap();
     }

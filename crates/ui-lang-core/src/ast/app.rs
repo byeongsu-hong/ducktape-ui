@@ -192,6 +192,14 @@ pub struct TraySettings {
     pub span: Span,
 }
 
+impl TraySettings {
+    /// Whether the tray carries an expression that has to be re-evaluated
+    /// after every update. Without one there is nothing to keep in sync.
+    pub fn has_text(&self) -> bool {
+        self.label.is_some() || self.tooltip.is_some()
+    }
+}
+
 impl Default for TraySettings {
     fn default() -> Self {
         Self {

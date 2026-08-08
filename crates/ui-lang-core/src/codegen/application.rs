@@ -305,7 +305,11 @@ pub(in crate::codegen) fn generate_boot(
         .as_ref()
         .is_some_and(|tray| tray.popover.is_some())
     {
-        writeln!(out, "__ice_tray_popover: ::std::option::Option::None,").unwrap();
+        writeln!(
+            out,
+            "__ice_tray_popover: ::std::option::Option::None,\n__ice_tray_dismissed: ::std::option::Option::None,"
+        )
+        .unwrap();
     }
     if program.settings().kind == ProgramKind::Application {
         writeln!(
@@ -379,6 +383,13 @@ pub(in crate::codegen) fn generate_boot(
     Ok(())
 }
 
+/// How long after the popover closes a status-item press still counts as the
+/// dismissal that closed it rather than a request to reopen. The unfocus and
+/// tray-click paths are separate event sources, so the ordering between them
+/// is a race decided within a frame or two; a fifth of a second covers it
+/// without swallowing a deliberate reopen.
+const DISMISS_GRACE_MS: u64 = 200;
+
 pub(in crate::codegen) fn generate_tray(
     out: &mut String,
     program: &LoweredProgram,
@@ -386,7 +397,7 @@ pub(in crate::codegen) fn generate_tray(
     let Some(tray) = &program.settings().tray else {
         return Ok(());
     };
-    if tray.label.is_none() && tray.tooltip.is_none() {
+    if !tray.has_text() {
         return Ok(());
     }
     let env = checked_state_env(program, "self");
@@ -549,7 +560,7 @@ pub(in crate::codegen) fn generate_update(
         if let Some(popover) = tray.popover {
             writeln!(
                 out,
-                "{message}::__TrayEvent(__event) => {{ match __event {{ ::ui_lang_runtime::tray::TrayEvent::LeftClick {{ icon }} => {{\nif let ::std::option::Option::Some(__id) = self.__ice_tray_popover.take() {{ return ::iced::window::close(__id); }}\nlet mut __settings = Self::__window_{index}();\n__settings.visible = false;\n__settings.position = ::iced::window::Position::Default;\nlet __size = __settings.size;\nlet (__id, __open) = ::iced::window::open(__settings);\nself.__ice_tray_popover = ::std::option::Option::Some(__id);\nreturn __open.discard().chain(::iced::window::scale_factor(__id).then(move |__scale| {{\nlet __icon = icon.clone();\n::iced::window::monitor_size(__id).then(move |__monitor| {{\nlet __anchor = ::ui_lang_runtime::tray::anchor_position(&__icon, f64::from(__scale), __size, __monitor);\n::iced::window::move_to(__id, __anchor).chain(::iced::window::set_mode(__id, ::iced::window::Mode::Windowed)).chain(::iced::window::gain_focus(__id))\n}})\n}}));\n}} }} }},\n{message}::__TrayPopoverClosed(__id) => {{ if self.__ice_tray_popover == ::std::option::Option::Some(__id) {{ self.__ice_tray_popover = ::std::option::Option::None; }} return ::iced::Task::none(); }},",
+                "{message}::__TrayEvent(__event) => {{ match __event {{ ::ui_lang_runtime::tray::TrayEvent::LeftClick {{ icon }} => {{\nif let ::std::option::Option::Some(__id) = self.__ice_tray_popover.take() {{ return ::iced::window::close(__id); }}\n// Pressing the status item unfocuses the popover before this click is\n// delivered, so a dismiss-on-unfocus handler can already have closed it and\n// cleared the tracking above. Without this guard that press would reopen what\n// the user just dismissed, and the popover could never be closed from the\n// status item.\nif self.__ice_tray_dismissed.take().is_some_and(|__at| __at.elapsed() < ::iced::time::Duration::from_millis({DISMISS_GRACE_MS})) {{ return ::iced::Task::none(); }}\nlet mut __settings = Self::__window_{index}();\n__settings.visible = false;\n__settings.position = ::iced::window::Position::Default;\nlet __size = __settings.size;\nlet (__id, __open) = ::iced::window::open(__settings);\nself.__ice_tray_popover = ::std::option::Option::Some(__id);\nreturn __open.discard().chain(::iced::window::scale_factor(__id).then(move |__scale| {{\nlet __icon = icon.clone();\n::iced::window::monitor_size(__id).then(move |__monitor| {{\nlet __anchor = ::ui_lang_runtime::tray::anchor_position(&__icon, f64::from(__scale), __size, __monitor);\n::iced::window::move_to(__id, __anchor).chain(::iced::window::set_mode(__id, ::iced::window::Mode::Windowed)).chain(::iced::window::gain_focus(__id))\n}})\n}}));\n}} }} }},\n{message}::__TrayPopoverClosed(__id) => {{ if self.__ice_tray_popover == ::std::option::Option::Some(__id) {{ self.__ice_tray_popover = ::std::option::Option::None; self.__ice_tray_dismissed = ::std::option::Option::Some(::iced::time::Instant::now()); }} return ::iced::Task::none(); }},",
                 index = popover.0
             )
             .unwrap();
@@ -816,7 +827,7 @@ pub(in crate::codegen) fn generate_update(
         .settings()
         .tray
         .as_ref()
-        .filter(|tray| tray.label.is_some() || tray.tooltip.is_some())
+        .filter(|tray| tray.has_text())
         .map_or("", |_| "self.__tray_sync();\n");
     if program.settings().kind == ProgramKind::Daemon {
         writeln!(out, "}};\n{tray_sync}__task\n}}").unwrap();

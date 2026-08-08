@@ -55,6 +55,33 @@ fn marked_platform_field(
     )
 }
 
+/// A source-relative asset path as the generated `include_bytes!` argument.
+/// Paths in a declaration are relative to their own `.ice` file, which the
+/// generated Rust does not live beside.
+fn embedded_asset_path(source_path: &str, relative: &str) -> String {
+    let parent = Path::new(source_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    rust_string(&parent.join(relative).display().to_string())
+}
+
+/// Embeds a raw RGBA asset and restates its `width × height × 4` contract as
+/// a compile-time assertion, so a file that stops matching its declared
+/// dimensions fails the build rather than the pixel decode. `kind` names the
+/// declaration in the assertion message.
+fn rgba_embed_code(
+    kind: &str,
+    icon: &crate::lower::ResolvedWindowIcon,
+    source_path: &str,
+    binding: &str,
+) -> String {
+    format!(
+        "{{ const {binding}: &[u8] = include_bytes!({}); const _: () = ::std::assert!({binding}.len() == {}, \"{kind} icon RGBA byte length does not match width × height × 4\"); {binding} }}",
+        embedded_asset_path(source_path, &icon.path),
+        icon.byte_len,
+    )
+}
+
 pub(in crate::codegen) fn has_animations(program: &LoweredProgram) -> bool {
     program
         .app_states()
@@ -67,9 +94,6 @@ pub(in crate::codegen) fn font_assets_code(
     settings: &ResolvedAppSettings,
     source_path: &str,
 ) -> String {
-    let parent = Path::new(source_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
     settings
         .fonts
         .iter()
@@ -79,7 +103,7 @@ pub(in crate::codegen) fn font_assets_code(
                 font.origin,
                 format!(
                     ".font(include_bytes!({}).as_slice())",
-                    rust_string(&parent.join(&font.path).display().to_string())
+                    embedded_asset_path(source_path, &font.path)
                 ),
             )
         })
@@ -137,11 +161,7 @@ pub(in crate::codegen) fn tray_init_code(
     let Some(tray) = &settings.tray else {
         return String::new();
     };
-    let parent = Path::new(source_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let path = parent.join(&tray.icon.path).display().to_string();
-    let sync = if tray.label.is_some() || tray.tooltip.is_some() {
+    let sync = if tray.has_text() {
         "\nstate.__tray_sync();"
     } else {
         ""
@@ -150,9 +170,8 @@ pub(in crate::codegen) fn tray_init_code(
         program,
         tray.origin,
         format!(
-            "#[cfg(not(test))]\n{{\n::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig {{ icon_rgba: {{ const __ICE_TRAY_RGBA: &[u8] = include_bytes!({}); const _: () = ::std::assert!(__ICE_TRAY_RGBA.len() == {}, \"tray icon RGBA byte length does not match width × height × 4\"); __ICE_TRAY_RGBA }}, icon_width: {}u32, icon_height: {}u32, icon_template: {}, }});{sync}\n}}",
-            rust_string(&path),
-            tray.icon.byte_len,
+            "#[cfg(not(test))]\n{{\n::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig {{ icon_rgba: {}, icon_width: {}u32, icon_height: {}u32, icon_template: {}, }});{sync}\n}}",
+            rgba_embed_code("tray", &tray.icon, source_path, "__ICE_TRAY_RGBA"),
             tray.icon.width,
             tray.icon.height,
             tray.icon_template,
@@ -275,14 +294,9 @@ pub(in crate::codegen) fn window_settings_value_code(
         ));
     }
     if let Some(icon) = &settings.icon {
-        let parent = Path::new(source_path)
-            .parent()
-            .unwrap_or_else(|| Path::new("."));
-        let path = parent.join(&icon.path).display().to_string();
         let value = format!(
-            "icon: ::std::option::Option::Some({{ const __ICE_RGBA: &[u8] = include_bytes!({}); const _: () = ::std::assert!(__ICE_RGBA.len() == {}, \"window icon RGBA byte length does not match width × height × 4\"); ::iced::window::icon::from_rgba(__ICE_RGBA.to_vec(), {}, {}).expect(\"statically checked RGBA window icon\") }}),",
-            rust_string(&path),
-            icon.byte_len,
+            "icon: ::std::option::Option::Some(::iced::window::icon::from_rgba({}.to_vec(), {}, {}).expect(\"statically checked RGBA window icon\")),",
+            rgba_embed_code("window", icon, source_path, "__ICE_RGBA"),
             icon.width,
             icon.height
         );

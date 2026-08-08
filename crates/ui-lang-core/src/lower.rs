@@ -1281,6 +1281,14 @@ pub(crate) struct ResolvedTraySettings {
     pub(crate) popover: Option<NamedWindowId>,
     pub(crate) origin: OriginId,
 }
+
+impl ResolvedTraySettings {
+    /// Whether the tray carries an expression that has to be re-evaluated
+    /// after every update, which is what `__tray_sync` exists for.
+    pub(crate) fn has_text(&self) -> bool {
+        self.label.is_some() || self.tooltip.is_some()
+    }
+}
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedAppSettings {
     #[cfg(test)]
@@ -9781,6 +9789,34 @@ fn valid_positive_f32(value: f64) -> bool {
     value > 0.0 && valid_f32(value)
 }
 
+/// The narrowest span for a tray whose static fields drifted: the setting
+/// line that changed, falling back to whichever tray block still exists.
+fn changed_tray_span<'a>(
+    current: Option<&'a TraySettings>,
+    expected: Option<&'a TraySettings>,
+) -> Option<&'a Span> {
+    let (Some(current), Some(expected)) = (current, expected) else {
+        return current.or(expected).map(|tray| &tray.span);
+    };
+    for (name, changed) in [
+        ("icon-rgba", current.icon != expected.icon),
+        (
+            "icon-template",
+            current.icon_template != expected.icon_template,
+        ),
+        ("popover", current.popover != expected.popover),
+    ] {
+        if changed {
+            return current
+                .setting_spans
+                .get(name)
+                .or_else(|| expected.setting_spans.get(name))
+                .or(Some(&current.span));
+        }
+    }
+    Some(&current.span)
+}
+
 fn tray_static_fields_match(
     current: Option<&TraySettings>,
     checked: Option<&TraySettings>,
@@ -9870,6 +9906,9 @@ fn first_changed_static_setting_span<'a>(
                     .get(current.windows.len())
                     .map(|window| &window.span)
             });
+    }
+    if !tray_static_fields_match(current.tray.as_ref(), expected.tray.as_ref()) {
+        return changed_tray_span(current.tray.as_ref(), expected.tray.as_ref());
     }
     None
 }
@@ -19526,6 +19565,34 @@ view
         checked.document.settings.tray = None;
         let error = lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
+    }
+
+    /// A tray-only drift has to point at the tray line that changed. Before
+    /// the tray joined `first_changed_static_setting_span`, the fallback
+    /// chain reported it against the default font or the app header.
+    #[test]
+    fn reports_a_tray_mutation_at_the_tray_setting_that_changed() {
+        let source = format!(
+            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    popover status\n  window status\n    size 320 240\nfont brand family=serif default=true\n{THEME}view\n  text \"ready\"\n"
+        );
+
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.tray.as_mut().unwrap().popover = Some("missing".into());
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, 5);
+
+        let mut checked = analyze(&source).unwrap();
+        checked
+            .document
+            .settings
+            .tray
+            .as_mut()
+            .unwrap()
+            .icon_template = Some(false);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert_eq!(error.line, 4);
     }
 
     #[test]

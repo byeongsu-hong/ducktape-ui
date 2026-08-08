@@ -42,8 +42,15 @@ const ANCHOR_MARGIN: f32 = 4.0;
 
 /// Top-left logical position for a popover of `window_size` anchored under
 /// the status item. `icon` is in physical pixels; `scale_factor` converts it
-/// to the logical space used by iced window positioning. When the monitor's
-/// logical size is known the popover is kept inside its right edge.
+/// to the logical space used by iced window positioning.
+///
+/// `monitor` is a display's logical size — iced reports no origin for it, so
+/// it only describes a coordinate span when the icon sits on that same
+/// display. Screen coordinates are global: a display arranged right of the
+/// primary starts beyond its width, and one arranged left of it runs
+/// negative. Clamping against a display the icon is not on would teleport the
+/// popover onto another screen, so the edge clamp applies only when the
+/// icon's own centre falls inside the reported span.
 #[must_use]
 pub fn anchor_position(
     icon: &TrayRect,
@@ -59,10 +66,12 @@ pub fn anchor_position(
     let center = (icon.x + icon.width / 2.0) / scale;
     let bottom = (icon.y + icon.height) / scale;
     let mut x = center as f32 - window_size.width / 2.0;
-    if let Some(monitor) = monitor {
-        x = x.min(monitor.width - window_size.width);
+    if let Some(monitor) =
+        monitor.filter(|monitor| (0.0..=f64::from(monitor.width)).contains(&center))
+    {
+        x = x.min(monitor.width - window_size.width).max(0.0);
     }
-    iced::Point::new(x.max(0.0), bottom as f32 + ANCHOR_MARGIN)
+    iced::Point::new(x, bottom as f32 + ANCHOR_MARGIN)
 }
 
 pub use platform::{events, init, set_label, set_tooltip};
@@ -154,36 +163,27 @@ mod platform {
         });
     }
 
-    /// Updates the hover tooltip with the same diffing as [`set_label`].
+    /// Updates the hover tooltip with the same diffing as [`set_label`]. A
+    /// failed update is not recorded, so the next sync retries it instead of
+    /// leaving the tooltip stale until the value happens to change again.
     pub fn set_tooltip(value: &str) {
         TRAY.with(|slot| {
             if let Some(state) = slot.borrow_mut().as_mut()
                 && state.tooltip != value
             {
-                if let Err(error) = state.icon.set_tooltip(Some(value)) {
-                    eprintln!("ice tray: tooltip update failed: {error}");
+                match state.icon.set_tooltip(Some(value)) {
+                    Ok(()) => value.clone_into(&mut state.tooltip),
+                    Err(error) => eprintln!("ice tray: tooltip update failed: {error}"),
                 }
-                value.clone_into(&mut state.tooltip);
             }
         });
     }
 
-    #[derive(Clone)]
+    /// Recipe identity for the tray event stream. `Subscription::run_with`
+    /// identifies a recipe by this type plus its hash, so the unit struct is
+    /// the whole identity: one tray stream per program.
+    #[derive(Hash)]
     struct TraySubscription;
-
-    impl PartialEq for TraySubscription {
-        fn eq(&self, _other: &Self) -> bool {
-            true
-        }
-    }
-
-    impl Eq for TraySubscription {}
-
-    impl std::hash::Hash for TraySubscription {
-        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-            "ui-lang-runtime::tray".hash(state);
-        }
-    }
 
     fn tray_stream(
         _subscription: &TraySubscription,
@@ -247,14 +247,19 @@ mod tests {
     }
 
     #[test]
-    fn clamps_to_the_left_edge() {
+    fn clamps_to_the_left_edge_of_the_icons_monitor() {
         let icon = TrayRect {
             x: 10.0,
             y: 0.0,
             width: 44.0,
             height: 48.0,
         };
-        let position = anchor_position(&icon, 2.0, iced::Size::new(320.0, 240.0), None);
+        let position = anchor_position(
+            &icon,
+            2.0,
+            iced::Size::new(320.0, 240.0),
+            Some(iced::Size::new(3008.0, 1692.0)),
+        );
         assert_eq!(position.x, 0.0);
     }
 
@@ -273,6 +278,48 @@ mod tests {
             Some(iced::Size::new(3008.0, 1692.0)),
         );
         assert_eq!(position.x, 3008.0 - 320.0);
+    }
+
+    /// A status item on a display arranged right of the primary reports
+    /// global coordinates past that display's width. The reported size
+    /// belongs to whichever display the popover was created on, so clamping
+    /// with it would drag the popover onto the wrong screen.
+    #[test]
+    fn ignores_a_monitor_the_icon_is_not_on() {
+        let icon = TrayRect {
+            x: 8000.0,
+            y: 0.0,
+            width: 44.0,
+            height: 48.0,
+        };
+        let position = anchor_position(
+            &icon,
+            2.0,
+            iced::Size::new(320.0, 240.0),
+            Some(iced::Size::new(3008.0, 1692.0)),
+        );
+        // Centre 4011 logical, so the popover stays under the icon at 3851
+        // instead of being pulled back to the primary display's edge.
+        assert_eq!(position.x, 3851.0);
+    }
+
+    /// A display arranged left of the primary runs negative, which the
+    /// left-edge floor would otherwise pull onto the primary display.
+    #[test]
+    fn keeps_negative_coordinates_off_the_primary_monitor() {
+        let icon = TrayRect {
+            x: -1800.0,
+            y: 0.0,
+            width: 44.0,
+            height: 48.0,
+        };
+        let position = anchor_position(
+            &icon,
+            2.0,
+            iced::Size::new(320.0, 240.0),
+            Some(iced::Size::new(3008.0, 1692.0)),
+        );
+        assert_eq!(position.x, -1049.0);
     }
 
     #[test]
