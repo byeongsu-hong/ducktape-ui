@@ -642,6 +642,27 @@ Relatedly, never `rm -rf` a package's `OUT_DIR` to force regeneration: cargo's
 fingerprint then skips re-running the build script and `include_app!` fails
 with "generated Rust is missing". Touch `build.rs` instead.
 
+**An environment variable that no fingerprint tracks.** `ICE_TEMPLATE_VIEW=0`
+was the switch that forced a view back onto the compiled path, so that a
+capture from it could be diffed against the published path. It does not work
+by itself. Cargo does not rerun a build script for an environment variable
+nobody declared `rerun-if-env-changed` on, and touching `build.rs` is not
+enough either, because `ui-lang-build` then compares its own input fingerprint
+— which the variable is also not part of — and keeps the output it already
+has. Setting the variable, touching `build.rs`, and rebuilding produced a
+byte-identical generated view three times running: with the switch on, off,
+and unset.
+
+The failure is silent and it flatters you. Both captures come from whichever
+path the directory happened to hold, they are byte-identical because they are
+the same program, and the diff reads as proof of parity. A capture comparison
+across the two paths is only meaningful from two separate target directories,
+one built from scratch under each setting. Verify which path a build actually
+took by grepping the generated Rust for `__ICE_TEMPLATE_JSON` rather than by
+trusting the variable — and grep every file in `ui-lang-generated/`, since the
+view lives in its own `*__app_view.rs` and `ls -t | head -1` will hand you the
+update phase instead.
+
 And the machine is shared. A blocked A/B run put a load spike entirely on one
 side and produced a 4.81s baseline against a 2.64s result for an edit that in
 truth does not move at all. Interleaving the sides — A, B, A, B — and pooling

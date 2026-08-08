@@ -36,13 +36,10 @@ fn template_render_code(
         .collect::<String>();
     let mut calls = String::new();
     for (index, chunk) in emission.slots.chunks(SLOTS_PER_METHOD).enumerate() {
-        let pushes = chunk
-            .iter()
-            .map(|slot| format!("__ice_slots.push({slot});"))
-            .collect::<String>();
+        let pushes = chunk.concat();
         writeln!(
             methods,
-            "pub(super) fn __ice_slots_{index}<'a>(&'a self, __ice_palette: __IcePalette, __ice_app_theme: &::iced::Theme{window_param}, __ice_slots: &mut ::std::vec::Vec<::ui_lang_runtime::template::Slot<'a, {message}>>) {{ let __ice_app_theme = __ice_app_theme.clone(); let _ = &__ice_app_theme; {pushes} }}",
+            "pub(super) fn __ice_slots_{index}<'a>(&'a self, __ice_palette: __IcePalette, __ice_app_theme: &::iced::Theme{window_param}, __ice_slots: &mut ::ui_lang_runtime::template::Slots<'a, {message}>) {{ let __ice_app_theme = __ice_app_theme.clone(); let _ = &__ice_app_theme; {pushes} }}",
         )
         .unwrap();
         writeln!(
@@ -58,13 +55,21 @@ fn template_render_code(
          thread_local! {{ static __ICE_TEMPLATE: ::ui_lang_runtime::template::TemplateSource = \
          ::ui_lang_runtime::template::TemplateSource::new(__ICE_TEMPLATE_JSON); }} \
          let __ice_template = __ICE_TEMPLATE.with(|source| source.current()); \
-         let mut __ice_slots: ::std::vec::Vec<::ui_lang_runtime::template::Slot<'_, {message}>> = \
-         ::std::vec::Vec::with_capacity({count}); {calls} \
+         let mut __ice_slots: ::ui_lang_runtime::template::Slots<'_, {message}> = \
+         ::ui_lang_runtime::template::Slots::with_capacity({counts}); {calls} \
          ::ui_lang_runtime::template::render(&__ice_template, &__ice_slots, &__ice_palette.colors, {root_scope}, &__ICE_TEMPLATE_PATHS) \
          }}",
         json = rust_string(&emission.json),
-        count = emission.slots.len(),
+        counts = slot_counts_code(&emission.counts),
         path_count = emission.paths.len(),
+    )
+}
+
+/// The `SlotCounts` literal the generated view sizes its tables from.
+fn slot_counts_code(counts: &ui_lang_template::SlotCounts) -> String {
+    format!(
+        "::ui_lang_runtime::template::SlotCounts {{ texts: {}, states: {}, messages: {}, handlers: {}, subtrees: {} }}",
+        counts.texts, counts.states, counts.messages, counts.handlers, counts.subtrees,
     )
 }
 

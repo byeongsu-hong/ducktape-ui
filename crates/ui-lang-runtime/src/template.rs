@@ -4,11 +4,11 @@
 //! literals, style tables, accessibility segments — is the node tree defined in
 //! `ui_lang_template` and published as data rather than Rust. The dynamic half
 //! — anything that reads application state or names a message — stays compiled,
-//! and reaches the renderer as a positional [`Slot`] table the generated
+//! and reaches the renderer as the positional [`Slots`] tables the generated
 //! `__view` fills in each frame.
 //!
 //! The split is what makes a running app reloadable: replacing the node tree
-//! needs no compiler as long as the slot table still satisfies it.
+//! needs no compiler as long as the slot tables still satisfy it.
 //!
 //! This module is the reading half only. The format itself — and the
 //! compatibility rule that decides whether an edited template can be accepted
@@ -16,8 +16,6 @@
 //! writes a template and the runtime that renders it share one definition
 //! rather than two that can drift apart. It is re-exported here, which is why
 //! `ui_lang_runtime::template::Template` still names it.
-
-use std::borrow::Cow;
 
 use iced::{
     Background, Color, Element, Length, Padding,
@@ -34,43 +32,66 @@ pub type IceElement<'a, Message> = Element<'a, Message, iced::Theme, iced::Rende
 
 /// The dynamic half of a view, evaluated fresh by generated code each frame.
 ///
-/// Slots are positional: a template's `Value::Slot(i)` names index `i` of the
-/// table the caller passes to [`render`].
-pub enum Slot<'a, Message> {
-    /// A string computed this frame — `self.count.to_string()` and friends.
-    /// Cloned into the widget, so it need not outlive the call.
-    Owned(String),
-    /// A string borrowed straight out of application state. Text inputs need
-    /// this: iced borrows the edited value for the element's lifetime.
-    Borrowed(&'a str),
-    /// A message value delivered on activation.
-    Message(Message),
-    /// A message constructor for widgets that report a value, such as the
-    /// two-way binding behind `<->`.
-    TextHandler(fn(String) -> Message),
-    /// A whole subtree the compiler built, for the constructs the template
+/// One table per kind of value, each addressed by its own index type from
+/// `ui_lang_template`. That is the whole point of the split: a node cannot
+/// name a slot of the wrong kind, because the index it holds does not type as
+/// anything else. When these were one table of a tagged enum, the renderer had
+/// to check the tag and had nothing useful to do when it did not match — a
+/// mis-emitted button silently lost its message and still drew.
+///
+/// What remains is out-of-range, which is not a codegen mistake but a stale
+/// template mid-reload. Those still resolve to something harmless rather than
+/// panicking: a half-written save must not take the window down.
+pub struct Slots<'a, Message> {
+    /// Strings computed this frame — `self.count.to_string()` and friends.
+    /// Cloned into the widget, so they need not outlive the call.
+    pub texts: Vec<String>,
+    /// Strings borrowed straight out of application state. Text inputs need
+    /// this: iced borrows the edited value for the element's lifetime, which
+    /// is why it cannot read `texts`.
+    pub states: Vec<&'a str>,
+    /// Message values delivered on activation.
+    pub messages: Vec<Message>,
+    /// Message constructors for widgets that report a value.
+    pub handlers: Vec<fn(String) -> Message>,
+    /// Whole subtrees the compiler built, for the constructs the template
     /// vocabulary does not model — control flow, components, native surfaces.
     ///
     /// Taken rather than cloned: an element is not `Clone`, and a template
     /// references each subtree exactly once. A stale template that names one
     /// twice gets an empty second reading rather than a panic.
-    Subtree(std::cell::RefCell<Option<IceElement<'a, Message>>>),
+    pub subtrees: Vec<std::cell::RefCell<Option<IceElement<'a, Message>>>>,
 }
 
-impl<'a, Message> Slot<'a, Message> {
-    /// Wraps a compiled subtree for the slot table.
-    pub fn subtree(element: impl Into<IceElement<'a, Message>>) -> Self {
-        Self::Subtree(std::cell::RefCell::new(Some(element.into())))
+impl<Message> Default for Slots<'_, Message> {
+    fn default() -> Self {
+        Self {
+            texts: Vec::new(),
+            states: Vec::new(),
+            messages: Vec::new(),
+            handlers: Vec::new(),
+            subtrees: Vec::new(),
+        }
     }
 }
 
-impl<Message> Slot<'_, Message> {
-    fn as_str(&self) -> &str {
-        match self {
-            Self::Owned(value) => value,
-            Self::Borrowed(value) => value,
-            Self::Message(_) | Self::TextHandler(_) | Self::Subtree(_) => "",
+impl<'a, Message> Slots<'a, Message> {
+    /// Allocates each table to the size the template declares, so filling them
+    /// costs no reallocation on a frame.
+    pub fn with_capacity(counts: SlotCounts) -> Self {
+        Self {
+            texts: Vec::with_capacity(counts.texts),
+            states: Vec::with_capacity(counts.states),
+            messages: Vec::with_capacity(counts.messages),
+            handlers: Vec::with_capacity(counts.handlers),
+            subtrees: Vec::with_capacity(counts.subtrees),
         }
+    }
+
+    /// Appends a compiled subtree to the hole table.
+    pub fn push_subtree(&mut self, element: impl Into<IceElement<'a, Message>>) {
+        self.subtrees
+            .push(std::cell::RefCell::new(Some(element.into())));
     }
 }
 
@@ -111,10 +132,10 @@ fn edge_padding(edges: Edges) -> Padding {
 /// Literals are cloned out of the template so the returned element never
 /// borrows it, which is what lets a reload swap the template while the previous
 /// frame's element is still alive.
-fn resolve_value<Message>(value: &Value, slots: &[Slot<'_, Message>]) -> String {
+fn resolve_value<Message>(value: &Value, slots: &Slots<'_, Message>) -> String {
     match value {
         Value::Literal(value) => value.clone(),
-        Value::Slot(index) => slots.get(*index).map(Slot::as_str).unwrap_or("").to_owned(),
+        Value::Slot(TextSlot(index)) => slots.texts.get(*index).cloned().unwrap_or_default(),
     }
 }
 
@@ -146,7 +167,7 @@ fn source_location(source: Source, paths: &[&'static str]) -> Option<crate::test
 /// this frame was built from.
 pub fn render<'a, Message>(
     template: &Template,
-    slots: &[Slot<'a, Message>],
+    slots: &Slots<'a, Message>,
     palette: &[Color],
     root_scope: &str,
     paths: &[&'static str],
@@ -159,7 +180,7 @@ where
 
 fn render_node<'a, Message>(
     node: &Node,
-    slots: &[Slot<'a, Message>],
+    slots: &Slots<'a, Message>,
     palette: &[Color],
     parent_key: &str,
     paths: &[&'static str],
@@ -315,16 +336,10 @@ where
             } else {
                 Role::TextInput
             };
-            let current = match slots.get(*value) {
-                Some(Slot::Borrowed(value)) => *value,
-                // An input's value must borrow state so iced can edit it in
-                // place; an owned slot means codegen mis-emitted this node.
-                _ => "",
-            };
-            let handler = match slots.get(*on_input) {
-                Some(Slot::TextHandler(handler)) => Some(*handler),
-                _ => None,
-            };
+            let StateSlot(value) = value;
+            let HandlerSlot(on_input) = on_input;
+            let current = slots.states.get(*value).copied().unwrap_or("");
+            let handler = slots.handlers.get(*on_input).copied();
             let mut input = widget::text_input("", current)
                 .id(widget::Id::from(key.clone()))
                 .secure(secure);
@@ -341,13 +356,13 @@ where
                 .spacing(6)
                 .into()
         }
-        Node::Subtree { slot } => match slots.get(*slot) {
-            Some(Slot::Subtree(cell)) => cell
-                .borrow_mut()
-                .take()
-                .unwrap_or_else(|| widget::Space::new().into()),
-            _ => widget::Space::new().into(),
-        },
+        Node::Subtree {
+            slot: SubtreeSlot(slot),
+        } => slots
+            .subtrees
+            .get(*slot)
+            .and_then(|cell| cell.borrow_mut().take())
+            .unwrap_or_else(|| widget::Space::new().into()),
         Node::Button {
             a11y,
             label,
@@ -356,10 +371,8 @@ where
         } => {
             let key = a11y.key(parent_key);
             let id = StableId::new(&key);
-            let activate = match slots.get(*on_press) {
-                Some(Slot::Message(message)) => Some(message.clone()),
-                _ => None,
-            };
+            let MessageSlot(on_press) = on_press;
+            let activate = slots.messages.get(*on_press).cloned();
             let content: IceElement<'a, Message> = widget::text(label.clone()).into();
             let style = resolve_button_style(style, palette);
             let button = widget::button(content)
@@ -573,40 +586,21 @@ pub fn changes() -> iced::Subscription<()> {
     })
 }
 
-impl<'a, Message> From<&'a str> for Slot<'a, Message> {
-    fn from(value: &'a str) -> Self {
-        Self::Borrowed(value)
-    }
-}
-
-impl<Message> From<String> for Slot<'_, Message> {
-    fn from(value: String) -> Self {
-        Self::Owned(value)
-    }
-}
-
-/// Convenience for the common `Cow` shape codegen produces.
-impl<'a, Message> From<Cow<'a, str>> for Slot<'a, Message> {
-    fn from(value: Cow<'a, str>) -> Self {
-        match value {
-            Cow::Borrowed(value) => Self::Borrowed(value),
-            Cow::Owned(value) => Self::Owned(value),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn literals_and_slots_resolve() {
-        let slots: Vec<Slot<'_, ()>> = vec![Slot::Owned("42".into())];
+        let slots = Slots::<()> {
+            texts: vec!["42".into()],
+            ..Slots::default()
+        };
         assert_eq!(resolve_value(&Value::Literal("Ice".into()), &slots), "Ice");
-        assert_eq!(resolve_value(&Value::Slot(0), &slots), "42");
+        assert_eq!(resolve_value(&Value::Slot(TextSlot(0)), &slots), "42");
         // An out-of-range slot renders empty rather than panicking: a stale
         // template must not take the window down mid-reload.
-        assert_eq!(resolve_value(&Value::Slot(7), &slots), "");
+        assert_eq!(resolve_value(&Value::Slot(TextSlot(7)), &slots), "");
     }
 
     #[test]
