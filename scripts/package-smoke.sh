@@ -6,6 +6,7 @@ cd "$package_root"
 
 package_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/ui-lang-core/Cargo.toml)
 packages=(
+  ui-lang-template
   ui-lang-core
   ui-lang-runtime
   ducktape-ui
@@ -36,14 +37,23 @@ build_patch=(
 runtime_patch=(
   --config "patch.crates-io.ui-lang-runtime.path=\"$package_root/crates/ui-lang-runtime\""
 )
+# The published view format. Both the generator and the runtime depend on it,
+# so every package below it needs the patch as well as its direct one.
+template_patch=(
+  --config "patch.crates-io.ui-lang-template.path=\"$package_root/crates/ui-lang-template\""
+)
 
-cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-core
-cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-runtime
-cargo package --locked --no-verify "${dirty_args[@]}" -p ducktape-ui "${runtime_patch[@]}"
-cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-build "${core_patch[@]}"
+cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-template
+cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-core "${template_patch[@]}"
+cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-runtime "${template_patch[@]}"
+cargo package --locked --no-verify "${dirty_args[@]}" -p ducktape-ui \
+  "${runtime_patch[@]}" "${template_patch[@]}"
+cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-build \
+  "${core_patch[@]}" "${template_patch[@]}"
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang \
-  "${core_patch[@]}" "${build_patch[@]}"
-cargo package --locked --no-verify "${dirty_args[@]}" -p cargo-ice "${core_patch[@]}"
+  "${core_patch[@]}" "${build_patch[@]}" "${template_patch[@]}"
+cargo package --locked --no-verify "${dirty_args[@]}" -p cargo-ice \
+  "${core_patch[@]}" "${template_patch[@]}"
 
 package_scratch=$(mktemp -d -t ducktape-package.XXXXXX)
 cleanup() {
@@ -74,6 +84,9 @@ packaged_build_patch=(
 packaged_runtime_patch=(
   --config "patch.crates-io.ui-lang-runtime.path=\"$package_scratch/ui-lang-runtime-$package_version\""
 )
+packaged_template_patch=(
+  --config "patch.crates-io.ui-lang-template.path=\"$package_scratch/ui-lang-template-$package_version\""
+)
 
 check_package() {
   local package=$1
@@ -95,10 +108,12 @@ check_package_features() {
     "$@"
 }
 
-check_package ui-lang-core
-check_package ui-lang-runtime
-check_package_features ui-lang-runtime data-grid,x11
-check_package ducktape-ui "${packaged_runtime_patch[@]}"
-check_package ui-lang-build "${packaged_patches[@]}"
-check_package ui-lang "${packaged_patches[@]}" "${packaged_build_patch[@]}"
-check_package cargo-ice "${packaged_patches[@]}"
+check_package ui-lang-template
+check_package ui-lang-core "${packaged_template_patch[@]}"
+check_package ui-lang-runtime "${packaged_template_patch[@]}"
+check_package_features ui-lang-runtime data-grid,x11 "${packaged_template_patch[@]}"
+check_package ducktape-ui "${packaged_runtime_patch[@]}" "${packaged_template_patch[@]}"
+check_package ui-lang-build "${packaged_patches[@]}" "${packaged_template_patch[@]}"
+check_package ui-lang "${packaged_patches[@]}" "${packaged_build_patch[@]}" \
+  "${packaged_template_patch[@]}"
+check_package cargo-ice "${packaged_patches[@]}" "${packaged_template_patch[@]}"
