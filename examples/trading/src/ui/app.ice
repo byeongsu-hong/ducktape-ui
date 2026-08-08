@@ -129,8 +129,8 @@ component Stat(name:str, value:str)
 
 component AlertRow(alert:Alert)
   emits
-    drop(f64)
-  button #root -> emit(drop, alert.price)
+    drop(str, f64)
+  button #root -> emit(drop, alert.coin, alert.price)
     with
       label=alert_label(alert)
       w=fill
@@ -145,6 +145,11 @@ component AlertRow(alert:Alert)
         pr=14.0
         gap=8.0
         align=center
+      text alert.coin
+        with
+          size=11.0
+          w=34.0
+          @text-muted
       if alert.fired
         text "HIT"
           with
@@ -677,8 +682,8 @@ on close_held
 on add_alert_here
   alerts = add_alert(alerts, coin, ticket_price, mark_price(focus))
 
-on drop_alert_at(price)
-  alerts = drop_alert(alerts, coin, price)
+on drop_alert_at(at_coin, price)
+  alerts = drop_alert(alerts, at_coin, price)
 
 on size_share(share)
   let sized = ticket_afford(account, ticket_price, ticket_leverage, share)
@@ -1360,7 +1365,7 @@ view
                     for alert in alerts
                       AlertRow alert=alert
                         events
-                          drop -> drop_alert_at _
+                          drop -> drop_alert_at _ _
                 rule horizontal thickness=1.0 color=edge
                 row
                   with
@@ -1808,6 +1813,17 @@ test trading_a_closing_order_asks_for_no_margin
   expect quote.ready
   expect quote.margin ~= 0.0
   expect quote.liquidation ~= 0.0
+
+test trading_an_alert_says_which_market_it_watches
+  preset held
+  viewport 1660 820
+  expect text "ETH"
+  expect text "3,400.00"
+  dispatch drop_alert_at("BTC", 3400.0)
+  expect text "3,400.00"
+  dispatch drop_alert_at("ETH", 3400.0)
+  expect no text "ETH"
+  expect no text "3,400.00"
 
 test trading_the_whole_terminal_renders_from_fixtures
   preset held

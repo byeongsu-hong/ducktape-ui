@@ -191,7 +191,8 @@ the only number a header can act on.
 
 The alerts live where the market is, not where the account is: the same rail
 as the book and the tape, because they are watching a price rather than a
-position.
+position. They outlive the market they were set from, so every row names its
+own — and dismisses by it, rather than by whatever is on screen.
 
 ## What a second venue has to provide
 

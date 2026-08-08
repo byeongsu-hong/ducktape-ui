@@ -1885,12 +1885,22 @@ pub fn demo_orders() -> Vec<Order> {
 
 /// One level already reached, so the panel's two readings both draw.
 pub fn demo_alerts() -> Vec<Alert> {
-    vec![Alert {
-        coin: "BTC".to_owned(),
-        price: 64_100.0,
-        above: true,
-        fired: true,
-    }]
+    vec![
+        Alert {
+            coin: "BTC".to_owned(),
+            price: 64_100.0,
+            above: true,
+            fired: true,
+        },
+        // A level on a market the list is not showing. Alerts outlive the
+        // market they were set from, so a row has to say which one it means.
+        Alert {
+            coin: "ETH".to_owned(),
+            price: 3_400.0,
+            above: true,
+            fired: false,
+        },
+    ]
 }
 
 /// A book and a tape to go with them, so the whole terminal renders from
