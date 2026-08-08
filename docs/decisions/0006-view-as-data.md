@@ -96,8 +96,8 @@ components), and 5 are fragments that do not analyse standalone.
 
   | probe | compiled path | published path |
   | --- | --- | --- |
-  | 200 rows (600 slots) | 6.6 s | **1.49 s** |
-  | 600 rows (1800 slots) | 26.7 s | **1.82 s** |
+  | 200 rows (600 slots) | 6.19 s | **1.39 s** |
+  | 600 rows (1800 slots) | 25.6 s | **1.78 s** |
 
   Generated Rust for the 200-row probe falls from 1.63 MB carrying 2,007 iced
   widget constructions to 0.67 MB carrying none. The shapes matter more than
@@ -106,7 +106,13 @@ components), and 5 are fragments that do not analyse standalone.
   function, the published path barely pays at all, because its view is data and
   its slot table is split across small ones.
 
-  These are incremental builds, which is what an edit loop actually runs.
+  These are incremental builds, which is what an edit loop actually runs, and
+  each figure is the steady state of eight consecutive edits rather than a
+  first reading. The first two edits after switching paths cost anywhere from
+  half to double the settled number while the incremental cache turns over, so
+  a three-sample average taken right after a change measures the turnover, not
+  the loop.
+
   Incremental compilation does almost nothing for the compiled path — a view is
   one function, and one changed literal re-checks all of it — so the gap is
   wider here than in a from-scratch build.
