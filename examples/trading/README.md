@@ -209,6 +209,23 @@ The markets are three rather than one, for the same reason. A list of one
 answers no question a list is asked: which row is selected, what a search
 leaves behind, whether a price landed on the market it belongs to.
 
+## Lists longer than the panels that hold them
+
+Every capture held four markets and three prints, and a list that fits
+answers nothing about a list that does not. There is a venue-sized fixture
+now — twenty four markets and a tape at the depth the feed keeps it — and
+the terminal is captured against it.
+
+The long list is generated rather than typed, and checked by the same test
+as the short one: volume descending, one selection, each maintenance half
+the margin at its cap, each change the price against its own close. A
+generated fixture that broke the ordering the panel assumes would be a panel
+drawing in the wrong order, quietly.
+
+Nothing was clipped. The book, the tape, the alerts, the orders and the
+market list each scroll inside their own bounds, and the half row at a
+boundary is the affordance saying so.
+
 ## Two states nothing had drawn
 
 A position the venue reports no liquidation price for says `none` rather
