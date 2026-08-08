@@ -278,6 +278,7 @@ pub(crate) enum ResolvedTestExpectation {
 
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedTestStepKind {
+    TrayClick,
     Click {
         target: ResolvedTestTargetRef,
         button: ResolvedTestMouseButton,
@@ -3877,6 +3878,14 @@ impl CheckedExpressionOwnerPolicy for ViewWidgetExpressionPolicy<'_> {
                 {
                     return Ok(checked.ty.clone());
                 }
+                if view == self.view
+                    && role == CheckedViewLocalRole::TrayPopover
+                    && self.lowerer.facts.tray_popover_local() == Some(local)
+                    && checked.name == "popover"
+                    && checked.ty == Type::Bool
+                {
+                    return Ok(checked.ty.clone());
+                }
                 let mut current = Some(self.view);
                 let mut found = false;
                 while let Some(id) = current {
@@ -4249,6 +4258,12 @@ impl CheckedExpressionOwnerPolicy for TestExpressionPolicy<'_> {
                 && self.lowerer.facts.daemon_window_local() == Some(id)
                 && local.name == "window"
                 && local.ty == Type::WindowId => {}
+            CheckedLocalOwner::View {
+                role: crate::check::CheckedViewLocalRole::TrayPopover,
+                ..
+            } if self.lowerer.facts.tray_popover_local() == Some(id)
+                && local.name == "popover"
+                && local.ty == Type::Bool => {}
             CheckedLocalOwner::ExpressionBinding { expression, .. }
                 if expression == self.use_id => {}
             CheckedLocalOwner::ExpressionBinding { .. } => {

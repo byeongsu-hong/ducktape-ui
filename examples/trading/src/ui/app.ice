@@ -32,8 +32,9 @@ font plex family="IBM Plex Sans KR" default=true
 font digits family="Monoplex KR"
 
 state
+  // The terminal window, opened on mount. A daemon starts with none, and the
+  // view needs to know which of its windows it is drawing.
   main:window-id? = none
-  panel_preview = false
   gate = true
   address = ""
   draft = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
@@ -196,15 +197,6 @@ preset stalled
     quote = price_ticket("64,000.00", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
     feed_error = "Hyperliquid feed dropped"
     latency = 0
-
-preset panel
-  state
-    gate = false
-    panel_preview = true
-    symbols = demo_symbols()
-    visible = demo_symbols()
-    focus = symbol_row(demo_symbols(), "BTC")
-    live = true
 
 preset failing
   state
@@ -1048,8 +1040,10 @@ subscribe
   every 700ms when flashing -> cool_flash
 
 view
+  // Two windows, one view: `popover` is true only for the window the status
+  // item opened.
   col w=fill h=fill
-    if panel_preview || (main != none && main != some(window))
+    if popover
       MiniStatus
         with
           coin=coin
@@ -1058,7 +1052,7 @@ view
           error=error
         events
           quit -> quit
-    if !panel_preview && (main == none || main == some(window))
+    if !popover
       overlay
         with
           when=gate
@@ -2443,8 +2437,9 @@ test trading_a_size_past_the_book_says_so
   expect text "64,001.00"
 
 test trading_menu_bar_panel_shows_the_focused_market
-  preset panel
+  preset held
   viewport 300 236
+  tray click
   expect text "PERP"
   expect text "64,000.00"
   expect text "FUNDING"

@@ -257,7 +257,7 @@ pub(in crate::parser) fn parse_window_settings(line: &Line) -> Result<WindowSett
                     }
                 }
             ),
-            "icon-rgba" => set!(icon, config_window_icon(value, item)?),
+            "icon-rgba" => set!(icon, config_window_icon("window", value, item)?),
             "exit-on-close" => {
                 set!(exit_on_close_request, config_bool(value, item)?)
             }
@@ -303,7 +303,7 @@ pub(in crate::parser) fn parse_tray_settings(line: &Line) -> Result<TraySettings
             }};
         }
         match name {
-            "icon-rgba" => set!(icon, config_window_icon(value, item)?),
+            "icon-rgba" => set!(icon, config_window_icon("tray", value, item)?),
             "icon-template" => set!(icon_template, config_bool(value, item)?),
             "label" => set!(label, app_expression(value, item)?),
             "tooltip" => set!(tooltip, app_expression(value, item)?),
@@ -505,7 +505,10 @@ pub(in crate::parser) fn parse_wasm_window_settings(
     Ok(settings)
 }
 
+/// Parses `icon-rgba "path" width height`. `kind` names the declaration the
+/// icon was written in, so a tray icon is not reported as a window icon.
 pub(in crate::parser) fn config_window_icon(
+    kind: &str,
     source: &str,
     line: &Line,
 ) -> Result<WindowIcon, Error> {
@@ -514,7 +517,7 @@ pub(in crate::parser) fn config_window_icon(
         return Err(error(
             "E015",
             line,
-            "window icon-rgba expects `\"relative/path.rgba\" width height`",
+            format!("{kind} icon-rgba expects `\"relative/path.rgba\" width height`"),
         ));
     }
     let path = string_literal(&parts[0], line)?;
@@ -522,7 +525,7 @@ pub(in crate::parser) fn config_window_icon(
         return Err(error(
             "E015",
             line,
-            "window icon paths must be non-empty relative `/` paths",
+            format!("{kind} icon paths must be non-empty relative `/` paths"),
         ));
     }
     let dimension = |value: &str| {
@@ -534,7 +537,7 @@ pub(in crate::parser) fn config_window_icon(
                 error(
                     "E015",
                     line,
-                    "window icon dimensions must be positive integers",
+                    format!("{kind} icon dimensions must be positive integers"),
                 )
             })
     };
@@ -544,7 +547,13 @@ pub(in crate::parser) fn config_window_icon(
         .checked_mul(height)
         .and_then(|pixels| usize::try_from(pixels).ok())
         .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| error("E015", line, "window icon dimensions are too large"))?;
+        .ok_or_else(|| {
+            error(
+                "E015",
+                line,
+                format!("{kind} icon dimensions are too large"),
+            )
+        })?;
     Ok(WindowIcon {
         path,
         width,

@@ -102,6 +102,29 @@ pub(in crate::codegen) fn generate_view(
             },
         );
     }
+    if program
+        .settings()
+        .tray
+        .as_ref()
+        .is_some_and(|tray| tray.popover.is_some())
+    {
+        // True only while the view is drawing the window the status item
+        // opened, so one view can answer for the panel and the app's own
+        // windows without the app tracking window ids itself.
+        env.insert(
+            "popover".into(),
+            Binding {
+                code: "(self.__ice_tray_popover == ::std::option::Option::Some(window))".into(),
+                ty: Type::Bool,
+                local: true,
+                state: None,
+                owner: program
+                    .expressions()
+                    .tray_popover_local()
+                    .map(BindingOwner::Local),
+            },
+        );
+    }
     let root_scope = if mounted.is_empty() {
         rust_string(program.app_name())
     } else {
