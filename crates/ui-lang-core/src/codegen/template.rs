@@ -346,11 +346,6 @@ impl Builder<'_> {
         let Some(padding) = self.padding(&linear.padding)? else {
             return Ok(None);
         };
-        // The inline path applies a linear layout's padding through a wrapping
-        // container; the template has no node for that yet.
-        if padding.is_some() {
-            return Ok(None);
-        }
         let axis = match linear.axis {
             ResolvedLinearAxis::Column => Axis::Column,
             ResolvedLinearAxis::Row => Axis::Row,
@@ -380,6 +375,7 @@ impl Builder<'_> {
             a11y,
             axis,
             spacing,
+            padding,
             width,
             height,
             align_x,

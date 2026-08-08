@@ -239,6 +239,7 @@ where
             a11y,
             axis,
             spacing,
+            padding,
             width,
             height,
             align_x,
@@ -263,6 +264,9 @@ where
             let layout: IceElement<'a, Message> = match axis {
                 Axis::Column => {
                     let mut column = widget::column(rendered).spacing(spacing);
+                    if let Some(padding) = padding {
+                        column = column.padding(edge_padding(*padding));
+                    }
                     if let Some(width) = width {
                         column = column.width(length(*width));
                     }
@@ -276,6 +280,9 @@ where
                 }
                 Axis::Row => {
                     let mut row = widget::row(rendered).spacing(spacing);
+                    if let Some(padding) = padding {
+                        row = row.padding(edge_padding(*padding));
+                    }
                     if let Some(width) = width {
                         row = row.width(length(*width));
                     }

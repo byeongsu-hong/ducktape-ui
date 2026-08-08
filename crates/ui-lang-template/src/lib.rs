@@ -222,6 +222,8 @@ pub enum Node {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         spacing: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        padding: Option<Edges>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         width: Option<Size>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         height: Option<Size>,
@@ -379,6 +381,7 @@ mod tests {
                 a11y: a11y("content"),
                 axis: Axis::Column,
                 spacing: Some(16.0),
+                padding: None,
                 width: Some(Size::Fill),
                 height: None,
                 align_x: Some(AlignX::Center),
@@ -416,6 +419,7 @@ mod tests {
                 a11y: a11y("content"),
                 axis: Axis::Row,
                 spacing: Some(8.0),
+                padding: None,
                 width: None,
                 height: None,
                 align_x: None,
