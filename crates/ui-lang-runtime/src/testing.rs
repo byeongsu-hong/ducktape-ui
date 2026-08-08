@@ -4461,22 +4461,38 @@ fn rendered_text_exists<Renderer: 'static>(
     expected: &str,
     within: Option<Rectangle>,
 ) -> Result<bool, &'static str> {
-    let visible = visible_texts(renderer, within)?;
-    if visible
-        .iter()
-        .any(|text| text.content.as_deref() == Some(expected))
-    {
+    // A primitive holding the whole string answers most queries, and answers
+    // them without reading the rest of the screen.
+    let mut singles = Vec::new();
+    let found = for_each_visible_text(renderer, within, |paint| {
+        if paint.content.as_deref() == Some(expected) {
+            return true;
+        }
+        if paint
+            .content
+            .as_deref()
+            .is_some_and(|content| crate::graphemes(content).count() == 1)
+        {
+            singles.push(paint);
+        }
+        false
+    })?;
+    if found {
         return Ok(true);
     }
-    Ok(tracked_runs(&visible).iter().any(|run| run == expected))
+    // Otherwise it may be drawn one grapheme at a time, and only the
+    // graphemes collected on the way past can say so.
+    Ok(tracked_runs(&singles).iter().any(|run| run == expected))
 }
 
-fn visible_texts<Renderer: 'static>(
+/// Walks every text primitive that is actually on screen, stopping early when
+/// `visit` is satisfied.
+fn for_each_visible_text<Renderer: 'static>(
     renderer: &mut Renderer,
     within: Option<Rectangle>,
-) -> Result<Vec<TextPaint>, &'static str> {
+    mut visit: impl FnMut(TextPaint) -> bool,
+) -> Result<bool, &'static str> {
     let renderer = tiny_skia_renderer(renderer)?;
-    let mut visible = Vec::new();
     for layer in renderer.layers() {
         for group in &layer.text {
             let transformation = group.transformation();
@@ -4491,13 +4507,14 @@ fn visible_texts<Renderer: 'static>(
                 };
                 if let Some(paint) = text_paint(text, transformation, bounds)
                     && within.is_none_or(|within| within.contains(paint.bounds.center()))
+                    && visit(paint)
                 {
-                    visible.push(paint);
+                    return Ok(true);
                 }
             }
         }
     }
-    Ok(visible)
+    Ok(false)
 }
 
 /// Text drawn with `tracking=` is one widget per grapheme, so no primitive
