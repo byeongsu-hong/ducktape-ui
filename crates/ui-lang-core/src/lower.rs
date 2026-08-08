@@ -17439,7 +17439,12 @@ view
         let generated = crate::codegen::generate(&program, "overlay-scale.ice").unwrap();
         let elapsed = started.elapsed();
         assert_eq!(program.overlays.len(), OVERLAYS);
-        assert_eq!(generated.matches("let __overlay_stack").count(), OVERLAYS);
+        // Overlays are published, so the count to check is the node the
+        // template carries, not the inline `Stack` it replaced.
+        assert_eq!(
+            generated.matches(r#"\"kind\": \"overlay\""#).count(),
+            OVERLAYS
+        );
         eprintln!("4k normalized overlays lowered and emitted in {elapsed:?}");
         assert!(
             elapsed.as_secs_f64() < 2.0,
