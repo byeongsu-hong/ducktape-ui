@@ -166,10 +166,14 @@ no generated Rust to map, so that safety net shrinks to the compiled half. The
 pixel-diff evidence in `cargo ice review` becomes the load-bearing check, and
 widening the vocabulary must be gated on it.
 
-Node kinds must be implemented once in the renderer and once in the emitter,
-and the two are only proven consistent by capture diffing. That is one
-implementation plus a serializer, not two implementations of the language, but
-it is not free.
+Node kinds must be implemented once in the renderer and once in the emitter.
+The *format* they meet on is shared — `ui-lang-template` holds the node types,
+their serde representation, and the reload-compatibility rule, so a field one
+side adds and the other does not read is a build failure rather than a view
+that renders wrong. What remains unproven by the compiler is each node's
+*meaning*: that the emitter chooses the node the renderer would have drawn.
+Only capture diffing establishes that. So this is one implementation plus a
+serializer, not two implementations of the language, but it is not free.
 
 Template strings are cloned per frame rather than borrowed, so an element never
 outlives the template it came from and a reload can drop the previous tree.

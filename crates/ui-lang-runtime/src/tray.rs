@@ -40,6 +40,23 @@ pub enum TrayEvent {
 /// Gap between the menu bar and an anchored popover, in logical points.
 const ANCHOR_MARGIN: f32 = 4.0;
 
+/// Whether `ICE_TRAY_DEBUG` asked for a trace of the tray's native boundary.
+/// A status item that does nothing looks identical whether the platform never
+/// delivered the click, the bridge dropped it, or the popover landed off the
+/// screen, and none of the three is visible from inside the application.
+fn tracing() -> bool {
+    static TRACING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACING.get_or_init(|| std::env::var_os("ICE_TRAY_DEBUG").is_some())
+}
+
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        if $crate::tray::tracing() {
+            eprintln!("ice tray: {}", ::std::format!($($arg)*));
+        }
+    };
+}
+
 /// Top-left logical position for a popover of `window_size` anchored under
 /// the status item. `icon` is in physical pixels; `scale_factor` converts it
 /// to the logical space used by iced window positioning.
@@ -71,7 +88,11 @@ pub fn anchor_position(
     {
         x = x.min(monitor.width - window_size.width).max(0.0);
     }
-    iced::Point::new(x, bottom as f32 + ANCHOR_MARGIN)
+    let anchor = iced::Point::new(x, bottom as f32 + ANCHOR_MARGIN);
+    trace!(
+        "anchor: icon {icon:?} scale {scale} window {window_size:?} monitor {monitor:?} -> {anchor:?}"
+    );
+    anchor
 }
 
 pub use platform::{events, init, set_label, set_tooltip};
@@ -105,6 +126,7 @@ mod platform {
         *EVENTS.lock().expect("tray event receiver lock") = Some(receiver);
         tray_icon::TrayIconEvent::set_event_handler(Some(
             move |event: tray_icon::TrayIconEvent| {
+                trace!("native event: {event:?}");
                 if let tray_icon::TrayIconEvent::Click {
                     rect,
                     button: tray_icon::MouseButton::Left,
@@ -112,7 +134,7 @@ mod platform {
                     ..
                 } = event
                 {
-                    let _ = sender.unbounded_send(TrayEvent::LeftClick {
+                    let delivered = sender.unbounded_send(TrayEvent::LeftClick {
                         icon: TrayRect {
                             x: rect.position.x,
                             y: rect.position.y,
@@ -120,6 +142,7 @@ mod platform {
                             height: f64::from(rect.size.height),
                         },
                     });
+                    trace!("forwarded left click: {delivered:?}");
                 }
             },
         ));
@@ -140,6 +163,7 @@ mod platform {
             .build()
         {
             Ok(icon) => TRAY.with(|slot| {
+                trace!("status item created");
                 *slot.borrow_mut() = Some(TrayState {
                     icon,
                     label: String::new(),
@@ -192,7 +216,9 @@ mod platform {
             .lock()
             .expect("tray event receiver lock")
             .take()
+            .inspect(|_| trace!("subscription took the live event receiver"))
             .unwrap_or_else(|| {
+                trace!("subscription found no receiver — clicks cannot arrive");
                 let (_sender, receiver) = iced::futures::channel::mpsc::unbounded();
                 receiver
             })

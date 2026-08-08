@@ -134,12 +134,12 @@ cargo run -p showcase          # the ducktape-ui component catalog (crates/ui)
 cargo run -p ice-starter       # the minimal copyable build/include/test path
 cargo run -p candles-example   # native lightweight financial chart (see examples/candles)
 cargo run -p trading-example   # live Hyperliquid markets, positions, and fills (see examples/trading)
-cargo run -p trading-example --bin menubar   # the same market as a macOS menu bar mini status
 ```
 
 The `tray` app-setting block puts an app in the macOS menu bar: a
 codec-free RGBA status icon, a live `label` expression beside it, and — for
-daemons — a `popover` window toggled under the icon. Other targets compile
+daemons — a `popover` window toggled under the icon, which dismisses itself
+when it loses focus. Other targets compile
 the same source with the tray as a no-op; see `SPEC.md` for the mapping.
 
 `showcase` also exercises the 100k-row collection widgets behind typed extern

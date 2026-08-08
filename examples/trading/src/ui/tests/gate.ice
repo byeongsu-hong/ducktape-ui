@@ -1,4 +1,5 @@
 test trading_gate_gates_the_app
+  preset gate
   viewport 1440 900
   target dialog = #gate
   target app = #app
@@ -7,6 +8,7 @@ test trading_gate_gates_the_app
   capture gate
 
 test trading_gate_refuses_a_malformed_address
+  preset gate
   viewport 1440 900
   target dialog = #gate
   target connect = dialog/connect

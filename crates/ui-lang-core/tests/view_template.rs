@@ -103,14 +103,24 @@ fn a_modelled_view_is_published_as_data() {
         .expect("the sample app analyzes")
         .expect("every node in the sample app is modelled");
 
-    // The dynamic half is exactly the four values the view reads: the greeting
-    // text, the input's value and its binding constructor, the button's
-    // message, and the count text.
-    assert!(
-        template.json.contains("\"slots\": 5"),
-        "expected five slots, got: {}",
-        &template.json[template.json.len().saturating_sub(200)..]
-    );
+    // The dynamic half is exactly the five values the view reads, and the
+    // tables now say which kind each one is: two computed strings (the
+    // greeting and the count), the input's borrowed state and its binding
+    // constructor, and the button's message. Nothing falls back to a hole.
+    for (kind, count) in [
+        ("texts", 2),
+        ("states", 1),
+        ("messages", 1),
+        ("handlers", 1),
+        ("subtrees", 0),
+    ] {
+        let expected = format!("\"{kind}\": {count}");
+        assert!(
+            template.json.contains(&expected),
+            "expected {expected}, got: {}",
+            &template.json[template.json.len().saturating_sub(300)..]
+        );
+    }
     // Structure and literals live in the data.
     assert!(template.json.contains("\"literal\": \"Sample\""));
     assert!(template.json.contains("\"segment\": \"greeting\""));

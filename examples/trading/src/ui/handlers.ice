@@ -1,3 +1,12 @@
+on mount
+  task window open main -> main_opened _
+
+on main_opened(id)
+  main = some(id)
+
+on quit
+  exit
+
 on navigate(next)
   page = next
 

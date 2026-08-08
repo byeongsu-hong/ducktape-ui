@@ -7,7 +7,7 @@
 
 use std::io::Write;
 
-use ui_lang_runtime::template::{Slot, Template, accepts};
+use ui_lang_runtime::template::{Slots, Template, accepts};
 
 const STARTER: &str = r#"{
   "root": {
@@ -29,7 +29,7 @@ const STARTER: &str = r#"{
       }
     ]
   },
-  "slots": 1
+  "slots": { "texts": 1 }
 }"#;
 
 fn write_template(path: &std::path::Path, source: &str) {
@@ -64,7 +64,7 @@ fn an_edit_needing_a_new_value_is_refused() {
     // have to evaluate an expression it does not contain.
     let edited = STARTER
         .replace("\"slot\": 0", "\"slot\": 1")
-        .replace("\"slots\": 1", "\"slots\": 2");
+        .replace("\"texts\": 1", "\"texts\": 2");
     let edited = Template::from_json(&edited).expect("edited template parses");
 
     assert!(
@@ -87,7 +87,7 @@ fn a_running_process_picks_up_a_rewritten_file() {
     let source = ui_lang_runtime::template::TemplateSource::from_path(STARTER, Some(path.clone()));
 
     let first = source.current();
-    assert_eq!(first.slots, 1);
+    assert_eq!(first.slots.texts, 1);
 
     // Rewrite the file the way `cargo ice dev` does after a view-only edit.
     let edited = STARTER.replace("\"Ice starter\"", "\"Reloaded\"");
@@ -123,7 +123,10 @@ fn slots_outlive_a_template_that_no_longer_needs_them() {
     // The renderer clones template strings rather than borrowing them, which
     // is what lets a reload drop the tree an earlier frame was built from.
     let template = Template::from_json(STARTER).expect("starter template parses");
-    let slots: Vec<Slot<'_, ()>> = vec![Slot::Owned("7".into())];
+    let slots = Slots::<()> {
+        texts: vec!["7".into()],
+        ..Slots::default()
+    };
     let palette = [iced::Color::BLACK];
     let element = ui_lang_runtime::template::render(&template, &slots, &palette, "App", &[]);
     drop(template);

@@ -1653,6 +1653,24 @@ pub fn fmt_bps(percent: f64) -> String {
 }
 
 /// Large money in a narrow column: "-$3.3M" rather than eleven digits.
+/// Funding as the reader's cash flow rather than as the venue's charge.
+///
+/// `Position.funding` is what the position has been CHARGED, which is the
+/// sign both venues report and the sign the arithmetic wants. It is the
+/// opposite of what a column headed FUNDING means to the person reading it:
+/// money that left the account is negative there, the way it is in every
+/// other money column on this screen. Shown as the charge, a position that
+/// had been PAID funding read as a loss, in the colour a loss is drawn in.
+pub fn fmt_funding_flow(charged: f64) -> String {
+    fmt_compact_usd(-charged)
+}
+
+/// Whether that flow was into the account, for the colour beside it. A charge
+/// is a cost and reads the way costs read.
+pub fn funding_received(charged: f64) -> bool {
+    charged <= 0.0
+}
+
 pub fn fmt_compact_usd(value: f64) -> String {
     if value == 0.0 {
         return "$0".to_owned();
@@ -3626,9 +3644,7 @@ mod tests {
     /// the view, the handlers and the tests it pulls in are where the boundary
     /// is actually read; scanning the root alone would call the whole boundary
     /// dead. The directory is walked rather than listed so a fragment added
-    /// later is covered without anyone remembering this test. Files that open
-    /// a root of their own stay out: the menubar is a second app over the same
-    /// extern block, and a `sync` only it calls is still dead here.
+    /// later is covered without anyone remembering this test.
     fn trading_ice() -> String {
         use std::path::Path;
 
@@ -3647,11 +3663,6 @@ mod tests {
                     continue;
                 }
                 let text = std::fs::read_to_string(&path).expect("read an Ice source");
-                let other_root = (text.starts_with("app ") || text.starts_with("daemon "))
-                    && !path.ends_with("app.ice");
-                if other_root {
-                    continue;
-                }
                 source.push_str(&text);
                 source.push('\n');
             }
@@ -3663,7 +3674,7 @@ mod tests {
             &mut source,
         );
         assert!(
-            source.contains("app Trading\n"),
+            source.contains("daemon Trading\n"),
             "the walk did not reach src/ui/app.ice, so everything below reads as dead"
         );
         source

@@ -1,9 +1,14 @@
 //! Publishes a view as data instead of Rust.
 //!
 //! Every construct here has an inline emitter elsewhere in `codegen::view`
-//! that produces the same widgets as compiled Rust. This module produces the
-//! JSON half that `ui_lang_runtime::template` renders, plus the Rust
-//! expressions that fill the slot table each frame.
+//! that produces the same widgets as compiled Rust. This module builds the
+//! `ui_lang_template` tree that `ui_lang_runtime::template` renders, plus the
+//! Rust expressions that fill the slot table each frame.
+//!
+//! The node types come from `ui_lang_template` rather than being restated
+//! here: a format written by one definition and read by another is a format
+//! that can drift, and the drift would surface as a view that renders wrong
+//! rather than as a build failure.
 //!
 //! The node vocabulary is deliberately narrow — layouts, containers, text,
 //! inputs, buttons. A construct outside it is not a failure: it becomes a hole
@@ -12,175 +17,25 @@
 //! required for a view to publish.
 
 use super::*;
-use serde::Serialize;
+use ui_lang_template::{
+    A11y, AlignX, AlignY, Axis, ButtonFace, ButtonStyle, ColorRef, Edges, HandlerSlot, MessageSlot,
+    Node, Size, SlotCounts, Source, StateSlot, SubtreeSlot, Template, TextSlot, Value,
+};
 
 /// A view published as data, with the compiled expressions that feed it.
 pub(in crate::codegen) struct TemplateEmission {
     /// The template itself, in the JSON form the runtime parses.
     pub(in crate::codegen) json: String,
-    /// Rust expressions, one per slot, each evaluating to a
-    /// `ui_lang_runtime::template::Slot`.
+    /// Rust statements, one per slot, each appending to the table its kind
+    /// belongs to. They are emitted in the order the tables are indexed, so a
+    /// statement's position in its own table is the index the template holds.
     pub(in crate::codegen) slots: Vec<String>,
+    /// How many slots of each kind the statements above produce.
+    pub(in crate::codegen) counts: SlotCounts,
     /// The `.ice` files this template's nodes cite, in index order. They are
     /// compiled in as `&'static str`, which is why a reload can move a node
     /// between these files but not introduce a new one.
     pub(in crate::codegen) paths: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct Template {
-    root: Node,
-    slots: usize,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum Value {
-    Literal(String),
-    Slot(usize),
-}
-
-#[derive(Serialize)]
-struct ColorRef {
-    index: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    alpha: Option<f32>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum Size {
-    Fill,
-    Shrink,
-    Fixed(f32),
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum AlignX {
-    Left,
-    Center,
-    Right,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum AlignY {
-    Top,
-    Center,
-    Bottom,
-}
-
-#[derive(Serialize)]
-struct Edges {
-    top: f64,
-    right: f64,
-    bottom: f64,
-    left: f64,
-}
-
-#[derive(Default, Serialize)]
-struct ButtonFace {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    background: Option<ColorRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    text_color: Option<ColorRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    radius: Option<f32>,
-}
-
-#[derive(Default, Serialize)]
-struct ButtonStyle {
-    active: ButtonFace,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hovered: Option<ButtonFace>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pressed: Option<ButtonFace>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum Axis {
-    Column,
-    Row,
-}
-
-#[derive(Serialize)]
-struct A11y {
-    segment: String,
-    named: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source: Option<Source>,
-}
-
-/// A `.ice` coordinate whose file is an index into the emitted path table.
-#[derive(Serialize)]
-struct Source {
-    path: usize,
-    line: usize,
-    column: usize,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum Node {
-    Container {
-        a11y: A11y,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        width: Option<Size>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        height: Option<Size>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        padding: Option<Edges>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        align_x: Option<AlignX>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        align_y: Option<AlignY>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        background: Option<ColorRef>,
-        content: Box<Node>,
-    },
-    Linear {
-        a11y: A11y,
-        axis: Axis,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        spacing: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        width: Option<Size>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        height: Option<Size>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        align_x: Option<AlignX>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        align_y: Option<AlignY>,
-        children: Vec<Node>,
-    },
-    Text {
-        a11y: A11y,
-        value: Value,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        size: Option<f32>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        color: Option<ColorRef>,
-    },
-    Input {
-        a11y: A11y,
-        label: String,
-        value: usize,
-        on_input: usize,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        width: Option<Size>,
-        secure: bool,
-    },
-    Button {
-        a11y: A11y,
-        label: String,
-        on_press: usize,
-        style: ButtonStyle,
-    },
-    Subtree {
-        slot: usize,
-    },
 }
 
 /// Publishes `program`'s app view as a template.
@@ -215,6 +70,7 @@ pub(in crate::codegen) fn emit(
         message,
         env,
         slots: Vec::new(),
+        counts: SlotCounts::default(),
         paths: Vec::new(),
         source_path,
     };
@@ -224,10 +80,10 @@ pub(in crate::codegen) fn emit(
     let root = builder.node(program.app_view(), root_scope)?;
     let template = Template {
         root,
-        slots: builder.slots.len(),
+        slots: builder.counts,
     };
     let origin = program.resolved_view(program.app_view())?.origin;
-    let json = serde_json::to_string_pretty(&template).map_err(|error| {
+    let json = template.to_json().map_err(|error| {
         program.invariant_at_origin(
             origin,
             format!("view template failed to serialize: {error}"),
@@ -236,6 +92,7 @@ pub(in crate::codegen) fn emit(
     Ok(Some(TemplateEmission {
         json,
         slots: builder.slots,
+        counts: builder.counts,
         paths: builder.paths,
     }))
 }
@@ -245,6 +102,7 @@ struct Builder<'a> {
     message: &'a str,
     env: &'a dyn BindingEnvironment,
     slots: Vec<String>,
+    counts: SlotCounts,
     paths: Vec<String>,
     /// The root being compiled. A node lowered from the root file carries no
     /// path of its own — only imported origins do — so this stands in for it,
@@ -253,9 +111,45 @@ struct Builder<'a> {
 }
 
 impl Builder<'_> {
-    fn push_slot(&mut self, code: String) -> usize {
-        self.slots.push(code);
-        self.slots.len() - 1
+    // One push per slot kind. Each hands back the index type its table is
+    // addressed by, so a node built from the wrong one does not compile.
+
+    fn push_text(&mut self, code: String) -> TextSlot {
+        let index = self.counts.texts;
+        self.counts.texts += 1;
+        self.slots.push(format!("__ice_slots.texts.push({code});"));
+        TextSlot(index)
+    }
+
+    fn push_state(&mut self, code: String) -> StateSlot {
+        let index = self.counts.states;
+        self.counts.states += 1;
+        self.slots.push(format!("__ice_slots.states.push({code});"));
+        StateSlot(index)
+    }
+
+    fn push_message(&mut self, code: String) -> MessageSlot {
+        let index = self.counts.messages;
+        self.counts.messages += 1;
+        self.slots
+            .push(format!("__ice_slots.messages.push({code});"));
+        MessageSlot(index)
+    }
+
+    fn push_handler(&mut self, code: String) -> HandlerSlot {
+        let index = self.counts.handlers;
+        self.counts.handlers += 1;
+        self.slots
+            .push(format!("__ice_slots.handlers.push({code});"));
+        HandlerSlot(index)
+    }
+
+    fn push_subtree(&mut self, code: String) -> SubtreeSlot {
+        let index = self.counts.subtrees;
+        self.counts.subtrees += 1;
+        self.slots
+            .push(format!("__ice_slots.push_subtree({code});"));
+        SubtreeSlot(index)
     }
 
     /// Interns a `.ice` path and returns its index in the emitted table.
@@ -360,9 +254,7 @@ impl Builder<'_> {
     fn subtree(&mut self, id: ViewId, scope: &str) -> Result<Node, Error> {
         let rendered = render_node(id, self.program, self.message, self.env, scope, None)?;
         Ok(Node::Subtree {
-            slot: self.push_slot(format!(
-                "::ui_lang_runtime::template::Slot::subtree({rendered})"
-            )),
+            slot: self.push_subtree(rendered),
         })
     }
 
@@ -546,9 +438,7 @@ impl Builder<'_> {
             None => {
                 let code =
                     resolved_expr_use_code(self.program, *value, self.env, ValueMode::Owned)?;
-                Value::Slot(self.push_slot(format!(
-                    "::ui_lang_runtime::template::Slot::Owned(({code}).to_string())"
-                )))
+                Value::Slot(self.push_text(format!("({code}).to_string()")))
             }
         };
         Ok(Some(Node::Text {
@@ -604,12 +494,9 @@ impl Builder<'_> {
         let Some(StateBinding::App(name)) = &state.state else {
             return Ok(None);
         };
-        let value = self.push_slot(format!(
-            "::ui_lang_runtime::template::Slot::Borrowed(&{})",
-            state.code
-        ));
-        let on_input = self.push_slot(format!(
-            "::ui_lang_runtime::template::Slot::TextHandler({}::{} as fn(::std::string::String) -> {})",
+        let value = self.push_state(format!("&{}", state.code));
+        let on_input = self.push_handler(format!(
+            "{}::{} as fn(::std::string::String) -> {}",
             self.message,
             binding_variant(name),
             self.message
@@ -667,9 +554,7 @@ impl Builder<'_> {
             self.program,
             self.message,
         )?;
-        let on_press = self.push_slot(format!(
-            "::ui_lang_runtime::template::Slot::Message({activate})"
-        ));
+        let on_press = self.push_message(activate);
         Ok(Some(Node::Button {
             a11y,
             label: label.clone(),

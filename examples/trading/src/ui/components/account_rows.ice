@@ -82,8 +82,8 @@ component PositionRow(held:Position)
           width=88.0
       Delta
         with
-          value=fmt_compact_usd(held.funding)
-          up=(held.funding >= 0.0)
+          value=fmt_funding_flow(held.funding)
+          up=funding_received(held.funding)
           size=11.0
           width=72.0
       space w=fill

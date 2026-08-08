@@ -8,6 +8,8 @@ enum Page
   settings
 
 state
+  main:window-id? = none
+  panel_preview = false
   page:Page = Page.trade
   gate = true
   address = ""
@@ -44,6 +46,8 @@ state
 
 derived
   watching = !gate && !empty(address)
+
+preset gate
 
 preset terminal
   state
@@ -169,6 +173,15 @@ preset stalled
     quote = price_ticket("64,000.00", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
     feed_error = "Hyperliquid feed dropped"
     latency = 0
+
+preset panel
+  state
+    gate = false
+    panel_preview = true
+    symbols = demo_symbols()
+    visible = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    live = true
 
 preset failing
   state

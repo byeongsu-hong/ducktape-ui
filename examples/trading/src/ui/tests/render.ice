@@ -136,3 +136,22 @@ test trading_a_position_row_quotes_its_own_pnl_to_the_cent
   expect text "-$2,400.00"
   expect no text "-$2.4K"
   expect text "-$33.36"
+
+test trading_funding_reads_as_money_that_moved_not_as_a_charge
+  preset held
+  viewport 1660 820
+  dispatch navigate(Page.portfolio)
+  // The fixture positions have all been PAID funding, which is money in.
+  expect text "+$3.3M"
+  expect no text "-$3.3M"
+  expect text "+$142"
+  expect text "+$8"
+
+test trading_menu_bar_panel_shows_the_focused_market
+  preset panel
+  viewport 300 236
+  expect text "PERP"
+  expect text "64,000.00"
+  expect text "FUNDING"
+  expect no text "ORDER BOOK"
+  capture menubar_panel

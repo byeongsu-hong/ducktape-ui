@@ -26,26 +26,27 @@ blames the exchange for something you just typed.
 
 ## The menu bar mini status
 
-On macOS the terminal also lives in the menu bar. The main app declares a
-`tray` block that keeps the focused market's coin and last price as the status
-item's label; clicking the item restores and focuses the terminal window.
+On macOS the terminal also lives in the menu bar: a `tray` block keeps the
+focused market's coin and last price beside a status icon, so the price is
+readable with every window closed.
 
-A second binary is the same idea without the terminal: a `daemon` whose only
-window is a popover anchored under the status item, showing the focused
-market's price, 24h change, and the volume/OI/funding row, fed by the same
-Hyperliquid externs.
+Left-clicking the item opens a panel anchored under it — the focused market's
+price, 24h change, and the volume/OI/funding row — and clicking anywhere else
+dismisses it. The `popover` block owns that, so the app subscribes to nothing
+for it.
 
-```bash
-cargo run -p trading-example --bin menubar
-```
+This is why the terminal is a `daemon` rather than an `app`: iced draws one
+view per application window, so the panel and the terminal have to be two
+branches of a view that knows which window it is drawing. Closing the terminal
+therefore leaves the app in the menu bar rather than exiting; **Quit** inside
+the panel ends it. On other platforms the same source builds and runs with the
+tray as a no-op.
 
-Left-clicking the status item toggles the popover; clicking anywhere else
-dismisses it (`subscribe window unfocused` → `task window close`). **Quit**
-inside the panel exits the daemon. On other platforms both binaries build and
-run with the tray as a no-op.
+If the status item ever looks inert, `ICE_TRAY_DEBUG=1 cargo run -p
+trading-example` traces the native boundary: whether the click arrived, and
+where the panel was placed.
 
-![Menubar popover, loading](screenshots/menubar-panel.png)
-![Menubar popover, focused market](screenshots/menubar-market.png)
+![The menu bar panel](screenshots/menubar-panel.png)
 
 ## Four pages
 
@@ -342,6 +343,18 @@ return on equity of 811.79% where the position's own pnl and margin say
 The markets are three rather than one, for the same reason. A list of one
 answers no question a list is asked: which row is selected, what a search
 leaves behind, whether a price landed on the market it belongs to.
+
+## Funding, as the money that moved
+
+Both venues report funding as a CHARGE — positive means the position paid —
+and that is the sign the arithmetic wants, so the field keeps it. A column
+headed FUNDING means something else to the person reading it: money that left
+the account is negative there, the way it is in every other money column on
+this screen.
+
+Shown as the charge, a position that had been paid funding read as a loss, in
+the colour a loss is drawn in. The column shows the flow now, and the colour
+follows it.
 
 ## The equity the engine can actually spend
 
