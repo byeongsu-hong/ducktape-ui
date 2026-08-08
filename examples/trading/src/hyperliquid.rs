@@ -2179,6 +2179,30 @@ pub fn demo_tape_full() -> Vec<Trade> {
         .collect()
 }
 
+/// One beat of the market feed, for driving the handler that folds a beat
+/// into the app. Carries the mids the fixtures are priced at, so what a
+/// dispatched beat leaves is what a real one would.
+/// A failure the way the feed reports one, for driving the handler that
+/// takes it.
+pub fn demo_feed_error() -> HlError {
+    HlError {
+        message: "Hyperliquid unreachable".to_owned(),
+    }
+}
+
+pub fn demo_tick() -> MarketTick {
+    MarketTick {
+        mids: demo_symbols()
+            .into_iter()
+            .map(|row| (row.name, row.price))
+            .collect(),
+        trades: Vec::new(),
+        book: Some(demo_book()),
+        latency: 42,
+        context: None,
+    }
+}
+
 pub fn demo_hover() -> Option<CandleHit> {
     let tape = demo_candles();
     let candles = lock(&tape.candles);

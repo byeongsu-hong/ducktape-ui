@@ -49,6 +49,7 @@ state
   feeds:task-handle? = none
   latency = 0
   live = false
+  feed_error = ""
   flashing = false
   loading_history = false
   lower_height = 232.0
@@ -178,7 +179,7 @@ preset stalled
     orders = demo_orders()
     ticket_price = "64,000.00"
     quote = price_ticket("64,000.00", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
-    error = "Hyperliquid feed dropped"
+    feed_error = "Hyperliquid feed dropped"
     latency = 0
 
 preset failing
@@ -875,6 +876,7 @@ on market_ticked(tick)
   book = tick.book
   latency = tick.latency
   live = true
+  feed_error = ""
   symbols = apply_feed(symbols, tick)
   visible = filter_symbols(symbols, query, coin)
   focus = symbol_row(symbols, coin)
@@ -889,7 +891,7 @@ on failed(reason)
   loading_history = false
 
 on feed_failed(reason)
-  error = reason.message
+  feed_error = reason.message
   latency = 0
   live = false
 
@@ -1162,9 +1164,11 @@ view
                       Label value=fmt_count(len(positions))
                       if !empty(error)
                         text error size=11.0 @text-fg
-                      if empty(error) && !empty(status)
+                      if empty(error) && !empty(feed_error)
+                        text feed_error size=11.0 @text-down
+                      if empty(error) && empty(feed_error) && !empty(status)
                         text status size=11.0 @text-faint
-                      if empty(error) && empty(status)
+                      if empty(error) && empty(feed_error) && empty(status)
                         match hover
                           some(hit)
                             row #readout gap=10.0 align=center
@@ -2043,6 +2047,12 @@ test trading_a_dead_feed_stops_the_price_looking_live
   viewport 1660 820
   expect text "NOT LIVE"
   expect text "Hyperliquid feed dropped"
+  dispatch market_ticked(demo_tick())
+  expect no text "NOT LIVE"
+  expect no text "Hyperliquid feed dropped"
+  dispatch feed_failed(demo_feed_error())
+  expect text "Hyperliquid unreachable"
+  expect text "NOT LIVE"
   expect no text "market not loaded"
   capture stalled
 
