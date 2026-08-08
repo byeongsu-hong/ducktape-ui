@@ -236,6 +236,18 @@ Single-letter shortcuts for the side are not here. The market search listens
 to the same keys, and the app has no notion of which surface holds focus, so
 typing `b` to find bitcoin would flip the ticket to a buy instead.
 
+## The rate belongs to the market, not the position
+
+A market capped at 40x holds every position in it to half of that cap,
+whether the trader opened at 40x or at 2x. Reading the requirement off the
+position's chosen leverage overstates a conservative position by exactly the
+factor it was conservative by — a 5x position on a 40x market reads eight
+times closer to the engine than it is.
+
+Where the venue reports what an account is held to, that figure is used
+rather than reassembled. `AGAINST THE ENGINE` starts from
+`crossMaintenanceMarginUsed` and only computes the part the order changes.
+
 ## The order, against the engine
 
 `AGAINST THE ENGINE` reads `91% → 100%`: where the account stands against its

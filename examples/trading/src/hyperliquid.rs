@@ -1792,7 +1792,9 @@ pub fn order_load(
     if size <= 0.0 || account.value <= 0.0 || market.price <= 0.0 {
         return String::new();
     }
-    let now = cross_maintenance(&account.positions);
+    // The venue reports what this account is held to, so the reading starts
+    // from that rather than from a sum reassembled out of the positions.
+    let now = account.maintenance;
     let held = account
         .positions
         .iter()
@@ -2085,7 +2087,7 @@ pub fn demo_candles_at(last: f64) -> Tape {
 /// The account those positions belong to. Built the way a parsed one is, so
 /// the rail and its percentage cannot disagree with the equity beside them.
 pub fn demo_account() -> Account {
-    demo_account_of(demo_positions(), 3_761_182.51, 2_200.0)
+    demo_account_of(demo_positions(), demo_symbols(), 3_761_182.51, 2_200.0)
 }
 
 /// An account whose equity is nearly all spoken for: a long that has moved
@@ -2114,22 +2116,39 @@ pub fn demo_account_at_risk() -> Account {
         -820.0,
     )];
     let equity = 34_000.0 + positions[0].pnl;
-    demo_account_of(positions, equity, 0.0)
+    demo_account_of(positions, demo_symbols_at_risk(), equity, 0.0)
 }
 
 /// The maintenance requirement an account is actually held to, summed from
 /// the positions that are held against the whole account rather than against
 /// their own margin. An isolated position dies alone and does not enter it.
-fn cross_maintenance<'a>(positions: impl IntoIterator<Item = &'a Position>) -> f64 {
+/// What a set of cross positions is held to, at each market's own rate.
+///
+/// The rate is the asset's, not the position's: a market capped at 40x holds
+/// every position in it to half of that, whether the trader opened at 40x or
+/// at 2x. Reading it off the position's chosen leverage overstates a
+/// conservative position by exactly the factor it was conservative by.
+fn cross_maintenance(positions: &[Position], markets: &[SymbolRow]) -> f64 {
     positions
-        .into_iter()
+        .iter()
         .filter(|held| held.margin_mode == "cross")
-        .map(|held| held.mark * held.size.abs() * maintenance_fraction(held.leverage))
+        .map(|held| {
+            let fraction = markets
+                .iter()
+                .find(|row| row.name == held.coin)
+                .map_or(0.0, |row| row.maintenance);
+            held.mark * held.size.abs() * fraction
+        })
         .sum()
 }
 
-fn demo_account_of(positions: Vec<Position>, value: f64, withdrawable: f64) -> Account {
-    let maintenance = cross_maintenance(&positions);
+fn demo_account_of(
+    positions: Vec<Position>,
+    markets: Vec<SymbolRow>,
+    value: f64,
+    withdrawable: f64,
+) -> Account {
+    let maintenance = cross_maintenance(&positions, &markets);
     Account {
         value,
         pnl: positions.iter().map(|position| position.pnl).sum(),
@@ -2484,14 +2503,18 @@ mod tests {
     /// nothing travelled — two risk figures on one screen disagreeing.
     #[test]
     fn the_fixture_account_is_held_to_what_its_positions_require() {
-        for account in [demo_account(), demo_account_at_risk()] {
+        for (account, markets) in [
+            (demo_account(), demo_symbols()),
+            (demo_account_at_risk(), demo_symbols_at_risk()),
+        ] {
             assert!(
                 (account.pnl - account.positions.iter().map(|held| held.pnl).sum::<f64>()).abs()
                     < 0.01,
                 "unrealized is not the sum of the positions under it"
             );
             assert!(
-                (account.maintenance - cross_maintenance(&account.positions)).abs() < 0.01,
+                (account.maintenance - cross_maintenance(&account.positions, &markets)).abs()
+                    < 0.01,
                 "the requirement is not what these positions are held to"
             );
             assert!(
@@ -2513,7 +2536,24 @@ mod tests {
             .filter(|held| held.margin_mode == "isolated")
             .collect();
         assert!(!isolated.is_empty(), "the fixture holds one to check");
-        assert_eq!(cross_maintenance(&isolated), 0.0);
+        assert_eq!(cross_maintenance(&isolated, &demo_symbols()), 0.0);
+
+        // The rate is the asset's cap, not the leverage the trader chose. A
+        // conservative position held to its own leverage reads as many times
+        // more dangerous as it was conservative.
+        let careful = vec![demo_position(
+            "BTC",
+            1.0,
+            64_000.0,
+            64_000.0,
+            5.0,
+            Some(52_000.0),
+            0.0,
+        )];
+        assert!(
+            (cross_maintenance(&careful, &demo_symbols()) - 64_000.0 / 80.0).abs() < 0.01,
+            "a 5x position on a 40x market is held to a fortieth of a fortieth"
+        );
 
         // A position's mark is the feed's price for its market — every beat
         // sets one from the other — so a fixture that priced them apart is a
