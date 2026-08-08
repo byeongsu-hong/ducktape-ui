@@ -15,6 +15,12 @@ ui-lang.workspace = true
 ui-lang-runtime.workspace = true
 ureq = { version = "3", features = ["json"] }
 
+# The Keychain, and only where there is one. `OSX_10_15` is not a nicety: it is
+# the flag gating `use_protected_keychain`, and without the data-protection
+# keychain macOS ignores `kSecAttrAccessible*` outright — see `src/session.rs`.
+[target."cfg(target_os = \"macos\")".dependencies]
+security-framework = { version = "3.7", default-features = false, features = ["OSX_10_15"] }
+
 [build-dependencies]
 ui-lang-build.workspace = true
 
