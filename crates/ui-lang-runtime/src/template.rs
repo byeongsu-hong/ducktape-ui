@@ -764,6 +764,16 @@ impl TemplateSource {
     }
 }
 
+/// Whether a dev runner has published a template for this process to watch.
+///
+/// Generated code subscribes to a redraw tick only when this is true, so a
+/// release build carries no polling at all. Without such a tick a rewritten
+/// template would sit unread: iced rebuilds the view only when something asks
+/// it to, and an idle window never asks.
+pub fn watching() -> bool {
+    std::env::var_os("ICE_TEMPLATE_PATH").is_some()
+}
+
 /// Reports whether a compiled process can accept `candidate` without being
 /// rebuilt: the slot table it fills each frame must still line up.
 ///

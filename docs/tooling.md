@@ -88,8 +88,11 @@ process.
 
 `ICE_TEMPLATE_PATH` names the published template a launched app reads. The
 runner sets it; an app started without it renders the template compiled into
-it. An unreadable or unparseable file leaves the last good view rendering, so a
-half-written save cannot blank the window.
+it. While it is set, the app also subscribes to a 150 ms tick that notices a
+republished file — iced rebuilds a view only when something asks it to, and an
+idle window never asks — and subscribes to nothing when it is unset, so a
+release build carries no polling. An unreadable or unparseable file leaves the
+last good view rendering, so a half-written save cannot blank the window.
 
 ## api
 

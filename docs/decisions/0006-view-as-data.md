@@ -76,10 +76,18 @@ components), and 5 are fragments that do not analyse standalone.
   failed the capture check on accessibility paths, which is how the oracle
   earned its keep: only an author's `#name` opens a scope for descendants, and
   the template initially opened one for every node.
-- **A binary renders a template it was never built against.** Editing the
-  emitted JSON — new heading, larger type, wider spacing, a reversed row, a
-  restyled button — and pointing the compiled `starter` at it renders every
-  change, while the state-backed slots keep working. No compiler ran.
+- **The loop closes end to end.** `cargo ice dev` running `starter` under a
+  virtual display, then saving a view-only edit: the runner prints
+  `view reloaded in place`, the window repaints with the new heading, type
+  size, spacing and button radius, and the application process ID is unchanged
+  — so no rebuild, no restart, and state was never re-initialised.
+
+  Running that loop is what found the last missing piece. Every part was
+  correct — the template republished, the fingerprint matched, the runtime
+  would have read the new file — and nothing happened, because iced rebuilds a
+  view only when something asks it to and an idle window never asks. Generated
+  code now subscribes to a 150 ms tick while `ICE_TEMPLATE_PATH` is set, and to
+  nothing at all otherwise.
 - **The reload path costs ~0.6ms** (parse, check, lower, emit), against ~1.0s
   for the rebuild it replaces on that app. Diagnostics are unaffected: the
   reload path runs the same front end.
