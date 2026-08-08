@@ -1996,13 +1996,55 @@ pub fn demo_candles() -> Tape {
 /// The account those positions belong to. Built the way a parsed one is, so
 /// the rail and its percentage cannot disagree with the equity beside them.
 pub fn demo_account() -> Account {
-    let positions = demo_positions();
-    let value = 3_761_182.51;
-    let maintenance = 1_418_309.0;
+    demo_account_of(demo_positions(), 3_761_182.51, 2_200.0)
+}
+
+/// An account whose equity is nearly all spoken for: a long that has moved
+/// against it, on collateral that cannot absorb much more. The equity bar is
+/// the account's own distance to the margin engine, and until this fixture
+/// existed no capture had drawn it anywhere but at rest.
+pub fn demo_positions_at_risk() -> Vec<Position> {
+    demo_account_at_risk().positions
+}
+
+pub fn demo_account_at_risk() -> Account {
+    // A cross position dies with the account, so its cliff is where the
+    // account's equity meets its requirement:
+    //
+    //     collateral + (mark - entry) * size == mark * size * maintenance
+    //
+    // which for 5 BTC bought at 64,000 on 34,000 of collateral, held to a
+    // fortieth of a fortieth, puts the account 76 dollars from the engine.
+    let positions = vec![demo_position(
+        "BTC",
+        5.0,
+        64_000.0,
+        58_000.0,
+        40.0,
+        Some(57_924.05),
+        -820.0,
+    )];
+    let equity = 34_000.0 + positions[0].pnl;
+    demo_account_of(positions, equity, 0.0)
+}
+
+/// The maintenance requirement an account is actually held to, summed from
+/// the positions that are held against the whole account rather than against
+/// their own margin. An isolated position dies alone and does not enter it.
+fn cross_maintenance(positions: &[Position]) -> f64 {
+    positions
+        .iter()
+        .filter(|held| held.margin_mode == "cross")
+        .map(|held| held.mark * held.size.abs() * maintenance_fraction(held.leverage))
+        .sum()
+}
+
+fn demo_account_of(positions: Vec<Position>, value: f64, withdrawable: f64) -> Account {
+    let maintenance = cross_maintenance(&positions);
     Account {
         value,
         pnl: positions.iter().map(|position| position.pnl).sum(),
-        withdrawable: 2_200.0,
+        withdrawable,
         notional: positions
             .iter()
             .map(|position| position.mark * position.size.abs())
@@ -2268,6 +2310,49 @@ mod tests {
                 "{coin}: the cliff is on the wrong side of the entry"
             );
         }
+    }
+
+    /// The equity bar is the account's distance to the margin engine, and it
+    /// has to be the distance these positions actually put it at. A hand-typed
+    /// requirement read 38% loaded beside a cross position whose own rail read
+    /// nothing travelled — two risk figures on one screen disagreeing.
+    #[test]
+    fn the_fixture_account_is_held_to_what_its_positions_require() {
+        for account in [demo_account(), demo_account_at_risk()] {
+            assert!(
+                (account.pnl - account.positions.iter().map(|held| held.pnl).sum::<f64>()).abs()
+                    < 0.01,
+                "unrealized is not the sum of the positions under it"
+            );
+            assert!(
+                (account.maintenance - cross_maintenance(&account.positions)).abs() < 0.01,
+                "the requirement is not what these positions are held to"
+            );
+            assert!(
+                (account.margin_pct - margin_load(account.value, account.maintenance) * 100.0)
+                    .abs()
+                    < 1e-9,
+                "the figure and the bar disagree"
+            );
+            assert!(
+                (account.health - account.margin_pct / 100.0 * RISK_RAIL_WIDTH).abs() < 1e-9,
+                "the bar is not that figure"
+            );
+        }
+
+        // An isolated position is liquidated against its own margin, so it
+        // asks nothing of the account's requirement.
+        let isolated: Vec<Position> = demo_positions()
+            .into_iter()
+            .filter(|held| held.margin_mode == "isolated")
+            .collect();
+        assert!(!isolated.is_empty(), "the fixture holds one to check");
+        assert_eq!(cross_maintenance(&isolated), 0.0);
+
+        // At rest and at risk are genuinely different readings, or the
+        // fixture pair is only one fixture.
+        assert!(demo_account().margin_pct < 5.0);
+        assert!(demo_account_at_risk().margin_pct > 50.0);
     }
 
     /// The fixture markets have to be the shape the parser leaves: volume

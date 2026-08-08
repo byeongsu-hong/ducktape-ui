@@ -92,6 +92,21 @@ preset browsing
     tape_prints = demo_tape()
     live = true
 
+preset at_risk
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    visible = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions_at_risk()
+    account = some(demo_account_at_risk())
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
+    live = true
+    quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, 5.0)
+
 preset stalled
   state
     gate = false
@@ -1942,6 +1957,13 @@ test trading_a_dead_feed_stops_the_price_looking_live
   expect text "Hyperliquid feed dropped"
   capture stalled
 
+test trading_an_account_against_its_engine_renders_as_such
+  preset at_risk
+  viewport 1660 820
+  expect text "91%"
+  expect text "57,924.05"
+  capture at_risk
+
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
   viewport 1660 820
@@ -1950,7 +1972,7 @@ test trading_the_whole_terminal_renders_from_fixtures
   expect no text "Connect an address"
   expect no text "READ ONLY"
   expect no text "No data"
-  expect text "38%"
+  expect text "1%"
   expect text "34%"
   expect no text "NOT LIVE"
   expect text "IF YOU CROSS"

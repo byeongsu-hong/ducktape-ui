@@ -42,6 +42,8 @@ extern crate::hyperliquid
   sync demo_positions() -> [Position]
   sync demo_candles() -> Tape
   sync demo_account() -> Account
+  sync demo_account_at_risk() -> Account
+  sync demo_positions_at_risk() -> [Position]
   sync demo_fills() -> [Fill]
   sync demo_orders() -> [Order]
   sync demo_alerts() -> [Alert]

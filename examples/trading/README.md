@@ -180,6 +180,16 @@ rule it is.
 
 ## Fixtures are read as evidence
 
+The account's requirement is summed from the positions held against the whole
+account, and an isolated one does not enter it — it dies alone. A hand-typed
+requirement had the equity bar reading 38% loaded beside a cross position
+whose own rail read nothing travelled: two risk figures on one screen, in
+disagreement, both drawn convincingly.
+
+The pair of account fixtures is at rest and against the engine, because a
+safety indicator that has only ever been rendered at rest has never been
+rendered.
+
 Every capture in this directory is an argument that the panel is right, so a
 fixture has to be a state the exchange could actually report. Five bugs in
 this example were impossible states drawn convincingly, and a wrong number in
