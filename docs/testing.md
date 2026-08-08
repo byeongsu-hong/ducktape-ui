@@ -715,3 +715,48 @@ outlines: its content has to be `'static` and an outlined method borrows
 `self`, so `outlining_active()` is false at any lazy depth. Wrapping a subtree
 to win frame time moves its component uses back inline, which is the cost the
 outlining work above removed. Measure both sides before taking that trade.
+
+### The unit rustc re-checks is the macro expansion
+
+After the outlining work and the `__update`/`__view` split, one number would
+not go away: any edit landing in the app's root generated file cost ~0.75s of
+`type_check_crate`, while the same size edit landing in a group file cost
+0.04s. Five hypotheses, four of them wrong, and the wrong ones are the useful
+part because each looked reasonable:
+
+| hypothesis | experiment | result |
+| --- | --- | --- |
+| `__program`'s RPIT inference | fence it into its own file | no change, slightly worse |
+| `include!` spans shifting the group files | emit the includes first | noise |
+| the `impl` block is the unit | close and reopen `impl` around one item | no change |
+| a fixed per-app cost | a 225-line root on another app | absent entirely |
+| **the lint macro invocation is the unit** | give one phase its own invocation | **0.69s to 0.05s** |
+
+Two of those experiments were wasted on the same unexamined assumption: they
+moved the *suspect* out of the root and left the thing being *edited* behind,
+so the edit still landed in the root either way. The experiment that settled it
+came from fencing something trivial — a one-line `__title` — and editing that:
+0.75s to 0.017s. If the cost follows a one-line function, it was never about
+what the function contains.
+
+The generator wraps everything it writes in one
+`__ice_generated_items_*! { ... }` invocation, which exists only to attach
+`#[allow(warnings, clippy::all)]` to each item — attributes on `include!` do
+not reach included items, and a module wrapper would change name resolution.
+But rustc re-checks a macro expansion as a unit, so every item in that
+invocation shares one fate. Group files sit outside it, which is why they were
+always cheap.
+
+The fix is to close the invocation and open the next one at each generation
+phase. `impl` blocks repeat freely (proven above by the experiment that found
+nothing), and the boundary always falls between whole items:
+
+| showcase edit | one invocation | per phase |
+| --- | --- | --- |
+| `app.ice` window title | 3.31s | **2.60s** |
+| `state.ice` | 3.32s | **2.17s** |
+| `handlers/app.ice` (control) | 2.56s | 2.60s |
+
+The control matters: a handler edit already lands in the `__app_update` group
+file, so it should not move, and it does not. The win is proportional to what
+is left in the root — a small app has little there and gains little.
