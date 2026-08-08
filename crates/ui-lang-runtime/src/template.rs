@@ -65,6 +65,8 @@ pub struct Slots<'a, Message> {
     /// layout splices into its own children. Taken like `subtrees`, and for
     /// the same reason.
     pub groups: Vec<std::cell::RefCell<Vec<IceElement<'a, Message>>>>,
+    /// Conditions the frame evaluated, for the structure that depends on them.
+    pub bools: Vec<bool>,
 }
 
 impl<Message> Default for Slots<'_, Message> {
@@ -76,6 +78,7 @@ impl<Message> Default for Slots<'_, Message> {
             handlers: Vec::new(),
             subtrees: Vec::new(),
             groups: Vec::new(),
+            bools: Vec::new(),
         }
     }
 }
@@ -96,6 +99,7 @@ impl<'a, Message> Slots<'a, Message> {
             handlers: Vec::with_capacity(counts.handlers),
             subtrees: Vec::with_capacity(counts.subtrees),
             groups: Vec::with_capacity(counts.groups),
+            bools: Vec::with_capacity(counts.bools),
         }
     }
 
@@ -139,6 +143,28 @@ fn vertical(align: AlignY) -> Vertical {
     }
 }
 
+/// Wraps an element so every press it does not act on is still swallowed
+/// rather than reaching what is drawn beneath it.
+fn swallowing_presses<'a, Message>(
+    content: impl Into<IceElement<'a, Message>>,
+    noop: &Message,
+) -> widget::MouseArea<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    widget::mouse_area(content)
+        .on_press(noop.clone())
+        .on_release(noop.clone())
+        .on_right_press(noop.clone())
+        .on_right_release(noop.clone())
+        .on_middle_press(noop.clone())
+        .on_middle_release(noop.clone())
+        .on_scroll({
+            let noop = noop.clone();
+            move |_| noop.clone()
+        })
+}
+
 fn edge_padding(edges: Edges) -> Padding {
     bounded_padding(edges.top, edges.right, edges.bottom, edges.left)
 }
@@ -156,10 +182,12 @@ fn resolve_value<Message>(value: &Value, slots: &Slots<'_, Message>) -> String {
 }
 
 fn resolve_color(reference: ColorRef, palette: &[Color]) -> Color {
-    let mut color = palette
-        .get(reference.index)
-        .copied()
-        .unwrap_or(Color::BLACK);
+    let mut color = match reference.base {
+        ColorBase::Token(index) => palette.get(index).copied().unwrap_or(Color::BLACK),
+        ColorBase::White => Color::WHITE,
+        ColorBase::Black => Color::BLACK,
+        ColorBase::Transparent => Color::TRANSPARENT,
+    };
     if let Some(alpha) = reference.alpha {
         color.a = alpha;
     }
@@ -399,6 +427,90 @@ where
             .unwrap_or_else(|| widget::Space::new().into()),
         // Only a layout expands a group into its child list; see `Node::Group`.
         Node::Group { .. } => widget::Space::new().into(),
+        Node::Overlay {
+            a11y,
+            visible,
+            backdrop,
+            padding,
+            align_x,
+            align_y,
+            dismiss,
+            noop,
+            content,
+            panel,
+        } => {
+            let key = a11y.key(parent_key);
+            let scope = a11y.scope(parent_key, &key);
+            let base = render_node(content, slots, palette, scope, paths);
+            let stack = widget::Stack::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .push(base);
+            // An overlay is not itself an accessible surface — it is the base
+            // and the panel that are. It takes an id only when the author
+            // named it, which is the one case the inline path wraps it too.
+            let identified = |element: IceElement<'a, Message>| -> IceElement<'a, Message> {
+                if a11y.named {
+                    widget::container(element)
+                        .id(widget::Id::from(key.clone()))
+                        .into()
+                } else {
+                    element
+                }
+            };
+            let BoolSlot(visible) = visible;
+            if !slots.bools.get(*visible).copied().unwrap_or(false) {
+                return identified(stack.into());
+            }
+            let MessageSlot(noop) = noop;
+            let Some(noop) = slots.messages.get(*noop) else {
+                return stack.into();
+            };
+            let MessageSlot(dismiss) = dismiss;
+            let dismiss = slots.messages.get(*dismiss).unwrap_or(noop);
+            let color = resolve_color(*backdrop, palette);
+            let backdrop = widget::container(widget::space())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |_theme| widget::container::Style {
+                    background: Some(Background::Color(color)),
+                    ..widget::container::Style::default()
+                });
+            let backdrop: IceElement<'a, Message> = swallowing_presses(backdrop, noop)
+                .on_press(dismiss.clone())
+                .into();
+            let SubtreeSlot(panel) = panel;
+            let panel = slots
+                .subtrees
+                .get(*panel)
+                .and_then(|cell| cell.borrow_mut().take())
+                .unwrap_or_else(|| widget::Space::new().into());
+            let panel: IceElement<'a, Message> = widget::container(panel)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(*padding)
+                .align_x(horizontal(*align_x))
+                .align_y(vertical(*align_y))
+                .into();
+            let surface: IceElement<'a, Message> = widget::Stack::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .push(backdrop)
+                .push(panel)
+                .into();
+            // iced's `float` captures nothing at its layout slot, so the
+            // surface is re-hosted at a translation of nothing at all — the
+            // same trick the inline emitter plays to put the panel above
+            // everything the base drew.
+            identified(
+                stack
+                    .push(
+                        widget::float(surface)
+                            .translate(|_, _| iced::Vector::new(f32::EPSILON, 0.0)),
+                    )
+                    .into(),
+            )
+        }
         Node::Button {
             a11y,
             label,
@@ -644,7 +756,7 @@ mod tests {
         let palette = [Color::from_rgba(0.2, 0.4, 0.6, 1.0)];
         let faded = resolve_color(
             ColorRef {
-                index: 0,
+                base: ColorBase::Token(0),
                 alpha: Some(0.5),
             },
             &palette,
@@ -654,12 +766,23 @@ mod tests {
         // An index the palette does not have must not panic during a reload.
         let missing = resolve_color(
             ColorRef {
-                index: 9,
+                base: ColorBase::Token(9),
                 alpha: None,
             },
             &palette,
         );
         assert_eq!(missing, Color::BLACK);
+        // The three colors that are not themed do not consult the palette.
+        assert_eq!(
+            resolve_color(
+                ColorRef {
+                    base: ColorBase::White,
+                    alpha: None,
+                },
+                &palette,
+            ),
+            Color::WHITE
+        );
     }
 
     #[test]
@@ -676,18 +799,18 @@ mod tests {
             &ButtonStyle {
                 active: ButtonFace {
                     background: Some(ColorRef {
-                        index: 0,
+                        base: ColorBase::Token(0),
                         alpha: None,
                     }),
                     text_color: Some(ColorRef {
-                        index: 1,
+                        base: ColorBase::Token(1),
                         alpha: None,
                     }),
                     radius: Some(8.0),
                 },
                 hovered: Some(ButtonFace {
                     text_color: Some(ColorRef {
-                        index: 2,
+                        base: ColorBase::Token(2),
                         alpha: None,
                     }),
                     ..ButtonFace::default()
