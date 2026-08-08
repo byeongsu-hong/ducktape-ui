@@ -101,6 +101,8 @@ extern crate::hyperliquid
   sync fmt_share(percent:f64) -> str
   sync fmt_funding(percent:f64) -> str
   sync fmt_compact_usd(value:f64) -> str
+  sync fmt_funding_flow(charged:f64) -> str
+  sync funding_received(charged:f64) -> bool
   sync fmt_pnl(value:f64) -> str
   sync fmt_count(value:i64) -> str
   sync fmt_leverage_mode(value:f64, mode:str) -> str

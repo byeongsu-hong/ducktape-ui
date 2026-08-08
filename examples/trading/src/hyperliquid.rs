@@ -1611,6 +1611,24 @@ pub fn fmt_bps(percent: f64) -> String {
 }
 
 /// Large money in a narrow column: "-$3.3M" rather than eleven digits.
+/// Funding as the reader's cash flow rather than as the venue's charge.
+///
+/// `Position.funding` is what the position has been CHARGED, which is the
+/// sign both venues report and the sign the arithmetic wants. It is the
+/// opposite of what a column headed FUNDING means to the person reading it:
+/// money that left the account is negative there, the way it is in every
+/// other money column on this screen. Shown as the charge, a position that
+/// had been PAID funding read as a loss, in the colour a loss is drawn in.
+pub fn fmt_funding_flow(charged: f64) -> String {
+    fmt_compact_usd(-charged)
+}
+
+/// Whether that flow was into the account, for the colour beside it. A charge
+/// is a cost and reads the way costs read.
+pub fn funding_received(charged: f64) -> bool {
+    charged <= 0.0
+}
+
 pub fn fmt_compact_usd(value: f64) -> String {
     if value == 0.0 {
         return "$0".to_owned();

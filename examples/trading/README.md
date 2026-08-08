@@ -270,6 +270,18 @@ The markets are three rather than one, for the same reason. A list of one
 answers no question a list is asked: which row is selected, what a search
 leaves behind, whether a price landed on the market it belongs to.
 
+## Funding, as the money that moved
+
+Both venues report funding as a CHARGE — positive means the position paid —
+and that is the sign the arithmetic wants, so the field keeps it. A column
+headed FUNDING means something else to the person reading it: money that left
+the account is negative there, the way it is in every other money column on
+this screen.
+
+Shown as the charge, a position that had been paid funding read as a loss, in
+the colour a loss is drawn in. The column shows the flow now, and the colour
+follows it.
+
 ## The equity the engine can actually spend
 
 A cross position is liquidated against the account's cross equity, not its
