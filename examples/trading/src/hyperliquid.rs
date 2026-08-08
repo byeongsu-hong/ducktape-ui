@@ -1737,7 +1737,9 @@ pub fn demo_account() -> Account {
 pub fn demo_fills() -> Vec<Fill> {
     let fill = |tid: i64, price: f64, size: f64, buy: bool, closed_pnl: f64, heat: i64| Fill {
         coin: "BTC".to_owned(),
-        ts: 1_786_117_200 - tid * 40,
+        // Inside the candle window `demo_candles` builds, so each lands on
+        // its own candle rather than piling onto the last one.
+        ts: 1_786_110_000 + (7 - tid) * 900,
         price,
         size,
         buy,
