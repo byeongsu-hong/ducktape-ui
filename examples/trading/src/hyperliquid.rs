@@ -109,27 +109,47 @@ fn agent() -> &'static ureq::Agent {
 /// the exchange happened to be holding. The tests own their fixtures; the wire
 /// is not one of them.
 ///
-/// The opt-in is explicit rather than an environment variable because
-/// `--ignored` runs those tests and nothing else, so nothing can be reading
-/// this while they flip it.
+/// The opt-in is one flag for the whole process, so it is only ever right in a
+/// run whose tests are all live ones. `--ignored` is that run: it selects the
+/// ignored tests and nothing else, so nothing that is not about the exchange
+/// can be reading this while they flip it. `--include-ignored` is not — it puts
+/// the ordinary tests in the same process, where one flip hands them the
+/// exchange for the rest of the run. So `open_the_wire` refuses under that flag
+/// rather than the comment claiming a boundary the flag walks through.
 #[cfg(test)]
 static WIRE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(test)]
-fn wire_is_open() -> bool {
+pub(crate) fn wire_is_open() -> bool {
     WIRE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[cfg(not(test))]
-fn wire_is_open() -> bool {
+pub(crate) fn wire_is_open() -> bool {
     true
 }
 
 /// Let this test reach the exchange. Only a test whose subject is the live API
 /// may call it, and it says so by calling it.
 #[cfg(test)]
-fn open_the_wire() {
+pub(crate) fn open_the_wire() {
+    assert!(
+        only_the_live_tests_are_running(std::env::args()),
+        "the wire is one flag for the whole process: run the live tests with \
+         --ignored, which runs them and nothing else, rather than with \
+         --include-ignored, which would leave this open under every ordinary \
+         test that outlives the flip"
+    );
     WIRE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether this process was started to run the ignored tests and nothing else,
+/// which is the only run a process-wide wire is sound in. Takes the arguments
+/// rather than reading them, so the rule can be held against a run that is not
+/// the one the test itself is in.
+#[cfg(test)]
+fn only_the_live_tests_are_running(mut args: impl Iterator<Item = String>) -> bool {
+    !args.any(|arg| arg == "--include-ignored")
 }
 
 /// Everything the exchange can tell us goes through this one endpoint.
@@ -332,7 +352,7 @@ pub struct Trade {
     /// four messages on the wire.
     pub sweep: i64,
     /// The exchange's trade id, which is how a repeated message is recognised.
-    tid: i64,
+    pub(crate) tid: i64,
 }
 
 /// One executed trade, which is what the chart marks.
@@ -364,7 +384,7 @@ pub struct Order {
 
 /// One price level of the book, with the cumulative depth behind it already
 /// resolved to a bar width so the view does no arithmetic.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Level {
     pub price: f64,
     pub size: f64,
@@ -387,7 +407,7 @@ pub struct Book {
 /// candles in place and nothing is copied per frame.
 #[derive(Clone)]
 pub struct Tape {
-    candles: SharedCandles,
+    pub(crate) candles: SharedCandles,
     focus: Arc<Mutex<String>>,
 }
 
@@ -404,7 +424,7 @@ fn focus_key(coin: &str, interval: &str) -> String {
 impl Tape {
     /// The market and interval the tape is currently holding, which is what
     /// the feed subscribes to. Empty until the app opens one.
-    fn focus(&self) -> Option<(String, String)> {
+    pub(crate) fn focus(&self) -> Option<(String, String)> {
         let focus = lock(&self.focus);
         let (coin, interval) = focus.split_once(':')?;
         Some((coin.to_owned(), interval.to_owned()))
@@ -455,7 +475,7 @@ fn value_i64(value: &Value, key: &str) -> i64 {
 
 /// Folds a fresh snapshot into the tape: the live candle is replaced in
 /// place, closed ones land in timestamp order.
-fn merge(tape: &mut Vec<Candle>, fresh: Vec<Candle>) {
+pub(crate) fn merge(tape: &mut Vec<Candle>, fresh: Vec<Candle>) {
     for candle in fresh {
         match tape.binary_search_by_key(&candle.ts, |held| held.ts) {
             Ok(index) => tape[index] = candle,
@@ -640,6 +660,28 @@ pub struct Ticket {
     /// were zero sits further from the entry than the real one — so the panel
     /// says it does not know rather than something reassuring.
     pub known: bool,
+}
+
+/// Why the ticket is not quoting a cliff, in the words that are true of the
+/// state it is actually in.
+///
+/// `Ticket.known` is one bit over three different situations and the panel
+/// used to read all three out as "market not loaded". That is true of exactly
+/// one of them. A universe that has arrived and does not carry the market on
+/// screen is a market this venue does not list — nothing is loading, and
+/// waiting will not change it. A market that is listed but states no
+/// maintenance requirement is loaded in full, and what is missing is the one
+/// figure a cliff is priced against.
+///
+/// `loaded` is whether the universe itself has arrived, which is the only
+/// thing that separates the first two: both have no row for the market, and
+/// one of them is going to get one.
+pub fn liquidation_gap(market: Option<SymbolRow>, loaded: bool) -> String {
+    match market {
+        Some(_) => "no requirement stated".to_owned(),
+        None if loaded => "not listed here".to_owned(),
+        None => "market not loaded".to_owned(),
+    }
 }
 
 /// Liquidation for a position opened at `price` with `leverage`, isolated.
@@ -1112,6 +1154,16 @@ struct Socket {
 
 impl Socket {
     fn connect() -> Result<Self, HlError> {
+        // The same gate `info` passes, and for the same reason: a test drives
+        // the real program, so a handler that starts a feed would open a
+        // socket to the exchange and make the suite depend on it being up.
+        // Nothing dispatched a feed until the venue switch landed, which is
+        // the only reason this was not here already.
+        if !wire_is_open() {
+            return Err(HlError::new(
+                "Hyperliquid feed unreachable: no wire under test".to_owned(),
+            ));
+        }
         let (ws, _) = tungstenite::connect(WS_URL)
             .map_err(|error| HlError::new(format!("Hyperliquid feed unreachable: {error}")))?;
         // Reads have to time out, or the loop could never look at the clock
@@ -1165,7 +1217,12 @@ impl Socket {
 /// What a feed's reader is handed. `Beat` is the coalescing tick: a reader
 /// that folds fast traffic into one update returns it there, and one with
 /// nothing to fold ignores it.
-enum Event<'a> {
+///
+/// Shared with the Lighter adapter, whose reader answers the same three
+/// events, so a test that walks either one walks the same sequence. The socket
+/// that produces them is not shared: only these three moments are common to
+/// the two venues, and everything either says on the wire differs.
+pub(crate) enum Event<'a> {
     Payload(&'a str, &'a Value),
     /// Round trip to the exchange in milliseconds.
     Pong(i64),
@@ -1192,6 +1249,13 @@ where
                 return;
             };
             if sender.send_blocking(Err(error)).is_err() {
+                return;
+            }
+            // Retrying is for a connection that dropped. Under test there is no
+            // wire to reconnect to, and a feed that kept trying would never let
+            // the app settle — a handler that starts one could not be dispatched
+            // by a test at all.
+            if !wire_is_open() {
                 return;
             }
             std::thread::sleep(RETRY);
@@ -1289,12 +1353,12 @@ pub struct MarketTick {
     /// Round trip to the exchange in milliseconds.
     pub latency: i64,
     /// Every mid price the exchange last published, by market.
-    mids: HashMap<String, f64>,
+    pub(crate) mids: HashMap<String, f64>,
     /// Prints on the charted market since the last beat, oldest first.
-    trades: Vec<Trade>,
+    pub(crate) trades: Vec<Trade>,
     /// A republished market context, when one arrived. It names the market it
     /// describes, and `apply_feed` writes it to the row of that name.
-    context: Option<SymbolRow>,
+    pub(crate) context: Option<SymbolRow>,
 }
 
 /// The market data feed: every mid price on the exchange, and the book,
@@ -1505,6 +1569,22 @@ pub fn mark_positions(positions: Vec<Position>, tick: MarketTick) -> Vec<Positio
             }
         })
         .collect()
+}
+
+/// Whether an account was read at all, which the panels under it need as a
+/// plain bool because the empty list means two different things. "No open
+/// positions on this account" is a claim about an account, and with none it
+/// names one that does not exist.
+pub fn account_read(account: Option<Account>) -> bool {
+    account.is_some()
+}
+
+/// What an account read came back holding, or nothing when there was no
+/// account to read. The positions panel draws this list rather than reaching
+/// into the account, so that "no address" and "an account with no positions"
+/// stay two different states of the same handler.
+pub fn held_positions(account: Option<Account>) -> Vec<Position> {
+    account.map(|held| held.positions).unwrap_or_default()
 }
 
 /// Re-totals the account from positions the feed has just re-valued. Equity
@@ -1721,6 +1801,40 @@ pub fn filter_symbols(rows: Vec<SymbolRow>, query: String, coin: String) -> Vec<
 
 pub fn symbol_row(rows: Vec<SymbolRow>, coin: String) -> Option<SymbolRow> {
     rows.into_iter().find(|row| row.name == coin)
+}
+
+/// Which market the terminal is left pointed at once a universe arrives: the
+/// one it is already on when this universe lists it, and otherwise the venue's
+/// own busiest market.
+///
+/// A ticker is not portable. Read live on the day this was written,
+/// Hyperliquid listed 232 markets and Lighter 205 active ones with 93 names in
+/// common, and the near-misses are spelled apart rather than shared —
+/// Hyperliquid's kPEPE, kSHIB and kBONK are Lighter's 1000PEPE, 1000SHIB and
+/// 1000BONK, while Lighter alone lists perps on shares, metals and currencies.
+/// So a ticker carried across a switch names a market the venue being opened
+/// may never have heard of, and every panel then draws nothing while the
+/// header goes on naming it. The same thing happens without a switch, more
+/// slowly: a market delisted under a terminal that is watching it stops being
+/// in the next universe the 60-second poll reads.
+///
+/// The fallback is the first row rather than a ticker named here, because both
+/// adapters sort a universe by the day's notional volume before returning it.
+/// The first row is therefore whatever this venue trades most — the one market
+/// it is certain to list, the one whose book and tape have something in them,
+/// and the one a reader who has expressed no preference is best pointed at. It
+/// also stays true when the busiest market changes, which a name typed here
+/// would not.
+///
+/// An empty universe is a read that answered nothing rather than a venue that
+/// lists nothing, so the market on screen is kept: landing on the first of no
+/// rows would throw the reader's market away every time a request came back
+/// empty.
+pub fn listed_coin(rows: Vec<SymbolRow>, coin: String) -> String {
+    if rows.iter().any(|row| row.name == coin) {
+        return coin;
+    }
+    rows.first().map_or(coin, |row| row.name.clone())
 }
 
 /// Puts the fills the feed just pushed on top of the ones already listed,
@@ -2797,6 +2911,9 @@ pub fn chart(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The other venue's fixture universe, which lives with the parsers that
+    // built it out of the payloads that venue answered.
+    use crate::lighter::demo_symbols_lighter;
 
     /// A fixture is read as evidence, so it has to be a state the exchange
     /// could actually report. Five of this loop's bugs were impossible states
@@ -4074,6 +4191,22 @@ mod tests {
         assert_eq!(unknown.margin, 20.0);
         assert!(!unknown.known, "and the panel says it does not know");
         assert_eq!(unknown.liquidation, 0.0, "rather than an optimistic one");
+        // Not knowing has three causes and they are three different sentences.
+        // Only one of them is a load in progress; the other two are finished
+        // reads, and "market not loaded" over either is the panel describing a
+        // wait that is not happening.
+        assert_eq!(liquidation_gap(None, false), "market not loaded");
+        assert_eq!(liquidation_gap(None, true), "not listed here");
+        assert_eq!(
+            liquidation_gap(Some(market(40.0)), true),
+            "no requirement stated"
+        );
+        // A row is a row whether or not the universe around it arrived, so the
+        // market's own answer does not depend on the list.
+        assert_eq!(
+            liquidation_gap(Some(market(40.0)), false),
+            liquidation_gap(Some(market(40.0)), true)
+        );
         // What it would have said: 100 * (1 - 1/10) / (1 - 0) = 90, a cliff
         // ten percent away when the real one is nearer.
         assert!(
@@ -4762,6 +4895,18 @@ mod tests {
         assert_eq!(fmt_funding(0.0), "+0.0000%");
     }
 
+    /// The wire the live tests open is one flag for the whole process, so the
+    /// run it is opened in has to be one where every test is a live test.
+    /// `--ignored` is that run. `--include-ignored` is the one that is not, and
+    /// it is the whole reason the opt-in checks: under it every ordinary test
+    /// that outlives the flip reads the exchange instead of its fixtures.
+    #[test]
+    fn the_wire_opt_in_refuses_the_run_that_mixes_the_two_sets() {
+        let run = |flag: &str| ["trading-example", flag].map(str::to_owned).into_iter();
+        assert!(only_the_live_tests_are_running(run("--ignored")));
+        assert!(!only_the_live_tests_are_running(run("--include-ignored")));
+    }
+
     /// The fixtures above encode what the exchange documents. This one asks
     /// the exchange. It talks to the network, so it stays opt-in:
     /// `cargo test -p trading-example -- --ignored`.
@@ -5047,5 +5192,74 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["ETH"]
         );
+    }
+
+    /// The two fixtures have to be two universes, or every test that switches
+    /// between them is switching between the same exchange twice.
+    #[test]
+    fn the_two_fixture_universes_are_not_the_same_universe() {
+        let names = |rows: Vec<SymbolRow>| -> Vec<String> {
+            rows.into_iter().map(|row| row.name).collect()
+        };
+        let here = names(demo_symbols());
+        let there = names(demo_symbols_lighter());
+        assert!(here.contains(&"kPEPE".to_owned()));
+        assert!(!there.contains(&"kPEPE".to_owned()));
+        assert!(there.contains(&"1000PEPE".to_owned()));
+        // And a market only one of them lists at all, which a rename does not
+        // cover.
+        assert!(there.contains(&"AAPL".to_owned()));
+        assert!(!here.contains(&"AAPL".to_owned()));
+        // Shared names too: a universe with nothing in common would make
+        // "keeps a listed ticker" untestable.
+        assert!(here.contains(&"BTC".to_owned()) && there.contains(&"BTC".to_owned()));
+        // A shared ticker is still not a shared row. Bitcoin is capped at 40x
+        // on one fixture and 50x on the other because that is what the two
+        // exchanges publish, and it is the figure the ticket prices a cliff
+        // against — so a Lighter fixture derived from this one would quote
+        // Hyperliquid's risk under Lighter's name.
+        let cap = |rows: Vec<SymbolRow>| symbol_row(rows, "BTC".into()).expect("bitcoin").leverage;
+        assert_eq!(cap(demo_symbols()), 40.0);
+        assert_eq!(cap(demo_symbols_lighter()), 50.0);
+
+        // Volume descending, as both parsers leave a universe — which is what
+        // makes the first row the venue's busiest market.
+        let mut sorted = demo_symbols_lighter();
+        sorted.sort_by(|left, right| right.volume.total_cmp(&left.volume));
+        assert_eq!(names(sorted), there);
+    }
+
+    /// A ticker is not portable, and a terminal pointed at a market its venue
+    /// does not list draws nothing under a header that still names it.
+    #[test]
+    fn a_market_the_venue_does_not_list_lands_on_the_one_it_trades_most() {
+        let there = demo_symbols_lighter();
+        // Not typed here: the busiest market is whatever sorts first, and the
+        // fallback has to be that row rather than a name this test agrees with.
+        let busiest = there.first().expect("a universe").name.clone();
+
+        // kPEPE is Hyperliquid's spelling. Carried across, it names nothing.
+        assert!(symbol_row(there.clone(), "kPEPE".into()).is_none());
+        assert_eq!(listed_coin(there.clone(), "kPEPE".into()), busiest);
+        // And what it lands on is a market that is actually there.
+        assert!(symbol_row(there.clone(), busiest.clone()).is_some());
+
+        // A ticker both venues list is kept — including one that is not the
+        // fallback, so keeping is distinguishable from always landing home.
+        assert_ne!("SOL", busiest);
+        assert_eq!(listed_coin(there.clone(), "SOL".into()), "SOL");
+        assert_eq!(listed_coin(there, busiest.clone()), busiest);
+
+        // The same rule the other way round, so neither venue is the one with
+        // the special case.
+        assert!(symbol_row(demo_symbols(), "1000PEPE".into()).is_none());
+        assert_eq!(
+            listed_coin(demo_symbols(), "1000PEPE".into()),
+            demo_symbols().first().expect("a universe").name
+        );
+
+        // An empty universe is a read that answered nothing, not a venue that
+        // lists nothing, so the market on screen survives it.
+        assert_eq!(listed_coin(Vec::new(), "kPEPE".into()), "kPEPE");
     }
 }

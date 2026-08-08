@@ -1,9 +1,16 @@
 # Trading
 
-A live Hyperliquid terminal written in Ice: the perpetuals list, candles and
-the order book for the selected market, and — for any address you point it at
-— that account's open positions, resting orders, recent fills, and every one
-of those fills marked on the candle it landed in.
+A live perpetuals terminal written in Ice, reading either of two exchanges:
+the market list, candles and the order book for the selected market, and — for
+any address you point it at — that account's open positions, resting orders,
+recent fills, and every one of those fills marked on the candle it landed in.
+
+Which exchange it is reading is a switch in the header, beside the page tabs.
+It is not a filter over one exchange's data: the two disagree about which
+markets exist, what they are called, and what the engine holds against a
+position in them, so switching throws every panel away and reads the other
+venue from nothing. What the venue being opened cannot answer is said in the
+panel that would otherwise be empty — see [the venue switch](#the-venue-switch).
 
 ```bash
 cargo run -p trading-example
@@ -574,54 +581,142 @@ as the book and the tape, because they are watching a price rather than a
 position. They outlive the market they were set from, so every row names its
 own — and dismisses by it, rather than by whatever is on screen.
 
-## What a second venue has to provide
+## The venue switch
+
+Two tabs in the header, stacked beside the page tabs, and they answer the outer
+half of the same question: the page tabs pick a surface, this picks the
+exchange every one of those surfaces was read from. The venue already being
+read is still a button, and a button carries no state a reader can hear — so it
+says which it is in its own accessible name (*Read Lighter* against *Read
+Lighter, already reading*) rather than in its highlight colour.
+
+Pressing it is not a filter and not an undo. Everything on screen belongs to
+the exchange it was read from, and a row kept across the switch would be drawn
+under the other exchange's name and look entirely plausible: a book at one
+venue's prices under the other's mid, a position at a maintenance requirement
+that market does not hold. So `switch_venue` clears the universe and the
+focused row, the book, the tape, the levels being watched, the account, its
+positions, orders and fills, the ticket's price and size, the chart's hover and
+the feed's own reading — and hands the feeds a **new** tape rather than a
+re-pointed one. That last one is the defect that hides: `tape_focus` turns away
+candles for a market it was not asked for, and both venues ask for the same
+market at the same width, so the feed being aborted would go on merging its own
+candles into the chart the next venue is drawing until its thread noticed. A
+Rust test holds the switch to handing over a tape the old feed cannot reach.
+
+Switching to the venue already on screen is not a switch, and returns early
+rather than re-reading a loaded terminal.
+
+The header was already exactly full at the window's own 1180×720 minimum, so
+the switch had to be paid for: the two venue tabs are stacked rather than side
+by side, and the account strip gave up its **FREE** figure. It is the one thing
+there that does not move between polls — the margin engine answers what is
+withdrawable once every five seconds, and it is a column on the portfolio page
+— so it was the cheapest of the five to lose. Nothing is clipped: everything
+the header still carries is on screen at the minimum size, and the page tests
+run there.
+
+### What each venue can serve today
+
+| | Hyperliquid | Lighter |
+| --- | --- | --- |
+| Market list, with the day's figures and the margin rule | yes | yes |
+| Mid prices, book, public tape, market context | yes, on the socket | yes, on the socket |
+| Candle history | yes — 500 bars on open, 500 more per pan back | **no** |
+| Live candles | yes | yes, one bar per interval, from the moment you open the chart |
+| Account equity, margin and positions | yes | yes, on the 5s poll |
+| Resting orders | yes | **no** |
+| Fills, as they print | yes, on the socket | **no** |
+| Liquidation prints on the tape | yes | **no** — see below |
+
+The gaps are stated on screen rather than left as empty panels, because an
+empty list reads as *nothing has happened* and on Lighter nothing *can* happen:
+
+- **Orders and fills.** Lighter keys its account channels by account index
+  rather than L1 address, and the order and notification channels want an
+  API-key-signed token an address alone cannot get (`code 20001`). An address is
+  all this app asks a reader for. Both panels say so where their rows would be,
+  and the settings page says it once more beside the venue's name. Connecting
+  an address would not change it, so the sentence does not offer that.
+- **Candle history.** `candle/<id>/<res>` answers a subscription with exactly
+  one bar — the one now forming — on all eight resolutions the venue quotes, and
+  REST `/candlesticks` is 403 from CloudFront. So a chart opened on Lighter
+  starts empty and gains a bar per interval, and the line above the interval
+  tabs says that rather than leaving a one-bar chart to read as a market that
+  has not traded. Nothing is folded out of the public tape to stand in for the
+  bars the venue will not send.
+- **Liquidation prints.** Lighter carries them in a second array on the trade
+  channel, keyed to merge by trade id, and the copy that arrives with the
+  subscription is hours stale — so including them would put old prints on screen
+  as new. The tape is the venue's ordinary prints only.
+
+A gap answers empty rather than failing. A venue that does not carry a channel
+has not broken, and an `Err` here would raise the app's alarm line over
+something working exactly as documented.
+
+### What a second venue has to provide
 
 The panels, the folds, the ticket's arithmetic, the formatters and the chart
 adapter do not know which exchange they are looking at. What does is a short
-list, and it is the whole of a second adapter:
+list, and it is the whole of a third adapter:
 
 | | |
 | --- | --- |
 | Two endpoints | one REST, one websocket |
-| Six requests | the universe, a candle window, an account, its resting orders, and whatever the websocket needs to open |
+| Seven answers | the universe, a candle window, the window before it, an account, its resting orders, and the two feeds — the fields of `Reads` in [`src/venue.rs`](src/venue.rs) |
 | Five channels | mids, book, market context, candles, and this account's fills |
-| One field map per response | every number arrives as a string here; another venue will disagree about names and types both |
-| One margin rule | the share of a position's value held against it — Hyperliquid keeps half the margin at the market's maximum leverage; the market carries the answer, so nothing shared learns the rule |
-| One interval vocabulary | `1m`, `5m`, `1h` are this venue's spelling |
-| One side encoding | `B` and `A` here, for both fills and prints |
+| One field map per response | every number arrives as a string on Hyperliquid; Lighter mixes strings and numbers in one object, sometimes for the same quantity |
+| One margin rule | the share of a position's value held against it — Hyperliquid keeps half the margin at the market's maximum leverage, Lighter publishes both fractions in basis points and its maintenance is *not* half its initial |
+| One interval vocabulary | `1m`, `5m`, `1h` are each venue's own spelling; an interval a venue does not quote is refused rather than drawn at the wrong width |
+| One side encoding | `B`/`A` on Hyperliquid, a maker-is-ask flag on Lighter |
 
 Everything else is already venue-neutral, and the boundary test keeps it that
 way: `SymbolRow`, `Position`, `Account`, `Book`, `Trade`, `Fill`, `Order` and
-`Ticket` are shapes the panels read, not shapes Hyperliquid returns.
+`Ticket` are shapes the panels read, not shapes either exchange returns.
 
-The one thing not yet done is the module split that would put those two halves
-in separate files. It is mechanical — the venue half needs `Tape.candles`,
-`MarketTick.mids`, `MarketTick.context` and `Fill.tid` visible to the crate,
-because the venue writes what the panels read — and it is worth doing when
-there is a second adapter to shape it against.
+The one thing not yet done is the module split that would move those neutral
+shapes out of `hyperliquid.rs`, where the second adapter still imports them
+from. It is mechanical, and `Fetch`, `HlError` and `Event` are misnamed until
+it lands.
 
 ## What talks to the exchange
 
-Everything the exchange pushes arrives on a websocket; everything it only
-answers when asked goes through the `info` endpoint as a blocking `ureq` POST
-moved off the UI thread with `smol::unblock`. Both live in
-[`src/hyperliquid.rs`](src/hyperliquid.rs).
+Ice cannot choose a function at the call site, so every read the app makes is
+one `venue_*` extern taking the venue it is holding, and the choice is made in
+Rust against `Reads` in [`src/venue.rs`](src/venue.rs) — one table per
+exchange, so a venue that cannot answer something has to say so there rather
+than in a handler. The two adapters are
+[`src/hyperliquid.rs`](src/hyperliquid.rs) and
+[`src/lighter.rs`](src/lighter.rs); neither is named anywhere under `src/ui`.
+
+Everything an exchange pushes arrives on a websocket; everything it only
+answers when asked is a blocking `ureq` request moved off the UI thread with
+`smol::unblock` — one POST to `info` on Hyperliquid, a REST path with a query
+string on Lighter.
 
 Two sockets, each a thread pumping into a channel that Ice consumes as a
 `stream`:
 
-| Ice stream | Subscriptions | Feeds |
-| --- | --- | --- |
-| `hl_market_feed` | `allMids`, `l2Book`, `activeAssetCtx`, `candle`, `trades` | every mid price, the book, the header's figures, the live candle, and the public tape |
-| `hl_fill_feed` | `userFills` | a snapshot of recent fills, then each new one as it prints |
+| Ice stream | Hyperliquid subscriptions | Lighter channels | Feeds |
+| --- | --- | --- | --- |
+| `venue_market_feed` | `allMids`, `l2Book`, `activeAssetCtx`, `candle`, `trades` | `market_stats/all`, `order_book/<id>`, `trade/<id>`, `candle/<id>/<res>` | every mid price, the book, the header's figures, the live candle, and the public tape |
+| `venue_fill_feed` | `userFills` | — | a snapshot of recent fills, then each new one as it prints |
 
-| Ice call | Request | Reads |
-| --- | --- | --- |
-| `hl_symbols` | `metaAndAssetCtxs` | the tradeable universe: tickers, maximum leverage, and the day's volume |
-| `hl_candles` | `candleSnapshot` | 500 candles when a market or interval is opened |
-| `hl_history` | `candleSnapshot` | 500 more, ending where the tape begins, when the chart is panned back that far |
-| `hl_account` | `clearinghouseState` | equity, margin, open positions with PnL, ROE, leverage, and funding paid |
-| `hl_orders` | `openOrders` | resting orders, listed with their age and drawn on the chart as levels |
+| Ice call | Hyperliquid | Lighter | Reads |
+| --- | --- | --- | --- |
+| `venue_symbols` | `metaAndAssetCtxs` | `orderBookDetails` + `fundingRates` | the tradeable universe: tickers, maximum leverage, the margin rule, and the day's volume |
+| `venue_candles` | `candleSnapshot` | — | 500 candles when a market or interval is opened |
+| `venue_history` | `candleSnapshot` | — | 500 more, ending where the tape begins, when the chart is panned back that far |
+| `venue_account` | `clearinghouseState` | `account` | equity, margin, open positions with PnL, ROE, leverage, and funding paid |
+| `venue_orders` | `openOrders` | — | resting orders, listed with their age and drawn on the chart as levels |
+
+The three account reads share one rule, and it lives at the seam rather than in
+the handlers: no address is not a failure and not an empty account, it is a
+read the app did not make. `venue_account` answers `none`, `venue_orders` an
+empty list, and `venue_fill_feed` a stream that has already ended. A handler
+could not hold that guard anyway — a task group has to be a handler's last
+statement, so guarding one read in Ice would mean a second copy of the whole
+group.
 
 Responses are read as `serde_json::Value` and mapped by hand, because the
 exchange sends every number as a string — a derive would need a custom
@@ -675,14 +770,17 @@ dash rather than leaving the last good number in the header, because a stale
 feed's own failures do that; a poll that fails says so in the status line and
 leaves the socket's reading alone.
 
-`hl_candles` keeps one tape for the whole session. An empty tape backfills 500
-candles and adopts the market that filled it, and the feed replaces the live
-candle in place from there. Switching markets re-points the tape, and a
-response — or a pushed candle — for the market you just left is dropped instead
-of overwriting the one you are looking at. Panning back past the oldest candle
-asks `hl_history` for the window before it, once per tape length; the chart
-moves its own viewport by however many candles land in front of it, so the
-screen stays on the bars it was showing.
+`venue_candles` keeps one tape for as long as one venue is being read. An empty
+tape backfills 500 candles and adopts the market that filled it, and the feed
+replaces the live candle in place from there. Switching markets re-points the
+tape, and a response — or a pushed candle — for the market you just left is
+dropped instead of overwriting the one you are looking at. Switching venues
+does not re-point it: it hands over a new one, because the market the old feed
+was asked for is the market the new one is being asked for, and only a tape the
+old feed cannot reach severs that. Panning back past the oldest candle asks
+`venue_history` for the window before it, once per tape length; the chart moves
+its own viewport by however many candles land in front of it, so the screen
+stays on the bars it was showing.
 
 ## Marking trades on the chart
 
@@ -743,6 +841,15 @@ survives being typed and clears on Escape; the panels that need an account say
 so when there is none; and a failure outranks the progress line it shares a
 slot with, in the terminal's plain ink rather than in either money colour.
 None of those reach the network, so they run wherever the rest does.
+
+The venue switch has a file of its own. Switching names a panel at a time and
+asks for what was in it — the book, the tape, the levels, the market list, the
+account, its positions, orders and fills — and switching back reads the first
+venue again rather than restoring what was on screen before it left. Both
+sockets and both REST reads refuse to open under test, so a dispatched switch
+starts the feeds of the venue being opened without any of them reaching an
+exchange; a feed that cannot reach one ends rather than retrying, or the app
+would never settle and no test could dispatch a switch at all.
 
 There is one test per page, and each one navigates to its page and asks for
 something only that page draws — a test that asserted the header would pass on
