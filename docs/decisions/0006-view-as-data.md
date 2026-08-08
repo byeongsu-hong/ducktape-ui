@@ -94,28 +94,34 @@ components), and 5 are fragments that do not analyse standalone.
 - **Rebuilds roughly halve at scale.** A generated probe of rows built from the
   modelled vocabulary, rebuilt after touching its `.ice`:
 
-  | probe | compiled path | template path |
+  | probe | compiled path | published path |
   | --- | --- | --- |
-  | 200 rows (600 slots) | 7.23 s | **3.65 s** |
-  | 600 rows (1800 slots) | 23.5 s | **13.0 s** |
+  | 200 rows (600 slots) | 7.23 s | **2.97 s** |
+  | 600 rows (1800 slots) | 23.5 s | **3.68 s** |
 
   Generated Rust for the 200-row probe falls from 1.63 MB carrying 2,007 iced
-  widget constructions to 0.67 MB carrying none.
+  widget constructions to 0.67 MB carrying none. Note the shapes, not just the
+  ratios: tripling the view costs the compiled path 16 s and the published path
+  0.7 s. What the compiled path pays superlinearly, the published one pays
+  roughly per byte.
 
 Two things this does **not** establish, both worth naming.
 
-The remaining template cost is not the published JSON. A 1.9 MB string literal
-compiles in 0.03 s standalone, and a 1.57 MB template with **no** slots rebuilds
-in 3.40 s against a 1.35 s floor. What costs is the slot table: 1,800 slot
-expressions in one `__view` body account for ~9.5 s, and emitting them as
-statements rather than as one array literal recovered only ~2.5 s of that. The
-compiled path already solves this problem — `codegen::view::outline` moves large
-views into per-fragment methods precisely because type and borrow checking are
-superlinear in function size — and the slot table needs the same treatment.
-Until it gets it, the measured win understates what the design can reach.
+The published JSON was never the cost. A 1.9 MB string literal compiles in
+0.03 s standalone, and a 1.57 MB template with **no** slots rebuilds in 3.40 s
+against a 1.35 s floor. The cost was the slot table: 1,800 slot expressions in
+one `__view` body accounted for ~9.5 s, and emitting them as statements rather
+than as one array literal recovered only ~2.5 s of that. Splitting them across
+methods of 32 recovered the rest — 13.0 s to 3.68 s — for the same reason
+`codegen::view::outline` exists: rustc's type and borrow checking are
+superlinear in the size of a single function, and it is function size that
+matters, not file or codegen-unit boundaries. Giving `__view` its own generated
+file (#426) left this number untouched at 13.1 s; splitting the function moved
+it.
 
-Nor does it establish anything about a `showcase`-scale application, whose views
-are built from components. A component is a hole today.
+What this still does not establish is anything about a `showcase`-scale
+application, whose views are built from components. A component is a hole
+today.
 
 ## Rejected alternatives
 
