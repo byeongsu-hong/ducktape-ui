@@ -441,3 +441,38 @@ Two other link levers were measured and are not taken. `rust-lld` is already
 the default on this target. Pointing the final link at `mold`
 (`-Clink-arg=-fuse-ld=mold`) moved 3.00s to 2.81s — 6%, for a toolchain
 dependency every contributor would have to install.
+
+### Chasing the outlining 2x to its last blocker
+
+The 2x above is real but the sound path to it is narrow, and the search
+converged on one line. Recorded in full so the next attempt starts at the end
+of it rather than the beginning.
+
+`RecordingEnv::record` decides whether a component use can move to its own
+method. Instrumenting every `hard_capture` setter (wrap the field write in a
+labelled helper — inserting statements before a `match` arm does not compile)
+says that on showcase **every** hard capture came from one binding:
+`__ice_reconciliation_scope`, falling into the catch-all arm because its
+`Binding` carries no `owner`. That is not a real capture — a scope is a scope
+local, and outlined methods already take those as parameters.
+
+Recording it as a scope local instead, plus narrowing `call.slots.is_empty()`
+to "unless the slot content actually reached a render-site local" (slot content
+is snapshotted at the call site and rendered from inside the body, so the call
+site has to be told what it touched through a shared cell), is sound: all eight
+examples build and the suite is green. It is also worth only ~5% — 6.27s to
+5.95s on the worst edit — because 74 of 94 slot renders still hard-capture.
+
+Instrumented again, those 74 land on the *new* branch: the reconciliation scope
+at a slot site is not a plain identifier but an expression, typically
+`format!("{}/root", __ice_use_scope)`. Passing an expression where a parameter
+name is expected is what the plain-identifier guard refuses.
+
+Most of those expressions would be valid verbatim inside the outlined method,
+because they reference only the method's own `__ice_use_scope` parameter. So
+the last mile is a judgement the current code does not make: whether a scope
+expression's free identifiers are all bindings the outlined method will have.
+A textual check over generated Rust is the wrong tool; the scope expression
+should carry that fact from where it is built.
+
+Both attempts were reverted. Nothing from them ships, and the 6.27s stands.
