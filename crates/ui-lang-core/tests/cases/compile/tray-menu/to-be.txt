@@ -1,0 +1,10 @@
+path: "assets/alarm.rgba"
+path: "assets/stale.rgba"
+path: "assets/tray.rgba"
+::ui_lang_runtime::tray::TrayRow::Item { command: false },::ui_lang_runtime::tray::TrayRow::Separator,::ui_lang_runtime::tray::TrayRow::Item { command: true },
+::ui_lang_runtime::tray::set_item(2usize, "Bump");
+::ui_lang_runtime::tray::set_item(3usize, "Quit");
+::ui_lang_runtime::tray::select_icon(&[(self.count > 3), (self.count < 0)]);
+::ui_lang_runtime::tray::set_item(0usize,
+fn __tray_row(__row: usize) -> ::std::option::Option<__TrayMenuMessage> { match __row { 2usize => ::std::option::Option::Some(__TrayMenuMessage::Bump),3usize => ::std::option::Option::Some(__TrayMenuMessage::Quit), _ => ::std::option::Option::None } }
+::ui_lang_runtime::tray::events().filter_map(Self::__tray_row),

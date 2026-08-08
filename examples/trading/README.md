@@ -37,23 +37,18 @@ On macOS the terminal also lives in the menu bar: a `tray` block keeps the
 focused market's coin and last price beside a status icon, so the price is
 readable with every window closed.
 
-Left-clicking the item opens a panel anchored under it — the focused market's
-price, 24h change, and the volume/OI/funding row — and clicking anywhere else
-dismisses it. The `popover` block owns that, so the app subscribes to nothing
-for it.
+Left-clicking the item raises a native menu: the focused market's coin and
+last price, the feed's latency, and **Quit**. The platform owns that menu — it
+opens, places itself and dismisses itself — so the terminal declares no window
+for it and subscribes to nothing but the row a reader chose.
 
-This is why the terminal is a `daemon` rather than an `app`: iced draws one
-view per application window, so the panel and the terminal have to be two
-branches of a view that knows which window it is drawing. Closing the terminal
-therefore leaves the app in the menu bar rather than exiting; **Quit** inside
-the panel ends it. On other platforms the same source builds and runs with the
-tray as a no-op.
+The terminal stays a `daemon` rather than an `app` so that closing the window
+leaves it in the menu bar rather than exiting; **Quit** in the menu ends it. On
+other platforms the same source builds and runs with the tray as a no-op.
 
 If the status item ever looks inert, `ICE_TRAY_DEBUG=1 cargo run -p
-trading-example` traces the native boundary: whether the click arrived, and
-where the panel was placed.
-
-![The menu bar panel](screenshots/menubar-panel.png)
+trading-example` traces the native boundary: whether the menu was built, and
+which row the platform reported.
 
 ## Four pages
 

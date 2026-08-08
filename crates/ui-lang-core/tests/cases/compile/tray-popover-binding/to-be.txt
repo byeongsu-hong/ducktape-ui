@@ -1,3 +1,0 @@
-(self.__ice_tray_popover == ::std::option::Option::Some(window))
-__PopoverBindingMessage::__TrayEvent(::ui_lang_runtime::tray::TrayEvent::LeftClick
-__test.dispatch(__message

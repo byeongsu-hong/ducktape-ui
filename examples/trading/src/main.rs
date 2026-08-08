@@ -17,7 +17,6 @@ fn main() -> iced::Result {
 mod tests {
     use super::{__TradingMessage, Trading, Venue};
     use crate::hyperliquid::SymbolRow;
-    use ui_lang_runtime::tray::{TrayEvent, TrayRect};
 
     fn row(name: &str) -> SymbolRow {
         SymbolRow {
@@ -77,74 +76,6 @@ mod tests {
         assert!(
             app.tape != held,
             "the switch re-pointed the tape the old feed still writes to"
-        );
-    }
-
-    fn tray_click() -> __TradingMessage {
-        __TradingMessage::__TrayEvent(TrayEvent::LeftClick {
-            icon: TrayRect {
-                x: 2164.0,
-                y: 0.0,
-                width: 172.0,
-                height: 78.0,
-            },
-        })
-    }
-
-    /// The status item toggles the panel: one press opens it, the next closes
-    /// it again.
-    #[test]
-    fn a_tray_click_toggles_the_menu_bar_panel() {
-        let (mut app, _) = Trading::__boot();
-        assert!(app.__ice_tray_popover.is_none());
-
-        let _ = app.__update(tray_click());
-        assert!(app.__ice_tray_popover.is_some(), "a press opens the panel");
-
-        let _ = app.__update(tray_click());
-        assert!(app.__ice_tray_popover.is_none(), "the next press closes it");
-    }
-
-    /// A window reports itself unfocused while it is still being created,
-    /// before it has ever been on screen. Dismissing on that report closed the
-    /// panel before it was drawn, which made the status item look inert.
-    #[test]
-    fn the_creation_time_unfocus_does_not_dismiss_the_panel() {
-        let (mut app, _) = Trading::__boot();
-        let _ = app.__update(tray_click());
-        let opened = app.__ice_tray_popover.expect("a press opens the panel");
-
-        let _ = app.__update(__TradingMessage::__TrayPopoverUnfocused(opened));
-        assert_eq!(
-            app.__ice_tray_popover,
-            Some(opened),
-            "a panel that never took focus must survive the creation-time unfocus"
-        );
-
-        let _ = app.__update(__TradingMessage::__TrayPopoverFocused(opened));
-        let _ = app.__update(__TradingMessage::__TrayPopoverUnfocused(opened));
-        assert!(
-            app.__ice_tray_popover.is_none(),
-            "clicking away from a shown panel dismisses it"
-        );
-    }
-
-    /// Pressing the item unfocuses the panel, so the dismissal lands before
-    /// the press does; that press must not reopen what it just closed.
-    #[test]
-    fn a_dismissing_press_does_not_reopen_the_panel() {
-        let (mut app, _) = Trading::__boot();
-        let _ = app.__update(tray_click());
-        let opened = app.__ice_tray_popover.expect("a press opens the panel");
-
-        let _ = app.__update(__TradingMessage::__TrayPopoverFocused(opened));
-        let _ = app.__update(__TradingMessage::__TrayPopoverUnfocused(opened));
-        assert!(app.__ice_tray_popover.is_none(), "focus loss dismissed it");
-
-        let _ = app.__update(tray_click());
-        assert!(
-            app.__ice_tray_popover.is_none(),
-            "the press that dismissed it must leave it closed"
         );
     }
 }

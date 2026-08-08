@@ -837,19 +837,27 @@ fn parses_tray_settings() {
         "app Demo",
         r#"daemon Demo
   tray
+    icon-rgba "assets/alarm.rgba" 22 22 when gate
     icon-rgba "assets/tray.rgba" 22 22
     icon-template true
     label describe(query)
     tooltip "Demo"
-    popover status
-  window status
-    size 320 240"#,
+    menu
+      describe(query)
+      separator
+      "Quit" -> quit"#,
     );
     let document = parse(&source).unwrap();
 
     let tray = document.settings.tray.unwrap();
-    let icon = tray.icon.unwrap();
-    assert_eq!(icon.path, "assets/tray.rgba");
+    assert_eq!(
+        tray.icons
+            .iter()
+            .map(|icon| (icon.icon.path.as_str(), icon.when.is_some()))
+            .collect::<Vec<_>>(),
+        [("assets/alarm.rgba", true), ("assets/tray.rgba", false)]
+    );
+    let icon = &tray.icons[1].icon;
     assert_eq!((icon.width, icon.height), (22, 22));
     assert_eq!(icon.byte_len, 22 * 22 * 4);
     assert_eq!(tray.icon_template, Some(true));
@@ -861,7 +869,21 @@ fn parses_tray_settings() {
         tray.tooltip.as_ref().map(|setting| &setting.value),
         Some(Expr::Str(value)) if value == "Demo"
     ));
-    assert_eq!(tray.popover.as_deref(), Some("status"));
+    assert!(matches!(
+        tray.menu.as_slice(),
+        [
+            TrayRow::Item {
+                text: AppExpression {
+                    value: Expr::Call { .. },
+                    ..
+                },
+                route: None,
+                ..
+            },
+            TrayRow::Separator { .. },
+            TrayRow::Item { route: Some(route), .. },
+        ] if route == "quit"
+    ));
 }
 
 #[test]
@@ -894,13 +916,39 @@ fn requires_tray_icon() {
     assert!(error.message.contains("tray requires `icon-rgba`"));
 }
 
+/// `icon "tray.png"` is the near-certain first attempt, so the hint has to
+/// name every key the block actually takes.
 #[test]
-fn rejects_tray_popover_outside_daemon() {
+fn names_every_tray_setting_when_one_is_unknown() {
+    let source = SOURCE.replace("app Demo", "app Demo\n  tray\n    icon \"tray.png\"");
+    let error = parse(&source).unwrap_err();
+    assert_eq!(error.code, "E015");
+    let hint = error.hint.unwrap();
+    for name in ["icon-rgba", "icon-template", "label", "tooltip", "menu"] {
+        assert!(hint.contains(name), "hint omits `{name}`: {hint}");
+    }
+}
+
+/// A tray icon that reports as a window icon sends the author to the wrong
+/// block.
+#[test]
+fn tray_icon_errors_name_the_tray() {
+    let source = SOURCE.replace("app Demo", "app Demo\n  tray\n    icon-rgba \"tray.rgba\"");
+    let error = parse(&source).unwrap_err();
+    assert!(
+        error.message.starts_with("tray icon-rgba expects"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn requires_a_tray_menu_row() {
     let source = SOURCE.replace(
         "app Demo",
-        "app Demo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    popover status\n  window status\n    size 320 240",
+        "app Demo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    menu",
     );
     let error = parse(&source).unwrap_err();
-    assert_eq!(error.code, "E014");
-    assert!(error.message.contains("tray popover requires a daemon"));
+    assert_eq!(error.code, "E015");
+    assert!(error.message.contains("menu requires at least one row"));
 }

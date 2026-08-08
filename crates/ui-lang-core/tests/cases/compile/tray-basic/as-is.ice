@@ -4,10 +4,6 @@ daemon TrayBasic
     icon-template true
     label describe(count)
     tooltip "Tray basic"
-    popover status
-  window status
-    size 320 240
-    decorations false
 
 extern crate::backend
   pure describe(value:i64) -> str

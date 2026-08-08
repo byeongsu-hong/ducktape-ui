@@ -183,31 +183,88 @@ impl Default for AppSettings {
 
 #[derive(Clone, Debug)]
 pub struct TraySettings {
-    pub icon: Option<WindowIcon>,
+    pub icons: Vec<TrayIcon>,
     pub icon_template: Option<bool>,
     pub label: Option<AppExpression>,
     pub tooltip: Option<AppExpression>,
-    pub popover: Option<String>,
+    pub menu: Vec<TrayRow>,
     pub setting_spans: BTreeMap<String, Span>,
     pub span: Span,
 }
 
+/// One `icon-rgba` line. `when` guards are tried in declaration order and the
+/// first match wins, so the last icon carries none and the fold is total.
+#[derive(Clone, Debug)]
+pub struct TrayIcon {
+    pub icon: WindowIcon,
+    pub when: Option<AppExpression>,
+}
+
+/// One row of the status item's native menu.
+#[derive(Clone, Debug)]
+pub enum TrayRow {
+    /// A `str` expression, optionally routed to a zero-parameter handler. A
+    /// row without a route is created disabled: a figure, not a command.
+    Item {
+        text: AppExpression,
+        route: Option<String>,
+        span: Span,
+    },
+    Separator {
+        span: Span,
+    },
+}
+
+/// The constant value of a tray string, or `None` when it has to be
+/// re-evaluated after every update.
+///
+/// One predicate, deliberately: the checker, the declaration index, the
+/// lowering and the code generator all have to agree on which tray strings
+/// are constant. Two of them disagreeing means one registers a checked
+/// expression another never resolves, which nothing downstream reports.
+pub fn tray_text_literal(setting: &AppExpression) -> Option<&str> {
+    match &setting.value {
+        Expr::Str(value) => Some(value),
+        _ => None,
+    }
+}
+
+/// Whether a tray string can differ from one update to the next. A literal
+/// cannot, which is what lets the tray apply it once at startup and leave it
+/// out of the per-message sync entirely.
+pub fn tray_text_is_reactive(setting: &AppExpression) -> bool {
+    tray_text_literal(setting).is_none()
+}
+
 impl TraySettings {
-    /// Whether the tray carries an expression that has to be re-evaluated
-    /// after every update. Without one there is nothing to keep in sync.
-    pub fn has_text(&self) -> bool {
-        self.label.is_some() || self.tooltip.is_some()
+    /// Whether any tray expression has to be re-evaluated after an update,
+    /// and therefore whether `__tray_sync` has anything to do at all. A tray
+    /// of nothing but literals is applied once: a constant cannot go stale.
+    ///
+    /// A guard always counts. Selecting between icons is the one thing a tray
+    /// declares *because* it changes, so a guard that never did would be a
+    /// mistake worth nobody's compile-time cleverness.
+    pub fn reactive(&self) -> bool {
+        let dynamic =
+            |setting: &Option<AppExpression>| setting.as_ref().is_some_and(tray_text_is_reactive);
+        dynamic(&self.label)
+            || dynamic(&self.tooltip)
+            || self.icons.iter().any(|icon| icon.when.is_some())
+            || self.menu.iter().any(|row| match row {
+                TrayRow::Item { text, .. } => tray_text_is_reactive(text),
+                TrayRow::Separator { .. } => false,
+            })
     }
 }
 
 impl Default for TraySettings {
     fn default() -> Self {
         Self {
-            icon: None,
+            icons: Vec::new(),
             icon_template: None,
             label: None,
             tooltip: None,
-            popover: None,
+            menu: Vec::new(),
             setting_spans: BTreeMap::new(),
             span: Span::line(1),
         }

@@ -155,14 +155,6 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
     if let Some(source) = line.text.strip_prefix("task widget ") {
         return parse_widget_operation(source, line);
     }
-    if line.text == "task tray close" {
-        return Ok(Statement::WindowOperation {
-            operation: WindowOperation::TrayClose,
-            target: None,
-            route: None,
-            span: Span::line(line.number),
-        });
-    }
     if let Some(source) = line.text.strip_prefix("task window ") {
         return parse_window_operation(source, line);
     }

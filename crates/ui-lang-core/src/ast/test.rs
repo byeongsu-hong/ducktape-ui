@@ -139,8 +139,10 @@ pub enum TestStepKind {
         handler: String,
         args: Vec<Expr>,
     },
-    /// Presses the tray's status item, the way a user opens the popover.
-    TrayClick,
+    /// Chooses the tray menu row whose text carries this value, the way the
+    /// platform reports one: by row, through the generated row-to-handler
+    /// table the live subscription uses.
+    TrayChoose(Expr),
     Expect(TestExpectation),
 }
 
@@ -262,6 +264,34 @@ pub enum TestExpectation {
         target: TestTargetRef,
         property: TestAccessibilityProperty,
     },
+    /// What the program last decided the status item should show. Read from
+    /// the runtime's record rather than the screen, so the assertion runs and
+    /// means the same thing where the tray is native and where it is a no-op.
+    Tray {
+        field: TrayField,
+        value: Expr,
+        negated: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrayField {
+    Label,
+    Icon,
+    Item,
+    /// Whether the row carrying the text is a command rather than a stat.
+    Command,
+}
+
+impl TrayField {
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Label => "label",
+            Self::Icon => "icon",
+            Self::Item => "item",
+            Self::Command => "command",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -345,6 +375,7 @@ pub(crate) fn test_step_expression_roots(step: &TestStep) -> Vec<&Expr> {
         }
         TestStepKind::Touch { id, x, y, .. } => expressions.extend([id, x, y]),
         TestStepKind::Dispatch { args, .. } => expressions.extend(args),
+        TestStepKind::TrayChoose(value) => expressions.push(value),
         TestStepKind::Expect(expectation) => match expectation {
             TestExpectation::Expr(value) => expressions.push(value),
             TestExpectation::Approx { left, right } => expressions.extend([left, right]),
@@ -357,6 +388,7 @@ pub(crate) fn test_step_expression_roots(step: &TestStep) -> Vec<&Expr> {
                     expressions.extend(target_ref_expression_roots(within));
                 }
             }
+            TestExpectation::Tray { value, .. } => expressions.push(value),
             TestExpectation::Accessibility {
                 target: value,
                 property,
@@ -399,7 +431,6 @@ pub(crate) fn test_step_expression_roots(step: &TestStep) -> Vec<&Expr> {
         | TestStepKind::FileLeave
         | TestStepKind::Wait(_)
         | TestStepKind::Advance(_)
-        | TestStepKind::TrayClick
         | TestStepKind::Idle
         | TestStepKind::Capture(_) => {}
     }
@@ -475,6 +506,9 @@ fn test_expectation_semantic_key(expectation: &TestExpectation) -> String {
                 .as_ref()
                 .map_or_else(|| "none".into(), test_target_ref_semantic_key)
         ),
+        TestExpectation::Tray { field, negated, .. } => {
+            format!("tray:{}:{negated}", field.keyword())
+        }
         TestExpectation::Accessibility { target, property } => format!(
             "a11y:{}:{}",
             test_target_ref_semantic_key(target),
@@ -581,7 +615,6 @@ pub(crate) fn test_step_semantic_key(step: &TestStep) -> String {
         TestStepKind::FileLeave => "file-leave".into(),
         TestStepKind::Wait(duration) => format!("wait:{duration}"),
         TestStepKind::Advance(duration) => format!("advance:{duration}"),
-        TestStepKind::TrayClick => "tray-click".into(),
         TestStepKind::Idle => "idle".into(),
         TestStepKind::Capture(name) => format!("capture:{name}"),
         TestStepKind::Accessibility { action, target } => format!(
@@ -591,6 +624,7 @@ pub(crate) fn test_step_semantic_key(step: &TestStep) -> String {
         TestStepKind::Dispatch { handler, args } => {
             format!("dispatch:{handler}:{}", args.len())
         }
+        TestStepKind::TrayChoose(_) => "tray-choose".into(),
         TestStepKind::Expect(expectation) => {
             format!("expect:{}", test_expectation_semantic_key(expectation))
         }
@@ -758,7 +792,6 @@ pub(crate) fn test_step_source(step: &TestStep) -> String {
         TestStepKind::FileLeave => "file-leave".into(),
         TestStepKind::Wait(duration) => format!("wait {duration}ms"),
         TestStepKind::Advance(duration) => format!("advance {duration}ms"),
-        TestStepKind::TrayClick => "tray click".into(),
         TestStepKind::Idle => "idle".into(),
         TestStepKind::Capture(name) => format!("capture {name}"),
         TestStepKind::Accessibility { action, target } => format!(
@@ -773,6 +806,7 @@ pub(crate) fn test_step_source(step: &TestStep) -> String {
             "dispatch {handler}({})",
             args.iter().map(expr_source).collect::<Vec<_>>().join(", ")
         ),
+        TestStepKind::TrayChoose(value) => format!("tray choose {}", expr_source(value)),
         TestStepKind::Expect(expectation) => format!(
             "expect {}",
             match expectation {
@@ -798,6 +832,16 @@ pub(crate) fn test_step_source(step: &TestStep) -> String {
                         " within {}",
                         target_ref_source(target)
                     ))
+                ),
+                TestExpectation::Tray {
+                    field,
+                    value,
+                    negated,
+                } => format!(
+                    "{}tray {} {}",
+                    if *negated { "no " } else { "" },
+                    field.keyword(),
+                    expr_source(value)
                 ),
                 TestExpectation::Accessibility { target, property } => format!(
                     "a11y {} {}",

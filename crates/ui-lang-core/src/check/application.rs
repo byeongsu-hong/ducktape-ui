@@ -50,36 +50,7 @@ pub(in crate::check) fn check_app_settings(
         )?;
     }
     if let Some(tray) = &document.settings.tray {
-        for (id, setting) in [
-            (crate::hir::AppSettingExprId::TrayLabel, &tray.label),
-            (crate::hir::AppSettingExprId::TrayTooltip, &tray.tooltip),
-        ]
-        .into_iter()
-        .filter_map(|(id, setting)| setting.as_ref().map(|setting| (id, setting)))
-        {
-            let analysis = analyze_expr_types(&setting.value, states, document, &setting.span)?;
-            require_type(
-                analysis.type_of(&setting.value).ok_or_else(|| {
-                    Error::new("E196", &setting.span, "missing checked tray text type")
-                })?,
-                &Type::Str,
-                &setting.span,
-            )?;
-            analyses.insert_expression(CheckedExprOwner::AppSetting(id), analysis)?;
-        }
-        if let Some(popover) = &tray.popover
-            && !document
-                .settings
-                .windows
-                .iter()
-                .any(|window| window.name == *popover)
-        {
-            return Err(Error::new(
-                "E173",
-                tray.setting_spans.get("popover").unwrap_or(&tray.span),
-                format!("unknown app window `{popover}`"),
-            ));
-        }
+        check_tray(tray, document, states, analyses)?;
     }
     if let Some(setting) = &document.settings.theme {
         if let Expr::Call { name, args } = &setting.value
@@ -204,6 +175,124 @@ pub(in crate::check) fn check_app_settings(
                 &setting.span,
                 "application colors must be 3, 4, 6, or 8 digit hexadecimal strings",
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Type-checks every tray expression and enforces the rules that make the
+/// icon fold total and the menu addressable.
+fn check_tray(
+    tray: &TraySettings,
+    document: &Document,
+    states: &HashMap<String, Type>,
+    analyses: &mut CheckedAnalyses,
+) -> Result<(), Error> {
+    let mut typed = |id, setting: &AppExpression, expected: &Type, what: &str| {
+        let analysis = analyze_expr_types(&setting.value, states, document, &setting.span)?;
+        require_type(
+            analysis
+                .type_of(&setting.value)
+                .ok_or_else(|| Error::new("E196", &setting.span, format!("missing {what}")))?,
+            expected,
+            &setting.span,
+        )?;
+        analyses.insert_expression(CheckedExprOwner::AppSetting(id), analysis)
+    };
+    // A literal never enters the checked-expression world: it is applied once
+    // at startup, so there is nothing for the rest of the pipeline to resolve.
+    for (id, setting) in [
+        (crate::hir::AppSettingExprId::TrayLabel, &tray.label),
+        (crate::hir::AppSettingExprId::TrayTooltip, &tray.tooltip),
+    ]
+    .into_iter()
+    .filter_map(|(id, setting)| setting.as_ref().map(|setting| (id, setting)))
+    .filter(|(_, setting)| tray_text_is_reactive(setting))
+    {
+        typed(id, setting, &Type::Str, "checked tray text type")?;
+    }
+    for (index, icon) in tray.icons.iter().enumerate() {
+        if let Some(guard) = &icon.when {
+            typed(
+                crate::hir::AppSettingExprId::TrayIconGuard(index as u32),
+                guard,
+                &Type::Bool,
+                "checked tray icon guard type",
+            )?;
+        }
+    }
+    for (index, row) in tray.menu.iter().enumerate() {
+        if let TrayRow::Item { text, .. } = row
+            && tray_text_is_reactive(text)
+        {
+            typed(
+                crate::hir::AppSettingExprId::TrayMenuRow(index as u32),
+                text,
+                &Type::Str,
+                "checked tray menu row type",
+            )?;
+        }
+    }
+    // Guards are tried in declaration order and the first match wins, so the
+    // last line is what applies when none does. Requiring it to be unguarded
+    // is what makes the fold total: codegen never emits a fallible selection
+    // and no author can write a tray with no icon to show.
+    let last = tray.icons.len().saturating_sub(1);
+    for (index, icon) in tray.icons.iter().enumerate() {
+        if index == last && icon.when.is_some() {
+            return Err(Error::new(
+                "E015",
+                &icon.icon.span,
+                format!(
+                    "tray icon-rgba `{}` is guarded but is the last one",
+                    icon.icon.path
+                ),
+            )
+            .hint(
+                "the last `icon-rgba` selects when no guard matches, so it cannot carry `when`",
+            ));
+        }
+        if index != last && icon.when.is_none() {
+            return Err(Error::new(
+                "E015",
+                &icon.icon.span,
+                format!(
+                    "tray icon-rgba `{}` before the last one needs `when`",
+                    icon.icon.path
+                ),
+            )
+            .hint("guards are tried in order and the first match wins"));
+        }
+        if tray.icons[..index]
+            .iter()
+            .any(|earlier| earlier.icon.path == icon.icon.path)
+        {
+            return Err(Error::new(
+                "E014",
+                &icon.icon.span,
+                format!("duplicate tray icon `{}`", icon.icon.path),
+            )
+            .hint("the path names the icon in `expect tray icon`"));
+        }
+    }
+    for row in &tray.menu {
+        let TrayRow::Item {
+            route: Some(route),
+            span,
+            ..
+        } = row
+        else {
+            continue;
+        };
+        if !document
+            .handlers
+            .iter()
+            .any(|handler| handler.name == *route && handler.params.is_empty())
+        {
+            return Err(
+                Error::new("E173", span, format!("unknown handler `{route}`"))
+                    .hint("a menu row calls a handler that takes no parameters"),
+            );
         }
     }
     Ok(())

@@ -1,2 +1,0 @@
-E014
-tray popover requires a daemon

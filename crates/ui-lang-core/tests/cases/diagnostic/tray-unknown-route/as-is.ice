@@ -1,9 +1,8 @@
-daemon Demo
+app Demo
   tray
     icon-rgba "assets/tray.rgba" 2 2
-    popover panel
-  window panel
-    size 200 120
+    menu
+      "Quit" -> missing
 theme contract AppTheme
   bg
   fg
@@ -14,7 +13,5 @@ palette app for AppTheme
   fg #ffffff
   primary #333333
   danger #ff0000
-state
-  popover = false
 view
   text "Demo"
