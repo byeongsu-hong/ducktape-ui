@@ -248,8 +248,10 @@ pub(in crate::codegen) fn generate_boot(
     out: &mut String,
     program: &LoweredProgram,
     message: &str,
+    source_path: &str,
 ) -> Result<(), Error> {
     let accessibility_root = rust_string(program.app_name());
+    let tray_init = tray_init_code(program, program.settings(), source_path);
     writeln!(out, "fn __state() -> Self {{").unwrap();
     for (pane, test_only) in document_pane_grids(program) {
         let field = pane_field(&pane.name);
@@ -297,6 +299,18 @@ pub(in crate::codegen) fn generate_boot(
         "::ui_lang_runtime::Bridge::new()"
     };
     writeln!(out, "__ice_accessibility: {accessibility_bridge},").unwrap();
+    if program
+        .settings()
+        .tray
+        .as_ref()
+        .is_some_and(|tray| tray.popover.is_some())
+    {
+        writeln!(
+            out,
+            "__ice_tray_popover: ::std::option::Option::None,\n__ice_tray_dismissed: ::std::option::Option::None,"
+        )
+        .unwrap();
+    }
     if program.settings().kind == ProgramKind::Application {
         writeln!(
             out,
@@ -356,16 +370,50 @@ pub(in crate::codegen) fn generate_boot(
     if program.settings().kind == ProgramKind::Daemon {
         writeln!(
             out,
-            "fn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\nlet task = state.__boot_task();\n(state, task)\n}}"
+            "fn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}let task = state.__boot_task();\n(state, task)\n}}"
         )
         .unwrap();
     } else {
         writeln!(
             out,
-            "#[cfg(all(target_os = \"windows\", not(test)))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{\n::iced::window::oldest().then(|__id| match __id {{\n::std::option::Option::Some(__id) => ::ui_lang_runtime::native_window(__id).map({message}::__AccessibilityNativeWindow),\n::std::option::Option::None => ::iced::Task::none(),\n}})\n}}\nfn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n#[cfg(all(target_os = \"windows\", not(test)))]\n{{\nstate.__ice_accessibility_initial = ::std::option::Option::Some(0);\n(state, Self::__accessibility_attach())\n}}\n#[cfg(not(all(target_os = \"windows\", not(test))))]\n{{\nlet task = state.__boot_task();\nlet __accessibility = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\n(state, ::iced::Task::batch([task, __accessibility]))\n}}\n}}"
+            "#[cfg(all(target_os = \"windows\", not(test)))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{\n::iced::window::oldest().then(|__id| match __id {{\n::std::option::Option::Some(__id) => ::ui_lang_runtime::native_window(__id).map({message}::__AccessibilityNativeWindow),\n::std::option::Option::None => ::iced::Task::none(),\n}})\n}}\nfn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}#[cfg(all(target_os = \"windows\", not(test)))]\n{{\nstate.__ice_accessibility_initial = ::std::option::Option::Some(0);\n(state, Self::__accessibility_attach())\n}}\n#[cfg(not(all(target_os = \"windows\", not(test))))]\n{{\nlet task = state.__boot_task();\nlet __accessibility = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\n(state, ::iced::Task::batch([task, __accessibility]))\n}}\n}}"
         )
         .unwrap();
     }
+    Ok(())
+}
+
+/// How long after the popover closes a status-item press still counts as the
+/// dismissal that closed it rather than a request to reopen. The unfocus and
+/// tray-click paths are separate event sources, so the ordering between them
+/// is a race decided within a frame or two; a fifth of a second covers it
+/// without swallowing a deliberate reopen.
+const DISMISS_GRACE_MS: u64 = 200;
+
+pub(in crate::codegen) fn generate_tray(
+    out: &mut String,
+    program: &LoweredProgram,
+) -> Result<(), Error> {
+    let Some(tray) = &program.settings().tray else {
+        return Ok(());
+    };
+    if !tray.has_text() {
+        return Ok(());
+    }
+    let env = checked_state_env(program, "self");
+    writeln!(out, "fn __tray_sync(&self) {{").unwrap();
+    for (setting, apply) in [
+        (&tray.label, "::ui_lang_runtime::tray::set_label"),
+        (&tray.tooltip, "::ui_lang_runtime::tray::set_tooltip"),
+    ] {
+        if let Some(setting) = setting {
+            let value =
+                resolved_expr_use_code(program, setting.expression, &env, ValueMode::Owned)?;
+            writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
+            writeln!(out, "{apply}(&({value}));\n{SOURCE_MARKER_END}").unwrap();
+        }
+    }
+    writeln!(out, "}}").unwrap();
     Ok(())
 }
 
@@ -373,15 +421,17 @@ pub(in crate::codegen) fn generate_presets(
     out: &mut String,
     program: &LoweredProgram,
     message: &str,
+    source_path: &str,
 ) -> Result<(), Error> {
     let settings = program.settings();
     let accessibility_root = rust_string(&program.settings().app_name);
+    let tray_init = tray_init_code(program, settings, source_path);
     for (index, preset) in program.preset_handlers().enumerate() {
         let task_name = format!("__preset_task_{index}");
         generate_initial_task_method(out, program, message, &task_name, &preset.statements)?;
         writeln!(
             out,
-            "fn __preset_{index}() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();"
+            "fn __preset_{index}() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}"
         )
         .unwrap();
         if settings.kind == ProgramKind::Daemon {
@@ -506,6 +556,22 @@ pub(in crate::codegen) fn generate_update(
         "{message}::__AccessibilityFocusNext => {{ return ::ui_lang_runtime::focus_next::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__AccessibilityFocusPrevious => {{ return ::ui_lang_runtime::focus_previous::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},"
     )
     .unwrap();
+    if let Some(tray) = &program.settings().tray {
+        if let Some(popover) = tray.popover {
+            writeln!(
+                out,
+                "{message}::__TrayEvent(__event) => {{ match __event {{ ::ui_lang_runtime::tray::TrayEvent::LeftClick {{ icon }} => {{\nif let ::std::option::Option::Some(__id) = self.__ice_tray_popover.take() {{ return ::iced::window::close(__id); }}\n// Pressing the status item unfocuses the popover before this click is\n// delivered, so a dismiss-on-unfocus handler can already have closed it and\n// cleared the tracking above. Without this guard that press would reopen what\n// the user just dismissed, and the popover could never be closed from the\n// status item.\nif self.__ice_tray_dismissed.take().is_some_and(|__at| __at.elapsed() < ::iced::time::Duration::from_millis({DISMISS_GRACE_MS})) {{ return ::iced::Task::none(); }}\nlet mut __settings = Self::__window_{index}();\n__settings.visible = false;\n__settings.position = ::iced::window::Position::Default;\nlet __size = __settings.size;\nlet (__id, __open) = ::iced::window::open(__settings);\nself.__ice_tray_popover = ::std::option::Option::Some(__id);\nreturn __open.discard().chain(::iced::window::scale_factor(__id).then(move |__scale| {{\nlet __icon = icon.clone();\n::iced::window::monitor_size(__id).then(move |__monitor| {{\nlet __anchor = ::ui_lang_runtime::tray::anchor_position(&__icon, f64::from(__scale), __size, __monitor);\n::iced::window::move_to(__id, __anchor).chain(::iced::window::set_mode(__id, ::iced::window::Mode::Windowed)).chain(::iced::window::gain_focus(__id))\n}})\n}}));\n}} }} }},\n{message}::__TrayPopoverClosed(__id) => {{ if self.__ice_tray_popover == ::std::option::Option::Some(__id) {{ self.__ice_tray_popover = ::std::option::Option::None; self.__ice_tray_dismissed = ::std::option::Option::Some(::iced::time::Instant::now()); }} return ::iced::Task::none(); }},",
+                index = popover.0
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "{message}::__TrayEvent(__event) => {{ let _ = __event; return ::iced::window::oldest().then(|__id| match __id {{ ::std::option::Option::Some(__id) => ::iced::window::minimize(__id, false).chain(::iced::window::gain_focus(__id)), ::std::option::Option::None => ::iced::Task::none(), }}); }},"
+            )
+            .unwrap();
+        }
+    }
     let app_handler_env = checked_state_env(program, "self");
     for handler in program.app_handlers() {
         if handler.name == "mount" {
@@ -757,12 +823,18 @@ pub(in crate::codegen) fn generate_update(
         writeln!(out, "}}\n}}").unwrap();
         return Ok(());
     }
+    let tray_sync = program
+        .settings()
+        .tray
+        .as_ref()
+        .filter(|tray| tray.has_text())
+        .map_or("", |_| "self.__tray_sync();\n");
     if program.settings().kind == ProgramKind::Daemon {
-        writeln!(out, "}};\n__task\n}}").unwrap();
+        writeln!(out, "}};\n{tray_sync}__task\n}}").unwrap();
     } else {
         writeln!(
             out,
-            "}};\n// Snapshotting the widget tree after every message serves ONLY an attached\n// assistive technology (and the test harness, which drives the app through\n// this tree) — ungated it walked every widget, built a TreeUpdate nobody\n// read, and scheduled a second frame per message.\nlet __accessibility = if cfg!(test) || ::ui_lang_runtime::accessibility_active() {{\n::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))\n}} else {{\n::iced::Task::none()\n}};\n::iced::Task::batch([__task, __accessibility])\n}}"
+            "}};\n{tray_sync}// Snapshotting the widget tree after every message serves ONLY an attached\n// assistive technology (and the test harness, which drives the app through\n// this tree) — ungated it walked every widget, built a TreeUpdate nobody\n// read, and scheduled a second frame per message.\nlet __accessibility = if cfg!(test) || ::ui_lang_runtime::accessibility_active() {{\n::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))\n}} else {{\n::iced::Task::none()\n}};\n::iced::Task::batch([__task, __accessibility])\n}}"
         )
         .unwrap();
     }

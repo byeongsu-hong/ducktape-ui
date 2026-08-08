@@ -467,6 +467,16 @@ impl DeclarationIndex {
                 push_app_expression(id, expression);
             }
         }
+        if let Some(tray) = &document.settings.tray {
+            for (id, expression) in [
+                (AppSettingExprId::TrayLabel, &tray.label),
+                (AppSettingExprId::TrayTooltip, &tray.tooltip),
+            ] {
+                if let Some(expression) = expression {
+                    push_app_expression(id, expression);
+                }
+            }
+        }
 
         Self {
             app_settings,

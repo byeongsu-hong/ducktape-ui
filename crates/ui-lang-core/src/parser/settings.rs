@@ -71,6 +71,13 @@ pub(in crate::parser) fn parse_app_settings(line: &Line) -> Result<AppSettings, 
             settings.window = Some(parse_window_settings(item)?);
             continue;
         }
+        if item.text == "tray" {
+            if settings.tray.is_some() {
+                return Err(error("E014", item, "duplicate app setting `tray`"));
+            }
+            settings.tray = Some(parse_tray_settings(item)?);
+            continue;
+        }
         if let Some(name) = item.text.strip_prefix("window ") {
             let name = identifier(name.trim(), item)?;
             if settings.windows.iter().any(|window| window.name == name) {
@@ -272,6 +279,46 @@ pub(in crate::parser) fn parse_window_settings(line: &Line) -> Result<WindowSett
             line,
             "window min-size cannot exceed max-size",
         ));
+    }
+    Ok(settings)
+}
+
+pub(in crate::parser) fn parse_tray_settings(line: &Line) -> Result<TraySettings, Error> {
+    let mut settings = TraySettings {
+        span: Span::line(line.number),
+        ..TraySettings::default()
+    };
+    for item in &line.children {
+        ensure_leaf(item)?;
+        let Some((name, value)) = item.text.split_once(char::is_whitespace) else {
+            return Err(error("E015", item, "tray setting requires a value"));
+        };
+        let value = value.trim();
+        macro_rules! set {
+            ($field:ident, $value:expr) => {{
+                set_setting(&mut settings.$field, $value, name, item)?;
+                settings
+                    .setting_spans
+                    .insert(name.to_owned(), Span::line(item.number));
+            }};
+        }
+        match name {
+            "icon-rgba" => set!(icon, config_window_icon(value, item)?),
+            "icon-template" => set!(icon_template, config_bool(value, item)?),
+            "label" => set!(label, app_expression(value, item)?),
+            "tooltip" => set!(tooltip, app_expression(value, item)?),
+            "popover" => set!(popover, identifier(value, item)?),
+            _ => {
+                return Err(error(
+                    "E015",
+                    item,
+                    format!("unknown tray setting `{name}`"),
+                ));
+            }
+        }
+    }
+    if settings.icon.is_none() {
+        return Err(error("E015", line, "tray requires `icon-rgba`"));
     }
     Ok(settings)
 }

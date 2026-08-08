@@ -49,6 +49,38 @@ pub(in crate::check) fn check_app_settings(
             analysis,
         )?;
     }
+    if let Some(tray) = &document.settings.tray {
+        for (id, setting) in [
+            (crate::hir::AppSettingExprId::TrayLabel, &tray.label),
+            (crate::hir::AppSettingExprId::TrayTooltip, &tray.tooltip),
+        ]
+        .into_iter()
+        .filter_map(|(id, setting)| setting.as_ref().map(|setting| (id, setting)))
+        {
+            let analysis = analyze_expr_types(&setting.value, states, document, &setting.span)?;
+            require_type(
+                analysis.type_of(&setting.value).ok_or_else(|| {
+                    Error::new("E196", &setting.span, "missing checked tray text type")
+                })?,
+                &Type::Str,
+                &setting.span,
+            )?;
+            analyses.insert_expression(CheckedExprOwner::AppSetting(id), analysis)?;
+        }
+        if let Some(popover) = &tray.popover
+            && !document
+                .settings
+                .windows
+                .iter()
+                .any(|window| window.name == *popover)
+        {
+            return Err(Error::new(
+                "E173",
+                tray.setting_spans.get("popover").unwrap_or(&tray.span),
+                format!("unknown app window `{popover}`"),
+            ));
+        }
+    }
     if let Some(setting) = &document.settings.theme {
         if let Expr::Call { name, args } = &setting.value
             && let Some(factory) = document

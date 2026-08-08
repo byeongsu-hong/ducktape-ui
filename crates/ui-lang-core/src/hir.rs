@@ -173,6 +173,8 @@ pub(crate) enum AppSettingExprId {
     Background,
     TextColor,
     ScaleFactor,
+    TrayLabel,
+    TrayTooltip,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

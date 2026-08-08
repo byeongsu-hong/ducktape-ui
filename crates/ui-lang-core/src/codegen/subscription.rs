@@ -44,6 +44,20 @@ pub(in crate::codegen) fn generate_subscription(
         )
         .unwrap();
     }
+    if let Some(tray) = &settings.tray {
+        writeln!(
+            out,
+            "::ui_lang_runtime::tray::events().map({message}::__TrayEvent),"
+        )
+        .unwrap();
+        if tray.popover.is_some() {
+            writeln!(
+                out,
+                "::iced::window::close_events().map({message}::__TrayPopoverClosed),"
+            )
+            .unwrap();
+        }
+    }
     for subscription in program.subscriptions() {
         writeln!(
             out,

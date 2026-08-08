@@ -830,3 +830,77 @@ view
         ]
     );
 }
+
+#[test]
+fn parses_tray_settings() {
+    let source = SOURCE.replace(
+        "app Demo",
+        r#"daemon Demo
+  tray
+    icon-rgba "assets/tray.rgba" 22 22
+    icon-template true
+    label describe(query)
+    tooltip "Demo"
+    popover status
+  window status
+    size 320 240"#,
+    );
+    let document = parse(&source).unwrap();
+
+    let tray = document.settings.tray.unwrap();
+    let icon = tray.icon.unwrap();
+    assert_eq!(icon.path, "assets/tray.rgba");
+    assert_eq!((icon.width, icon.height), (22, 22));
+    assert_eq!(icon.byte_len, 22 * 22 * 4);
+    assert_eq!(tray.icon_template, Some(true));
+    assert!(matches!(
+        tray.label.as_ref().map(|setting| &setting.value),
+        Some(Expr::Call { .. })
+    ));
+    assert!(matches!(
+        tray.tooltip.as_ref().map(|setting| &setting.value),
+        Some(Expr::Str(value)) if value == "Demo"
+    ));
+    assert_eq!(tray.popover.as_deref(), Some("status"));
+}
+
+#[test]
+fn rejects_duplicate_tray_blocks() {
+    let source = SOURCE.replace(
+        "app Demo",
+        "app Demo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2",
+    );
+    let error = parse(&source).unwrap_err();
+    assert_eq!(error.code, "E014");
+    assert!(error.message.contains("duplicate app setting `tray`"));
+}
+
+#[test]
+fn rejects_unknown_tray_settings() {
+    let source = SOURCE.replace(
+        "app Demo",
+        "app Demo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    badge 3",
+    );
+    let error = parse(&source).unwrap_err();
+    assert_eq!(error.code, "E015");
+    assert!(error.message.contains("unknown tray setting `badge`"));
+}
+
+#[test]
+fn requires_tray_icon() {
+    let source = SOURCE.replace("app Demo", "app Demo\n  tray\n    tooltip \"Demo\"");
+    let error = parse(&source).unwrap_err();
+    assert_eq!(error.code, "E015");
+    assert!(error.message.contains("tray requires `icon-rgba`"));
+}
+
+#[test]
+fn rejects_tray_popover_outside_daemon() {
+    let source = SOURCE.replace(
+        "app Demo",
+        "app Demo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    popover status\n  window status\n    size 320 240",
+    );
+    let error = parse(&source).unwrap_err();
+    assert_eq!(error.code, "E014");
+    assert!(error.message.contains("tray popover requires a daemon"));
+}
