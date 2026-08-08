@@ -419,7 +419,6 @@ pub(in crate::codegen) fn render_content(
                 if outline::outlining_active()
                     && !recording.site_capturing()
                     && !recording.touched_local_values()
-                    && call.slots.is_empty()
                     && let Some(callback_params) = callback_params
                 {
                     let mut scope_locals = recording.scope_locals();
@@ -510,8 +509,16 @@ pub(in crate::codegen) fn render_content(
             let Some(content) = content else {
                 return Ok(None);
             };
-            let mut content_env = content.env.clone();
-            set_reconciliation_scope(&mut content_env, scope.to_owned());
+            // The scope the content renders under comes from here, not from
+            // the call site, so it is layered ABOVE the recorder: reading it
+            // back is not a capture, and an outlined method rewrites the
+            // identifier it names along with the rest of its body.
+            let captured = SlotRecordingEnv::new(&content.env, content.recorder.as_ref());
+            let mut content_env = ScopedBindingEnv::new(&captured);
+            content_env.insert(
+                RECONCILIATION_SCOPE_BINDING.into(),
+                reconciliation_scope_binding(scope.to_owned()),
+            );
             let rendered = render_node(
                 content.view,
                 document,

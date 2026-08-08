@@ -444,35 +444,66 @@ dependency every contributor would have to install.
 
 ### Chasing the outlining 2x to its last blocker
 
-The 2x above is real but the sound path to it is narrow, and the search
-converged on one line. Recorded in full so the next attempt starts at the end
-of it rather than the beginning.
+The 2x above is real, and the search for it went through one wrong diagnosis
+before landing. Both are recorded, because the wrong one is easy to repeat.
 
-`RecordingEnv::record` decides whether a component use can move to its own
-method. Instrumenting every `hard_capture` setter (wrap the field write in a
-labelled helper — inserting statements before a `match` arm does not compile)
-says that on showcase **every** hard capture came from one binding:
-`__ice_reconciliation_scope`, falling into the catch-all arm because its
-`Binding` carries no `owner`. That is not a real capture — a scope is a scope
-local, and outlined methods already take those as parameters.
+Counting the decision directly — one line per component use, printing each
+clause of the gate — says that on showcase, of 164 uses in `__view`:
 
-Recording it as a scope local instead, plus narrowing `call.slots.is_empty()`
-to "unless the slot content actually reached a render-site local" (slot content
-is snapshotted at the call site and rendered from inside the body, so the call
-site has to be told what it touched through a shared cell), is sound: all eight
-examples build and the suite is green. It is also worth only ~5% — 6.27s to
-5.95s on the worst edit — because 74 of 94 slot renders still hard-capture.
+| Rejected by | Uses |
+| --- | --- |
+| `call.slots.is_empty()` | 90 |
+| a hard capture | 0 |
+| a render-site local value | 0 |
+| a callback with no signature marker | 0 |
 
-Instrumented again, those 74 land on the *new* branch: the reconciliation scope
-at a slot site is not a plain identifier but an expression, typically
-`format!("{}/root", __ice_use_scope)`. Passing an expression where a parameter
-name is expected is what the plain-identifier guard refuses.
+One clause. Everything the recorder was built to detect fires on nothing here.
 
-Most of those expressions would be valid verbatim inside the outlined method,
-because they reference only the method's own `__ice_use_scope` parameter. So
-the last mile is a judgement the current code does not make: whether a scope
-expression's free identifiers are all bindings the outlined method will have.
-A textual check over generated Rust is the wrong tool; the scope expression
-should carry that fact from where it is built.
+The earlier note in this file claimed the blocker was `__ice_reconciliation_scope`
+falling into `RecordingEnv::record`'s catch-all arm, and that the last mile was
+a judgement about whether a scope expression's free identifiers are available
+inside an outlined method. That was measured on a build that had *already*
+lifted the slot gate, so it described a consequence of the experiment rather
+than the state of the tree. There is no free-identifier judgement to make.
 
-Both attempts were reverted. Nothing from them ships, and the 6.27s stands.
+Lifting the gate outright breaks exactly one thing, in `iced-app`:
+`error[E0425]: cannot find value 'item'`. Slot content is snapshotted at the
+call site and rendered from inside the callee, so a call-site loop item it
+reads is not in scope in the method the body was moved to. The recorder never
+saw the read, because by render time the content's environment is a flat copy
+with nothing in front of it.
+
+So give the snapshot the recorder that stood at its call site, and replay its
+reads into it — no more and no less. Replaying into *every* open recorder
+instead is sound but over-blocks: a `lazy` dependency read by slot content is
+bound inside the enclosing component's body and travels with it, and blocking
+on it costs that component its own method (the `lazy-component-context`
+fixture catches this).
+
+The reconciliation scope then does surface in the catch-all — and it is not a
+capture at all. `set_reconciliation_scope` at a slot render site writes the
+scope the content renders under, which comes from the render site, not the
+call site. Reading it back is only a capture because the write went *under*
+the recorder. Layering it above instead makes the question disappear.
+
+That is the whole change: all 164 showcase uses outline, and the `.ice` edit
+falls from 5.91s to 3.49s — 41%, measured with `scripts/build_bench.py` in
+both directions on one warm target directory.
+
+| Package | edit before | edit after |
+| --- | --- | --- |
+| showcase | 5.91s | 3.49s |
+| music-example | 2.42s | 2.45s |
+| trading-example | 2.89s | 2.90s |
+| iced-app | 2.15s | 2.16s |
+
+Only showcase moves, and that is the expected shape rather than a
+disappointment: the other three already sit at the link-dominated floor
+measured above, where the type check is not what the wall clock is waiting on.
+Outlining buys nothing there, and showcase lands close to that same floor.
+
+Outlining is not free at runtime — each use becomes a call through
+`grow_stack` with its scope locals cloned in — so the frame was checked too.
+`__view build only` on showcase reads 707/709/719/731us across four runs
+against a 715us baseline: no change that the run-to-run spread does not
+already cover.

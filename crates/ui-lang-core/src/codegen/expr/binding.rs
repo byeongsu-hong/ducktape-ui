@@ -50,6 +50,9 @@ pub(in crate::codegen) struct SlotContent {
     pub(in crate::codegen) name: String,
     pub(in crate::codegen) view: ViewId,
     pub(in crate::codegen) env: HashMap<String, Binding>,
+    /// The recorder that stood at the call site, so reads the content makes
+    /// once it renders inside the callee still reach it.
+    pub(in crate::codegen) recorder: Option<std::rc::Rc<RecordingSink>>,
 }
 
 #[derive(Clone, Copy)]
