@@ -642,26 +642,31 @@ Relatedly, never `rm -rf` a package's `OUT_DIR` to force regeneration: cargo's
 fingerprint then skips re-running the build script and `include_app!` fails
 with "generated Rust is missing". Touch `build.rs` instead.
 
-**An environment variable that no fingerprint tracks.** `ICE_TEMPLATE_VIEW=0`
-was the switch that forced a view back onto the compiled path, so that a
-capture from it could be diffed against the published path. It does not work
-by itself. Cargo does not rerun a build script for an environment variable
-nobody declared `rerun-if-env-changed` on, and touching `build.rs` is not
-enough either, because `ui-lang-build` then compares its own input fingerprint
-— which the variable is also not part of — and keeps the output it already
-has. Setting the variable, touching `build.rs`, and rebuilding produced a
-byte-identical generated view three times running: with the switch on, off,
-and unset.
+**An environment variable that no fingerprint tracks.** Anything read at
+codegen time is a build input, and a build input nothing tracks is not a
+switch — it is a switch-shaped thing that does nothing. Cargo does not rerun a
+build script for a variable nobody declared `rerun-if-env-changed` on, and
+touching `build.rs` is not enough either, because `ui-lang-build` then compares
+its own input fingerprint and keeps the output it already has when the `.ice`
+sources have not moved.
 
-The failure is silent and it flatters you. Both captures come from whichever
-path the directory happened to hold, they are byte-identical because they are
-the same program, and the diff reads as proof of parity. A capture comparison
-across the two paths is only meaningful from two separate target directories,
-one built from scratch under each setting. Verify which path a build actually
-took by grepping the generated Rust for `__ICE_TEMPLATE_JSON` rather than by
-trusting the variable — and grep every file in `ui-lang-generated/`, since the
-view lives in its own `*__app_view.rs` and `ls -t | head -1` will hand you the
-update phase instead.
+`ICE_TEMPLATE_VIEW=0` was such a switch, meant to force a view back onto the
+compiled path so a capture from it could be diffed against the published one.
+Setting it, touching `build.rs` and rebuilding produced a byte-identical
+generated view three times running — on, off, and unset. The failure is silent
+and it flatters you: both captures come from whichever path the directory
+happened to hold, they are byte-identical because they are the same program,
+and the diff reads as proof of parity. That result was produced and retracted,
+and the switch was deleted rather than repaired, because `main` is now the
+parity reference — diff against a revision where the node kind is not yet
+published.
+
+The general rule outlives the variable. To compare two codegen configurations,
+give each its own target directory and build from scratch; a shared one carries
+the other's output. And confirm which path a build actually took by grepping
+the generated Rust for `__ICE_TEMPLATE_JSON`, across every file in
+`ui-lang-generated/` — the view has its own `*__app_view.rs`, so
+`ls -t | head -1` hands you the update phase instead.
 
 And the machine is shared. A blocked A/B run put a load spike entirely on one
 side and produced a 4.81s baseline against a 2.64s result for an edit that in
