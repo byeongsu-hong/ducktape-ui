@@ -1,9 +1,78 @@
 use super::*;
 
+/// How many slot expressions one generated method carries.
+///
+/// The slot table grows with the whole screen, and rustc's type and borrow
+/// checking are superlinear in the size of a single function — the same reason
+/// `codegen::view::outline` exists for component uses. Splitting the table
+/// across methods keeps each one small; the constant is a balance between that
+/// and the per-call overhead of many tiny methods.
+const SLOTS_PER_METHOD: usize = 32;
+
+/// Renders a published template: the process resolves its current template —
+/// the embedded one, or the file `ICE_TEMPLATE_PATH` names — then fills this
+/// frame's slot table and hands both to the runtime renderer.
+///
+/// The slot expressions are emitted as sibling methods appended to `methods`,
+/// not inline, so a large view does not become one enormous function body.
+fn template_render_code(
+    emission: &crate::codegen::template::TemplateEmission,
+    message: &str,
+    root_scope: &str,
+    daemon: bool,
+    methods: &mut String,
+) -> String {
+    // A daemon's view is per-window, and its slot expressions may read the
+    // window it is rendering for, so the parameter travels with them.
+    let (window_param, window_arg) = if daemon {
+        (", window: ::iced::window::Id", ", window")
+    } else {
+        ("", "")
+    };
+    let paths = emission
+        .paths
+        .iter()
+        .map(|path| format!("{},", rust_string(path)))
+        .collect::<String>();
+    let mut calls = String::new();
+    for (index, chunk) in emission.slots.chunks(SLOTS_PER_METHOD).enumerate() {
+        let pushes = chunk
+            .iter()
+            .map(|slot| format!("__ice_slots.push({slot});"))
+            .collect::<String>();
+        writeln!(
+            methods,
+            "pub(super) fn __ice_slots_{index}<'a>(&'a self, __ice_palette: __IcePalette, __ice_app_theme: &::iced::Theme{window_param}, __ice_slots: &mut ::std::vec::Vec<::ui_lang_runtime::template::Slot<'a, {message}>>) {{ let __ice_app_theme = __ice_app_theme.clone(); let _ = &__ice_app_theme; {pushes} }}",
+        )
+        .unwrap();
+        writeln!(
+            calls,
+            "self.__ice_slots_{index}(__ice_palette, &__ice_app_theme{window_arg}, &mut __ice_slots);"
+        )
+        .unwrap();
+    }
+    format!(
+        "{{ \
+         static __ICE_TEMPLATE_JSON: &str = {json}; \
+         static __ICE_TEMPLATE_PATHS: [&str; {path_count}] = [{paths}]; \
+         thread_local! {{ static __ICE_TEMPLATE: ::ui_lang_runtime::template::TemplateSource = \
+         ::ui_lang_runtime::template::TemplateSource::new(__ICE_TEMPLATE_JSON); }} \
+         let __ice_template = __ICE_TEMPLATE.with(|source| source.current()); \
+         let mut __ice_slots: ::std::vec::Vec<::ui_lang_runtime::template::Slot<'_, {message}>> = \
+         ::std::vec::Vec::with_capacity({count}); {calls} \
+         ::ui_lang_runtime::template::render(&__ice_template, &__ice_slots, &__ice_palette.colors, {root_scope}, &__ICE_TEMPLATE_PATHS) \
+         }}",
+        json = rust_string(&emission.json),
+        count = emission.slots.len(),
+        path_count = emission.paths.len(),
+    )
+}
+
 pub(in crate::codegen) fn generate_view(
     out: &mut String,
     program: &LoweredProgram,
     message: &str,
+    source_path: &str,
 ) -> Result<(), Error> {
     let daemon = program.settings().kind == ProgramKind::Daemon;
     let mounted = program
@@ -33,15 +102,24 @@ pub(in crate::codegen) fn generate_view(
     } else {
         "__ice_root_scope_ref".into()
     };
-    let rendered_root = render_node_if_present(
-        program.app_view(),
-        program,
-        message,
-        &env,
-        &root_scope,
-        None,
-    )?
-    .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
+    // A view the template vocabulary covers is published as data and rendered
+    // by the runtime; anything else keeps its compiled tree.
+    let mut slot_methods = String::new();
+    let rendered_root =
+        match crate::codegen::template::emit(program, message, &env, source_path, &root_scope)? {
+            Some(emission) => {
+                template_render_code(&emission, message, &root_scope, daemon, &mut slot_methods)
+            }
+            None => render_node_if_present(
+                program.app_view(),
+                program,
+                message,
+                &env,
+                &root_scope,
+                None,
+            )?
+            .unwrap_or_else(|| "::iced::widget::Column::new().into()".into()),
+        };
     let window_arg = if daemon {
         ", window: ::iced::window::Id"
     } else {
@@ -93,5 +171,6 @@ pub(in crate::codegen) fn generate_view(
         )
         .unwrap();
     }
+    out.push_str(&slot_methods);
     Ok(())
 }

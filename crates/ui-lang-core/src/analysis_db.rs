@@ -882,6 +882,37 @@ impl AnalysisDb {
             .collect()
     }
 
+    /// Publishes a root's view as data without generating any Rust.
+    ///
+    /// This is the reload path: parse, check, and lower still run — so an edit
+    /// is still diagnosed — but nothing reaches the compiler. `None` means the
+    /// view uses constructs only compiled Rust expresses, and the caller must
+    /// fall back to rebuilding.
+    pub fn view_template(
+        &mut self,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<codegen::ViewTemplate>, Error> {
+        let path = normalize_path(path.as_ref()).map_err(|error| {
+            file_error(
+                "E181",
+                path.as_ref(),
+                1,
+                format!("cannot resolve source path: {error}"),
+            )
+        })?;
+        let analysis = self.analyze_root(&path)?;
+        let source_origins = analysis.document.source_origins().to_vec();
+        let program = lower::lower(analysis.document)
+            .map_err(|error| remap_origin(error, &source_origins))?;
+        codegen::view_template(&program, &path.display().to_string()).map_err(|mut error| {
+            if let Some((origin, line)) = program.source_origin(error.line) {
+                error.path = Some(origin.display().to_string());
+                error.line = line;
+            }
+            error
+        })
+    }
+
     pub fn compile_root(&mut self, path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
         let path = normalize_path(path.as_ref()).map_err(|error| {
             file_error(

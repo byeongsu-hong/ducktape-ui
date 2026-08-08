@@ -109,7 +109,7 @@ pub(in crate::codegen) fn render_node_if_present(
     }
 }
 
-fn node_is_omitted(
+pub(in crate::codegen) fn node_is_omitted(
     node: ViewId,
     document: &LoweredProgram,
     env: &dyn BindingEnvironment,

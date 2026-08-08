@@ -43,6 +43,15 @@ pub(in crate::codegen) fn generate_subscription(
             "::iced::window::events().map(|(__id, __event)| {message}::__AccessibilityWindow(__id, __event)),"
         )
         .unwrap();
+        // Wakes the event loop when a dev runner republishes the view. The
+        // runtime owns the watching, so this costs nothing — and requires
+        // nothing of the application's iced features — when no template file
+        // is published.
+        writeln!(
+            out,
+            "::ui_lang_runtime::template::changes().map(|()| {message}::__TemplateChanged),"
+        )
+        .unwrap();
     }
     if let Some(tray) = &settings.tray {
         writeln!(

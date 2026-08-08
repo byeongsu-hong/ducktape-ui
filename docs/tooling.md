@@ -65,15 +65,34 @@ refresh the metadata inventory before hashing new or affected files. A changed
 snapshot must remain identical across two reads before the background rebuild
 starts.
 
-Every accepted edit starts a shadow candidate through the ordinary generated
-Rust path. The current process remains open until the candidate reports that
-its first root widget draw completed. Parse, check, build, startup, or
-readiness failure leaves that last-known-good process running. A successful
-candidate replaces the old process, so application, window, and widget state
-intentionally restart instead of relying on a second runtime interpreter. A
-daemon reports readiness through its first drawn window; a windowless daemon
-candidate cannot satisfy this draw boundary and is rejected after the
-30-second readiness timeout without replacing the current process.
+An accepted edit is first offered to the running process as a view reload. The
+runner re-runs parse, check, and lowering — so the edit is diagnosed exactly as
+before — and republishes the view as data. When the running binary still fills
+the slot table the new view asks for, the runner rewrites the published
+template file, prints `ice dev: view reloaded in place`, and the app renders
+the change on its next frame with application, window, and widget state
+untouched. See [decision 0006](decisions/0006-view-as-data.md) for what that
+contract covers: structure, literals, colours, spacing, and accessibility
+segments reload; reading new state, adding a handler, or using a node the
+template vocabulary does not model does not.
+
+Every other accepted edit starts a shadow candidate through the ordinary
+generated Rust path. The current process remains open until the candidate
+reports that its first root widget draw completed. Parse, check, build,
+startup, or readiness failure leaves that last-known-good process running. A
+successful candidate replaces the old process, so application, window, and
+widget state restart. A daemon reports readiness through its first drawn
+window; a windowless daemon candidate cannot satisfy this draw boundary and is
+rejected after the 30-second readiness timeout without replacing the current
+process.
+
+`ICE_TEMPLATE_PATH` names the published template a launched app reads. The
+runner sets it; an app started without it renders the template compiled into
+it. While it is set, the app also subscribes to a 150 ms tick that notices a
+republished file — iced rebuilds a view only when something asks it to, and an
+idle window never asks — and subscribes to nothing when it is unset, so a
+release build carries no polling. An unreadable or unparseable file leaves the
+last good view rendering, so a half-written save cannot blank the window.
 
 ## api
 

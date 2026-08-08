@@ -1,5 +1,5 @@
 **/target/
 /.worktree/
-/handoff.md
+/HANDOFF.md
 /examples/terminal/screenshots/
 *.rs.bk

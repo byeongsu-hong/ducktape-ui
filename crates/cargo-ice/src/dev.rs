@@ -40,6 +40,19 @@ struct DevCompileError {
     asset_dependencies: Vec<PathBuf>,
 }
 
+/// Writes the root's current view template, returning it when the view is
+/// publishable as data. `None` means this app's views only exist as compiled
+/// Rust, so the runner stays in rebuild-and-restart mode.
+fn publish_template(
+    analysis_db: &mut ui_lang_core::AnalysisDb,
+    source: &Path,
+    path: &Path,
+) -> Option<ui_lang_core::ViewTemplate> {
+    let template = analysis_db.view_template(source).ok().flatten()?;
+    fs::write(path, &template.json).ok()?;
+    Some(template)
+}
+
 fn update_failed_watch(watched: &mut Vec<PathBuf>, discovered: Vec<PathBuf>) -> bool {
     if discovered.is_empty() || discovered == *watched {
         return false;
@@ -127,10 +140,29 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         );
     };
     let executable = stage_executable(&executable, revision)?;
-    let mut app = ChildGuard::spawn_owned(root, executable, runtime_args(cargo_args))?;
+    // The template the compiled binary was built against. While an edit only
+    // changes the published view, the process reads a rewritten file instead
+    // of being replaced.
+    let template_path = ready_dir.join(format!(
+        "{}-{}.template.json",
+        source
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("app"),
+        std::process::id()
+    ));
+    let mut live_template = publish_template(&mut analysis_db, &source, &template_path);
+    let template_arg = live_template.is_some().then_some(template_path.as_path());
+    let mut app =
+        ChildGuard::spawn_owned(root, executable, runtime_args(cargo_args), template_arg)?;
     println!(
-        "ice dev: watching {} Ice source input(s); rebuild-and-restart mode",
-        observed_stamps.0.len()
+        "ice dev: watching {} Ice source input(s); {}",
+        observed_stamps.0.len(),
+        if live_template.is_some() {
+            "view edits reload in place, everything else rebuilds and restarts"
+        } else {
+            "rebuild-and-restart mode"
+        }
     );
     let mut changes = DevWatcher::new(&watched_dependencies, &watched_assets, &cargo_inputs);
 
@@ -266,6 +298,42 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             }
         }
 
+        // A view-only edit needs no compiler: if the running binary still
+        // fills the slot table the new template asks for, rewriting the file
+        // is the whole reload, and application state survives untouched.
+        if let Some(current) = &live_template {
+            match analysis_db.view_template(&source) {
+                Ok(Some(candidate))
+                    if candidate.slot_fingerprint == current.slot_fingerprint
+                        && candidate.json != current.json =>
+                {
+                    match fs::write(&template_path, &candidate.json) {
+                        Ok(()) => {
+                            println!("ice dev: view reloaded in place");
+                            live_template = Some(candidate);
+                            watched_dependencies = next.dependencies;
+                            watched_assets = next.asset_dependencies;
+                            observed_stamps = candidate_stamps;
+                            continue;
+                        }
+                        Err(error) => eprintln!(
+                            "ice dev: cannot publish the reloaded view: {error}; rebuilding instead"
+                        ),
+                    }
+                }
+                // An unchanged view means the edit was elsewhere.
+                Ok(Some(candidate)) if candidate.slot_fingerprint == current.slot_fingerprint => {}
+                Ok(Some(_)) => eprintln!(
+                    "ice dev: the edit needs values the running app does not compute; rebuilding"
+                ),
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("{error}");
+                    observed_stamps = candidate_stamps;
+                    continue;
+                }
+            }
+        }
         eprintln!("ice dev: inputs changed; rebuilding with the current app open");
         let build = match cargo_build(
             root,
@@ -321,12 +389,17 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
                 continue;
             }
         };
+        // The rebuilt binary carries its own template and may fill a different
+        // slot table, so the published file has to match it before the
+        // candidate starts reading.
+        live_template = publish_template(&mut analysis_db, &source, &template_path);
         if let Err(error) = app.restart(
             root,
             executable,
             runtime_args(cargo_args),
             &ready_base,
             revision,
+            live_template.is_some().then_some(template_path.as_path()),
         ) {
             eprintln!("ice dev: restart candidate failed; keeping the current app open: {error}");
             watched_dependencies = next.dependencies;

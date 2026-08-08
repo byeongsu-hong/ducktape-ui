@@ -5900,6 +5900,7 @@ version = "0.1.0"
 dependencies = [
  "qrcode 0.14.1",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "tempfile",
 ]
@@ -5918,6 +5919,7 @@ dependencies = [
  "ouroboros",
  "png 0.18.1",
  "rustc-hash 2.1.3",
+ "serde",
  "serde_json",
  "stacker",
  "stats_alloc",

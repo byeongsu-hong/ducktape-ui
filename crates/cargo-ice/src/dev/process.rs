@@ -8,6 +8,9 @@ use std::time::Duration;
 
 pub(super) const READY_PATH_ENV: &str = "ICE_DEV_READY_PATH";
 pub(super) const READY_TOKEN_ENV: &str = "ICE_DEV_READY_TOKEN";
+/// Points a launched app at the template file this runner rewrites, so a view
+/// edit reaches it without a rebuild.
+pub(super) const TEMPLATE_PATH_ENV: &str = "ICE_TEMPLATE_PATH";
 
 const RESTART_READY_TIMEOUT: Duration = Duration::from_secs(30);
 static NEXT_EXECUTABLE_COPY: AtomicU64 = AtomicU64::new(0);
@@ -109,13 +112,14 @@ impl ChildGuard {
         root: &Path,
         executable: StagedExecutable,
         args: &[String],
+        template: Option<&Path>,
     ) -> Result<Self, String> {
-        Self::spawn_owned_with_ready(root, executable, args, None)
+        Self::spawn_owned_with_ready(root, executable, args, None, template)
     }
 
     #[cfg(test)]
     pub(super) fn spawn(root: &Path, executable: &Path, args: &[String]) -> Result<Self, String> {
-        Self::spawn_process(root, executable, args, None, None)
+        Self::spawn_process(root, executable, args, None, None, None)
     }
 
     #[cfg(test)]
@@ -126,7 +130,7 @@ impl ChildGuard {
         ready: &Path,
         token: &str,
     ) -> Result<Self, String> {
-        Self::spawn_process(root, executable, args, Some((ready, token)), None)
+        Self::spawn_process(root, executable, args, Some((ready, token)), None, None)
     }
 
     fn spawn_owned_with_ready(
@@ -134,9 +138,10 @@ impl ChildGuard {
         executable: StagedExecutable,
         args: &[String],
         ready: Option<(&Path, &str)>,
+        template: Option<&Path>,
     ) -> Result<Self, String> {
         let path = executable.path().to_owned();
-        Self::spawn_process(root, &path, args, ready, Some(executable))
+        Self::spawn_process(root, &path, args, ready, Some(executable), template)
     }
 
     fn spawn_process(
@@ -145,17 +150,22 @@ impl ChildGuard {
         args: &[String],
         ready: Option<(&Path, &str)>,
         owned_executable: Option<StagedExecutable>,
+        template: Option<&Path>,
     ) -> Result<Self, String> {
         let mut command = Command::new(executable);
         command
             .args(args)
             .env_remove(READY_PATH_ENV)
             .env_remove(READY_TOKEN_ENV)
+            .env_remove(TEMPLATE_PATH_ENV)
             .current_dir(root);
         if let Some((ready, token)) = ready {
             command
                 .env(READY_PATH_ENV, ready)
                 .env(READY_TOKEN_ENV, token);
+        }
+        if let Some(template) = template {
+            command.env(TEMPLATE_PATH_ENV, template);
         }
         let mut attempts = 0;
         let child = loop {
@@ -185,13 +195,14 @@ impl ChildGuard {
         args: &[String],
         ready_base: &Path,
         revision: u64,
+        template: Option<&Path>,
     ) -> Result<(), String> {
         let token_id = NEXT_READY_TOKEN.fetch_add(1, Ordering::Relaxed);
         let token = format!("{}-{revision}-{token_id}", std::process::id());
         let ready = ready_base.with_extension(format!("revision-{revision}-{token_id}.ready"));
         remove_file_if_exists(&ready)?;
         let mut candidate =
-            Self::spawn_owned_with_ready(root, executable, args, Some((&ready, &token)))?;
+            Self::spawn_owned_with_ready(root, executable, args, Some((&ready, &token)), template)?;
         if let Err(error) = candidate.wait_ready(&ready, &token) {
             drop(candidate);
             let _ = fs::remove_file(&ready);

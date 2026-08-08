@@ -410,6 +410,45 @@ fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Er
     Ok(())
 }
 
+/// A view published as data, with the fingerprint that decides whether a
+/// running process can accept it.
+#[derive(Clone, Debug)]
+pub struct ViewTemplate {
+    /// The template JSON `ui_lang_runtime::template` parses.
+    pub json: String,
+    /// Identifies the slot table this template needs. A compiled process fills
+    /// a fixed set of slot expressions each frame, so it can accept a new
+    /// template only when that set is unchanged — same expressions, same
+    /// order. Any other edit has to go through the compiler.
+    pub slot_fingerprint: String,
+}
+
+/// Publishes `program`'s view as data, or reports `None` when the view uses
+/// constructs that only compiled Rust expresses.
+pub fn view_template(
+    program: &LoweredProgram,
+    source_path: &str,
+) -> Result<Option<ViewTemplate>, Error> {
+    let app_name = program.app_name();
+    let message = format!("__{app_name}Message");
+    let env = checked_state_env(program, "self");
+    let root_scope = rust_string(program.app_name());
+    Ok(
+        template::emit(program, &message, &env, source_path, &root_scope)?.map(|emission| {
+            ViewTemplate {
+                slot_fingerprint: {
+                    use sha2::Digest;
+                    sha2::Sha256::digest(emission.slots.join("\u{1f}"))
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect()
+                },
+                json: emission.json,
+            }
+        }),
+    )
+}
+
 pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, Error> {
     #[cfg(test)]
     {
@@ -666,7 +705,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     writeln!(out, "#[derive(Clone)]\npub(crate) enum {message} {{").unwrap();
     writeln!(
         out,
-        "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,"
+        "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,\n__TemplateChanged,"
     )
     .unwrap();
     if let Some(tray) = &program.settings().tray {
@@ -904,7 +943,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     writeln!(out, "{phase}").unwrap();
     let outline_guard = outline::enable_for_view();
     let mut view = String::new();
-    generate_view(&mut view, program, &message)?;
+    generate_view(&mut view, program, &message, source_path)?;
     let mut outlined = outline::drain_outlined_methods();
     outlined.push((APP_UPDATE_GROUP.to_owned(), update));
     outlined.push((APP_VIEW_GROUP.to_owned(), view));
@@ -955,6 +994,7 @@ mod settings;
 mod statement;
 mod style;
 mod subscription;
+mod template;
 mod testing;
 mod type_code;
 mod view;
