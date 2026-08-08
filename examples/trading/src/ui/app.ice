@@ -77,7 +77,8 @@ preset held
     orders = demo_orders()
     live = true
     ticket_price = "64,000.00"
-    quote = price_ticket("64,000.00", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
+    ticket_size = "3.00"
+    quote = price_ticket("64,000.00", "3.00", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
 
 preset browsing
   state
@@ -90,6 +91,21 @@ preset browsing
     book = some(demo_book())
     tape_prints = demo_tape()
     live = true
+
+preset at_risk
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    visible = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions_at_risk()
+    account = some(demo_account_at_risk())
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
+    live = true
+    quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, 5.0)
 
 preset stalled
   state
@@ -1498,247 +1514,283 @@ view
                 h=fill
                 p=14.0
                 bg=panel
-              col gap=16.0 w=fill
-                row
+              scroll #ticket-body
+                with
+                  h=fill
+                  bar-w=6.0
+                  bar-m=2.0
+                  scroller-w=6.0
+                active
+                  y-rail bg=panel
+                  y-scroller bg=edge r=3.0
+                hovered
+                  y-rail bg=panel
+                  y-scroller bg=muted r=3.0
+                col
                   with
+                    gap=16.0
                     w=fill
-                    gap=10.0
-                    align=center
-                  col gap=6.0
-                    Label value="DEMO ONLY"
-                    row gap=6.0 align=center
-                      text "New order"
-                        with
-                          size=18.0
-                          @text-fg
-                          @font-bold
-                      text coin
-                        with
-                          size=18.0
-                          @text-muted
-                          @font-bold
-                text "Prices an order against the margin engine's own arithmetic and sends nothing. Submitting would need this app to hold the key that signs it."
-                  with
-                    size=11.0
-                    w=fill
-                    wrap=word
-                    @text-faint
-                row gap=8.0 w=fill
-                  col #side-buy w=fill
-                    if ticket_buy
-                      button #buy-on -> ticket_side(true)
-                        with
-                          label="Buy"
-                          w=fill
-                          p=9.0
-                        active bg=up text=fg_invert r=4.0
-                        hovered bg=up text=fg_invert r=4.0
-                        text "BUY / LONG"
-                          with
-                            size=11.0
-                            w=fill
-                            align-x=center
-                    if !ticket_buy
-                      button #buy-off -> ticket_side(true)
-                        with
-                          label="Buy"
-                          w=fill
-                          p=9.0
-                        active bg=raised text=muted r=4.0
-                        hovered bg=edge text=fg r=4.0
-                        text "BUY / LONG"
-                          with
-                            size=11.0
-                            w=fill
-                            align-x=center
-                            @text-muted
-                  col #side-sell w=fill
-                    if !ticket_buy
-                      button #sell-on -> ticket_side(false)
-                        with
-                          label="Sell"
-                          w=fill
-                          p=9.0
-                        active bg=down text=fg_invert r=4.0
-                        hovered bg=down text=fg_invert r=4.0
-                        text "SELL / SHORT"
-                          with
-                            size=11.0
-                            w=fill
-                            align-x=center
-                    if ticket_buy
-                      button #sell-off -> ticket_side(false)
-                        with
-                          label="Sell"
-                          w=fill
-                          p=9.0
-                        active bg=raised text=muted r=4.0
-                        hovered bg=edge text=fg r=4.0
-                        text "SELL / SHORT"
-                          with
-                            size=11.0
-                            w=fill
-                            align-x=center
-                            @text-muted
-                if position_held(positions, coin) != 0.0
-                  button #close-held -> close_held
+                    pr=10.0
+                  row
                     with
-                      label="Fill the size that closes this position"
                       w=fill
-                      p=8.0
-                    active bg=raised text=muted r=4.0
-                    hovered bg=edge text=fg r=4.0
-                    text "CLOSE POSITION"
+                      gap=10.0
+                      align=center
+                    col gap=6.0
+                      Label value="DEMO ONLY"
+                      row gap=6.0 align=center
+                        text "New order"
+                          with
+                            size=18.0
+                            @text-fg
+                            @font-bold
+                        text coin
+                          with
+                            size=18.0
+                            @text-muted
+                            @font-bold
+                  text "Prices an order against the margin engine's own arithmetic and sends nothing. Submitting would need this app to hold the key that signs it."
+                    with
+                      size=11.0
+                      w=fill
+                      wrap=word
+                      @text-faint
+                  row gap=8.0 w=fill
+                    col #side-buy w=fill
+                      if ticket_buy
+                        button #buy-on -> ticket_side(true)
+                          with
+                            label="Buy"
+                            w=fill
+                            p=9.0
+                          active bg=up text=fg_invert r=4.0
+                          hovered bg=up text=fg_invert r=4.0
+                          text "BUY / LONG"
+                            with
+                              size=11.0
+                              w=fill
+                              align-x=center
+                      if !ticket_buy
+                        button #buy-off -> ticket_side(true)
+                          with
+                            label="Buy"
+                            w=fill
+                            p=9.0
+                          active bg=raised text=muted r=4.0
+                          hovered bg=edge text=fg r=4.0
+                          text "BUY / LONG"
+                            with
+                              size=11.0
+                              w=fill
+                              align-x=center
+                              @text-muted
+                    col #side-sell w=fill
+                      if !ticket_buy
+                        button #sell-on -> ticket_side(false)
+                          with
+                            label="Sell"
+                            w=fill
+                            p=9.0
+                          active bg=down text=fg_invert r=4.0
+                          hovered bg=down text=fg_invert r=4.0
+                          text "SELL / SHORT"
+                            with
+                              size=11.0
+                              w=fill
+                              align-x=center
+                      if ticket_buy
+                        button #sell-off -> ticket_side(false)
+                          with
+                            label="Sell"
+                            w=fill
+                            p=9.0
+                          active bg=raised text=muted r=4.0
+                          hovered bg=edge text=fg r=4.0
+                          text "SELL / SHORT"
+                            with
+                              size=11.0
+                              w=fill
+                              align-x=center
+                              @text-muted
+                  if position_held(positions, coin) != 0.0
+                    button #close-held -> close_held
+                      with
+                        label="Fill the size that closes this position"
+                        w=fill
+                        p=8.0
+                      active bg=raised text=muted r=4.0
+                      hovered bg=edge text=fg r=4.0
+                      text "CLOSE POSITION"
+                        with
+                          size=10.0
+                          w=fill
+                          align-x=center
+                          tracking=1.1
+                          @text-muted
+                  if !empty(ticket_effect(positions, coin, ticket_size, ticket_buy))
+                    text ticket_effect(positions, coin, ticket_size, ticket_buy)
+                      with
+                        size=11.0
+                        w=fill
+                        wrap=word
+                        @text-muted
+                  col gap=8.0 w=fill
+                    Label value="LIMIT PRICE"
+                    input "" #ticket-price <-> ticket_price
+                      with
+                        label="Limit price"
+                        hint="0.00"
+                        change=ticket_priced
+                        text-size=12.0
+                        font=digits
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                    button #alert-here -> add_alert_here
+                      with
+                        label="Watch this level"
+                        w=fill
+                        p=5.0
+                      active bg=raised text=muted r=3.0
+                      hovered bg=edge text=fg r=3.0
+                      text "WATCH THIS LEVEL"
+                        with
+                          size=9.0
+                          w=fill
+                          align-x=center
+                          tracking=1.1
+                          @text-muted
+                  col gap=8.0 w=fill
+                    row gap=6.0 align=center
+                      Label value="SIZE"
+                      Label value=coin
+                    input "" #ticket-size <-> ticket_size
+                      with
+                        label="Size"
+                        hint="0.00"
+                        change=ticket_sized
+                        text-size=12.0
+                        font=digits
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                  row gap=4.0 w=fill
+                    Share label="25%" share=0.25
+                      events
+                        pick -> size_share _
+                    Share label="50%" share=0.5
+                      events
+                        pick -> size_share _
+                    Share label="75%" share=0.75
+                      events
+                        pick -> size_share _
+                    Share label="MAX" share=1.0
+                      events
+                        pick -> size_share _
+                  col gap=8.0 w=fill
+                    row gap=6.0 align=center
+                      Label value="LEVERAGE"
+                      match focus
+                        some(row)
+                          row gap=4.0 align=center
+                            text "max" size=10.0 @text-faint
+                            text fmt_leverage(row.leverage)
+                              with
+                                size=10.0
+                                font=digits
+                                @text-faint
+                        none
+                          space
+                    input "" #ticket-leverage <-> ticket_leverage
+                      with
+                        label="Leverage"
+                        hint="5"
+                        change=ticket_levered
+                        text-size=12.0
+                        font=digits
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                  rule horizontal thickness=1.0 color=edge
+                  col gap=10.0 w=fill
+                    row w=fill align=center
+                      Label value="ORDER VALUE"
+                      space w=fill
+                      text fmt_usd(quote.notional)
+                        with
+                          size=12.0
+                          font=digits
+                          @text-muted
+                    row w=fill align=center
+                      Label value="IF YOU CROSS"
+                      space w=fill
+                      row gap=8.0 align=center
+                        text impact_price(book, ticket_size, ticket_buy)
+                          with
+                            size=12.0
+                            font=digits
+                            @text-fg
+                        text impact_slippage(book, ticket_size, ticket_buy)
+                          with
+                            size=10.0
+                            font=digits
+                            @text-faint
+                    if impact_short(book, ticket_size, ticket_buy)
+                      text "The book on screen cannot fill that size."
+                        with
+                          size=10.0
+                          w=fill
+                          @text-down
+                    row w=fill align=center
+                      Label value="PRICED AT"
+                      space w=fill
+                      text fmt_leverage(quote.leverage)
+                        with
+                          size=12.0
+                          font=digits
+                          @text-muted
+                    row w=fill align=center
+                      Label value="MARGIN REQUIRED"
+                      space w=fill
+                      text fmt_usd(quote.margin)
+                        with
+                          size=12.0
+                          font=digits
+                          @text-muted
+                    row w=fill align=center
+                      Label value="LIQUIDATION"
+                      space w=fill
+                      if quote.liquidation > 0.0
+                        text fmt_px(quote.liquidation)
+                          with
+                            size=13.0
+                            font=digits
+                            @text-down
+                      if quote.liquidation <= 0.0 && quote.known
+                        text "none"
+                          with
+                            size=13.0
+                            font=digits
+                            @text-faint
+                      if !quote.known
+                        text "market not loaded"
+                          with
+                            size=11.0
+                            font=digits
+                            @text-faint
+                    text "Isolated margin, at the maintenance requirement this market holds. A cross position dies against the whole account instead, which is the rail under the equity figure."
                       with
                         size=10.0
                         w=fill
-                        align-x=center
-                        tracking=1.1
-                        @text-muted
-                if !empty(ticket_effect(positions, coin, ticket_size, ticket_buy))
-                  text ticket_effect(positions, coin, ticket_size, ticket_buy)
+                        wrap=word
+                        @text-faint
+                  box
                     with
-                      size=11.0
                       w=fill
-                      wrap=word
-                      @text-muted
-                col gap=8.0 w=fill
-                  Label value="LIMIT PRICE"
-                  input "" #ticket-price <-> ticket_price
-                    with
-                      label="Limit price"
-                      hint="0.00"
-                      change=ticket_priced
-                      text-size=12.0
-                      font=digits
-                    focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                  button #alert-here -> add_alert_here
-                    with
-                      label="Watch this level"
-                      w=fill
-                      p=5.0
-                    active bg=raised text=muted r=3.0
-                    hovered bg=edge text=fg r=3.0
-                    text "WATCH THIS LEVEL"
+                      p=12.0
+                      r=4.0
+                      bg=raised
+                    text "DEMO ONLY, NOTHING IS SENT"
                       with
-                        size=9.0
+                        size=11.0
                         w=fill
                         align-x=center
                         tracking=1.1
-                        @text-muted
-                col gap=8.0 w=fill
-                  row gap=6.0 align=center
-                    Label value="SIZE"
-                    Label value=coin
-                  input "" #ticket-size <-> ticket_size
-                    with
-                      label="Size"
-                      hint="0.00"
-                      change=ticket_sized
-                      text-size=12.0
-                      font=digits
-                    focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                row gap=4.0 w=fill
-                  Share label="25%" share=0.25
-                    events
-                      pick -> size_share _
-                  Share label="50%" share=0.5
-                    events
-                      pick -> size_share _
-                  Share label="75%" share=0.75
-                    events
-                      pick -> size_share _
-                  Share label="MAX" share=1.0
-                    events
-                      pick -> size_share _
-                col gap=8.0 w=fill
-                  row gap=6.0 align=center
-                    Label value="LEVERAGE"
-                    match focus
-                      some(row)
-                        row gap=4.0 align=center
-                          text "max" size=10.0 @text-faint
-                          text fmt_leverage(row.leverage)
-                            with
-                              size=10.0
-                              font=digits
-                              @text-faint
-                      none
-                        space
-                  input "" #ticket-leverage <-> ticket_leverage
-                    with
-                      label="Leverage"
-                      hint="5"
-                      change=ticket_levered
-                      text-size=12.0
-                      font=digits
-                    focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                rule horizontal thickness=1.0 color=edge
-                col gap=10.0 w=fill
-                  row w=fill align=center
-                    Label value="ORDER VALUE"
-                    space w=fill
-                    text fmt_usd(quote.notional)
-                      with
-                        size=12.0
-                        font=digits
-                        @text-muted
-                  row w=fill align=center
-                    Label value="PRICED AT"
-                    space w=fill
-                    text fmt_leverage(quote.leverage)
-                      with
-                        size=12.0
-                        font=digits
-                        @text-muted
-                  row w=fill align=center
-                    Label value="MARGIN REQUIRED"
-                    space w=fill
-                    text fmt_usd(quote.margin)
-                      with
-                        size=12.0
-                        font=digits
-                        @text-muted
-                  row w=fill align=center
-                    Label value="LIQUIDATION"
-                    space w=fill
-                    if quote.liquidation > 0.0
-                      text fmt_px(quote.liquidation)
-                        with
-                          size=13.0
-                          font=digits
-                          @text-down
-                    if quote.liquidation <= 0.0 && quote.known
-                      text "none"
-                        with
-                          size=13.0
-                          font=digits
-                          @text-faint
-                    if !quote.known
-                      text "market not loaded"
-                        with
-                          size=11.0
-                          font=digits
-                          @text-faint
-                  text "Isolated margin, at the maintenance requirement this market holds. A cross position dies against the whole account instead, which is the rail under the equity figure."
-                    with
-                      size=10.0
-                      w=fill
-                      wrap=word
-                      @text-faint
-                box
-                  with
-                    w=fill
-                    p=12.0
-                    r=4.0
-                    bg=raised
-                  text "DEMO ONLY, NOTHING IS SENT"
-                    with
-                      size=11.0
-                      w=fill
-                      align-x=center
-                      tracking=1.1
-                      @text-faint
+                        @text-faint
     layer
       box #gate
         with
@@ -1873,12 +1925,10 @@ test trading_a_closing_order_asks_for_no_margin
 test trading_an_alert_says_which_market_it_watches
   preset held
   viewport 1660 820
-  expect text "ETH"
   expect text "3,400.00"
   dispatch drop_alert_at("BTC", 3400.0)
   expect text "3,400.00"
   dispatch drop_alert_at("ETH", 3400.0)
-  expect no text "ETH"
   expect no text "3,400.00"
 
 test trading_browsing_without_an_address_renders
@@ -1907,6 +1957,13 @@ test trading_a_dead_feed_stops_the_price_looking_live
   expect text "Hyperliquid feed dropped"
   capture stalled
 
+test trading_an_account_against_its_engine_renders_as_such
+  preset at_risk
+  viewport 1660 820
+  expect text "91%"
+  expect text "57,924.05"
+  capture at_risk
+
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
   viewport 1660 820
@@ -1915,7 +1972,35 @@ test trading_the_whole_terminal_renders_from_fixtures
   expect no text "Connect an address"
   expect no text "READ ONLY"
   expect no text "No data"
-  expect text "38%"
+  expect text "1%"
   expect text "34%"
   expect no text "NOT LIVE"
+  expect text "IF YOU CROSS"
+  expect text "64,001.40"
+  expect no text "The book on screen cannot fill that size."
+  expect text "SOL"
+  expect text "148.620"
+  expect text "3,526.53"
   capture terminal
+
+test trading_a_search_narrows_the_list_and_keeps_the_selection
+  preset held
+  viewport 1660 820
+  target app = #app
+  target markets = app/markets
+  target search = markets/search
+  focus search
+  type "SO"
+  expect text "148.620"
+  expect no text "3,540.00"
+  key escape
+  expect text "3,540.00"
+
+test trading_a_size_past_the_book_says_so
+  preset held
+  viewport 1660 820
+  dispatch ticket_sized("100")
+  expect text "The book on screen cannot fill that size."
+  dispatch ticket_sized("1.0")
+  expect no text "The book on screen cannot fill that size."
+  expect text "64,001.00"

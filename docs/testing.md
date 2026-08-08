@@ -596,6 +596,17 @@ edit stops re-checking the view:
 
 Fragment edits and top-of-app edits do not move, and are not claimed to.
 
+`scripts/build_bench.py` now measures both anchors — a `handler` phase beside
+`edit` — because documenting the hazard would not have stopped the next person
+quoting one number. On every app that has a handler fragment the two differ,
+and which one is worse changed with this fix:
+
+| | root edit | handler edit |
+| --- | --- | --- |
+| showcase | 3.54s | 2.79s |
+| music-example | 2.50s | 1.97s |
+| markdown-example | 1.92s | 1.77s |
+
 ### Two ways these numbers went wrong first
 
 Both mistakes produced clean-looking tables, so they are worth naming.
@@ -610,8 +621,142 @@ without `-Ztime-passes`, between two builds that had it, discards the
 incremental cache — the next "incremental" edit measured 11s instead of 3s.
 Every build in a series has to carry identical flags.
 
+**A stale build directory.** `target/debug/build/<pkg>-*` matches several
+directories, and `ls ... | head -1` picks whichever sorts first, not the live
+one — so generated sizes and build-script timings come from an old build and
+look stable while the thing under test changes. `ls -t | head -1`. Two rounds
+of numbers on the hot-reload track were retracted for this, and the same glob
+appears in `scripts/build_bench.py`, which sorts by name and takes the last.
+Relatedly, never `rm -rf` a package's `OUT_DIR` to force regeneration: cargo's
+fingerprint then skips re-running the build script and `include_app!` fails
+with "generated Rust is missing". Touch `build.rs` instead.
+
 And the machine is shared. A blocked A/B run put a load spike entirely on one
 side and produced a 4.81s baseline against a 2.64s result for an edit that in
 truth does not move at all. Interleaving the sides — A, B, A, B — and pooling
 each side's samples is what settled it. When a result is large and one side's
 spread is much wider than the other's, the spread is the finding.
+
+### Splitting the groups finer buys nothing
+
+Component methods are grouped per source fragment, which on showcase makes the
+default component library one 8728-line module. rustc partitions codegen units
+by module, so a single component's edit looked like it should be re-codegening
+the whole library — `codegen_crate` plus `LLVM_passes` is 1.30s on that edit,
+against 0.04s of type checking.
+
+Grouping per component instead splits that module into about fifty, and the
+generated file count goes from 12 to 60. Interleaved, under a quiet machine:
+
+| edit | per fragment | per component |
+| --- | --- | --- |
+| `crates/ui/src/ice/components.ice` | 2.38s | 2.35s |
+| `components/navigation.ice` (control) | 2.55s | 2.61s |
+
+Nothing. Whatever decides the codegen cost of an edit here, it is not the
+module the outlined methods sit in — rustc's unit partitioning does its own
+merging and splitting at 256 units and does not follow the module tree that
+literally. Reverted; the fragment grouping stands.
+
+### Where the loop stands
+
+Per `scripts/build_bench.py`, three runs each, on one warm target directory:
+
+| package | noop | script | root edit | handler edit |
+| --- | --- | --- | --- | --- |
+| showcase | 0.20s | 0.40s | 3.54s | 2.79s |
+| trading-example | 0.20s | 0.31s | 2.86s | — |
+| music-example | 0.20s | 0.35s | 2.50s | 1.97s |
+| iced-app | 0.24s | 0.56s | 2.39s | — |
+| markdown-example | 0.19s | 0.33s | 1.92s | 1.77s |
+| terminal-example | 0.20s | 0.07s | 1.49s | — |
+| candles-example | 0.20s | 0.13s | 1.41s | — |
+
+The Ice compiler itself (`script`) is never the cost. What is left is rustc's
+floor: link, codegen and LLVM, and the monomorphization walk plus unit
+partitioning plus dep-graph serialization — roughly 0.6s, 0.9s and 0.6s of a
+2.4s rebuild, all of which scale with the whole crate rather than with the
+edit. Cutting further means generating fewer monomorphizations, not shuffling
+the ones there are.
+
+### The frame is one number, counted several times
+
+`examples/showcase/src/frame_probe.rs` prints seven phases, and reading them as
+seven costs is a mistake. The test driver simulates one event per
+`UserInterface` build, so that a test can observe the state between a press and
+a release; a running app batches a frame's events into one build. Every phase
+comes out an integer multiple of a single build:
+
+| phase | showcase | builds |
+| --- | --- | --- |
+| `__view` alone | 0.65ms | — |
+| idle redraw | 3.02ms | 1 |
+| cursor move | 3.07ms | 1 |
+| state update + redraw | 6.82ms | 2 |
+| scroll | 6.11ms | 2 |
+| click + redraw | 12.27ms | 4 |
+
+So the 12ms click is not a user-visible 12ms — a click costs an app two builds,
+not four. The labels now carry the count. There is one number to optimize:
+**one build and layout, 3.0ms**, of which `__view` is 0.65ms and the rest is
+layout. Layout does not shrink with the viewport (2.99ms at 480x320 against
+3.02ms at 1440x900), so it is the whole tree every time.
+
+The repo's two answers to that are `lazy` (which memoizes the layout node, not
+just the element) and `virtual_list`. Neither applies to showcase, and the
+reason is worth recording rather than rediscovering: its catalog is one
+`Catalog` component taking about fifty app-state parameters, so a `lazy` over
+it would depend on essentially all state, and several of those types are not
+hashable at all. The showcase view is a worst case by construction — every
+component in the library, wired to live state.
+
+`lazy` is also not free on the build side. Nothing inside a `lazy` closure
+outlines: its content has to be `'static` and an outlined method borrows
+`self`, so `outlining_active()` is false at any lazy depth. Wrapping a subtree
+to win frame time moves its component uses back inline, which is the cost the
+outlining work above removed. Measure both sides before taking that trade.
+
+### The unit rustc re-checks is the macro expansion
+
+After the outlining work and the `__update`/`__view` split, one number would
+not go away: any edit landing in the app's root generated file cost ~0.75s of
+`type_check_crate`, while the same size edit landing in a group file cost
+0.04s. Five hypotheses, four of them wrong, and the wrong ones are the useful
+part because each looked reasonable:
+
+| hypothesis | experiment | result |
+| --- | --- | --- |
+| `__program`'s RPIT inference | fence it into its own file | no change, slightly worse |
+| `include!` spans shifting the group files | emit the includes first | noise |
+| the `impl` block is the unit | close and reopen `impl` around one item | no change |
+| a fixed per-app cost | a 225-line root on another app | absent entirely |
+| **the lint macro invocation is the unit** | give one phase its own invocation | **0.69s to 0.05s** |
+
+Two of those experiments were wasted on the same unexamined assumption: they
+moved the *suspect* out of the root and left the thing being *edited* behind,
+so the edit still landed in the root either way. The experiment that settled it
+came from fencing something trivial — a one-line `__title` — and editing that:
+0.75s to 0.017s. If the cost follows a one-line function, it was never about
+what the function contains.
+
+The generator wraps everything it writes in one
+`__ice_generated_items_*! { ... }` invocation, which exists only to attach
+`#[allow(warnings, clippy::all)]` to each item — attributes on `include!` do
+not reach included items, and a module wrapper would change name resolution.
+But rustc re-checks a macro expansion as a unit, so every item in that
+invocation shares one fate. Group files sit outside it, which is why they were
+always cheap.
+
+The fix is to close the invocation and open the next one at each generation
+phase. `impl` blocks repeat freely (proven above by the experiment that found
+nothing), and the boundary always falls between whole items:
+
+| showcase edit | one invocation | per phase |
+| --- | --- | --- |
+| `app.ice` window title | 3.31s | **2.60s** |
+| `state.ice` | 3.32s | **2.17s** |
+| `handlers/app.ice` (control) | 2.56s | 2.60s |
+
+The control matters: a handler edit already lands in the `__app_update` group
+file, so it should not move, and it does not. The win is proportional to what
+is left in the root — a small app has little there and gains little.

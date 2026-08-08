@@ -178,6 +178,52 @@ market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
 
+## Fixtures are read as evidence
+
+The account's requirement is summed from the positions held against the whole
+account, and an isolated one does not enter it — it dies alone. A hand-typed
+requirement had the equity bar reading 38% loaded beside a cross position
+whose own rail read nothing travelled: two risk figures on one screen, in
+disagreement, both drawn convincingly.
+
+The pair of account fixtures is at rest and against the engine, because a
+safety indicator that has only ever been rendered at rest has never been
+rendered.
+
+Every capture in this directory is an argument that the panel is right, so a
+fixture has to be a state the exchange could actually report. Five bugs in
+this example were impossible states drawn convincingly, and a wrong number in
+the right column is the one kind of wrong a render cannot show.
+
+So the fixture positions derive their figures from the four that are chosen,
+through the same arithmetic the panel uses, and a test holds the relations
+that survive: unrealized from entry, mark and size; margin from the leverage
+beside it; return on equity as that return over that equity; the rail as how
+far the mark has travelled; the cliff on the correct side of the entry.
+
+Writing that test found two numbers that had been on screen all along — a
+return on equity of 811.79% where the position's own pnl and margin say
+857.41%, and a 24h change rounded away from the prices it is computed from.
+
+The markets are three rather than one, for the same reason. A list of one
+answers no question a list is asked: which row is selected, what a search
+leaves behind, whether a price landed on the market it belongs to.
+
+## The other price
+
+The ticket quotes a price the reader typed. `IF YOU CROSS` is the other one:
+the size walked through the resting side of the book, level by level, at the
+prices actually there, with the distance from the mid beside it. The gap
+between the two is the whole question of whether to cross or to rest.
+
+The walk starts at the best price, which is not the first row. The asks are
+stored reversed so the panel can draw them downward into the spread, and a
+walk that trusted the order would have quoted the worst level in the book as
+the first one filled. A test holds that, because nothing on screen would.
+
+When the size is past what the book holds, it says so rather than pricing
+depth that is not there.
+
 ## A price that has stopped arriving
 
 The dangerous state in a terminal is not an error, it is data that has gone

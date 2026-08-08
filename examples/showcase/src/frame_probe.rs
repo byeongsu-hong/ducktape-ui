@@ -5,6 +5,13 @@
 //! event walk — on the largest view in the repo. Prints per-phase p50/p95 and
 //! asserts nothing, so it stays a probe rather than a contract.
 //!
+//! Read the phases as multiples, not as separate costs. The driver simulates
+//! one event per `UserInterface` build so a test can observe the state between
+//! a press and a release; a running app batches a frame's events into one.
+//! Every phase here comes out an integer multiple of a single build — 3.0ms on
+//! showcase — so the only number to optimize is that one, and each label says
+//! how many it pays. A click costs a user two builds, not the four below.
+//!
 //!     cargo test --release -p showcase -- --ignored --nocapture frame_cost
 #![cfg(not(debug_assertions))]
 
@@ -79,11 +86,11 @@ fn frame_cost() {
         view_only.sample(|| std::hint::black_box(state.__view()));
     }
 
-    let mut idle = Phase::new("idle redraw");
-    let mut cursor = Phase::new("cursor move");
-    let mut update = Phase::new("state update + redraw");
-    let mut scroll = Phase::new("scroll");
-    let mut click = Phase::new("click + redraw");
+    let mut idle = Phase::new("idle redraw (1 build)");
+    let mut cursor = Phase::new("cursor move (1 build)");
+    let mut update = Phase::new("state update + redraw (2)");
+    let mut scroll = Phase::new("scroll (2 builds)");
+    let mut click = Phase::new("click + redraw (4 builds)");
 
     for frame in 0..FRAMES {
         idle.sample(|| driver.redraw(here()));
@@ -116,7 +123,7 @@ fn frame_cost() {
     for _ in 0..WARMUP {
         tiny.redraw(here());
     }
-    let mut tiny_idle = Phase::new("idle redraw @480x320");
+    let mut tiny_idle = Phase::new("idle redraw @480x320 (1)");
     for _ in 0..FRAMES {
         tiny_idle.sample(|| tiny.redraw(here()));
     }

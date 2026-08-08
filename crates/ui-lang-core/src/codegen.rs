@@ -804,7 +804,11 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         &extern_component_ids,
     );
     generate_editor_binding_mapper(&mut out, program, &extern_component_ids);
-    writeln!(out, "#[allow(unused_parens)]\nimpl {app_name} {{").unwrap();
+    writeln!(
+        out,
+        "}}\n{lint_macro}! {{\n#[allow(unused_parens)]\nimpl {app_name} {{"
+    )
+    .unwrap();
     let app_settings = program.settings();
     if let Some(font) = &app_settings.default_font {
         writeln!(out, "{}", source_marker_for_origin(program, font.origin)).unwrap();
@@ -895,18 +899,29 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     )
     .unwrap();
 
+    // rustc re-checks a macro expansion as a unit, so every item the generator
+    // writes into one `__ice_generated_items_*!` invocation shares one fate: a
+    // one-character edit anywhere in the app root re-type-checks all of them.
+    // Measured on showcase, splitting one phase out took `type_check_crate`
+    // from 0.69s to 0.05s and the rebuild from 3.41s to 2.60s. So each phase
+    // closes the invocation and opens the next; `impl` blocks repeat freely,
+    // and the boundary always lands between whole items.
+    let phase = format!("}}\n}}\n{lint_macro}! {{\n#[allow(unused_parens)]\nimpl {app_name} {{");
+    writeln!(out, "{phase}").unwrap();
     generate_theme(&mut out, program)?;
+    writeln!(out, "{phase}").unwrap();
     generate_boot(&mut out, program, &message)?;
+    writeln!(out, "{phase}").unwrap();
     generate_presets(&mut out, program, &message)?;
-    // `__update` and `__view` are the two items in a generated app large
-    // enough for their spans to matter, and they answer to different sources:
-    // handlers write one, the view tree the other. Left side by side in the
-    // root file, a one-character edit at the top of the app re-checks both
-    // for nothing (measured on showcase: 0.77s of `type_check_crate` where a
-    // view edit costs 0.04s). Each gets its own group, hence its own file.
+    writeln!(out, "{phase}").unwrap();
+    // `__update` and `__view` answer to different sources — handlers write
+    // one, the view tree the other — and are the two items large enough for
+    // that to matter. Each gets its own group, hence its own file, so an edit
+    // to one leaves the other's type check reusable.
     let mut update = String::new();
     generate_update(&mut update, program, &message)?;
     generate_subscription(&mut out, program, &message)?;
+    writeln!(out, "{phase}").unwrap();
     let outline_guard = outline::enable_for_view();
     let mut view = String::new();
     generate_view(&mut view, program, &message, source_path)?;

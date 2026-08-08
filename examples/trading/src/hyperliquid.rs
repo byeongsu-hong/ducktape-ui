@@ -679,6 +679,105 @@ pub fn price_ticket(
     }
 }
 
+/// What crossing the spread right now would actually cost: the size walked
+/// through the resting side of the book, level by level, at the prices that
+/// are really there.
+///
+/// The ticket quotes a price the reader typed. This is the other price — the
+/// one a market order gets — and the difference between them is the whole
+/// question of whether to cross or to rest.
+#[derive(Clone, PartialEq)]
+pub struct Impact {
+    /// Size-weighted price the walk actually pays.
+    pub paid: f64,
+    /// How far that is from the mid, the wrong way, as a percent.
+    pub slippage_pct: f64,
+    /// How much of the size the visible book could fill.
+    pub filled: f64,
+    /// The book ran out before the size did.
+    pub short: bool,
+    pub ready: bool,
+}
+
+pub fn book_impact(book: Option<Book>, size: String, buy: bool) -> Impact {
+    let empty = Impact {
+        paid: 0.0,
+        slippage_pct: 0.0,
+        filled: 0.0,
+        short: false,
+        ready: false,
+    };
+    let wanted = amount(&size).abs();
+    let Some(book) = book else {
+        return empty;
+    };
+    // A buy lifts the asks and a sell hits the bids: the side that is resting
+    // is the other one. The asks arrive reversed, because the panel draws them
+    // downward into the spread, so the best of them is the last — and a walk
+    // that started at the front would sweep from the worst price in the book.
+    let side: Vec<&Level> = if buy {
+        book.asks.iter().rev().collect()
+    } else {
+        book.bids.iter().collect()
+    };
+    if wanted <= 0.0 || side.is_empty() || book.mid <= 0.0 {
+        return empty;
+    }
+    let mut left = wanted;
+    let mut notional = 0.0;
+    for level in side {
+        if left <= 0.0 {
+            break;
+        }
+        let taken = level.size.min(left);
+        notional += taken * level.price;
+        left -= taken;
+    }
+    let filled = wanted - left;
+    if filled <= 0.0 {
+        return empty;
+    }
+    let paid = notional / filled;
+    // Slippage is what the crossing costs, so it reads positive either way.
+    let slippage_pct = if buy {
+        (paid - book.mid) / book.mid * 100.0
+    } else {
+        (book.mid - paid) / book.mid * 100.0
+    };
+    Impact {
+        paid,
+        slippage_pct,
+        filled,
+        short: left > 0.0,
+        ready: true,
+    }
+}
+
+/// What crossing right now would pay, as the panel reads it. Three thin
+/// readings rather than one struct: the boundary carries what the view draws,
+/// and the view draws a price, a distance, and a warning.
+pub fn impact_price(book: Option<Book>, size: String, buy: bool) -> String {
+    let impact = book_impact(book, size, buy);
+    if impact.ready {
+        fmt_px(impact.paid)
+    } else {
+        "—".to_owned()
+    }
+}
+
+pub fn impact_slippage(book: Option<Book>, size: String, buy: bool) -> String {
+    let impact = book_impact(book, size, buy);
+    if impact.ready {
+        fmt_bps(impact.slippage_pct)
+    } else {
+        String::new()
+    }
+}
+
+pub fn impact_short(book: Option<Book>, size: String, buy: bool) -> bool {
+    book_impact(book, size, buy).short
+}
+
 /// The share of the entry-to-liquidation distance the mark has already
 /// covered: 0 at the entry price, 1 at the cliff. Works for either side
 /// because both endpoints flip together, and reads 0 when the position has
@@ -1763,35 +1862,108 @@ pub fn fmt_age(ts: i64) -> String {
 /// state from somewhere; these are that somewhere. Two bugs in this panel were
 /// only ever visible in a picture, and a picture needs data.
 pub fn demo_symbols() -> Vec<SymbolRow> {
-    vec![SymbolRow {
-        name: "BTC".to_owned(),
-        price: 64_000.0,
-        change_pct: 1.25,
-        volume: 1_300_000_000.0,
-        funding_pct: 0.00125,
-        leverage: 40.0,
-        open_interest: 35_000.0,
-        prev: 63_210.0,
-        maintenance: 1.0 / 80.0,
-        selected: true,
-    }]
+    // More than one, because a list of one hides every question worth asking
+    // of a list: which row is selected, what a search leaves, and whether a
+    // price landed on the market it belongs to. Volume descending, as the
+    // parser leaves them.
+    vec![
+        SymbolRow {
+            name: "BTC".to_owned(),
+            price: 64_000.0,
+            change_pct: change_pct(64_000.0, 63_210.0),
+            volume: 1_300_000_000.0,
+            funding_pct: 0.00125,
+            leverage: 40.0,
+            open_interest: 35_000.0,
+            prev: 63_210.0,
+            maintenance: 1.0 / 80.0,
+            selected: true,
+        },
+        SymbolRow {
+            name: "ETH".to_owned(),
+            price: 3_540.0,
+            change_pct: change_pct(3_540.0, 3_500.0),
+            volume: 890_000_000.0,
+            funding_pct: 0.0009,
+            leverage: 25.0,
+            open_interest: 410_000.0,
+            prev: 3_500.0,
+            maintenance: 1.0 / 50.0,
+            selected: false,
+        },
+        SymbolRow {
+            name: "SOL".to_owned(),
+            price: 148.62,
+            change_pct: change_pct(148.62, 152.0),
+            volume: 410_000_000.0,
+            funding_pct: -0.00042,
+            leverage: 20.0,
+            open_interest: 2_900_000.0,
+            prev: 152.0,
+            maintenance: 1.0 / 40.0,
+            selected: false,
+        },
+    ]
 }
 
 pub fn demo_positions() -> Vec<Position> {
-    vec![Position {
-        coin: "BTC".to_owned(),
-        size: -30.0,
-        entry: 81_461.5,
-        mark: 64_000.0,
-        liq: 174_000.0,
-        pnl: 523_845.0,
-        roe_pct: 811.79,
-        margin: 61_096.0,
-        risk: liquidation_travel(81_461.5, 64_000.0, 174_000.0) * RISK_RAIL_WIDTH,
-        leverage: 40.0,
-        margin_mode: "cross".to_owned(),
-        funding: -3_309_304.0,
-    }]
+    vec![
+        demo_position(
+            "BTC",
+            -30.0,
+            81_461.5,
+            64_000.0,
+            40.0,
+            Some(174_000.0),
+            -3_309_304.0,
+        ),
+        // The state the risk rail exists for, and the one no capture had
+        // ever drawn: an isolated long most of the way to its cliff.
+        // Isolated, so the cross maintenance the equity bar reads is its own.
+        demo_position("ETH", 40.0, 3_600.0, 3_540.0, 25.0, None, -142.0),
+    ]
+}
+
+/// A fixture position whose figures follow from the ones that are chosen,
+/// through the same arithmetic the panel uses. Hand-typed money drifts from
+/// the fields beside it and reads exactly as plausibly as the correct value.
+fn demo_position(
+    coin: &str,
+    size: f64,
+    entry: f64,
+    mark: f64,
+    leverage: f64,
+    reported_liq: Option<f64>,
+    funding: f64,
+) -> Position {
+    // A cross position is liquidated against the whole account, so its cliff
+    // is the exchange's to report and arrives with it; an isolated one is
+    // liquidated against its own margin and has the closed form. Which of the
+    // two a position is, is that same fact, so it is not asked for twice.
+    let mode = if reported_liq.is_some() {
+        "cross"
+    } else {
+        "isolated"
+    };
+    let maintenance = 1.0 / (leverage * 2.0);
+    let liq = reported_liq
+        .unwrap_or_else(|| ticket_liquidation(entry, leverage, maintenance, size > 0.0));
+    let pnl = (mark - entry) * size;
+    let margin = entry * size.abs() / leverage;
+    Position {
+        coin: coin.to_owned(),
+        size,
+        entry,
+        mark,
+        liq,
+        pnl,
+        roe_pct: pnl / margin * 100.0,
+        margin,
+        risk: liquidation_travel(entry, mark, liq) * RISK_RAIL_WIDTH,
+        leverage,
+        margin_mode: mode.to_owned(),
+        funding,
+    }
 }
 
 /// A tape with candles already in it, focused on the market the other
@@ -1824,13 +1996,55 @@ pub fn demo_candles() -> Tape {
 /// The account those positions belong to. Built the way a parsed one is, so
 /// the rail and its percentage cannot disagree with the equity beside them.
 pub fn demo_account() -> Account {
-    let positions = demo_positions();
-    let value = 3_761_182.51;
-    let maintenance = 1_418_309.0;
+    demo_account_of(demo_positions(), 3_761_182.51, 2_200.0)
+}
+
+/// An account whose equity is nearly all spoken for: a long that has moved
+/// against it, on collateral that cannot absorb much more. The equity bar is
+/// the account's own distance to the margin engine, and until this fixture
+/// existed no capture had drawn it anywhere but at rest.
+pub fn demo_positions_at_risk() -> Vec<Position> {
+    demo_account_at_risk().positions
+}
+
+pub fn demo_account_at_risk() -> Account {
+    // A cross position dies with the account, so its cliff is where the
+    // account's equity meets its requirement:
+    //
+    //     collateral + (mark - entry) * size == mark * size * maintenance
+    //
+    // which for 5 BTC bought at 64,000 on 34,000 of collateral, held to a
+    // fortieth of a fortieth, puts the account 76 dollars from the engine.
+    let positions = vec![demo_position(
+        "BTC",
+        5.0,
+        64_000.0,
+        58_000.0,
+        40.0,
+        Some(57_924.05),
+        -820.0,
+    )];
+    let equity = 34_000.0 + positions[0].pnl;
+    demo_account_of(positions, equity, 0.0)
+}
+
+/// The maintenance requirement an account is actually held to, summed from
+/// the positions that are held against the whole account rather than against
+/// their own margin. An isolated position dies alone and does not enter it.
+fn cross_maintenance(positions: &[Position]) -> f64 {
+    positions
+        .iter()
+        .filter(|held| held.margin_mode == "cross")
+        .map(|held| held.mark * held.size.abs() * maintenance_fraction(held.leverage))
+        .sum()
+}
+
+fn demo_account_of(positions: Vec<Position>, value: f64, withdrawable: f64) -> Account {
+    let maintenance = cross_maintenance(&positions);
     Account {
         value,
         pnl: positions.iter().map(|position| position.pnl).sum(),
-        withdrawable: 2_200.0,
+        withdrawable,
         notional: positions
             .iter()
             .map(|position| position.mark * position.size.abs())
@@ -1897,7 +2111,7 @@ pub fn demo_alerts() -> Vec<Alert> {
         Alert {
             coin: "ETH".to_owned(),
             price: 3_400.0,
-            above: true,
+            above: false,
             fired: false,
         },
     ]
@@ -2057,6 +2271,172 @@ pub fn chart(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fixture is read as evidence, so it has to be a state the exchange
+    /// could actually report. Five of this loop's bugs were impossible states
+    /// drawn convincingly, and a wrong number in the right column is the one
+    /// kind of wrong a render cannot show.
+    #[test]
+    fn the_fixture_positions_are_arithmetically_possible() {
+        for held in demo_positions() {
+            let coin = &held.coin;
+            assert!(
+                (held.pnl - (held.mark - held.entry) * held.size).abs() < 0.01,
+                "{coin}: unrealized does not follow from entry, mark and size"
+            );
+            assert!(
+                (held.margin - held.entry * held.size.abs() / held.leverage).abs() < 0.01,
+                "{coin}: margin does not follow from the leverage beside it"
+            );
+            assert!(
+                (held.roe_pct - held.pnl / held.margin * 100.0).abs() < 0.01,
+                "{coin}: return on equity is not that return over that equity"
+            );
+            assert!(
+                (held.risk - liquidation_travel(held.entry, held.mark, held.liq) * RISK_RAIL_WIDTH)
+                    .abs()
+                    < 1e-9,
+                "{coin}: the risk rail is not how far the mark has travelled"
+            );
+            assert!(
+                (0.0..=RISK_RAIL_WIDTH).contains(&held.risk),
+                "{coin}: the rail is drawn {} wide of {RISK_RAIL_WIDTH}",
+                held.risk
+            );
+            // A long is liquidated below its entry and a short above it.
+            assert_eq!(
+                held.liq < held.entry,
+                held.size > 0.0,
+                "{coin}: the cliff is on the wrong side of the entry"
+            );
+        }
+    }
+
+    /// The equity bar is the account's distance to the margin engine, and it
+    /// has to be the distance these positions actually put it at. A hand-typed
+    /// requirement read 38% loaded beside a cross position whose own rail read
+    /// nothing travelled — two risk figures on one screen disagreeing.
+    #[test]
+    fn the_fixture_account_is_held_to_what_its_positions_require() {
+        for account in [demo_account(), demo_account_at_risk()] {
+            assert!(
+                (account.pnl - account.positions.iter().map(|held| held.pnl).sum::<f64>()).abs()
+                    < 0.01,
+                "unrealized is not the sum of the positions under it"
+            );
+            assert!(
+                (account.maintenance - cross_maintenance(&account.positions)).abs() < 0.01,
+                "the requirement is not what these positions are held to"
+            );
+            assert!(
+                (account.margin_pct - margin_load(account.value, account.maintenance) * 100.0)
+                    .abs()
+                    < 1e-9,
+                "the figure and the bar disagree"
+            );
+            assert!(
+                (account.health - account.margin_pct / 100.0 * RISK_RAIL_WIDTH).abs() < 1e-9,
+                "the bar is not that figure"
+            );
+        }
+
+        // An isolated position is liquidated against its own margin, so it
+        // asks nothing of the account's requirement.
+        let isolated: Vec<Position> = demo_positions()
+            .into_iter()
+            .filter(|held| held.margin_mode == "isolated")
+            .collect();
+        assert!(!isolated.is_empty(), "the fixture holds one to check");
+        assert_eq!(cross_maintenance(&isolated), 0.0);
+
+        // At rest and at risk are genuinely different readings, or the
+        // fixture pair is only one fixture.
+        assert!(demo_account().margin_pct < 5.0);
+        assert!(demo_account_at_risk().margin_pct > 50.0);
+    }
+
+    /// The fixture markets have to be the shape the parser leaves: volume
+    /// descending, one selection, and a maintenance that matches the cap.
+    #[test]
+    fn the_fixture_markets_are_the_shape_the_parser_leaves() {
+        let rows = demo_symbols();
+        assert!(rows.len() > 1, "a list of one hides what a list does");
+        for pair in rows.windows(2) {
+            assert!(
+                pair[0].volume >= pair[1].volume,
+                "{} outranks {} on volume",
+                pair[1].name,
+                pair[0].name
+            );
+        }
+        for row in &rows {
+            assert!(
+                (row.maintenance - 1.0 / (row.leverage * 2.0)).abs() < 1e-12,
+                "{}: maintenance is half the margin at the cap",
+                row.name
+            );
+            assert!(
+                (row.change_pct - change_pct(row.price, row.prev)).abs() < 1e-9,
+                "{}: the change is not this price against that close",
+                row.name
+            );
+        }
+    }
+
+    /// The book the fixture holds: bids 63,999/998/997 at 1.4/2.1/2.5 and
+    /// asks 64,001/002/003 at 1.8/2.2/3.0, around a 64,000 mid.
+    #[test]
+    fn crossing_the_spread_is_priced_at_the_levels_that_are_there() {
+        let book = || Some(demo_book());
+
+        // Inside the best ask: one level, one price, and the slippage is the
+        // half spread and nothing else.
+        let small = book_impact(book(), "1.0".to_owned(), true);
+        assert!(small.ready && !small.short);
+        assert!((small.paid - 64_001.0).abs() < 1e-9);
+        assert!((small.filled - 1.0).abs() < 1e-9);
+        assert!((small.slippage_pct - (1.0 / 64_000.0 * 100.0)).abs() < 1e-9);
+
+        // Through two levels: 1.8 at 64,001 and 1.2 at 64,002.
+        let deeper = book_impact(book(), "3.0".to_owned(), true);
+        let expected = (1.8 * 64_001.0 + 1.2 * 64_002.0) / 3.0;
+        assert!((deeper.paid - expected).abs() < 1e-9, "{}", deeper.paid);
+        assert!(deeper.paid > small.paid, "depth costs more, never less");
+
+        // Selling walks the bids down, and the slippage still reads positive:
+        // it is what the crossing costs, not which way the price went.
+        let sold = book_impact(book(), "2.0".to_owned(), false);
+        let expected = (1.4 * 63_999.0 + 0.6 * 63_998.0) / 2.0;
+        assert!((sold.paid - expected).abs() < 1e-9);
+        assert!(sold.slippage_pct > 0.0);
+    }
+
+    /// The walk must start at the best price. The asks are stored reversed for
+    /// the panel to draw downward, so a walk that trusted the order would
+    /// quote the worst level in the book as the first one filled.
+    #[test]
+    fn a_sweep_starts_at_the_best_price_not_the_first_row() {
+        let impact = book_impact(Some(demo_book()), "0.5".to_owned(), true);
+        assert!(
+            (impact.paid - 64_001.0).abs() < 1e-9,
+            "a small buy pays the best ask, not {}",
+            impact.paid
+        );
+    }
+
+    #[test]
+    fn a_size_the_book_cannot_fill_says_so_rather_than_inventing_depth() {
+        let impact = book_impact(Some(demo_book()), "100".to_owned(), true);
+        assert!(impact.short, "7.0 of asks cannot fill 100");
+        assert!((impact.filled - 7.0).abs() < 1e-9);
+        assert!(
+            (impact.paid - (1.8 * 64_001.0 + 2.2 * 64_002.0 + 3.0 * 64_003.0) / 7.0).abs() < 1e-9,
+            "and it is priced over what is actually there"
+        );
+
+        assert!(!book_impact(Some(demo_book()), "0".to_owned(), true).ready);
+        assert!(!book_impact(None, "1".to_owned(), true).ready);
+    }
 
     /// The address the app opens on, which is a real account with real
     /// positions to check the valuation arithmetic against.
