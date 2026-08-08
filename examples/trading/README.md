@@ -209,6 +209,23 @@ The markets are three rather than one, for the same reason. A list of one
 answers no question a list is asked: which row is selected, what a search
 leaves behind, whether a price landed on the market it belongs to.
 
+## A market worth a fraction of a cent
+
+Most of a perp venue is priced under a dollar, and every column here was
+sized and formatted around bitcoin. The fixture holds one now — kPEPE at
+0.008421 — and the terminal is captured focused on it.
+
+It found the chart tagging the last price `0.00842` while every other panel
+said `0.008421`. The chart derived its decimals from the gridline step, which
+is enough to tell two gridlines apart and not enough to tell two ticks apart.
+Those are different questions: the axis answers "which line is this" and the
+tag answers "which price is this". The tag is written to the instrument's
+quote precision now, and the axis to whatever its own step needs.
+
+The book and the tape take a tick as well as a price. A dollar between levels
+is a reasonable book on bitcoin and the whole market on a coin worth a
+fraction of a cent.
+
 ## One market on the screen at a time
 
 Every panel is quoting the same market, so a fixture has to price them

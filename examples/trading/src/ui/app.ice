@@ -109,6 +109,23 @@ preset at_risk
     ticket_size = "5.00"
     quote = price_ticket("58,000.00", "5.00", "5", symbol_row(demo_symbols_at_risk(), "BTC"), true, 5.0)
 
+preset penny
+  state
+    gate = false
+    coin = "kPEPE"
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    visible = demo_symbols()
+    focus = symbol_row(demo_symbols(), "kPEPE")
+    account = some(demo_account())
+    tape = demo_candles_for("kPEPE", 0.008421)
+    book = some(demo_book_ticked(0.008421, 0.000001))
+    tape_prints = demo_tape_ticked(0.008421, 0.000001)
+    live = true
+    ticket_price = "0.008421"
+    ticket_size = "1,200,000"
+    quote = price_ticket("0.008421", "1,200,000", "5", symbol_row(demo_symbols(), "kPEPE"), true, 0.0)
+
 preset stalled
   state
     gate = false
@@ -1982,6 +1999,13 @@ test trading_an_account_against_its_engine_renders_as_such
   expect text "57,924.05"
   expect text "91% → 100%"
   capture at_risk
+
+test trading_a_market_worth_a_fraction_of_a_cent_renders
+  preset penny
+  viewport 1660 820
+  expect text "0.008421"
+  expect text "0.008422"
+  capture penny
 
 test trading_the_whole_terminal_renders_from_fixtures
   preset held

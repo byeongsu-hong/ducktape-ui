@@ -1985,6 +1985,20 @@ fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
             maintenance: 1.0 / 40.0,
             selected: false,
         },
+        // A market priced in fractions of a cent, which most of a perp venue
+        // is. Every column here was sized and formatted around bitcoin.
+        SymbolRow {
+            name: "kPEPE".to_owned(),
+            price: 0.008421,
+            change_pct: change_pct(0.008421, 0.007933),
+            volume: 210_000_000.0,
+            funding_pct: 0.0031,
+            leverage: 10.0,
+            open_interest: 4_100_000_000.0,
+            prev: 0.007933,
+            maintenance: 1.0 / 20.0,
+            selected: false,
+        },
     ]
 }
 
@@ -2059,25 +2073,35 @@ pub fn demo_candles() -> Tape {
 /// Candles that end where the market is quoting. A chart drawn around another
 /// price is a chart of another market, and it is the largest panel on screen.
 pub fn demo_candles_at(last: f64) -> Tape {
-    let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+    demo_candles_for("BTC".to_owned(), last)
+}
+
+/// Candles whose shape is a share of the price rather than a number of
+/// dollars, so a market worth a fraction of a cent gets a chart and not a
+/// flat line.
+pub fn demo_candles_for(coin: String, last: f64) -> Tape {
+    let tape = tape_focus(tape_new(), coin, "1m".to_owned());
     let mut candles = Vec::new();
     // The walk below lands its last close at `base + 519.5 * ...`; starting
     // from what that leaves puts the tip on the price the market quotes.
-    let base = last - (119.0_f64 / 9.0).sin() * 520.0 - 119.0 * 1.5;
-    let mut close = base - 100.0;
+    let swing = last * 0.008125;
+    let creep = last * 0.0000234;
+    let wick = last * 0.0009375;
+    let base = last - (119.0_f64 / 9.0).sin() * swing - 119.0 * creep;
+    let mut close = base - wick;
     for step in 0..120 {
         // A shape rather than a straight line, so the moving averages have
         // something to say and the plot is not a diagonal.
-        let drift = ((step as f64) / 9.0).sin() * 520.0;
+        let drift = ((step as f64) / 9.0).sin() * swing;
         let open = close;
-        close = base + drift + (step as f64) * 1.5;
+        close = base + drift + (step as f64) * creep;
         candles.push(Candle {
             ts: 1_786_110_000 + step * 60,
             open,
-            high: open.max(close) + 60.0,
-            low: open.min(close) - 60.0,
+            high: open.max(close) + wick,
+            low: open.min(close) - wick,
             close,
-            volume: 40.0 + drift.abs(),
+            volume: 40.0 + drift.abs() / last * 64_000.0,
         });
     }
     *lock(&tape.candles) = candles;
@@ -2236,6 +2260,13 @@ pub fn demo_book() -> Book {
 /// crossing costs, and the answer would be about a price nothing is trading
 /// at.
 pub fn demo_book_at(mid: f64) -> Book {
+    demo_book_ticked(mid, 1.0)
+}
+
+/// A book whose levels are a tick apart. The tick is the market's, not
+/// bitcoin's: a dollar between levels is the whole market on a coin worth a
+/// fraction of a cent.
+pub fn demo_book_ticked(mid: f64, tick: f64) -> Book {
     let level = |price: f64, size: f64, total: f64, deepest: f64| Level {
         price,
         size,
@@ -2244,19 +2275,19 @@ pub fn demo_book_at(mid: f64) -> Book {
     };
     Book {
         bids: vec![
-            level(mid - 1.0, 1.4, 1.4, 6.0),
-            level(mid - 2.0, 2.1, 3.5, 6.0),
-            level(mid - 3.0, 2.5, 6.0, 6.0),
+            level(mid - tick, 1.4, 1.4, 6.0),
+            level(mid - tick * 2.0, 2.1, 3.5, 6.0),
+            level(mid - tick * 3.0, 2.5, 6.0, 6.0),
         ],
         // Reversed, as the feed leaves them: the best ask sits last, against
         // the spread, so the panel walks both lists top to bottom.
         asks: vec![
-            level(mid + 3.0, 3.0, 7.0, 7.0),
-            level(mid + 2.0, 2.2, 4.0, 7.0),
-            level(mid + 1.0, 1.8, 1.8, 7.0),
+            level(mid + tick * 3.0, 3.0, 7.0, 7.0),
+            level(mid + tick * 2.0, 2.2, 4.0, 7.0),
+            level(mid + tick, 1.8, 1.8, 7.0),
         ],
-        spread: 2.0,
-        spread_pct: 2.0 / mid * 100.0,
+        spread: tick * 2.0,
+        spread_pct: tick * 2.0 / mid * 100.0,
         mid,
     }
 }
@@ -2266,6 +2297,10 @@ pub fn demo_tape() -> Vec<Trade> {
 }
 
 pub fn demo_tape_at(mid: f64) -> Vec<Trade> {
+    demo_tape_ticked(mid, 1.0)
+}
+
+pub fn demo_tape_ticked(mid: f64, tick: f64) -> Vec<Trade> {
     let print = |tid: i64, price: f64, size: f64, buy: bool, sweep: i64| Trade {
         ts: 1_786_117_888 - tid,
         price,
@@ -2275,9 +2310,9 @@ pub fn demo_tape_at(mid: f64) -> Vec<Trade> {
         tid,
     };
     vec![
-        print(1, mid + 1.0, 0.53, true, 2),
-        print(2, mid - 1.0, 1.20, false, 1),
-        print(3, mid + 1.0, 0.08, true, 1),
+        print(1, mid + tick, 0.53, true, 2),
+        print(2, mid - tick, 1.20, false, 1),
+        print(3, mid + tick, 0.08, true, 1),
     ]
 }
 
@@ -2370,7 +2405,19 @@ pub fn chart(
     // view — and the view rebuilds on every beat of the feed.
     let theme = chart_theme();
     let palette = &theme.palette;
+    // The chart is told the instrument's scale rather than deriving one from
+    // whatever range is on screen. Derived, it reads the gridline step, which
+    // is enough to tell two gridlines apart and not enough to tell two ticks
+    // apart: a market quoted to a millionth had its last price tagged
+    // 0.00842 while every other panel said 0.008421.
+    let scale = {
+        let candles = lock(&tape.candles);
+        candles
+            .last()
+            .map_or(2, |candle| price_decimals(candle.close))
+    };
     let chart = candle_chart_shared(tape.candles.clone(), &theme)
+        .precision(scale)
         .height(Length::Fill)
         .live(BEAT)
         .moving_averages([20, 60])

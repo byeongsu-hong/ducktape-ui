@@ -1271,8 +1271,14 @@ impl<'a, Message> CandleChart<'a, Message> {
         self
     }
 
-    /// Fixes the price decimals to the instrument's tick size instead of
-    /// deriving them from the visible range.
+    /// How many decimals this instrument is quoted to.
+    ///
+    /// The tag on the price line is written to exactly that, because its job
+    /// is to say which price the market is at, and a market quoted to a
+    /// millionth cannot say so in five decimals. The axis is written to
+    /// whatever its own gridline step needs, capped here: labels finer than
+    /// the instrument trades are digits that cannot differ, and labels
+    /// coarser are two gridlines that read the same.
     #[must_use]
     pub fn precision(mut self, decimals: usize) -> Self {
         self.precision = Some(decimals.min(8));
@@ -1856,7 +1862,9 @@ impl<Message> CandleProgram<'_, Message> {
         });
         Axes {
             ticks,
-            precision: self.precision.unwrap_or_else(|| decimals(step)),
+            precision: self
+                .precision
+                .map_or_else(|| decimals(step), |quoted| quoted.min(decimals(step))),
             tag_precision: self.precision.unwrap_or_else(|| decimals(step).max(2)),
             time_ticks,
             time_step_secs: time_step_secs(candles, range),
@@ -2395,8 +2403,13 @@ mod tests {
         assert_eq!(format_ts(1_700_000_000, 3_600), "22:13");
     }
 
+    /// The axis answers "tell these gridlines apart" and the tag answers
+    /// "which price is this". They are not the same number of decimals, and
+    /// writing one of them with the other's is how a market quoted to a
+    /// millionth had its price tagged 0.00842 while every other panel on the
+    /// screen said 0.008421.
     #[test]
-    fn explicit_precision_overrides_derived_decimals() {
+    fn the_tag_is_quoted_to_the_instrument_and_the_axis_to_its_step() {
         let data = candles(50);
         let chrome = chrome(BOUNDS);
         let viewport = Viewport::initial(50, DEFAULT_BARS);
@@ -2408,11 +2421,13 @@ mod tests {
         assert_eq!(axes.precision, 0);
         assert_eq!(axes.tag_precision, 2);
 
+        // Quoting to four decimals does not put four decimals on gridlines a
+        // whole unit apart; they would be four zeroes every label.
         let mut fixed = hover_program(&data);
         fixed.precision = Some(4);
         let axes = fixed.axes(&data, chrome, viewport, range, scale);
-        assert_eq!(axes.precision, 4);
-        assert_eq!(axes.tag_precision, 4);
+        assert_eq!(axes.precision, 0, "the step still decides the axis");
+        assert_eq!(axes.tag_precision, 4, "the instrument decides the tag");
     }
 
     #[test]
