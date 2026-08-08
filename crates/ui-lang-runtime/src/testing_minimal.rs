@@ -40,3 +40,13 @@ impl fmt::Display for Location {
 pub(crate) const fn current_render_source() -> Option<Location> {
     None
 }
+
+/// Stands in for the driver's render-source guard so the template renderer
+/// compiles without the test runtime. Nothing consumes provenance here.
+#[doc(hidden)]
+pub struct RenderSourceGuard;
+
+#[doc(hidden)]
+pub const fn push_render_source(_source: Location) -> RenderSourceGuard {
+    RenderSourceGuard
+}

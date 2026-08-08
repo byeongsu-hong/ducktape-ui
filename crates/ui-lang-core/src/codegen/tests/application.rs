@@ -5,7 +5,7 @@ use crate::codegen::{
 };
 
 #[test]
-fn keeps_the_aot_view_and_wraps_only_its_rendered_root_for_dev_readiness() {
+fn publishes_a_modelled_view_as_data_and_wraps_its_root_for_dev_readiness() {
     let source = r#"app Demo
 theme contract AppTheme
   bg
@@ -23,10 +23,16 @@ view
     let generated = compile(source, "ready.ice").unwrap();
 
     assert!(generated.contains("fn __view(&self) -> __IceElement"));
-    assert!(generated.contains("let __text_value = (\"ready\").to_string()"));
-    assert!(generated.contains("::iced::widget::text(__text_value.clone())"));
+    // The view is data: its structure and its literal reach the runtime as a
+    // template rather than as widget-construction Rust.
+    assert!(generated.contains("__ICE_TEMPLATE_JSON"));
+    assert!(generated.contains("::ui_lang_runtime::template::render("));
+    assert!(generated.contains(r#"\"literal\": \"ready\""#));
     assert!(generated.contains("::ui_lang_runtime::dev::ready(__ice_root)"));
 
+    // A template is data the runtime renders, not a program it interprets.
+    // The deleted live-plan machinery must not come back with it, and the
+    // compiler must stay out of the app binary.
     for forbidden in [
         "::ui_lang_runtime::live",
         "::ui_lang_core",
@@ -37,7 +43,7 @@ view
     ] {
         assert!(
             !generated.contains(forbidden),
-            "generated AOT view contains runtime interpreter hook {forbidden}"
+            "generated view contains removed live-reload machinery {forbidden}"
         );
     }
 }
@@ -61,8 +67,8 @@ view
     let generated = compile(source, "ready_daemon.ice").unwrap();
 
     assert!(generated.contains("fn __view(&self, window: ::iced::window::Id) -> __IceElement"));
-    assert!(generated.contains("let __text_value = (\"ready\").to_string()"));
-    assert!(generated.contains("::iced::widget::text(__text_value.clone())"));
+    assert!(generated.contains("::ui_lang_runtime::template::render("));
+    assert!(generated.contains(r#"\"literal\": \"ready\""#));
     assert!(generated.contains("::ui_lang_runtime::dev::ready(__ice_root)"));
     assert!(!generated.contains("::ui_lang_runtime::live"));
 }

@@ -610,6 +610,7 @@ fn wrong_candidate_token_keeps_the_previous_process_alive() {
             &candidate_args,
             &fixture.path().join("ready"),
             2,
+            None,
         )
         .unwrap_err();
 
@@ -639,6 +640,7 @@ fn candidate_early_exit_keeps_the_previous_process_and_cleans_the_snapshot() {
             &candidate_args,
             &fixture.path().join("ready"),
             4,
+            None,
         )
         .unwrap_err();
 
@@ -685,6 +687,7 @@ fn successful_candidate_handoff_replaces_the_previous_process_within_budget() {
         &candidate_args,
         &fixture.path().join("ready"),
         3,
+        None,
     )
     .unwrap();
     let elapsed = started.elapsed();
@@ -733,7 +736,7 @@ fn child_guard_removes_its_staged_executable_after_termination() {
     let executable_path = executable.path().to_owned();
     let args = ["5".to_owned()];
 
-    let child = ChildGuard::spawn_owned(fixture.path(), executable, &args).unwrap();
+    let child = ChildGuard::spawn_owned(fixture.path(), executable, &args, None).unwrap();
     assert!(executable_path.exists());
     drop(child);
 
@@ -1657,7 +1660,7 @@ fn sigint_shutdown_cleans_child_and_shadow_executable() {
         install_stop_handler().unwrap();
         let executable = stage_executable(&root.join("app-sh"), 41).unwrap();
         let args = ["-c".to_owned(), "sleep 30".to_owned()];
-        let app = ChildGuard::spawn_owned(&root, executable, &args).unwrap();
+        let app = ChildGuard::spawn_owned(&root, executable, &args, None).unwrap();
         std::fs::write(root.join("ready"), app.id().to_string()).unwrap();
         while !stop_requested() {
             std::thread::sleep(std::time::Duration::from_millis(10));

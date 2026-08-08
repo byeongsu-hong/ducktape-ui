@@ -764,12 +764,21 @@ view
     hovered text=primary
 "#;
     let generated = compile(source, "styles.ice").unwrap();
-    let background = generated.find("__style.background =").unwrap();
-    let hovered = generated.find("button::Status::Hovered").unwrap();
-    assert!(background < hovered);
+    // The button's styling is published as data. `active` carries the base
+    // face; `hovered` carries only what it overrides, and the runtime applies
+    // the base first — which is what makes the cascade a cascade. That
+    // application is covered by `template::tests::hovered_face_cascades_over_active`.
+    let active = generated.find(r#"\"active\""#).unwrap();
+    let hovered = generated.find(r#"\"hovered\""#).unwrap();
+    assert!(
+        active < hovered,
+        "the base face is published before its overrides"
+    );
+    assert!(generated.contains(r#"\"background\""#));
+    assert!(generated.contains(r#"\"text_color\""#));
+    assert!(generated.contains(r#"\"radius\": 8.0"#));
+    // The cascade is expressed by omission, not by a redundant active status.
     assert!(!generated.contains("button::Status::Active"));
-    assert!(generated.contains("__style.text_color ="));
-    assert!(generated.contains("__style.border.radius ="));
 }
 
 #[test]

@@ -1,9 +1,44 @@
 use super::*;
 
+/// Renders a published template: the process resolves its current template —
+/// the embedded one, or the file `ICE_TEMPLATE_PATH` names — then fills this
+/// frame's slot table and hands both to the runtime renderer.
+fn template_render_code(
+    emission: &crate::codegen::template::TemplateEmission,
+    message: &str,
+    root_scope: &str,
+) -> String {
+    let slots = emission
+        .slots
+        .iter()
+        .map(|slot| format!("{slot},"))
+        .collect::<String>();
+    let paths = emission
+        .paths
+        .iter()
+        .map(|path| format!("{},", rust_string(path)))
+        .collect::<String>();
+    format!(
+        "{{ \
+         static __ICE_TEMPLATE_JSON: &str = {json}; \
+         static __ICE_TEMPLATE_PATHS: [&str; {path_count}] = [{paths}]; \
+         thread_local! {{ static __ICE_TEMPLATE: ::ui_lang_runtime::template::TemplateSource = \
+         ::ui_lang_runtime::template::TemplateSource::new(__ICE_TEMPLATE_JSON); }} \
+         let __ice_template = __ICE_TEMPLATE.with(|source| source.current()); \
+         let __ice_slots: [::ui_lang_runtime::template::Slot<'_, {message}>; {count}] = [{slots}]; \
+         ::ui_lang_runtime::template::render(&__ice_template, &__ice_slots, &__ice_palette.colors, {root_scope}, &__ICE_TEMPLATE_PATHS) \
+         }}",
+        json = rust_string(&emission.json),
+        count = emission.slots.len(),
+        path_count = emission.paths.len(),
+    )
+}
+
 pub(in crate::codegen) fn generate_view(
     out: &mut String,
     program: &LoweredProgram,
     message: &str,
+    source_path: &str,
 ) -> Result<(), Error> {
     let daemon = program.settings().kind == ProgramKind::Daemon;
     let mounted = program
@@ -33,15 +68,20 @@ pub(in crate::codegen) fn generate_view(
     } else {
         "__ice_root_scope_ref".into()
     };
-    let rendered_root = render_node_if_present(
-        program.app_view(),
-        program,
-        message,
-        &env,
-        &root_scope,
-        None,
-    )?
-    .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
+    // A view the template vocabulary covers is published as data and rendered
+    // by the runtime; anything else keeps its compiled tree.
+    let rendered_root = match crate::codegen::template::emit(program, message, &env, source_path)? {
+        Some(emission) => template_render_code(&emission, message, &root_scope),
+        None => render_node_if_present(
+            program.app_view(),
+            program,
+            message,
+            &env,
+            &root_scope,
+            None,
+        )?
+        .unwrap_or_else(|| "::iced::widget::Column::new().into()".into()),
+    };
     let window_arg = if daemon {
         ", window: ::iced::window::Id"
     } else {

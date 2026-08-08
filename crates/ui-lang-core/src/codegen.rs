@@ -404,6 +404,42 @@ fn generate_derived(out: &mut String, program: &LoweredProgram) -> Result<(), Er
     Ok(())
 }
 
+/// A view published as data, with the fingerprint that decides whether a
+/// running process can accept it.
+#[derive(Clone, Debug)]
+pub struct ViewTemplate {
+    /// The template JSON `ui_lang_runtime::template` parses.
+    pub json: String,
+    /// Identifies the slot table this template needs. A compiled process fills
+    /// a fixed set of slot expressions each frame, so it can accept a new
+    /// template only when that set is unchanged — same expressions, same
+    /// order. Any other edit has to go through the compiler.
+    pub slot_fingerprint: String,
+}
+
+/// Publishes `program`'s view as data, or reports `None` when the view uses
+/// constructs that only compiled Rust expresses.
+pub fn view_template(
+    program: &LoweredProgram,
+    source_path: &str,
+) -> Result<Option<ViewTemplate>, Error> {
+    let app_name = program.app_name();
+    let message = format!("__{app_name}Message");
+    let env = checked_state_env(program, "self");
+    Ok(
+        template::emit(program, &message, &env, source_path)?.map(|emission| ViewTemplate {
+            slot_fingerprint: {
+                use sha2::Digest;
+                sha2::Sha256::digest(emission.slots.join("\u{1f}"))
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect()
+            },
+            json: emission.json,
+        }),
+    )
+}
+
 pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, Error> {
     #[cfg(test)]
     {
@@ -856,7 +892,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_update(&mut out, program, &message)?;
     generate_subscription(&mut out, program, &message)?;
     let outline_guard = outline::enable_for_view();
-    generate_view(&mut out, program, &message)?;
+    generate_view(&mut out, program, &message, source_path)?;
     let mut outlined = outline::drain_outlined_methods();
     drop(outline_guard);
     let outline_guard = outline::enable_for_test_mounts();
@@ -905,6 +941,7 @@ mod settings;
 mod statement;
 mod style;
 mod subscription;
+mod template;
 mod testing;
 mod type_code;
 mod view;

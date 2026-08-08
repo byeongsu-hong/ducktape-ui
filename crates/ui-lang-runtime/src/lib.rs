@@ -19,6 +19,7 @@ mod resize_handle;
 pub mod rich_text_editor;
 mod selectable_text;
 mod stack_relief;
+pub mod template;
 #[doc(hidden)]
 #[cfg(feature = "test-runtime")]
 pub mod testing;
