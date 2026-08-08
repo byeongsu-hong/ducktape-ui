@@ -77,6 +77,17 @@ preset held
     ticket_price = "64,000.00"
     quote = price_ticket("64,000.00", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
 
+preset browsing
+  state
+    gate = false
+    symbols = demo_symbols()
+    visible = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, 0.0)
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
+
 preset failing
   state
     gate = false
@@ -747,6 +758,7 @@ on symbols_loaded(rows)
   visible = filter_symbols(rows, query, coin)
   focus = symbol_row(rows, coin)
   status = ""
+  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on candles_loaded(_count)
   error = ""
@@ -756,6 +768,7 @@ on account_loaded(next)
   error = ""
   account = some(next)
   positions = next.positions
+  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on fills_streamed(rows)
   fills = push_fills(fills, rows, 200)
@@ -775,6 +788,7 @@ on market_ticked(tick)
   account = mark_account(account, positions)
   tape_prints = push_trades(tape_prints, tick, 60)
   alerts = check_alerts(alerts, tick)
+  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on failed(reason)
   error = reason.message
@@ -1824,6 +1838,25 @@ test trading_an_alert_says_which_market_it_watches
   dispatch drop_alert_at("ETH", 3400.0)
   expect no text "ETH"
   expect no text "3,400.00"
+
+test trading_browsing_without_an_address_renders
+  preset browsing
+  viewport 1660 820
+  expect text "READ ONLY"
+  expect text "No levels watched."
+  expect text "Fills need an address."
+  expect text "Orders need an address."
+  expect no text "EQUITY"
+  expect no text "market not loaded"
+  capture browsing
+
+test trading_a_loaded_market_is_priced_against_at_once
+  preset terminal
+  viewport 1660 820
+  expect text "market not loaded"
+  dispatch symbols_loaded(demo_symbols())
+  expect quote.known
+  expect no text "market not loaded"
 
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
