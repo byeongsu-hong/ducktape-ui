@@ -32,7 +32,11 @@ font plex family="IBM Plex Sans KR" default=true
 font digits family="Monoplex KR"
 
 state
+  // The terminal window, opened on mount. A daemon starts with none, and the
+  // view needs to know which of its windows it is drawing.
   main:window-id? = none
+  // Presets cannot fabricate a window id, so this is how the menu bar panel
+  // keeps a rendered test.
   panel_preview = false
   gate = true
   address = ""
@@ -1048,6 +1052,9 @@ subscribe
   every 700ms when flashing -> cool_flash
 
 view
+  // Two windows, one view: the panel for the window the status item opened,
+  // the terminal for the one mount opened. The language has no `else`, so the
+  // second condition is the first one negated — keep them in step.
   col w=fill h=fill
     if panel_preview || (main != none && main != some(window))
       MiniStatus
