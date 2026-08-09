@@ -43,15 +43,59 @@ On macOS the terminal also lives in the menu bar: a `tray` block keeps the
 focused market's coin and last price beside a status icon, so the price is
 readable with every window closed.
 
-Left-clicking the item raises a native menu: the focused market's coin and
-last price, the feed's latency, and **Quit**. The platform owns that menu — it
-opens, places itself and dismisses itself — so the terminal declares no window
-for it and subscribes to nothing but the row a reader chose.
+Left-clicking the item raises a native menu:
 
-A dead feed marks the label and the row `NOT LIVE`, the same words the header
-stamps beside the price it greys. The menu bar is read without the header
-there to qualify it, so a last price printed there in the words a live one
-uses is the one stale figure nothing on screen would correct.
+```text
+BTC 64,000.00
+1 ALERT HIT · 3 waiting
+─────────────────────────
+Account                  ▸   EQUITY  $3,761,182.51
+                             PNL  +$521.4K
+                             3 open: BTC, ETH, SOL
+Hyperliquid — REAL MONEY ▸   READ ONLY
+                             FEED  42ms
+─────────────────────────
+Quit
+```
+
+The platform owns that menu — it opens, places itself and dismisses itself —
+so the terminal declares no window for it and subscribes to nothing but the row
+a reader chose. Only **Quit** is a row anyone can press; everything else is a
+figure the platform draws disabled, and the two group titles are submenus it
+opens rather than delivers.
+
+A hit level is above the fold because it is the one thing here a reader wants
+pushed at them rather than looked up. Everything else is grouped, because a
+menu bar's whole budget is one glance.
+
+## What each row is allowed to claim
+
+A dead feed marks the label `NOT LIVE`, the same words the header stamps beside
+the price it greys. The menu bar is read without the header there to qualify
+it, so a last price printed there in the words a live one uses is the one stale
+figure nothing on screen would correct.
+
+The header does not qualify equity and PnL by the feed, and it is right not to:
+`mark_account` re-marks them from the same feed, so the badge sitting on the
+same strip covers the whole reading. **A menu row inherits no strip.** So the
+`Account` submenu's own title carries the word — `Account — NOT LIVE` — and a
+reader cannot reach the figures without passing it. `EQUITY` uses `fmt_usd` and
+`PNL` uses `fmt_pnl`, the same formatters the header uses, so the same number
+never reads two ways; `PNL` is `Account::pnl` rather than a second sum over the
+positions, which is how two figures that must agree stop agreeing.
+
+The label stamps `TESTNET` and not `REAL MONEY`, which is the one place this
+app marks a single side of that distinction. The header states both because it
+has room and because a badge whose absence must be noticed is a badge nobody
+notices. The label is what a glance gets before any click, and the danger a
+glance can carry is reading a test network as the real one — so the mark goes
+where the danger is, and the menu one click below states both.
+
+The positions row says how many and which coins, and nothing else. A menu's row
+count is fixed when the app compiles, so a row per position does not exist to
+give; a size or a PnL per coin would need rows this surface does not have. The
+window is where a position is read. The menu bar is where you learn there are
+three.
 
 The terminal stays a `daemon` rather than an `app` so that closing the window
 leaves it in the menu bar rather than exiting; **Quit** in the menu ends it. On
