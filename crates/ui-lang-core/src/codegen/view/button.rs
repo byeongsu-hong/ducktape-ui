@@ -154,6 +154,7 @@ fn resolved_button_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let utilities = &button.utility_style;
     let has_utilities = utilities.background.is_some()
         || utilities.hover_background.is_some()

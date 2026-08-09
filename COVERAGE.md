@@ -244,7 +244,13 @@ retaining the namespace prefix at each call site.
 
 Top-level derived values are checked, cycle-free pure expressions over app
 state and other derived values, including declared typed `pure` extern calls;
-generated getters keep them read-only without a runtime reactive graph.
+generated computations remain read-only without a runtime reactive graph,
+persistent cache, handler-maintained mirror, or cross-frame retention. Their
+observable evaluation count is not guaranteed; codegen may coalesce equivalent
+safe reads within one eager view build. Focused regression contracts cover eager
+structural coalescing across template slots, outlined components, and multiple
+slot chunks, plus exclusion of opaque owned, mixed structural/owned, and
+deferred reads.
 Derived expressions reject immediate `sync` externs and recomputation-unsafe
 built-ins (`window_id.unique`, `aborted`, `debug.time_with`, `image.upgrade`, the
 unqualified `encoded`/`rgba` image constructors, and animation queries with an

@@ -715,8 +715,12 @@ fn render_flex_children(
                 let program = document;
                 let iteration = program.resolved_iteration(*child)?;
                 let item_name = &iteration.item.name;
-                let items =
-                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
+                let items = resolved_expr_use_code(
+                    program,
+                    iteration.items,
+                    env,
+                    ValueMode::TransientBorrowed,
+                )?;
                 let reconciliation_scope = borrowed_scope(reconciliation_scope(scope, env));
                 write!(
                     out,
@@ -1057,6 +1061,7 @@ fn resolved_scroll_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let custom = scroll
         .custom_style
         .as_ref()

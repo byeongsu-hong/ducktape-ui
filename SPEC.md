@@ -2610,9 +2610,13 @@ covers both runtime reads and constructors that create a fresh retained identity
 on each call. The checker permits these built-ins in top-level app state
 initializers, handlers, and views. Capture the needed value or identity in app
 state from an initializer or handler when it must remain stable, then derive
-from that state. Derived values lower to ordinary Rust getters and are
-recomputed when read; Ice does not create a signal, cache, or runtime dependency
-graph.
+from that state.
+
+Derived values lower to pure read-only Rust computations. Ice does not create a
+signal, persistent cache, runtime dependency graph, or handler-maintained state
+mirror. Observable evaluation cardinality is not guaranteed: the compiler may
+coalesce equivalent safe reads within one eager view build. Such coalescing is
+semantics-preserving and never retains a derived value across frames.
 
 Empty lists need an annotation because their element type is unknowable:
 

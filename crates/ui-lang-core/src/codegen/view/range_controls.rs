@@ -140,6 +140,7 @@ fn resolved_slider_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let custom = slider
         .custom_style
         .as_ref()
@@ -250,6 +251,7 @@ fn resolved_progress_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let radius = resolved_text_radius_code(&progress.radius, program, env)?;
     let has_style = progress.style.is_some()
         || progress.custom_style.is_some()

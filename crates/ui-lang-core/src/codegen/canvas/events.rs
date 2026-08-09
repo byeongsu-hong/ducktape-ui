@@ -9,6 +9,7 @@ pub(in crate::codegen) fn canvas_update_code(
     message: &str,
     use_cache: bool,
 ) -> Result<String, Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let capture = options
         .capture
         .as_ref()
