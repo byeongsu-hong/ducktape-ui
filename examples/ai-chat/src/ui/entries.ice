@@ -165,5 +165,5 @@ component Chip(options:[str], selected:str?) -> str
     opened-hovered text=fg handle=fg bg=accent border=border r=7.0
     menu text=fg selected-text=fg selected-bg=accent bg=surface border=border border-w=1.0 r=10.0 shadow=shadow_popover shadow-y=6.0 shadow-blur=18.0
     handle dynamic
-      closed code="▾" size=13.0
-      open code="▴" size=13.0
+      closed code="▾" size=17.0
+      open code="▴" size=17.0
