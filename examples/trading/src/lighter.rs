@@ -22,9 +22,10 @@ use smol::channel::{Receiver, Sender};
 use tungstenite::stream::MaybeTlsStream;
 
 use crate::hyperliquid::{
-    Account, Book, Candle, Event, HlError, Level, MarketTick, Position, SymbolRow, Tape, Trade,
-    merge, older_than, wire_is_open,
+    Account, Book, Candle, Event, HlError, Level, MarketTick, Order, Position, SymbolRow, Tape,
+    Trade, merge, older_than, wire_is_open,
 };
+use crate::lighter_sign::{self, PrivateKey, Transaction};
 use crate::venue::lighter_buy;
 
 /// Which Lighter deployment a read is addressed to.
@@ -58,6 +59,32 @@ impl Zone {
 
     pub fn testnet(self) -> bool {
         matches!(self, Zone::Testnet)
+    }
+
+    /// The number the sequencer stamps into every transaction digest.
+    ///
+    /// It is what makes a signature belong to one deployment: the chain id
+    /// leads the hashed elements, so a transaction signed for the test
+    /// sequencer recovers nobody on the live one. That is the same job
+    /// `Chain`'s phantom-agent `source` does on the other venue, and it is why
+    /// the transaction builders take a `Zone` rather than a bare number — a
+    /// caller cannot post to one deployment while signing for the other.
+    pub fn chain_id(self) -> u32 {
+        match self {
+            Zone::Mainnet => 304,
+            Zone::Testnet => 300,
+        }
+    }
+
+    /// A short, stable name for this deployment, for anything that has to file
+    /// something under it. The same rule `Chain::key` follows: not for a
+    /// reader, and deliberately not the wire spelling, so renaming a keychain
+    /// item can never change what a signature says.
+    pub fn key(self) -> &'static str {
+        match self {
+            Zone::Mainnet => "mainnet",
+            Zone::Testnet => "testnet",
+        }
     }
 }
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -283,7 +310,10 @@ fn parse_symbol(detail: &Value, funding: &HashMap<i64, f64>) -> SymbolRow {
         name: text(detail, "symbol"),
         // Lighter keys a book by `market_id`, which this deployment's own
         // universe supplies; the Hyperliquid universe index this field carries
-        // is not a thing Lighter has, and the order path never reaches here.
+        // is not a thing Lighter has. The order path does not read it either:
+        // it resolves the id and the two step counts together out of
+        // `orderBookDetails`, because a price is sent as a count of the
+        // market's own steps and the two must come from one row.
         asset: 0,
         price,
         change_pct,
@@ -372,15 +402,41 @@ fn parse_funding(rates: &Value) -> HashMap<i64, f64> {
 /// left is one stale entry for a ticker delisted while the terminal was
 /// reading the other exchange, and the read that would use it is a book for a
 /// market `listed_coin` has already moved the terminal off.
-fn ids() -> &'static Mutex<HashMap<String, i64>> {
-    static IDS: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
+fn ids() -> &'static Mutex<HashMap<String, Market>> {
+    static IDS: OnceLock<Mutex<HashMap<String, Market>>> = OnceLock::new();
     IDS.get_or_init(Mutex::default)
 }
 
-fn parse_ids(details: &Value) -> HashMap<String, i64> {
+/// What a request needs to know about a market that its ticker does not say.
+///
+/// The two step counts ride along with the id because they come out of the
+/// same `orderBookDetails` row and are needed at the same moment: an order
+/// carries its price and size as integers counted in the market's own steps,
+/// so a price without its decimals is a number off by a power of ten. Reading
+/// them separately would be a second request for a fact already in hand — and,
+/// worse, a chance for the id and the decimals to come from different reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Market {
+    pub id: i64,
+    /// How finely this market quotes a price. Live on the test deployment,
+    /// BTC quotes to one decimal and sizes to five.
+    pub price_decimals: u32,
+    pub size_decimals: u32,
+}
+
+fn parse_ids(details: &Value) -> HashMap<String, Market> {
     list(details, "order_book_details")
         .iter()
-        .map(|detail| (text(detail, "symbol"), value_i64(detail, "market_id")))
+        .map(|detail| {
+            (
+                text(detail, "symbol"),
+                Market {
+                    id: value_i64(detail, "market_id"),
+                    price_decimals: value_i64(detail, "price_decimals").clamp(0, 18) as u32,
+                    size_decimals: value_i64(detail, "size_decimals").clamp(0, 18) as u32,
+                },
+            )
+        })
         .collect()
 }
 
@@ -392,11 +448,11 @@ pub async fn lighter_symbols(zone: Zone) -> Result<Vec<SymbolRow>, HlError> {
     Ok(parse_symbols(&details, &rates))
 }
 
-/// The market id a ticker trades under, fetching the universe only if nothing
-/// has yet.
-async fn market_id(zone: Zone, coin: &str) -> Result<i64, HlError> {
-    if let Some(id) = lock(ids()).get(coin) {
-        return Ok(*id);
+/// The market a ticker trades as, fetching the universe only if nothing has
+/// yet.
+async fn market_of(zone: Zone, coin: &str) -> Result<Market, HlError> {
+    if let Some(market) = lock(ids()).get(coin) {
+        return Ok(*market);
     }
     let details = get(zone, "orderBookDetails".to_owned()).await?;
     let fresh = parse_ids(&details);
@@ -496,7 +552,7 @@ fn parse_book(value: &Value) -> Book {
 /// other venue's. The asks come back best-first; the panel reverses them
 /// itself, the same way it does for the feed it already has.
 pub async fn lighter_book(zone: Zone, coin: String) -> Result<Book, HlError> {
-    let id = market_id(zone, &coin).await?;
+    let id = market_of(zone, &coin).await?.id;
     Ok(parse_book(
         &get(
             zone,
@@ -693,6 +749,248 @@ pub async fn lighter_account(zone: Zone, address: String) -> Result<Option<Accou
     }
 }
 
+// The order path: complete, held to the venue's own answers, and pointed at by
+// nothing until the ticket is wired to it — the shape `hyperliquid.rs` states
+// for its own writes, and for the same reason: built and proven before a button
+// can spend money with it.
+
+/// How long a signed transaction stays submittable. Ten minutes, which is what
+/// the venue's own SDK gives one.
+///
+/// It bounds a *transaction*, not an order: a signed body somebody copied off
+/// the wire stops being worth replaying after this, and the order it placed
+/// keeps resting regardless. The two deadlines are separate fields for that
+/// reason and are never one value.
+const TX_LIFETIME_MS: i64 = 10 * 60 * 1_000;
+
+/// How long a placed order rests before the venue drops it. 28 days, the
+/// venue's SDK default, and required to be *something*: a good-till-time order
+/// with no expiry is refused, and this app places no other kind.
+const ORDER_LIFETIME_MS: i64 = 28 * 24 * 60 * 60 * 1_000;
+
+/// The verdicts `/sendTx` answers with, each read live off the test deployment
+/// and each meaning something different to a reader.
+///
+/// The ladder matters more than any one rung. The venue checks the body's shape
+/// first, then the account, then the key, then the signature — so a refusal
+/// names how far a submission got, and `KEY_UNKNOWN` in particular means every
+/// field was read and accepted and only the enrolment was missing. That is what
+/// makes an unregistered key useful evidence: it is the venue confirming it
+/// parses what this module writes.
+const BAD_TX_INFO: i64 = 21501;
+const NO_ACCOUNT_HERE: i64 = 21100;
+const KEY_UNKNOWN: i64 = 21109;
+const BAD_SIGNATURE: i64 = 21120;
+
+/// The next transaction number for one API key.
+///
+/// A nonce is per key rather than per account, which is why both indices are in
+/// the query: two keys on one account count separately, and reusing a number is
+/// how a replay is refused.
+///
+/// It is not evidence the account exists. Read live, `nextNonce` answers
+/// `{"code":200,"nonce":0}` for an account index nobody has ever opened — so
+/// nothing may infer an account from a nonce, and the account read is still the
+/// only thing that answers that question.
+pub async fn lighter_nonce(zone: Zone, account: i64, api_key: u8) -> Result<i64, HlError> {
+    let body = get(
+        zone,
+        format!("nextNonce?account_index={account}&api_key_index={api_key}"),
+    )
+    .await?;
+    body.get("nonce")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| fail("Lighter answered the nonce request without a nonce in it".to_owned()))
+}
+
+/// Post one signed transaction, and answer the hash the sequencer filed it
+/// under.
+///
+/// Behind the same `wire_is_open` gate every read passes, and for the reason
+/// that gate exists at all: a test drives the real program, so a path that
+/// spends money must not be the one path a test can reach.
+async fn send_tx(zone: Zone, tx: &Transaction, key: &PrivateKey) -> Result<String, HlError> {
+    if !wire_is_open() {
+        return Err(fail("Lighter unreachable: no wire under test".to_owned()));
+    }
+    let url = format!("{}/sendTx", zone.api_url());
+    let tx_type = tx.tx_type().to_string();
+    // Signed here rather than inside `unblock`, so the key never crosses onto
+    // another thread — what does is 80 bytes of signature and a JSON body.
+    let tx_info = tx.signed(key);
+    let (code, body) = smol::unblock(move || {
+        let mut response = agent()
+            // The venue reads a form, not a JSON body, and the signature is
+            // base64 — whose `+` and `/` are exactly the characters a naive
+            // body would corrupt. `send_form` percent-encodes both fields.
+            .post(&url)
+            .send_form([("tx_type", tx_type.as_str()), ("tx_info", tx_info.as_str())])
+            .map_err(|error| fail(format!("Lighter unreachable: {error}")))?;
+        let status = response.status();
+        let body = response
+            .body_mut()
+            .read_json::<Value>()
+            .map_err(|error| fail(format!("Lighter answered sendTx {status}: {error}")))?;
+        let stated = body.get("code").and_then(Value::as_i64);
+        Ok::<_, HlError>((
+            stated.unwrap_or(if status.is_success() {
+                OK
+            } else {
+                i64::from(status.as_u16())
+            }),
+            body,
+        ))
+    })
+    .await?;
+    submitted(code, &body)
+}
+
+/// What the venue made of a submitted transaction.
+///
+/// The `code` is the verdict, not the HTTP status: every refusal seen live
+/// arrives as HTTP 400 carrying its own number and sentence, and the venue puts
+/// a `code` on its successes too. Reading the status alone would report a
+/// refused order as sent.
+///
+/// What an acceptance is, exactly: the sequencer took the transaction. It is
+/// **not** the order resting. The answer carries a
+/// `predicted_execution_time_ms` beside the hash, which is the venue saying so
+/// itself — the book is where an order appears, and this is a receipt for a
+/// submission. A caller that draws "placed" off this is drawing a claim the
+/// venue did not make.
+///
+/// A `code` of 200 with no hash under it is refused rather than accepted: an
+/// acceptance with nothing to point at is not an outcome anybody can act on,
+/// and it is the shape a changed response would take.
+fn submitted(code: i64, body: &Value) -> Result<String, HlError> {
+    if code != OK {
+        let said = text(body, "message");
+        return Err(fail(if said.is_empty() {
+            format!("Lighter refused the transaction: code {code}")
+        } else {
+            format!("Lighter refused the transaction: code {code} {said}")
+        }));
+    }
+    let hash = text(body, "tx_hash");
+    if hash.is_empty() {
+        return Err(fail(
+            "Lighter accepted the transaction and named no hash for it".to_owned(),
+        ));
+    }
+    Ok(hash)
+}
+
+/// A figure on screen as the integer count of the market's own steps.
+///
+/// Refused rather than rounded, which is the same stance `signing.rs` takes on
+/// the other venue's decimal strings: a price quietly rounded onto the tick is
+/// a fill nobody asked for, and it is invisible on every screen afterwards.
+/// The caller rounds to the market's step before it prices anything; this is
+/// the check that it did.
+fn stepped(what: &str, value: f64, decimals: u32) -> Result<i64, HlError> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(fail(format!("{value} is not a {what} to send")));
+    }
+    let scale = 10f64.powi(decimals as i32);
+    let scaled = value * scale;
+    let rounded = scaled.round();
+    if (scaled - rounded).abs() > 1e-6 {
+        return Err(fail(format!(
+            "this market counts its {what} in steps of {}, and {value} is not a whole number of \
+             them",
+            1.0 / scale,
+        )));
+    }
+    Ok(rounded as i64)
+}
+
+/// Place one limit order, and answer the index it was placed under.
+///
+/// That index is the app's own and is chosen here, because the venue's answer
+/// has no order id in it: a submission is acknowledged with a transaction hash,
+/// and the only name a later cancel can use is the `ClientOrderIndex` its
+/// placer picked. The clock supplies it, which is the same source the other
+/// venue's nonce comes from and gives an index that rises and sits well inside
+/// the venue's range.
+///
+/// ponytail: two orders placed inside one millisecond would share an index.
+/// A person pressing a button cannot, and the sequencer's nonce is what stops a
+/// transaction being replayed regardless — so the counter this would need waits
+/// until something places orders in a loop.
+pub async fn lighter_place(
+    zone: Zone,
+    key: &PrivateKey,
+    account: i64,
+    api_key: u8,
+    coin: &str,
+    order: Order,
+    reduce_only: bool,
+) -> Result<i64, HlError> {
+    let market = market_of(zone, coin).await?;
+    let now = now_ms();
+    let client_index = now;
+    let built = lighter_sign::create_order(
+        zone,
+        &lighter_sign::NewOrder {
+            account,
+            api_key,
+            market: i16::try_from(market.id).map_err(|_| {
+                fail(format!(
+                    "Lighter numbers {coin} past what an order can name"
+                ))
+            })?,
+            client_index,
+            base_amount: stepped("size", order.size, market.size_decimals)?,
+            price: u32::try_from(stepped("price", order.price, market.price_decimals)?).map_err(
+                |_| {
+                    fail(format!(
+                        "{} is past the highest price this venue takes",
+                        order.price
+                    ))
+                },
+            )?,
+            ask: !order.buy,
+            reduce_only,
+            expiry_ms: now + ORDER_LIFETIME_MS,
+            deadline_ms: now + TX_LIFETIME_MS,
+            nonce: lighter_nonce(zone, account, api_key).await?,
+        },
+    )
+    .map_err(|error| fail(error.to_string()))?;
+    send_tx(zone, &built, key).await?;
+    Ok(client_index)
+}
+
+/// Pull one resting order, by the index it was placed under.
+pub async fn lighter_cancel(
+    zone: Zone,
+    key: &PrivateKey,
+    account: i64,
+    api_key: u8,
+    coin: &str,
+    index: i64,
+) -> Result<(), HlError> {
+    let market = market_of(zone, coin).await?;
+    let now = now_ms();
+    let built = lighter_sign::cancel_order(
+        zone,
+        &lighter_sign::Cancel {
+            account,
+            api_key,
+            market: i16::try_from(market.id).map_err(|_| {
+                fail(format!(
+                    "Lighter numbers {coin} past what an order can name"
+                ))
+            })?,
+            index,
+            deadline_ms: now + TX_LIFETIME_MS,
+            nonce: lighter_nonce(zone, account, api_key).await?,
+        },
+    )
+    .map_err(|error| fail(error.to_string()))?;
+    send_tx(zone, &built, key).await.map(|_| ())
+}
+
 /// The most bars one `/candles` call will serve, which is also the window a
 /// chart opens on. Enforced by the venue rather than chosen here:
 /// `count_back=1000` over a 1000-bar window answers with 500.
@@ -764,7 +1062,7 @@ async fn fill(
             widths()
         ))
     })?;
-    let id = market_id(zone, coin).await?;
+    let id = market_of(zone, coin).await?.id;
     let body = get(zone, candles_path(id, width, secs, end_ms, bars)).await?;
     let fresh: Vec<Candle> = list(&body, "c").iter().map(parse_candle).collect();
 
@@ -911,7 +1209,7 @@ fn channels(tape: &Tape) -> Result<Vec<String>, HlError> {
             widths()
         ))
     })?;
-    let Some(id) = lock(ids()).get(&coin).copied() else {
+    let Some(id) = lock(ids()).get(&coin).map(|market| market.id) else {
         return Ok(wanted);
     };
     wanted.push(format!("order_book/{id}"));
@@ -939,8 +1237,10 @@ fn focused(tape: &Tape) -> Focused {
     let Some((coin, interval)) = tape.focus() else {
         return Focused::default();
     };
-    let (Some(id), Some((width, _))) = (lock(ids()).get(&coin).copied(), resolution(&interval))
-    else {
+    let (Some(id), Some((width, _))) = (
+        lock(ids()).get(&coin).map(|market| market.id),
+        resolution(&interval),
+    ) else {
         // The market list has not landed yet, or the app is asking for a width
         // this venue does not quote. Either way there is nothing per-market to
         // fold, but the coin is still the one the context belongs to.
@@ -1154,7 +1454,10 @@ fn parse_stats(stats: &Value) -> SymbolRow {
         name: text(stats, "symbol"),
         // Lighter keys a book by `market_id`, which this deployment's own
         // universe supplies; the Hyperliquid universe index this field carries
-        // is not a thing Lighter has, and the order path never reaches here.
+        // is not a thing Lighter has. The order path does not read it either:
+        // it resolves the id and the two step counts together out of
+        // `orderBookDetails`, because a price is sent as a count of the
+        // market's own steps and the two must come from one row.
         asset: 0,
         price,
         change_pct,
@@ -1567,7 +1870,7 @@ fn captured_universe() -> Value {
         "order_book_details": [
             {
                 "symbol": "MKR", "market_id": 28, "market_type": "perp",
-                "status": "inactive", "size_decimals": 4,
+                "status": "inactive", "price_decimals": 2, "size_decimals": 4,
                 "maintenance_margin_fraction": 0,
                 "min_initial_margin_fraction": 0,
                 "mark_price": "0.00", "index_price": "0.00",
@@ -1576,7 +1879,7 @@ fn captured_universe() -> Value {
             },
             {
                 "symbol": "ASTER", "market_id": 83, "market_type": "perp",
-                "status": "active", "size_decimals": 1,
+                "status": "active", "price_decimals": 5, "size_decimals": 1,
                 "maintenance_margin_fraction": 1200,
                 "min_initial_margin_fraction": 2000,
                 "default_initial_margin_fraction": 2000,
@@ -1589,7 +1892,7 @@ fn captured_universe() -> Value {
             },
             {
                 "symbol": "BTC", "market_id": 1, "market_type": "perp",
-                "status": "active", "size_decimals": 5,
+                "status": "active", "price_decimals": 1, "size_decimals": 5,
                 "maintenance_margin_fraction": 120,
                 "min_initial_margin_fraction": 200,
                 "default_initial_margin_fraction": 500,
@@ -1602,7 +1905,7 @@ fn captured_universe() -> Value {
             },
             {
                 "symbol": "ETH", "market_id": 0, "market_type": "perp",
-                "status": "active", "size_decimals": 4,
+                "status": "active", "price_decimals": 2, "size_decimals": 4,
                 "maintenance_margin_fraction": 120,
                 "min_initial_margin_fraction": 200,
                 "default_initial_margin_fraction": 500,
@@ -1615,7 +1918,7 @@ fn captured_universe() -> Value {
             },
             {
                 "symbol": "SOL", "market_id": 2, "market_type": "perp",
-                "status": "active", "size_decimals": 3,
+                "status": "active", "price_decimals": 3, "size_decimals": 3,
                 "maintenance_margin_fraction": 240,
                 "min_initial_margin_fraction": 400,
                 "default_initial_margin_fraction": 1000,
@@ -1628,7 +1931,7 @@ fn captured_universe() -> Value {
             },
             {
                 "symbol": "ENA", "market_id": 29, "market_type": "perp",
-                "status": "active", "size_decimals": 1,
+                "status": "active", "price_decimals": 5, "size_decimals": 1,
                 "maintenance_margin_fraction": 600,
                 "min_initial_margin_fraction": 1000,
                 "default_initial_margin_fraction": 2000,
@@ -1641,7 +1944,7 @@ fn captured_universe() -> Value {
             },
             {
                 "symbol": "SUI", "market_id": 16, "market_type": "perp",
-                "status": "active", "size_decimals": 1,
+                "status": "active", "price_decimals": 5, "size_decimals": 1,
                 "maintenance_margin_fraction": 600,
                 "min_initial_margin_fraction": 1000,
                 "default_initial_margin_fraction": 2000,
@@ -1654,7 +1957,7 @@ fn captured_universe() -> Value {
             },
             {
                 "symbol": "AAPL", "market_id": 113, "market_type": "perp",
-                "status": "active", "size_decimals": 3,
+                "status": "active", "price_decimals": 3, "size_decimals": 3,
                 "maintenance_margin_fraction": 300,
                 "min_initial_margin_fraction": 500,
                 "default_initial_margin_fraction": 1000,
@@ -1667,7 +1970,7 @@ fn captured_universe() -> Value {
             },
             {
                 "symbol": "1000PEPE", "market_id": 4, "market_type": "perp",
-                "status": "active", "size_decimals": 0,
+                "status": "active", "price_decimals": 6, "size_decimals": 0,
                 "maintenance_margin_fraction": 600,
                 "min_initial_margin_fraction": 1000,
                 "default_initial_margin_fraction": 2000,
@@ -1680,7 +1983,7 @@ fn captured_universe() -> Value {
             },
             {
                 "symbol": "OP", "market_id": 55, "market_type": "perp",
-                "status": "active", "size_decimals": 1,
+                "status": "active", "price_decimals": 5, "size_decimals": 1,
                 "maintenance_margin_fraction": 399,
                 "min_initial_margin_fraction": 666,
                 "default_initial_margin_fraction": 1332,
@@ -1966,6 +2269,406 @@ mod tests {
     fn listed_market(name: &str) -> SymbolRow {
         symbol_row(demo_symbols_lighter(), name.to_owned())
             .unwrap_or_else(|| panic!("{name} is not in the sample"))
+    }
+
+    // -----------------------------------------------------------------------
+    // The order path.
+    // -----------------------------------------------------------------------
+
+    /// Every verdict below is one this deployment actually answered, recorded
+    /// while the order path was written by posting to `testnet.zklighter` and
+    /// reading what came back. They are the ladder the venue checks in: the
+    /// body's shape, then each field, then the account, then the key, then the
+    /// signature.
+    fn refusal(code: i64, message: &str) -> Value {
+        json!({ "code": code, "message": message })
+    }
+
+    /// What an acceptance looks like: the venue's own success shape, with the
+    /// two figures it puts beside the hash. `predicted_execution_time_ms` is
+    /// the venue saying in its own answer that the order has not executed yet.
+    fn accepted(hash: &str) -> Value {
+        json!({
+            "code": 200,
+            "tx_hash": hash,
+            "predicted_execution_time_ms": 12,
+            "volume_quota_remaining": 1_000_000,
+        })
+    }
+
+    /// The id an order names a market by and the steps its figures are counted
+    /// in come out of one row of one read.
+    ///
+    /// They have to. A price is sent as an integer count of the market's price
+    /// steps, so a price paired with another market's decimals is out by a
+    /// power of ten — an order at a tenth of the intended price, or ten times
+    /// it, sent to a market that will happily take either. Reading them
+    /// together is what makes that impossible rather than merely unlikely.
+    #[test]
+    fn a_markets_id_and_its_steps_come_from_the_same_row() {
+        let table = parse_ids(&captured_universe());
+        // The venue's own published pairs, live: bitcoin is market 1, priced to
+        // a tenth and sized to five decimals; ether is market 0, priced to a
+        // cent and sized to four.
+        assert_eq!(
+            table.get("BTC").copied(),
+            Some(Market {
+                id: 1,
+                price_decimals: 1,
+                size_decimals: 5
+            }),
+        );
+        assert_eq!(
+            table.get("ETH").copied(),
+            Some(Market {
+                id: 0,
+                price_decimals: 2,
+                size_decimals: 4
+            }),
+        );
+        // And the two are genuinely per market rather than one figure serving
+        // both: a coin worth a fraction of a cent is priced to six decimals and
+        // sized in whole units, which is the opposite way round from bitcoin.
+        assert_eq!(
+            table.get("1000PEPE").copied(),
+            Some(Market {
+                id: 4,
+                price_decimals: 6,
+                size_decimals: 0
+            }),
+        );
+
+        // A market missing its steps counts in whole units rather than
+        // borrowing another market's, which is a refused order rather than a
+        // wrong one.
+        let bare = parse_ids(&json!({
+            "order_book_details": [{ "symbol": "ICEONE", "market_id": 4_240 }],
+        }));
+        assert_eq!(
+            bare.get("ICEONE").copied(),
+            Some(Market {
+                id: 4_240,
+                price_decimals: 0,
+                size_decimals: 0
+            }),
+        );
+    }
+
+    /// A refused transaction must never read as a sent one, and the venue's own
+    /// sentence is the only useful thing to say about it.
+    ///
+    /// The verdict is the `code` rather than the HTTP status: every refusal
+    /// here arrived as HTTP 400, so a parser reading the status would be right
+    /// by accident on all of them and wrong the day one arrives as a 200 — and
+    /// this venue does put a `code` on its 200s, which is why the read side
+    /// already works this way.
+    #[test]
+    fn a_refused_transaction_never_reads_as_a_sent_one() {
+        for (code, message) in [
+            (BAD_TX_INFO, "invalid tx info"),
+            (21602, "invalid market index"),
+            (21701, "invalid base amount"),
+            (21702, "invalid price"),
+            (21705, "invalid OrderTimeInForce"),
+            (21104, "invalid nonce"),
+            (NO_ACCOUNT_HERE, "account not found"),
+            (KEY_UNKNOWN, "api key not found"),
+            (BAD_SIGNATURE, "invalid signature"),
+        ] {
+            let refused = submitted(code, &refusal(code, message))
+                .expect_err("the venue refused this transaction");
+            assert!(
+                refused.message.contains(message),
+                "the venue's own sentence is what a reader needs: {}",
+                refused.message
+            );
+            assert!(
+                refused.message.contains(&code.to_string()),
+                "and the code, which is what a support request quotes: {}",
+                refused.message
+            );
+        }
+
+        // A refusal the venue did not put a sentence on still has to read as a
+        // refusal rather than as an empty success.
+        let silent = submitted(21999, &json!({ "code": 21999 })).expect_err("still a refusal");
+        assert!(silent.message.contains("21999"), "{}", silent.message);
+
+        // And the accepted shape is the one thing that is not a refusal.
+        assert_eq!(
+            submitted(OK, &accepted("0xabc")).expect("the venue took it"),
+            "0xabc"
+        );
+    }
+
+    /// An acceptance with nothing to point at is refused.
+    ///
+    /// A `code` of 200 and no hash under it is not an outcome anybody can act
+    /// on: there is nothing to look the transaction up by and nothing to say
+    /// happened. It is also the shape a changed response takes, and reading it
+    /// as success would report every submission as sent forever after.
+    #[test]
+    fn an_acceptance_with_no_hash_is_not_an_acceptance() {
+        for body in [
+            json!({ "code": 200 }),
+            json!({ "code": 200, "tx_hash": "" }),
+            json!({ "code": 200, "tx_hash": 7 }),
+        ] {
+            let refused = submitted(OK, &body).expect_err("an acceptance names a transaction");
+            assert!(refused.message.contains("no hash"), "{}", refused.message);
+        }
+        assert!(submitted(OK, &accepted("0x01")).is_ok());
+    }
+
+    /// A figure that is not a whole number of the market's own steps is refused
+    /// rather than rounded onto one.
+    ///
+    /// Rounding here is the failure with no symptom: the order goes out at a
+    /// price nobody typed, rests there, and every screen afterwards shows the
+    /// price the venue holds rather than the one that was meant. The other
+    /// venue's signer takes the same stance on its decimal strings.
+    #[test]
+    fn a_figure_off_the_markets_step_is_refused_rather_than_rounded() {
+        // Bitcoin on this venue: prices to a tenth, sizes to five decimals.
+        assert_eq!(stepped("price", 64_912.5, 1).expect("on the tick"), 649_125);
+        assert_eq!(stepped("size", 0.00021, 5).expect("on the step"), 21);
+        // A whole-unit market counts its size in whole units.
+        assert_eq!(stepped("size", 3.0, 0).expect("a whole coin"), 3);
+
+        let refused = stepped("price", 64_912.55, 1).expect_err("half a tick is not a price");
+        assert!(
+            refused.message.contains("64912.55") && refused.message.contains("steps"),
+            "the refusal names the figure and the rule: {}",
+            refused.message
+        );
+        assert!(stepped("size", 0.000215, 5).is_err(), "half a step");
+
+        // Nothing that is not a figure at all.
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(stepped("size", bad, 5).is_err(), "{bad} is not a size");
+        }
+    }
+
+    /// The nonce read, live, on the deployment orders would go to.
+    ///
+    /// Two claims, and the second is the one worth the network. A nonce comes
+    /// back at all — so the endpoint, its two query parameters and the field
+    /// this reads are right. And it is *not* evidence the account exists: the
+    /// same read answers `nonce: 0` for an index nobody has opened, so nothing
+    /// downstream may treat a nonce as an account.
+    #[test]
+    #[ignore = "hits the live venue, run explicitly: the nonce read"]
+    fn the_nonce_read_answers_and_says_nothing_about_the_account() {
+        crate::hyperliquid::open_the_wire();
+        smol::block_on(async {
+            // The faucet account on the test deployment.
+            let held = lighter_nonce(Zone::Testnet, 637, 0)
+                .await
+                .expect("the venue answers a nonce");
+            assert!(held >= 0, "a nonce counts up from zero");
+
+            // An account index far past anything opened. It answers, which is
+            // exactly why a nonce is not an account.
+            assert!(
+                lighter_nonce(Zone::Testnet, 281_474_976_710_000, 0)
+                    .await
+                    .is_ok(),
+                "the nonce read answers for an account that does not exist, so \
+                 nothing may infer one from it"
+            );
+        });
+    }
+
+    /// The venue reads what this module writes, established the only way it can
+    /// be without an enrolled key: by submitting a correctly built, correctly
+    /// signed transaction and being refused for the enrolment rather than for
+    /// the shape.
+    ///
+    /// What `21109 api key not found` discriminates, exactly: the venue parsed
+    /// the form, parsed `tx_info` as JSON, read every field, accepted the market
+    /// index, the base amount, the price, the time-in-force, the nonce and the
+    /// deadline, found the account — and then found no key registered under the
+    /// index named. A transaction this module spelled wrong lands earlier and
+    /// says which field (`21501`, `21602`, `21701`, `21702`, `21705`, `21104`),
+    /// and one for an account that does not exist lands on `21100`. So this is
+    /// evidence about the transaction's *shape*, and that is all it is.
+    ///
+    /// It is not evidence the signature is any good; the key here is registered
+    /// on nothing, so a correct signature and 80 random bytes both land on
+    /// 21109. The cryptography is pinned offline against the venue's own signer
+    /// in `lighter_sign.rs`, which is where that claim belongs.
+    #[test]
+    #[ignore = "hits the live venue, run explicitly: the submission reaches the key check"]
+    fn a_well_formed_transaction_reaches_the_venues_key_check() {
+        crate::hyperliquid::open_the_wire();
+        // The throwaway key `lighter_sign.rs` pins its vectors against,
+        // registered on no account anywhere.
+        let key = PrivateKey::from_hex(
+            "0x64ca3ac2840332193cf362603055e0808e039bc143e965f0b0aa922a1a4d40d5af86c4cb0cd07370",
+        )
+        .expect("the oracle key");
+        smol::block_on(async {
+            // A bid at a fraction of the mark, on an account whose key is not
+            // enrolled: refused twice over before anything could rest.
+            let refused = lighter_place(
+                Zone::Testnet,
+                &key,
+                637,
+                0,
+                "BTC",
+                Order {
+                    oid: 0,
+                    coin: "BTC".to_owned(),
+                    buy: true,
+                    price: 1_000.0,
+                    size: 0.001,
+                    ts: 0,
+                },
+                false,
+            )
+            .await
+            .expect_err("an unenrolled key cannot place an order");
+            assert!(
+                refused.message.contains(&KEY_UNKNOWN.to_string()),
+                "expected the key check, got: {}",
+                refused.message
+            );
+
+            // And a cancel, which is the other transaction type through the
+            // same gates.
+            let pulled = lighter_cancel(Zone::Testnet, &key, 637, 0, "BTC", 1)
+                .await
+                .expect_err("an unenrolled key cannot cancel either");
+            assert!(
+                pulled.message.contains(&KEY_UNKNOWN.to_string()),
+                "expected the key check, got: {}",
+                pulled.message
+            );
+        });
+    }
+
+    /// The whole round trip on the test deployment: an order placed, found
+    /// resting under the index it was placed with, and pulled again.
+    ///
+    /// Gated on the environment because it needs something no CI runner can
+    /// have and this repository must never hold: an API key the account
+    /// registered with the exchange. Registering the first one is signed by the
+    /// L1 wallet that owns the account, which is the one key this app never
+    /// holds — the same shape as Hyperliquid's approval step, and owner-side
+    /// for the same reason.
+    ///
+    /// The order rests far from the market on purpose: a bid at a fraction of
+    /// the mark cannot fill, so the round trip ends with the book exactly as it
+    /// started.
+    ///
+    /// It reads the book back through `accountActiveOrders`, which is a gated
+    /// read and wants the token `lighter_sign.rs` already mints. That read is
+    /// built here rather than published, because the app's own orders panel
+    /// does not make it — it holds no key — and a function with one caller in a
+    /// test is a seam nothing crosses.
+    #[test]
+    #[ignore = "places a real order on Lighter testnet; needs ICE_LIGHTER_TESTNET_ACCOUNT, ICE_LIGHTER_TESTNET_API_KEY and ICE_LIGHTER_TESTNET_KEY"]
+    fn the_order_path_places_rests_and_cancels_on_the_test_deployment() {
+        let (Ok(account), Ok(api_key), Ok(secret)) = (
+            std::env::var("ICE_LIGHTER_TESTNET_ACCOUNT"),
+            std::env::var("ICE_LIGHTER_TESTNET_API_KEY"),
+            std::env::var("ICE_LIGHTER_TESTNET_KEY"),
+        ) else {
+            panic!(
+                "set ICE_LIGHTER_TESTNET_ACCOUNT to the funded testnet account index, \
+                 ICE_LIGHTER_TESTNET_API_KEY to the index that account registered a key \
+                 under, and ICE_LIGHTER_TESTNET_KEY to that key's 40-byte hex secret — \
+                 see the enrolment checklist in README.md. Registering the first key is \
+                 signed by the account's L1 wallet and cannot be done from here."
+            );
+        };
+        let account: i64 = account.trim().parse().expect("an account index");
+        let api_key: u8 = api_key.trim().parse().expect("an api key index");
+        let key = PrivateKey::from_hex(secret.trim()).expect("40 bytes of hex");
+
+        crate::hyperliquid::open_the_wire();
+        smol::block_on(async {
+            let markets = lighter_symbols(Zone::Testnet)
+                .await
+                .expect("the testnet universe");
+            let btc = markets
+                .iter()
+                .find(|row| row.name == "BTC")
+                .expect("the test deployment lists BTC");
+            let step = market_of(Zone::Testnet, "BTC").await.expect("the market");
+
+            // A tenth of the mark, rounded onto the market's own tick so
+            // nothing is refused for a price it cannot spell.
+            let tick = 10f64.powi(step.price_decimals as i32);
+            let price = (btc.price / 10.0 * tick).round() / tick;
+            let index = lighter_place(
+                Zone::Testnet,
+                &key,
+                account,
+                api_key,
+                "BTC",
+                Order {
+                    oid: 0,
+                    coin: "BTC".to_owned(),
+                    buy: true,
+                    price,
+                    size: 0.001,
+                    ts: 0,
+                },
+                false,
+            )
+            .await
+            .expect("the venue takes the order");
+
+            // The submission is a receipt rather than a fill, so the book is
+            // what says the order rested — and it is read after the sequencer
+            // has had time to take it.
+            std::thread::sleep(Duration::from_secs(3));
+            assert!(
+                resting(Zone::Testnet, &key, account, api_key, step.id).contains(&index),
+                "an order the venue accepted is one it lists back under the \
+                 index it was placed with"
+            );
+
+            lighter_cancel(Zone::Testnet, &key, account, api_key, "BTC", index)
+                .await
+                .expect("the venue takes the cancel");
+            std::thread::sleep(Duration::from_secs(3));
+            assert!(
+                !resting(Zone::Testnet, &key, account, api_key, step.id).contains(&index),
+                "a cancel the venue accepted is an order it stops listing"
+            );
+        });
+    }
+
+    /// The client order indices this account is resting in one market, read
+    /// through the gated endpoint with a token minted for the same key.
+    fn resting(zone: Zone, key: &PrivateKey, account: i64, api_key: u8, market: i64) -> Vec<i64> {
+        let deadline = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("a clock after 1970")
+            .as_secs()
+            + 600;
+        let token = crate::lighter_sign::auth_token(key, account, api_key, deadline)
+            .expect("a token inside the venue's window");
+        let mut response = agent()
+            .get(&format!(
+                "{}/accountActiveOrders?account_index={account}&market_id={market}",
+                zone.api_url()
+            ))
+            .header("Authorization", &token)
+            .call()
+            .expect("Lighter reachable");
+        let body: Value = response.body_mut().read_json().expect("a JSON answer");
+        assert_eq!(
+            body.get("code").and_then(Value::as_i64),
+            Some(OK),
+            "the gated read refused this token: {body}"
+        );
+        list(&body, "orders")
+            .iter()
+            .map(|order| value_i64(order, "client_order_index"))
+            .collect()
     }
 
     /// The step a size is quoted to belongs to the market, and each venue
@@ -3150,10 +3853,20 @@ mod tests {
         assert!((64_489.1..=65_349.4).contains(&streamed.prev));
     }
 
+    /// A market by id alone, for the feed tests: what a channel name is built
+    /// from is the id, and the two step counts belong to the order path.
+    fn market_at(id: i64) -> Market {
+        Market {
+            id,
+            price_decimals: 0,
+            size_decimals: 0,
+        }
+    }
+
     /// A ticker only this test uses, so seeding the shared id table cannot
     /// disturb another one.
     fn charted(coin: &str, id: i64, interval: &str) -> Tape {
-        lock(ids()).insert(coin.to_owned(), id);
+        lock(ids()).insert(coin.to_owned(), market_at(id));
         tape_focus(tape_new(), coin.to_owned(), interval.to_owned())
     }
 
@@ -3416,7 +4129,7 @@ mod tests {
     #[test]
     fn the_book_of_the_market_just_left_is_not_drawn_as_this_one_s() {
         let tape = charted("ICEFIVE", 4_246, "1m");
-        lock(ids()).insert("ICESIX".to_owned(), 4_247);
+        lock(ids()).insert("ICESIX".to_owned(), market_at(4_247));
         let (mut read, _) = reader(&tape);
         assert!(read(Event::Beat).is_none());
         assert!(read(Event::Payload("order_book:4246", &book_snapshot(FIRST))).is_none());

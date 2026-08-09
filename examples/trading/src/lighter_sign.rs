@@ -1,4 +1,17 @@
-//! Lighter's auth token: Schnorr over ECgFp5 with a Poseidon2 challenge.
+//! What Lighter's API key signs: Schnorr over ECgFp5 with a Poseidon2
+//! challenge, under a read token and under the L2 transactions that trade.
+//!
+//! One key does both. The `api_key_index` an account registers is the same
+//! index in both preimages, and the curve, the sponge and the signature below
+//! are shared — which is why the transactions live here beside the token
+//! rather than in the adapter that posts them. What differs is only what is
+//! hashed: the token hashes three ASCII fields, a transaction hashes its own
+//! fields as Goldilocks elements under the deployment's chain id.
+//!
+//! **Nothing here submits anything.** This module builds and signs; `lighter.rs`
+//! is what reaches `/sendTx`, behind the same gate every read passes.
+//!
+//! ## The token
 //!
 //! Lighter gates its private reads behind a token the caller signs itself:
 //!
@@ -44,17 +57,36 @@
 //! observable: the first external layer runs before any constant is added, and
 //! `EXTERNAL_CONSTANTS[4]` is added by the last partial round rather than by
 //! an external one.
+//!
+//! ## The transactions
+//!
+//! An order on Lighter is an L2 transaction, not a JSON action: the fields are
+//! hashed as field elements in the sequencer's own order, and the body sent
+//! beside the signature is the same fields as JSON. Both are built together at
+//! the bottom of this file, from one set of values, for the reason `signing.rs`
+//! builds Hyperliquid's action once and packs it twice — a field signed in one
+//! shape and sent in another recovers a stranger.
+//!
+//! The layouts are transcribed from `elliottech/lighter-go`'s
+//! `L2CreateOrderTxInfo.Hash` and `L2CancelOrderTxInfo.Hash`, and every claim
+//! about them is pinned against digests and bodies that the venue's own signer
+//! produced for the same inputs — the same `.so` the token's vectors came
+//! from, so nothing here is documentation taken on trust.
 
-// Read-only and complete, but nothing points at it until authenticated reads
-// land.
+// Complete and held to its evidence, but nothing points at it until the ticket
+// is wired to the order path.
 #![allow(dead_code)]
 
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use ecgfp5::curve::Point;
 use ecgfp5::field::{GFp, GFp5};
 use ecgfp5::scalar::Scalar;
+
+use crate::lighter::Zone;
 
 // ---------------------------------------------------------------------------
 // Poseidon2 over Goldilocks, plonky2 variant.
@@ -587,16 +619,21 @@ pub enum SignError {
     Message,
     DeadlinePassed,
     DeadlineTooFar,
+    /// A transaction field a digest cannot carry, named. See [`field`].
+    Field(&'static str),
 }
 
 impl fmt::Display for SignError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::PrivateKey => "private key must be 40 bytes of hex, and not zero mod the order",
-            Self::Message => "auth message is not a canonical field element",
-            Self::DeadlinePassed => "deadline is not in the future",
-            Self::DeadlineTooFar => "deadline is more than 8h ahead",
-        })
+        match self {
+            Self::PrivateKey => {
+                f.write_str("private key must be 40 bytes of hex, and not zero mod the order")
+            }
+            Self::Message => f.write_str("auth message is not a canonical field element"),
+            Self::DeadlinePassed => f.write_str("deadline is not in the future"),
+            Self::DeadlineTooFar => f.write_str("deadline is more than 8h ahead"),
+            Self::Field(name) => write!(f, "a transaction's {name} cannot be negative"),
+        }
     }
 }
 
@@ -650,6 +687,204 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
     (0..text.len() / 2)
         .map(|i| u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).ok())
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// The L2 transactions.
+
+/// The numbers the sequencer files these two under. They are the `tx_type` the
+/// submission carries *and* the second element of the digest, so a transaction
+/// cannot be re-filed as another kind after it is signed.
+const TX_CREATE_ORDER: u8 = 14;
+const TX_CANCEL_ORDER: u8 = 15;
+
+/// The one order shape this app places, as the venue's own tables number it: a
+/// limit order that rests until its own expiry, with no trigger.
+///
+/// Written out rather than parameterised because every other shape is a
+/// different validation table at the venue — a market order must be
+/// immediate-or-cancel and carry no expiry, a stop must carry a trigger and is
+/// refused on spot — and none of them has a caller here. A `Tif` enum with one
+/// inhabitant reached would be a choice nobody makes.
+const ORDER_LIMIT: i64 = 0;
+const ORDER_GOOD_TILL_TIME: i64 = 1;
+const NO_TRIGGER: i64 = 0;
+
+/// One limit order, as the transaction carries it.
+///
+/// Integers throughout, because that is what is signed: a price is counted in
+/// the market's own price steps and a size in its size steps, and the adapter
+/// that reads a market's decimals is what turns a figure on screen into one of
+/// these. A float here would be a rounding rule living in the signer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NewOrder {
+    pub account: i64,
+    pub api_key: u8,
+    /// The market's own id on *this* deployment. The two deployments number
+    /// their markets independently, so an id is meaningless without the zone
+    /// beside it — which is why both reach the digest together.
+    pub market: i16,
+    /// The app's own name for this order, and the only handle it gets: the
+    /// venue answers a submission with a transaction hash rather than an order
+    /// id, so the cancel names the order by the index its placer chose.
+    pub client_index: i64,
+    pub base_amount: i64,
+    pub price: u32,
+    pub ask: bool,
+    pub reduce_only: bool,
+    /// When the resting order stops resting.
+    pub expiry_ms: i64,
+    /// When the *transaction* stops being submittable, which is a different
+    /// deadline and a far shorter one: it bounds how long a signed transaction
+    /// somebody copied is worth replaying, and says nothing about the order.
+    pub deadline_ms: i64,
+    pub nonce: i64,
+}
+
+/// One resting order to pull, named by the index it was placed under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cancel {
+    pub account: i64,
+    pub api_key: u8,
+    pub market: i16,
+    pub index: i64,
+    pub deadline_ms: i64,
+    pub nonce: i64,
+}
+
+/// A built, unsigned transaction: the number the wire files it under, the
+/// digest the API key signs, and the body those same fields go out as.
+///
+/// The digest is built here rather than by the caller for the reason
+/// `signing.rs` builds Hyperliquid's the same way: what is signed and what is
+/// sent have to come from one set of values, or a field can be signed in one
+/// shape and sent in another and the venue recovers a stranger.
+#[derive(Clone, Debug)]
+pub struct Transaction {
+    tx_type: u8,
+    digest: Digest,
+    fields: String,
+}
+
+impl Transaction {
+    pub fn tx_type(&self) -> u8 {
+        self.tx_type
+    }
+
+    pub fn digest(&self) -> Digest {
+        self.digest
+    }
+
+    /// The `tx_info` the submission carries, with this key's signature in it.
+    ///
+    /// `L2TxAttributes` is always null: attributes are integrator fees and
+    /// self-trade modes, this app sets none, and an empty set is the one case
+    /// the venue's digest leaves out of the hash entirely.
+    pub fn signed(&self, key: &PrivateKey) -> String {
+        let signature = BASE64.encode(key.sign(self.digest));
+        format!(
+            "{{{},\"Sig\":\"{signature}\",\"L2TxAttributes\":null}}",
+            self.fields
+        )
+    }
+}
+
+/// Build the digest for a create-order transaction.
+///
+/// The element order is the venue's and is not the body's: the chain and the
+/// transaction type lead, then the two the sequencer replays against, then the
+/// transaction's own fields. Transcribed from `lighter-go`'s
+/// `L2CreateOrderTxInfo.Hash`, and pinned against digests that signer produced.
+pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignError> {
+    let ask = i64::from(order.ask);
+    let reduce_only = i64::from(order.reduce_only);
+    let digest = digest_of(&[
+        ("chain id", i64::from(zone.chain_id())),
+        ("transaction type", i64::from(TX_CREATE_ORDER)),
+        ("nonce", order.nonce),
+        ("deadline", order.deadline_ms),
+        ("account index", order.account),
+        ("api key index", i64::from(order.api_key)),
+        ("market index", i64::from(order.market)),
+        ("client order index", order.client_index),
+        ("base amount", order.base_amount),
+        ("price", i64::from(order.price)),
+        ("side", ask),
+        ("order type", ORDER_LIMIT),
+        ("time in force", ORDER_GOOD_TILL_TIME),
+        ("reduce-only flag", reduce_only),
+        ("trigger price", NO_TRIGGER),
+        ("order expiry", order.expiry_ms),
+    ])?;
+    Ok(Transaction {
+        tx_type: TX_CREATE_ORDER,
+        digest,
+        fields: format!(
+            "\"AccountIndex\":{},\"ApiKeyIndex\":{},\"MarketIndex\":{},\
+             \"ClientOrderIndex\":{},\"BaseAmount\":{},\"Price\":{},\"IsAsk\":{ask},\
+             \"Type\":{ORDER_LIMIT},\"TimeInForce\":{ORDER_GOOD_TILL_TIME},\
+             \"ReduceOnly\":{reduce_only},\"TriggerPrice\":{NO_TRIGGER},\
+             \"OrderExpiry\":{},\"ExpiredAt\":{},\"Nonce\":{}",
+            order.account,
+            order.api_key,
+            order.market,
+            order.client_index,
+            order.base_amount,
+            order.price,
+            order.expiry_ms,
+            order.deadline_ms,
+            order.nonce,
+        ),
+    })
+}
+
+/// The same for a cancel, whose digest is the same envelope over half the
+/// fields.
+pub fn cancel_order(zone: Zone, cancel: &Cancel) -> Result<Transaction, SignError> {
+    let digest = digest_of(&[
+        ("chain id", i64::from(zone.chain_id())),
+        ("transaction type", i64::from(TX_CANCEL_ORDER)),
+        ("nonce", cancel.nonce),
+        ("deadline", cancel.deadline_ms),
+        ("account index", cancel.account),
+        ("api key index", i64::from(cancel.api_key)),
+        ("market index", i64::from(cancel.market)),
+        ("order index", cancel.index),
+    ])?;
+    Ok(Transaction {
+        tx_type: TX_CANCEL_ORDER,
+        digest,
+        fields: format!(
+            "\"AccountIndex\":{},\"ApiKeyIndex\":{},\"MarketIndex\":{},\"Index\":{},\
+             \"ExpiredAt\":{},\"Nonce\":{}",
+            cancel.account,
+            cancel.api_key,
+            cancel.market,
+            cancel.index,
+            cancel.deadline_ms,
+            cancel.nonce,
+        ),
+    })
+}
+
+/// Hash the named fields, refusing any that a digest cannot carry.
+///
+/// The venue casts each field straight into a Goldilocks element, so a
+/// negative one wraps to an element near 2^64 rather than to a small one.
+/// Nothing here is ever legitimately negative, and a value that arrived that
+/// way would be signed as a number nobody meant — so it is refused by name
+/// rather than hashed. Everything non-negative needs no further check: the
+/// Goldilocks prime is 2^64 - 2^32 + 1, which is above `i64::MAX`, so every
+/// value that passes this is already canonical.
+fn digest_of(fields: &[(&'static str, i64)]) -> Result<Digest, SignError> {
+    let mut elements = Vec::with_capacity(fields.len());
+    for (name, value) in fields {
+        if *value < 0 {
+            return Err(SignError::Field(name));
+        }
+        elements.push(GFp::from_u64_reduce(*value as u64));
+    }
+    Ok(Digest(hash_to_quintic_extension(&elements)))
 }
 
 #[cfg(test)]
@@ -1043,6 +1278,440 @@ mod tests {
         assert!(
             std::mem::needs_drop::<PrivateKey>(),
             "PrivateKey lost its Drop, so it can be made Copy and its limbs outlive it"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The transactions, against the same signer the token's vectors came from.
+    //
+    // Each vector is one call into `lighter-signer-linux-amd64.so` with the
+    // inputs spelled below, and what came back is the digest and the body. The
+    // `ExpiredAt` in each is not a choice: the shared library stamps it from
+    // its own clock, so it is recorded here exactly as it was produced. That
+    // makes these fixed vectors rather than a re-derivation, which is the
+    // point — they were produced by their code, not by ours.
+    // -----------------------------------------------------------------------
+
+    /// A limit buy on the test deployment, at the small end of every range.
+    const BUY: NewOrder = NewOrder {
+        account: ACCOUNT,
+        api_key: API_KEY,
+        market: 1,
+        client_index: 13,
+        base_amount: 100_000,
+        price: 6_500_000,
+        ask: false,
+        reduce_only: false,
+        expiry_ms: 1_786_300_000_000,
+        deadline_ms: 1_786_279_157_060,
+        nonce: 7,
+    };
+    const BUY_DIGEST: &str =
+        "5be034139e72ab860d2f11051a10d878b991b69a12b3cec3d360a7cbecda31e5f9492d0f6970bd30";
+    const BUY_BODY: &str = concat!(
+        r#"{"AccountIndex":702384,"ApiKeyIndex":3,"MarketIndex":1,"ClientOrderIndex":13,"#,
+        r#""BaseAmount":100000,"Price":6500000,"IsAsk":0,"Type":0,"TimeInForce":1,"#,
+        r#""ReduceOnly":0,"TriggerPrice":0,"OrderExpiry":1786300000000,"#,
+        r#""ExpiredAt":1786279157060,"Nonce":7,"Sig":"botQoZ4SpebwpsSbz1vOQGhjQwRIlJJU1einQ"#,
+        r#"DhXggAf4IvvwCbOYakGncaoc4TmOuuGPRNu20s0qD9777jdbL/ZHxaOFLsvzwRhl5K4jWc=","#,
+        r#""L2TxAttributes":null}"#,
+    );
+
+    /// The same order's cancel.
+    const PULL: Cancel = Cancel {
+        account: ACCOUNT,
+        api_key: API_KEY,
+        market: 1,
+        index: 13,
+        deadline_ms: 1_786_279_157_060,
+        nonce: 9,
+    };
+    const PULL_DIGEST: &str =
+        "f7b4080dd16cc13c626a3b43859cb34d4d1c3992bf1003eab418db07b1cdc97a7c706adb54c4333b";
+    const PULL_BODY: &str = concat!(
+        r#"{"AccountIndex":702384,"ApiKeyIndex":3,"MarketIndex":1,"Index":13,"#,
+        r#""ExpiredAt":1786279157060,"Nonce":9,"Sig":"/HO8yYTU2Wqyrf6atHXJcRxpsjpIU9NuppSD"#,
+        r#"fIimDFaX3X8nrm3oCY9qlYWWHtPQGb8f5/P/+5q2H0fbrMG3Q8NNnmvOXG/44pFgVkw3YlY=","#,
+        r#""L2TxAttributes":null}"#,
+    );
+
+    /// A reduce-only sell on the live deployment, with every field the venue
+    /// caps pushed to its cap: the largest market index, client index, size,
+    /// price and nonce it will take. The pair with `BUY` is what says a field
+    /// is carried rather than a constant — every one of them differs.
+    const CAPPED_SELL: NewOrder = NewOrder {
+        account: ACCOUNT,
+        api_key: API_KEY,
+        market: 254,
+        client_index: 281_474_976_710_655,
+        base_amount: 281_474_976_710_655,
+        price: u32::MAX,
+        ask: true,
+        reduce_only: true,
+        expiry_ms: 4_102_444_800_000,
+        deadline_ms: 1_786_279_157_061,
+        nonce: 281_474_976_710_655,
+    };
+    const CAPPED_SELL_DIGEST: &str =
+        "4f033e25df0aeb784a445e7104a7703cbbc3ef00e9e79dda5a8e868e6ae55b01710de9c48be0d7f9";
+    const CAPPED_SELL_BODY: &str = concat!(
+        r#"{"AccountIndex":702384,"ApiKeyIndex":3,"MarketIndex":254,"#,
+        r#""ClientOrderIndex":281474976710655,"BaseAmount":281474976710655,"#,
+        r#""Price":4294967295,"IsAsk":1,"Type":0,"TimeInForce":1,"ReduceOnly":1,"#,
+        r#""TriggerPrice":0,"OrderExpiry":4102444800000,"ExpiredAt":1786279157061,"#,
+        r#""Nonce":281474976710655,"Sig":"y0KvygQ14ir/gkwPEPolCp3qhgdgfzAojN0OPAYElFAAq3R1"#,
+        r#"Ie3cHQoks8opXNrTJNuTm9R9aX4auk/5OB/v0t3qTyUWckrILlM5KboHa3w=","L2TxAttributes":null}"#,
+    );
+
+    /// A cancel naming an order by the venue's own index rather than a client
+    /// one, at the top of that range.
+    const CAPPED_PULL: Cancel = Cancel {
+        account: ACCOUNT,
+        api_key: API_KEY,
+        market: 254,
+        index: 1_152_921_504_606_846_975,
+        deadline_ms: 1_786_279_157_061,
+        nonce: 1,
+    };
+    const CAPPED_PULL_DIGEST: &str =
+        "efb1df807b4d6d49e9efd79970e431d377c434be6167a98bcf870814ae175c515a25c3527a30a592";
+    const CAPPED_PULL_BODY: &str = concat!(
+        r#"{"AccountIndex":702384,"ApiKeyIndex":3,"MarketIndex":254,"#,
+        r#""Index":1152921504606846975,"ExpiredAt":1786279157061,"Nonce":1,"#,
+        r#""Sig":"7koGy+5Ipy637VwBcbbV8PBTS8IDeQRK39oeTfi5D4ACCimFYjnSOG01lyk5UCBQTuUH9w9ukGCX"#,
+        r#"IqbqSTCO/KhLnmBpeXLo3lrs9zI0Rgo=","L2TxAttributes":null}"#,
+    );
+
+    /// The signature out of a body the official signer produced, as bytes.
+    fn signature_in(body: &str) -> [u8; 80] {
+        let (_, rest) = body.split_once("\"Sig\":\"").expect("a signed body");
+        let (encoded, _) = rest.split_once('"').expect("a closed string");
+        BASE64
+            .decode(encoded)
+            .expect("the venue spells a signature in base64")[..]
+            .try_into()
+            .expect("80 bytes of signature")
+    }
+
+    /// A body with its signature blanked, so two bodies can be compared on
+    /// everything the signature is not. They cannot be compared whole: their
+    /// signer samples its nonce where this module derives one, so the same
+    /// transaction is signed to different bytes by each and only the fields
+    /// under the signature are the same.
+    fn without_signature(body: &str) -> String {
+        let (before, rest) = body.split_once("\"Sig\":\"").expect("a signed body");
+        let (_, after) = rest.split_once('"').expect("a closed string");
+        format!("{before}\"Sig\":\"…\"{after}")
+    }
+
+    /// The whole transaction layout in one number, four times over.
+    ///
+    /// This is the claim the rest of the order path stands on: which fields are
+    /// hashed, in which order, under which chain id, and how the leading two
+    /// elements are spelled. Nothing about it can be checked against itself —
+    /// a digest agrees with whatever built it — so each of these is a digest
+    /// the venue's own signer produced for inputs stated beside it.
+    ///
+    /// Both transaction kinds and both deployments, because the chain id and
+    /// the transaction type are elements of the hash rather than routing: a
+    /// module that ignored either would still produce a stable digest and would
+    /// sign a mainnet order with a testnet signature.
+    #[test]
+    fn a_transaction_digest_matches_the_official_signer() {
+        let digest = |transaction: Transaction| hex(&transaction.digest().to_bytes());
+        assert_eq!(
+            digest(create_order(Zone::Testnet, &BUY).expect("a buildable order")),
+            BUY_DIGEST,
+        );
+        assert_eq!(
+            digest(cancel_order(Zone::Testnet, &PULL).expect("a buildable cancel")),
+            PULL_DIGEST,
+        );
+        assert_eq!(
+            digest(create_order(Zone::Mainnet, &CAPPED_SELL).expect("a buildable order")),
+            CAPPED_SELL_DIGEST,
+        );
+        assert_eq!(
+            digest(cancel_order(Zone::Mainnet, &CAPPED_PULL).expect("a buildable cancel")),
+            CAPPED_PULL_DIGEST,
+        );
+    }
+
+    /// The body beside the signature, spelled the way the sequencer's own
+    /// client spells it: the same field names, the same order, integers rather
+    /// than strings, and a null attribute map.
+    ///
+    /// It is compared against the official signer's own output rather than
+    /// against a hand-written expectation, so a field renamed or dropped on
+    /// their side shows up here as a difference rather than as a rejection
+    /// nobody can read.
+    #[test]
+    fn a_transaction_body_matches_the_official_signer() {
+        let key = key();
+        let body = |transaction: Transaction| transaction.signed(&key);
+        for (built, official) in [
+            (
+                body(create_order(Zone::Testnet, &BUY).expect("an order")),
+                BUY_BODY,
+            ),
+            (
+                body(cancel_order(Zone::Testnet, &PULL).expect("a cancel")),
+                PULL_BODY,
+            ),
+            (
+                body(create_order(Zone::Mainnet, &CAPPED_SELL).expect("an order")),
+                CAPPED_SELL_BODY,
+            ),
+            (
+                body(cancel_order(Zone::Mainnet, &CAPPED_PULL).expect("a cancel")),
+                CAPPED_PULL_BODY,
+            ),
+        ] {
+            assert_eq!(without_signature(&built), without_signature(official));
+            // And the one field that legitimately differs is still a signature
+            // of the right size, rather than the field having gone missing.
+            assert_eq!(signature_in(&built).len(), 80);
+            assert_ne!(
+                signature_in(&built),
+                signature_in(official),
+                "a derived nonce is not their sampled one"
+            );
+        }
+    }
+
+    /// The other direction, and the one a body comparison cannot give: the
+    /// signature the venue's signer made over its digest has to verify against
+    /// the digest this module computes.
+    ///
+    /// That is a stronger statement than the hex match above. It says the two
+    /// digests are the same *element* under their signature scheme rather than
+    /// the same forty bytes under ours, so a transposed limb or a different
+    /// byte order would fail here even if it happened to spell alike.
+    #[test]
+    fn the_official_signature_over_a_transaction_verifies() {
+        let public = bytes::<40>(PUBLIC_KEY);
+        for (transaction, body) in [
+            (
+                create_order(Zone::Testnet, &BUY).expect("an order"),
+                BUY_BODY,
+            ),
+            (
+                cancel_order(Zone::Testnet, &PULL).expect("a cancel"),
+                PULL_BODY,
+            ),
+            (
+                create_order(Zone::Mainnet, &CAPPED_SELL).expect("an order"),
+                CAPPED_SELL_BODY,
+            ),
+            (
+                cancel_order(Zone::Mainnet, &CAPPED_PULL).expect("a cancel"),
+                CAPPED_PULL_BODY,
+            ),
+        ] {
+            assert!(
+                verify(&public, transaction.digest(), &signature_in(body)),
+                "the official signature does not verify against this digest",
+            );
+            // And this module's own signature over the same digest verifies
+            // too, which is what the wire will actually carry.
+            assert!(verify(
+                &public,
+                transaction.digest(),
+                &signature_in(&transaction.signed(&key())),
+            ));
+        }
+    }
+
+    /// Every field has to reach the digest, and a vector pins only the field
+    /// values it happens to hold: a field dropped from the element list still
+    /// produces a stable, plausible digest for every transaction that shares
+    /// that field's value.
+    ///
+    /// So each field is moved on its own and the digest must move with it. The
+    /// deployment is in the same loop because the chain id is an element like
+    /// any other and is the one whose absence is invisible until an order is
+    /// replayed on the wrong exchange.
+    #[test]
+    fn every_field_a_transaction_carries_reaches_its_digest() {
+        let of = |zone, order: &NewOrder| {
+            hex(&create_order(zone, order)
+                .expect("a buildable order")
+                .digest()
+                .to_bytes())
+        };
+        let base = of(Zone::Testnet, &BUY);
+        let mut moved: Vec<(&str, String)> = vec![("deployment", of(Zone::Mainnet, &BUY))];
+        let mut push = |name: &'static str, order: NewOrder| {
+            moved.push((name, of(Zone::Testnet, &order)));
+        };
+        push(
+            "account",
+            NewOrder {
+                account: BUY.account + 1,
+                ..BUY
+            },
+        );
+        push(
+            "api key",
+            NewOrder {
+                api_key: BUY.api_key + 1,
+                ..BUY
+            },
+        );
+        push(
+            "market",
+            NewOrder {
+                market: BUY.market + 1,
+                ..BUY
+            },
+        );
+        push(
+            "client index",
+            NewOrder {
+                client_index: BUY.client_index + 1,
+                ..BUY
+            },
+        );
+        push(
+            "base amount",
+            NewOrder {
+                base_amount: BUY.base_amount + 1,
+                ..BUY
+            },
+        );
+        push(
+            "price",
+            NewOrder {
+                price: BUY.price + 1,
+                ..BUY
+            },
+        );
+        push(
+            "side",
+            NewOrder {
+                ask: !BUY.ask,
+                ..BUY
+            },
+        );
+        push(
+            "reduce only",
+            NewOrder {
+                reduce_only: !BUY.reduce_only,
+                ..BUY
+            },
+        );
+        push(
+            "expiry",
+            NewOrder {
+                expiry_ms: BUY.expiry_ms + 1,
+                ..BUY
+            },
+        );
+        push(
+            "deadline",
+            NewOrder {
+                deadline_ms: BUY.deadline_ms + 1,
+                ..BUY
+            },
+        );
+        push(
+            "nonce",
+            NewOrder {
+                nonce: BUY.nonce + 1,
+                ..BUY
+            },
+        );
+
+        for (name, digest) in &moved {
+            assert_ne!(*digest, base, "the {name} does not reach the digest");
+        }
+        // And no two of them collide, which is what a field written into the
+        // wrong slot of the element list would produce.
+        let mut seen: Vec<&String> = moved.iter().map(|(_, digest)| digest).collect();
+        seen.sort();
+        let all = seen.len();
+        seen.dedup();
+        assert_eq!(seen.len(), all, "two different fields hash to one digest");
+
+        // The same for a cancel's four of its own.
+        let cancel = |cancel: &Cancel| {
+            hex(&cancel_order(Zone::Testnet, cancel)
+                .expect("a buildable cancel")
+                .digest()
+                .to_bytes())
+        };
+        let resting = cancel(&PULL);
+        for moved in [
+            Cancel {
+                account: PULL.account + 1,
+                ..PULL
+            },
+            Cancel {
+                api_key: PULL.api_key + 1,
+                ..PULL
+            },
+            Cancel {
+                market: PULL.market + 1,
+                ..PULL
+            },
+            Cancel {
+                index: PULL.index + 1,
+                ..PULL
+            },
+            Cancel {
+                deadline_ms: PULL.deadline_ms + 1,
+                ..PULL
+            },
+            Cancel {
+                nonce: PULL.nonce + 1,
+                ..PULL
+            },
+        ] {
+            assert_ne!(cancel(&moved), resting);
+        }
+        // A cancel is not the order it cancels, which is the transaction type
+        // doing its job: every other element these two share is equal.
+        assert_ne!(resting, base);
+    }
+
+    /// A negative field is refused by name rather than hashed.
+    ///
+    /// The venue casts each field straight into a Goldilocks element, so a -1
+    /// becomes an element near 2^64 rather than a small one — and this module
+    /// reduces where theirs does not, so the two would disagree and the venue
+    /// would recover a stranger. Nothing here is ever legitimately negative, so
+    /// the value is refused where it can still be read.
+    #[test]
+    fn a_negative_field_is_refused_rather_than_signed_as_a_huge_one() {
+        let refused = |order: NewOrder| {
+            create_order(Zone::Testnet, &order).expect_err("a negative field is not signable")
+        };
+        assert_eq!(
+            refused(NewOrder { nonce: -1, ..BUY }),
+            SignError::Field("nonce"),
+        );
+        assert_eq!(
+            refused(NewOrder { market: -1, ..BUY }),
+            SignError::Field("market index"),
+        );
+        assert_eq!(
+            refused(NewOrder {
+                base_amount: -1,
+                ..BUY
+            }),
+            SignError::Field("base amount"),
+        );
+        assert_eq!(
+            cancel_order(Zone::Testnet, &Cancel { index: -1, ..PULL })
+                .expect_err("a negative index is not signable"),
+            SignError::Field("order index"),
+        );
+        // And the sentence names the field, because "invalid transaction" sends
+        // a reader to read the whole thing.
+        assert!(
+            SignError::Field("base amount")
+                .to_string()
+                .contains("base amount")
         );
     }
 
