@@ -37,6 +37,7 @@ state
   busy = false
   error = ""
   draft:editor = ""
+  copied = ""
   signed:bool = signed_in()
   code = ""
   code_url = ""
@@ -259,7 +260,7 @@ view
                     // One `if` per kind rather than a `match`: the kinds are
                     // disjoint, so first-match ordering buys nothing here.
                     if settled.kind == "prompt"
-                      Prompt #prompt(settled.id) body=settled.body
+                      Prompt #prompt(settled.id) body=settled.body -> copy_text _
                     if settled.kind == "reasoning"
                       Reasoning #reasoning(settled.id) -> toggle_row _
                         with
@@ -282,7 +283,7 @@ view
                           status=settled.status
                           open=settled.open
                     if settled.kind == "answer"
-                      Answer #answer(settled.id) -> copy_link _
+                      Answer #answer(settled.id) -> copy_text _
                         with
                           row_id=settled.id
                           body=settled.body
@@ -304,9 +305,9 @@ view
                       row gap=8.0 align=center
                         text "◌" size=12.5 @text-warning
                         text status @field_label
-                      markdown live_thinking #live-thinking gap=6.0 text-size=12.5 -> copy_link _
+                      markdown live_thinking #live-thinking gap=6.0 text-size=12.5 -> copy_text _
                         style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
-                  markdown live #live-body -> copy_link _
+                  markdown live #live-body -> copy_text _
                     with
                       gap=10.0
                       text-size=13.5
@@ -382,6 +383,8 @@ view
                   button "Send after" #queue @outline_action -> queue
                 if busy && !can_steer
                   text status @meta_compact
+                if !busy && !empty(copied)
+                  text "Copied" @meta_compact
                 if !busy
                   Kbd label="Enter"
                 if !busy

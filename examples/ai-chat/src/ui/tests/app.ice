@@ -140,3 +140,24 @@ test an_idle_composer_offers_only_send
   expect exists #app/composer/field/send
   expect missing #app/composer/field/stop
   expect missing #app/composer/steer
+
+// iced draws non-editable text without selection, so there is no dragging
+// over an answer to copy it. The button is how the text leaves the window,
+// which makes it load-bearing rather than a convenience.
+test copying_a_message_puts_its_own_text_on_the_clipboard
+  preset conversation
+  viewport 920 800
+  target ask = #app/transcript/rows/key(-1)/prompt(-1)/root/copy
+  target reply = #app/transcript/rows/key(-6)/answer(-6)/root/copy
+  expect a11y ask name "Copy"
+  expect a11y reply name "Copy"
+
+  // The clipboard itself is outside what the harness can read, so what is
+  // asserted is that each button carried its own row's text to the handler
+  // that writes it — which is the part that goes wrong.
+  click ask
+  expect copied == "Which version of iced is current, and how do I stream a reply into a Markdown view?"
+  expect text "Copied"
+
+  click reply
+  expect copied != "Which version of iced is current, and how do I stream a reply into a Markdown view?"

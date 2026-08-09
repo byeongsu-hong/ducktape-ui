@@ -8,6 +8,7 @@
 on send
   let prompt = typed
   return if busy || empty(prompt)
+  copied = ""
   entries = push_user(session, prompt)
   draft = editor("")
   error = ""
@@ -113,10 +114,13 @@ on use_day
   active_palette = AppTheme.app
   entries = set_palette(session, false)
 
-// A link in an answer is copied rather than opened: which browser a developer
-// wanted is not this window's call to make.
-on copy_link(url)
-  task clipboard write url
+// Everything that leaves this window leaves the same way. A clicked link is
+// copied rather than opened — which browser a developer wanted is not this
+// window's call — and so is a message, because iced draws non-editable text
+// without selection and there is no dragging over it to copy.
+on copy_text(text)
+  copied = text
+  task clipboard write text
 
 // Signing in without leaving the window. The host mints a short code, the
 // person types it into a browser wherever they have one, and this waits.

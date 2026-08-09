@@ -88,7 +88,7 @@ fn style(dark: bool) -> markdown::Style {
 /// iced derives a code block's container from the theme, which on a dark
 /// palette leaves it the same value as the page behind it — the block stops
 /// reading as a block at all. Everything else here is iced's own default.
-struct Blocks {
+pub struct Blocks {
     dark: bool,
 }
 
@@ -134,6 +134,15 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
         })
         .into()
     }
+}
+
+/// The same viewer, for the reply still being written.
+///
+/// Without it the live reply is drawn by iced's default and a code block
+/// changes appearance the moment its turn settles — popping onto the ground
+/// `Blocks` gives it. The answer should not move when it stops arriving.
+pub fn answer_viewer(dark: bool) -> Blocks {
+    Blocks { dark }
 }
 
 /// One settled Markdown row. The message is the URL of a clicked link.

@@ -9,7 +9,7 @@
 // written — the caller puts each one behind `lazy`, keyed on the row itself.
 
 // What was asked, leaning to its own side of the column.
-component Prompt(body:str)
+component Prompt(body:str) -> str
   row #root w=fill gap=10.0
     space w=fill h=1.0
     box
@@ -21,7 +21,11 @@ component Prompt(body:str)
         border=border
         border-w=1.0
         r=14.0
-      text body wrap=word @body
+      col gap=4.0
+        text body wrap=word @body
+        row w=fill
+          space w=fill h=1.0
+          button "Copy" #copy @ghost_action -> emit(body)
 
 // The model's account of what it was doing. Folded by default: it is context
 // for the answer, not the answer.
@@ -121,8 +125,18 @@ component ToolCall(row_id:i64, title:str, detail:str, status:str, open:bool) -> 
 // widget because a parsed document cannot live in component state; it keeps one
 // parse per row for the life of the window.
 component Answer(row_id:i64, body:str, dark:bool) -> str
-  col #root w=fill pt=6.0
+  col #root
+    with
+      w=fill
+      pt=6.0
+      gap=4.0
     extern markdown_body(row_id, body, 13.5, dark) #body -> emit(_)
+    // iced draws non-editable text without selection, so an answer cannot be
+    // dragged over and copied the way it could in a browser. Until the toolkit
+    // grows that, this is how the text leaves the window.
+    row w=fill
+      space w=fill h=1.0
+      button "Copy" #copy @ghost_action -> emit(body)
 
 // What the turn cost, set quietly against the right edge.
 component Usage(detail:str)
@@ -144,12 +158,12 @@ component Usage(detail:str)
 // The default pick styling puts a filled highlight behind the selection, which
 // is far too loud for something sitting under the app's own name.
 component Chip(options:[str], selected:str?) -> str
-  pick options selected #root p=6.0 text-size=11.0 -> emit(_)
+  pick options selected #root p=7.0 text-size=13.0 -> emit(_)
     active text=muted handle=muted bg=surface border=surface r=7.0
     hovered text=fg handle=fg bg=accent border=border r=7.0
     opened text=fg handle=fg bg=accent border=border r=7.0
     opened-hovered text=fg handle=fg bg=accent border=border r=7.0
     menu text=fg selected-text=fg selected-bg=accent bg=surface border=border border-w=1.0 r=10.0 shadow=shadow_popover shadow-y=6.0 shadow-blur=18.0
     handle dynamic
-      closed code="⌄" size=15.0
-      open code="⌃" size=15.0
+      closed code="▾" size=13.0
+      open code="▴" size=13.0

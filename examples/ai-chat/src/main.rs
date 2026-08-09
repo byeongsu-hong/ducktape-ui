@@ -20,6 +20,11 @@ fn main() -> iced::Result {
 /// view rebuild. It is compared against the same cycle with every row changed,
 /// which is what the transcript would cost per token if nothing were held.
 ///
+/// The second measurement splits that cycle into its two halves against the
+/// length of the reply being written, because the halves answer to different
+/// things: the append answers to the shape of the reply and the rebuild to how
+/// many blocks it has been cut into.
+///
 /// Run: `cargo test -p ai-chat-example --release perf -- --ignored --nocapture`
 #[cfg(test)]
 mod perf {
@@ -93,65 +98,10 @@ mod perf {
         })
     }
 
-    /// What 138 extra rows add to one cycle, in each mode. Taking the
-    /// difference cancels everything the two modes do not share.
+    /// What the extra rows of 23 more turns add to one cycle, in each mode.
+    /// Taking the difference cancels everything the two modes do not share.
     fn marginal(mode: fn(usize) -> Duration) -> Duration {
         mode(24).saturating_sub(mode(1))
-    }
-
-    /// The same, split: what the state change costs, and what redrawing costs.
-    fn split_at_answer_length(prefix: u32) -> (Duration, Duration) {
-        let token = || {
-            __AiChatMessage::Streamed(Chunk {
-                answer: "another handful of words ".to_owned(),
-                thinking: String::new(),
-                status: "Responding".to_owned(),
-            })
-        };
-        let mut app = booted(1);
-        for _ in 0..prefix {
-            let _ = app.__update(token());
-        }
-        let _ = app.__view();
-        let update_only = measure(|| {
-            let _ = app.__update(token());
-        });
-
-        let mut app = booted(1);
-        for _ in 0..prefix {
-            let _ = app.__update(token());
-        }
-        let _ = app.__view();
-        let both = measure(|| {
-            let _ = app.__update(token());
-            let _ = app.__view();
-        });
-        (update_only, both.saturating_sub(update_only))
-    }
-
-    /// What a token costs once the reply is already `tokens` long.
-    ///
-    /// This is the hot path, and the one that can go quadratic: every token
-    /// lands in a Markdown document that is already on screen. If appending
-    /// reparses from the top, the cost of a token tracks the length of the
-    /// answer so far — and a long reply gets slower as it is written.
-    fn cost_at_answer_length(prefix: u32) -> Duration {
-        let mut app = booted(1);
-        let token = || {
-            __AiChatMessage::Streamed(Chunk {
-                answer: "another handful of words ".to_owned(),
-                thinking: String::new(),
-                status: "Responding".to_owned(),
-            })
-        };
-        for _ in 0..prefix {
-            let _ = app.__update(token());
-        }
-        let _ = app.__view();
-        measure(move || {
-            let _ = app.__update(token());
-            let _ = app.__view();
-        })
     }
 
     #[test]
@@ -164,7 +114,7 @@ mod perf {
         for turns in [1, 8, 24] {
             eprintln!(
                 "{turns:>3} turns ({:>3} rows)  token {:>10?}   all rows changed {:>10?}",
-                turns * 6,
+                transcript(turns, false).len(),
                 streaming(turns),
                 rebuilding(turns),
             );
@@ -172,7 +122,8 @@ mod perf {
 
         let held = marginal(streaming);
         let rebuilt = marginal(rebuilding);
-        eprintln!("138 extra rows cost  {held:?} per token held, {rebuilt:?} rebuilt");
+        let extra = transcript(24, false).len() - transcript(1, false).len();
+        eprintln!("{extra} extra rows cost  {held:?} per token held, {rebuilt:?} rebuilt");
 
         // The assertion is on the property that holds with room to spare: the
         // per-token cost grows far slower than the transcript. 24x the rows for
@@ -186,28 +137,136 @@ mod perf {
         );
     }
 
-    /// The claim the streaming path rests on: appending to a parsed document
-    /// costs the same whether the answer is short or long.
+    /// A turn that is still being written, with the live surfaces on screen.
+    ///
+    /// The `streaming` preset is what puts `busy` on; without it the reply
+    /// being written is not drawn at all and a redraw measurement would be
+    /// measuring the transcript alone.
+    fn mid_turn(turns: usize) -> AiChat {
+        let (mut app, _boot) = AiChat::__preset_2();
+        let _ = app.__update(__AiChatMessage::Rows(transcript(turns, false)));
+        // The preset's live reply ends on a closing code fence. Anything
+        // appended straight onto it lands inside the fence line and reopens the
+        // block, so close it before measuring a reply of a chosen shape.
+        let _ = app.__update(chunk("\n\n"));
+        app
+    }
+
+    fn chunk(answer: &str) -> __AiChatMessage {
+        __AiChatMessage::Streamed(Chunk {
+            answer: answer.to_owned(),
+            thinking: String::new(),
+            status: "Responding".to_owned(),
+        })
+    }
+
+    /// What the reply being written looks like. `push_str` reparses the block
+    /// the reply is still inside, so the shape of a reply is what decides the
+    /// cost of a token, not its length.
+    #[derive(Clone, Copy)]
+    struct Shape {
+        name: &'static str,
+        /// Opens the reply — a code fence, or nothing for prose.
+        seed: &'static str,
+        /// Tokens between line breaks.
+        every: u32,
+        /// What a line break is: a blank line closes the block, a lone newline
+        /// stays inside it.
+        separator: &'static str,
+    }
+
+    const PROSE: Shape = Shape {
+        name: "prose, a paragraph every 40 tokens",
+        seed: "",
+        every: 40,
+        separator: "\n\n",
+    };
+
+    const CODE: Shape = Shape {
+        name: "one code block, a line every 12 tokens",
+        seed: "```rust\n",
+        every: 12,
+        separator: "\n",
+    };
+
+    /// Where a token's cost goes once the reply is long: the append into the
+    /// parsed document, and the view rebuild that follows it.
+    fn split(turns: usize, written: u32, shape: Shape) -> (Duration, Duration) {
+        let mut app = mid_turn(turns);
+        let _ = app.__update(chunk(shape.seed));
+        let mut so_far = 0u32;
+        let mut token = |app: &mut AiChat| {
+            so_far += 1;
+            let text = if so_far.is_multiple_of(shape.every) {
+                format!("token{}", shape.separator)
+            } else {
+                "token ".to_owned()
+            };
+            let _ = app.__update(chunk(&text));
+        };
+        for _ in 0..written {
+            token(&mut app);
+        }
+        for _ in 0..20 {
+            token(&mut app);
+            let _ = app.__view();
+        }
+        let (mut append, mut redraw) = (Duration::ZERO, Duration::ZERO);
+        for _ in 0..TOKENS {
+            let start = Instant::now();
+            token(&mut app);
+            append += start.elapsed();
+            let start = Instant::now();
+            let _ = app.__view();
+            redraw += start.elapsed();
+        }
+        (append / TOKENS, redraw / TOKENS)
+    }
+
     #[test]
     #[ignore = "timing evidence; run explicitly in release mode"]
-    fn a_token_costs_the_same_however_long_the_answer_already_is() {
+    fn a_streamed_token_pays_for_the_block_it_lands_in_not_the_whole_reply() {
         if cfg!(debug_assertions) {
             eprintln!("skipped: run with --release");
             return;
         }
-        let mut seen = Vec::new();
-        for prefix in [0, 250, 1000, 3000] {
-            let cost = cost_at_answer_length(prefix);
-            let (update, view) = split_at_answer_length(prefix);
-            eprintln!(
-                "{prefix:>5} written  {cost:>10?} per token   (append {update:>9?}, redraw {view:>9?})"
-            );
-            seen.push(cost);
+        let mut flat = None;
+        for shape in [PROSE, CODE] {
+            eprintln!("{}", shape.name);
+            let mut appends = Vec::new();
+            for written in [0, 500, 1500, 3000] {
+                let (append, redraw) = split(1, written, shape);
+                appends.push(append);
+                eprintln!(
+                    "  {written:>5} tokens written   token {:>10?}   append {:>10?}   redraw {:>10?}",
+                    append + redraw,
+                    append,
+                    redraw,
+                );
+            }
+            flat.get_or_insert((appends[0], *appends.last().unwrap()));
         }
-        let (first, last) = (seen[0], seen[seen.len() - 1]);
+        let (append, redraw) = split(24, 3000, CODE);
+        let worst = append + redraw;
+        eprintln!("worst case, 24 turns behind a 3000-token code block: {worst:?}");
+
+        // A reply whose blocks close — which is what prose is — costs the same
+        // per token at 3000 tokens as at none: the parser is re-reading the
+        // paragraph in hand, not the reply. A reply that is one long code block
+        // has no such boundary, so it grows; the figures above show by how much,
+        // and the bound below is what makes that growth affordable rather than
+        // the growth itself being the claim.
+        let (short, long) = flat.expect("prose ran first");
         assert!(
-            last < first * 4,
-            "the cost of a token tracked the length of the answer: {first:?} -> {last:?}"
+            long < short * 2,
+            "appending to prose tracked the reply already written: {short:?} -> {long:?}"
+        );
+        // A model writes 50-100 tokens a second, so the budget for one is
+        // 10-20ms. The worst reply this screen can be handed is an order of
+        // magnitude inside it.
+        assert!(
+            worst < Duration::from_millis(1),
+            "a token cost {worst:?} of a 10ms budget"
         );
     }
 }

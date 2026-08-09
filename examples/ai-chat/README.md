@@ -153,17 +153,33 @@ committed artifact.
 ### Measured
 
 One full Elm cycle — `update` with a token, then a whole view rebuild — on a
-release build, 200 tokens per sample:
+release build, 200 tokens per sample.
+
+Against transcript length, with the reply being written on screen:
 
 | Transcript | Per token | Same cycle, every row changed |
 | --- | --- | --- |
-| 1 turn (6 rows) | 24 µs | 20 µs |
-| 8 turns (48 rows) | 44 µs | 51 µs |
-| 24 turns (144 rows) | 92 µs | 121 µs |
+| 1 turn (4 rows) | 25 µs | 23 µs |
+| 8 turns (32 rows) | 39 µs | 41 µs |
+| 24 turns (96 rows) | 69 µs | 80 µs |
 
-24× the transcript for 3.8× the per-token cost. What remains is the keyed
-column building one wrapper per row whether or not the row is reused;
-virtualising the transcript is the next thing that would flatten it.
+Against the length of the reply itself, split into the append and the redraw.
+`Content::push_str` re-reads the block the reply is still inside, so what
+decides the cost of a token is the reply's *shape*, not its length:
+
+| Reply so far | Prose (a paragraph every 40) | One unbroken code block |
+| --- | --- | --- |
+| 0 tokens | 51 µs | 51 µs |
+| 1500 tokens | 51 µs | 98 µs |
+| 3000 tokens | 56 µs | 135 µs |
+
+Prose is flat — the parser is re-reading the paragraph in hand, not the reply.
+A reply that is one long code block has no boundary to close, so it grows.
+
+The worst case this screen can be handed — 24 settled turns behind a
+3000-token unbroken code block — is **171 µs**. A model writes 50–100 tokens a
+second, so the budget for one is 10–20 ms: that worst case is under 2% of it.
+Further tuning is not warranted, and none was kept.
 
 ## Limits
 
