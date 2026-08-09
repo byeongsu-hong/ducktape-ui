@@ -5565,11 +5565,14 @@ revision.
 
 ## 12. Development runner and Cargo commands
 
-`cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` is the native
-development runner. It analyzes `FILE` and its imports with the normal parser
-and checker, then builds exactly one selected Cargo binary through the same
-ahead-of-time code generator used by production builds. Generated applications
-never parse, deserialize, or interpret Ice source at runtime.
+`cargo ice dev -p PACKAGE [<cargo-build-args>] [-- <app-args>]` is the native
+development runner. It discovers the package's unique Ice app or daemon root,
+analyzes that root and its imports with the normal parser and checker, then
+builds exactly one selected Cargo binary through the same ahead-of-time code
+generator used by production builds. A package with multiple Ice roots uses
+the explicit `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` form.
+Generated applications never parse, deserialize, or interpret Ice source at
+runtime.
 
 Native filesystem notifications over the complete input graph trigger snapshot
 verification. Access-only events and events below excluded build, vendor,
@@ -5626,7 +5629,7 @@ candidate children, and removes staged executables on replacement or shutdown.
 | `cargo ice clippy` | language analysis followed by workspace clippy |
 | `cargo ice compat` | analyzes app graphs, verifies exact `iced`, `iced_widget`, `ui-lang-build`, runtime, and AccessKit lockfile versions plus direct reference-app/runtime manifest pins, and runs the reference app tests |
 | `cargo ice expand FILE` | prints generated Rust for debugging |
-| `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` | watches complete source/build inputs and replaces the running app only after a rebuilt shadow candidate reports ready |
+| `cargo ice dev -p PACKAGE [<cargo-build-args>] [-- <app-args>]` | discovers the package's unique Ice root, watches complete source/build inputs, reloads compatible views in place, and replaces the running app only after a rebuilt shadow candidate reports ready |
 | `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts for a fixed input tuple |
 | `cargo ice diff BASE.json CURRENT.json [options]` | compares structured manifests and RGBA pixels, writes JSON/PNG diff artifacts, and fails outside explicit tolerances |
 | `cargo ice api FILE` | checks an app or declaration-only interface graph and prints its deterministic, versioned public API fingerprint |

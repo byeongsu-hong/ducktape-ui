@@ -3,7 +3,7 @@
 Run the example through the development runner:
 
 ```bash
-cargo ice dev examples/hotreload/src/ui/app.ice -- -p hotreload-example
+cargo ice dev -p hotreload-example
 ```
 
 The left pane is the rendered Ice view. The right pane edits

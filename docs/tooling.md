@@ -50,9 +50,11 @@ execution and policy. The output contains `report.json`, `report.html`,
 
 ## dev
 
-`cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` builds and launches
-one native app or daemon, watches its complete Ice and Cargo input graph, and
-uses native filesystem notifications to trigger content verification. If native
+`cargo ice dev -p PACKAGE [<cargo-build-args>] [-- <app-args>]` discovers the
+package's unique Ice root, builds and launches its native app or daemon, watches
+the complete Ice and Cargo input graph, and uses native filesystem notifications
+to trigger content verification. Packages with multiple Ice roots can use
+`cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]`. If native
 notifications cannot be installed, it reports
 `ice dev: native notifications unavailable; using polling safety mode` and
 checks the relevant metadata inventory every 750 milliseconds instead. Idle

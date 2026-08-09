@@ -198,11 +198,14 @@ The release packages job independently regenerates the artifact and requires
 byte equality plus a zero JSON diff before a tag can publish. This is tooling
 evidence over the existing Core contract, not a new syntax or LSP capability.
 
-`cargo ice dev` exercises that same ahead-of-time path. Content stamps cover
-the selected Ice import graph, embedded fonts, icons, and media files,
+`cargo ice dev` exercises that same ahead-of-time path. `-p PACKAGE` discovers
+the package's unique Ice app or daemon root. Content stamps cover the selected
+Ice import graph, embedded fonts, icons, and media files,
 participating project
 Rust packages, Cargo manifests and lock/config/toolchain files, rustc dep-info,
-and build-script `rerun-if-changed` inputs. Native notification tests prove that
+and build-script `rerun-if-changed` inputs. The dep-info resolver accepts both
+hard-linked executables and byte-identical copies produced on macOS while still
+rejecting Cargo's aggregate dep-info. Native notification tests prove that
 a source edit wakes the runner while an idle wait performs no snapshot poll.
 Injected NFS, unsupported-mount, and inotify-limit creation failures prove the
 runner selects its 750-millisecond polling safety mode; fallback tests cover

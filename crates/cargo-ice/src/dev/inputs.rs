@@ -719,28 +719,7 @@ pub(super) fn cargo_input_graph(
     root: &Path,
     cargo_args: &[String],
 ) -> Result<CargoInputGraph, String> {
-    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let output = Command::new(cargo)
-        .arg("metadata")
-        .args(["--format-version", "1"])
-        .args(cargo_metadata_args(cargo_args))
-        .current_dir(root)
-        .output()
-        .map_err(|error| format!("cannot run cargo metadata: {error}"))?;
-    if !output.status.success() {
-        let diagnostic = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "cargo metadata failed{}{}",
-            if diagnostic.trim().is_empty() {
-                ""
-            } else {
-                ": "
-            },
-            diagnostic.trim()
-        ));
-    }
-    let metadata = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-        .map_err(|error| format!("invalid cargo metadata output: {error}"))?;
+    let metadata = cargo_metadata(root, cargo_args)?;
     let packages = metadata["packages"]
         .as_array()
         .ok_or_else(|| "cargo metadata output has no package list".to_owned())?;
@@ -822,6 +801,69 @@ pub(super) fn cargo_input_graph(
         excluded_roots,
         discovered_inputs: Vec::new(),
     })
+}
+
+pub(super) fn package_ice_source(
+    root: &Path,
+    package_name: &str,
+    cargo_args: &[String],
+) -> Result<PathBuf, String> {
+    let metadata = cargo_metadata(root, cargo_args)?;
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or_else(|| "cargo metadata output has no package list".to_owned())?;
+    let package_roots = packages
+        .iter()
+        .filter(|package| {
+            package["source"].is_null() && package["name"].as_str() == Some(package_name)
+        })
+        .filter_map(|package| package["manifest_path"].as_str())
+        .filter_map(|manifest| Path::new(manifest).parent())
+        .collect::<Vec<_>>();
+    let package_root = match package_roots.as_slice() {
+        [package_root] => *package_root,
+        [] => return Err(format!("ice dev: package `{package_name}` was not found")),
+        _ => return Err(format!("ice dev: package `{package_name}` is ambiguous")),
+    };
+    let sources = crate::root_files(&crate::ice_files(package_root)?)
+        .map_err(|_| format!("ice dev: package `{package_name}` has no Ice app or daemon root"))?;
+    match sources.as_slice() {
+        [source] => Ok(source.clone()),
+        _ => Err(format!(
+            "ice dev: package `{package_name}` has multiple Ice roots; pass one explicit .ice path: {}",
+            sources
+                .iter()
+                .map(|source| source.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+fn cargo_metadata(root: &Path, cargo_args: &[String]) -> Result<serde_json::Value, String> {
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let output = Command::new(cargo)
+        .arg("metadata")
+        .args(["--format-version", "1"])
+        .args(cargo_metadata_args(cargo_args))
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("cannot run cargo metadata: {error}"))?;
+    if !output.status.success() {
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "cargo metadata failed{}{}",
+            if diagnostic.trim().is_empty() {
+                ""
+            } else {
+                ": "
+            },
+            diagnostic.trim()
+        ));
+    }
+    let metadata = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .map_err(|error| format!("invalid cargo metadata output: {error}"))?;
+    Ok(metadata)
 }
 
 fn cargo_target_directories(root: &Path, cargo_args: &[String]) -> Vec<PathBuf> {
@@ -1221,7 +1263,9 @@ pub(super) fn rustc_dep_info_path(executable: &Path) -> Result<PathBuf, String> 
             }) {
                 continue;
             }
-            if same_file::is_same_file(executable, &path).unwrap_or(false) {
+            if same_file::is_same_file(executable, &path).unwrap_or(false)
+                || files_have_same_contents(executable, &path)
+            {
                 artifacts.push(path);
             }
         }
@@ -1257,6 +1301,38 @@ pub(super) fn rustc_dep_info_path(executable: &Path) -> Result<PathBuf, String> 
         ));
     }
     Ok(dep_info)
+}
+
+fn files_have_same_contents(left: &Path, right: &Path) -> bool {
+    let Ok(left_metadata) = fs::metadata(left) else {
+        return false;
+    };
+    let Ok(right_metadata) = fs::metadata(right) else {
+        return false;
+    };
+    if left_metadata.len() != right_metadata.len() {
+        return false;
+    }
+    let Ok(mut left) = fs::File::open(left) else {
+        return false;
+    };
+    let Ok(mut right) = fs::File::open(right) else {
+        return false;
+    };
+    let mut left_buffer = [0; 64 * 1024];
+    let mut right_buffer = [0; 64 * 1024];
+    let mut remaining = left_metadata.len();
+    while remaining > 0 {
+        let length = remaining.min(left_buffer.len() as u64) as usize;
+        if left.read_exact(&mut left_buffer[..length]).is_err()
+            || right.read_exact(&mut right_buffer[..length]).is_err()
+            || left_buffer[..length] != right_buffer[..length]
+        {
+            return false;
+        }
+        remaining -= length as u64;
+    }
+    true
 }
 
 fn resolve_watch_path(base: &Path, path: &Path) -> PathBuf {
