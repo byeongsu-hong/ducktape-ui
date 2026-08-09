@@ -191,6 +191,55 @@ test trading_a_word_typed_against_one_venue_does_not_filter_the_other
   expect text "ETH" within markets
   expect text "AAPL" within markets
 
+// The switch is where the network is named. It used to be on the settings
+// page only, which made the reader who had just read REAL MONEY in the header
+// leave the terminal to act on what the header had told them — the app holding
+// the answer and withholding the choice. Pressing the block that names the
+// network is now the whole of the way to the list.
+//
+// Nothing about the block moves when it becomes pressable: what it draws
+// closed is the two lines it always drew, and `trading_the_header_keeps_its_shape_across_a_venue_switch`
+// is the measurement that says so.
+test trading_the_network_picker_opens_from_the_header
+  preset held
+  viewport 1660 820
+  target app = #app
+  target header = app/header
+  target venues = header/venues
+  target panel = #venue-panel
+  target picker = panel/network-picker
+  target here = picker/network("Hyperliquid")/root/tab-on
+  target testnet = picker/network("Hyperliquid Testnet")/root/tab-off
+  target other = picker/network("Lighter")/root/tab-off
+  target other_testnet = picker/network("Lighter Testnet")/root/tab-off
+  // A control that only names the network is a readout. This one says what it
+  // is, what it is showing, and what pressing it does — the reader who cannot
+  // see a panel drop has nothing else to learn it from.
+  expect a11y venues name "Hyperliquid, real money — switch network"
+  expect !venues_open
+  expect missing panel
+  expect missing here
+  expect missing other
+  click venues
+  expect venues_open
+  expect exists panel
+  // The panel is a loop over the registry, so every network added in Rust is
+  // drawn here without this file or the view naming it — which is the whole of
+  // what "extensible" has to mean. Rows rather than text: `expect text` reads
+  // the primitives of the layer under the overlay and sees nothing painted in
+  // its layer, which is why the picture below is the evidence for the ink.
+  expect exists here
+  expect exists testnet
+  expect exists other
+  expect exists other_testnet
+  // And it drops over the terminal rather than pushing it: the header is where
+  // it was, and the terminal is still drawing what it was drawing.
+  expect text "ORDER BOOK"
+  expect text "64,001.00"
+  expect header.height ~= 58.0
+  expect panel.width ~= 300.0
+  capture header_network_picker
+
 // A row that is only highlighted says which network is being read to whoever
 // can see two inks. Every row is reachable and the name each one carries is
 // the difference, so the state is in the name rather than in the colour.
@@ -198,36 +247,98 @@ test trading_a_word_typed_against_one_venue_does_not_filter_the_other
 // Every network's name is on the picker at all times, so a name on screen says
 // nothing about which one is being read: what says it is which row carries the
 // state in its own name, and that has to move when the network does.
+//
+// The kind is in that name too. A labelled button's name replaces its
+// contents, so the REAL MONEY box painted inside each row is never spoken —
+// which left the one reader who cannot check the colour choosing a deployment
+// blind, in the one place where that mistake is actually made.
 test trading_the_network_picker_says_which_one_is_being_read
   preset held
-  viewport 1660 900
+  viewport 1660 820
   target app = #app
-  target settings = app/settings
-  target picker = settings/settings-content/network-picker
+  target header = app/header
+  target venues = header/venues
+  target panel = #venue-panel
+  target picker = panel/network-picker
   target here = picker/network("Hyperliquid")/root/tab-on
   target other = picker/network("Lighter")/root/tab-off
   target test_net = picker/network("Hyperliquid Testnet")/root/tab-off
   target opened = picker/network("Lighter")/root/tab-on
   target left = picker/network("Hyperliquid")/root/tab-off
-  dispatch navigate(Page.settings)
-  // The picker is a loop over the registry, so a network added in Rust is
-  // drawn here without this file or the view naming it — which is the whole of
-  // what "extensible" has to mean. Text rather than a target, because a row
-  // that is not drawn has no target to resolve and a test that cannot resolve
-  // one has not observed anything.
-  expect text "Hyperliquid" within picker
-  expect text "Hyperliquid Testnet" within picker
-  expect text "Lighter" within picker
-  // And every row says which kind it is before it is pressed. A picker is
-  // where this mistake is actually made.
-  expect text "TESTNET" within picker
-  expect text "REAL MONEY" within picker
-  expect a11y here name "Read Hyperliquid, already reading"
-  expect a11y other name "Read Lighter"
-  expect a11y test_net name "Read Hyperliquid Testnet"
+  click venues
+  // Every row says which kind it is before it is pressed, and says it aloud as
+  // well as in ink: a labelled button's name replaces its contents, so the
+  // REAL MONEY box inside each row is painted and never spoken. The ink is in
+  // the picture `trading_the_network_picker_opens_from_the_header` captures,
+  // because `expect text` cannot read the overlay's own layer.
+  expect a11y here name "Read Hyperliquid, real money, already reading"
+  expect a11y other name "Read Lighter, real money"
+  expect a11y test_net name "Read Hyperliquid Testnet, testnet"
   dispatch switch_venue(Venue.lighter)
-  expect a11y opened name "Read Lighter, already reading"
-  expect a11y left name "Read Hyperliquid"
+  dispatch open_venues
+  expect a11y opened name "Read Lighter, real money, already reading"
+  expect a11y left name "Read Hyperliquid, real money"
+
+// The row is the switch. Everything else here dispatches `switch_venue`
+// directly, which proves what the handler throws away and nothing at all about
+// whether a press reaches it — the picker could be wired to the wrong network,
+// or to nothing, and every one of those tests would still pass.
+test trading_picking_a_network_from_the_header_switches_to_it
+  preset held
+  viewport 1660 820
+  target app = #app
+  target header = app/header
+  target venues = header/venues
+  target panel = #venue-panel
+  target picker = panel/network-picker
+  target lighter = picker/network("Lighter")/root/tab-off
+  target testnet = picker/network("Hyperliquid Testnet")/root/tab-off
+  expect venue == Venue.hyperliquid
+  click venues
+  click lighter
+  // The network the row named, not the next one along and not the one the
+  // trigger was showing.
+  expect venue == Venue.lighter
+  // And the pick is answered: a panel left open over the network just chosen
+  // is the press unanswered.
+  expect !venues_open
+  expect missing panel
+  // Again, to a deployment of a different kind, because a picker that routes
+  // its first row correctly and its third one by position is a picker that
+  // sends a reader to mainnet.
+  click venues
+  click testnet
+  expect venue == Venue.hyperliquid_testnet
+  expect !venues_open
+
+// Two ways out that change nothing, because opening the list is not choosing
+// from it. Both are the overlay's own: the backdrop takes every press outside
+// the panel, and Escape is the key a reader presses at a panel covering a
+// screen.
+test trading_the_network_picker_shuts_without_switching
+  preset held
+  viewport 1660 820
+  target app = #app
+  target header = app/header
+  target venues = header/venues
+  target panel = #venue-panel
+  click venues
+  expect exists panel
+  key escape
+  expect !venues_open
+  expect missing panel
+  expect venue == Venue.hyperliquid
+  // Still Hyperliquid's book behind it, so nothing was thrown away on the way
+  // out.
+  expect text "64,001.00"
+  click venues
+  expect exists panel
+  // Far from the panel, which is 300 wide and centred under the header.
+  click-at 120.0 500.0
+  expect !venues_open
+  expect missing panel
+  expect venue == Venue.hyperliquid
+  expect text "64,001.00"
 
 // Which network is on screen has to be answerable without remembering which
 // one was picked, because the two screens are otherwise identical: the same
