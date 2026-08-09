@@ -82,7 +82,7 @@ preset streaming
     effort = some("xhigh")
     efforts = ["low", "medium", "high", "xhigh"]
     session = sample_session(false)
-    entries = sample_entries(false)
+    entries = sample_running(false)
     busy = true
     status = "Responding"
     live_thinking = markdown("**Checking the append path**\n\nThe question is whether the tail alone is reparsed.")
@@ -252,12 +252,20 @@ view
                           title=settled.title
                           body=settled.body
                           open=settled.open
-                    if settled.kind == "tool"
-                      ToolCall #tool(settled.id)
+                    if settled.kind == "work"
+                      Work #work(settled.id) -> toggle_row _
                         with
+                          row_id=settled.id
+                          title=settled.title
+                          open=settled.open
+                    if settled.kind == "tool"
+                      ToolCall #tool(settled.id) -> toggle_row _
+                        with
+                          row_id=settled.id
                           title=settled.title
                           detail=settled.detail
                           status=settled.status
+                          open=settled.open
                     if settled.kind == "answer"
                       Answer #answer(settled.id) -> copy_link _
                         with

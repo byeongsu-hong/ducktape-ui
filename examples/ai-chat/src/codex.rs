@@ -70,8 +70,14 @@ pub struct Entry {
     pub body: String,
     /// `running` while a tool is still working, `done` once it is not.
     pub status: String,
+    /// Which turn produced this row. Everything a turn did folds away together
+    /// under one summary once it is finished.
+    pub turn: i64,
     /// Whether a folded row is showing its body.
     pub open: bool,
+    /// Folded away inside a closed summary. Hidden rows are filtered out of
+    /// what the screen is handed, so a folded turn costs no widgets at all.
+    pub hidden: bool,
     /// Which palette this row was handed over for.
     ///
     /// A row carries it because `lazy` rebuilds a row only when the row
@@ -96,6 +102,7 @@ impl std::hash::Hash for Entry {
         self.id.hash(state);
         self.open.hash(state);
         self.dark.hash(state);
+        self.hidden.hash(state);
         // A running tool becomes a finished one in place, under one id.
         self.status.hash(state);
     }
@@ -110,7 +117,9 @@ impl Entry {
             detail: String::new(),
             body: String::new(),
             status: String::new(),
+            turn: 0,
             open: false,
+            hidden: false,
             dark: false,
         }
     }
@@ -183,6 +192,10 @@ pub struct Session {
 struct Transcript {
     input: Vec<Value>,
     entries: Vec<Entry>,
+    /// Which turn is being recorded, so its rows can be gathered afterwards.
+    turn: i64,
+    /// When the turn in progress started, for what its summary says.
+    started: Option<std::time::Instant>,
     dark: bool,
     /// Which model answers. Held here rather than read per turn, so choosing
     /// one applies to this chat and not to whatever the CLI is configured for.
@@ -196,14 +209,60 @@ struct Transcript {
 
 impl Transcript {
     /// The list as the screen should draw it now.
+    ///
+    /// Rows folded inside a closed summary are left out rather than drawn and
+    /// hidden, so a folded turn costs nothing to have on screen.
     fn snapshot(&self) -> Vec<Entry> {
         self.entries
             .iter()
+            .filter(|row| !row.hidden)
             .map(|row| Entry {
                 dark: self.dark,
                 ..row.clone()
             })
             .collect()
+    }
+
+    fn push(&mut self, entry: Entry) {
+        let turn = self.turn;
+        self.entries.push(Entry { turn, ..entry });
+    }
+
+    /// Gather everything this turn did under one summary and fold it away.
+    ///
+    /// A finished turn's working-out is context, not the answer. It stays open
+    /// while it is happening — that is the only time it is worth watching — and
+    /// closes once there is an answer to read instead.
+    fn close_work(&mut self) {
+        let turn = self.turn;
+        let is_work = |row: &Entry| {
+            row.turn == turn && matches!(row.kind.as_str(), "reasoning" | "tool") && !row.hidden
+        };
+        let Some(first) = self.entries.iter().position(is_work) else {
+            return;
+        };
+        let counted = self.entries.iter().filter(|row| is_work(row)).count();
+        let seconds = self.started.map_or(0, |at| at.elapsed().as_secs() as i64);
+
+        for row in self.entries.iter_mut().filter(|row| is_work(row)) {
+            row.hidden = true;
+        }
+        let summary = Entry::new("work", worked_for(seconds, counted));
+        self.entries.insert(first, Entry { turn, ..summary });
+    }
+
+    /// Show or hide one summary's rows.
+    fn fold_work(&mut self, id: i64) {
+        let Some(summary) = self.entries.iter_mut().find(|row| row.id == id) else {
+            return;
+        };
+        summary.open = !summary.open;
+        let (turn, open) = (summary.turn, summary.open);
+        for row in self.entries.iter_mut() {
+            if row.turn == turn && matches!(row.kind.as_str(), "reasoning" | "tool") {
+                row.hidden = !open;
+            }
+        }
     }
 
     /// Hand the list to the screen, once, because it changed.
@@ -215,6 +274,19 @@ impl Transcript {
             self.watcher = None;
         }
     }
+}
+
+/// What a finished turn's summary says it did.
+fn worked_for(seconds: i64, steps: usize) -> String {
+    let steps = if steps == 1 {
+        "1 step".to_owned()
+    } else {
+        format!("{steps} steps")
+    };
+    if seconds < 60 {
+        return format!("Worked for {seconds}s · {steps}");
+    }
+    format!("Worked for {}m {}s · {steps}", seconds / 60, seconds % 60)
 }
 
 impl Session {
@@ -376,7 +448,9 @@ pub fn push_user(session: Session, text: String) -> Vec<Entry> {
         "role": "user",
         "content": [{"type": "input_text", "text": text}],
     }));
-    state.entries.push(Entry::new("prompt", "").body(text));
+    state.turn += 1;
+    state.started = Some(std::time::Instant::now());
+    state.push(Entry::new("prompt", "").body(text));
     state.snapshot()
 }
 
@@ -386,7 +460,13 @@ pub fn push_user(session: Session, text: String) -> Vec<Entry> {
 /// settled row sits behind `lazy`, which redraws it only when the row changes.
 pub fn toggle_row(session: Session, id: i64) -> Vec<Entry> {
     let mut state = session.lock();
-    if let Some(row) = state.entries.iter_mut().find(|row| row.id == id) {
+    let summary = state
+        .entries
+        .iter()
+        .any(|row| row.id == id && row.kind == "work");
+    if summary {
+        state.fold_work(id);
+    } else if let Some(row) = state.entries.iter_mut().find(|row| row.id == id) {
         row.open = !row.open;
     }
     state.snapshot()
@@ -659,9 +739,13 @@ fn record(session: &Session, event: &Value) {
     match (kind, item_kind) {
         // A tool appears the moment it starts, so the screen can say so while
         // it is still working.
+        // A call that is still working stays open; one that has finished
+        // collapses to its own title. Mid-turn, that leaves exactly one step
+        // expanded — the one actually happening.
         ("response.output_item.added", "web_search_call") => {
-            let started = Entry::new("tool", "Web search").status("running");
-            state.entries.push(started);
+            let mut running = Entry::new("tool", "Searching the web").status("running");
+            running.open = true;
+            state.push(running);
         }
         ("response.output_item.done", "web_search_call") => {
             let (title, detail) = search_action(&item["action"]);
@@ -681,21 +765,19 @@ fn record(session: &Session, event: &Value) {
             let summary = summary_text(&item["summary"]);
             if !summary.trim().is_empty() {
                 let (title, body) = headed(&summary);
-                state
-                    .entries
-                    .push(Entry::new("reasoning", title).body(body));
+                state.push(Entry::new("reasoning", title).body(body));
             }
         }
         ("response.output_item.done", "message") => {
             let text = message_text(&item["content"]);
             if !text.trim().is_empty() {
-                state.entries.push(Entry::new("answer", "").body(text));
+                state.push(Entry::new("answer", "").body(text));
             }
         }
         // Anything this build does not model is still a row, because a chat
         // window that silently drops part of a turn is misreporting it.
         ("response.output_item.done", other) if !other.is_empty() => {
-            state.entries.push(
+            state.push(
                 Entry::new("tool", other)
                     .detail(item["status"].as_str().unwrap_or("done"))
                     .body(format!(
@@ -706,9 +788,8 @@ fn record(session: &Session, event: &Value) {
             );
         }
         ("response.completed", _) => {
-            state
-                .entries
-                .push(Entry::new("usage", "").detail(tokens(&event["response"]["usage"])));
+            state.close_work();
+            state.push(Entry::new("usage", "").detail(tokens(&event["response"]["usage"])));
         }
         _ => return,
     }
@@ -953,45 +1034,103 @@ pub fn sample_session(dark: bool) -> Session {
     let session = codex_session();
     let mut state = session.lock();
     state.dark = dark;
-    state.entries = sample_entries(dark);
+    state.entries = sample_rows(dark);
+    state.turn = 1;
     drop(state);
     session
 }
 
 pub fn sample_entries(dark: bool) -> Vec<Entry> {
+    sample_rows(dark)
+        .into_iter()
+        .filter(|row| !row.hidden)
+        .collect()
+}
+
+/// A turn caught in the middle: one step done and closed, one still running.
+pub fn sample_running(dark: bool) -> Vec<Entry> {
+    let row = |id: i64, open: bool, entry: Entry| Entry {
+        id,
+        turn: 1,
+        open,
+        dark,
+        ..entry
+    };
+    vec![
+        row(
+            -21,
+            false,
+            Entry::new("prompt", "").body("Which version of iced is current?"),
+        ),
+        row(
+            -22,
+            false,
+            Entry::new("reasoning", "Checking the crate before answering")
+                .body("The version could have moved since training."),
+        ),
+        row(
+            -23,
+            false,
+            Entry::new("tool", "Searched the web")
+                .detail("site:crates.io/crates/iced latest version")
+                .status("done"),
+        ),
+        row(
+            -24,
+            true,
+            Entry::new("tool", "Searching the web").status("running"),
+        ),
+    ]
+}
+
+/// The whole turn, folded as a finished one is: the working-out is present but
+/// tucked under its summary, which is the state a transcript is read in.
+fn sample_rows(dark: bool) -> Vec<Entry> {
     // Fixed, negative ids. Live rows count up from one, so a sample row can
     // never collide with a real one — in the Markdown cache or in a widget
     // path — and a test can name a row by hand.
-    let row = |id: i64, entry: Entry| Entry { id, dark, ..entry };
+    let row = |id: i64, hidden: bool, entry: Entry| Entry {
+        id,
+        turn: 1,
+        hidden,
+        dark,
+        ..entry
+    };
     vec![
         row(
             -1,
+            false,
             Entry::new("prompt", "").body(
                 "Which version of iced is current, and how do I stream a reply into a \
                  Markdown view?",
             ),
         ),
+        row(-2, false, Entry::new("work", worked_for(12, 4))),
         row(
-            -2,
+            -3,
+            true,
             Entry::new("reasoning", "Checking the crate before answering").body(
                 "The version could have moved since training, so it is worth a look \
                  rather than a guess.",
             ),
         ),
         row(
-            -3,
+            -4,
+            true,
             Entry::new("tool", "Searched the web")
                 .detail("site:crates.io/crates/iced latest version  ·  iced-rs releases")
                 .status("done"),
         ),
         row(
-            -4,
+            -5,
+            true,
             Entry::new("tool", "Opened a page")
                 .detail("https://crates.io/crates/iced")
                 .status("done"),
         ),
         row(
-            -5,
+            -6,
+            false,
             Entry::new("answer", "").body(
                 "**iced 0.14** is current.\n\nFor the Markdown view, append to the parsed \
                  document instead of rebuilding it:\n\n\
@@ -1006,7 +1145,8 @@ pub fn sample_entries(dark: bool) -> Vec<Entry> {
             ),
         ),
         row(
-            -6,
+            -7,
+            false,
             Entry::new("usage", "").detail("2,914 in · 268 out · 192 reasoning"),
         ),
     ]
@@ -1061,6 +1201,10 @@ mod tests {
         let running = rows(&session);
         assert_eq!(running.len(), 1, "the tool appears immediately");
         assert_eq!(running[0].status, "running");
+        assert!(
+            running[0].open,
+            "the step happening now is the one to watch"
+        );
 
         record(
             &session,

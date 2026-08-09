@@ -32,10 +32,20 @@ transcript is a flat, ordered list of everything the turn produced:
 | Row | What it is |
 | --- | --- |
 | prompt | what was asked, in a bubble on its own side |
-| reasoning | a summary, folded away under the subject it names |
-| tool | a web search or page open, drawn while it runs and again when it lands |
+| work | one line — `Worked for 12s · 4 steps` — holding everything below it |
+| reasoning | a summary, folded under the subject it names |
+| tool | a search or page open; its arguments are behind its own fold |
 | answer | Markdown — headings, lists, code blocks, links |
 | usage | what the turn cost |
+
+A turn is watched while it happens and read once it is done, and it folds
+accordingly. The step running now stays open; each step collapses to its own
+title as it finishes; and when there is an answer to read instead, the whole
+turn's working-out gathers under one line. Nothing is thrown away — every fold
+opens — but a finished transcript reads as questions and answers.
+
+Folded rows are left out of what the screen is handed rather than drawn and
+hidden, so a folded turn costs no widgets at all.
 
 An item this build does not model still becomes a row rather than being
 dropped, because a chat window that silently swallows part of a turn is

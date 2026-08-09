@@ -67,20 +67,55 @@ component Reasoning(row_id:i64, title:str, body:str, open:bool) -> i64
 // A tool call: what it was, what it was given, and whether it is still going.
 // The mark on the left is the state — a turn in progress and a turn that has
 // finished must not look the same.
-component ToolCall(title:str, detail:str, status:str)
+// Everything a turn did, under one line. It stays open while the turn runs —
+// the only time watching it is worth anything — and closes once there is an
+// answer to read instead.
+component Work(row_id:i64, title:str, open:bool) -> i64
+  row #root w=fill gap=11.0
+    rule vertical thickness=2.0 color=border
+    button #toggle -> emit(row_id)
+      with
+        label=title
+        p=0.0
+        @ghost_action
+      row gap=8.0 align=center
+        if open
+          text "▾" size=11.0 @text-muted
+        if !open
+          text "▸" size=11.0 @text-muted
+        text title @meta
+
+// A tool call: what it was, and what it was given once asked. The mark on the
+// left is the state — a call in progress and one that has finished must not
+// look the same.
+component ToolCall(row_id:i64, title:str, detail:str, status:str, open:bool) -> i64
   row #root w=fill gap=11.0
     rule vertical thickness=2.0 color=border
     col w=fill gap=3.0
-      row gap=8.0 align=center
-        if status == "running"
-          text "◌" size=11.0 @text-warning
-        if status == "done"
-          text "✓" size=11.0 @text-success
-        if status == "failed"
-          text "✕" size=11.0 @text-danger
-        text title @field_label
-      if !empty(detail)
-        text detail wrap=word @machine
+      button #toggle -> emit(row_id)
+        with
+          label=title
+          p=0.0
+          @ghost_action
+        row
+          with
+            w=fill
+            gap=8.0
+            align=center
+          if status == "running"
+            text "◌" size=11.0 @text-warning
+          if status == "done"
+            text "✓" size=11.0 @text-success
+          if status == "failed"
+            text "✕" size=11.0 @text-danger
+          text title @field_label
+          if !empty(detail) && open
+            text "▾" size=10.0 @text-muted
+          if !empty(detail) && !open
+            text "▸" size=10.0 @text-muted
+      if open && !empty(detail)
+        box w=fill pb=4.0
+          text detail wrap=word @machine
 
 // The answer itself. `markdown_body` is a Rust adapter rather than the built-in
 // widget because a parsed document cannot live in component state; it keeps one
