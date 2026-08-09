@@ -30,14 +30,21 @@
 //! property: what this process can reach places and cancels orders, cannot
 //! withdraw, and stops working on a date the exchange chose.
 //!
-//! # Why the keychain item is keyed by deployment
+//! # Why the keychain item is keyed by network
 //!
 //! An agent key is approved on one deployment. The same address on mainnet and
 //! on testnet holds two different accounts, approves two different keys, and a
 //! secret read back under the wrong one is a key the venue has never heard of —
 //! which surfaces as an order refused for a signer nobody recognises, long
-//! after the mistake. So the keychain account is the chain and the address,
-//! never the address alone.
+//! after the mistake. So the keychain account is the deployment and the
+//! address, never the address alone.
+//!
+//! And the exchange too, which is the half a single-venue app never needs. Both
+//! venues have a mainnet, one address is read at both, and their keys are
+//! unrelated — different curves, even — so an item named for the deployment
+//! alone would have the second enrolment overwrite the first and afterwards
+//! hand each venue the other's secret. `Signing::key` in `venue.rs` is what
+//! spells the whole name, and `item` below is the address glued to it.
 //!
 //! # What CI holds, and what needs a Mac
 //!
@@ -88,7 +95,7 @@ use crate::session::{
     step,
 };
 use crate::signing::{Chain, Wallet};
-use crate::venue::{Network, venue_name};
+use crate::venue::{Network, Signing, venue_name};
 
 /// What one act of custody produced: where the session now stands, and the
 /// sentence the panel owes about it.
@@ -156,40 +163,47 @@ fn millis(now_s: i64) -> i64 {
     now_s.saturating_mul(1_000)
 }
 
-/// What the keychain files this account's secret under.
+/// What the keychain files this network's secret under.
 ///
-/// The deployment is in the key because a key approved on one is unknown on the
-/// other; see the module header.
-fn item(chain: Chain, address: &str) -> String {
-    format!("{}:{}", chain.key(), address.trim().to_lowercase())
+/// The network rather than the address alone, because a key belongs to one
+/// deployment *of one exchange*: see the module header for the deployment half,
+/// and `Signing::key` for why the exchange is in the name too.
+fn item(venue: Venue, address: &str) -> String {
+    format!(
+        "{}:{}",
+        Network::of(venue).signing.key(),
+        address.trim().to_lowercase()
+    )
 }
 
 /// The Hyperliquid deployment this network signs for, or the sentence saying
-/// this app has not built a write path to it yet.
+/// this panel is not what holds its key.
 ///
-/// Lighter is the second case, and the distinction matters: the *venue* has a
-/// write path — orders are L2 transactions signed by an API key the account
-/// registers, which is the `api_key_index` in the token `lighter_sign.rs`
-/// already mints, over the same curve it already implements. What is missing is
-/// this app's transaction half, not the venue's. `lighter_sign.rs` says as much
-/// where it says it: "nothing in *this module* can place an order" is a note on
-/// what is implemented, not a claim about what Lighter can do.
+/// Both venues can be written to and neither claim below is about that. What
+/// this panel does is one scheme's worth of custody: it *generates* an Ethereum
+/// agent key, files the secret, and shows the address for the account's own
+/// wallet to approve. Lighter's key is not generated and not approved — it is
+/// an API key the account registers with the exchange, so the user brings one
+/// that already exists — and nothing in this app takes it yet.
 ///
-/// So the refusal below is about this app at this moment and says so. It stops
-/// being true the day the Lighter path lands, and it has to go in the same
-/// change rather than outlive it.
+/// So the refusal is about enrolment rather than about signing, and says so.
+/// `lighter.rs` will place and cancel orders for a key handed to it; what is
+/// missing is the half that hands it one.
 fn deployment(venue: Venue) -> Result<Chain, Entry> {
-    Network::of(venue).chain.ok_or_else(|| {
-        Entry::saying(
+    match Network::of(venue).signing {
+        Signing::Eip712(chain) => Ok(chain),
+        Signing::ApiKey(_) => Err(Entry::saying(
             Session::Locked,
             &format!(
-                "This app cannot sign for {} yet: its orders are transactions signed by an \
-                 API key the account registers with the exchange, and that path is not \
-                 built here. Reading it needs no key and is unaffected.",
+                "{} orders are signed by an API key the account registers with the exchange, \
+                 and this app has no way to take one yet — what this panel makes and holds is \
+                 an Ethereum agent key, which {} does not use. Reading it needs no key and is \
+                 unaffected.",
+                venue_name(venue),
                 venue_name(venue),
             ),
-        )
-    })
+        )),
+    }
 }
 
 /// Generate an agent key, hand its secret to the platform keychain, and report
@@ -201,10 +215,12 @@ fn deployment(venue: Venue) -> Result<Chain, Entry> {
 /// keystore's problem and it solves it by preserving what it replaces — see
 /// `session.rs`, which reads the old bytes back before it deletes them.
 pub async fn enrol_agent(venue: Venue, address: String) -> Result<Entry, CustodyFault> {
-    let chain = match deployment(venue) {
-        Ok(chain) => chain,
-        Err(refused) => return Ok(refused),
-    };
+    // The deployment is not read here — the keychain item names the whole
+    // network — but the refusal is: a network whose key this panel does not
+    // hold has nothing to enrol.
+    if let Err(refused) = deployment(venue) {
+        return Ok(refused);
+    }
     let address = address.trim().to_owned();
     if address.is_empty() {
         return Ok(Entry::saying(
@@ -234,7 +250,7 @@ pub async fn enrol_agent(venue: Venue, address: String) -> Result<Entry, Custody
             }
         };
         let secret = Secret::new(bytes.to_vec());
-        match PlatformKeystore.store(&item(chain, &address), &secret) {
+        match PlatformKeystore.store(&item(venue, &address), &secret) {
             // A keystore that cannot hold a secret is not a thing to ask again:
             // either this build has none, or the one this machine has failed
             // for a reason no sheet the user answers will change. `session.rs`
@@ -285,7 +301,7 @@ pub async fn unlock_agent(venue: Venue, address: String) -> Result<Entry, Custod
         let address = address.clone();
         // Reading is what raises the sheet, and the sheet blocks — so it is off
         // the executor's thread rather than on it.
-        smol::unblock(move || read_key(chain, &address)).await
+        smol::unblock(move || read_key(venue, &address)).await
     };
     let (held, wallet) = match opened {
         Opened::Refused(entry) => return Ok(entry),
@@ -376,7 +392,7 @@ enum Opened {
     Refused(Entry),
 }
 
-fn read_key(chain: Chain, address: &str) -> Opened {
+fn read_key(venue: Venue, address: &str) -> Opened {
     let asked = step(Session::Locked, Event::Prompt);
     let answered = |outcome: Unlock| {
         step(
@@ -388,7 +404,7 @@ fn read_key(chain: Chain, address: &str) -> Opened {
         )
     };
 
-    match PlatformKeystore.load(&item(chain, address)) {
+    match PlatformKeystore.load(&item(venue, address)) {
         // Not a fault and not a decline: nothing has ever been stored for this
         // account here, and a second sheet would fetch the same answer forever.
         // Enrolling is what changes it.
@@ -532,9 +548,9 @@ pub fn session_unlockable(session: Session) -> bool {
 /// The same shape the gate refuses an address in: the control goes dead and
 /// says which refusal it is, rather than answering a press with nothing.
 pub fn session_refusal(venue: Venue, session: Session) -> String {
-    if Network::of(venue).chain.is_none() {
+    if let Signing::ApiKey(_) = Network::of(venue).signing {
         return format!(
-            "This app cannot sign {} orders yet, so there is no key to hold for it here.",
+            "{} signs with an API key the account registers, not one this panel can make.",
             venue_name(venue),
         );
     }
@@ -734,23 +750,42 @@ mod tests {
     /// and the refusal says which fact it is rather than looking like a
     /// keychain problem.
     #[test]
-    fn a_network_with_no_write_path_is_refused_before_any_sheet() {
-        let refused = session_refusal(Venue::Lighter, Session::Locked);
-        assert!(
-            refused.contains("Lighter"),
-            "the refusal names the network it is about: {refused}"
-        );
-        assert!(
-            session_refusal(Venue::Hyperliquid, Session::Locked).is_empty(),
-            "and says nothing where there is a write path"
-        );
+    fn a_network_this_panel_holds_no_key_for_is_refused_before_any_sheet() {
+        for lighter in [Venue::Lighter, Venue::LighterTestnet] {
+            let refused = session_refusal(lighter, Session::Locked);
+            assert!(
+                refused.contains(&venue_name(lighter)),
+                "the refusal names the network it is about: {refused}"
+            );
+            assert!(
+                refused.contains("API key"),
+                "and the reason, which is the enrolment rather than the app \
+                 being unable to sign at all: {refused}"
+            );
 
-        // The seam refuses without touching the keychain at all, so the same
-        // answer arrives on a machine that has one and a machine that does not.
-        let entry = smol::block_on(unlock_agent(Venue::Lighter, ACCOUNT.to_owned()))
-            .expect("a network without a write path is an answer, not a fault");
-        assert_eq!(entry.session, Session::Locked);
-        assert!(entry.note.contains("Lighter"));
+            // The seam refuses without touching the keychain at all, so the
+            // same answer arrives on a machine that has one and a machine that
+            // does not.
+            let entry = smol::block_on(unlock_agent(lighter, ACCOUNT.to_owned()))
+                .expect("a network this panel holds no key for is an answer, not a fault");
+            assert_eq!(entry.session, Session::Locked);
+            assert!(entry.note.contains(&venue_name(lighter)));
+            assert!(entry.note.contains("API key"), "{}", entry.note);
+
+            // Enrolling is refused the same way and for the same reason: there
+            // is no agent key to make for a venue that does not use one.
+            let made = smol::block_on(enrol_agent(lighter, ACCOUNT.to_owned()))
+                .expect("the same answer, not a fault");
+            assert_eq!(made.session, Session::Locked);
+            assert!(made.note.contains("API key"), "{}", made.note);
+        }
+
+        for hyperliquid in [Venue::Hyperliquid, Venue::HyperliquidTestnet] {
+            assert!(
+                session_refusal(hyperliquid, Session::Locked).is_empty(),
+                "and says nothing where this panel does hold the key"
+            );
+        }
     }
 
     /// The keychain item names the deployment, because the same address holds
@@ -758,13 +793,40 @@ mod tests {
     /// the wrong one is a key the venue has never heard of.
     #[test]
     fn one_address_on_two_deployments_is_two_keychain_items() {
-        assert_ne!(item(Chain::Mainnet, ACCOUNT), item(Chain::Testnet, ACCOUNT));
-        assert!(item(Chain::Testnet, ACCOUNT).contains(ACCOUNT));
+        assert_ne!(
+            item(Venue::Hyperliquid, ACCOUNT),
+            item(Venue::HyperliquidTestnet, ACCOUNT)
+        );
+        assert!(item(Venue::HyperliquidTestnet, ACCOUNT).contains(ACCOUNT));
+        // And the exchange too, for the same reason one step out: both venues
+        // have a mainnet, one address is read at both, and the keys are
+        // unrelated — so an item named for the deployment alone would have the
+        // second enrolment overwrite the first.
+        assert_ne!(
+            item(Venue::Hyperliquid, ACCOUNT),
+            item(Venue::Lighter, ACCOUNT)
+        );
+        let mut filed: Vec<String> = [
+            Venue::Hyperliquid,
+            Venue::HyperliquidTestnet,
+            Venue::Lighter,
+            Venue::LighterTestnet,
+        ]
+        .iter()
+        .map(|venue| item(*venue, ACCOUNT))
+        .collect();
+        filed.sort();
+        let held = filed.len();
+        filed.dedup();
+        assert_eq!(filed.len(), held, "two networks share a keychain item");
         // And the same address typed either way is the same item, so a capital
         // letter is not a second enrolment.
         assert_eq!(
-            item(Chain::Mainnet, ACCOUNT),
-            item(Chain::Mainnet, &ACCOUNT.to_uppercase().replace("0X", "0x")),
+            item(Venue::Hyperliquid, ACCOUNT),
+            item(
+                Venue::Hyperliquid,
+                &ACCOUNT.to_uppercase().replace("0X", "0x")
+            ),
         );
     }
 

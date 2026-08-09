@@ -6059,6 +6059,7 @@ dependencies = [
 name = "trading-example"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "ducktape-ui",
  "ecgfp5",
  "getrandom 0.3.4",

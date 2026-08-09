@@ -490,18 +490,25 @@ dead and states the platform's own words. `session.rs` draws that line in a
 pure function outside every `cfg`, which is why a Linux machine can test it;
 this seam's job is not to blur it on the way to the screen.
 
-A network this app cannot sign for **yet** is refused before any sheet, by
-name. Lighter is that case today, and the distinction is worth stating
-precisely because the first version of this sentence got it wrong: the *venue*
-has a write path. Lighter's orders are L2 transactions signed by an API key the
-account registers — the `api_key_index` in the token `lighter_sign.rs` already
-mints, over the curve it already implements. What is missing is this app's
-transaction half. "Nothing in this module can place an order" is that module
-saying what it implements, not what Lighter can do.
+A network **this panel holds no key for** is refused before any sheet, by name.
+Lighter is that case, and the distinction is worth stating precisely because
+two earlier versions of this sentence got it wrong in opposite directions. The
+venue has a write path and so does this app: `lighter_sign.rs` builds and signs
+both L2 transactions and `lighter.rs` posts them. What is missing is the
+*enrolment*. This panel makes an Ethereum agent key and shows its address for
+the account's own wallet to approve; Lighter uses neither — the key is an API
+key the account registers with the exchange, and the app has no way to take one
+yet.
 
-So `Network.chain` is `None` there, meaning "no write path here yet", and the
-refusal says the same. Both stop being true when the Lighter path lands, and
-both go in that change rather than outliving it.
+So `Network.signing` names the scheme rather than a chain, and the two Lighter
+entries carry `Signing::ApiKey(Zone)` where the two Hyperliquid ones carry
+`Signing::Eip712(Chain)`. Every network in the registry can be signed for; the
+refusal is about which keys this panel holds, and it says so.
+
+That scheme is also why the keychain item names the exchange and not only the
+deployment. Both venues have a mainnet, one address is read at both, and the
+two hold unrelated secrets — so `Signing::key` spells `hyperliquid-mainnet` and
+`lighter-testnet`, and a second enrolment cannot overwrite the first.
 
 Changing network or address forgets the key. Carried across either, it is a
 session claiming the app may trade somewhere the key is unknown, and the first
@@ -606,8 +613,11 @@ against the venue rather than taking anyone's word for it.
 
 #### Lighter Testnet
 
-Landing with the Lighter order path; the steps are here so both venues are
-planned together rather than one at a time.
+The transaction half is built: `lighter.rs` places and cancels for a key handed
+to it, and the live round trip
+(`the_order_path_places_rests_and_cancels_on_the_test_deployment`) is written
+and waiting on these three values. The panel does not yet take them, so for now
+they arrive as environment variables and the test names each one it is missing.
 
 1. **Fund the account.** One request, and it creates the account as well as
    funding it:
@@ -621,21 +631,31 @@ planned together rather than one at a time.
    `account_index` the next step needs. A fresh account arrives with 10,000
    collateral.
 
-2. **What the app has already done.** Generated an ECgFp5 key over the curve
-   `lighter_sign.rs` already implements and stored its secret in the keychain
-   under `lighter-testnet:0xYOURADDRESS`.
+2. **Register an API key.** A fresh account has none, and the first
+   registration is signed by the L1 wallet — the same line `approveAgent`
+   draws, and the same reason this app cannot cross it. Do it at
+   <https://testnet.app.lighter.xyz/>.
 
-3. **Register that public key.** A fresh account has no registered API key, and
-   the first registration is signed by the L1 wallet — the same line
-   `approveAgent` draws. Do it at <https://testnet.app.lighter.xyz/>, then hand
-   back the **`account_index`** and the **`api_key_index`** you registered
-   under. Those two are account coordinates rather than secrets, and the app
-   has no way to discover which slot was used.
+3. **Hand back three values.** The **`account_index`**, the
+   **`api_key_index`** the key was registered under, and that key's 40-byte hex
+   secret. The first two are account coordinates rather than secrets and the app
+   has no way to discover which slot was used; the third is what signs.
 
-4. **The app verifies it.** `apikeys?account_index=…&api_key_index=…` publishes
-   the registered public key, so the app compares it against the one it
-   generated before claiming the session may trade — exactly what `extraAgents`
-   does on the other venue.
+   ```bash
+   ICE_LIGHTER_TESTNET_ACCOUNT=… \
+   ICE_LIGHTER_TESTNET_API_KEY=… \
+   ICE_LIGHTER_TESTNET_KEY=0x… \
+     cargo test -p trading-example -- --ignored --exact \
+       lighter::tests::the_order_path_places_rests_and_cancels_on_the_test_deployment
+   ```
+
+4. **Still owed: the panel's half.** Making the keypair, filing the secret
+   under `lighter-testnet:0xYOURADDRESS`, and holding the two indices beside it
+   are custody work this panel does not do yet — it makes Ethereum agent keys,
+   which this venue does not use. When it lands, the verification is
+   `apikeys?account_index=…&api_key_index=…`, which publishes the registered
+   public key for the app to compare against the one it holds, exactly as
+   `extraAgents` is compared on the other venue.
 
 ### What needs a Mac
 
@@ -1258,6 +1278,47 @@ old feed cannot reach severs that. Panning back past the oldest candle asks
 `venue_history` for the window before it, once per tape length; the chart moves
 its own viewport by however many candles land in front of it, so the screen
 stays on the bars it was showing.
+
+### Placing an order on Lighter
+
+An order here is an L2 transaction rather than a JSON action, and it is the one
+place the two venues share no shape at all. `POST /api/v1/sendTx` takes a form
+of `tx_type` and `tx_info`: 14 to create an order, 15 to cancel one. `tx_info`
+carries the transaction's fields as JSON with an 80-byte Schnorr signature
+beside them, and what that signature covers is a Poseidon2 digest over the same
+fields as Goldilocks elements — in the sequencer's own order, led by the
+deployment's chain id (300 on testnet, 304 on mainnet) and the transaction
+type. `lighter_sign.rs` builds both from one set of values, for the reason
+`signing.rs` packs a Hyperliquid action twice from one tree: a field signed in
+one shape and sent in another recovers a stranger.
+
+Nothing about that layout is taken on documentation. Both digests and both
+bodies are pinned against output from `lighter-signer-linux-amd64.so` — the
+venue's own signer, and the same artifact the read token's vectors came from —
+for four transactions covering both kinds, both deployments, and each field at
+the small and the capped end of its range. The venue's signature over its own
+digest is also verified against the digest this module computes, which says the
+two are the same field element and not merely the same forty bytes.
+
+A nonce is per API key rather than per account: `GET /nextNonce?account_index=
+…&api_key_index=…`. It answers `nonce: 0` for an account index nobody has ever
+opened, so nothing may infer an account from it.
+
+`sendTx` puts its verdict in a `code` rather than in the HTTP status, and every
+refusal read live arrives as a 400 — the shape of the body first (`21501`),
+then each field (`21602` market, `21701` size, `21702` price, `21705`
+time-in-force, `21104` nonce), then the account (`21100`), then the key
+(`21109`), then the signature (`21120`). That ladder is what makes an
+unregistered key useful evidence: a transaction refused at `21109` is one the
+venue parsed and accepted in every other respect, which is the live proof it
+reads what this module writes.
+
+**An acceptance is a receipt, not a fill.** `code: 200` answers a `tx_hash` and
+a `predicted_execution_time_ms` — the venue saying in its own answer that the
+order has not executed yet. Nothing may draw "placed" off it; the book is what
+says an order rests. There is no order id in that answer either, so an order is
+named by the `ClientOrderIndex` its placer chose, and that index is what
+`lighter_place` returns and what `lighter_cancel` takes.
 
 ## Marking trades on the chart
 

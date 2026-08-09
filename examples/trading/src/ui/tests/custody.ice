@@ -81,9 +81,12 @@ test trading_a_build_with_no_keychain_says_so_instead_of_offering_a_prompt
   expect !session_can_trade(session, clock)
 
 // The other half of that distinction, and the half that must not be blurred: a
-// network this app cannot sign for at all is refused before any sheet, and the
-// refusal names the network rather than looking like a broken keychain.
-test trading_a_network_with_no_write_path_refuses_the_unlock_by_name
+// network whose key this panel does not hold is refused before any sheet, and
+// the refusal names the network and the reason rather than looking like a
+// broken keychain. Lighter's orders are signed by an API key the account
+// registers, so there is nothing here to make and nothing here to unlock — and
+// that is about enrolment, not about whether the app can sign at all.
+test trading_a_network_this_panel_does_not_hold_a_key_for_refuses_by_name
   preset lighter
   viewport 1660 900
   target app = #app
@@ -92,13 +95,13 @@ test trading_a_network_with_no_write_path_refuses_the_unlock_by_name
   target unlock = custody/unlock
   dispatch navigate(Page.settings)
   expect a11y unlock disabled true
-  expect text "This app cannot sign Lighter orders yet, so there is no key to hold for it here." within custody
-  // And the network that can be signed for leaves the same button live, so the
+  expect text "Lighter signs with an API key the account registers, not one this panel can make." within custody
+  // And the network whose keys it does hold leaves the same button live, so the
   // refusal is about this network rather than about the button always being
   // dead.
   dispatch switch_venue(Venue.hyperliquid)
   expect a11y unlock disabled false
-  expect no text "This app cannot sign Lighter orders yet, so there is no key to hold for it here." within custody
+  expect no text "Lighter signs with an API key the account registers, not one this panel can make." within custody
 
 // A key is approved for one account on one deployment. Carried across either
 // change, it is a session claiming the app may trade somewhere the key is

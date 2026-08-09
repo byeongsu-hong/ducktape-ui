@@ -134,6 +134,63 @@ fn no_stream<T>() -> Receiver<Result<T, HlError>> {
     receiver
 }
 
+/// How this app signs for a network, and which deployment that signature is
+/// pinned to.
+///
+/// Two schemes rather than one, because the two exchanges share no part of a
+/// signature. Hyperliquid signs EIP-712 typed data with an Ethereum agent key
+/// the master wallet approved; Lighter signs L2 transactions with an API key
+/// the account registered, Schnorr over a different curve entirely, and its
+/// deployment is a number stamped into the digest rather than a domain. What
+/// they do share is the one fact this type exists to carry: a signature belongs
+/// to exactly one deployment, and it is the same deployment the reads on that
+/// network are addressed to.
+///
+/// So the field on `Network` is this rather than a `Chain`. A `Chain` bent to
+/// stand for both would be an EIP-712 domain claiming to describe a scheme that
+/// has none, and the entry for a Lighter network would name a Hyperliquid
+/// deployment — which is the exact confusion the whole seam is built to
+/// prevent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Signing {
+    /// `signing.rs`, pinned by the chain the phantom agent's `source` names.
+    Eip712(Chain),
+    /// `lighter_sign.rs`, pinned by the chain id this zone's sequencer stamps
+    /// into every transaction digest.
+    ApiKey(Zone),
+}
+
+impl Signing {
+    /// Whether the deployment this signs for trades money that is worth
+    /// something. Read beside `Network.testnet`, which has to agree with it.
+    pub fn testnet(self) -> bool {
+        match self {
+            Signing::Eip712(chain) => chain.testnet(),
+            Signing::ApiKey(zone) => zone.testnet(),
+        }
+    }
+
+    /// A short, stable name for what a key held here is for.
+    ///
+    /// The *scheme* is in the name and not only the deployment, which is the
+    /// half a single-venue app never needs. One address is read at both
+    /// exchanges and holds a different key at each; an item named for the
+    /// deployment alone would file both under "mainnet", so enrolling the
+    /// second would overwrite the first and each venue would afterwards be
+    /// handed the other's secret. That failure has no symptom until an order is
+    /// refused for a signer nobody recognises.
+    ///
+    /// Deliberately not the wire spelling of anything, for `Chain::key`'s
+    /// reason: renaming a keychain item must never be able to change what a
+    /// signature says.
+    pub fn key(self) -> String {
+        match self {
+            Signing::Eip712(chain) => format!("hyperliquid-{}", chain.key()),
+            Signing::ApiKey(zone) => format!("lighter-{}", zone.key()),
+        }
+    }
+}
+
 /// One network: what it is called, what it costs to be wrong on it, and
 /// everything the terminal asks it for. Read-only, and each answer is already
 /// in the shape the panels read rather than the shape the exchange returned —
@@ -164,22 +221,27 @@ pub struct Network {
     pub name: &'static str,
     /// Whether an order here costs anything to get wrong.
     pub testnet: bool,
-    /// The deployment a signature made for this network is pinned to, or
-    /// nothing where this app cannot write at all.
+    /// How a write to this network is signed, and the deployment that
+    /// signature is pinned to.
     ///
     /// Declared here rather than left inside the read closures because it is
     /// the one fact about a network that two halves of the app have to agree
-    /// on: `Chain` is what the reads are addressed to *and* what a signature
-    /// carries, so an entry whose badge says testnet while its chain says
-    /// mainnet is a screen that prices an order on one deployment and sends it
-    /// to the other. The test below holds the pair together.
+    /// on: the deployment named here is what the reads are addressed to *and*
+    /// what a signature carries, so an entry whose badge says testnet while its
+    /// signing says mainnet is a screen that prices an order on one deployment
+    /// and sends it to the other. The test below holds the pair together.
     ///
-    /// What it cannot hold: each read closure still names its own `Chain`
+    /// Not an `Option`. Every network in the registry can be written to, so a
+    /// "no write path" case would be a state nothing is in — and the day one is
+    /// added, a missing scheme should be a compile error here rather than a
+    /// silent read-only network that the panels never explain.
+    ///
+    /// What it cannot hold: each read closure still names its own deployment
     /// literal, because a closure that captured this field would no longer be
     /// the `fn` pointer the seam is built from. A closure naming the wrong one
     /// compiles, and only review and the endpoint in the failure message catch
     /// it.
-    pub chain: Option<Chain>,
+    pub signing: Signing,
     /// What this network will not tell the app about the account it is
     /// watching, or nothing when it answers everything asked of it. Stated
     /// once here so the panels that go empty read the same reason.
@@ -266,7 +328,7 @@ impl Network {
         rests_forever: true,
         attaches_levels: true,
         testnet: false,
-        chain: Some(Chain::Mainnet),
+        signing: Signing::Eip712(Chain::Mainnet),
         gap: "",
         note: "",
         portfolio: |address| Box::pin(hl_portfolio(Chain::Mainnet, address)),
@@ -307,7 +369,7 @@ impl Network {
         attaches_levels: true,
         name: "Hyperliquid Testnet",
         testnet: true,
-        chain: Some(Chain::Testnet),
+        signing: Signing::Eip712(Chain::Testnet),
         // It answers every read this app makes, so it refuses nothing and this
         // is empty. What is different about it is a `note`.
         gap: "",
@@ -344,16 +406,12 @@ impl Network {
         attaches_levels: false,
         name: "Lighter",
         testnet: false,
-        // Nothing yet, and the reason is this app rather than the venue.
-        // Lighter's orders are L2 transactions signed by an API key the account
-        // registers — the `api_key_index` in the token `lighter_sign.rs`
-        // already mints, over the curve it already implements — so the missing
-        // half is the transaction, not the signing. `None` here means "this app
-        // has no write path", and when that changes this field changes shape:
-        // Lighter's writes are not pinned to an EIP-712 chain, so carrying both
-        // schemes is the seam's own next revision rather than a `Chain` bent to
-        // fit.
-        chain: None,
+        // An L2 transaction signed by an API key the account registers, which
+        // is the same key and the same `api_key_index` the read token
+        // `lighter_sign.rs` mints. The zone rather than a chain: what pins one
+        // of these to a deployment is the chain id its sequencer stamps into
+        // the digest, not an EIP-712 domain.
+        signing: Signing::ApiKey(Zone::Mainnet),
         gap: "Lighter serves resting orders and this account's fills only to an \
               API-key-signed token, which an address alone cannot get and this app \
               does not hold.",
@@ -400,16 +458,7 @@ impl Network {
         attaches_levels: false,
         name: "Lighter Testnet",
         testnet: true,
-        // Nothing yet, and the reason is this app rather than the venue.
-        // Lighter's orders are L2 transactions signed by an API key the account
-        // registers — the `api_key_index` in the token `lighter_sign.rs`
-        // already mints, over the curve it already implements — so the missing
-        // half is the transaction, not the signing. `None` here means "this app
-        // has no write path", and when that changes this field changes shape:
-        // Lighter's writes are not pinned to an EIP-712 chain, so carrying both
-        // schemes is the seam's own next revision rather than a `Chain` bent to
-        // fit.
-        chain: None,
+        signing: Signing::ApiKey(Zone::Testnet),
         gap: "Lighter serves resting orders and this account's fills only to an \
               API-key-signed token, which an address alone cannot get and this app \
               does not hold.",
@@ -852,69 +901,111 @@ mod tests {
         );
     }
 
-    /// The badge and the chain a signature would carry are the same fact, and
-    /// an entry where they disagree is the failure this whole seam exists to
-    /// make impossible: a screen labelled TESTNET whose orders are signed for
-    /// mainnet reads correctly on both halves and empties a real account.
+    /// The badge and the deployment a signature is pinned to are the same
+    /// fact, and an entry where they disagree is the failure this whole seam
+    /// exists to make impossible: a screen labelled TESTNET whose orders are
+    /// signed for mainnet reads correctly on both halves and empties a real
+    /// account.
     ///
-    /// What this does not reach: each read closure names its own `Chain`
+    /// What this does not reach: each read closure names its own deployment
     /// literal, because capturing this field would stop it being the `fn`
     /// pointer the seam is built from. A closure naming the wrong deployment
     /// compiles and is caught by review, not by this.
     #[test]
     fn a_network_signs_for_the_deployment_it_says_it_is() {
-        // Where a network carries a signing deployment, it must be the one the
-        // badge names. Where it carries none this says nothing — a network
-        // this app cannot write to yet is not thereby a mainnet, which is what
-        // the first version of this assertion accidentally claimed and what
-        // Lighter Testnet caught the moment it was added.
+        // Every network's signing deployment must be the one its badge names.
+        // No entry is skipped: the field is not optional, so a network added
+        // without a scheme is a compile error rather than a row this loop
+        // walks past.
         for network in NETWORKS {
-            let Some(chain) = network.chain else {
-                continue;
-            };
             assert_eq!(
                 network.testnet,
-                chain.testnet(),
-                "{}: the badge and the signing chain name different deployments",
+                network.signing.testnet(),
+                "{}: the badge and the signing deployment disagree",
                 network.name,
             );
         }
 
-        // And the other half, which the `if let` above would otherwise let
-        // rot: every network that can be written to at all is accounted for
-        // here, so a new entry silently carrying no scheme is a compile-time
-        // arm rather than a test that quietly skips it.
-        let writable: Vec<&str> = NETWORKS
+        // Which networks this app can sign for, and by which scheme. Pinned
+        // rather than derived, because changing it is never only a registry
+        // edit: the refusal sentences, the enrolment a user has to perform and
+        // the custody seam's branches all say which venues can be written to.
+        let schemes: Vec<(&str, Signing)> = NETWORKS
             .iter()
-            .filter(|network| network.chain.is_some())
-            .map(|network| network.name)
+            .map(|network| (network.name, network.signing))
             .collect();
         assert_eq!(
-            writable,
-            vec!["Hyperliquid", "Hyperliquid Testnet"],
+            schemes,
+            vec![
+                ("Hyperliquid", Signing::Eip712(Chain::Mainnet)),
+                ("Hyperliquid Testnet", Signing::Eip712(Chain::Testnet)),
+                ("Lighter", Signing::ApiKey(Zone::Mainnet)),
+                ("Lighter Testnet", Signing::ApiKey(Zone::Testnet)),
+            ],
             "the networks this app can sign for changed; the refusal sentences \
              and the enrolment checklist are part of that change"
         );
 
         assert_eq!(
-            Network::HYPERLIQUID.chain.map(Chain::info_url),
-            Some("https://api.hyperliquid.xyz/info"),
+            Chain::Mainnet.info_url(),
+            "https://api.hyperliquid.xyz/info"
         );
         assert_eq!(
-            Network::HYPERLIQUID_TESTNET.chain.map(Chain::info_url),
-            Some("https://api.hyperliquid-testnet.xyz/info"),
+            Chain::Testnet.info_url(),
+            "https://api.hyperliquid-testnet.xyz/info"
         );
         assert_ne!(
-            Network::HYPERLIQUID.chain,
-            Network::HYPERLIQUID_TESTNET.chain,
-            "one exchange's two deployments have to be two chains"
+            Network::HYPERLIQUID.signing,
+            Network::HYPERLIQUID_TESTNET.signing,
+            "one exchange's two deployments have to be two signatures"
         );
-        for lighter in [Network::LIGHTER, Network::LIGHTER_TESTNET] {
+        assert_ne!(
+            Network::LIGHTER.signing,
+            Network::LIGHTER_TESTNET.signing,
+            "and the same on the other exchange"
+        );
+    }
+
+    /// A key is filed under the network it signs for, and one address holds a
+    /// different key at each of the four.
+    ///
+    /// The scheme has to be in that name and not only the deployment. Both
+    /// exchanges have a "mainnet", the same address is read at both, and the
+    /// two hold unrelated secrets — so names that collided would have the
+    /// second enrolment overwrite the first and afterwards hand each venue the
+    /// other's key, which surfaces only as an order refused for a signer
+    /// nobody recognises.
+    #[test]
+    fn every_network_files_its_key_under_a_name_of_its_own() {
+        let mut names: Vec<String> = NETWORKS
+            .iter()
+            .map(|network| network.signing.key())
+            .collect();
+        assert_eq!(names.len(), NETWORKS.len());
+        names.sort();
+        let filed = names.len();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            filed,
+            "two networks file a key under one name: {names:?}"
+        );
+
+        // And each name says both halves, so a reader of the keychain can tell
+        // which key they are looking at.
+        for network in NETWORKS {
+            let name = network.signing.key();
+            let exchange = if name.starts_with("hyperliquid") {
+                "hyperliquid"
+            } else {
+                "lighter"
+            };
+            assert!(name.starts_with(exchange), "{name}");
             assert_eq!(
-                lighter.chain, None,
-                "{}: this app has no Lighter write path yet, and an EIP-712 chain \
-                 here would claim both that it has one and that it is that scheme",
-                lighter.name,
+                name.contains("testnet"),
+                network.testnet,
+                "{}: the item name and the badge disagree",
+                network.name
             );
         }
     }
