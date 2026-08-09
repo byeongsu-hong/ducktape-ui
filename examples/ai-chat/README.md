@@ -199,8 +199,19 @@ next turn would resend, and either for the question, which different sessions
 record in different places.
 
 The drawn stream is what brings back the things this window cannot itself
-produce: shell commands with their output, file changes, MCP calls. A chat is
+produce: shell commands with their output, web searches, file changes, MCP
+calls, sub-agent hand-offs, and where the context was compacted. A chat is
 being read back, not re-run.
+
+Not every rollout is a chat. The CLI writes one for exec runs and for each
+sub-agent's own session, and it opens every session by injecting context —
+`<environment_context>`, the project's AGENTS.md — as a message in the same
+shape as a typed one. A rollout with nothing a person actually asked in it is
+not listed, and injected text is never drawn as a question or used as a name.
+
+`src/qa.rs` audits this against the rollouts on the machine it runs on:
+`AI_CHAT_QA_FROM`/`AI_CHAT_QA_TO` bound the slice, and it reports what came out
+badly. It is what found both of the above.
 
 These files are large: a median of 2MB and a tail past 90MB. The listing reads
 only each file's head, and opening one streams it a line at a time and keeps a

@@ -74,6 +74,8 @@ mod audit {
 
     /// Item types the drawn stream carries that `history` does not model.
     fn unmapped(raw: &str) -> Vec<String> {
+        // Everything the parser has an arm for, including the one it answers
+        // for by deliberately drawing nothing.
         let known = [
             "UserMessage",
             "AgentMessage",
@@ -81,6 +83,11 @@ mod audit {
             "CommandExecution",
             "FileChange",
             "McpToolCall",
+            "Extension",
+            "ContextCompaction",
+            "ImageView",
+            "SubAgentActivity",
+            "CollabAgentToolCall",
         ];
         let mut seen = Vec::new();
         for line in raw.lines() {

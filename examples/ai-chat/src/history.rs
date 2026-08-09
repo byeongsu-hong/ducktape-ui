@@ -24,11 +24,12 @@ use crate::codex::{CodexError, Entry, Session};
 
 /// How much of a file to read when all that is wanted is its name and date.
 ///
-/// The first prompt sits a median of 60KB in, behind the instructions and the
-/// environment the CLI records ahead of it, so a smaller head finds a name for
-/// barely a tenth of them. A chat whose prompt is past even this is still
-/// listed, under the only other name it has.
-const HEAD_BYTES: u64 = 256 * 1024;
+/// Measured across 120 sampled rollouts, the first question someone actually
+/// typed — as opposed to the context the CLI injects ahead of it — sits a
+/// median of 71KB in, three quarters within 99KB and nine tenths within 825KB.
+/// Reading stops the moment it is found, so this bound is only ever paid by a
+/// rollout that buries its question or has none at all.
+const HEAD_BYTES: u64 = 1024 * 1024;
 /// How many chats to offer. They are the most recent ones.
 const CHATS: usize = 120;
 /// How many rows one chat may put on screen. A rollout can hold thousands, and
@@ -48,6 +49,25 @@ pub struct Chat {
     pub when: String,
     /// Where it was had.
     pub cwd: String,
+}
+
+/// Text the CLI puts in front of a session in the shape of a user message.
+///
+/// It arrives as a `response_item` with a user role, indistinguishable by
+/// shape from something typed, so it is told apart by what it opens with. Left
+/// unfiltered it becomes the chat's name — one rollout here was titled
+/// `# AGENTS.md instructions for /home/…` — and its first turn.
+const INJECTED: [&str; 5] = [
+    "<environment_context",
+    "<recommended_plugins",
+    "<codex_internal_context",
+    "<user_instructions",
+    "# AGENTS.md instructions for",
+];
+
+fn is_injected(text: &str) -> bool {
+    let text = text.trim_start();
+    INJECTED.iter().any(|marker| text.starts_with(marker))
 }
 
 fn sessions_root() -> PathBuf {
@@ -118,7 +138,10 @@ fn chat_at(path: &Path) -> Option<Chat> {
                     && payload["role"] == "user"
                     && title.is_empty() =>
             {
-                title = first_line(&text_of(&payload["content"]));
+                let asked = text_of(&payload["content"]);
+                if !is_injected(&asked) {
+                    title = first_line(&asked);
+                }
             }
             _ => {}
         }
@@ -127,19 +150,17 @@ fn chat_at(path: &Path) -> Option<Chat> {
         }
     }
 
-    // A rollout with no session of its own never started; one whose prompt is
-    // simply further in than this reads is still a chat, and is listed under
-    // the only other name it has rather than dropped.
-    if when.is_empty() {
+    // A rollout nobody asked anything in is not a chat to reopen: an exec run,
+    // a sub-agent's own session, a start that went nowhere. Listing them under
+    // a placeholder name fills the sidebar with things that open onto machine
+    // output and no question. The name is the test because it is the same
+    // thing: what a person typed, as opposed to what the CLI injected.
+    if when.is_empty() || title.is_empty() {
         return None;
     }
     Some(Chat {
         path: path.to_string_lossy().into_owned(),
-        title: if title.is_empty() {
-            "Untitled chat".to_owned()
-        } else {
-            title
-        },
+        title,
         when: day_of(&when),
         cwd: last_component(&cwd),
     })
@@ -263,7 +284,12 @@ pub fn open_chat(session: Session, path: String) -> Result<Vec<Entry>, CodexErro
             "response_item" => {
                 if payload["type"] == "message" && payload["role"] == "user" {
                     let asked = text_of(&payload["content"]);
-                    if !asked.trim().is_empty() && said.insert(asked.clone()) {
+                    // Still resent — the model needs it — but not drawn as
+                    // though someone typed it.
+                    if !asked.trim().is_empty()
+                        && !is_injected(&asked)
+                        && said.insert(asked.clone())
+                    {
                         turn += 1;
                         let mut row = Entry::of("prompt", "").with_body(asked);
                         row.turn = turn;
@@ -387,6 +413,56 @@ fn row_for(item: &Value) -> Option<Entry> {
             row.status = "done".to_owned();
             Some(row)
         }
+        // A search the model ran. Dropping it made an answer that came from
+        // the web read as though the model simply knew.
+        "Extension" => {
+            let mut row = Entry::of("tool", item["kind"].as_str().unwrap_or("Extension"));
+            row.detail = clipped(
+                item["query"]
+                    .as_str()
+                    .or_else(|| item["action"].as_str())
+                    .unwrap_or_default(),
+                OUTPUT,
+            );
+            row.body = clipped(&item["results"].to_string(), OUTPUT);
+            row.status = "done".to_owned();
+            Some(row)
+        }
+        // Where the CLI summarised older turns away, which is the only
+        // explanation a reader gets for a model forgetting something.
+        "ContextCompaction" => {
+            let mut row = Entry::of("tool", "Compacted the context");
+            row.status = "done".to_owned();
+            Some(row)
+        }
+        "ImageView" => {
+            let mut row = Entry::of("tool", "Viewed an image");
+            row.detail = clipped(item["path"].as_str().unwrap_or_default(), OUTPUT);
+            row.status = "done".to_owned();
+            Some(row)
+        }
+        // Handing off to a sub-agent is worth a line; the polling in between
+        // is not. `interacted` is 621 of 660 of these, and a transcript that
+        // drew them all would be mostly them.
+        "SubAgentActivity" => {
+            let kind = item["kind"].as_str().unwrap_or_default();
+            if !matches!(kind, "started" | "interrupted") {
+                return None;
+            }
+            let mut row = Entry::of("tool", format!("Sub-agent {kind}"));
+            row.detail = clipped(item["agent_path"].as_str().unwrap_or_default(), OUTPUT);
+            row.status = if kind == "interrupted" {
+                "failed"
+            } else {
+                "done"
+            }
+            .to_owned();
+            Some(row)
+        }
+        // Deliberately not a row: every one of the 411 in this machine's
+        // rollouts is `tool: "wait"`, the orchestrator waiting on a sub-agent.
+        // Drawing them would add only noise, and denser than any other type.
+        "CollabAgentToolCall" => None,
         "McpToolCall" => {
             let mut row = Entry::of(
                 "tool",
@@ -517,10 +593,59 @@ mod tests {
         assert_eq!(mcp.title, "github · list_issues");
     }
 
+    /// The CLI puts its own text in front of a session in the shape of a user
+    /// message. Read as one it becomes the chat's name and its first turn —
+    /// one rollout here was titled `# AGENTS.md instructions for /home/…`,
+    /// which is neither a question nor anyone's business.
+    #[test]
+    fn what_the_cli_injected_is_not_what_anyone_asked() {
+        for injected in [
+            "<environment_context>\n  <cwd>/home/eddy</cwd>",
+            "# AGENTS.md instructions for /home/eddy/dev/ducktape",
+            "<recommended_plugins>Here is a list of plugins",
+            "<codex_internal_context source=\"goal\">",
+        ] {
+            assert!(is_injected(injected), "not caught: {injected}");
+        }
+        for asked in [
+            "Which version of iced is current?",
+            "  # Why is this slow?",
+            "Explain <environment_context> to me",
+        ] {
+            assert!(!is_injected(asked), "wrongly caught: {asked}");
+        }
+    }
+
+    /// A search the model ran, a hand-off, and a compaction are all things a
+    /// reader needs to see; the orchestrator waiting is not.
+    #[test]
+    fn the_drawn_items_worth_reading_become_rows_and_the_rest_do_not() {
+        let row = |raw: &str| row_for(&item(raw));
+        assert_eq!(
+            row(r#"{"type":"Extension","kind":"web.search","query":"iced 0.14"}"#)
+                .map(|row| (row.title, row.detail)),
+            Some(("web.search".to_owned(), "iced 0.14".to_owned()))
+        );
+        assert_eq!(
+            row(r#"{"type":"SubAgentActivity","kind":"started","agent_path":"reviewer"}"#)
+                .map(|row| row.title),
+            Some("Sub-agent started".to_owned())
+        );
+        assert!(
+            row(r#"{"type":"SubAgentActivity","kind":"interacted"}"#).is_none(),
+            "polling is not a step anyone reads"
+        );
+        assert!(
+            row(r#"{"type":"CollabAgentToolCall","tool":"wait"}"#).is_none(),
+            "nor is waiting"
+        );
+        assert!(row(r#"{"type":"ContextCompaction"}"#).is_some());
+    }
+
     /// An item this build does not model is not a row, rather than an empty one.
     #[test]
     fn an_unmodelled_item_is_no_row_at_all() {
-        assert!(row_for(&item(r#"{"type":"SubAgentActivity"}"#)).is_none());
+        assert!(row_for(&item(r#"{"type":"ThreadGoalUpdated"}"#)).is_none());
         assert!(row_for(&item(r#"{"type":"Reasoning","summary_text":"   "}"#)).is_none());
     }
 
