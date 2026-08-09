@@ -1545,9 +1545,7 @@ fn cargo_build_discovers_rustc_and_build_script_inputs() {
     assert_ne!(dep_info, build.executable.with_extension("d"));
     assert!(dep_info.starts_with(build.executable.parent().unwrap().join("deps")));
     assert!(
-        build
-            .discovered_inputs
-            .contains(&embedded.canonicalize().unwrap()),
+        build.discovered_inputs.contains(&embedded),
         "rustc dep-info did not report include_bytes input: {:?}",
         build.discovered_inputs
     );
