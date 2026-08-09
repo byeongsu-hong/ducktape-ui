@@ -132,7 +132,7 @@ component PortfolioAssetRow(asset:PortfolioAsset)
             align-x=right
             font=digits
             @text-up
-        text fmt_pct(asset.pnl_pct)
+        text fmt_pct(asset.roe_pct)
           with
             size=9.0
             w=fill
@@ -148,7 +148,7 @@ component PortfolioAssetRow(asset:PortfolioAsset)
             align-x=right
             font=digits
             @text-down
-        text fmt_pct(asset.pnl_pct)
+        text fmt_pct(asset.roe_pct)
           with
             size=9.0
             w=fill

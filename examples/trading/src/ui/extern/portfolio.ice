@@ -1,6 +1,6 @@
 extern crate::portfolio
   PortfolioHistory(note:str)
-  PortfolioAsset(coin:str, side:str, size:f64, mark:f64, value:f64, share:f64, bar:f64, pnl:f64, pnl_pct:f64)
+  PortfolioAsset(coin:str, side:str, size:f64, mark:f64, value:f64, share:f64, bar:f64, pnl:f64, roe_pct:f64)
   PortfolioFlow(trades:i64, volume:f64, realized:f64, wins:i64, losses:i64, closed:i64, win_pct:f64)
   PortfolioFunding(paid:f64, received:f64, net:f64)
   venue_portfolio(venue:Venue, address:str) -> PortfolioHistory ! HlError
