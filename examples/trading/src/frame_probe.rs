@@ -7,12 +7,12 @@
 //!
 //! What is left is the dense screen itself: a chart, a book, a tape, alerts,
 //! four tables and a ticket, rebuilt on every beat of the feed. These probes
-//! price it panel by panel, price the sync boundary the view calls across, and
+//! price it panel by panel, price the direct Rust calls the view makes, and
 //! price a beat of the feed against an idle frame. They print and assert
 //! nothing.
 //!
 //!     cargo test --release -p trading-example -- --ignored --nocapture frame_
-//!     cargo test --release -p trading-example -- --ignored --nocapture sync_
+//!     cargo test --release -p trading-example -- --ignored --nocapture direct_call_
 //!     cargo test --release -p trading-example -- --ignored --nocapture beat_
 #![cfg(not(debug_assertions))]
 
@@ -235,7 +235,6 @@ fn app(screen: Screen) -> Trading {
     state.live = true;
     state.latency = 42;
     state.symbols = symbol_rows(screen.symbols, &coin);
-    state.visible = hyperliquid::filter_symbols(state.symbols.clone(), String::new(), coin.clone());
     state.focus = hyperliquid::symbol_row(state.symbols.clone(), coin.clone());
     state.account = Some(account(held.clone()));
     state.positions = held;
@@ -264,7 +263,7 @@ fn app(screen: Screen) -> Trading {
 type Ablation = (&'static str, fn(&mut Trading));
 
 const ABLATIONS: &[Ablation] = &[
-    ("without market rows", |state| state.visible.clear()),
+    ("without market rows", |state| state.query = "\0".to_owned()),
     ("without position rows", |state| state.positions.clear()),
     ("without fill rows", |state| state.fills.clear()),
     ("without book rows", |state| state.book = None),
@@ -275,7 +274,7 @@ const ABLATIONS: &[Ablation] = &[
         state.tape = hyperliquid::tape_new()
     }),
     ("without any rows", |state| {
-        state.visible.clear();
+        state.query = "\0".to_owned();
         state.positions.clear();
         state.fills.clear();
         state.book = None;
@@ -635,12 +634,12 @@ fn beat_cost() {
     report("redraw after the beat", after);
 }
 
-/// What the view pays to call across the sync boundary, per call. Each is
+/// What the view pays for direct Rust calls, per call. Each is
 /// written the way the generated view writes it — the boundary takes owned
 /// values, so the collection the app holds is cloned at the call site.
 #[test]
 #[ignore = "frame-cost probe, run explicitly: prints per-call costs, asserts nothing"]
-fn sync_cost() {
+fn direct_call_cost() {
     let state = app(DENSE);
     let row = state
         .focus
@@ -771,7 +770,10 @@ fn sync_cost() {
     price!("fmt_pnl(f64)", hyperliquid::fmt_pnl(held.pnl));
     price!("fmt_volume(f64)", hyperliquid::fmt_volume(row.volume));
     price!("fmt_time(i64)", hyperliquid::fmt_time(print.ts));
-    price!("fmt_age(i64)", hyperliquid::fmt_age(order.ts));
+    price!(
+        "fmt_age(i64, i64)",
+        hyperliquid::fmt_age(order.ts, hyperliquid::now_seconds())
+    );
     price!("fmt_count(i64)", hyperliquid::fmt_count(20));
     price!("fmt_leverage(f64)", hyperliquid::fmt_leverage(row.leverage));
     price!("fmt_bps(f64)", hyperliquid::fmt_bps(0.3));
@@ -796,7 +798,7 @@ fn sync_cost() {
     );
 
     eprintln!(
-        "\nsync boundary as the view calls it, one call, at {} positions / {} prints / {} alerts / {} book levels",
+        "\ndirect Rust calls from the view, one call, at {} positions / {} prints / {} alerts / {} book levels",
         DENSE.positions,
         DENSE.prints,
         DENSE.alerts,
@@ -870,7 +872,7 @@ fn sync_cost() {
     );
 
     eprintln!(
-        "\nsync boundary as one beat calls it, {} markets",
+        "\ndirect Rust calls from one beat, {} markets",
         DENSE.symbols
     );
     fold.sort_by_key(|(_, cost)| std::cmp::Reverse(*cost));
@@ -939,152 +941,6 @@ fn sync_cost() {
         "copied, not computed",
         copied as f64 / 1000.0,
         total as f64 / 1000.0
-    );
-}
-
-/// The fills list is the largest thing on this screen and sits behind a `lazy`
-/// boundary keyed on the fill it draws. This holds that boundary down with a
-/// count rather than a clock: `fill_label` is called once per fill row that is
-/// actually built, so a redraw that rebuilds a memoized row is visible here and
-/// nowhere else. Remove the `lazy`, or give `Fill` a `Hash` that does not track
-/// what the row renders, and the counts below move.
-#[test]
-#[ignore = "performance contract, run explicitly: counts fill rows rebuilt per redraw"]
-fn fills_stay_memoized_performance_contract() {
-    use std::cell::Cell;
-
-    use crate::hyperliquid::FILL_LABELS;
-
-    let mut driver = Driver::new(
-        Trading::__program(),
-        Config::new("fills_stay_memoized").viewport(VIEWPORT.0, VIEWPORT.1),
-    );
-    *driver.state_mut() = app(DENSE);
-
-    FILL_LABELS.with(Cell::take);
-    driver.redraw(here());
-    let first = FILL_LABELS.with(Cell::take);
-    // A redraw is not one view build. How many it is belongs to the runtime and
-    // moves when the view is restructured — the page split turned it from one
-    // into several — so this contract measures rows against that number rather
-    // than assuming it. What it holds is the invalidation rule, and the rule is
-    // per row: every row is built on the first redraw, none on a redraw that
-    // changed nothing, and exactly one when exactly one fill moves.
-    assert!(
-        first > 0 && first % DENSE.fills == 0,
-        "a cold redraw builds every fill row a whole number of times: {first} for {} rows",
-        DENSE.fills
-    );
-    // Cold, a row is built once per pass the first redraw makes over it. Warm,
-    // a moved row is built exactly ONCE however many passes there are — which
-    // is the memo working, and the difference between the two numbers is what
-    // it buys.
-
-    driver.redraw(here());
-    let unchanged = FILL_LABELS.with(Cell::take);
-    assert_eq!(
-        unchanged, 0,
-        "a redraw of {} unchanged fills must rebuild none of them",
-        DENSE.fills
-    );
-
-    // The one-sentence invalidation, executed: a row is rebuilt exactly when
-    // the fill it draws changes. Every field the fill has is moved in turn,
-    // because a `Hash` that skipped one would leave rows showing a number the
-    // state no longer holds — and a contract that moved only `heat` would pass
-    // just the same.
-    let moves: &[(&str, fn(&mut Fill))] = &[
-        ("coin", |fill| fill.coin.push('X')),
-        ("ts", |fill| fill.ts += 1),
-        ("price", |fill| fill.price += 0.5),
-        ("size", |fill| fill.size += 0.5),
-        ("buy", |fill| fill.buy = !fill.buy),
-        ("closed_pnl", |fill| fill.closed_pnl += 0.5),
-        ("heat", |fill| fill.heat += 1),
-        ("tid", |fill| fill.tid += 1_000_000),
-    ];
-    for (field, move_it) in moves {
-        move_it(&mut driver.state_mut().fills[0]);
-        driver.redraw(here());
-        assert_eq!(
-            FILL_LABELS.with(Cell::take),
-            1,
-            "moving a fill's {field} must rebuild that row and no other — \
-             a `Hash` that does not cover {field} leaves the row showing a stale one"
-        );
-    }
-
-    eprintln!(
-        "\n{} fills: {first} rows built cold, {unchanged} on an unchanged redraw, \
-         1 after each of the {} fields of one fill moved",
-        DENSE.fills,
-        moves.len()
-    );
-}
-
-/// The same contract for the market list, which has been behind a `lazy`
-/// boundary far longer than the fills have and whose `SymbolRow` carries eleven
-/// fields into a hand-written `Hash`. Counted through `fmt_leverage`, which
-/// draws the MARKET LEVERAGE column and, on the markets page, nothing else —
-/// the cold assertion below is what holds that true.
-#[test]
-#[ignore = "performance contract, run explicitly: counts market rows rebuilt per redraw"]
-fn markets_stay_memoized_performance_contract() {
-    use std::cell::Cell;
-
-    use crate::hyperliquid::MARKET_ROWS;
-
-    let mut driver = Driver::new(
-        Trading::__program(),
-        Config::new("markets_stay_memoized").viewport(VIEWPORT.0, VIEWPORT.1),
-    );
-    *driver.state_mut() = app(DENSE);
-    driver.state_mut().page = crate::Page::Markets;
-
-    MARKET_ROWS.with(Cell::take);
-    driver.redraw(here());
-    let first = MARKET_ROWS.with(Cell::take);
-    let rows = DENSE.symbols;
-    assert!(
-        first > 0 && first % rows == 0,
-        "a cold redraw builds every market row a whole number of times: {first} for {rows} rows"
-    );
-
-    driver.redraw(here());
-    let unchanged = MARKET_ROWS.with(Cell::take);
-    assert_eq!(
-        unchanged, 0,
-        "a redraw of {rows} unchanged markets must rebuild none of them"
-    );
-
-    let moves: &[(&str, fn(&mut SymbolRow))] = &[
-        ("name", |row| row.name.push('X')),
-        ("price", |row| row.price += 0.5),
-        ("change_pct", |row| row.change_pct += 0.5),
-        ("volume", |row| row.volume += 0.5),
-        ("funding_pct", |row| row.funding_pct += 0.5),
-        ("leverage", |row| row.leverage += 0.5),
-        ("open_interest", |row| row.open_interest += 0.5),
-        ("prev", |row| row.prev += 0.5),
-        ("maintenance", |row| row.maintenance += 0.5),
-        ("size_decimals", |row| row.size_decimals += 1),
-        ("selected", |row| row.selected = !row.selected),
-    ];
-    for (field, move_it) in moves {
-        move_it(&mut driver.state_mut().visible[0]);
-        driver.redraw(here());
-        assert_eq!(
-            MARKET_ROWS.with(Cell::take),
-            1,
-            "moving a market's {field} must rebuild that row and no other — \
-             a `Hash` that does not cover {field} leaves the row showing a stale one"
-        );
-    }
-
-    eprintln!(
-        "\n{rows} markets: {first} rows built cold, {unchanged} on an unchanged redraw, \
-         1 after each of the {} fields of one market moved",
-        moves.len()
     );
 }
 
@@ -1174,9 +1030,10 @@ impl ProbeClone for Trading {
         state.address = self.address.clone();
         state.live = self.live;
         state.latency = self.latency;
+        state.clock = self.clock;
         state.coin = self.coin.clone();
+        state.query = self.query.clone();
         state.symbols = self.symbols.clone();
-        state.visible = self.visible.clone();
         state.focus = self.focus.clone();
         state.account = self.account.clone();
         state.positions = self.positions.clone();

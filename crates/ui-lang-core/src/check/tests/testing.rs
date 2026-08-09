@@ -14,8 +14,8 @@ palette app for AppTheme
   danger #cc3333
 
 extern crate::backend
-  sync normalize(value:str) -> str
-  sync dimension(value:f64) -> i64
+  pure normalize(value:str) -> str
+  pure dimension(value:f64) -> i64
 
 preset test
   state

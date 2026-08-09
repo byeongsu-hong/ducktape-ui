@@ -77,8 +77,8 @@ view
 fn checks_generic_event_values_and_filters() {
     let source = r#"app Events
 extern crate::backend
-  sync event_name(value:event) -> str
-  sync event_label(value:event) -> str?
+  pure event_name(value:event) -> str
+  pure event_label(value:event) -> str?
 theme contract AppTheme
   bg
   fg
@@ -125,8 +125,8 @@ view
     );
 
     let error = analyze(&source.replace(
-        "sync event_label(value:event) -> str?",
-        "sync event_label(value:str) -> str?",
+        "pure event_label(value:event) -> str?",
+        "pure event_label(value:str) -> str?",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E101");

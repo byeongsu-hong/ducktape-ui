@@ -723,7 +723,7 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "extern" => details(
             &["document", "view"],
-            "extern <rust-path>\n  [sync|task|component] <name>(<param>:<type>, ...) -> <type>[ ! <error-type>] | extern <declared-component>(<argument>, ...) [#<id>] [-> <handler> [_]]",
+            "extern <rust-path>\n  [pure|sync|task|component] <name>(<param>:<type>, ...) -> <type>[ ! <error-type>] | extern <declared-component>(<argument>, ...) [#<id>] [-> <handler> [_]]",
             json!({
                 "min": 0,
                 "max": null,
@@ -2372,7 +2372,7 @@ fn test_contract() -> Value {
             "uiCache": "persistent across rerenders within one current window; reset by a task-issued window open",
             "startupSystemThemeRustConfig": "Config::system_theme; independent from the render theme override",
             "settling": "widget messages, updates, real tasks, and recursively emitted messages drain after each executable step",
-            "externs": "real sync and task Rust extern implementations",
+            "externs": "real pure, sync, and task Rust extern implementations",
             "subscriptions": "active under the generated program contract",
             "wait": "bounded real elapsed time followed by settling",
             "advance": "deterministic redraw timestamp plus RedrawRequested; arbitrary iced::time futures remain real",
@@ -2628,6 +2628,74 @@ pub fn document() -> Value {
                     "selection": "app setting `palette <str-expression>`; defaults to the first declared palette",
                 },
             },
+            "externFunctions": {
+                "pure": {
+                    "syntax": "pure <name>(<param>:<type>, ...) -> <type>",
+                    "rustAbi": "fn(...) -> Output",
+                    "trustedRustContract": {
+                        "sameArgumentsSameResult": true,
+                        "sideEffectFree": true,
+                        "compilerInspectsBody": false,
+                    },
+                    "allowedContexts": "every checked expression context",
+                },
+                "sync": {
+                    "syntax": "sync <name>(<param>:<type>, ...) -> <type>",
+                    "rustAbi": "fn(...) -> Output",
+                    "purpose": ["immediate effect", "environment read", "retained identity"],
+                    "allowedContexts": [
+                        "top-level app state initializer",
+                        "immediately evaluated app handler expression",
+                        "immediately evaluated component handler expression",
+                        "immediately evaluated preset handler expression",
+                        "handler task argument, including nested task statements",
+                    ],
+                    "componentStateInitializer": false,
+                    "reason": "component rendering may initialize local state again",
+                    "asyncCompletionRouteExpression": {
+                        "syncExtern": false,
+                        "externKinds": ["pure"],
+                        "reason": "the route expression is evaluated when the callback runs",
+                    },
+                },
+                "errorType": false,
+                "derived": {
+                    "externKinds": ["pure"],
+                },
+                "recomputationUnsafeBuiltins": {
+                    "term": "recomputation-unsafe builtin",
+                    "definition": "runtime reads or fresh retained identities forbidden where Ice requires stable recomputation",
+                    "names": [
+                        "window_id.unique",
+                        "aborted",
+                        "debug.time_with",
+                        "image.upgrade",
+                        "encoded",
+                        "rgba",
+                        "animation.animating without explicit instant",
+                        "animation.interpolate without explicit instant",
+                        "animation.remaining without explicit instant",
+                        "animation.project without explicit instant",
+                    ],
+                    "imageConstructorQualification": "encoded and rgba mean the unqualified built-in image constructors; declared pure/sync externs with those names take precedence",
+                    "forbiddenContexts": [
+                        "derived",
+                        "component prop default",
+                        "component state initializer",
+                    ],
+                    "allowedContexts": [
+                        "top-level app state initializer",
+                        "handler",
+                        "view",
+                    ],
+                },
+                "componentRecomputedInitializers": {
+                    "contexts": ["component prop default", "component state initializer"],
+                    "pureExtern": true,
+                    "syncExtern": false,
+                    "recomputationUnsafeBuiltins": false,
+                },
+            },
             "types": {
                 "expression": "statically checked Ice expression",
                 "bool-expression": "expression of bool",
@@ -2654,7 +2722,7 @@ pub fn document() -> Value {
                 "prop": "<name>:<type>[=<default-expression>]",
                 "defaults": {
                     "optional": true,
-                    "expression": "pure checked expression closed over no app state, component state, or parameters",
+                    "expression": "pure checked expression closed over no app state, component state, or parameters; pure extern calls allowed; sync extern calls forbidden",
                     "mutableValues": false,
                     "requiredAfterDefault": true,
                     "callRule": "a missing named argument uses its declared default"
@@ -2992,6 +3060,60 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("<type>")
+        );
+        assert_eq!(
+            schema["core"]["externFunctions"]["pure"]["trustedRustContract"]["sameArgumentsSameResult"],
+            true
+        );
+        assert_eq!(
+            schema["core"]["externFunctions"]["sync"]["allowedContexts"],
+            json!([
+                "top-level app state initializer",
+                "immediately evaluated app handler expression",
+                "immediately evaluated component handler expression",
+                "immediately evaluated preset handler expression",
+                "handler task argument, including nested task statements",
+            ])
+        );
+        assert_eq!(
+            schema["core"]["externFunctions"]["sync"]["componentStateInitializer"],
+            false
+        );
+        assert_eq!(
+            schema["core"]["externFunctions"]["sync"]["asyncCompletionRouteExpression"]["externKinds"],
+            json!(["pure"])
+        );
+        assert_eq!(
+            schema["core"]["externFunctions"]["sync"]["asyncCompletionRouteExpression"]["syncExtern"],
+            false
+        );
+        assert_eq!(
+            schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["forbiddenContexts"],
+            json!([
+                "derived",
+                "component prop default",
+                "component state initializer",
+            ])
+        );
+        assert_eq!(
+            schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["term"],
+            "recomputation-unsafe builtin"
+        );
+        assert_eq!(
+            schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["allowedContexts"],
+            json!(["top-level app state initializer", "handler", "view"])
+        );
+        assert!(
+            schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["names"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("encoded"))
+        );
+        assert!(
+            schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["names"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("rgba"))
         );
     }
 

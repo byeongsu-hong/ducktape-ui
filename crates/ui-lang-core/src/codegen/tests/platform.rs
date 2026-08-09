@@ -129,7 +129,7 @@ fn lowers_native_keyboard_subscriptions() {
     assert!(generated.contains(".to_latin(event.physical_key)"));
     assert!(generated.contains("::iced::keyboard::Key::Character(value)"));
     assert!(generated.contains("::iced::keyboard::key::Physical::Code(value)"));
-    assert!(generated.contains("fn __ui_lang_check_sync_keyboard_value"));
+    assert!(generated.contains("fn __ui_lang_check_pure_keyboard_value"));
 }
 
 #[test]
@@ -157,8 +157,8 @@ fn lowers_native_timer_subscription() {
 fn lowers_generic_event_values_to_all_native_listeners() {
     let source = r#"app Events
 extern crate::backend
-  sync event_name(value:event) -> str
-  sync event_label(value:event) -> str?
+  pure event_name(value:event) -> str
+  pure event_label(value:event) -> str?
 theme contract AppTheme
   bg
   fg
@@ -182,7 +182,7 @@ view
   text "Events"
 "#;
     let generated = compile(source, "events.ice").unwrap();
-    assert!(generated.contains("fn __ui_lang_check_sync_event_name"));
+    assert!(generated.contains("fn __ui_lang_check_pure_event_name"));
     assert!(generated.contains("arg0: ::iced::Event"));
     assert!(generated.contains("::iced::event::listen_with"));
     assert!(generated.contains("::iced::event::listen_raw"));
@@ -276,7 +276,7 @@ fn lowers_typed_pointer_values() {
         "::iced::mouse::Button::Other(9u16)",
         "::iced::touch::Finger(18446744073709551615u64)",
         ".position_over(bounds)",
-        "fn __ui_lang_check_sync_pointer_click",
+        "fn __ui_lang_check_pure_pointer_click",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
@@ -296,7 +296,7 @@ fn lowers_native_transformations() {
         "::iced::Transformation::scale",
         ".inverse()",
         "::std::convert::Into::<[f32; 16]>::into",
-        "fn __ui_lang_check_sync_transformation_round_trip",
+        "fn __ui_lang_check_pure_transformation_round_trip",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
@@ -325,7 +325,7 @@ fn lowers_native_geometry_values() {
         "::iced::alignment::Horizontal::Right",
         "::iced::alignment::Vertical::Bottom",
         "(2.0) as f32",
-        "fn __ui_lang_check_sync_geometry_round_trip",
+        "fn __ui_lang_check_pure_geometry_round_trip",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
@@ -353,7 +353,7 @@ fn lowers_native_padding_and_angles() {
         " % ",
         "(2.0) as f32 * ::iced::Radians",
         ".rotate(self.radians_value)",
-        "fn __ui_lang_check_sync_unit_round_trip",
+        "fn __ui_lang_check_pure_unit_round_trip",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }

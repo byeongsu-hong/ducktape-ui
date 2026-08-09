@@ -362,7 +362,7 @@ extern_item    = struct_sig | function_sig | extern_component_sig
                | extern_selector_sig
                | extern_shader_sig | extern_task_sig | extern_stream_sig
                | extern_sip_sig | extern_recipe_sig | extern_event_filter_sig
-               | extern_sync_sig | extern_subscription_sig
+               | extern_pure_sig | extern_sync_sig | extern_subscription_sig
                | extern_theme_sig | extern_themer_sig
                | extern_window_sig | extern_markdown_viewer_sig
                | extern_text_style_sig | extern_slider_style_sig
@@ -429,6 +429,7 @@ extern_sip_sig = "sip" name "(" field_list? ")" "progress=" type
                  "->" type ("!" type)?
 extern_recipe_sig = "recipe" name "(" field_list? ")" "->" type
 extern_event_filter_sig = "event-filter" name "()" "->" type
+extern_pure_sig = "pure" name "(" field_list? ")" "->" type
 extern_sync_sig = "sync" name "(" field_list? ")" "->" type
 extern_subscription_sig
                = "subscription" name "(" field_list? ")" "->" type
@@ -1794,7 +1795,7 @@ name a Rust numeric alias without exposing fake fields:
 ```ice
 extern crate::backend
   SliderNumber()
-  sync slider_number(value:f64) -> SliderNumber
+  pure slider_number(value:f64) -> SliderNumber
 
 state
   precise:SliderNumber = slider_number(50.0)
@@ -2256,7 +2257,7 @@ Pure editor inspection uses `editor_cursor_line(editor)`,
 `editor_cursor_column(editor)`, `editor_line_count(editor)`,
 `editor_has_selection(editor)`, and `editor_line(editor, line) -> str?`.
 `editor_copy(editor)` preserves text and cursor in a fresh native Content when
-an actual duplicate is needed. A sync self-assignment such as
+an actual duplicate is needed. A handler-only `sync` self-assignment such as
 `document = apply_command(document, command)` transfers the owned editor buffer
 through the function without cloning it, so editing, undo, formatting, and
 similar commands keep the same native buffer allocation.
@@ -2360,21 +2361,47 @@ messages must satisfy the traits required by generated iced code, notably
 opaque, so ordinary extern state and payload types do not additionally need to
 implement `Debug`.
 
-Declared `sync` functions are checked, synchronous Rust calls available in
-Ice expressions. They are the small escape hatch for pure domain conversions
-that do not justify a language builtin:
+Declared `pure` and `sync` functions are checked synchronous Rust calls with
+the same `fn(...) -> Output` ABI but different effect contracts. `pure` is the
+small escape hatch for a domain computation that does not justify a language
+builtin:
 
 ```ice
 extern crate::backend
   NetworkError(message:str)
   AppError(message:str)
-  sync normalize_error(error:NetworkError) -> AppError
+  pure normalize_error(error:NetworkError) -> AppError
 ```
 
 This declaration requires
 `fn normalize_error(NetworkError) -> AppError`; generated probes verify the
-actual Rust signature. A sync function cannot declare `! Error` because it
-returns its value directly.
+actual Rust signature. `pure` is a trusted promise about the Rust body: the
+same arguments always produce the same value, with no observable side effect.
+Ice may therefore reevaluate it in every checked expression context, including
+app and component state initializers, application settings, derived values, views,
+component defaults, subscription filters, custom easing, handlers, and tests.
+
+`sync` makes no determinism or effect promise. Use it for an immediate effect,
+an environment read, or retained identity construction:
+
+```ice
+extern crate::backend
+  sync connect(endpoint:str) -> Client
+  sync now() -> instant
+```
+
+A `sync` call is accepted in a top-level app state initializer or an immediately
+evaluated app, component, or preset handler expression. This includes handler
+`let` initializers, assignment right-hand sides, guards, and task arguments,
+including arguments inside nested task groups. An async completion route
+expression is different: it is evaluated when the callback runs, so declared
+extern calls there are pure-only and a `sync` call is rejected. Component state
+initializers also reject `sync` because rendering may initialize them again.
+Capture a runtime value in top-level state or an immediately evaluated handler
+expression, then pass that value into `pure` computations. Neither synchronous
+kind may declare `! Error`; both return their values directly. The compiler
+probes types but does not inspect Rust bodies, so a dishonest `pure` declaration
+is a backend contract violation.
 
 Thirty-two typed iced adapters expose framework capabilities without embedding Rust
 expressions in Ice:
@@ -2537,7 +2564,7 @@ remain available as explicit overrides.
 
 Generated probes type-check every declaration
 against the actual Rust item. Extern component, shader, recipe, event-filter,
-sync, selector, subscription, theme, themer, window, Markdown viewer, editor extension, and widget style declarations are
+pure, sync, selector, subscription, theme, themer, window, Markdown viewer, editor extension, and widget style declarations are
 infallible; errors are ordinary event payloads when an adapter needs them.
 Shader programs retain native control of `State`, `Primitive`, GPU
 pipeline/storage, event actions, redraws, capture, and mouse interaction. The
@@ -2573,9 +2600,19 @@ derived
 
 Derived values are available in app handlers and views. Their types are
 inferred, dependency cycles are errors, and assignment or `<->` binding is
-forbidden. Derived expressions use Ice built-ins and cannot call extern
-functions. They lower to ordinary pure Rust getters and are recomputed when
-read; Ice does not create a signal, cache, or runtime dependency graph.
+forbidden. Derived expressions use deterministic Ice built-ins and declared
+`pure` extern functions. They reject `sync` externs and recomputation-unsafe
+built-ins: `window_id.unique`, `aborted`, `debug.time_with`, `image.upgrade`, the
+unqualified image constructors `encoded` and `rgba`, plus
+`animation.animating`, `animation.interpolate`, `animation.remaining`, and
+`animation.project` when their explicit instant is omitted. This category
+covers both runtime reads and constructors that create a fresh retained identity
+on each call. The checker permits these built-ins in top-level app state
+initializers, handlers, and views. Capture the needed value or identity in app
+state from an initializer or handler when it must remain stable, then derive
+from that state. Derived values lower to ordinary Rust getters and are
+recomputed when read; Ice does not create a signal, cache, or runtime dependency
+graph.
 
 Empty lists need an annotation because their element type is unknowable:
 
@@ -2590,7 +2627,7 @@ time and interpolation:
 
 ```ice
 extern crate::backend
-  sync elastic(value:f64) -> f64
+  pure elastic(value:f64) -> f64
 
 state
   expanded:animation[bool] = false
@@ -2611,7 +2648,7 @@ on open
 The built-in state types are `bool` and `f64`; a named extern type is also
 accepted when its Rust type implements iced's animation bounds. Every native
 easing variant is accepted in kebab case. A different easing name
-must resolve to `sync name(value:f64) -> f64`. Durations and delays accept whole
+must resolve to `pure name(value:f64) -> f64`. Durations and delays accept whole
 `ms`/`s` values, including zero; duration presets are `very-quick`, `quick`,
 `slow`, and `very-slow`. `repeat N` preserves iced's meaning (one repetition
 plays twice), while `repeat forever` and `auto-reverse true` map directly to the
@@ -2666,12 +2703,13 @@ The expression language contains:
   `animation.project(state, value, expression[, at])`, where the expression
   sees the current inner value as `value` and returns `f64` or `f64?`;
 - `markdown(str) -> markdown` and `markdown_images(markdown) -> [str]`;
-- calls to declared typed `sync` extern functions.
+- calls to declared typed `pure` or `sync` extern functions, subject to the
+  current expression context's effect boundary.
 
-Declared sync calls take precedence over ordinary built-ins. The name `bytes`
-remains reserved for hexadecimal byte-literal syntax. If a sync declaration
-shadows `encoded` or `rgba`, state initialized by that call needs an explicit
-type because it is no longer a built-in literal constructor.
+Declared `pure` and `sync` calls take precedence over ordinary built-ins. The
+name `bytes` remains reserved for hexadecimal byte-literal syntax. If either
+kind shadows `encoded` or `rgba`, state initialized by that call needs an
+explicit type because it is no longer a built-in literal constructor.
 
 Store `encoded` and `rgba` handles in state so they are created when state
 changes instead of on every view pass. Literal RGBA data is checked to contain
@@ -2776,6 +2814,11 @@ Rules:
   `instant` instead;
 - `combo state push value` requires a `combo[T]` state and a `T` value;
 - `return if` requires `bool`;
+- `sync` externs are allowed in immediately evaluated app, component, and preset
+  handler expressions, including `let` initializers, assignment right-hand
+  sides, and arguments in nested task statements; async completion route
+  expressions are evaluated when their callback runs and may call only `pure`
+  externs;
 - every statement that immediately returns an iced `Task` must be final:
   `exit`, `run`, `task`, `stream`, `sip`, `flow`, task groups, abortable tasks,
   clipboard writes, widget operations, window tasks, and pane queries;
@@ -2937,7 +2980,7 @@ flow
 ```
 
 `map-err error -> expr` lowers to `Task::map_err`, may read only its error
-binding, and replaces the flow's error type with the expression type. A sync
+binding, and replaces the flow's error type with the expression type. A `pure`
 extern is the normal way to translate one domain error into another:
 
 ```ice
@@ -3469,7 +3512,10 @@ view
 
 Defaults are pure checked expressions evaluated without an environment. They
 cannot refer to app state, component state, or any parameter (including an
-earlier parameter), call an extern function, or belong to a `bind` prop.
+earlier parameter), call a `sync` extern or recomputation-unsafe builtin, or
+belong to a `bind` prop. Declared `pure` extern calls are allowed. The
+recomputation-unsafe set is the same one rejected by derived expressions,
+including the unqualified `encoded` and `rgba` image constructors.
 Mutable component-only values such as `editor`,
 `markdown`, `combo`, `animation`, task handles, and debug spans cannot have
 defaults. A supplied argument always overrides the default.
@@ -3510,7 +3556,10 @@ explicit component IDs own independent values. The declared initializer is
 used until the first local event materializes that instance. The default
 `lifetime retained` keeps entries for the app lifetime, including while an
 instance is absent from the current tree. Repeated dynamic retained instances
-should therefore use stable IDs.
+should therefore use stable IDs. Because rendering may evaluate an initializer
+again, it may call `pure` externs but rejects `sync` externs and the same
+recomputation-unsafe built-ins forbidden in component prop defaults, including
+the unqualified `encoded` and `rgba` image constructors.
 
 `lifetime mounted` marks the scopes present in each rendered root and removes
 entries that disappear from that root. Removing an entry drops its local state,
@@ -3805,7 +3854,7 @@ Generic events support the same transforms as every native source:
 
 ```ice
 extern crate::backend
-  sync label_event(value:event) -> str?
+  pure label_event(value:event) -> str?
 
 subscribe
   event filter=label_event status=any -> labeled _
@@ -3817,7 +3866,7 @@ transforms:
 
 ```ice
 extern crate::backend
-  sync visible_pointer(x:f64, y:f64) -> str?
+  pure visible_pointer(x:f64, y:f64) -> str?
 
 state
   generation = 7
@@ -3828,7 +3877,7 @@ subscribe
   mouse moved with=generation filter=visible_pointer -> pointer_moved _ _
 ```
 
-`filter=` names a declared `sync` function and lowers to
+`filter=` names a declared `pure` function and lowers to
 `Subscription::filter_map`. Its parameters exactly match the source payloads:
 no parameters for a payload-free event, one for a scalar source, and one per
 field for a multi-payload native event. It must return `T?`; after filtering,
@@ -4061,7 +4110,7 @@ have no fixed point. The native enum does not implement `PartialEq` or `Hash`,
 so all comparisons and lazy identity are rejected.
 
 `Position::SpecificWith(fn(Size, Size) -> Point)` crosses the existing typed
-`sync` boundary exactly: a Rust sync extern returns `window-position`, and
+`pure` boundary exactly: a Rust pure extern returns `window-position`, and
 rustc checks the callback signature while Ice stores and passes the native
 function pointer unchanged. Existing initial-window `default`, `centered`, and
 `specific(x, y)` settings remain concise equivalent sugar.
@@ -4089,7 +4138,7 @@ borrowed and owned byte views at Ice's owned `bytes` boundary.
 crop boundary validates region arithmetic and RGBA length before calling Iced,
 so malformed constructed or extern values return `out-of-bounds` instead of panicking. The
 native value is cloneable but implements neither equality nor hashing, so
-comparisons and lazy identity are rejected. Typed sync externs pass the exact
+comparisons and lazy identity are rejected. Typed pure externs pass the exact
 `iced::window::Screenshot` value.
 
 Fields are checked: points and vectors expose `x/y` plus lossless two-value
@@ -5077,7 +5126,7 @@ be infinite. `wait` is the bounded real-time escape hatch and `advance` controls
 only the redraw timestamp; neither turns an infinite subscription into finite
 work.
 
-Checked `sync`, future, task, stream, and subscription externs call their real
+Checked `pure`, `sync`, future, task, stream, and subscription externs call their real
 Rust implementations. Their panics and errors are not hidden. Deterministic
 test behavior belongs behind a named preset or a Rust `cfg(test)` implementation
 boundary; Ice has no mock layer.
@@ -5106,7 +5155,7 @@ expect a11y target action focus false
 ```
 
 A boolean expectation uses normal checked app-state expressions, equality, and
-`sync` extern calls. Component-local state remains private. `~=` converts both
+`pure` extern calls. Component-local state remains private. `~=` converts both
 numeric operands to `f64` and uses absolute tolerance `0.001`; non-finite values
 fail. Text matching is exact over visible rendered text. `within` restricts the
 search to the selected target bounds. `exists` and `missing` are useful for IDs
@@ -5683,7 +5732,7 @@ boundaries. Borrowed custom widgets and an application-wide renderer type
 retain arbitrary native behavior without admitting unchecked expressions into
 Ice. [`COVERAGE.md`](COVERAGE.md) is the exact versioned completeness ledger.
 
-The language must not grow one ad-hoc syntax form for every iced API. Thirty-three
+The language must not grow one ad-hoc syntax form for every iced API. Thirty-four
 typed Rust boundaries cover domain work, native elements and programs, runtime
 tasks and subscriptions, Markdown viewers, and native style callbacks without
 admitting arbitrary Rust into expressions or duplicating iced in the core
@@ -5709,7 +5758,8 @@ event/stream source      -> typed Rust Subscription adapter
 native default theme     -> typed Rust Theme factory
 alternate themed subtree -> typed Rust Themer adapter
 domain and I/O           -> typed Rust async extern
-pure domain conversion   -> typed Rust sync extern
+pure domain conversion   -> typed Rust pure extern
+immediate effect/value   -> typed Rust sync extern in an app initializer or immediate handler expression
 native window handle     -> typed Rust window callback
 ```
 

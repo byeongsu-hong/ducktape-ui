@@ -62,7 +62,6 @@ on ticket_levered(typed)
 on search_key(event)
   return if event.key != key.named("Escape")
   query = ""
-  visible = filter_symbols(symbols, "", coin)
 
 on close_held
   let held = position_held(positions, coin)
@@ -124,7 +123,6 @@ on pick_symbol(name)
   ticket_price = seed
   ticket_size = ""
   quote = price_ticket(seed, "", ticket_leverage, market, ticket_buy, position_held(positions, name))
-  visible = filter_symbols(symbols, query, name)
   tape_prints = []
   focus = symbol_row(symbols, name)
   hover = none
@@ -146,13 +144,12 @@ on switch_venue(next)
   // cap and the maintenance the ticket prices against, so keeping it would
   // quote one venue's liquidation on the other's market.
   symbols = []
-  visible = []
   focus = none
   // The word in the search box was typed against the list it was narrowing,
-  // and it is the one thing here that would survive its own panel: `visible`
-  // is cleared, and then the next universe is filtered back down through this
-  // on arrival. A reader who typed "PEPE" at one exchange and switched would
-  // get the other exchange's markets hidden by a word nothing on screen shows.
+  // and it would otherwise keep narrowing the next universe through the
+  // derived `visible` list. A reader who typed "PEPE" at one exchange and
+  // switched would get the other exchange's markets hidden by a word nothing
+  // on screen shows.
   query = ""
   book = none
   tape_prints = []
@@ -219,9 +216,9 @@ on pick_interval(next)
 
 on search(typed)
   query = typed
-  visible = filter_symbols(symbols, typed, coin)
 
 on tick_universe
+  clock = now_seconds()
   run venue_symbols(venue) -> symbols_loaded _ | failed _
 
 on tick_account
@@ -246,7 +243,6 @@ on symbols_loaded(rows)
   error = ""
   symbols = rows
   coin = landed
-  visible = filter_symbols(rows, query, landed)
   focus = symbol_row(rows, landed)
   status = ""
   quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, landed))
@@ -293,7 +289,6 @@ on market_ticked(tick)
   live = true
   feed_error = ""
   symbols = apply_feed(symbols, tick)
-  visible = filter_symbols(symbols, query, coin)
   focus = symbol_row(symbols, coin)
   positions = mark_positions(positions, tick)
   account = mark_account(account, positions)

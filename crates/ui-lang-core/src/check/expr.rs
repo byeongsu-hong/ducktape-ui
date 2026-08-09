@@ -48,6 +48,10 @@ pub(crate) trait ExprTypeEnv {
 
     fn type_with_prefix(&self, prefix: &str) -> Option<&Type>;
 
+    fn allows_sync_externs(&self) -> bool {
+        false
+    }
+
     fn contains_type(&self, name: &str) -> bool {
         self.get_type(name).is_some()
     }
@@ -74,6 +78,10 @@ impl<T: ExprTypeEnv + ?Sized> ExprTypeEnv for &mut T {
 
     fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
         (**self).type_with_prefix(prefix)
+    }
+
+    fn allows_sync_externs(&self) -> bool {
+        (**self).allows_sync_externs()
     }
 }
 
@@ -112,6 +120,32 @@ impl<'a> ScopedTypeEnv<'a> {
     }
 }
 
+pub(crate) struct SyncTypeEnv<'a>(&'a dyn ExprTypeEnv);
+
+impl<'a> SyncTypeEnv<'a> {
+    pub(crate) fn new(base: &'a dyn ExprTypeEnv) -> Self {
+        Self(base)
+    }
+}
+
+impl ExprTypeEnv for SyncTypeEnv<'_> {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.0.get_type(name)
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        self.0.visit_types(visitor);
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.0.type_with_prefix(prefix)
+    }
+
+    fn allows_sync_externs(&self) -> bool {
+        true
+    }
+}
+
 impl ExprTypeEnv for ScopedTypeEnv<'_> {
     fn get_type(&self, name: &str) -> Option<&Type> {
         self.entries.get(name).or_else(|| self.base.get_type(name))
@@ -129,6 +163,10 @@ impl ExprTypeEnv for ScopedTypeEnv<'_> {
             .iter()
             .find_map(|(name, ty)| name.starts_with(prefix).then_some(ty))
             .or_else(|| self.base.type_with_prefix(prefix))
+    }
+
+    fn allows_sync_externs(&self) -> bool {
+        self.base.allows_sync_externs()
     }
 }
 
@@ -169,6 +207,10 @@ impl ExprTypeEnv for LayeredTypeEnv<'_> {
             .starts_with(prefix)
             .then_some(&self.ty)
             .or_else(|| self.base.type_with_prefix(prefix))
+    }
+
+    fn allows_sync_externs(&self) -> bool {
+        self.base.allows_sync_externs()
     }
 }
 
@@ -383,11 +425,9 @@ fn refine_expr_type_evidence(
 }
 
 fn contextual_builtin_call(name: &str, document: &Document) -> Option<ContextualBuiltin> {
-    if document
-        .functions
-        .iter()
-        .any(|function| function.name == name && function.kind == ExternKind::Sync)
-    {
+    if document.functions.iter().any(|function| {
+        function.name == name && matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
+    }) {
         None
     } else {
         ContextualBuiltin::from_name(unqualified_name(name))
@@ -660,11 +700,21 @@ fn expr_type_uncached_with_call_resolution(
                 return Ok(Type::Named(enum_name.to_owned()));
             }
             if call_resolution == CallResolution::Source
-                && let Some(function) = document
-                    .functions
-                    .iter()
-                    .find(|function| function.name == *name && function.kind == ExternKind::Sync)
+                && let Some(function) = document.functions.iter().find(|function| {
+                    function.name == *name
+                        && matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
+                })
             {
+                if function.kind == ExternKind::Sync && !env.allows_sync_externs() {
+                    return Err(Error::new(
+                        "E152",
+                        span,
+                        format!(
+                            "sync extern `{name}` is only valid in app state initializers and handlers"
+                        ),
+                    )
+                    .hint("declare a deterministic, side-effect-free Rust function as `pure` when it must run in a recomputed expression"));
+                }
                 check_call_args(function, args, env, document, span)?;
                 return Ok(function.output.clone());
             }
@@ -2337,7 +2387,26 @@ fn expr_type_uncached_with_call_resolution(
                     format!("unknown built-in function `{name}`"),
                 )),
                 _ => {
-                    let function = extern_function(document, name, ExternKind::Sync, span)?;
+                    let function = document
+                        .functions
+                        .iter()
+                        .find(|function| {
+                            function.name == name
+                                && matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
+                        })
+                        .ok_or_else(|| {
+                            Error::new("E130", span, format!("unknown extern function `{name}`"))
+                        })?;
+                    if function.kind == ExternKind::Sync && !env.allows_sync_externs() {
+                        return Err(Error::new(
+                            "E152",
+                            span,
+                            format!(
+                                "sync extern `{name}` is only valid in app state initializers and handlers"
+                            ),
+                        )
+                        .hint("declare a deterministic, side-effect-free Rust function as `pure` when it must run in a recomputed expression"));
+                    }
                     check_call_args(function, args, env, document, span)?;
                     Ok(function.output.clone())
                 }

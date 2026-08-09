@@ -2181,20 +2181,25 @@ pub fn find_document(mut content: Content, query: String, reverse: bool) -> Cont
     content
 }
 
-pub fn can_undo() -> bool {
-    with_history(|history| !history.undo.is_empty())
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EditorStatus {
+    pub can_undo: bool,
+    pub can_redo: bool,
+    pub dirty: bool,
+    pub revision: i64,
 }
 
-pub fn can_redo() -> bool {
-    with_history(|history| !history.redo.is_empty())
+pub fn editor_status() -> EditorStatus {
+    with_history(editor_status_from)
 }
 
-pub fn is_dirty() -> bool {
-    with_history(|history| history.current_id != history.saved_id)
-}
-
-pub fn revision() -> i64 {
-    with_history(|history| i64::try_from(history.current_id).unwrap_or(i64::MAX))
+fn editor_status_from(history: &History) -> EditorStatus {
+    EditorStatus {
+        can_undo: !history.undo.is_empty(),
+        can_redo: !history.redo.is_empty(),
+        dirty: history.current_id != history.saved_id,
+        revision: i64::try_from(history.current_id).unwrap_or(i64::MAX),
+    }
 }
 
 #[cfg(test)]
@@ -2206,15 +2211,15 @@ fn current_editor_state() -> (ContentVersion, Option<EditorChange>) {
     with_history(|history| (history.content_version(), history.pending_change))
 }
 
-pub fn mark_saved(revision: i64) {
-    let Ok(revision) = u64::try_from(revision) else {
-        return;
-    };
+pub fn mark_saved(revision: i64) -> EditorStatus {
     with_history_mut(|history| {
-        if history.current_id == revision {
+        if let Ok(revision) = u64::try_from(revision)
+            && history.current_id == revision
+        {
             history.saved_id = revision;
         }
-    });
+        editor_status_from(history)
+    })
 }
 
 fn min_position(left: Position, right: Position) -> Position {
@@ -2294,9 +2299,9 @@ fn position_at(content: &Content, mut offset: usize) -> Position {
 #[cfg(test)]
 mod tests {
     use super::{
-        MarkdownHighlight, MarkdownHighlighter, can_redo, can_undo, clear_editor_selection,
-        current_content_version, current_editor_state, format_document, inline_highlights,
-        is_dirty, mark_saved, redo_document, reset_document, revision, track_action, undo_document,
+        MarkdownHighlight, MarkdownHighlighter, clear_editor_selection, current_content_version,
+        current_editor_state, editor_status, format_document, inline_highlights, mark_saved,
+        redo_document, reset_document, track_action, undo_document,
     };
     use iced::advanced::text::Highlighter;
     use iced::widget::text_editor::{Action, Content, Cursor, Edit, Motion, Position};
@@ -2667,22 +2672,24 @@ mod tests {
     #[test]
     fn undo_redo_tracks_deltas_and_saved_state() {
         let mut document = reset_document("hello".into());
-        mark_saved(revision());
+        mark_saved(editor_status().revision);
         track_action(&mut document, Action::Edit(Edit::Insert('!')));
         assert_eq!(document.text(), "!hello");
-        assert!(is_dirty());
-        assert!(can_undo());
-        let stale_revision = revision();
+        let status = editor_status();
+        assert!(status.dirty);
+        assert!(status.can_undo);
+        let stale_revision = status.revision;
 
         track_action(&mut document, Action::Edit(Edit::Insert('?')));
         mark_saved(stale_revision);
         assert_eq!(document.text(), "!?hello");
-        assert!(is_dirty());
+        assert!(editor_status().dirty);
 
         document = undo_document(document);
         assert_eq!(document.text(), "hello");
-        assert!(!is_dirty());
-        assert!(can_redo());
+        let status = editor_status();
+        assert!(!status.dirty);
+        assert!(status.can_redo);
 
         document = redo_document(document);
         assert_eq!(document.text(), "!?hello");
@@ -2806,12 +2813,12 @@ mod tests {
         let mut document = reset_document("hello".into());
         track_action(&mut document, Action::Edit(Edit::Insert('!')));
         document = undo_document(document);
-        assert!(can_redo());
+        assert!(editor_status().can_redo);
 
         track_action(&mut document, Action::Edit(Edit::Insert('?')));
 
         assert_eq!(document.text(), "?hello");
-        assert!(!can_redo());
+        assert!(!editor_status().can_redo);
     }
 
     #[test]
@@ -2949,7 +2956,7 @@ mod tests {
 
         let final_text = document.text();
         let mut undo_count = 0;
-        while can_undo() {
+        while editor_status().can_undo {
             document = undo_document(document);
             assert_cursor_boundaries(&document);
             undo_count += 1;
@@ -2958,7 +2965,7 @@ mod tests {
         assert_eq!(document.text(), original);
 
         let mut redo_count = 0;
-        while can_redo() {
+        while editor_status().can_redo {
             document = redo_document(document);
             assert_cursor_boundaries(&document);
             redo_count += 1;

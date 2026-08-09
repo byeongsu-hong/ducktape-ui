@@ -44,7 +44,8 @@ Classify each value before declaring it:
 | domain entity returned from Rust | typed extern struct |
 | authoritative validation or invariant | Rust |
 | persistence, networking, authentication | Rust async extern |
-| pure missing conversion | Rust `sync` extern |
+| pure missing conversion | Rust `pure` extern |
+| immediate effect, environment read, retained identity | Rust `sync` extern in a top-level app state initializer or immediately evaluated handler expression, not an async completion route |
 | native task, widget, shader, or subscription | matching typed adapter |
 
 Trace each interaction:

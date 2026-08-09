@@ -4,12 +4,12 @@
 // and hands over the venue it is holding. Duplicating each handler per venue
 // would put the choice in every one of them instead of in one table.
 extern crate::venue
-  sync venue_name(venue:Venue) -> str
-  sync venue_label(venue:Venue, shown:bool) -> str
-  sync venue_account_gap(venue:Venue) -> str
-  sync venue_account_note(venue:Venue, watching:bool) -> str
-  sync venue_orders_note(venue:Venue, watching:bool) -> str
-  sync venue_fills_note(venue:Venue, watching:bool) -> str
+  pure venue_name(venue:Venue) -> str
+  pure venue_label(venue:Venue, shown:bool) -> str
+  pure venue_account_gap(venue:Venue) -> str
+  pure venue_account_note(venue:Venue, watching:bool) -> str
+  pure venue_orders_note(venue:Venue, watching:bool) -> str
+  pure venue_fills_note(venue:Venue, watching:bool) -> str
   venue_symbols(venue:Venue) -> [SymbolRow] ! HlError
   venue_candles(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError
   venue_history(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError

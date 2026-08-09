@@ -55,8 +55,8 @@ task-issued window open replaces the single headless current window with fresh
 widget/focus/input state while retaining application state.
 
 Interactions replay emitted messages through generated update code and drain
-real tasks recursively before the next statement. Checked `sync` and task
-externs therefore call the same Rust functions used by the app. Deterministic
+real tasks recursively before the next statement. Checked `pure`, `sync`, and
+task externs therefore call the same Rust functions used by the app. Deterministic
 test behavior belongs behind a named preset or Rust `cfg(test)` boundary; Ice
 does not add a mock layer. Subscriptions are re-established around simulated
 events; intentionally infinite timer/I/O subscriptions are sampled rather than
@@ -321,7 +321,7 @@ showcase: lists whose rows are a near-pure function of one row value.
 ```sh
 cargo test --release -p trading-example -- --ignored --nocapture frame_        # cost, panels, scaling
 cargo test --release -p trading-example -- --ignored --nocapture beat_cost     # a beat of the feed
-cargo test --release -p trading-example -- --ignored --nocapture sync_cost     # the sync boundary
+cargo test --release -p trading-example -- --ignored --nocapture direct_call_cost  # direct Rust call costs
 cargo test --release -p trading-example -- --ignored --nocapture memo_parking  # the memo lot
 ```
 
@@ -382,8 +382,9 @@ against the market rows' 2.5us behind their boundary.
 One row of that table prices nothing, and knowing which saves re-deriving it:
 the probe seeds the **portfolio** page, where the market list is not drawn, so
 `market rows` ablates a list that is not on screen and comes back inside its own
-noise — negative as often as not. The market list is measured on its own page,
-by `markets_stay_memoized_performance_contract` and by the symbol sweep above.
+noise — negative as often as not. The market list is measured on its own page
+by the symbol sweep above; cache correctness is covered separately from timing,
+at the runtime and dependency-hash ownership boundaries described below.
 
 It took the same three things the market list took, and one more:
 
@@ -491,14 +492,13 @@ leaves the build and arrives in the frame, and only the frame is a frame. On a
 steady screen the deferred work is then skipped entirely, which is why the
 frame moved at all; on the frame where a row does change, it is paid.
 
-`fills_stay_memoized_performance_contract` holds it down with a count rather
-than a clock: `fill_label` runs once per fill row actually built, so a cold
-redraw is 200 and an unchanged redraw is 0. Then **each of `Fill`'s eight
-fields is moved in turn and each must rebuild exactly one row** — the
-invalidation rule executed, field by field. Moving only `heat`, as this
-contract first did, passes just as well against a `Hash` that has quietly
-dropped `price`: deleting `price` and `size` from `Fill`'s `Hash` leaves the
-old contract green and fails the widened one on `price`.
+The correctness contract is split where ownership actually lies. Runtime test
+`diff_keeps_the_layout_memo_only_while_the_dependency_holds` proves that an
+unchanged dependency retains the memoized layout and a changed dependency
+drops it. Trading test `lazy_row_hashes_cover_every_rendered_field` changes
+each rendered field of `SymbolRow` and `Fill` in turn and requires its
+dependency hash to change. Together they prove invalidation without mutating
+otherwise `pure` Rust formatters through `cfg(test)` counters.
 
 The nine `capture` PNGs come out byte-identical with the boundary and without
 it, which was also worth re-checking rather than re-quoting: when it was first

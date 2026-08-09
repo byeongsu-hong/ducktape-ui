@@ -10,7 +10,7 @@ daemon TrayBasic
     decorations false
 
 extern crate::backend
-  sync describe(value:i64) -> str
+  pure describe(value:i64) -> str
 
 theme contract AppTheme
   bg

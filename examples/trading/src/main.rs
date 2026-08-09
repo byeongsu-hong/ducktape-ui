@@ -35,17 +35,17 @@ mod tests {
         }
     }
 
-    fn marked(app: &Trading) -> Vec<&str> {
-        app.visible
-            .iter()
+    fn marked(app: &Trading) -> Vec<String> {
+        app.__ice_derived_visible()
+            .into_iter()
             .filter(|row| row.selected)
-            .map(|row| row.name.as_str())
+            .map(|row| row.name)
             .collect()
     }
 
     /// The list rows sit behind a `lazy` boundary keyed on the row itself, so
-    /// the highlight only moves if picking a market rebuilds `visible`. Nothing
-    /// in the type system says it has to.
+    /// the derived list must follow the selected coin as well as the symbol
+    /// universe. No handler-owned mirror is available to repair a stale mark.
     #[test]
     fn picking_a_market_moves_the_mark_onto_its_row() {
         let (mut app, _) = Trading::__boot();

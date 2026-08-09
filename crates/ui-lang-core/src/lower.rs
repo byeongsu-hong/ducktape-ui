@@ -5693,7 +5693,7 @@ impl Lowerer {
                     .iter()
                     .any(|argument| matches!(argument, CheckedCallArgument::Binding(_)))
                     || function.name != reference.name
-                    || function.kind != ExternKind::Sync
+                    || !matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
                     || function.params.len() != argument_types.len()
                     || function
                         .params
@@ -6539,7 +6539,7 @@ impl Lowerer {
             .as_ref()
             .map(|reference| {
                 let function =
-                    self.checked_subscription_extern(reference, ExternKind::Sync, span)?;
+                    self.checked_subscription_extern(reference, ExternKind::Pure, span)?;
                 if function
                     .params
                     .iter()
@@ -6560,7 +6560,7 @@ impl Lowerer {
                     ));
                 };
                 Ok((
-                    self.resolve_subscription_extern(reference, ExternKind::Sync, span)?,
+                    self.resolve_subscription_extern(reference, ExternKind::Pure, span)?,
                     output.as_ref().clone(),
                 ))
             })
@@ -11068,7 +11068,7 @@ view
     fn malformed_codegen_consumed_handler_fields_are_e196() {
         fn editor_program() -> LoweredProgram {
             let source = format!(
-                "app EditorContract\nextern crate::backend\n  sync apply_command(content:editor, command:str) -> editor\n{THEME}state\n  notes:editor = \"hello\"\non command\n  notes = apply_command(notes, \"bold\")\nview\n  editor <-> notes\n"
+                "app EditorContract\nextern crate::backend\n  pure apply_command(content:editor, command:str) -> editor\n{THEME}state\n  notes:editor = \"hello\"\non command\n  notes = apply_command(notes, \"bold\")\nview\n  editor <-> notes\n"
             );
             lower(analyze(&source).unwrap()).unwrap()
         }
@@ -19080,7 +19080,7 @@ view
     #[test]
     fn snapshots_the_complete_initializer_hir_slice() {
         let source = format!(
-            "app Initializers\nextern crate::backend\n  sync elastic(value:f64) -> f64\n{THEME}state\n  progress:animation[f64] = 0.0\n    easing elastic\n    duration 120ms\n    delay 5ms\n    repeat 2\n    auto-reverse true\nderived\n  total = 1.0 + 2.0\ncomponent Meter(label:str=\"ready\")\n  state\n    open = false\n  text label\nview\n  Meter\n"
+            "app Initializers\nextern crate::backend\n  pure elastic(value:f64) -> f64\n{THEME}state\n  progress:animation[f64] = 0.0\n    easing elastic\n    duration 120ms\n    delay 5ms\n    repeat 2\n    auto-reverse true\nderived\n  total = 1.0 + 2.0\ncomponent Meter(label:str=\"ready\")\n  state\n    open = false\n  text label\nview\n  Meter\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
         let facts = program.checked_facts();
@@ -19172,8 +19172,8 @@ view
     min-size 320 240
     max-size 1920 1080
 extern crate::backend
-  sync describe(id:window-id) -> str
-  sync scale_for(id:window-id) -> f64
+  pure describe(id:window-id) -> str
+  pure scale_for(id:window-id) -> f64
   theme native_theme(id:window-id, dark:bool)
 font brand family="Brand Sans" weight=semibold stretch=semi-expanded style=italic default=true
 theme contract AppTheme
@@ -19416,7 +19416,7 @@ view
             "computed_scale",
         ] {
             assert!(
-                generated.contains(&format!("Self::__ice_derived_{name}(self)")),
+                generated.contains(&format!("self.__ice_derived_{name}()")),
                 "missing derived setting binding `{name}`"
             );
         }
@@ -19437,9 +19437,9 @@ view
     }
 
     #[test]
-    fn qualified_builtin_contract_does_not_resolve_a_same_name_sync_extern() {
+    fn qualified_builtin_contract_does_not_resolve_a_same_name_pure_extern() {
         let source = format!(
-            "app QualifiedBuiltin\n  title builtin::trim(title)\nextern crate::backend\n  sync trim(value:str) -> bool\n{THEME}state\n  title = \" Title \"\nview\n  text title\n"
+            "app QualifiedBuiltin\n  title builtin::trim(title)\nextern crate::backend\n  pure trim(value:str) -> bool\n{THEME}state\n  title = \" Title \"\nview\n  text title\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
         let generated = crate::codegen::generate(&program, "qualified_builtin.ice").unwrap();
@@ -19483,7 +19483,7 @@ view
     #[test]
     fn lowers_tray_settings_with_popover_reference() {
         let source = format!(
-            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    label describe(count)\n    tooltip \"Demo\"\n    popover status\n  window status\n    size 320 240\nextern crate::backend\n  sync describe(value:i64) -> str\nstate\n  count = 1\n{THEME}view\n  text count\n"
+            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    label describe(count)\n    tooltip \"Demo\"\n    popover status\n  window status\n    size 320 240\nextern crate::backend\n  pure describe(value:i64) -> str\nstate\n  count = 1\n{THEME}view\n  text count\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
         let settings = program.settings();
@@ -20601,7 +20601,7 @@ view
         fs::write(directory.join("icon.rgba"), [0_u8, 0, 0, 0]).unwrap();
         fs::write(
             &imported,
-            "extern crate::backend\n  sync describe(id:window-id) -> str\n  sync scale(id:window-id) -> f64\n  theme native_theme(id:window-id)\n",
+            "extern crate::backend\n  pure describe(id:window-id) -> str\n  pure scale(id:window-id) -> f64\n  theme native_theme(id:window-id)\n",
         )
         .unwrap();
 
@@ -20916,7 +20916,7 @@ test stable_flow
     #[test]
     fn normalizes_slider_and_progress_contracts() {
         let source = format!(
-            "app RangeHir\nextern crate::backend\n  RangeNumber()\n  sync range_number(value:f64) -> RangeNumber\n  slider-style slider_style(active:bool)\n  progress-style progress_style(active:bool)\n{THEME}state\n  amount = 25.0\n  precise:RangeNumber = range_number(25.0)\n  active = true\non changed(next)\n  precise = next\non released\nview\n  col\n    slider precise min=range_number(0.0) max=range_number(100.0) step=range_number(1.0) default=range_number(25.0) shift-step=range_number(5.0) vertical w=20.0 h=fill(2) style=slider_style(active) release=released -> changed _\n      active rail-start=linear(0.0, primary@0.0, danger@1.0) rail-end=bg rail-w=4.0 rail-border=fg rail-border-w=1.0 rail-r=2.0 handle=rect(12) handle-color=primary handle-border=fg handle-border-w=1.0 handle-r=3.0\n    progress amount vertical length=fill(2) girth=20.0 style=progress_style(active) bg=bg bar=primary border=fg border-w=1.0 r=4.0\n"
+            "app RangeHir\nextern crate::backend\n  RangeNumber()\n  pure range_number(value:f64) -> RangeNumber\n  slider-style slider_style(active:bool)\n  progress-style progress_style(active:bool)\n{THEME}state\n  amount = 25.0\n  precise:RangeNumber = range_number(25.0)\n  active = true\non changed(next)\n  precise = next\non released\nview\n  col\n    slider precise min=range_number(0.0) max=range_number(100.0) step=range_number(1.0) default=range_number(25.0) shift-step=range_number(5.0) vertical w=20.0 h=fill(2) style=slider_style(active) release=released -> changed _\n      active rail-start=linear(0.0, primary@0.0, danger@1.0) rail-end=bg rail-w=4.0 rail-border=fg rail-border-w=1.0 rail-r=2.0 handle=rect(12) handle-color=primary handle-border=fg handle-border-w=1.0 handle-r=3.0\n    progress amount vertical length=fill(2) girth=20.0 style=progress_style(active) bg=bg bar=primary border=fg border-w=1.0 r=4.0\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
         let slider = program.slider(ViewId(1)).unwrap();

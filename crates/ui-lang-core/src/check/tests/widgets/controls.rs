@@ -36,7 +36,7 @@ fn checks_slider_options_and_rejects_invalid_ranges() {
     let source = r#"app Controls
 extern crate::backend
   SliderNumber()
-  sync slider_number(value:f64) -> SliderNumber
+  pure slider_number(value:f64) -> SliderNumber
   slider-style dynamic_slider(active:bool)
 theme contract AppTheme
   bg

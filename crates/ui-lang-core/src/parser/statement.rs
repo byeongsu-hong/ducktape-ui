@@ -304,7 +304,7 @@ pub(in crate::parser) fn parse_task_flow(line: &Line) -> Result<Statement, Error
                 return Err(error(
                     "E050",
                     item,
-                    "map-err uses `map-err error -> sync_call(error)`",
+                    "map-err uses `map-err error -> expression`",
                 ));
             };
             transforms.push(TaskTransform::MapError {

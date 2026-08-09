@@ -218,7 +218,7 @@ view
 fn checks_derived_values_and_immutable_handler_locals() {
     let source = r#"app Demo
 extern crate::backend
-  sync normalize(value:str) -> str
+  pure normalize(value:str) -> str
   save(title:str) -> unit
 theme contract AppTheme
   bg
@@ -234,7 +234,7 @@ state
   draft = ""
   loading = false
 derived
-  normalized = trim(draft)
+  normalized = normalize(draft)
   can_submit = !loading && !empty(normalized)
 on submit
   let title = normalized
@@ -252,23 +252,30 @@ view
     assert_eq!(document.source_document().derived[1].ty, Type::Bool);
 
     let forward = source.replace(
-        "normalized = trim(draft)\n  can_submit = !loading && !empty(normalized)",
-        "can_submit = !loading && !empty(normalized)\n  normalized = trim(draft)",
+        "normalized = normalize(draft)\n  can_submit = !loading && !empty(normalized)",
+        "can_submit = !loading && !empty(normalized)\n  normalized = normalize(draft)",
     );
     analyze(&forward).unwrap();
 
     let cycle = source.replace(
-        "normalized = trim(draft)\n  can_submit = !loading && !empty(normalized)",
+        "normalized = normalize(draft)\n  can_submit = !loading && !empty(normalized)",
         "normalized = can_submit\n  can_submit = normalized",
     );
     let error = analyze(&cycle).unwrap_err();
     assert_eq!(error.code, "E103");
     assert!(error.message.contains("dependency cycle"));
 
-    let impure = source.replace("normalized = trim(draft)", "normalized = normalize(draft)");
-    let error = analyze(&impure).unwrap_err();
+    let effectful = source.replace(
+        "pure normalize(value:str) -> str",
+        "sync normalize(value:str) -> str",
+    );
+    let error = analyze(&effectful).unwrap_err();
     assert_eq!(error.code, "E103");
-    assert!(error.message.contains("pure Ice expression"));
+    assert!(
+        error
+            .message
+            .contains("cannot call sync extern `normalize`")
+    );
 
     let shadow = source.replace("let title = normalized", "let draft = normalized");
     let error = analyze(&shadow).unwrap_err();
@@ -305,6 +312,232 @@ view
         "{}",
         error.message
     );
+}
+
+#[test]
+fn confines_sync_externs_to_initializers_and_handlers() {
+    let source = r#"app Demo
+extern crate::backend
+  sync connect(name:str) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  value:str = connect("initial")
+on reconnect
+  value = connect("next")
+view
+  text value
+"#;
+    analyze(source).unwrap();
+
+    let error = analyze(&source.replace("text value", "text connect(value)")).unwrap_err();
+    assert_eq!(error.code, "E152");
+    assert!(
+        error
+            .message
+            .contains("only valid in app state initializers and handlers")
+    );
+
+    let component = source.replace(
+        "state\n  value:str = connect(\"initial\")",
+        "state\n  value = \"initial\"\ncomponent Retained()\n  state\n    connection:str = connect(\"component\")\n  text connection",
+    );
+    let error = analyze(&component).unwrap_err();
+    assert_eq!(error.code, "E152");
+    assert!(
+        error
+            .message
+            .contains("only valid in app state initializers and handlers")
+    );
+}
+
+#[test]
+fn permits_sync_externs_in_every_handler_local_but_not_async_routes() {
+    let source = r#"app Demo
+extern crate::backend
+  sync read_environment() -> str
+  load(value:str) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  value = ""
+on mount
+  let top = read_environment()
+  value = top
+  sequential
+    run load(read_environment()) -> loaded _
+on loaded(next)
+  value = next
+component Reader()
+  state
+    value = ""
+  on refresh
+    let current = read_environment()
+    value = current
+  button "Refresh" -> refresh
+preset test
+  boot
+    let current = read_environment()
+    value = current
+view
+  Reader
+"#;
+    analyze(source).unwrap();
+
+    let effectful_route = source.replace(
+        "run load(read_environment()) -> loaded _",
+        "run load(\"ready\") -> loaded(read_environment())",
+    );
+    let error = analyze(&effectful_route).unwrap_err();
+    assert_eq!(error.code, "E152");
+    assert!(
+        error
+            .message
+            .contains("only valid in app state initializers and handlers")
+    );
+}
+
+#[test]
+fn rejects_recomputation_unsafe_builtins_in_derived_values() {
+    let source = r#"app Demo
+extern crate::backend
+  sync now() -> instant
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  progress:animation[f64] = 0.0
+  at:instant = now()
+derived
+  stable = animation.animating(progress, at)
+view
+  text "stable"
+"#;
+    analyze(source).unwrap();
+
+    for call in [
+        "window_id.unique()",
+        "aborted(none)",
+        "debug.time_with(\"derived\", true)",
+        "image.upgrade(none)",
+        "encoded(bytes(50 36))",
+        "rgba(1, 1, bytes(ff 00 ff ff))",
+        "animation.animating(progress)",
+        "animation.interpolate(progress, 0.0, 1.0)",
+        "animation.remaining(progress)",
+        "animation.project(progress, value, value)",
+    ] {
+        let error = analyze(&source.replace(
+            "stable = animation.animating(progress, at)",
+            &format!("stable = {call}"),
+        ))
+        .unwrap_err();
+        assert_eq!(error.code, "E103", "{call}: {}", error.message);
+        assert!(
+            error.message.contains("recomputation-unsafe builtin"),
+            "{call}: {}",
+            error.message
+        );
+    }
+}
+
+#[test]
+fn rejects_recomputation_unsafe_builtins_in_component_initializers() {
+    for (ty, call) in [
+        ("window-id", "window_id.unique()"),
+        ("image", "encoded(bytes(50 36))"),
+        ("image", "rgba(1, 1, bytes(ff 00 ff ff))"),
+    ] {
+        let source = format!(
+            r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Identity(value:{ty}={call})
+  state
+    retained:{ty} = {call}
+  text "identity"
+view
+  Identity
+"#
+        );
+
+        let error = analyze(&source).unwrap_err();
+        assert_eq!(error.code, "E103", "{call}: {}", error.message);
+        assert!(error.message.contains("component prop `value` default"));
+        assert!(error.message.contains("recomputation-unsafe builtin"));
+
+        let explicit_prop = source.replace(
+            &format!("component Identity(value:{ty}={call})"),
+            &format!("component Identity(value:{ty})"),
+        );
+        let error = analyze(&explicit_prop).unwrap_err();
+        assert_eq!(error.code, "E103", "{call}: {}", error.message);
+        assert!(
+            error
+                .message
+                .contains("component state `retained` initializer")
+        );
+        assert!(error.message.contains("recomputation-unsafe builtin"));
+    }
+}
+
+#[test]
+fn requires_pure_custom_animation_easing() {
+    let source = r#"app Demo
+extern crate::backend
+  pure elastic(value:f64) -> f64
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  progress:animation[f64] = 0.0
+    easing elastic
+view
+  text "ready"
+"#;
+    analyze(source).unwrap();
+
+    let error = analyze(&source.replace("pure elastic", "sync elastic")).unwrap_err();
+    assert_eq!(error.code, "E130");
+    assert!(error.message.contains("unknown extern pure function"));
 }
 
 #[test]

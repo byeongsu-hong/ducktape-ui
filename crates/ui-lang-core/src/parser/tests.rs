@@ -50,11 +50,14 @@ fn rejects_rust_and_compiler_reserved_identifiers() {
         parse("app Demo\nstate\n  __ice_accessibility = 0\nview\n  text \"ok\"\n").unwrap_err();
     assert_eq!(error.code, "E072");
 
-    let error =
-        parse("app Demo\nextern crate::backend\n  sync bytes() -> i64\nview\n  text \"ok\"\n")
-            .unwrap_err();
-    assert_eq!(error.code, "E021");
-    assert!(error.message.contains("byte literal"));
+    for kind in ["pure", "sync"] {
+        let error = parse(&format!(
+            "app Demo\nextern crate::backend\n  {kind} bytes() -> i64\nview\n  text \"ok\"\n"
+        ))
+        .unwrap_err();
+        assert_eq!(error.code, "E021");
+        assert!(error.message.contains("byte literal"));
+    }
 
     assert!(!SymbolKind::Handler.accepts("match"));
     assert!(!SymbolKind::Handler.accepts("_"));
@@ -69,13 +72,21 @@ fn rejects_rust_and_compiler_reserved_identifiers() {
 
 #[test]
 fn shadowed_image_constructors_require_explicit_state_types() {
-    for (declaration, call) in [
-        ("sync encoded(value:bytes) -> str", "encoded(bytes(00))"),
+    for (kind, signature, call) in [
+        ("pure", "encoded(value:bytes) -> str", "encoded(bytes(00))"),
+        ("sync", "encoded(value:bytes) -> str", "encoded(bytes(00))"),
         (
-            "sync rgba(width:i64, height:i64, value:bytes) -> str",
+            "pure",
+            "rgba(width:i64, height:i64, value:bytes) -> str",
+            "rgba(1, 1, bytes(00))",
+        ),
+        (
+            "sync",
+            "rgba(width:i64, height:i64, value:bytes) -> str",
             "rgba(1, 1, bytes(00))",
         ),
     ] {
+        let declaration = format!("{kind} {signature}");
         let inferred = format!(
             "app Demo\nextern crate::backend\n  {declaration}\nstate\n  value = {call}\nview\n  text \"ok\"\n"
         );

@@ -6,6 +6,7 @@ const HANDLER_PERF_THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary
 fn lowers_derived_values_to_getters_and_handler_locals_to_rust_lets() {
     let source = r#"app Derived
 extern crate::backend
+  pure normalize(value:str) -> str
   save(title:str) -> unit
 theme contract AppTheme
   bg
@@ -21,7 +22,7 @@ state
   draft = ""
   loading = false
 derived
-  normalized = trim(draft)
+  normalized = normalize(draft)
   can_submit = !loading && !empty(normalized)
 on submit
   let title = normalized
@@ -35,7 +36,9 @@ view
     assert!(generated.contains("#[allow(unused_parens)]\nimpl Derived"));
     assert!(generated.contains("fn __ice_derived_normalized(&self) -> ::std::string::String"));
     assert!(generated.contains("fn __ice_derived_can_submit(&self) -> bool"));
-    assert!(generated.contains("let title = Self::__ice_derived_normalized(self);"));
+    assert!(generated.contains("crate::backend::normalize(self.draft.to_owned())"));
+    assert!(generated.contains("fn __ui_lang_check_pure_normalize"));
+    assert!(generated.contains("let title = self.__ice_derived_normalized();"));
     assert!(generated.contains("crate::backend::save(title.to_owned())"));
 }
 
@@ -435,7 +438,7 @@ fn lowers_task_error_mapping_and_native_sources() {
 extern crate::backend
   NetworkError(message:str)
   AppError(message:str)
-  sync normalize(error:NetworkError) -> AppError
+  pure normalize(error:NetworkError) -> AppError
   task request() -> i64 ! NetworkError
 theme contract AppTheme
   bg
@@ -470,7 +473,7 @@ view
   text len(results)
 "#;
     let generated = compile(source, "errors.ice").unwrap();
-    assert!(generated.contains("fn __ui_lang_check_sync_normalize"));
+    assert!(generated.contains("fn __ui_lang_check_pure_normalize"));
     assert!(
         generated.contains(".map_err(move |reason| crate::backend::normalize(reason.clone()))")
     );

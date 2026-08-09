@@ -17,6 +17,8 @@ preset test
 state
   draft = ""
   count = 0
+derived
+  incremented = count == 1
 component Card(bind value:str)
   col #root
     input "Draft" #draft <-> value
@@ -40,6 +42,7 @@ test render_contract
   resize 480 720
   dispatch increment
   expect count == 1
+  expect incremented
 view
   Card value<->draft #card
 "#;
@@ -69,6 +72,7 @@ view
         "Action::Resize",
         "__test.perform_action",
         "__test.dispatch",
+        "__test.state().__ice_derived_incremented()",
         "Location::new(\"contract.ice\"",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
@@ -249,11 +253,11 @@ test semantic_actions
 }
 
 #[test]
-fn wraps_sync_test_expressions_in_source_mapped_panic_context() {
+fn wraps_pure_test_expressions_in_source_mapped_panic_context() {
     let generated = compile(
         r#"app Demo
 extern crate::backend
-  sync explode() -> bool
+  pure explode() -> bool
 theme contract AppTheme
   bg
   fg
@@ -264,28 +268,28 @@ palette app for AppTheme
   fg #ffffff
   primary #333333
   danger #ff0000
-test sync_context
+test pure_context
   expect explode()
 view
   text "ok"
 "#,
-        "sync_context.ice",
+        "pure_context.ice",
     )
     .unwrap();
 
     let context = generated
-        .find("::ui_lang_runtime::testing::step(\"sync_context\"")
+        .find("::ui_lang_runtime::testing::step(\"pure_context\"")
         .expect("generated test step must establish panic context");
     let call = generated[context..]
         .find("crate::backend::explode()")
         .map(|offset| context + offset)
-        .expect("sync expression must be generated inside the test step");
+        .expect("pure expression must be generated inside the test step");
     let check = generated[call..]
         .find("__test.check(__actual")
         .map(|offset| call + offset)
-        .expect("expectation must be generated after the sync call");
+        .expect("expectation must be generated after the pure call");
     assert!(context < call && call < check);
-    assert!(generated[context..call].contains("Location::new(\"sync_context.ice\""));
+    assert!(generated[context..call].contains("Location::new(\"pure_context.ice\""));
     assert!(generated[context..call].contains("\"expect explode()\""));
 }
 
