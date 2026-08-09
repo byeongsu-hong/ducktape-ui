@@ -4970,6 +4970,13 @@ self and forward references are rejected. Targets themselves are opaque
 identities and are not comparable; compare an explicit field such as `kind`,
 `value`, or `width` instead.
 
+A target path is rooted at the scope the tested view renders under, which a
+test never spells: a daemon root that retains `lifetime mounted` component
+state carries the window it is rendering for, and a target resolves against the
+one window the test drives, the same window `window` reads. A test follows the
+app onto each window the app opens, so addressing a second window of a
+multi-window daemon means driving the app to open it.
+
 Static paths are checked against the normal scoped ID graph. Dynamic keys use
 the existing widget-target expression and key-type rules. IDs still represent
 identity, not CSS selectors. In particular, a component call ID introduces an

@@ -265,6 +265,43 @@ fn borrowed_scope(scope: &str) -> &str {
     scope.strip_suffix(".clone()").unwrap_or(scope)
 }
 
+/// The state fields a render pass marks scopes in and then prunes.
+fn mounted_component_fields(program: &LoweredProgram) -> Vec<String> {
+    program
+        .components()
+        .iter()
+        .filter(|component| component.storage == ComponentStorage::Mounted)
+        .map(|component| component_state_field(&component.name))
+        .collect()
+}
+
+/// Whether the app keeps component state that outlives a single render pass.
+/// Such a view has to name its root scope at runtime, because the storage is
+/// keyed by instance scope and every entry hangs off that root.
+fn retains_mounted_components(program: &LoweredProgram) -> bool {
+    program
+        .components()
+        .iter()
+        .any(|component| component.storage == ComponentStorage::Mounted)
+}
+
+/// The view's root widget scope, as Rust code producing an owned `String`.
+///
+/// Every id in a rendered view hangs off this scope, so anything addressing a
+/// widget from outside the view — a test target above all — has to build its
+/// path from the same expression rather than guess at its spelling. A daemon
+/// retaining mounted component state qualifies the root with the window it is
+/// rendering, so one window's render never prunes another window's scopes;
+/// `window` is the Rust code for that window id at the call site.
+fn root_scope_code(program: &LoweredProgram, window: &str) -> String {
+    let app = rust_string(program.app_name());
+    if program.settings().kind == ProgramKind::Daemon && retains_mounted_components(program) {
+        format!("format!(\"{{}}/{{:?}}\", {app}, {window})")
+    } else {
+        format!("{app}.to_owned()")
+    }
+}
+
 fn reconciliation_scope_binding(code: String) -> Binding {
     Binding {
         code,

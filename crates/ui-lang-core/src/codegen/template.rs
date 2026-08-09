@@ -53,11 +53,7 @@ pub(in crate::codegen) fn emit(
 ) -> Result<Option<TemplateEmission>, Error> {
     // Mounted components carry per-scope retained state that the template
     // vocabulary has no node for, so those views stay inline wholesale.
-    if program
-        .components()
-        .iter()
-        .any(|component| component.storage == ComponentStorage::Mounted)
-    {
+    if retains_mounted_components(program) {
         return Ok(None);
     }
     let mut builder = Builder {
