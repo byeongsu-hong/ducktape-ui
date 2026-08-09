@@ -322,6 +322,33 @@ fn component_state_scopes(env: &dyn BindingEnvironment) -> Vec<String> {
     scopes
 }
 
+/// Rebinds every component instance scope an expression might read to a local
+/// clone, for an expression that will be emitted inside a `move` closure.
+/// Without it the closure takes the one scope value the component has, and a
+/// second closure in the same component is left with nothing to read.
+fn closure_capture_env(env: &dyn BindingEnvironment) -> (HashMap<String, Binding>, String) {
+    let mut scopes = component_state_scopes(env);
+    scopes.sort();
+    scopes.dedup();
+    let mut captured = env.snapshot();
+    let mut setup = String::new();
+    for (index, scope) in scopes.iter().enumerate() {
+        let alias = format!("__ice_closure_scope_{index}");
+        write!(setup, "let {alias} = ({}).clone();", borrowed_scope(scope)).unwrap();
+        for binding in captured.values_mut() {
+            binding.code = binding.code.replace(scope, &alias);
+            if let Some(StateBinding::Component {
+                scope: state_scope, ..
+            }) = &mut binding.state
+                && state_scope == scope
+            {
+                *state_scope = alias.clone();
+            }
+        }
+    }
+    (captured, setup)
+}
+
 fn set_reconciliation_scope(env: &mut HashMap<String, Binding>, code: String) {
     env.insert(
         RECONCILIATION_SCOPE_BINDING.into(),

@@ -186,6 +186,8 @@ mod request_lane_lifecycle {
 
         app.show_mounted = false;
         let _ = app.__view();
+        // Pruning lands one pass late; see `begin_render`.
+        let _ = app.__view();
         assert!(app.__ice_component_mounted.values().is_empty());
         app.show_mounted = true;
         let _ = app.__view();
@@ -419,7 +421,7 @@ mod animation {
 
         std::thread::sleep(std::time::Duration::from_millis(200));
         let _ = app.__view();
-        std::thread::sleep(std::time::Duration::from_millis(900));
+        std::thread::sleep(std::time::Duration::from_millis(1400));
         let _ = app.__view();
         assert_eq!(
             app.__subscription().units(),

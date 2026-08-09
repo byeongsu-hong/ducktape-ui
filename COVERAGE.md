@@ -874,7 +874,7 @@ animated type is `E103`
 (`crates/ui-lang-core/tests/cases/diagnostic/animation-from-type`).
 
 **A computed number reaches a surface's colour.** A container's `bg=` accepts a
-parenthesised opacity expression — `bg=flash/(animation.value(fade))` — on the
+parenthesised opacity expression — `bg=flash/(animation.project(fade, value, value))` — on the
 same `0..=100` scale as the literal `bg=flash/40`, replacing the colour's alpha
 every view pass. It is a container property with a single background colour;
 anywhere else it is rejected

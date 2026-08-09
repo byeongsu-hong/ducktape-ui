@@ -22,7 +22,7 @@ component PrintRow(print:Print)
       from 100.0
       easing ease-out
       duration 900ms
-  box w=fill h=26.0 bg=flash/(animation.value(fade))
+  box w=fill h=26.0 bg=flash/(animation.project(fade, value, value))
     text "print"
 view
   col

@@ -122,18 +122,18 @@ component FillFlash(up:bool)
       duration 1000ms
   stack w=fill h=26.0
     if up
-      box
+      box #wash
         with
           w=fill
           h=26.0
-          bg=up_flash/(animation.value(fade))
+          bg=up_flash/(animation.project(fade, value, value))
         space w=fill h=fill
     if !up
-      box
+      box #wash-down
         with
           w=fill
           h=26.0
-          bg=down_flash/(animation.value(fade))
+          bg=down_flash/(animation.project(fade, value, value))
         space w=fill h=fill
 
 component FillRow(fill:Fill)

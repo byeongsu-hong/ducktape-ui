@@ -31,21 +31,22 @@ component ArrivalRow(label:i64, up:bool)
     lit:animation[f64] = 0.0
       from 100.0
       easing ease-out
+      delay 500ms
       duration 900ms
   stack w=fill h=24.0
     if up
-      box
+      box #lit
         with
           w=fill
           h=24.0
-          bg=primary/(animation.value(lit))
+          bg=primary/(animation.project(lit, value, value))
         space w=fill h=fill
     if !up
       box
         with
           w=fill
           h=24.0
-          bg=danger/(animation.value(lit))
+          bg=danger/(animation.project(lit, value, value))
         space w=fill h=fill
     text label
 
@@ -106,3 +107,18 @@ test computed_surface_opacity
     FadedSurface opacity=50.0 #faded
   target surface = #faded/surface
   expect surface.background == background.color(color.scale_alpha(color.rgb8(96, 165, 250), 0.5))
+
+// A row's fade has two ends, and both are exact. Through the delay it holds
+// the value it was declared from, which is what fails if the surface reads an
+// animation's target instead of its current value. Past delay plus duration it
+// is gone, which is what fails if each pass builds a new animation and the
+// highlight never goes out.
+test row_fade_holds_its_start_then_reaches_nothing
+  viewport 200 120
+  mount
+    ArrivalRow label=1 up=true #row
+  target lit = #row/lit
+  expect lit.background == background.color(color.scale_alpha(color.rgb8(96, 165, 250), 1.0))
+  wait 1500ms
+  advance 1ms
+  expect lit.background == background.color(color.scale_alpha(color.rgb8(96, 165, 250), 0.0))

@@ -1,5 +1,5 @@
 .entry(__ice_use_scope.clone()).or_default();
 ::iced::Animation::new(100.0f32).easing(::iced::animation::Easing::EaseOut).duration(::std::time::Duration::from_millis(900)).go((0.0) as f32, ::iced::time::Instant::now())
-let __ice_surface_alpha = (((self.__ice_component_05072696e74526f77.values().get(&__ice_use_scope)
-__color.a = __ice_surface_alpha;
+let __ice_closure_scope_0 = (__ice_use_scope).clone();
+__color.a = (((self.__ice_component_05072696e74526f77.values().get(&__ice_closure_scope_0)
 .values().values().any(|__state| __state.fade.is_animating(::iced::time::Instant::now())) { ::iced::window::frames()
