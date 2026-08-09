@@ -147,6 +147,32 @@ test trading_changing_network_keeps_the_session
   expect session_can_trade(session, clock)
   expect !empty(session_agent(session))
 
+// The same claim through the control a reader actually presses, which a
+// dispatch cannot make: the header's picker, opened and clicked. A switch that
+// went through some other path than the handler would pass the test above and
+// fail this one.
+test trading_switching_through_the_picker_keeps_the_session
+  preset unlocked
+  viewport 1660 820
+  target app = #app
+  target header = app/header
+  target venues = header/venues
+  target panel = #venue-panel
+  target picker = panel/network-picker
+  target other = picker/network("Lighter")/root/tab-off
+  expect session_can_trade(session, clock)
+  expect empty(cancel_refusal)
+  click venues
+  expect exists panel
+  click other
+  // The picker closes, the terminal is pointed at the other network, and the
+  // session it was unlocked with is still the session.
+  expect !venues_open
+  expect venue == Venue.lighter
+  expect session_can_trade(session, clock)
+  expect empty(cancel_refusal)
+  expect !empty(session_agent(session))
+
 // What a switch *does* still throw away, which is everything the other venue
 // answered. The key survives; the other exchange's book, universe and account
 // do not.

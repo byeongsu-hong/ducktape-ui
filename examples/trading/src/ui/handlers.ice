@@ -69,6 +69,20 @@ on search_key(event)
   return if event.key != key.named("Escape")
   query = ""
 
+// The network picker, opened from the block in the header that names the
+// network. There is no toggle here because there cannot be a second press: the
+// panel opens over a backdrop that takes every click outside it, so the way
+// back out is that backdrop, Escape, or picking a row.
+on open_venues
+  venues_open = true
+
+on close_venues
+  venues_open = false
+
+on venues_key(event)
+  return if event.key != key.named("Escape")
+  venues_open = false
+
 // A close is a reduce-only order with the size and the side already known, so
 // this fills those three in rather than being a fourth path that happens to
 // agree with them. What follows from the box being set follows here too: the
@@ -228,6 +242,10 @@ on pick_symbol(name)
 // across the switch is the exchange being left, drawn under the name of the
 // one being opened, and it looks entirely plausible.
 on switch_venue(next)
+  // The pick is answered before it is acted on, and it is answered either way:
+  // a picker left open over the network that was just chosen is the press going
+  // unanswered, which is the rule `pick_symbol` follows for the market rail.
+  venues_open = false
   return if next == venue
   venue = next
   // The universe and everything drawn from it. The focused row carries the
@@ -597,7 +615,11 @@ subscribe
   // the terminal. App-scoped, it cleared a filter the reader could not see from
   // anywhere else, so the list came back narrowed to a word nothing on screen
   // showed.
-  keyboard press when page == Page.terminal && !gate && !empty(query) -> search_key _
+  keyboard press when page == Page.terminal && !gate && !venues_open && !empty(query) -> search_key _
+  // Escape shuts the picker, and it shuts it before it clears the search box:
+  // one press is one act, and the act a reader means is the panel covering
+  // the screen rather than a word in a rail behind it.
+  keyboard press when venues_open -> venues_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 60s when !gate && !empty(address) -> tick_portfolio

@@ -107,9 +107,36 @@ const NETWORKS: [Network; 4] = [
 /// What a reader hears on the switch, by the rule the page and interval tabs
 /// already follow: the button is named for the act, and the one already taken
 /// says so in its name rather than in its colour.
+///
+/// The kind is in here rather than only in the badge beside it. A labelled
+/// button's name replaces its contents, so the box reading REAL MONEY inside
+/// the row is painted and never spoken — which left the one reader who cannot
+/// check the colour hearing four names and no deployments. This is the row a
+/// finger is travelling towards; it has to answer "real money or not" before
+/// it is pressed, and to every reader.
 pub fn venue_label(venue: Venue, shown: bool) -> String {
     let state = if shown { ", already reading" } else { "" };
-    format!("Read {}{state}", venue_name(venue))
+    format!("Read {}, {}{state}", venue_name(venue), spoken_kind(venue))
+}
+
+/// What the control that opens the picker says it is and what it is showing.
+///
+/// A trigger that only names the network is a label for a readout, and this
+/// one is a button: without the act in its name, nothing tells a reader who
+/// cannot see the panel drop that the header's venue block is a way to change
+/// venue at all.
+pub fn venue_switch_label(venue: Venue) -> String {
+    format!(
+        "{}, {} — switch network",
+        venue_name(venue),
+        spoken_kind(venue)
+    )
+}
+
+/// `venue_kind` said aloud. The badge is set in capitals because it is read as
+/// a shape at a glance; a screen reader spelling out R-E-A-L is not that.
+fn spoken_kind(venue: Venue) -> String {
+    venue_kind(venue).to_lowercase()
 }
 
 /// One read in flight.
@@ -578,8 +605,9 @@ pub fn venue_account_gap(venue: Venue) -> String {
 }
 
 /// What a reader has to know about this network that its name does not say,
-/// or nothing. Drawn on settings beside the picker, never where rows would be:
-/// a sentence under an empty panel is read as the reason the panel is empty.
+/// or nothing. Drawn on settings among the network's other facts, never where
+/// rows would be: a sentence under an empty panel is read as the reason the
+/// panel is empty.
 pub fn venue_note(venue: Venue) -> String {
     Network::of(venue).note.to_owned()
 }
@@ -1273,10 +1301,13 @@ mod tests {
         assert_eq!(venue_name(Venue::Hyperliquid), "Hyperliquid");
         assert_eq!(venue_name(Venue::Lighter), "Lighter");
 
-        assert_eq!(venue_label(Venue::Lighter, false), "Read Lighter");
+        assert_eq!(
+            venue_label(Venue::Lighter, false),
+            "Read Lighter, real money"
+        );
         assert_eq!(
             venue_label(Venue::Lighter, true),
-            "Read Lighter, already reading"
+            "Read Lighter, real money, already reading"
         );
 
         let mut heard: Vec<String> = BOTH
@@ -1296,6 +1327,41 @@ mod tests {
         heard.sort();
         heard.dedup();
         assert_eq!(heard.len(), 4, "two tabs sounding alike say nothing");
+    }
+
+    /// Which deployment a row is, spoken rather than only painted.
+    ///
+    /// The badge inside each row is drawn and never read out: a labelled
+    /// button's name replaces its contents, so a reader on a screen reader was
+    /// choosing between four names that differ by a word, in the one control
+    /// where getting it wrong costs money. The trigger owes the same, plus the
+    /// act — a control that only names the network is a readout.
+    #[test]
+    fn every_switch_says_which_deployment_it_is() {
+        for network in NETWORKS {
+            let spoken = venue_kind(network.venue).to_lowercase();
+            for shown in [false, true] {
+                let row = venue_label(network.venue, shown);
+                assert!(
+                    row.contains(&spoken),
+                    "{row}: a row chosen without its kind is a row chosen blind"
+                );
+            }
+
+            let trigger = venue_switch_label(network.venue);
+            assert!(trigger.starts_with(network.name), "{trigger}");
+            assert!(trigger.contains(&spoken), "{trigger}");
+            assert!(trigger.contains("switch network"), "{trigger}");
+        }
+
+        assert_eq!(
+            venue_switch_label(Venue::HyperliquidTestnet),
+            "Hyperliquid Testnet, testnet — switch network"
+        );
+        assert_eq!(
+            venue_switch_label(Venue::Hyperliquid),
+            "Hyperliquid, real money — switch network"
+        );
     }
 
     /// A venue that cannot answer a read owes the panel a sentence, and the

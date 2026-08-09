@@ -48,6 +48,10 @@ state
   page:Page = Page.terminal
   venue:Venue = Venue.hyperliquid
   gate = true
+  // Whether the network picker is dropped over the terminal. A display flag
+  // and nothing else: which network is being read is `venue`, and this only
+  // says whether the list of the others is on screen.
+  venues_open = false
   address = ""
   draft = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
   coin = "BTC"
