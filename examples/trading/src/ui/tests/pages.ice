@@ -317,3 +317,42 @@ test trading_the_range_picker_announces_a_span_not_a_page
   expect a11y drawn name "Show account value over the last month, already showing"
   expect a11y aweek name "Show account value over the last week"
   expect a11y ever name "Show account value over its whole history"
+
+// A position row is seven columns and a button, and a button's label replaces
+// every one of them. Named "BTC short 30" it asked a reader who cannot see the
+// rest whether this position is profitable or a tick from being closed for
+// them, and answered neither. It names one figure per column with a header.
+test trading_a_position_row_announces_the_columns_it_replaces
+  preset held
+  viewport 1660 820
+  target app = #app
+  target lower = app/terminal-fit/trade/lower
+  target held_rows = lower/positions/position-list
+  target bitcoin = held_rows/position("BTC")/root
+  expect a11y bitcoin name "BTC short 30, entry 81,461.50, liquidation 174,000.00, funding +$3.3M, unrealized +$523.8K at +857.41%"
+
+// The venue reports no cliff for this one, so the LIQ column reads "none" and
+// the name may not invent a price to fill the gap.
+test trading_a_position_with_no_cliff_announces_that_rather_than_a_price
+  preset held
+  viewport 1660 820
+  target app = #app
+  target lower = app/terminal-fit/trade/lower
+  target held_rows = lower/positions/position-list
+  target solana = held_rows/position("SOL")/root
+  expect a11y solana name "SOL long 12, entry 151.400, no liquidation price, funding +$8, unrealized -$33.36 at -36.72%"
+
+// The fills row draws a size and a realized PnL side by side. The name used to
+// pick one: a closing fill announced what it made and left a full close
+// indistinguishable by ear from a quarter of one. An opening fill has no PnL —
+// the row draws an em dash there — so the name still says only what it took.
+test trading_a_fill_row_announces_both_the_size_and_what_it_realized
+  preset held
+  viewport 1660 820
+  target app = #app
+  target lower = app/terminal-fit/trade/lower
+  target printed = lower/fills/fill-list
+  target closing = printed/fill(1)/root
+  target opening = printed/fill(2)/root
+  expect a11y closing name "BTC sold 0.25 at 64,010.00, realized +$1,240.00"
+  expect a11y opening name "BTC bought 0.5 at 63,940.00"

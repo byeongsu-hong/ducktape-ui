@@ -56,3 +56,24 @@ test trading_a_size_past_the_book_says_so
   dispatch ticket_sized("1.0")
   expect no text "The book on screen cannot fill that size."
   expect text "64,001.00"
+
+// The side selector said "Buy" and "Sell" whichever one the ticket was on, and
+// accesskit carries a toggled state for a checkbox and a switch but not for a
+// plain button — so the highlight was the whole answer. A reader who cannot see
+// it was one press from the opposite trade.
+test trading_the_ticket_side_says_which_side_is_selected
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target buying = ticket/side-buy/buy-on
+  target buy_offered = ticket/side-buy/buy-off
+  target selling = ticket/side-sell/sell-on
+  target sell_offered = ticket/side-sell/sell-off
+  expect ticket_buy
+  expect a11y buying name "Buy, already selected"
+  expect a11y sell_offered name "Sell"
+  click sell_offered
+  expect !ticket_buy
+  expect a11y selling name "Sell, already selected"
+  expect a11y buy_offered name "Buy"

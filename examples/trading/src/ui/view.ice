@@ -776,12 +776,18 @@ view
                                     size=18.0
                                     @text-muted
                                     @font-bold
+                            // Which side the ticket is on was the fill colour
+                            // and nothing else. accesskit carries a toggled
+                            // state for a checkbox and a switch, not for a
+                            // button, so the chosen side says so in its name by
+                            // the rule the tabs follow — and getting this wrong
+                            // costs a reader the opposite trade.
                             row gap=8.0 w=fill
                               col #side-buy w=fill
                                 if ticket_buy
                                   button #buy-on -> ticket_side(true)
                                     with
-                                      label="Buy"
+                                      label="Buy, already selected"
                                       w=fill
                                       p=9.0
                                     active bg=up text=fg_invert r=4.0
@@ -809,7 +815,7 @@ view
                                 if !ticket_buy
                                   button #sell-on -> ticket_side(false)
                                     with
-                                      label="Sell"
+                                      label="Sell, already selected"
                                       w=fill
                                       p=9.0
                                     active bg=down text=fg_invert r=4.0

@@ -1970,11 +1970,30 @@ pub fn book_label(price: f64, buy: bool) -> String {
     format!("{side} at {}", fmt_px(price))
 }
 
-/// A position row carries a side, a size, an entry, a liquidation price and a
-/// PnL. Named by its coin alone, a reader arriving on it hears "BTC".
+/// A position row carries a side, a size, an entry, a liquidation price, a
+/// funding flow and a PnL. The row is one button, and a button's label replaces
+/// every cell inside it rather than introducing them, so a name that stopped at
+/// the side and the size asked a reader who cannot see the other five columns
+/// whether this position is making money or about to be closed for them. It
+/// names one figure per column the panel gives a header to.
 pub fn position_label(held: Position) -> String {
     let side = if held.size >= 0.0 { "long" } else { "short" };
-    format!("{} {side} {}", held.coin, fmt_size(held.size))
+    // The LIQ column draws "none" for a position the venue reports no cliff
+    // for, and a label may not read out a price the panel does not show.
+    let liq = if held.liq > 0.0 {
+        format!("liquidation {}", fmt_px(held.liq))
+    } else {
+        "no liquidation price".to_owned()
+    };
+    format!(
+        "{} {side} {}, entry {}, {liq}, funding {}, unrealized {} at {}",
+        held.coin,
+        fmt_size(held.size),
+        fmt_px(held.entry),
+        fmt_funding_flow(held.funding),
+        fmt_pnl(held.pnl),
+        fmt_pct(held.roe_pct)
+    )
 }
 
 /// A level somebody asked to be told about. Which side it is waiting on is
@@ -2330,18 +2349,26 @@ pub(crate) fn count(counter: &'static std::thread::LocalKey<std::cell::Cell<usiz
     counter.with(|rows| rows.set(rows.get() + 1));
 }
 
-/// A fill names what it did and where. Its realized PnL is the point when it
-/// closed something, and its size when it opened.
+/// A fill names what it did, how much of it, and where. Choosing between the
+/// size and the realized PnL was choosing between two cells the row draws side
+/// by side: a closing fill announced what it made and left a reader unable to
+/// hear whether it closed the position or a quarter of it. The PnL is said only
+/// when there is one, because the row draws an em dash where there is not.
 pub fn fill_label(fill: Fill) -> String {
     #[cfg(test)]
     count(&FILL_LABELS);
     let side = if fill.buy { "bought" } else { "sold" };
-    let outcome = if fill.closed_pnl == 0.0 {
-        fmt_size(fill.size)
+    let closed = if fill.closed_pnl == 0.0 {
+        String::new()
     } else {
-        fmt_signed_usd(fill.closed_pnl)
+        format!(", realized {}", fmt_pnl(fill.closed_pnl))
     };
-    format!("{} {side} {} at {}", fill.coin, outcome, fmt_px(fill.price))
+    format!(
+        "{} {side} {} at {}{closed}",
+        fill.coin,
+        fmt_size(fill.size),
+        fmt_px(fill.price)
+    )
 }
 
 /// The share of the tape that lifted the offer, as a percentage. Which side
@@ -4445,9 +4472,24 @@ mod tests {
             margin_mode: "cross".into(),
             funding: 0.0,
         };
-        // A row carrying a side, a size, an entry, a cliff and a PnL is worth
-        // more than its ticker to somebody who cannot see the rest of it.
-        assert_eq!(position_label(held(30.0)), "BTC long 30");
+        // A row carrying a side, a size, an entry, a cliff, a funding flow and
+        // a PnL is worth more than its ticker to somebody who cannot see the
+        // rest of it — and the button it is drawn as replaces all six.
+        assert_eq!(
+            position_label(held(30.0)),
+            "BTC long 30, entry 60,000.00, liquidation 45,000.00, \
+             funding $0, unrealized +$0.00 at +0.00%"
+        );
+        // A venue that reports no cliff for a position leaves the column
+        // reading "none", and the name may not invent a price for it.
+        assert_eq!(
+            position_label(Position {
+                liq: 0.0,
+                ..held(30.0)
+            }),
+            "BTC long 30, entry 60,000.00, no liquidation price, \
+             funding $0, unrealized +$0.00 at +0.00%"
+        );
 
         let order = Order {
             coin: "BTC".into(),
@@ -4475,16 +4517,17 @@ mod tests {
             heat: 0,
             tid: 0,
         };
-        // A fill that closed something is named by what it made; one that
-        // opened, by what it took on. The row reads the same way.
+        // A fill that closed something is named by what it took and what it
+        // made, because the row draws both: what it made alone cannot tell a
+        // full close from a quarter of one. A fill that opened has no realized
+        // PnL and the row draws an em dash, so the name says nothing there.
         assert_eq!(
             fill_label(fill(250.0, false)),
-            "BTC sold +$250.00 at 64,000.00"
+            "BTC sold 0.5 at 64,000.00, realized +$250.00"
         );
         assert_eq!(fill_label(fill(0.0, true)), "BTC bought 0.5 at 64,000.00");
-        assert_eq!(
-            position_label(held(-30.0)),
-            "BTC short 30",
+        assert!(
+            position_label(held(-30.0)).starts_with("BTC short 30,"),
             "the size reads unsigned; the word carries the side"
         );
 
