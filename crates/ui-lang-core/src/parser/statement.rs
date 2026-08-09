@@ -196,6 +196,35 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
         } else {
             (FutureMode::Every, run)
         };
+        let (lane, run) = if mode == FutureMode::Every {
+            (None, run)
+        } else {
+            let Some(lane_and_call) = run.strip_prefix("lane=") else {
+                let mode = match mode {
+                    FutureMode::Latest => "latest",
+                    FutureMode::Replace => "replace",
+                    FutureMode::Every => unreachable!(),
+                };
+                return Err(error(
+                    "E050",
+                    line,
+                    format!("`run {mode}` requires a named request lane"),
+                )
+                .hint(format!(
+                    "write `run {mode} lane=request_name call(...) -> ...`"
+                )));
+            };
+            let Some(separator) = lane_and_call.find(char::is_whitespace) else {
+                return Err(error(
+                    "E050",
+                    line,
+                    "a request lane must be followed by an extern call",
+                ));
+            };
+            let lane = &lane_and_call[..separator];
+            let call = lane_and_call[separator..].trim_start();
+            (Some(line.qualify(&qualified_identifier(lane, line)?)), call)
+        };
         let Some((call, routes)) = split_top_marker(run, "->") else {
             let keyword = match kind {
                 EffectKind::Future => "run",
@@ -219,6 +248,7 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
         return Ok(Statement::Run {
             kind,
             mode,
+            lane,
             function,
             args,
             success,

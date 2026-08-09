@@ -1,4 +1,4 @@
-use crate::hir::{ExternFnId, HandlerId, RunSiteId, canonical_rust_type_name};
+use crate::hir::{ExternFnId, HandlerId, RunLaneId, canonical_rust_type_name};
 use crate::lower::*;
 use crate::semantic::*;
 use crate::{Error, canonical_snake};
@@ -357,32 +357,47 @@ fn resolved_match_pattern_code(
     })
 }
 
-pub(in crate::codegen) fn component_run_sites(
-    program: &LoweredProgram,
-    handlers: &[HandlerId],
-) -> Vec<(RunSiteId, FutureMode)> {
-    handlers
-        .iter()
-        .flat_map(|handler| &program.handler(*handler).statements)
-        .filter_map(|statement| match &statement.kind {
-            ResolvedStatementKind::Run(run) => run.site.map(|site| (site, run.mode)),
-            _ => None,
-        })
-        .collect()
+fn collect_run_lanes(
+    statements: &[ResolvedStatement],
+    lanes: &mut BTreeMap<u32, (RunLaneId, FutureMode)>,
+) {
+    for statement in statements {
+        match &statement.kind {
+            ResolvedStatementKind::Run(run) => {
+                if let Some(lane) = run.lane {
+                    lanes.entry(lane.0).or_insert((lane, run.mode));
+                }
+            }
+            ResolvedStatementKind::TaskGroup { statements, .. } => {
+                collect_run_lanes(statements, lanes);
+            }
+            ResolvedStatementKind::Abortable { task, .. } => {
+                collect_run_lanes(::std::slice::from_ref(task), lanes);
+            }
+            _ => {}
+        }
+    }
 }
 
-pub(in crate::codegen) fn handler_future(
-    handler: &ResolvedHandler,
-) -> Option<(FutureMode, Option<RunSiteId>)> {
-    handler
-        .statements
-        .iter()
-        .find_map(|statement| match &statement.kind {
-            ResolvedStatementKind::Run(run) if run.kind == EffectKind::Future => {
-                Some((run.mode, run.site))
-            }
-            _ => None,
-        })
+fn handler_run_lanes<'a>(
+    handlers: impl Iterator<Item = &'a ResolvedHandler>,
+) -> Vec<(RunLaneId, FutureMode)> {
+    let mut lanes = BTreeMap::new();
+    for handler in handlers {
+        collect_run_lanes(&handler.statements, &mut lanes);
+    }
+    lanes.into_values().collect()
+}
+
+pub(in crate::codegen) fn app_run_lanes(program: &LoweredProgram) -> Vec<(RunLaneId, FutureMode)> {
+    handler_run_lanes(program.app_handlers().chain(program.preset_handlers()))
+}
+
+pub(in crate::codegen) fn component_run_lanes(
+    program: &LoweredProgram,
+    handlers: &[HandlerId],
+) -> Vec<(RunLaneId, FutureMode)> {
+    handler_run_lanes(handlers.iter().map(|handler| program.handler(*handler)))
 }
 
 pub(in crate::codegen) fn event_filter_type(name: &str) -> String {
@@ -594,17 +609,17 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
-        for (site, _) in component_run_sites(program, &component.handlers) {
-            writeln!(out, "{}: u64,", component_latest_field(site.0 as usize)).unwrap();
+        for (lane, _) in component_run_lanes(program, &component.handlers) {
+            writeln!(out, "{}: u64,", run_lane_generation_field(lane.0 as usize)).unwrap();
         }
-        for (site, _mode) in component_run_sites(program, &component.handlers)
+        for (lane, _mode) in component_run_lanes(program, &component.handlers)
             .into_iter()
             .filter(|(_, mode)| *mode == FutureMode::Replace)
         {
             writeln!(
                 out,
                 "{}: ::std::option::Option<::iced::task::Handle>,",
-                component_replace_field(site.0 as usize)
+                run_lane_handle_field(lane.0 as usize)
             )
             .unwrap();
         }
@@ -624,17 +639,17 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
-        for (site, _) in component_run_sites(program, &component.handlers) {
-            writeln!(out, "{}: 0,", component_latest_field(site.0 as usize)).unwrap();
+        for (lane, _) in component_run_lanes(program, &component.handlers) {
+            writeln!(out, "{}: 0,", run_lane_generation_field(lane.0 as usize)).unwrap();
         }
-        for (site, _mode) in component_run_sites(program, &component.handlers)
+        for (lane, _mode) in component_run_lanes(program, &component.handlers)
             .into_iter()
             .filter(|(_, mode)| *mode == FutureMode::Replace)
         {
             writeln!(
                 out,
                 "{}: ::std::option::Option::None,",
-                component_replace_field(site.0 as usize)
+                run_lane_handle_field(lane.0 as usize)
             )
             .unwrap();
         }
@@ -653,6 +668,22 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             "#[cfg(all(target_os = \"windows\", not(test)))]\npub(crate) __ice_accessibility_initial: ::std::option::Option<usize>,\n#[cfg(all(target_os = \"windows\", not(test)))]\npub(crate) __ice_accessibility_pending: ::std::vec::Vec<{message}>,"
         )
         .unwrap();
+    }
+    for (lane, mode) in app_run_lanes(program) {
+        writeln!(
+            out,
+            "pub(crate) {}: u64,",
+            run_lane_generation_field(lane.0 as usize)
+        )
+        .unwrap();
+        if mode == FutureMode::Replace {
+            writeln!(
+                out,
+                "pub(crate) {}: ::std::option::Option<::iced::task::Handle>,",
+                run_lane_handle_field(lane.0 as usize)
+            )
+            .unwrap();
+        }
     }
     for (pane, test_only) in document_pane_grids(program) {
         let pane_state = if pane.templates.is_empty() {
@@ -731,6 +762,14 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,\n__TemplateChanged,"
     )
     .unwrap();
+    for (lane, _) in app_run_lanes(program) {
+        writeln!(
+            out,
+            "{}(u64, ::std::boxed::Box<{message}>),",
+            run_lane_variant(lane.0 as usize)
+        )
+        .unwrap();
+    }
     for handler in program.app_handlers() {
         if handler.name == "mount" {
             continue;
@@ -749,11 +788,11 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         }
     }
     for component in program.components() {
-        for (site, _) in component_run_sites(program, &component.handlers) {
+        for (lane, _) in component_run_lanes(program, &component.handlers) {
             writeln!(
                 out,
                 "{}(::std::string::String, u64, ::std::boxed::Box<{message}>),",
-                component_latest_variant(&component.name, site.0 as usize)
+                run_lane_variant(lane.0 as usize)
             )
             .unwrap();
         }

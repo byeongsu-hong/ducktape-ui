@@ -1209,7 +1209,7 @@ view
 }
 
 #[test]
-fn lowers_component_latest_futures_with_a_scoped_generation() {
+fn lowers_component_request_lanes_with_a_scoped_generation() {
     let source = r#"app Search
 extern crate::backend
   fetch(query:str) -> str
@@ -1228,7 +1228,7 @@ component SearchBox()
     query = ""
     result:str? = none
   on search
-    run latest fetch(query) -> loaded _
+    run latest lane=request fetch(query) -> loaded _
   on loaded(value)
     result = some(value)
   col
@@ -1238,16 +1238,51 @@ view
   SearchBox #search
 "#;
     let generated = compile(source, "search.ice").unwrap();
-    assert!(generated.contains("__ice_latest_0: u64"));
-    assert!(generated.contains("__SearchBoxLatest0(::std::string::String, u64"));
-    assert!(generated.contains("__local.__ice_latest_0.wrapping_add(1)"));
-    assert!(generated.contains("__SearchMessage::__SearchBoxLatest0(__scope.clone()"));
-    assert!(generated.contains("__local.__ice_latest_0 == __generation"));
+    assert!(generated.contains("__ice_run_lane_0_generation: u64"));
+    assert!(generated.contains("__RequestLane0(::std::string::String, u64"));
+    assert!(generated.contains("__local.__ice_run_lane_0_generation.wrapping_add(1)"));
+    assert!(generated.contains("__SearchMessage::__RequestLane0(__ice_lane_scope_0.clone()"));
+    assert!(generated.contains("__local.__ice_run_lane_0_generation == __generation"));
     assert!(generated.contains("return self.__update(*__message)"));
 
-    let ordinary = compile(&source.replace("run latest", "run"), "search.ice").unwrap();
-    assert!(!ordinary.contains("Latest0"));
+    let ordinary = compile(
+        &source.replace("run latest lane=request", "run"),
+        "search.ice",
+    )
+    .unwrap();
+    assert!(!ordinary.contains("RequestLane0"));
     assert!(!ordinary.contains("wrapping_add(1)"));
+}
+
+#[test]
+fn lowers_nested_request_lanes_for_a_component_without_declared_state() {
+    let source = r#"app Search
+extern crate::backend
+  fetch(query:str) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component SearchBox()
+  on search
+    parallel
+      run latest lane=primary fetch("first") -> loaded _
+      run latest lane=secondary fetch("second") -> loaded _
+  on loaded(value)
+  button "Search" -> search
+view
+  SearchBox #search
+"#;
+    let generated = compile(source, "nested_request_lanes.ice").unwrap();
+    assert!(generated.contains("struct __IceSearchBoxState"));
+    assert!(generated.contains("__ice_run_lane_0_generation: u64"));
+    assert!(generated.contains("__ice_run_lane_1_generation: u64"));
 }
 
 #[test]
@@ -1270,7 +1305,7 @@ component SearchBox()
   state
     query = ""
   on search
-    run replace fetch(query) -> loaded _
+    run replace lane=request fetch(query) -> loaded _
   on loaded(value)
     query = value
   button "Search" -> search
@@ -1283,16 +1318,18 @@ view
 "#;
     let generated = compile(source, "search.ice").unwrap();
     assert!(generated.contains("::ui_lang_runtime::MountedComponentState<__IceSearchBoxState>"));
-    assert!(generated.contains("__ice_replace_0: ::std::option::Option<::iced::task::Handle>"));
-    assert!(generated.contains("__ice_latest_0: u64"));
+    assert!(
+        generated.contains("__ice_run_lane_0_handle: ::std::option::Option<::iced::task::Handle>")
+    );
+    assert!(generated.contains("__ice_run_lane_0_generation: u64"));
     assert!(generated.contains(".next_generation()"));
-    assert!(generated.contains(".__ice_replace_0.replace(__handle.abort_on_drop())"));
+    assert!(generated.contains(".__ice_run_lane_0_handle.replace(__handle.abort_on_drop())"));
     assert!(generated.contains("__previous.abort()"));
     assert!(generated.contains("let (__task, __handle) = __task.abortable()"));
     assert!(generated.contains(".begin_render()"));
     assert!(generated.contains(".mount("));
     assert!(generated.contains(".finish_render(__ice_root_scope_ref)"));
-    assert!(generated.contains("SearchBoxLatest0"));
+    assert!(generated.contains("RequestLane0"));
     assert!(generated.contains("::iced::widget::keyed_column(__children)"));
     assert!(generated.contains("format!(\"{}/key({})\""));
 }

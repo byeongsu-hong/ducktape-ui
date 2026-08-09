@@ -24,7 +24,7 @@ component Search()
     tasks:[Task] = []
   on load
     loading = true
-    run replace create_task(query) -> loaded _ | failed _
+    run replace lane=load create_task(query) -> loaded _ | failed _
   on loaded(next)
     tasks = next
     loading = false

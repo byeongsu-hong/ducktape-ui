@@ -408,11 +408,27 @@ Available effect families include:
 - native clipboard, font, system, widget, window, pane, image, time, and debug
   operations.
 
-Inside a component handler, `run latest` filters stale completion messages by
-instance scope and call site without stopping the old Future. Use `run replace`
-when the old Future must be aborted before its replacement starts. Both modes
-require component scope; app-global handlers use ordinary `run` or an explicit
-`abortable` state handle.
+Ordinary `run` delivers every completion. Use a named request lane when later
+work supersedes earlier work: `run latest lane=search` filters stale success
+and failure messages without stopping the old Future, while `run replace
+lane=preview` also aborts the prior Iced task. Equal fully qualified lane names
+join calls across handlers for one state owner. A fragment imported `as
+catalog` may contribute an aliased component whose internal lane is likewise
+qualified, but that lane remains owned by each component instance. Unaliased
+app and preset fragments remain in the root namespace and may share root lanes.
+The app owns one
+scope, a daemon shares one scope across its windows, and each component instance
+is independent. Names are static qualified identifiers and therefore finite per
+owner; one owner cannot mix `latest` and `replace` for a name.
+
+`latest` leaves stale Futures and their captured values live until completion.
+`replace` drops work owned by the aborted task but cannot roll back effects
+already performed or stop detached or blocking Rust work. Choose a backend
+boundary with cancellation semantics that match the lane. Generated bookkeeping
+is fixed per declared lane for each state owner; component-owner count follows
+the retained/mounted lifetime contract. If an outer abort prevents the matching completion
+from reaching update, one current replacement handle can remain until the next
+replacement or owner drop; it does not accumulate.
 
 Read [rust-boundary.md](rust-boundary.md) before adding one.
 
@@ -461,7 +477,7 @@ component SearchDialog()
   state
     query = ""
   on search
-    run replace fetch(query) -> loaded _ | failed _
+    run replace lane=search fetch(query) -> loaded _ | failed _
   input "Search" <-> query submit=search
 ```
 

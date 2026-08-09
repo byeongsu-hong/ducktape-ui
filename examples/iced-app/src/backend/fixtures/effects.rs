@@ -1,4 +1,79 @@
 use super::*;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{LazyLock, Mutex};
+use std::task::{Context, Poll, Waker};
+
+#[derive(Default)]
+struct ControlledRequests {
+    ready: HashMap<i64, String>,
+    wakers: HashMap<i64, Waker>,
+    cancelled: HashSet<i64>,
+}
+
+static CONTROLLED_REQUESTS: LazyLock<Mutex<ControlledRequests>> =
+    LazyLock::new(|| Mutex::new(ControlledRequests::default()));
+
+pub struct ControlledRequest {
+    id: i64,
+    completed: bool,
+}
+
+impl Future for ControlledRequest {
+    type Output = Result<String, AppError>;
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        let result = {
+            let mut requests = CONTROLLED_REQUESTS.lock().unwrap();
+            if let Some(value) = requests.ready.remove(&self.id) {
+                Some(value)
+            } else {
+                requests.wakers.insert(self.id, context.waker().clone());
+                None
+            }
+        };
+        if let Some(value) = result {
+            self.completed = true;
+            Poll::Ready(Ok(value))
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+impl Drop for ControlledRequest {
+    fn drop(&mut self) {
+        if !self.completed {
+            let mut requests = CONTROLLED_REQUESTS.lock().unwrap();
+            requests.ready.remove(&self.id);
+            requests.wakers.remove(&self.id);
+            requests.cancelled.insert(self.id);
+        }
+    }
+}
+
+pub fn controlled_request(id: i64) -> ControlledRequest {
+    ControlledRequest {
+        id,
+        completed: false,
+    }
+}
+
+pub fn complete_controlled_request(id: i64, value: &str) {
+    let waker = {
+        let mut requests = CONTROLLED_REQUESTS.lock().unwrap();
+        requests.ready.insert(id, value.to_owned());
+        requests.wakers.remove(&id)
+    };
+    if let Some(waker) = waker {
+        waker.wake();
+    }
+}
+
+pub fn controlled_request_was_cancelled(id: i64) -> bool {
+    CONTROLLED_REQUESTS.lock().unwrap().cancelled.contains(&id)
+}
 
 #[cfg(test)]
 pub fn copy_text(text: String) -> iced::Task<Result<(), AppError>> {

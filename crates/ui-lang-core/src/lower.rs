@@ -25,7 +25,7 @@ pub(crate) use crate::hir::{
     ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId, ExternRef,
     FloatExpressionId, HandlerId, HandlerOwner, InteractionExpressionId, InteractionRouteId,
     MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena, OriginId, PaletteId,
-    PinExpressionId, RouteId, RunSiteId, StatementId, SubscriptionId, TaskId, TestId, TestStepId,
+    PinExpressionId, RouteId, RunLaneId, StatementId, SubscriptionId, TaskId, TestId, TestStepId,
     TestTargetId, TooltipExpressionId, ViewId,
 };
 #[cfg(test)]
@@ -838,7 +838,7 @@ pub(crate) enum ResolvedEffectTarget {
 pub(crate) struct ResolvedRun {
     pub(crate) kind: EffectKind,
     pub(crate) mode: FutureMode,
-    pub(crate) site: Option<RunSiteId>,
+    pub(crate) lane: Option<RunLaneId>,
     pub(crate) target: ResolvedEffectTarget,
     pub(crate) args: Vec<CheckedExprUseId>,
     pub(crate) success: ResolvedRoute,
@@ -1741,15 +1741,33 @@ fn resolved_statement_semantic_key(
         }
         ResolvedStatementKind::ReturnIf { .. } => "return-if".into(),
         ResolvedStatementKind::Exit => "exit".into(),
-        ResolvedStatementKind::Run(run) => format!(
-            "run:{:?}:{:?}:{}:{}:{}:{}",
-            run.kind,
-            run.mode,
-            effect_name(program, &run.target, statement.origin)?,
-            run.args.len(),
-            route_shape(&run.success),
-            run.error.as_ref().map(route_shape).unwrap_or_default()
-        ),
+        ResolvedStatementKind::Run(run) => {
+            let lane = run
+                .lane
+                .map(|lane| {
+                    program
+                        .declarations
+                        .try_run_lane(lane)
+                        .map(|lane| lane.name.as_str())
+                        .ok_or_else(|| {
+                            program.invariant_at_origin(
+                                statement.origin,
+                                "request-lane ID is outside its arena",
+                            )
+                        })
+                })
+                .transpose()?
+                .unwrap_or_default();
+            format!(
+                "run:{:?}:{:?}:{lane}:{}:{}:{}:{}",
+                run.kind,
+                run.mode,
+                effect_name(program, &run.target, statement.origin)?,
+                run.args.len(),
+                route_shape(&run.success),
+                run.error.as_ref().map(route_shape).unwrap_or_default()
+            )
+        }
         ResolvedStatementKind::Sip(sip) => {
             let function = program
                 .declarations
@@ -2771,26 +2789,33 @@ impl LoweredProgram {
                     })?;
                     validate_effect_task(program, task, run.kind, &run.target, statement.origin)?;
                     validate_task_operands(program, task, &run.args, statement.origin)?;
-                    if (run.mode == FutureMode::Every) != run.site.is_none()
-                        || run.site != declaration.run_site
+                    if (run.mode == FutureMode::Every) != run.lane.is_none()
+                        || run.lane != declaration.run_lane
                     {
                         return Err(program.invariant_at_origin(
                             statement.origin,
-                            "run mode and stable run-site cardinality diverged",
+                            "run mode and request-lane cardinality diverged",
                         ));
                     }
-                    if let Some(site) = run.site {
-                        let run_site =
-                            program.declarations.try_run_site(site).ok_or_else(|| {
+                    if let Some(lane) = run.lane {
+                        let run_lane =
+                            program.declarations.try_run_lane(lane).ok_or_else(|| {
                                 program.invariant_at_origin(
                                     statement.origin,
-                                    "run-site ID is outside its arena",
+                                    "request-lane ID is outside its arena",
                                 )
                             })?;
-                        if run_site.statement != statement.id || run_site.mode != run.mode {
+                        let owner = match handler.owner {
+                            HandlerOwner::Preset(_) => HandlerOwner::App,
+                            owner => owner,
+                        };
+                        if run_lane.owner != owner
+                            || run_lane.mode != run.mode
+                            || !run_lane.statements.contains(&statement.id)
+                        {
                             return Err(program.invariant_at_origin(
                                 statement.origin,
-                                "run-site ID belongs to a different statement or mode",
+                                "request-lane ID belongs to a different owner, statement, or mode",
                             ));
                         }
                     }
@@ -7218,7 +7243,7 @@ impl Lowerer {
             statements: &mut [bool],
             tasks: &mut [bool],
             routes: &mut [bool],
-            run_sites: &mut [bool],
+            run_lanes: &mut [bool],
         ) -> bool {
             if !mark(statements, statement.id.0)
                 || statement.task.is_some_and(|task| !mark(tasks, task.0))
@@ -7232,7 +7257,7 @@ impl Lowerer {
                             .error
                             .as_ref()
                             .is_none_or(|route| mark_route(route, routes))
-                        && run.site.is_none_or(|site| mark(run_sites, site.0))
+                        && run.lane.is_none_or(|lane| mark(run_lanes, lane.0))
                 }
                 ResolvedStatementKind::Sip(sip) => {
                     mark_route(&sip.progress, routes)
@@ -7273,9 +7298,9 @@ impl Lowerer {
                     ..
                 } => children
                     .iter()
-                    .all(|child| visit(child, statements, tasks, routes, run_sites)),
+                    .all(|child| visit(child, statements, tasks, routes, run_lanes)),
                 ResolvedStatementKind::Abortable { task, .. } => {
-                    visit(task, statements, tasks, routes, run_sites)
+                    visit(task, statements, tasks, routes, run_lanes)
                 }
                 ResolvedStatementKind::WidgetOperation { route, .. }
                 | ResolvedStatementKind::PaneOperation { route, .. }
@@ -7298,7 +7323,7 @@ impl Lowerer {
         let mut statements = vec![false; self.declarations.statement_count()];
         let mut tasks = vec![false; self.declarations.task_count()];
         let mut routes = vec![false; self.declarations.route_count()];
-        let mut run_sites = vec![false; self.declarations.run_site_count()];
+        let mut run_lanes = vec![false; self.declarations.run_lane_count()];
         let valid = self
             .handlers
             .iter()
@@ -7309,18 +7334,18 @@ impl Lowerer {
                     &mut statements,
                     &mut tasks,
                     &mut routes,
-                    &mut run_sites,
+                    &mut run_lanes,
                 )
             });
         if !valid
             || statements.iter().any(|seen| !seen)
             || tasks.iter().any(|seen| !seen)
             || routes.iter().any(|seen| !seen)
-            || run_sites.iter().any(|seen| !seen)
+            || run_lanes.iter().any(|seen| !seen)
         {
             return Err(self.invariant(
                 &Span::line(1),
-                "handler lowering did not consume every statement, task, route, and run-site ID",
+                "handler lowering did not consume every statement, task, route, and request-lane ID",
             ));
         }
         Ok(())
@@ -7893,6 +7918,7 @@ impl Lowerer {
             Statement::Run {
                 kind,
                 mode,
+                lane: lane_name,
                 function,
                 args,
                 success,
@@ -7921,29 +7947,36 @@ impl Lowerer {
                         self.lower_route(route, route_id, owner, id, declaration.task)
                     })
                     .transpose()?;
-                let site = declaration.run_site;
-                if (*mode == FutureMode::Every) != site.is_none() {
-                    return Err(self.invariant(span, "run mode and stable run-site ID diverged"));
+                let lane = declaration.run_lane;
+                if (*mode == FutureMode::Every) != lane.is_none()
+                    || lane_name.is_some() != lane.is_some()
+                {
+                    return Err(self.invariant(span, "run mode and request-lane ID diverged"));
                 }
-                if let Some(site) = site {
-                    let run_site = self.declarations.try_run_site(site).ok_or_else(|| {
-                        self.invariant(span, "stable run-site ID is outside its arena")
+                if let Some(lane) = lane {
+                    let run_lane = self.declarations.try_run_lane(lane).ok_or_else(|| {
+                        self.invariant(span, "request-lane ID is outside its arena")
                     })?;
-                    if run_site.declaration.id != site
-                        || run_site.statement != id
-                        || run_site.mode != *mode
-                        || run_site.declaration.origin != declaration.declaration.origin
+                    let lane_owner = match owner {
+                        HandlerOwner::Preset(_) => HandlerOwner::App,
+                        owner => owner,
+                    };
+                    if run_lane.declaration.id != lane
+                        || run_lane.owner != lane_owner
+                        || run_lane.name != *lane_name.as_ref().expect("lane shape checked above")
+                        || run_lane.mode != *mode
+                        || !run_lane.statements.contains(&id)
                     {
                         return Err(self.invariant(
                             span,
-                            "stable run-site HIR owner, mode, or origin diverged",
+                            "request-lane HIR owner, name, mode, or membership diverged",
                         ));
                     }
                 }
                 ResolvedStatementKind::Run(ResolvedRun {
                     kind: *kind,
                     mode: *mode,
-                    site,
+                    lane,
                     target: self.effect_target(task, function, *kind, span)?,
                     args,
                     success,
@@ -10344,9 +10377,9 @@ mod tests {
             }
             ResolvedStatementKind::Exit => "exit".into(),
             ResolvedStatementKind::Run(run) => format!(
-                "run {:?} site={:?} {} error={}",
+                "run {:?} lane={:?} {} error={}",
                 run.mode,
-                run.site,
+                run.lane,
                 route_snapshot(program, &run.success),
                 run.error
                     .as_ref()
@@ -10485,7 +10518,7 @@ component Card()
   state
     local = 0
   on start
-    run replace fetch(local) -> done _
+    run replace lane=request fetch(local) -> done _
   on done(next)
     local = next
   button "Start" -> start
@@ -10498,11 +10531,11 @@ view
             handler_snapshot(&program),
             r#"h0 App mount params=[] @19:1
   s0 task=None final=false let request LocalId(0) = ExpressionId(2) @20:1
-  s1 task=Some(TaskId(0)) final=true run Every site=None r0 -> app h1 loaded (payload 0:i64) @21:1 error=none @21:1
+  s1 task=Some(TaskId(0)) final=true run Every lane=None r0 -> app h1 loaded (payload 0:i64) @21:1 error=none @21:1
 h1 App loaded params=["next:i64:LocalId(1)"] @22:1
   s2 task=None final=true assign value:i64, value=ExpressionId(4), at=None, move=false @23:1
 h2 Component(ComponentId(0)) start params=[] @27:1
-  s3 task=Some(TaskId(1)) final=true run Replace site=Some(RunSiteId(0)) r1 -> component c0 h3 done (payload 0:i64) @28:1 error=none @28:1
+  s3 task=Some(TaskId(1)) final=true run Replace lane=Some(RunLaneId(0)) r1 -> component c0 h3 done (payload 0:i64) @28:1 error=none @28:1
 h3 Component(ComponentId(0)) done params=["next:i64:LocalId(2)"] @29:1
   s4 task=None final=true assign local:i64, value=ExpressionId(6), at=None, move=false @30:1
 h4 Preset(0) preset seeded params=[] @16:1
@@ -10559,7 +10592,7 @@ view
             "r2 -> app h3 collected (payload 0:[i64])",
             "r3 -> app h4 planned (payload 0:i64)",
             "s3 task=Some(TaskId(7)) final=true abortable",
-            "s4 task=Some(TaskId(8)) final=true run Every site=None r4 -> app h5 themed (payload 0:str)",
+            "s4 task=Some(TaskId(8)) final=true run Every lane=None r4 -> app h5 themed (payload 0:str)",
         ] {
             assert!(
                 snapshot.contains(expected),
@@ -10569,7 +10602,7 @@ view
     }
 
     #[test]
-    fn handler_codegen_uses_checked_expressions_and_stable_run_sites_after_ast_mutation() {
+    fn handler_codegen_uses_checked_expressions_and_request_lanes_after_ast_mutation() {
         let source = format!(
             r#"app Mutation
 extern crate::backend
@@ -10583,7 +10616,7 @@ component Search()
   state
     query = 2
   on search
-    run latest fetch(query) -> loaded _
+    run latest lane=search fetch(query) -> loaded _
   on loaded(next)
     query = next
   button "Search" -> search
@@ -10610,8 +10643,7 @@ view
         let generated = crate::codegen::generate(&program, "mutation.ice").unwrap();
         assert!(generated.contains("let original = (self.value + 1);"));
         assert!(generated.contains("crate::backend::fetch(__local.query)"));
-        assert!(generated.contains("__ice_latest_0"));
-        assert!(!generated.contains("Latest999"));
+        assert!(generated.contains("__ice_run_lane_0_generation"));
         assert!(!generated.contains("unchecked-poison"));
         assert!(!generated.contains("unchecked-run-poison"));
         assert!(!generated.contains("// __ICE_SOURCE 900 1"));
@@ -10619,7 +10651,7 @@ view
     }
 
     #[test]
-    fn rejects_mutated_handler_route_run_site_and_statement_shapes_as_hir_invariants() {
+    fn rejects_mutated_handler_route_run_lane_and_statement_shapes_as_hir_invariants() {
         let source = format!(
             r#"app InvalidHir
 extern crate::backend
@@ -10628,7 +10660,7 @@ extern crate::backend
   state
     query = 1
   on search
-    run latest fetch(query) -> loaded _
+    run latest lane=search fetch(query) -> loaded _
   on loaded(next)
     query = next
   button "Search" -> search
@@ -11084,12 +11116,12 @@ view
     }
 
     #[test]
-    fn malformed_run_site_and_required_operation_routes_are_e196_not_panics() {
+    fn malformed_run_lane_and_required_operation_routes_are_e196_not_panics() {
         let latest = format!(
-            "app Search\nextern crate::backend\n  fetch(query:str) -> str\n{THEME}component SearchBox()\n  state\n    query = \"\"\n    result:str? = none\n  on search\n    run latest fetch(query) -> loaded _\n  on loaded(value)\n    result = some(value)\n  button \"Search\" -> search\nview\n  SearchBox #search\n"
+            "app Search\nextern crate::backend\n  fetch(query:str) -> str\n{THEME}component SearchBox()\n  state\n    query = \"\"\n    result:str? = none\n  on search\n    run latest lane=search fetch(query) -> loaded _\n  on loaded(value)\n    result = some(value)\n  button \"Search\" -> search\nview\n  SearchBox #search\n"
         );
-        let mut invalid_site = lower(analyze(&latest).unwrap()).unwrap();
-        let statement = invalid_site
+        let mut invalid_lane = lower(analyze(&latest).unwrap()).unwrap();
+        let statement = invalid_lane
             .handlers
             .iter_mut()
             .find(|handler| handler.name == "search")
@@ -11098,10 +11130,10 @@ view
         let ResolvedStatementKind::Run(run) = &mut statement.kind else {
             panic!("fixture must contain a run");
         };
-        run.site = None;
-        let error = crate::codegen::generate(&invalid_site, "invalid.ice").unwrap_err();
+        run.lane = None;
+        let error = crate::codegen::generate(&invalid_lane, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("run-site"));
+        assert!(error.message.contains("request-lane"));
 
         let widget = format!(
             "app WidgetRoute\n{THEME}state\n  field = \"\"\n  focused = false\non inspect\n  task widget focused #field -> observed _\non observed(value)\n  focused = value\nview\n  input \"Field\" #field <-> field\n"

@@ -208,7 +208,7 @@ extern crate::backend
 component Search()
   lifetime mounted
   on search
-    run replace fetch() -> loaded _
+    run replace lane=requests::search fetch() -> loaded _
   button "Search" -> search
 on loaded(value)
 view
@@ -220,8 +220,9 @@ view
         document.components[0].handlers[0].statements[0],
         Statement::Run {
             mode: FutureMode::Replace,
+            lane: Some(ref lane),
             ..
-        }
+        } if lane == "requests::search"
     ));
     assert_eq!(
         parse(&source.replace("  lifetime mounted\n", ""))
@@ -247,6 +248,41 @@ view
     ] {
         let error = parse(&source.replace("  lifetime mounted", replacement)).unwrap_err();
         assert!(error.message.contains(expected), "{}", error.message);
+    }
+}
+
+#[test]
+fn request_modes_require_named_lanes_while_bare_run_remains_every() {
+    let source = r#"app Demo
+extern crate::backend
+  fetch() -> str
+on search
+  run fetch() -> loaded _
+on loaded(value)
+view
+  text "Demo"
+"#;
+    let document = parse(source).unwrap();
+    assert!(matches!(
+        document.handlers[0].statements[0],
+        Statement::Run {
+            mode: FutureMode::Every,
+            lane: None,
+            ..
+        }
+    ));
+
+    for mode in ["latest", "replace"] {
+        let error = parse(&source.replace("run fetch", &format!("run {mode} fetch"))).unwrap_err();
+        assert_eq!(error.code, "E050");
+        assert_eq!(
+            error.message,
+            format!("`run {mode}` requires a named request lane")
+        );
+        assert_eq!(
+            error.hint.as_deref(),
+            Some(format!("write `run {mode} lane=request_name call(...) -> ...`").as_str())
+        );
     }
 }
 

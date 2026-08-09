@@ -124,7 +124,7 @@ same-directory lock tests with the actual Cargo command boundary.
 App, implicit mount, component, and preset handler bodies now cross a complete
 normalized HIR boundary before Rust emission. Stable typed arenas own handlers,
 preorder statements, immediate and flow tasks, body routes, checked locals, and
-latest/replace run sites. Route payloads retain ordered indices and concrete
+latest/replace lane members. Route payloads retain ordered indices and concrete
 types; tasks retain output/error types and finality; every node retains a root
 or imported origin chain. Handler code generation has no statement-AST
 expression fallback, checker type query, extern name rediscovery, or source-line
@@ -264,12 +264,25 @@ Handler-local `let` values use the same closed typed
 expression language, are immutable and non-shadowing, and remain available to
 later assignments, guards, and the final task. Parser, checker, codegen, schema,
 README, and reference-app tests are direct evidence for both constructs.
+Named request lanes join Future starts with the same fully qualified lane name
+across handlers and source locations for one state owner. Apps own one top-level
+scope, daemons share one scope across their windows, and each component instance
+is independent. Component lanes are supported both as direct `run` statements
+and as leaves of nested `parallel` and `sequential` task groups. `run latest
+lane=<name>` filters stale success and failure delivery without canceling old
+work; `run replace lane=<name>` also aborts the prior Iced task without rolling
+back effects already performed or detached backend work. Static qualified lane
+names keep bookkeeping finite per owner; component-owner count follows the
+existing retained/mounted lifetime contract. Stale `latest` Futures may retain
+captures until they finish. Parser, checker, formatter, normalized HIR, codegen,
+schema/LSP completions and error-route actions, and controlled cross-handler
+and component lifecycle integration tests provide direct evidence.
 Core view control includes checked `if`, `for`, first-match literal `match`
 arms, and exhaustive Option/Result/UI-enum payload patterns. UI enums are
 non-generic, non-recursive cloneable data; fieldless enums support equality,
 while payload enums remain match-only and match payloads are block-scoped.
 Components may own ordinary cloneable state and local handlers, including
-Future externs; `run latest` filters stale completions by scope and call site.
+Future externs and instance-owned request lanes.
 Writable component inputs are explicit `bind` props; calls use `<->` with a
 direct app state, component-local state, or forwarded bind prop. Ordinary props
 never carry write capability.
@@ -299,9 +312,8 @@ Canonical `with` metadata blocks preserve long checked property and utility
 lists without changing the view tree; the formatter alone decides inline versus
 wrapped form and orders metadata before events, forwarding, slots/statuses, and
 content.
-`run replace` uses native abort handles to cancel and replace prior work at the
-same component scope and call site. `lifetime mounted` prunes disappeared
-scopes, dropping local state, generation counters, and abort-on-drop handles;
+`lifetime mounted` prunes disappeared scopes, dropping local state and request
+lane generations and abort-on-drop handles;
 the default `retained` lifetime preserves state for the app lifetime.
 Generated state is isolated by hierarchical component ID. Structured native
 status styles inherit the matching `active` fields before applying the
@@ -791,7 +803,7 @@ public behavior has direct documented Ice syntax and tests.
 | debug timing | native | `debug-span?` owns exact non-clone `iced::debug::Span` state; checked `debug start name -> state` finishes any prior span before native `time`, `debug finish state` consumes it exactly once, `debug.active(state)` reads its presence, and generic `debug.time_with(name, value)` preserves the value type; iced's `debug` feature activates reporting while its native no-op implementation remains available without the feature |
 | `Theme` and styles | native | a checked semantic-token contract with complete named runtime-selectable palettes, all 22 built-in default-renderer themes, typed native factories including `custom`/`custom_with_fn` and complete extended-palette logic, app/nested selection, dynamically selected token styles, target-scoped utilities, imported semantic recipes with deterministic precedence, complete widget-native catalogs, concrete style fields, and typed runtime callbacks |
 | `theme::Mode` | native | default and all none/light/dark variants, compact kind projection, equality, exact typed extern passage, equivalent app theme/factory behavior, and deliberate ordering/lazy rejection matching the native enum cover the complete public value behavior |
-| `Task` | native | complete public `iced::Task` construction and composition through async/task/stream/sip externs, direct `done`/`none`, system/clipboard/font/widget/window tasks, `batch`, `chain`, abortable handles including abort-on-drop/query and component-scoped `run replace`, `map`, output-dependent `then`, optional-or-result `and_then`, `map_err`, result-preserving `collect`, `discard`, and `units`; every immediate task producer has one exhaustively checked final-statement classification, while multiple tasks require `parallel` or `sequential`; `future`/`stream` identity forms are represented by perform/run extern sources, and default/unit conversion by `none` |
+| `Task` | native | complete public `iced::Task` construction and composition through async/task/stream/sip externs, direct `done`/`none`, system/clipboard/font/widget/window tasks, `batch`, `chain`, abortable handles including abort-on-drop/query and owner-scoped named `run replace` lanes, `map`, output-dependent `then`, optional-or-result `and_then`, `map_err`, result-preserving `collect`, `discard`, and `units`; every immediate task producer has one exhaustively checked final-statement classification, while multiple tasks require `parallel` or `sequential`; `future`/`stream` identity forms are represented by perform/run extern sources, and default/unit conversion by `none` |
 | `Subscription` | native | complete application-facing construction and composition: typed arbitrary adapters, `none`, `batch`, checked conditional activation/status filters, direct every/repeat timers, native `listen`/`listen_with`/`listen_raw` generic events, input-method/keyboard/mouse/touch/window sources (with optional typed IDs on all eleven discrete window events) and system theme changes, typed `run`/`run_with` workers, custom `Recipe` factories through `from_recipe`, raw `EventStream` filters with hashable identity, `with` identity context, typed `map` routing, noncapturing typed `filter_map`, and `units`; advanced `into_recipes` is runtime-consumer plumbing rather than subscription construction or behavior |
 | widget operations | native | all 13 core focus/cursor/selection/scroll operations with checked static/dynamic identity paths through component, layout, slot, keyed, table and pane scopes, typed focus query, native `find`/`find-all` over ID, text, point and focused selectors with complete normalized target metadata, plus custom typed selector factories |
 | clipboard | native | standard and primary read/write tasks; reads preserve iced's optional string payload and writes are checked fire-and-forget effects |

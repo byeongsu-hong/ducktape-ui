@@ -359,7 +359,8 @@ impl DeclarationIndex {
         let mut statements = Vec::new();
         let mut tasks = Vec::new();
         let mut routes = Vec::new();
-        let mut run_sites = Vec::new();
+        let mut run_lanes = Vec::new();
+        let mut run_lanes_by_owner_name = HashMap::new();
         for handler in &document.handlers {
             index_handler_declaration(
                 handler,
@@ -370,7 +371,8 @@ impl DeclarationIndex {
                 &mut statements,
                 &mut tasks,
                 &mut routes,
-                &mut run_sites,
+                &mut run_lanes,
+                &mut run_lanes_by_owner_name,
             );
         }
         for (component_index, component) in document.components.iter().enumerate() {
@@ -386,7 +388,8 @@ impl DeclarationIndex {
                     &mut statements,
                     &mut tasks,
                     &mut routes,
-                    &mut run_sites,
+                    &mut run_lanes,
+                    &mut run_lanes_by_owner_name,
                 );
             }
         }
@@ -406,7 +409,8 @@ impl DeclarationIndex {
                 &mut statements,
                 &mut tasks,
                 &mut routes,
-                &mut run_sites,
+                &mut run_lanes,
+                &mut run_lanes_by_owner_name,
             );
         }
 
@@ -524,7 +528,7 @@ impl DeclarationIndex {
             statements,
             tasks,
             routes,
-            run_sites,
+            run_lanes,
         }
     }
 
@@ -598,7 +602,8 @@ fn index_handler_declaration(
     statements: &mut Vec<StatementDeclaration>,
     tasks: &mut Vec<TaskDeclaration>,
     routes: &mut Vec<RouteDeclaration>,
-    run_sites: &mut Vec<RunSiteDeclaration>,
+    run_lanes: &mut Vec<RunLaneDeclaration>,
+    run_lanes_by_owner_name: &mut HashMap<(HandlerOwner, String), RunLaneId>,
 ) {
     let id = HandlerId(handlers.len() as u32);
     let origin = origins.push(&handler.span, parent);
@@ -610,6 +615,7 @@ fn index_handler_declaration(
             index_statement_declaration(
                 statement,
                 id,
+                owner,
                 None,
                 index + 1 == handler.statements.len(),
                 origin,
@@ -617,7 +623,8 @@ fn index_handler_declaration(
                 statements,
                 tasks,
                 routes,
-                run_sites,
+                run_lanes,
+                run_lanes_by_owner_name,
             )
         })
         .collect();
@@ -638,6 +645,7 @@ fn index_handler_declaration(
 fn index_statement_declaration(
     statement: &Statement,
     handler: HandlerId,
+    owner: HandlerOwner,
     parent: Option<StatementId>,
     is_final: bool,
     parent_origin: OriginId,
@@ -645,7 +653,8 @@ fn index_statement_declaration(
     statements: &mut Vec<StatementDeclaration>,
     tasks: &mut Vec<TaskDeclaration>,
     routes: &mut Vec<RouteDeclaration>,
-    run_sites: &mut Vec<RunSiteDeclaration>,
+    run_lanes: &mut Vec<RunLaneDeclaration>,
+    run_lanes_by_owner_name: &mut HashMap<(HandlerOwner, String), RunLaneId>,
 ) -> StatementId {
     let id = StatementId(statements.len() as u32);
     let origin = origins.push(statement.span(), Some(parent_origin));
@@ -656,7 +665,7 @@ fn index_statement_declaration(
         task: None,
         source_tasks: Vec::new(),
         routes: Vec::new(),
-        run_site: None,
+        run_lane: None,
         children: Vec::new(),
         is_final,
     });
@@ -731,19 +740,36 @@ fn index_statement_declaration(
         statements[id.0 as usize].routes.push(route_id);
     }
 
-    if let Statement::Run { mode, .. } = statement
-        && *mode != FutureMode::Every
+    if let Statement::Run {
+        mode,
+        lane: Some(name),
+        ..
+    } = statement
     {
-        let run_site = RunSiteId(run_sites.len() as u32);
-        run_sites.push(RunSiteDeclaration {
-            declaration: Declaration {
-                id: run_site,
-                origin,
-            },
-            statement: id,
-            mode: *mode,
-        });
-        statements[id.0 as usize].run_site = Some(run_site);
+        let owner = match owner {
+            HandlerOwner::Preset(_) => HandlerOwner::App,
+            owner => owner,
+        };
+        let key = (owner, name.clone());
+        let run_lane = if let Some(run_lane) = run_lanes_by_owner_name.get(&key).copied() {
+            run_lanes[run_lane.0 as usize].statements.push(id);
+            run_lane
+        } else {
+            let run_lane = RunLaneId(run_lanes.len() as u32);
+            run_lanes.push(RunLaneDeclaration {
+                declaration: Declaration {
+                    id: run_lane,
+                    origin,
+                },
+                owner,
+                name: name.clone(),
+                mode: *mode,
+                statements: vec![id],
+            });
+            run_lanes_by_owner_name.insert(key, run_lane);
+            run_lane
+        };
+        statements[id.0 as usize].run_lane = Some(run_lane);
     }
 
     let children: Vec<&Statement> = match statement {
@@ -757,6 +783,7 @@ fn index_statement_declaration(
             index_statement_declaration(
                 child,
                 handler,
+                owner,
                 Some(id),
                 true,
                 origin,
@@ -764,7 +791,8 @@ fn index_statement_declaration(
                 statements,
                 tasks,
                 routes,
-                run_sites,
+                run_lanes,
+                run_lanes_by_owner_name,
             )
         })
         .collect();
@@ -1058,13 +1086,15 @@ pub(crate) fn statement_semantic_key(statement: &Statement) -> String {
         Statement::Run {
             kind,
             mode,
+            lane,
             function,
             args,
             success,
             error,
             ..
         } => format!(
-            "run:{kind:?}:{mode:?}:{function}:{}:{}:{}",
+            "run:{kind:?}:{mode:?}:{}:{function}:{}:{}:{}",
+            lane.as_deref().unwrap_or_default(),
             args.len(),
             route_shape(success),
             error.as_ref().map(route_shape).unwrap_or_default()

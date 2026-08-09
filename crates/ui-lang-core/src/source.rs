@@ -778,6 +778,25 @@ mod tests {
     }
 
     #[test]
+    fn unaliased_app_fragments_and_presets_share_one_root_request_lane() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "app.ice",
+            "app RequestLanes\nuse \"request.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\npreset seeded\n  boot\n    run latest lane=search fetch(\"preset\") -> loaded _\non root_search\n  run latest lane=search fetch(\"root\") -> loaded _\non loaded(value)\nview\n  text \"Ready\"\n",
+        );
+        fixture.write(
+            "request.ice",
+            "extern crate::backend\n  fetch(query:str) -> str\non imported_search\n  run latest lane=search fetch(\"fragment\") -> loaded _\n",
+        );
+
+        let compiled = compile_file(fixture.path("app.ice")).unwrap();
+        assert!(compiled.rust.contains("__ice_run_lane_0_generation"));
+        assert!(compiled.rust.contains("__RequestLane0"));
+        assert!(!compiled.rust.contains("__ice_run_lane_1_generation"));
+        assert!(!compiled.rust.contains("__RequestLane1"));
+    }
+
+    #[test]
     fn analysis_reports_source_and_asset_inputs() {
         let fixture = Fixture::new();
         fixture.write(
