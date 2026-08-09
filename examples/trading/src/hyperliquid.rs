@@ -23,7 +23,7 @@ use tungstenite::stream::MaybeTlsStream;
 use ui_lang_runtime::{Role, StableId, accessible};
 
 use crate::Venue;
-use crate::signing::Chain;
+use crate::signing::{self, Action, Chain, Wallet};
 use crate::venue::venue_name;
 
 pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
@@ -298,6 +298,21 @@ pub struct SymbolRow {
     /// rather than to arithmetic, so the venue publishes it per market and
     /// the shared math never learns one exchange's rule.
     pub maintenance: f64,
+    /// This market's index in its own `meta.universe`, which is what an order
+    /// carries on the wire — the name never reaches the exchange.
+    ///
+    /// Read from the universe *before* the volume sort below, because the sort
+    /// is the app's presentation order and the index is the exchange's
+    /// identity. Taking it from the sorted position would name a different
+    /// market on every poll, which is an order for whatever happened to be as
+    /// busy as the one you meant.
+    ///
+    /// Canonical markets only. A builder dex numbers its own universe and the
+    /// wire offsets it, and this app does not place orders there anyway: those
+    /// markets are margined against a clearinghouse it cannot read, and
+    /// `own_clearinghouse` already declines them on the ticket. The order path
+    /// refuses them again rather than trusting that.
+    pub asset: u32,
     /// How finely this market quotes a size. It is the instrument's, not the
     /// size's: the venue accepts the same step whether you trade a thousandth
     /// of a coin or a thousand of them, so a size the app works out for itself
@@ -319,6 +334,7 @@ fn hash_f64(value: f64, state: &mut impl Hasher) {
 impl Hash for SymbolRow {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
+        self.asset.hash(state);
         self.category.hash(state);
         self.collateral.hash(state);
         self.heading.hash(state);
@@ -436,6 +452,10 @@ impl Hash for Fill {
 /// One resting order, listed and drawn on the chart as a level.
 #[derive(Clone, PartialEq)]
 pub struct Order {
+    /// The exchange's own id for this resting order, and the only thing a
+    /// cancel can name it by: a coin and a price identify a level, not an
+    /// order, and an account may rest several at one price.
+    pub oid: u64,
     pub coin: String,
     pub buy: bool,
     pub price: f64,
@@ -667,18 +687,24 @@ fn parse_symbols(value: &Value, category: &str, collateral: &str) -> Vec<SymbolR
     };
     let universe = list(meta, "universe");
     let contexts = contexts.as_array().map(Vec::as_slice).unwrap_or_default();
+    // Enumerated before the delisting filter as well as before the sort: the
+    // index is a position in the venue's own list, and a delisted market still
+    // occupies one. Counting only the survivors would shift every market after
+    // the first delisting by one.
     let mut rows: Vec<SymbolRow> = universe
         .iter()
+        .enumerate()
         .zip(contexts)
-        .filter(|(asset, _)| {
+        .filter(|((_, asset), _)| {
             !asset
                 .get("isDelisted")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
         })
-        .map(|(asset, context)| SymbolRow {
+        .map(|((index, asset), context)| SymbolRow {
             category: category.to_owned(),
             collateral: collateral.to_owned(),
+            asset: index as u32,
             leverage: max_leverage(asset),
             maintenance: maintenance_fraction(max_leverage(asset)),
             size_decimals: size_decimals(asset),
@@ -702,9 +728,10 @@ fn parse_context(name: String, context: &Value) -> SymbolRow {
         change_pct: change_pct(price, previous),
         volume: num(context, "dayNtlVlm"),
         funding_pct: num(context, "funding") * 100.0,
-        // The streamed context does not restate the asset's maximum or its
-        // size step, so the universe's reading of all three is kept by the
-        // caller.
+        // The streamed context restates neither the asset's index nor its
+        // maximum nor its size step, so the universe's reading of all of them
+        // is kept by the caller.
+        asset: 0,
         leverage: 0.0,
         maintenance: 0.0,
         size_decimals: 0,
@@ -1361,6 +1388,7 @@ fn parse_orders(value: &Value) -> Vec<Order> {
         .unwrap_or_default()
         .iter()
         .map(|order| Order {
+            oid: value_i64(order, "oid").max(0) as u64,
             coin: text(order, "coin"),
             buy: text(order, "side") == "B",
             price: num(order, "limitPx"),
@@ -1450,6 +1478,157 @@ pub async fn hl_agents(chain: Chain, address: String) -> Result<Vec<(String, i64
         .map(|agent| (text(agent, "address"), value_i64(agent, "validUntil")))
         .filter(|(address, _)| !address.is_empty())
         .collect())
+}
+
+// The order path: complete, tested against the venue's own answers, and
+// pointed at by nothing until the ticket is wired to it. The same shape
+// `lighter_sign.rs` states for its own signer — built and held to its evidence
+// before a button can reach it, rather than appearing in the same change as the
+// button that spends money with it.
+#[allow(dead_code)]
+/// The one endpoint that changes anything, on the deployment the caller names.
+///
+/// Behind the same `wire_is_open` gate every read passes, and that is not
+/// symmetry for its own sake: it is the reason no test in this suite can place
+/// an order. A test drives the real program, subscriptions and handlers
+/// included, so a gate on the reads alone would leave the one path that spends
+/// money as the only one a test could reach.
+pub(crate) async fn exchange(chain: Chain, body: Value) -> Result<Value, HlError> {
+    if !wire_is_open() {
+        return Err(HlError::new(
+            "Hyperliquid unreachable: no wire under test".to_owned(),
+        ));
+    }
+    smol::unblock(move || {
+        let mut response = agent()
+            .post(chain.exchange_url())
+            // A rejection arrives as a 200 carrying `status: "err"`, and a 4xx
+            // is a malformed action rather than a transport failure. Both are
+            // the venue's answer and both have to reach the reader in its own
+            // words, so neither is turned into a thrown transport error here.
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(&body)
+            .map_err(|error| HlError::new(format!("Hyperliquid unreachable: {error}")))?;
+        let status = response.status();
+        response
+            .body_mut()
+            .read_json::<Value>()
+            .map_err(|error| HlError::new(format!("Hyperliquid answered {status} with {error}")))
+    })
+    .await
+}
+
+#[allow(dead_code)]
+/// What the exchange said about one submitted action.
+///
+/// Hyperliquid answers a refusal with HTTP 200 and `status: "err"`, and answers
+/// a *partial* refusal with `status: "ok"` and an `error` inside one of the
+/// per-order statuses — so "the request succeeded" and "the order rested" are
+/// two different questions and only the second one matters. Reading the outer
+/// status alone reports a rejected order as placed.
+fn placed(answer: &Value) -> Result<Vec<u64>, HlError> {
+    if let Some(message) = answer.get("response").and_then(Value::as_str) {
+        return Err(HlError::new(message.to_owned()));
+    }
+    if text(answer, "status") == "err" {
+        // The venue puts its sentence where the payload would be.
+        let said = answer
+            .get("response")
+            .and_then(Value::as_str)
+            .unwrap_or("Hyperliquid refused the action and said nothing");
+        return Err(HlError::new(said.to_owned()));
+    }
+    let statuses = answer
+        .get("response")
+        .and_then(|response| response.get("data"))
+        .map(|data| list(data, "statuses"))
+        .unwrap_or_default();
+    if statuses.is_empty() {
+        return Err(HlError::new(
+            "Hyperliquid accepted the request and reported nothing about the order".to_owned(),
+        ));
+    }
+    let mut ids = Vec::new();
+    for status in statuses {
+        // One refusal among several is still a refusal, and the venue's own
+        // sentence is the only useful thing to say about it.
+        if let Some(said) = status.get("error").and_then(Value::as_str) {
+            return Err(HlError::new(said.to_owned()));
+        }
+        // A resting order answers with its id; one that filled immediately
+        // answers `filled` and has no id to cancel later.
+        if let Some(oid) = status
+            .get("resting")
+            .and_then(|resting| resting.get("oid"))
+            .and_then(Value::as_u64)
+        {
+            ids.push(oid);
+        }
+    }
+    Ok(ids)
+}
+
+#[allow(dead_code)]
+/// Send a signed action and read what the venue made of it.
+async fn acted(chain: Chain, wallet: &Wallet, action: &Action) -> Result<Vec<u64>, HlError> {
+    placed(&exchange(chain, action.request(wallet)).await?)
+}
+
+#[allow(dead_code)]
+/// Place one limit order, and answer the id it rests under.
+///
+/// The market is named by its index, which is what the wire carries — see
+/// `SymbolRow::asset`. A market whose margin lives in a clearinghouse this app
+/// cannot read is refused here as well as on the ticket, because an order is
+/// the one place where being wrong about which account backs it costs money.
+pub async fn hl_place(
+    chain: Chain,
+    wallet: &Wallet,
+    market: &SymbolRow,
+    order: Order,
+    reduce_only: bool,
+) -> Result<Vec<u64>, HlError> {
+    if market.name.contains(':') {
+        return Err(HlError::new(format!(
+            "{} is margined against a clearinghouse this app cannot read, so it will not send \
+             an order there.",
+            market.name,
+        )));
+    }
+    let action = signing::order(
+        chain,
+        &[signing::Order {
+            asset: market.asset,
+            buy: order.buy,
+            price: order.price,
+            size: order.size,
+            reduce_only,
+            tif: signing::Tif::Gtc,
+        }],
+        now_ms() as u64,
+    )?;
+    acted(chain, wallet, &action).await
+}
+
+#[allow(dead_code)]
+/// Pull one resting order by the id the exchange gave it.
+pub async fn hl_cancel(
+    chain: Chain,
+    wallet: &Wallet,
+    market: &SymbolRow,
+    oid: u64,
+) -> Result<(), HlError> {
+    let action = signing::cancel(
+        chain,
+        &[signing::Cancel {
+            asset: market.asset,
+            oid,
+        }],
+        now_ms() as u64,
+    );
+    acted(chain, wallet, &action).await.map(|_| ())
 }
 
 pub async fn hl_orders(chain: Chain, address: String) -> Result<Vec<Order>, HlError> {
@@ -1852,6 +2031,10 @@ pub fn apply_feed(rows: Vec<SymbolRow>, tick: MarketTick) -> Vec<SymbolRow> {
         && let Some(row) = rows.iter_mut().find(|row| row.name == context.name)
     {
         *row = SymbolRow {
+            // The index is the one field here an order is actually sent with,
+            // and a beat that dropped it would leave every market pointing at
+            // whatever `parse_context` zeroes to — which is a real market.
+            asset: row.asset,
             // All three belong to the asset rather than to the day, and the
             // streamed context does not carry them.
             leverage: row.leverage,
@@ -3385,6 +3568,7 @@ pub fn demo_fills_opening() -> Vec<Fill> {
 pub fn demo_orders() -> Vec<Order> {
     vec![
         Order {
+            oid: 71_234_567_890,
             coin: "BTC".to_owned(),
             buy: true,
             price: 63_600.0,
@@ -3392,6 +3576,7 @@ pub fn demo_orders() -> Vec<Order> {
             ts: now_ms() / 1_000 - 7_200,
         },
         Order {
+            oid: 71_234_567_891,
             coin: "BTC".to_owned(),
             buy: false,
             price: 64_440.0,
@@ -3774,6 +3959,201 @@ pub(crate) mod probe {
 
 #[cfg(test)]
 mod tests {
+
+    /// The whole order path against the live test deployment: place, see it
+    /// resting, cancel it, see it gone.
+    ///
+    /// Testnet only, and structurally so — `Chain::Testnet` is the only chain
+    /// this builds, so there is no argument to get wrong. The account and its
+    /// approved agent key come from the environment because they are the
+    /// owner's: enrolment needs a signature from the wallet that owns the
+    /// account, which this app will never hold. Until those are set this test
+    /// says what is missing and stops, rather than passing quietly on nothing.
+    ///
+    /// The order rests far from the market on purpose — a bid at a fraction of
+    /// the mark cannot fill, so the round trip ends with the book exactly as it
+    /// started.
+    #[test]
+    #[ignore = "hits Hyperliquid testnet with a real order; needs ICE_HL_TESTNET_ACCOUNT and ICE_HL_TESTNET_AGENT_KEY"]
+    fn the_order_path_places_rests_and_cancels_on_the_test_deployment() {
+        let (Ok(account), Ok(secret)) = (
+            std::env::var("ICE_HL_TESTNET_ACCOUNT"),
+            std::env::var("ICE_HL_TESTNET_AGENT_KEY"),
+        ) else {
+            panic!(
+                "set ICE_HL_TESTNET_ACCOUNT to the funded testnet address and \
+                 ICE_HL_TESTNET_AGENT_KEY to the hex secret of an agent key that \
+                 address has approved — see the enrolment checklist in README.md"
+            );
+        };
+        open_the_wire();
+        let bytes: [u8; 32] = hex::decode(secret.trim_start_matches("0x"))
+            .expect("a hex agent key")
+            .try_into()
+            .expect("32 bytes");
+        let wallet = Wallet::from_secret(&bytes).expect("an agent key");
+
+        smol::block_on(async {
+            let markets = hl_symbols(Chain::Testnet, HL_CANONICAL)
+                .await
+                .expect("the testnet universe");
+            let market = markets
+                .iter()
+                .find(|row| row.name == "BTC")
+                .expect("testnet lists BTC")
+                .clone();
+
+            // A tenth of the mark: a bid nothing will cross.
+            let resting = Order {
+                oid: 0,
+                coin: market.name.clone(),
+                buy: true,
+                price: (market.price / 10.0).round(),
+                size: 0.001,
+                ts: 0,
+            };
+            let ids = hl_place(Chain::Testnet, &wallet, &market, resting, false)
+                .await
+                .expect("the order is accepted");
+            let oid = *ids.first().expect("a resting order has an id");
+
+            let open = hl_orders(Chain::Testnet, account.clone())
+                .await
+                .expect("open orders");
+            assert!(
+                open.iter().any(|order| order.oid == oid),
+                "the order the venue said it rested is the one it lists back"
+            );
+
+            hl_cancel(Chain::Testnet, &wallet, &market, oid)
+                .await
+                .expect("the cancel is accepted");
+
+            let after = hl_orders(Chain::Testnet, account)
+                .await
+                .expect("open orders");
+            assert!(
+                !after.iter().any(|order| order.oid == oid),
+                "a cancel the venue accepted is an order it stops listing"
+            );
+        });
+    }
+
+    /// The venue answers a refusal with HTTP 200, so "the request worked" and
+    /// "the order rested" are different questions. Reading only the outer
+    /// status reports a rejected order as placed, which is the one failure on
+    /// this path that costs money by being quiet.
+    #[test]
+    fn a_refusal_is_read_as_a_refusal_however_the_venue_spells_it() {
+        // Rested: the id comes back and is what a cancel later names.
+        let resting = json!({
+            "status": "ok",
+            "response": { "type": "order", "data": { "statuses": [
+                { "resting": { "oid": 77_665_544 } }
+            ]}},
+        });
+        assert_eq!(placed(&resting).expect("a resting order"), vec![77_665_544]);
+
+        // Refused outright, at the top level.
+        let refused = json!({ "status": "err", "response": "Insufficient margin to place order." });
+        let said = placed(&refused).expect_err("a refusal is not a placement");
+        assert_eq!(
+            said.message, "Insufficient margin to place order.",
+            "the venue's own sentence, not a sentence about the venue"
+        );
+
+        // Refused *inside* an otherwise ok response, which is the shape that
+        // reads as success to anything looking at `status` alone.
+        let partial = json!({
+            "status": "ok",
+            "response": { "type": "order", "data": { "statuses": [
+                { "error": "Order price cannot be more than 95% away from the reference price" }
+            ]}},
+        });
+        let said = placed(&partial).expect_err("an error inside an ok is still an error");
+        assert!(said.message.contains("95%"), "{}", said.message);
+
+        // Accepted and said nothing about the order: not a success to report.
+        let silent =
+            json!({ "status": "ok", "response": { "type": "order", "data": { "statuses": [] }}});
+        assert!(placed(&silent).is_err(), "silence is not a placement");
+
+        // Filled immediately: no resting id, and no error either.
+        let filled = json!({
+            "status": "ok",
+            "response": { "type": "order", "data": { "statuses": [
+                { "filled": { "totalSz": "1.0", "avgPx": "64000.0", "oid": 5 } }
+            ]}},
+        });
+        assert!(
+            placed(&filled).expect("a fill is not a failure").is_empty(),
+            "a filled order rests under no id, so there is none to hand back"
+        );
+    }
+
+    /// The index an order is sent with is the venue's, and the row order on
+    /// screen is the app's. Reading the index off the sorted list names
+    /// whichever market happened to be as busy as the one you meant — an order
+    /// for the wrong asset, with every figure on screen still correct.
+    #[test]
+    fn the_asset_index_survives_the_sort_and_the_delisting_filter() {
+        let response = json!([
+            { "universe": [
+                { "name": "AAA", "szDecimals": 2, "maxLeverage": 10 },
+                { "name": "GONE", "szDecimals": 2, "maxLeverage": 10, "isDelisted": true },
+                { "name": "BBB", "szDecimals": 2, "maxLeverage": 10 }
+            ]},
+            [
+                { "markPx": "1.0", "prevDayPx": "1.0", "dayNtlVlm": "5" },
+                { "markPx": "1.0", "prevDayPx": "1.0", "dayNtlVlm": "9" },
+                { "markPx": "1.0", "prevDayPx": "1.0", "dayNtlVlm": "100" }
+            ],
+        ]);
+        let rows = parse_symbols(&response, HL_CANONICAL, HL_COLLATERAL);
+        let index = |name: &str| {
+            rows.iter()
+                .find(|row| row.name == name)
+                .unwrap_or_else(|| panic!("{name} is listed"))
+                .asset
+        };
+        // BBB sorts first on volume and is the venue's third asset.
+        assert_eq!(rows[0].name, "BBB", "the rows are sorted by volume");
+        assert_eq!(
+            index("BBB"),
+            2,
+            "and carry the venue's index, not the row's"
+        );
+        assert_eq!(index("AAA"), 0);
+        assert_eq!(
+            rows.len(),
+            2,
+            "the delisted market is dropped but still occupied its slot"
+        );
+    }
+
+    /// A beat carries a price, not an identity. Dropping the index on one
+    /// would leave every market pointing at asset zero, which is a real market.
+    #[test]
+    fn a_streamed_beat_does_not_move_which_asset_a_row_is() {
+        let held = SymbolRow {
+            name: "ETH".into(),
+            price: 3_500.0,
+            asset: 4,
+            ..Default::default()
+        };
+        // A context off the socket, which carries no index — `parse_context`
+        // zeroes it, and zero is a real market.
+        let beat = MarketTick {
+            context: Some(parse_context(
+                "ETH".into(),
+                &json!({ "markPx": "3600.0", "prevDayPx": "3500.0" }),
+            )),
+            ..MarketTick::default()
+        };
+        let after = apply_feed(vec![held], beat);
+        assert_eq!(after[0].price, 3_600.0, "the price is the beat's");
+        assert_eq!(after[0].asset, 4, "the index is not");
+    }
     use super::*;
 
     /// A builder-deployed market's name carries a colon, and the tape holds
@@ -5241,6 +5621,7 @@ mod tests {
         );
 
         let order = Order {
+            oid: 1,
             coin: "BTC".into(),
             buy: true,
             price: 60_000.0,

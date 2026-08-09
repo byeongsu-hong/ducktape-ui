@@ -281,6 +281,10 @@ fn parse_symbol(detail: &Value, funding: &HashMap<i64, f64>) -> SymbolRow {
     let change_pct = num(detail, "daily_price_change");
     SymbolRow {
         name: text(detail, "symbol"),
+        // Lighter keys a book by `market_id`, which this deployment's own
+        // universe supplies; the Hyperliquid universe index this field carries
+        // is not a thing Lighter has, and the order path never reaches here.
+        asset: 0,
         price,
         change_pct,
         // The quote-denominated leg, which is what Hyperliquid's `dayNtlVlm`
@@ -1148,6 +1152,10 @@ fn parse_stats(stats: &Value) -> SymbolRow {
     let change_pct = num(stats, "daily_price_change");
     SymbolRow {
         name: text(stats, "symbol"),
+        // Lighter keys a book by `market_id`, which this deployment's own
+        // universe supplies; the Hyperliquid universe index this field carries
+        // is not a thing Lighter has, and the order path never reaches here.
+        asset: 0,
         price,
         change_pct,
         volume: num(stats, "daily_quote_token_volume"),
