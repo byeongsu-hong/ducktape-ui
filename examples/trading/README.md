@@ -400,6 +400,136 @@ Changing network or address forgets the key. Carried across either, it is a
 session claiming the app may trade somewhere the key is unknown, and the first
 thing that would say otherwise is a rejected order.
 
+### Enrolling on a testnet, end to end
+
+Both venues need the account's own wallet once, and neither lets this app stand
+in for it — that is the property rather than a gap. Both are written down here
+together so neither arrives as a surprise halfway through.
+
+The app generates the key and never surrenders it; the wallet approves an
+address and never enters this process. What crosses between them is an address
+one way and a confirmation the other, and the app checks that confirmation
+against the venue rather than taking anyone's word for it.
+
+#### Hyperliquid Testnet
+
+1. **Fund the account.** The perp account needs testnet USDC, and the faucet is
+   a web action at <https://app.hyperliquid-testnet.xyz/drip>, not an API. Its
+   eligibility rule is Hyperliquid's and is not published through `info`, so
+   check rather than assume — one request answers whether an address has the
+   mainnet standing the drip has historically wanted:
+
+   ```bash
+   curl -s -X POST https://api.hyperliquid.xyz/info \
+     -H 'content-type: application/json' \
+     -d '{"type":"clearinghouseState","user":"0xYOURADDRESS"}' \
+     | python3 -c 'import sys,json;print(json.load(sys.stdin)["marginSummary"]["accountValue"])'
+   ```
+
+   A non-zero figure is the signal. Zero, and the cheapest path is to use an
+   address that already trades on Hyperliquid mainnet rather than to bootstrap
+   one — nothing here needs that address to be the same one used elsewhere.
+   Confirm the drip landed with the same request against
+   `api.hyperliquid-testnet.xyz`.
+
+2. **What the app has already done.** `NEW KEY` on the settings page generated a
+   secp256k1 agent key, put its secret in this Mac's keychain under
+   `testnet:0xYOURADDRESS`, and printed the agent's address. Nothing else has
+   left the machine.
+
+3. **Approve that address.** This is the master wallet's signature and the one
+   action this app will never build a path for. The Hyperliquid UI's own API
+   Wallet page generates a key for you, which is the wrong direction — the key
+   already exists here. So sign the payload for *this* address:
+
+   ```json
+   {
+     "domain": { "name": "HyperliquidSignTransaction", "version": "1",
+                 "chainId": 421614,
+                 "verifyingContract": "0x0000000000000000000000000000000000000000" },
+     "primaryType": "HyperliquidTransaction:ApproveAgent",
+     "types": {
+       "EIP712Domain": [ {"name":"name","type":"string"},
+                         {"name":"version","type":"string"},
+                         {"name":"chainId","type":"uint256"},
+                         {"name":"verifyingContract","type":"address"} ],
+       "HyperliquidTransaction:ApproveAgent": [
+         {"name":"hyperliquidChain","type":"string"},
+         {"name":"agentAddress","type":"address"},
+         {"name":"agentName","type":"string"},
+         {"name":"nonce","type":"uint64"} ]
+     },
+     "message": { "hyperliquidChain": "Testnet",
+                  "agentAddress": "0xTHE-ADDRESS-THE-APP-PRINTED",
+                  "agentName": "",
+                  "nonce": 1786000000000 }
+   }
+   ```
+
+   `nonce` is milliseconds since the epoch and must be recent. `chainId` is
+   `0x66eee`, Arbitrum Sepolia, and it is the *signature's* domain rather than
+   where anything settles.
+
+   Sign it with Foundry, which is what pins this payload's own test vector in
+   `signing.rs` — so the tool checking the app is the tool producing the
+   approval:
+
+   ```bash
+   cast wallet sign --from-keystore <keystore> --data --from-file approve.json
+   ```
+
+   Then post it, with `signatureChainId` back in the action — it names the
+   domain rather than sitting in it, so the exchange reads it from the body:
+
+   ```bash
+   curl -s -X POST https://api.hyperliquid-testnet.xyz/exchange \
+     -H 'content-type: application/json' \
+     -d '{"action":{"type":"approveAgent","hyperliquidChain":"Testnet",
+                    "signatureChainId":"0x66eee",
+                    "agentAddress":"0xTHE-ADDRESS","agentName":"","nonce":1786000000000},
+          "nonce":1786000000000,
+          "signature":{"r":"0x…","s":"0x…","v":27}}'
+   ```
+
+4. **Hand back: nothing.** The app verifies this itself. `UNLOCK` reads
+   `extraAgents` for the account and looks for the address it generated; a
+   listing naming it, with a window still ahead of it, is what `Ready` is made
+   of. If the approval did not land the panel says so and the account stays
+   readable.
+
+#### Lighter Testnet
+
+Landing with the Lighter order path; the steps are here so both venues are
+planned together rather than one at a time.
+
+1. **Fund the account.** One request, and it creates the account as well as
+   funding it:
+
+   ```bash
+   curl -s "https://testnet.zklighter.elliot.ai/api/v1/faucet?l1_address=0xYOURADDRESS"
+   ```
+
+   Confirm with
+   `.../api/v1/accountsByL1Address?l1_address=0xYOURADDRESS`, which answers the
+   `account_index` the next step needs. A fresh account arrives with 10,000
+   collateral.
+
+2. **What the app has already done.** Generated an ECgFp5 key over the curve
+   `lighter_sign.rs` already implements and stored its secret in the keychain
+   under `lighter-testnet:0xYOURADDRESS`.
+
+3. **Register that public key.** A fresh account has no registered API key, and
+   the first registration is signed by the L1 wallet — the same line
+   `approveAgent` draws. Do it at <https://testnet.app.lighter.xyz/>, then hand
+   back the **`account_index`** and the **`api_key_index`** you registered
+   under. Those two are account coordinates rather than secrets, and the app
+   has no way to discover which slot was used.
+
+4. **The app verifies it.** `apikeys?account_index=…&api_key_index=…` publishes
+   the registered public key, so the app compares it against the one it
+   generated before claiming the session may trade — exactly what `extraAgents`
+   does on the other venue.
+
 ### What needs a Mac
 
 Everything decidable without a Keychain is decided in CI, on Linux: the state
