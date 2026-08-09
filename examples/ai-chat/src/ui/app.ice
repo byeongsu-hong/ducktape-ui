@@ -171,7 +171,7 @@ view
         if !dark
           button "Night" #theme-night @ghost_action -> use_night
         if signed
-          button "New chat" #new-chat @ghost_action -> reset
+          button "New chat" #new-chat @outline_action -> reset
         if signed
           button "Sign out" #sign-out @ghost_action -> forget
     Separator
@@ -297,18 +297,40 @@ view
         box w=fill align-x=center
           box w=fill max-w=760.0
             col w=fill gap=9.0
-              row
+              box #field
                 with
                   w=fill
-                  gap=9.0
-                  align=center
-                input "" #draft <-> draft
+                  px=6.0
+                  py=6.0
+                  bg=muted_bg
+                  border=border
+                  border-w=1.0
+                  r=17.0
+                row
                   with
-                    hint="Message Codex…"
-                    description="Message Codex"
-                    submit=send
-                    @control
-                button "Send" #send disabled=!can_send @primary_action -> send
+                    w=fill
+                    gap=6.0
+                    align=center
+                  input "" #draft <-> draft
+                    with
+                      submit=send
+                      hint="Message Codex…"
+                      description="Message Codex"
+                      w=fill
+                      p=8.0
+                      text-size=13.5
+                    active bg=muted_bg border=muted_bg placeholder=muted value=fg selection=primary
+                    focused-hovered bg=muted_bg border=muted_bg
+                    disabled bg=muted_bg border=muted_bg value=muted
+                  button "↑" #send -> send
+                    with
+                      disabled=!can_send
+                      label="Send"
+                      w=30.0
+                      h=30.0
+                    active bg=primary text=primary_fg r=15.0
+                    hovered bg=primary_hover text=primary_fg r=15.0
+                    disabled bg=disabled text=disabled_fg r=15.0
               row
                 with
                   w=fill

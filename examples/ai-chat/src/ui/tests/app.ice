@@ -11,7 +11,7 @@ test folding_a_settled_reasoning_row_opens_it
   expect thoughts.height < 30.0
 
   click toggle
-  expect thoughts.height > 60.0
+  expect thoughts.height > 40.0
 
   // And it folds back, so the height follows the row rather than only ever
   // growing.
@@ -23,8 +23,8 @@ test folding_a_settled_reasoning_row_opens_it
 test the_composer_will_not_send_a_blank_draft
   preset conversation
   viewport 920 800
-  target composer = #app/composer/draft
-  target send = #app/composer/send
+  target composer = #app/composer/field/draft
+  target send = #app/composer/field/send
   expect a11y send disabled true
 
   click composer
@@ -55,8 +55,8 @@ test a_turn_draws_its_reasoning_searches_and_cost
 test sending_a_message_runs_a_whole_turn
   preset signed_in
   viewport 920 800
-  target composer = #app/composer/draft
-  target send = #app/composer/send
+  target composer = #app/composer/field/draft
+  target send = #app/composer/field/send
   expect text "What are we working on?"
 
   click composer
@@ -86,3 +86,22 @@ test the_header_shows_what_will_answer_and_how_hard
   target effort_chip = #app/header/effort/root
   expect text "gpt-5.6-sol" within model_chip
   expect text "xhigh" within effort_chip
+
+// What this can and cannot prove, stated plainly: the overlay's own contents
+// are outside the tree the harness scans, and this palette paints an opened
+// control the same as a hovered one — so "the menu opened" is not observable
+// here. What is observable is that the control answered the click at all, and
+// the capture is what the menu's appearance is actually reviewed from.
+test clicking_a_chip_raises_it_and_captures_its_menu
+  preset conversation
+  viewport 920 800
+  target model_chip = #app/header/model/root
+  // Closed, the control is the header it sits in. Opened, it lifts onto the
+  // accent — which is the only part of the menu the harness can read, the
+  // overlay's own text being outside the scanned tree.
+  expect model_chip.background == background.color(color.rgb8(255, 255, 255))
+
+  click model_chip
+  window redraw
+  expect model_chip.background == background.color(color.rgb8(243, 242, 239))
+  capture menu

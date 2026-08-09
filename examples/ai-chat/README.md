@@ -54,13 +54,17 @@ survive `New chat`, and `~/.codex/config.toml` is only ever read.
 Clicking a link copies it; which browser you wanted is not this window's call.
 `Night`/`Day` switches palettes, and settled rows follow.
 
-| Mid-turn | Night |
-| --- | --- |
-| ![A reply being written, under the work still running](screenshots/streaming.png) | ![The same transcript on the night palette](screenshots/night.png) |
+| Mid-turn |
+| --- |
+| ![A reply being written, under the work still running](screenshots/streaming.png) |
 
-| Signing in | Waiting for the code |
+| The model menu | Waiting for a code |
 | --- | --- |
-| ![The sign-in screen](screenshots/sign-in.png) | ![A code to type, and the page to type it into](screenshots/sign-in-code.png) |
+| ![The catalogue, open](screenshots/menu.png) | ![A code to type, and the page to type it into](screenshots/sign-in-code.png) |
+
+| Signing in | Night |
+| --- | --- |
+| ![The sign-in screen](screenshots/sign-in.png) | ![The same transcript on the night palette](screenshots/night.png) |
 
 Every one of these is generated, not staged: the first by the test that types
 into the composer and presses Send, the rest by `cargo ice inspect` against a
@@ -140,6 +144,9 @@ virtualising the transcript is the next thing that would flatten it.
 
 ## Limits
 
+- An overlay's contents are outside the tree the test harness scans, so a
+  menu's appearance is reviewed from a capture rather than asserted. The test
+  that produces it says so.
 - **The sign-in is not fully verified.** Minting a code and telling waiting from
   refused are both checked against the live host; the half past approval — what
   the host returns once a code is typed, and the token exchange — is read off

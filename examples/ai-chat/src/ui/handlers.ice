@@ -60,7 +60,7 @@ on reset
   busy = false
   error = ""
   draft = ""
-  task widget focus #app/composer/draft
+  task widget focus #app/composer/field/draft
 
 on toggle_row(id)
   entries = toggle_row(session, id)
@@ -75,7 +75,7 @@ on choose_effort(level)
 
 on suggest(text)
   draft = text
-  task widget focus #app/composer/draft
+  task widget focus #app/composer/field/draft
 
 on use_night
   dark = true
@@ -111,7 +111,7 @@ on signed_in_as(email)
   signing_in = false
   code = ""
   code_url = ""
-  task widget focus #app/composer/draft
+  task widget focus #app/composer/field/draft
 
 on sign_in_failed(cause)
   signing_in = false

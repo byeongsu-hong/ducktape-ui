@@ -30,68 +30,57 @@ component Prompt(body:str)
 // because a settled row is drawn behind `lazy` — which redraws it only when
 // the row itself changes, and cannot see state held anywhere else.
 component Reasoning(row_id:i64, title:str, body:str, open:bool) -> i64
-  col #root w=fill gap=7.0
-    // A summary is often nothing but its own bold heading. There is no fold
-    // to offer then, and a toggle that opens an empty box is a lie about
-    // there being more to read.
-    if empty(body)
-      row
-        with
-          w=fill
-          gap=8.0
-          align=center
-        text "·" size=11.0 @text-muted
-        text title @field_label
-    if !empty(body)
-      button #toggle -> emit(row_id)
-        with
-          label=title
-          p=0.0
-          @ghost_action
+  row #root w=fill gap=11.0
+    rule vertical thickness=2.0 color=border
+    col w=fill gap=7.0
+      // A summary is often nothing but its own bold heading. There is no fold
+      // to offer then, and a toggle that opens an empty box is a lie about
+      // there being more to read.
+      if empty(body)
         row
           with
             w=fill
             gap=8.0
             align=center
-          if open
-            text "▾" size=11.0 @text-muted
-          if !open
-            text "▸" size=11.0 @text-muted
+          text "·" size=11.0 @text-muted
           text title @field_label
-      if open
-        box #body
+      if !empty(body)
+        button #toggle -> emit(row_id)
           with
-            w=fill
-            px=15.0
-            py=12.0
-            bg=muted_bg
-            r=10.0
-          text body wrap=word @caption
+            label=title
+            p=0.0
+            @ghost_action
+          row
+            with
+              w=fill
+              gap=8.0
+              align=center
+            if open
+              text "▾" size=11.0 @text-muted
+            if !open
+              text "▸" size=11.0 @text-muted
+            text title @field_label
+        if open
+          box w=fill pb=6.0
+            text body wrap=word @caption
 
 // A tool call: what it was, what it was given, and whether it is still going.
 // The mark on the left is the state — a turn in progress and a turn that has
 // finished must not look the same.
 component ToolCall(title:str, detail:str, status:str)
-  box #root
-    with
-      w=fill
-      px=15.0
-      py=12.0
-      bg=muted_bg
-      border=border
-      border-w=1.0
-      r=10.0
-    row w=fill gap=11.0
-      if status == "running"
-        text "◌" size=12.0 @text-warning
-      if status == "done"
-        text "✓" size=12.0 @text-success
-      if status == "failed"
-        text "✕" size=12.0 @text-danger
-      col w=fill gap=4.0
+  row #root w=fill gap=11.0
+    rule vertical thickness=2.0 color=border
+    col w=fill gap=3.0
+      row gap=8.0 align=center
+        if status == "running"
+          text "◌" size=11.0 @text-warning
+        if status == "done"
+          text "✓" size=11.0 @text-success
+        if status == "failed"
+          text "✕" size=11.0 @text-danger
         text title @field_label
-        if !empty(detail)
-          text detail wrap=word @machine
+      if !empty(detail)
+        text detail wrap=word @machine
 
 // The answer itself. `markdown_body` is a Rust adapter rather than the built-in
 // widget because a parsed document cannot live in component state; it keeps one
@@ -110,11 +99,12 @@ component Usage(detail:str)
 // The default pick styling puts a filled highlight behind the selection, which
 // is far too loud for something sitting under the app's own name.
 component Chip(options:[str], selected:str?) -> str
-  pick options selected #root -> emit(_)
-    with
-      p=2.0
-      text-size=11.0
-      menu-h=220.0
-    active text=muted handle=muted bg=surface border=surface r=6.0
-    opened-hovered text=fg handle=fg bg=accent border=border r=6.0
-    menu text=fg selected-text=primary_fg selected-bg=primary bg=surface border=border r=8.0 shadow=shadow_popover shadow-y=4.0
+  pick options selected #root p=6.0 text-size=11.0 -> emit(_)
+    active text=muted handle=muted bg=surface border=surface r=7.0
+    hovered text=fg handle=fg bg=accent border=border r=7.0
+    opened text=fg handle=fg bg=accent border=border r=7.0
+    opened-hovered text=fg handle=fg bg=accent border=border r=7.0
+    menu text=fg selected-text=fg selected-bg=accent bg=surface border=border border-w=1.0 r=10.0 shadow=shadow_popover shadow-y=6.0 shadow-blur=18.0
+    handle dynamic
+      closed code="⌄" size=10.0
+      open code="⌃" size=10.0
