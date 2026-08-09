@@ -18,7 +18,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use base64::Engine;
 use serde_json::{Value, json};
 use smol::channel::{Receiver, Sender};
 
@@ -46,7 +45,7 @@ pub struct CodexError {
 }
 
 impl CodexError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -337,20 +336,43 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
         "include": ["reasoning.encrypted_content"],
     });
 
-    let response = ureq::post(RESPONSES_URL)
-        .config()
-        // The rejection body carries the only useful part of a refusal — which
-        // model is refused, or that the login expired — and status-as-error
-        // would throw it away.
-        .http_status_as_error(false)
-        .build()
-        .header("Authorization", &format!("Bearer {}", auth.access_token))
-        .header("chatgpt-account-id", &auth.account_id)
-        .header("OpenAI-Beta", "responses=experimental")
-        .header("Accept", "text/event-stream")
-        .header("originator", "codex_cli_rs")
-        .send_json(&body)
-        .map_err(|error| CodexError::new(format!("Could not reach Codex: {error}")))?;
+    // One retry, and only for a login this app owns: a refresh rotates the
+    // token it is given, and rotating the CLI's would break `codex` for a
+    // login this window only borrowed.
+    let mut auth = auth;
+    let mut refreshed = false;
+    let response = loop {
+        let attempt = ureq::post(RESPONSES_URL)
+            .config()
+            // The rejection body carries the only useful part of a refusal —
+            // which model is refused, or that the login expired — and
+            // status-as-error would throw it away.
+            .http_status_as_error(false)
+            .build()
+            .header("Authorization", &format!("Bearer {}", auth.access_token))
+            .header("chatgpt-account-id", &auth.account_id)
+            .header("OpenAI-Beta", "responses=experimental")
+            .header("Accept", "text/event-stream")
+            .header("originator", "codex_cli_rs")
+            .send_json(&body)
+            .map_err(|error| CodexError::new(format!("Could not reach Codex: {error}")))?;
+
+        if attempt.status().as_u16() != 401 || refreshed {
+            break attempt;
+        }
+        refreshed = true;
+        let Some(token) = auth
+            .refresh_token
+            .clone()
+            .filter(|_| auth.whose == crate::auth::Login::Ours)
+        else {
+            return Err(CodexError::new(
+                "The Codex login has expired. Run `codex login` to renew it.",
+            ));
+        };
+        crate::auth::refresh(&token)?;
+        auth = read_auth()?;
+    };
 
     let status = response.status();
     if !status.is_success() {
@@ -695,6 +717,8 @@ fn reason(body: &str) -> String {
 struct Auth {
     access_token: String,
     account_id: String,
+    refresh_token: Option<String>,
+    whose: crate::auth::Login,
 }
 
 fn codex_home() -> PathBuf {
@@ -704,54 +728,44 @@ fn codex_home() -> PathBuf {
     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex")
 }
 
-fn auth_file() -> Result<Value, CodexError> {
-    let path = codex_home().join("auth.json");
-    let text = std::fs::read_to_string(&path).map_err(|_| {
-        CodexError::new(format!(
-            "No Codex login at {}. Run `codex login` first.",
-            path.display()
-        ))
-    })?;
-    serde_json::from_str(&text)
-        .map_err(|error| CodexError::new(format!("Codex login file is unreadable: {error}")))
-}
-
 fn read_auth() -> Result<Auth, CodexError> {
-    let file = auth_file()?;
+    let Some((file, whose)) = crate::auth::stored() else {
+        return Err(CodexError::new("Not signed in."));
+    };
     let tokens = &file["tokens"];
     let (Some(access_token), Some(account_id)) = (
         tokens["access_token"].as_str(),
         tokens["account_id"].as_str(),
     ) else {
-        return Err(CodexError::new(
-            "Codex is not signed in to a ChatGPT account. Run `codex login`.",
-        ));
+        return Err(CodexError::new("The stored login is missing its account."));
     };
     Ok(Auth {
         access_token: access_token.to_owned(),
         account_id: account_id.to_owned(),
+        refresh_token: tokens["refresh_token"].as_str().map(str::to_owned),
+        whose,
     })
 }
 
-/// Who the stored login belongs to, for the sidebar's footer.
-///
-/// The address is a claim inside the id token rather than a field of its own,
-/// and claims are the unsigned half of a JWT — read here only to name the
-/// account on screen. Nothing is authorised on the strength of it.
+/// Whether anyone is signed in at all.
+pub fn signed_in() -> bool {
+    crate::auth::stored().is_some()
+}
+
+/// Who is signed in, for the header strip.
 pub fn codex_account() -> String {
-    let Ok(file) = auth_file() else {
-        return String::new();
-    };
-    let Some(claims) = file["tokens"]["id_token"].as_str().and_then(|token| {
-        let payload = token.split('.').nth(1)?;
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(payload)
-            .ok()?;
-        serde_json::from_slice::<Value>(&bytes).ok()
-    }) else {
-        return String::new();
-    };
-    claims["email"].as_str().unwrap_or_default().to_owned()
+    crate::auth::stored()
+        .and_then(|(file, _)| crate::auth::email_of(&file["tokens"]))
+        .unwrap_or_default()
+}
+
+/// Forget this app's login, and say whether anyone is still signed in.
+///
+/// The CLI's file is left alone, so signing out here and remaining signed in
+/// through `codex login` is the expected outcome, not a bug.
+pub fn sign_out() -> bool {
+    crate::auth::sign_out();
+    signed_in()
 }
 
 /// The model the CLI itself is set to, so this window answers as it would.

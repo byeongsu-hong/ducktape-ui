@@ -83,3 +83,45 @@ on use_day
 // wanted is not this window's call to make.
 on copy_link(url)
   task clipboard write url
+
+// Signing in without leaving the window. The host mints a short code, the
+// person types it into a browser wherever they have one, and this waits.
+on sign_in
+  error = ""
+  signing_in = true
+  run begin_sign_in() -> code_ready _ | sign_in_failed _
+
+on code_ready(next)
+  code = next.user_code
+  code_url = next.verification_uri
+  run finish_sign_in(next) -> signed_in_as _ | sign_in_failed _
+
+on signed_in_as(email)
+  account = email
+  model = codex_model()
+  signed = true
+  signing_in = false
+  code = ""
+  code_url = ""
+  task widget focus #app/composer/draft
+
+on sign_in_failed(cause)
+  signing_in = false
+  code = ""
+  code_url = ""
+  error = cause.message
+
+on copy_code
+  task clipboard write code
+
+on copy_url
+  task clipboard write code_url
+
+// Forgetting this app's login. The CLI's is left alone, so staying signed in
+// through `codex login` afterwards is the expected outcome.
+on forget
+  signed = sign_out()
+  account = codex_account()
+  session = codex_session()
+  entries = []
+  error = ""

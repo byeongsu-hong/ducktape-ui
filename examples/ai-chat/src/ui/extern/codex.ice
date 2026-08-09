@@ -18,6 +18,8 @@ extern crate::codex
   CodexError(message:str)
   sync codex_session() -> Session
   sync codex_account() -> str
+  sync signed_in() -> bool
+  sync sign_out() -> bool
   sync codex_model() -> str
   sync push_user(session:Session, text:str) -> [Entry]
   sync set_palette(session:Session, dark:bool) -> [Entry]
@@ -33,3 +35,12 @@ extern crate::codex
 // clicked link.
 extern crate::render
   component markdown_body(id:i64, source:str, size:f64, dark:bool) -> str
+
+// Signing in without leaving the window: ask the host for a short code, show
+// it, and wait while it is typed into a browser. This app keeps what it is
+// granted in its own file and never writes the CLI's, because a refresh here
+// would rotate a token `codex` is still holding.
+extern crate::auth
+  DeviceCode(user_code:str, verification_uri:str, device_auth_id:str)
+  begin_sign_in() -> DeviceCode ! CodexError
+  finish_sign_in(code:DeviceCode) -> str ! CodexError
