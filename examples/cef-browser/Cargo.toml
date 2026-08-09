@@ -9,7 +9,7 @@ default = []
 cef = ["dep:cef", "dep:dispatch2"]
 
 [dependencies]
-cef = { version = "=150.2.1", default-features = false, features = ["build-util"], optional = true }
+cef = { version = "=151.2.0", default-features = false, features = ["build-util"], optional = true }
 iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "tokio", "wgpu", "x11"] }
 ui-lang.workspace = true
 ui-lang-runtime.workspace = true
