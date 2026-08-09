@@ -341,6 +341,57 @@ fn run_lane_task_code(
     ))
 }
 
+fn invalidate_run_lane_code(
+    lane: RunLaneId,
+    statement: &ResolvedStatement,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    state: &str,
+) -> Result<String, Error> {
+    let declaration = program.run_lane(lane).ok_or_else(|| {
+        program.invariant_at_origin(statement.origin, "request-lane ID is outside its arena")
+    })?;
+    let generation = run_lane_generation_field(lane.0 as usize);
+    let advance = if let Some((component, _)) = env.component_context() {
+        let contract = program
+            .components()
+            .iter()
+            .find(|candidate| candidate.name == component)
+            .ok_or_else(|| {
+                program.invariant_at_origin(
+                    statement.origin,
+                    "request-lane invalidation has no active component contract",
+                )
+            })?;
+        match contract.storage {
+            ComponentStorage::Retained => {
+                format!("{state}.{generation} = {state}.{generation}.wrapping_add(1);")
+            }
+            ComponentStorage::Mounted => format!(
+                "{state}.{generation} = self.{}.next_generation();",
+                component_state_field(component)
+            ),
+            ComponentStorage::Stateless => {
+                return Err(program.invariant_at_origin(
+                    statement.origin,
+                    "request-lane invalidation belongs to a stateless component",
+                ));
+            }
+        }
+    } else {
+        format!("{state}.{generation} = {state}.{generation}.wrapping_add(1);")
+    };
+    let abort = if declaration.mode == FutureMode::Replace {
+        let handle = run_lane_handle_field(lane.0 as usize);
+        format!(
+            " if let ::std::option::Option::Some(__previous) = {state}.{handle}.take() {{ __previous.abort(); }}"
+        )
+    } else {
+        String::new()
+    };
+    Ok(format!("{advance}{abort}"))
+}
+
 pub(in crate::codegen) fn generate_statements(
     out: &mut String,
     statements: &[ResolvedStatement],
@@ -435,6 +486,14 @@ pub(in crate::codegen) fn generate_statements(
                     out,
                     "{}::iced::exit::<{message}>(){}",
                     task_prefix, task_suffix
+                )
+                .unwrap();
+            }
+            ResolvedStatementKind::InvalidateLane { lane } => {
+                writeln!(
+                    out,
+                    "{}",
+                    invalidate_run_lane_code(*lane, statement, program, env, state)?
                 )
                 .unwrap();
             }

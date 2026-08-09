@@ -123,10 +123,11 @@ same-directory lock tests with the actual Cargo command boundary.
 
 App, implicit mount, component, and preset handler bodies now cross a complete
 normalized HIR boundary before Rust emission. Stable typed arenas own handlers,
-preorder statements, immediate and flow tasks, body routes, checked locals, and
-latest/replace lane members. Route payloads retain ordered indices and concrete
-types; tasks retain output/error types and finality; every node retains a root
-or imported origin chain. Handler code generation has no statement-AST
+preorder statements, immediate and flow tasks, body routes, checked locals,
+latest/replace lane members, and explicit lane invalidations. Route payloads
+retain ordered indices and concrete types; tasks retain output/error types and
+finality; every node retains a root or imported origin chain. Handler code
+generation has no statement-AST
 expression fallback, checker type query, extern name rediscovery, or source-line
 async identity. Snapshot, post-check mutation, invalid-state, imported-marker,
 and compiled fixtures guard those invariants. An ignored full-pipeline
@@ -274,9 +275,13 @@ work; `run replace lane=<name>` also aborts the prior Iced task without rolling
 back effects already performed or detached backend work. Static qualified lane
 names keep bookkeeping finite per owner; component-owner count follows the
 existing retained/mounted lifetime contract. Stale `latest` Futures may retain
-captures until they finish. Parser, checker, formatter, normalized HIR, codegen,
-schema/LSP completions and error-route actions, and controlled cross-handler
-and component lifecycle integration tests provide direct evidence.
+captures until they finish. A direct `invalidate lane=<name>` handler statement
+advances an existing owner-scoped lane without declaring or starting work; it
+filters already queued completions, leaves `latest` work running, and aborts
+the current `replace` task. Parser, checker, formatter, normalized HIR, codegen, schema/LSP
+completions and route-action boundaries, controlled cross-handler/component
+lifecycle tests, and an Apple Music queued-completion integration test provide
+direct evidence.
 Core view control includes checked `if`, `for`, first-match literal `match`
 arms, and exhaustive Option/Result/UI-enum payload patterns. UI enums are
 non-generic, non-recursive cloneable data; fieldless enums support equality,
@@ -803,7 +808,7 @@ public behavior has direct documented Ice syntax and tests.
 | debug timing | native | `debug-span?` owns exact non-clone `iced::debug::Span` state; checked `debug start name -> state` finishes any prior span before native `time`, `debug finish state` consumes it exactly once, `debug.active(state)` reads its presence, and generic `debug.time_with(name, value)` preserves the value type; iced's `debug` feature activates reporting while its native no-op implementation remains available without the feature |
 | `Theme` and styles | native | a checked semantic-token contract with complete named runtime-selectable palettes, all 22 built-in default-renderer themes, typed native factories including `custom`/`custom_with_fn` and complete extended-palette logic, app/nested selection, dynamically selected token styles, target-scoped utilities, imported semantic recipes with deterministic precedence, complete widget-native catalogs, concrete style fields, and typed runtime callbacks |
 | `theme::Mode` | native | default and all none/light/dark variants, compact kind projection, equality, exact typed extern passage, equivalent app theme/factory behavior, and deliberate ordering/lazy rejection matching the native enum cover the complete public value behavior |
-| `Task` | native | complete public `iced::Task` construction and composition through async/task/stream/sip externs, direct `done`/`none`, system/clipboard/font/widget/window tasks, `batch`, `chain`, abortable handles including abort-on-drop/query and owner-scoped named `run replace` lanes, `map`, output-dependent `then`, optional-or-result `and_then`, `map_err`, result-preserving `collect`, `discard`, and `units`; every immediate task producer has one exhaustively checked final-statement classification, while multiple tasks require `parallel` or `sequential`; `future`/`stream` identity forms are represented by perform/run extern sources, and default/unit conversion by `none` |
+| `Task` | native | complete public `iced::Task` construction and composition through async/task/stream/sip externs, direct `done`/`none`, system/clipboard/font/widget/window tasks, `batch`, `chain`, abortable handles including abort-on-drop/query and owner-scoped named `run replace` lanes with explicit invalidation, `map`, output-dependent `then`, optional-or-result `and_then`, `map_err`, result-preserving `collect`, `discard`, and `units`; every immediate task producer has one exhaustively checked final-statement classification, while multiple tasks require `parallel` or `sequential`; `future`/`stream` identity forms are represented by perform/run extern sources, and default/unit conversion by `none` |
 | `Subscription` | native | complete application-facing construction and composition: typed arbitrary adapters, `none`, `batch`, checked conditional activation/status filters, direct every/repeat timers, native `listen`/`listen_with`/`listen_raw` generic events, input-method/keyboard/mouse/touch/window sources (with optional typed IDs on all eleven discrete window events) and system theme changes, typed `run`/`run_with` workers, custom `Recipe` factories through `from_recipe`, raw `EventStream` filters with hashable identity, `with` identity context, typed `map` routing, noncapturing typed `filter_map`, and `units`; advanced `into_recipes` is runtime-consumer plumbing rather than subscription construction or behavior |
 | widget operations | native | all 13 core focus/cursor/selection/scroll operations with checked static/dynamic identity paths through component, layout, slot, keyed, table and pane scopes, typed focus query, native `find`/`find-all` over ID, text, point and focused selectors with complete normalized target metadata, plus custom typed selector factories |
 | clipboard | native | standard and primary read/write tasks; reads preserve iced's optional string payload and writes are checked fire-and-forget effects |

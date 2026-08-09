@@ -5116,6 +5116,10 @@ mod tests {
             effect("run replace")["insertText"],
             "run replace lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
         );
+        assert_eq!(
+            effect("invalidate")["insertText"],
+            "invalidate lane=${1:request}"
+        );
         assert!(handler.iter().any(|item| {
             item["label"] == "load"
                 && item["insertText"]
@@ -5793,9 +5797,9 @@ mod tests {
     }
 
     #[test]
-    fn fallible_route_action_recognizes_ordinary_and_named_runs() {
+    fn fallible_route_action_recognizes_runs_and_ignores_lane_invalidation() {
         let uri = "file:///tmp/request-lane-actions.ice";
-        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non ordinary\n  run load(\"ordinary\") -> loaded _\non newest\n  run latest lane=search load(\"latest\") -> loaded _\non replacing\n  run replace lane=refresh load(\"replace\") -> loaded _\non loaded(_value)\nview\n  text \"Ready\"\n";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non ordinary\n  run load(\"ordinary\") -> loaded _\non cancel_search\n  invalidate lane=search\non newest\n  run latest lane=search load(\"latest\") -> loaded _\non replacing\n  run replace lane=refresh load(\"replace\") -> loaded _\non loaded(_value)\nview\n  text \"Ready\"\n";
         let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
 
         for statement in [
@@ -5828,6 +5832,30 @@ mod tests {
                 " | load_failed _"
             );
         }
+
+        let invalidate_line = source
+            .lines()
+            .position(|candidate| candidate == "  invalidate lane=search")
+            .unwrap();
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": invalidate_line, "character": 2 },
+                    "end": { "line": invalidate_line, "character": 2 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        assert!(
+            actions.iter().all(|action| {
+                let title = action["title"].as_str().unwrap_or_default();
+                !title.starts_with("Add error route") && !title.starts_with("Create handler")
+            }),
+            "lane invalidation has no completion route: {actions:?}"
+        );
     }
 
     #[test]

@@ -1443,6 +1443,91 @@ fn deduplicates_app_and_preset_request_lane_hir() {
 }
 
 #[test]
+fn resolves_forward_lane_invalidation_without_declaring_a_start_site() {
+    let source = REQUEST_LANE_APP.replace(
+        "on search\n",
+        "on cancel\n  invalidate lane=search\non search\n",
+    );
+    let checked = analyze(&source).unwrap();
+    assert_eq!(checked.declarations.run_lane_count(), 1);
+    let lane = checked
+        .declarations
+        .try_run_lane(crate::hir::RunLaneId(0))
+        .unwrap();
+    let cancel = checked
+        .declarations
+        .handlers()
+        .iter()
+        .find(|handler| handler.owner == crate::hir::HandlerOwner::App && handler.name == "cancel")
+        .unwrap();
+    let invalidation = checked.declarations.statement(cancel.statement_roots[0]);
+    assert_eq!(invalidation.run_lane, Some(lane.declaration.id));
+    assert_eq!(invalidation.task, None);
+    assert_eq!(lane.statements.len(), 2);
+    assert!(!lane.statements.contains(&invalidation.declaration.id));
+}
+
+#[test]
+fn checks_lane_invalidation_declarations_and_state_owners() {
+    let source = REQUEST_LANE_APP.replace(
+        "view\n  text \"Search\"",
+        "component SearchBox()\n  on cancel\n    invalidate lane=search\n  on search\n    run latest lane=search fetch(\"component\") -> loaded _\n  on loaded(value)\n  col\n    button \"Search\" -> search\n    button \"Cancel\" -> cancel\nview\n  SearchBox",
+    );
+    let checked = analyze(&source).unwrap();
+    assert_eq!(checked.declarations.run_lane_count(), 2);
+
+    let unknown_source = REQUEST_LANE_APP.replace(
+        "on search\n",
+        "on cancel\n  invalidate lane=missing\non search\n",
+    );
+    let error = analyze(&unknown_source).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert_eq!(
+        error.message,
+        "request lane `missing` is not declared for this state owner"
+    );
+    assert_eq!(
+        error.hint.as_deref(),
+        Some(
+            "declare it with `run latest lane=missing ...` or `run replace lane=missing ...` for the same state owner"
+        )
+    );
+
+    let wrong_owner = REQUEST_LANE_APP.replace(
+        "view\n  text \"Search\"",
+        "component SearchBox()\n  on cancel\n    invalidate lane=search\n  text \"Search\"\nview\n  SearchBox",
+    );
+    let error = analyze(&wrong_owner).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert_eq!(
+        error.message,
+        "request lane `search` is not declared for this state owner"
+    );
+}
+
+#[test]
+fn rejects_lane_invalidation_inside_task_composition() {
+    for (composition, message) in [
+        (
+            "parallel\n    invalidate lane=missing",
+            "task groups only accept task-producing statements",
+        ),
+        (
+            "abortable request abort-on-drop\n    invalidate lane=missing",
+            "abortable requires a task-producing statement",
+        ),
+    ] {
+        let source = REQUEST_LANE_APP.replace(
+            "on search\n",
+            &format!("on cancel\n  {composition}\non search\n"),
+        );
+        let error = analyze(&source).unwrap_err();
+        assert_eq!(error.code, "E143");
+        assert_eq!(error.message, message);
+    }
+}
+
+#[test]
 fn enforces_request_lane_modes_per_owner() {
     let mismatch = analyze(&REQUEST_LANE_APP.replace(
         "run latest lane=search fetch(\"preset\")",

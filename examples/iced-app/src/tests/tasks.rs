@@ -82,6 +82,139 @@ mod request_lane_lifecycle {
         assert_eq!(app.replace_result, "current");
         assert!(app.__ice_run_lane_1_handle.is_none());
     }
+
+    #[test]
+    fn invalidating_latest_advances_the_generation_without_cancelling_work() {
+        let (mut app, _) = RequestLaneLifecycle::__boot();
+        let task = app.__update(__RequestLaneLifecycleMessage::LatestForInvalidation);
+        let started_generation = app.__ice_run_lane_0_generation;
+
+        let _ = app.__update(__RequestLaneLifecycleMessage::InvalidateLatest);
+        assert!(app.__ice_run_lane_0_generation > started_generation);
+        assert!(!crate::backend::controlled_request_was_cancelled(103));
+
+        crate::backend::complete_controlled_request(103, "stale");
+        let _ = app.__update(output(task).expect("invalidated latest completion"));
+        assert_eq!(app.latest_result, "waiting");
+        assert!(!crate::backend::controlled_request_was_cancelled(103));
+    }
+
+    #[test]
+    fn invalidating_replace_aborts_and_clears_the_current_handle() {
+        let (mut app, _) = RequestLaneLifecycle::__boot();
+        let task = app.__update(__RequestLaneLifecycleMessage::ReplaceForInvalidation);
+        let started_generation = app.__ice_run_lane_1_generation;
+        let observer = app.__ice_run_lane_1_handle.as_ref().unwrap().clone();
+
+        let _ = app.__update(__RequestLaneLifecycleMessage::InvalidateReplace);
+        assert!(app.__ice_run_lane_1_generation > started_generation);
+        assert!(observer.is_aborted());
+        assert!(app.__ice_run_lane_1_handle.is_none());
+        assert!(output(task).is_none(), "invalidated work must not emit");
+        assert!(crate::backend::controlled_request_was_cancelled(203));
+        assert_eq!(app.replace_result, "waiting");
+    }
+
+    #[test]
+    fn retained_component_invalidation_is_instance_scoped() {
+        let (mut app, _) = RequestLaneLifecycle::__boot();
+        let first_scope = "RequestLaneLifecycle/retained-first";
+        let second_scope = "RequestLaneLifecycle/retained-second";
+        let first = app.__update(__RequestLaneLifecycleMessage::__RetainedHandleStart(
+            first_scope.into(),
+            301,
+        ));
+        let second = app.__update(__RequestLaneLifecycleMessage::__RetainedHandleStart(
+            second_scope.into(),
+            302,
+        ));
+        let first_observer = app.__ice_component_retained[first_scope]
+            .__ice_run_lane_2_handle
+            .as_ref()
+            .unwrap()
+            .clone();
+
+        let _ = app.__update(
+            __RequestLaneLifecycleMessage::__RetainedHandleInvalidateRequest(first_scope.into()),
+        );
+        assert!(first_observer.is_aborted());
+        assert!(
+            app.__ice_component_retained[first_scope]
+                .__ice_run_lane_2_handle
+                .is_none()
+        );
+        assert!(
+            app.__ice_component_retained[second_scope]
+                .__ice_run_lane_2_handle
+                .is_some()
+        );
+        assert!(
+            output(first).is_none(),
+            "invalidated instance must not emit"
+        );
+        assert!(crate::backend::controlled_request_was_cancelled(301));
+
+        crate::backend::complete_controlled_request(302, "second current");
+        let _ = app.__update(output(second).expect("second component completion"));
+        assert_eq!(app.__ice_component_retained[first_scope].result, "waiting");
+        assert_eq!(
+            app.__ice_component_retained[second_scope].result,
+            "second current"
+        );
+    }
+
+    #[test]
+    fn mounted_invalidation_keeps_generation_monotonic_across_remount() {
+        let (mut app, _) = RequestLaneLifecycle::__boot();
+        let scope = "RequestLaneLifecycle/mounted";
+        let _ = app.__view();
+        let old = app.__update(__RequestLaneLifecycleMessage::__MountedHandleStart(
+            scope.into(),
+            401,
+        ));
+        let old_generation =
+            app.__ice_component_mounted.values()[scope].__ice_run_lane_3_generation;
+        crate::backend::complete_controlled_request(401, "old");
+        let old_completion = output(old).expect("old mounted completion");
+
+        let _ = app.__update(
+            __RequestLaneLifecycleMessage::__MountedHandleInvalidateRequest(scope.into()),
+        );
+        let invalidated_generation =
+            app.__ice_component_mounted.values()[scope].__ice_run_lane_3_generation;
+        assert!(invalidated_generation > old_generation);
+
+        app.show_mounted = false;
+        let _ = app.__view();
+        assert!(app.__ice_component_mounted.values().is_empty());
+        app.show_mounted = true;
+        let _ = app.__view();
+
+        let current = app.__update(__RequestLaneLifecycleMessage::__MountedHandleStart(
+            scope.into(),
+            402,
+        ));
+        let current_generation =
+            app.__ice_component_mounted.values()[scope].__ice_run_lane_3_generation;
+        assert!(current_generation > invalidated_generation);
+        assert_eq!(
+            app.__ice_component_mounted.values()[scope].result,
+            "waiting"
+        );
+
+        let _ = app.__update(old_completion);
+        assert_eq!(
+            app.__ice_component_mounted.values()[scope].result,
+            "waiting"
+        );
+
+        crate::backend::complete_controlled_request(402, "current");
+        let _ = app.__update(output(current).expect("current mounted completion"));
+        assert_eq!(
+            app.__ice_component_mounted.values()[scope].result,
+            "current"
+        );
+    }
 }
 
 #[cfg(test)]

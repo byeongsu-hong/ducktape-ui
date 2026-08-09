@@ -96,6 +96,12 @@ Async completion route expressions are evaluated later and may call only
 Ordinary `run` delivers every Future completion. For superseding requests,
 `run latest lane=<name>` routes only the newest completion without canceling
 older work, while `run replace lane=<name>` also aborts the prior Iced task.
+A direct app, daemon, preset, or component handler statement whose immediate
+intent supersedes an in-flight request can use `invalidate lane=<name>` before
+its state changes. Invalidation advances the existing owner-scoped lane without
+starting work or declaring another lane, so any earlier success or failure is
+stale; it leaves a `latest` Future running and aborts the current `replace`
+task.
 A lane is a static, finite qualified name owned by the app, the daemon shared
 across its windows, or one component instance, so the same fully qualified name
 deliberately joins calls from different handlers of that owner. Unaliased app
@@ -108,8 +114,8 @@ stop work the Rust backend detached. Per-owner lane bookkeeping is fixed by
 source-declared names;
 component-owner count follows the existing retained/mounted lifetime contract.
 If an outer abort prevents a matching completion from reaching update, one
-current replacement handle can remain until the next replacement or owner
-drop, but handles do not accumulate per owner.
+current replacement handle can remain until the next replacement, explicit
+invalidation, or owner drop, but handles do not accumulate per owner.
 
 The punctuation has one job each:
 

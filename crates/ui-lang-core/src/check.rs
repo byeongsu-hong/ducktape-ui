@@ -922,6 +922,7 @@ fn component_handler_statement_supported(statement: &Statement) -> bool {
                 },
             ..
         }
+        | Statement::InvalidateLane { .. }
         | Statement::Run {
             kind: EffectKind::Future,
             ..
@@ -947,6 +948,21 @@ fn check_run_lanes(document: &Document) -> Result<(), Error> {
                 &handler.statements,
                 Some(component.name.as_str()),
                 &mut modes,
+            )?;
+        }
+    }
+    for handler in &document.handlers {
+        check_handler_lane_invalidations(&handler.statements, None, &modes)?;
+    }
+    for preset in &document.presets {
+        check_handler_lane_invalidations(&preset.statements, None, &modes)?;
+    }
+    for component in &document.components {
+        for handler in &component.handlers {
+            check_handler_lane_invalidations(
+                &handler.statements,
+                Some(component.name.as_str()),
+                &modes,
             )?;
         }
     }
@@ -1016,6 +1032,28 @@ fn check_handler_run_lanes<'a>(
     }
 
     visit(statements, owner, modes, &mut HashSet::new())
+}
+
+fn check_handler_lane_invalidations<'a>(
+    statements: &'a [Statement],
+    owner: Option<&'a str>,
+    modes: &HashMap<(Option<&'a str>, &'a str), (FutureMode, &'a Span)>,
+) -> Result<(), Error> {
+    for statement in statements {
+        if let Statement::InvalidateLane { lane, span } = statement
+            && !modes.contains_key(&(owner, lane.as_str()))
+        {
+            return Err(Error::new(
+                "E140",
+                span,
+                format!("request lane `{lane}` is not declared for this state owner"),
+            )
+            .hint(format!(
+                "declare it with `run latest lane={lane} ...` or `run replace lane={lane} ...` for the same state owner"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn future_mode_name(mode: FutureMode) -> &'static str {

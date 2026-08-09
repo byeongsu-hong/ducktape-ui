@@ -8028,6 +8028,7 @@ impl<'a> FactsBuilder<'a> {
                     statement.span(),
                 )?;
             }
+            Statement::InvalidateLane { .. } => {}
             Statement::Run {
                 kind,
                 function,
@@ -8737,6 +8738,7 @@ impl<'a> FactsBuilder<'a> {
             | Statement::ComboPush { .. }
             | Statement::ReturnIf { .. }
             | Statement::Exit { .. }
+            | Statement::InvalidateLane { .. }
             | Statement::Run { .. }
             | Statement::Sip { .. }
             | Statement::TaskFlow { .. }
