@@ -294,12 +294,19 @@ pub fn codex_turn(session: Session) -> impl iced::task::Straw<Vec<Entry>, Chunk,
     })
 }
 
-/// The same turn's event list, published only when it actually changes.
+/// The same turn's row list, published only when it actually changes.
 ///
-/// This is a second channel on purpose. Tool calls and finished reasoning are
-/// rare — a handful per turn — while text deltas are constant, and putting the
-/// list on every delta would copy the whole transcript once per token. A turn
-/// ends by closing this channel.
+/// This is a second channel on purpose. Tool calls and settled blocks are rare
+/// — a handful per turn — while text deltas are constant, and putting the list
+/// on every delta would copy the whole transcript once per token.
+///
+/// The list published last in a turn is the one the turn settles with, so the
+/// two channels cannot disagree about the transcript whichever order their
+/// final messages arrive in.
+///
+/// The channel outlives its turn: it closes when the next turn replaces this
+/// watcher, or when the session is dropped by a new chat. One idle stream can
+/// therefore be waiting between turns; it does not accumulate.
 pub fn codex_entries(session: Session) -> Receiver<Vec<Entry>> {
     let (sender, receiver) = smol::channel::unbounded();
     session.lock().watcher = Some(sender);
