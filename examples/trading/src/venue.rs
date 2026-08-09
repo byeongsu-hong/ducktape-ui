@@ -396,6 +396,8 @@ impl Network {
     /// out of whichever universe it was handed.
     pub const LIGHTER_TESTNET: Network = Network {
         venue: Venue::LighterTestnet,
+        rests_forever: false,
+        attaches_levels: false,
         name: "Lighter Testnet",
         testnet: true,
         // Nothing yet, and the reason is this app rather than the venue.
