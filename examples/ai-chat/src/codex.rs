@@ -1,0 +1,959 @@
+//! The Codex CLI's ChatGPT session, opened with the tokens its own headless
+//! login already wrote, and a turn broken into the things a screen draws.
+//!
+//! `codex login` — browser or `--device-auth` — finishes by writing OAuth
+//! tokens to `~/.codex/auth.json`. This app reads that file instead of running
+//! a second login, and posts to the same ChatGPT backend the CLI posts to. No
+//! token is copied anywhere else, and none of them cross into Ice.
+//!
+//! A turn is not one answer. It is an ordered run of reasoning summaries, tool
+//! calls, answer text and a token bill, and the screen draws all of it — so
+//! that is the shape handed over: a flat, ordered [`Entry`] list that only ever
+//! grows. Text that arrives token by token is handed over as pieces instead,
+//! through [`Chunk`], because appending to a parsed document is the difference
+//! between a flat and a quadratic cost per token.
+
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use base64::Engine;
+use serde_json::{Value, json};
+use smol::channel::{Receiver, Sender};
+
+const RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+/// Used only when `~/.codex/config.toml` names no model.
+const DEFAULT_MODEL: &str = "gpt-5.6-sol";
+const INSTRUCTIONS: &str = "You are Codex, answering inside a desktop chat window. \
+     Reply in Markdown. Search the web when a fact could have changed since training.";
+/// A tool result this app cannot model is still drawn, cut to a length a card
+/// can hold rather than pasted whole.
+const DETAIL_LIMIT: usize = 400;
+
+/// Ids are unique for the life of the process, not the life of a chat, because
+/// the parsed-Markdown cache in `render` is keyed on them and a chat cleared
+/// mid-session must not hand a new answer an old answer's layout.
+static NEXT_ID: AtomicI64 = AtomicI64::new(1);
+
+fn next_id() -> i64 {
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Clone, Debug)]
+pub struct CodexError {
+    pub message: String,
+}
+
+impl CodexError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+/// One row of the transcript, in the order it happened.
+///
+/// Every row of the transcript is one of these — the prompt included — so the
+/// screen renders a single flat list and a turn's interleaving survives
+/// exactly as the model produced it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub id: i64,
+    /// `prompt` · `reasoning` · `tool` · `answer` · `usage`
+    pub kind: String,
+    /// The row's heading — a tool's name, or what it did.
+    pub title: String,
+    /// One line under the heading: a query, a URL, a token count.
+    pub detail: String,
+    /// Markdown, for the rows that carry prose.
+    pub body: String,
+    /// `running` while a tool is still working, `done` once it is not.
+    pub status: String,
+    /// Whether a folded row is showing its body.
+    pub open: bool,
+    /// Which palette this row was handed over for.
+    ///
+    /// A row carries it because `lazy` rebuilds a row only when the row
+    /// changes, and the palette decides how the row is drawn. Stamping it here
+    /// is what makes a theme switch reach rows that are otherwise settled.
+    pub dark: bool,
+}
+
+/// What a `lazy` boundary keys a row's redraw on.
+///
+/// Hashing is deliberately not derived. `lazy` hashes its dependency on every
+/// frame, and a derived hash would walk every row's full answer text — which
+/// costs about as much as rebuilding the row and defeats the boundary
+/// entirely (measured in `main.rs`'s `perf` module).
+///
+/// Hashing the identity instead is sound because the rest of a row is
+/// immutable: rows are only ever appended, a row's prose never changes after
+/// it settles, and the two fields that do change — whether it is folded and
+/// which palette it was stamped for — are both here.
+impl std::hash::Hash for Entry {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.open.hash(state);
+        self.dark.hash(state);
+        // A running tool becomes a finished one in place, under one id.
+        self.status.hash(state);
+    }
+}
+
+impl Entry {
+    fn new(kind: &str, title: impl Into<String>) -> Self {
+        Self {
+            id: next_id(),
+            kind: kind.to_owned(),
+            title: title.into(),
+            detail: String::new(),
+            body: String::new(),
+            status: String::new(),
+            open: false,
+            dark: false,
+        }
+    }
+
+    fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = clipped(detail.into());
+        self
+    }
+
+    fn body(mut self, body: impl Into<String>) -> Self {
+        self.body = body.into();
+        self
+    }
+
+    fn status(mut self, status: &str) -> Self {
+        self.status = status.to_owned();
+        self
+    }
+}
+
+/// Text arriving token by token, addressed to the surface that draws it.
+///
+/// There is a field per live surface rather than a kind to switch on, because
+/// Ice handlers do not branch: the screen appends both unconditionally and an
+/// empty one is a no-op. `status` is what the composer says at that moment,
+/// carried by every chunk so progress is never inferred from what arrived.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Chunk {
+    pub answer: String,
+    pub thinking: String,
+    pub status: String,
+}
+
+impl Chunk {
+    fn status(status: &str) -> Self {
+        Self {
+            answer: String::new(),
+            thinking: String::new(),
+            status: status.to_owned(),
+        }
+    }
+
+    fn answer(text: impl Into<String>) -> Self {
+        Self {
+            answer: text.into(),
+            ..Self::status("Responding")
+        }
+    }
+
+    fn thinking(text: impl Into<String>) -> Self {
+        Self {
+            thinking: text.into(),
+            ..Self::status("Thinking")
+        }
+    }
+}
+
+/// The conversation, held once and shared by the screen and the worker thread.
+///
+/// Two views of the same chat live here: `input` is what the API is resent on
+/// every turn — this app does not `store` — and `entries` is what the screen
+/// draws. They are kept together because they must not disagree: an answer
+/// drawn but not resent would vanish from the model's next reply.
+#[derive(Clone)]
+pub struct Session {
+    state: Arc<Mutex<Transcript>>,
+}
+
+#[derive(Default)]
+struct Transcript {
+    input: Vec<Value>,
+    entries: Vec<Entry>,
+    dark: bool,
+    /// Where the screen is listening while a turn runs, if it is.
+    watcher: Option<Sender<Vec<Entry>>>,
+}
+
+impl Transcript {
+    /// The list as the screen should draw it now.
+    fn snapshot(&self) -> Vec<Entry> {
+        self.entries
+            .iter()
+            .map(|row| Entry {
+                dark: self.dark,
+                ..row.clone()
+            })
+            .collect()
+    }
+
+    /// Hand the list to the screen, once, because it changed.
+    fn publish(&mut self) {
+        let Some(watcher) = self.watcher.clone() else {
+            return;
+        };
+        if watcher.send_blocking(self.snapshot()).is_err() {
+            self.watcher = None;
+        }
+    }
+}
+
+impl Session {
+    fn lock(&self) -> MutexGuard<'_, Transcript> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl PartialEq for Session {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Session")
+    }
+}
+
+pub fn codex_session() -> Session {
+    Session {
+        state: Arc::new(Mutex::new(Transcript::default())),
+    }
+}
+
+/// Draw the prompt the moment it is typed, before the socket is opened.
+pub fn push_user(session: Session, text: String) -> Vec<Entry> {
+    let mut state = session.lock();
+    state.input.push(json!({
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": text}],
+    }));
+    state.entries.push(Entry::new("prompt", "").body(text));
+    state.snapshot()
+}
+
+/// Fold or unfold one row, and hand back the transcript.
+///
+/// The open flag lives on the row for the same reason the palette does: a
+/// settled row sits behind `lazy`, which redraws it only when the row changes.
+pub fn toggle_row(session: Session, id: i64) -> Vec<Entry> {
+    let mut state = session.lock();
+    if let Some(row) = state.entries.iter_mut().find(|row| row.id == id) {
+        row.open = !row.open;
+    }
+    state.snapshot()
+}
+
+/// Switch palettes, and hand back the transcript stamped for the new one.
+///
+/// The stamp is what makes settled rows redraw: they sit behind `lazy`, which
+/// rebuilds a row only when the row itself changes.
+pub fn set_palette(session: Session, dark: bool) -> Vec<Entry> {
+    let mut state = session.lock();
+    state.dark = dark;
+    state.snapshot()
+}
+
+/// One turn's streamed text, and what the composer should say while it runs.
+///
+/// The request is blocking, so it runs on its own thread and reaches the async
+/// side through a channel — a slow first token never touches the frame loop.
+pub fn codex_turn(session: Session) -> impl iced::task::Straw<Vec<Entry>, Chunk, CodexError> {
+    iced::task::sipper(move |mut sender| async move {
+        let (chunks, incoming) = smol::channel::unbounded();
+        let (outcome, settled) = smol::channel::bounded(1);
+        std::thread::spawn(move || {
+            let result = pump(&session, &chunks);
+            drop(chunks);
+            let _ = outcome.send_blocking(result);
+        });
+
+        while let Ok(chunk) = incoming.recv().await {
+            sender.send(chunk).await;
+        }
+        settled
+            .recv()
+            .await
+            .unwrap_or_else(|_| Err(CodexError::new("Codex stopped without answering.")))
+    })
+}
+
+/// The same turn's event list, published only when it actually changes.
+///
+/// This is a second channel on purpose. Tool calls and finished reasoning are
+/// rare — a handful per turn — while text deltas are constant, and putting the
+/// list on every delta would copy the whole transcript once per token. A turn
+/// ends by closing this channel.
+pub fn codex_entries(session: Session) -> Receiver<Vec<Entry>> {
+    let (sender, receiver) = smol::channel::unbounded();
+    session.lock().watcher = Some(sender);
+    receiver
+}
+
+/// Post the conversation and read the answer back event by event.
+fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexError> {
+    let auth = read_auth()?;
+    let input = session.lock().input.clone();
+    let body = json!({
+        "model": codex_model(),
+        "instructions": INSTRUCTIONS,
+        "input": input,
+        // Hosted, so the backend runs the search itself. Codex's own shell and
+        // patch tools would need this window to execute them, which is a very
+        // different program; a served tool still puts a real tool call on
+        // screen, which is what a chat client has to be able to draw.
+        "tools": [{"type": "web_search"}],
+        "tool_choice": "auto",
+        "parallel_tool_calls": false,
+        "store": false,
+        "stream": true,
+        "reasoning": {"effort": "medium", "summary": "detailed"},
+        "include": ["reasoning.encrypted_content"],
+    });
+
+    let response = ureq::post(RESPONSES_URL)
+        .config()
+        // The rejection body carries the only useful part of a refusal — which
+        // model is refused, or that the login expired — and status-as-error
+        // would throw it away.
+        .http_status_as_error(false)
+        .build()
+        .header("Authorization", &format!("Bearer {}", auth.access_token))
+        .header("chatgpt-account-id", &auth.account_id)
+        .header("OpenAI-Beta", "responses=experimental")
+        .header("Accept", "text/event-stream")
+        .header("originator", "codex_cli_rs")
+        .send_json(&body)
+        .map_err(|error| CodexError::new(format!("Could not reach Codex: {error}")))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.into_body().read_to_string().unwrap_or_default();
+        return Err(CodexError::new(format!(
+            "Codex refused the request ({}): {}",
+            status.as_u16(),
+            reason(&detail)
+        )));
+    }
+
+    let mut answer = String::new();
+    let reader = BufReader::new(response.into_body().into_reader());
+    for line in reader.lines() {
+        let line =
+            line.map_err(|error| CodexError::new(format!("Codex stream broke off: {error}")))?;
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        if let Some(failure) = failure(&event) {
+            return Err(CodexError::new(failure));
+        }
+        for chunk in stream_text(&event, &mut answer) {
+            // A closed channel is the screen having moved on, so there is
+            // nothing left to draw for.
+            if chunks.send_blocking(chunk).is_err() {
+                return Err(CodexError::new("Turn cancelled."));
+            }
+        }
+        record(session, &event);
+    }
+
+    let mut state = session.lock();
+    state.input.push(json!({
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": answer}],
+    }));
+    state.publish();
+    Ok(state.snapshot())
+}
+
+/// The two things that arrive in pieces, handed over as pieces.
+fn stream_text(event: &Value, answer: &mut String) -> Vec<Chunk> {
+    match event["type"].as_str().unwrap_or_default() {
+        "response.created" | "response.in_progress" => vec![Chunk::status("Thinking")],
+        "response.reasoning_summary_text.delta" => {
+            vec![Chunk::thinking(event["delta"].as_str().unwrap_or_default())]
+        }
+        "response.reasoning_summary_part.done" => vec![Chunk::thinking("\n\n")],
+        "response.output_text.delta" => {
+            let delta = event["delta"].as_str().unwrap_or_default();
+            answer.push_str(delta);
+            vec![Chunk::answer(delta)]
+        }
+        "response.web_search_call.in_progress" => vec![Chunk::status("Searching")],
+        "response.completed" => vec![Chunk::status("")],
+        _ => Vec::new(),
+    }
+}
+
+/// The rows of the transcript, appended as each item of the turn settles.
+fn record(session: &Session, event: &Value) {
+    let kind = event["type"].as_str().unwrap_or_default();
+    if !matches!(
+        kind,
+        "response.output_item.added" | "response.output_item.done" | "response.completed"
+    ) {
+        return;
+    }
+    let item = &event["item"];
+    let item_kind = item["type"].as_str().unwrap_or_default();
+    let mut state = session.lock();
+
+    match (kind, item_kind) {
+        // A tool appears the moment it starts, so the screen can say so while
+        // it is still working.
+        ("response.output_item.added", "web_search_call") => {
+            let started = Entry::new("tool", "Web search").status("running");
+            state.entries.push(started);
+        }
+        ("response.output_item.done", "web_search_call") => {
+            let (title, detail) = search_action(&item["action"]);
+            let failed = item["status"].as_str() == Some("failed");
+            if let Some(open) = state
+                .entries
+                .iter_mut()
+                .rev()
+                .find(|row| row.kind == "tool" && row.status == "running")
+            {
+                open.title = title;
+                open.detail = clipped(detail);
+                open.status = if failed { "failed" } else { "done" }.to_owned();
+            }
+        }
+        ("response.output_item.done", "reasoning") => {
+            let summary = summary_text(&item["summary"]);
+            if !summary.trim().is_empty() {
+                let (title, body) = headed(&summary);
+                state
+                    .entries
+                    .push(Entry::new("reasoning", title).body(body));
+            }
+        }
+        ("response.output_item.done", "message") => {
+            let text = message_text(&item["content"]);
+            if !text.trim().is_empty() {
+                state.entries.push(Entry::new("answer", "").body(text));
+            }
+        }
+        // Anything this build does not model is still a row, because a chat
+        // window that silently drops part of a turn is misreporting it.
+        ("response.output_item.done", other) if !other.is_empty() => {
+            state.entries.push(
+                Entry::new("tool", other)
+                    .detail(item["status"].as_str().unwrap_or("done"))
+                    .body(format!(
+                        "```json\n{}\n```",
+                        serde_json::to_string_pretty(item).unwrap_or_default()
+                    ))
+                    .status("done"),
+            );
+        }
+        ("response.completed", _) => {
+            state
+                .entries
+                .push(Entry::new("usage", "").detail(tokens(&event["response"]["usage"])));
+        }
+        _ => return,
+    }
+    state.publish();
+}
+
+/// What a web search actually did, said the way a person would say it.
+fn search_action(action: &Value) -> (String, String) {
+    match action["type"].as_str().unwrap_or_default() {
+        "open_page" => (
+            "Opened a page".to_owned(),
+            action["url"].as_str().unwrap_or_default().to_owned(),
+        ),
+        "find_in_page" => (
+            "Searched within a page".to_owned(),
+            action["pattern"].as_str().unwrap_or_default().to_owned(),
+        ),
+        _ => {
+            let queries: Vec<&str> = action["queries"]
+                .as_array()
+                .map(|list| list.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let detail = if queries.is_empty() {
+                action["query"].as_str().unwrap_or_default().to_owned()
+            } else {
+                queries.join("  ·  ")
+            };
+            ("Searched the web".to_owned(), detail)
+        }
+    }
+}
+
+/// A reasoning summary states its own subject on a bold first line. That line
+/// is the row's heading, so the fold shows what was being thought about rather
+/// than a generic label, and the body underneath is left as plain prose.
+fn headed(summary: &str) -> (String, String) {
+    let (first, rest) = summary.split_once('\n').unwrap_or((summary, ""));
+    let heading = first.trim().trim_matches('*').trim();
+    if heading.is_empty() || !first.trim().starts_with("**") {
+        return ("Thought process".to_owned(), summary.trim().to_owned());
+    }
+    (heading.to_owned(), rest.trim().to_owned())
+}
+
+fn summary_text(summary: &Value) -> String {
+    summary
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        })
+        .unwrap_or_default()
+}
+
+fn message_text(content: &Value) -> String {
+    content
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+}
+
+/// The stream's own way of failing, as opposed to the socket's.
+fn failure(event: &Value) -> Option<String> {
+    match event["type"].as_str().unwrap_or_default() {
+        "error" => Some(reason(&event.to_string())),
+        "response.failed" => Some(reason(&event["response"]["error"].to_string())),
+        "response.incomplete" => Some(format!(
+            "Codex stopped early: {}",
+            event["response"]["incomplete_details"]["reason"]
+                .as_str()
+                .unwrap_or("no reason given")
+        )),
+        _ => None,
+    }
+}
+
+fn tokens(usage: &Value) -> String {
+    let count = |key: &str| usage[key].as_i64().unwrap_or(0);
+    let reasoning = usage["output_tokens_details"]["reasoning_tokens"]
+        .as_i64()
+        .unwrap_or(0);
+    format!(
+        "{} in · {} out · {reasoning} reasoning",
+        count("input_tokens"),
+        count("output_tokens"),
+    )
+}
+
+/// A one-line field, kept to one line's worth of text.
+fn clipped(mut text: String) -> String {
+    if text.len() > DETAIL_LIMIT {
+        let mut cut = DETAIL_LIMIT;
+        // Back off to a char boundary, so a multi-byte glyph is never halved.
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text.truncate(cut);
+        text.push('…');
+    }
+    text
+}
+
+/// The sentence inside an error body, or the body when it has no shape.
+fn reason(body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return body.trim().to_owned();
+    };
+    for path in [&["detail"][..], &["error", "message"], &["message"]] {
+        let mut found = &value;
+        for key in path {
+            found = &found[*key];
+        }
+        if let Some(text) = found.as_str() {
+            return text.to_owned();
+        }
+    }
+    body.trim().to_owned()
+}
+
+struct Auth {
+    access_token: String,
+    account_id: String,
+}
+
+fn codex_home() -> PathBuf {
+    if let Some(home) = std::env::var_os("CODEX_HOME") {
+        return PathBuf::from(home);
+    }
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex")
+}
+
+fn auth_file() -> Result<Value, CodexError> {
+    let path = codex_home().join("auth.json");
+    let text = std::fs::read_to_string(&path).map_err(|_| {
+        CodexError::new(format!(
+            "No Codex login at {}. Run `codex login` first.",
+            path.display()
+        ))
+    })?;
+    serde_json::from_str(&text)
+        .map_err(|error| CodexError::new(format!("Codex login file is unreadable: {error}")))
+}
+
+fn read_auth() -> Result<Auth, CodexError> {
+    let file = auth_file()?;
+    let tokens = &file["tokens"];
+    let (Some(access_token), Some(account_id)) = (
+        tokens["access_token"].as_str(),
+        tokens["account_id"].as_str(),
+    ) else {
+        return Err(CodexError::new(
+            "Codex is not signed in to a ChatGPT account. Run `codex login`.",
+        ));
+    };
+    Ok(Auth {
+        access_token: access_token.to_owned(),
+        account_id: account_id.to_owned(),
+    })
+}
+
+/// Who the stored login belongs to, for the sidebar's footer.
+///
+/// The address is a claim inside the id token rather than a field of its own,
+/// and claims are the unsigned half of a JWT — read here only to name the
+/// account on screen. Nothing is authorised on the strength of it.
+pub fn codex_account() -> String {
+    let Ok(file) = auth_file() else {
+        return String::new();
+    };
+    let Some(claims) = file["tokens"]["id_token"].as_str().and_then(|token| {
+        let payload = token.split('.').nth(1)?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .ok()?;
+        serde_json::from_slice::<Value>(&bytes).ok()
+    }) else {
+        return String::new();
+    };
+    claims["email"].as_str().unwrap_or_default().to_owned()
+}
+
+/// The model the CLI itself is set to, so this window answers as it would.
+///
+/// One scan for a top-level `model` key rather than a TOML parse: a model named
+/// only inside a `[profiles.*]` table is missed and the default stands.
+pub fn codex_model() -> String {
+    std::fs::read_to_string(codex_home().join("config.toml"))
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let (key, value) = line.split_once('=')?;
+                (key.trim() == "model").then(|| value.trim().trim_matches('"').to_owned())
+            })
+        })
+        .filter(|model| !model.is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL.to_owned())
+}
+
+/// A settled turn with no network behind it.
+///
+/// Presets and captures draw from this instead of a live account, which keeps a
+/// real conversation — and the address of whoever is signed in — out of every
+/// screenshot and test artifact this repository stores.
+/// A session already holding the sample turn.
+///
+/// A preset seeds this as well as the drawn list, because the two are the same
+/// conversation and every handler that changes a row goes through the session.
+/// Seeding only the drawn half would let a preset exercise a path production
+/// never takes.
+pub fn sample_session() -> Session {
+    let session = codex_session();
+    session.lock().entries = sample_entries();
+    session
+}
+
+pub fn sample_entries() -> Vec<Entry> {
+    // Fixed, negative ids. Live rows count up from one, so a sample row can
+    // never collide with a real one — in the Markdown cache or in a widget
+    // path — and a test can name a row by hand.
+    let row = |id: i64, entry: Entry| Entry { id, ..entry };
+    vec![
+        row(
+            -1,
+            Entry::new("prompt", "").body(
+                "Which version of iced is current, and how do I stream a reply into a \
+                 Markdown view?",
+            ),
+        ),
+        row(
+            -2,
+            Entry::new("reasoning", "Checking the crate before answering").body(
+                "The version could have moved since training, so it is worth a look \
+                 rather than a guess.",
+            ),
+        ),
+        row(
+            -3,
+            Entry::new("tool", "Searched the web")
+                .detail("site:crates.io/crates/iced latest version  ·  iced-rs releases")
+                .status("done"),
+        ),
+        row(
+            -4,
+            Entry::new("tool", "Opened a page")
+                .detail("https://crates.io/crates/iced")
+                .status("done"),
+        ),
+        row(
+            -5,
+            Entry::new("answer", "").body(
+                "**iced 0.14** is current.\n\nFor the Markdown view, append to the parsed \
+                 document instead of rebuilding it:\n\n\
+                 ```rust\n\
+                 content.push_str(&delta);\n\
+                 ```\n\n\
+                 Only the tail is reparsed, so the cost of a token stays flat as the \
+                 answer grows.\n\n\
+                 - The document is parsed once, then extended\n\
+                 - Earlier blocks keep their layout\n\
+                 - The view rebuilds one row, not the transcript",
+            ),
+        ),
+        row(
+            -6,
+            Entry::new("usage", "").detail("2,914 in · 268 out · 192 reasoning"),
+        ),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(raw: &str) -> Value {
+        serde_json::from_str(raw).expect("event")
+    }
+
+    fn empty() -> Session {
+        codex_session()
+    }
+
+    fn rows(session: &Session) -> Vec<Entry> {
+        session.lock().snapshot()
+    }
+
+    /// Streamed text must arrive as pieces and accumulate, because the screen
+    /// appends them and the settled row is built from the total.
+    #[test]
+    fn streamed_answer_accumulates_and_is_handed_over_in_pieces() {
+        let mut answer = String::new();
+        let drawn: Vec<Chunk> = [
+            r#"{"type":"response.output_text.delta","delta":"Hel"}"#,
+            r#"{"type":"response.output_text.delta","delta":"lo"}"#,
+        ]
+        .iter()
+        .flat_map(|raw| stream_text(&event(raw), &mut answer))
+        .collect();
+
+        assert_eq!(answer, "Hello", "the settled row needs the whole answer");
+        assert_eq!(
+            drawn.iter().map(|c| c.answer.as_str()).collect::<Vec<_>>(),
+            ["Hel", "lo"],
+            "pieces, not prefixes: a repeated prefix would double the text"
+        );
+    }
+
+    /// A tool has to be on screen while it is still running, then say what it
+    /// did — one row that changes, not two rows.
+    #[test]
+    fn a_tool_call_is_drawn_when_it_starts_and_updated_when_it_finishes() {
+        let session = empty();
+        record(
+            &session,
+            &event(r#"{"type":"response.output_item.added","item":{"type":"web_search_call"}}"#),
+        );
+        let running = rows(&session);
+        assert_eq!(running.len(), 1, "the tool appears immediately");
+        assert_eq!(running[0].status, "running");
+
+        record(
+            &session,
+            &event(
+                r#"{"type":"response.output_item.done","item":{"type":"web_search_call",
+                    "status":"completed","action":{"type":"search","queries":["iced 0.14"]}}}"#,
+            ),
+        );
+        let settled = rows(&session);
+        assert_eq!(
+            settled.len(),
+            1,
+            "the same row settles; it is not duplicated"
+        );
+        assert_eq!(settled[0].status, "done");
+        assert_eq!(settled[0].title, "Searched the web");
+        assert_eq!(settled[0].detail, "iced 0.14");
+    }
+
+    /// Opening a page and running a query are different acts, and a transcript
+    /// that calls both "searched" is not reporting what happened.
+    #[test]
+    fn each_search_action_is_named_for_what_it_did() {
+        assert_eq!(
+            search_action(&event(r#"{"type":"open_page","url":"https://crates.io"}"#)),
+            ("Opened a page".to_owned(), "https://crates.io".to_owned())
+        );
+        let (title, detail) = search_action(&event(r#"{"type":"search","queries":["one","two"]}"#));
+        assert_eq!(title, "Searched the web");
+        assert_eq!(detail, "one  ·  two");
+    }
+
+    /// An item this build never modelled is still part of the turn.
+    #[test]
+    fn an_unmodelled_item_becomes_a_row_rather_than_being_dropped() {
+        let session = empty();
+        record(
+            &session,
+            &event(
+                r#"{"type":"response.output_item.done","item":{"type":"custom_tool_call","status":"completed"}}"#,
+            ),
+        );
+        let entries = rows(&session);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "custom_tool_call");
+        assert!(entries[0].body.contains("```json"), "drawn as itself");
+    }
+
+    /// Reasoning and the answer arrive twice — streamed, then as a completed
+    /// item. Recording the completed item is what settles the row; recording
+    /// an empty one would leave a blank row behind.
+    #[test]
+    fn empty_reasoning_and_message_items_leave_no_row() {
+        let session = empty();
+        for raw in [
+            r#"{"type":"response.output_item.done","item":{"type":"reasoning","summary":[]}}"#,
+            r#"{"type":"response.output_item.done","item":{"type":"message","content":[]}}"#,
+        ] {
+            record(&session, &event(raw));
+        }
+        assert!(rows(&session).is_empty());
+    }
+
+    /// Every row is keyed by its id, so two rows must never share one.
+    #[test]
+    fn rows_never_share_an_id() {
+        let session = empty();
+        let entries = push_user(session.clone(), "first".to_owned());
+        assert_eq!(entries.len(), 1);
+        record(
+            &session,
+            &event(r#"{"type":"response.completed","response":{"usage":{}}}"#),
+        );
+        let entries = rows(&session);
+        assert_ne!(
+            entries[0].id, entries[1].id,
+            "a shared id collapses two rows"
+        );
+    }
+
+    /// One real turn against the signed-in account, end to end: the request is
+    /// accepted, text arrives in pieces, and the pieces settle into rows.
+    ///
+    /// Ignored by default because it needs `codex login` and spends tokens.
+    /// Run it with:
+    /// `cargo test -p ai-chat-example -- --ignored --nocapture a_live_turn`
+    #[test]
+    #[ignore = "reaches the ChatGPT backend; needs `codex login`"]
+    fn a_live_turn_streams_text_and_settles_into_rows() {
+        let session = codex_session();
+        push_user(session.clone(), "Reply with exactly: pong".to_owned());
+
+        let (chunks, incoming) = smol::channel::unbounded();
+        let worker = session.clone();
+        let turn = std::thread::spawn(move || pump(&worker, &chunks));
+
+        let mut streamed = String::new();
+        let mut statuses = Vec::new();
+        while let Ok(chunk) = incoming.recv_blocking() {
+            streamed.push_str(&chunk.answer);
+            if !chunk.status.is_empty() && statuses.last() != Some(&chunk.status) {
+                statuses.push(chunk.status.clone());
+            }
+        }
+        let rows = turn
+            .join()
+            .expect("worker thread")
+            .expect("a finished turn");
+
+        eprintln!("statuses: {statuses:?}");
+        for row in &rows {
+            eprintln!("{:>9}  {}{}", row.kind, row.title, row.detail);
+        }
+        assert!(
+            streamed.to_lowercase().contains("pong"),
+            "the answer must arrive as streamed pieces, got {streamed:?}"
+        );
+        assert_eq!(rows.first().map(|row| row.kind.as_str()), Some("prompt"));
+        assert!(
+            rows.iter()
+                .any(|row| row.kind == "answer" && row.body == streamed),
+            "the settled answer row must equal what was streamed"
+        );
+        assert!(
+            rows.last()
+                .is_some_and(|row| row.kind == "usage" && !row.detail.is_empty()),
+            "a turn ends with what it cost"
+        );
+    }
+
+    /// A refusal is the only place a cause is stated, so it has to survive the
+    /// shapes the backend states it in.
+    #[test]
+    fn a_refusal_keeps_its_sentence() {
+        assert_eq!(
+            reason(r#"{"detail":"model is not supported"}"#),
+            "model is not supported"
+        );
+        assert_eq!(
+            reason(r#"{"error":{"message":"token expired"}}"#),
+            "token expired"
+        );
+        assert_eq!(reason("upstream is down"), "upstream is down");
+    }
+
+    /// The token bill is drawn under every answer; a missing detail must read
+    /// as zero rather than take the line down with it.
+    #[test]
+    fn a_partial_usage_report_still_reads() {
+        assert_eq!(
+            tokens(&event(r#"{"input_tokens":27,"output_tokens":84}"#)),
+            "27 in · 84 out · 0 reasoning"
+        );
+    }
+}

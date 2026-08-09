@@ -169,6 +169,7 @@ cargo run -p ice-starter       # the minimal copyable build/include/test path
 cargo run -p candles-example   # native lightweight financial chart (see examples/candles)
 cargo run -p trading-example   # live Hyperliquid markets, positions, and fills (see examples/trading)
 cargo run -p tray-example      # the smallest macOS menu bar app: status item, live label, native menu
+cargo run -p ai-chat-example   # streaming Codex chat: reasoning, tool calls, Markdown (see examples/ai-chat)
 ```
 
 The `tray` app-setting block puts an app in the macOS menu bar: codec-free
