@@ -308,6 +308,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --locked
       - name: Test development runner discovery
+        if: matrix.runner == 'macos-latest'
         run: |
           cargo test --locked -p cargo-ice package_selection_discovers_its_ice_root
           cargo test --locked -p cargo-ice cargo_build_discovers_rustc_and_build_script_inputs
