@@ -68,6 +68,28 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
             span: Span::line(line.number),
         });
     }
+    if line.text == "invalidate" {
+        return Err(error(
+            "E050",
+            line,
+            "`invalidate` requires `lane=<qualified-identifier>`",
+        )
+        .hint("write `invalidate lane=request_name`"));
+    }
+    if let Some(source) = line.text.strip_prefix("invalidate ") {
+        let Some(lane) = source.strip_prefix("lane=") else {
+            return Err(error(
+                "E050",
+                line,
+                "`invalidate` requires `lane=<qualified-identifier>`",
+            )
+            .hint("write `invalidate lane=request_name`"));
+        };
+        return Ok(Statement::InvalidateLane {
+            lane: line.qualify(&qualified_identifier(lane, line)?),
+            span: Span::line(line.number),
+        });
+    }
     if let Some(source) = line.text.strip_prefix("let ") {
         let Some((name, value)) = split_top_once(source, '=') else {
             return Err(error(

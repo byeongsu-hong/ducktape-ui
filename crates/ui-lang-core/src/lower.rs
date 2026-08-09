@@ -25,8 +25,8 @@ pub(crate) use crate::hir::{
     ComponentParamId, ComponentSlotId, ComponentStateId, DeclarationIndex, ExternFnId, ExternRef,
     FloatExpressionId, HandlerId, HandlerOwner, InteractionExpressionId, InteractionRouteId,
     MediaExpressionId, NamedTypeId, NamedWindowId, OriginArena, OriginId, PaletteId,
-    PinExpressionId, RouteId, RunLaneId, StatementId, SubscriptionId, TaskId, TestId, TestStepId,
-    TestTargetId, TooltipExpressionId, ViewId,
+    PinExpressionId, RouteId, RunLaneDeclaration, RunLaneId, StatementId, SubscriptionId, TaskId,
+    TestId, TestStepId, TestTargetId, TooltipExpressionId, ViewId,
 };
 #[cfg(test)]
 use crate::hir::{AppSettingsId, CanvasRouteId};
@@ -779,6 +779,9 @@ pub(crate) enum ResolvedStatementKind {
         condition: CheckedExprUseId,
     },
     Exit,
+    InvalidateLane {
+        lane: RunLaneId,
+    },
     Run(ResolvedRun),
     Sip(ResolvedSip),
     TaskFlow(ResolvedTaskFlow),
@@ -1742,6 +1745,13 @@ fn resolved_statement_semantic_key(
         }
         ResolvedStatementKind::ReturnIf { .. } => "return-if".into(),
         ResolvedStatementKind::Exit => "exit".into(),
+        ResolvedStatementKind::InvalidateLane { lane } => {
+            let lane = program.declarations.try_run_lane(*lane).ok_or_else(|| {
+                program
+                    .invariant_at_origin(statement.origin, "request-lane ID is outside its arena")
+            })?;
+            format!("invalidate-lane:{}", lane.name)
+        }
         ResolvedStatementKind::Run(run) => {
             let lane = run
                 .lane
@@ -2541,6 +2551,7 @@ impl LoweredProgram {
                     }
                 }
                 ResolvedStatementKind::Exit
+                | ResolvedStatementKind::InvalidateLane { .. }
                 | ResolvedStatementKind::Run(_)
                 | ResolvedStatementKind::Sip(_)
                 | ResolvedStatementKind::TaskFlow(_)
@@ -2781,6 +2792,27 @@ impl LoweredProgram {
                 ));
             }
             match &statement.kind {
+                ResolvedStatementKind::InvalidateLane { lane } => {
+                    let run_lane = program.declarations.try_run_lane(*lane).ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "request-lane ID is outside its arena",
+                        )
+                    })?;
+                    let owner = match handler.owner {
+                        HandlerOwner::Preset(_) => HandlerOwner::App,
+                        owner => owner,
+                    };
+                    if declaration.run_lane != Some(*lane)
+                        || run_lane.declaration.id != *lane
+                        || run_lane.owner != owner
+                    {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "request-lane invalidation belongs to a different declaration or owner",
+                        ));
+                    }
+                }
                 ResolvedStatementKind::Run(run) => {
                     let task = statement.task.ok_or_else(|| {
                         program.invariant_at_origin(
@@ -3418,6 +3450,10 @@ impl LoweredProgram {
     #[cfg(test)]
     pub(crate) fn declarations(&self) -> &DeclarationIndex {
         &self.declarations
+    }
+
+    pub(crate) fn run_lane(&self, id: RunLaneId) -> Option<&RunLaneDeclaration> {
+        self.declarations.try_run_lane(id)
     }
 
     pub(crate) fn settings(&self) -> &ResolvedAppSettings {
@@ -7253,6 +7289,7 @@ impl Lowerer {
                 return false;
             }
             match &statement.kind {
+                ResolvedStatementKind::InvalidateLane { lane } => mark(run_lanes, lane.0),
                 ResolvedStatementKind::Run(run) => {
                     mark_route(&run.success, routes)
                         && run
@@ -7917,6 +7954,29 @@ impl Lowerer {
                 condition: self.checked_statement_expression(id, &mut operand, span)?,
             },
             Statement::Exit { .. } => ResolvedStatementKind::Exit,
+            Statement::InvalidateLane { lane: name, span } => {
+                let lane = declaration.run_lane.ok_or_else(|| {
+                    self.invariant(span, "request-lane invalidation has no normalized lane ID")
+                })?;
+                let run_lane = self
+                    .declarations
+                    .try_run_lane(lane)
+                    .ok_or_else(|| self.invariant(span, "request-lane ID is outside its arena"))?;
+                let lane_owner = match owner {
+                    HandlerOwner::Preset(_) => HandlerOwner::App,
+                    owner => owner,
+                };
+                if run_lane.declaration.id != lane
+                    || run_lane.owner != lane_owner
+                    || run_lane.name != *name
+                {
+                    return Err(self.invariant(
+                        span,
+                        "request-lane invalidation owner, name, or ID diverged",
+                    ));
+                }
+                ResolvedStatementKind::InvalidateLane { lane }
+            }
             Statement::Run {
                 kind,
                 mode,
@@ -10378,6 +10438,9 @@ mod tests {
                 format!("return-if {condition:?}")
             }
             ResolvedStatementKind::Exit => "exit".into(),
+            ResolvedStatementKind::InvalidateLane { lane } => {
+                format!("invalidate-lane {lane:?}")
+            }
             ResolvedStatementKind::Run(run) => format!(
                 "run {:?} lane={:?} {} error={}",
                 run.mode,
@@ -10544,6 +10607,47 @@ h4 Preset(0) preset seeded params=[] @16:1
   s5 task=None final=true assign value:i64, value=ExpressionId(7), at=None, move=false @18:1
 "#
         );
+    }
+
+    #[test]
+    fn lowers_forward_lane_invalidation_and_rejects_post_check_name_changes() {
+        let source = format!(
+            r#"app LaneInvalidation
+extern crate::backend
+  fetch() -> str
+{THEME}on cancel
+  invalidate lane=search
+on search
+  run latest lane=search fetch() -> loaded _
+on loaded(value)
+view
+  text "Search"
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        assert!(matches!(
+            program.handlers[0].statements[0],
+            ResolvedStatement {
+                kind: ResolvedStatementKind::InvalidateLane { lane: RunLaneId(0) },
+                task: None,
+                ..
+            }
+        ));
+        let lane = program.run_lane(RunLaneId(0)).unwrap();
+        assert_eq!(lane.owner, HandlerOwner::App);
+        assert_eq!(lane.mode, FutureMode::Latest);
+        assert_eq!(lane.statements.len(), 1);
+
+        let mut changed = analyze(&source).unwrap();
+        let Statement::InvalidateLane { lane, .. } =
+            &mut changed.document.handlers[0].statements[0]
+        else {
+            panic!("fixture must contain a lane invalidation");
+        };
+        *lane = "missing".into();
+        let error = lower(changed).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
     }
 
     #[test]

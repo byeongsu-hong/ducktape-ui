@@ -361,6 +361,7 @@ impl DeclarationIndex {
         let mut routes = Vec::new();
         let mut run_lanes = Vec::new();
         let mut run_lanes_by_owner_name = HashMap::new();
+        let mut pending_run_lane_references = Vec::new();
         for handler in &document.handlers {
             index_handler_declaration(
                 handler,
@@ -373,6 +374,7 @@ impl DeclarationIndex {
                 &mut routes,
                 &mut run_lanes,
                 &mut run_lanes_by_owner_name,
+                &mut pending_run_lane_references,
             );
         }
         for (component_index, component) in document.components.iter().enumerate() {
@@ -390,6 +392,7 @@ impl DeclarationIndex {
                     &mut routes,
                     &mut run_lanes,
                     &mut run_lanes_by_owner_name,
+                    &mut pending_run_lane_references,
                 );
             }
         }
@@ -411,7 +414,13 @@ impl DeclarationIndex {
                 &mut routes,
                 &mut run_lanes,
                 &mut run_lanes_by_owner_name,
+                &mut pending_run_lane_references,
             );
+        }
+        for (statement, owner, name) in pending_run_lane_references {
+            if let Some(lane) = run_lanes_by_owner_name.get(&(owner, name)).copied() {
+                statements[statement.0 as usize].run_lane = Some(lane);
+            }
         }
 
         let handlers_by_owner_name = handlers
@@ -604,6 +613,7 @@ fn index_handler_declaration(
     routes: &mut Vec<RouteDeclaration>,
     run_lanes: &mut Vec<RunLaneDeclaration>,
     run_lanes_by_owner_name: &mut HashMap<(HandlerOwner, String), RunLaneId>,
+    pending_run_lane_references: &mut Vec<(StatementId, HandlerOwner, String)>,
 ) {
     let id = HandlerId(handlers.len() as u32);
     let origin = origins.push(&handler.span, parent);
@@ -625,6 +635,7 @@ fn index_handler_declaration(
                 routes,
                 run_lanes,
                 run_lanes_by_owner_name,
+                pending_run_lane_references,
             )
         })
         .collect();
@@ -655,6 +666,7 @@ fn index_statement_declaration(
     routes: &mut Vec<RouteDeclaration>,
     run_lanes: &mut Vec<RunLaneDeclaration>,
     run_lanes_by_owner_name: &mut HashMap<(HandlerOwner, String), RunLaneId>,
+    pending_run_lane_references: &mut Vec<(StatementId, HandlerOwner, String)>,
 ) -> StatementId {
     let id = StatementId(statements.len() as u32);
     let origin = origins.push(statement.span(), Some(parent_origin));
@@ -771,6 +783,13 @@ fn index_statement_declaration(
         };
         statements[id.0 as usize].run_lane = Some(run_lane);
     }
+    if let Statement::InvalidateLane { lane, .. } = statement {
+        let owner = match owner {
+            HandlerOwner::Preset(_) => HandlerOwner::App,
+            owner => owner,
+        };
+        pending_run_lane_references.push((id, owner, lane.clone()));
+    }
 
     let children: Vec<&Statement> = match statement {
         Statement::TaskGroup { statements, .. } => statements.iter().collect(),
@@ -793,6 +812,7 @@ fn index_statement_declaration(
                 routes,
                 run_lanes,
                 run_lanes_by_owner_name,
+                pending_run_lane_references,
             )
         })
         .collect();
@@ -1083,6 +1103,7 @@ pub(crate) fn statement_semantic_key(statement: &Statement) -> String {
         Statement::ComboPush { target, .. } => format!("combo-push:{target}"),
         Statement::ReturnIf { .. } => "return-if".into(),
         Statement::Exit { .. } => "exit".into(),
+        Statement::InvalidateLane { lane, .. } => format!("invalidate-lane:{lane}"),
         Statement::Run {
             kind,
             mode,

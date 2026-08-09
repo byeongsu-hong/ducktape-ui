@@ -397,6 +397,7 @@ fn automatic_routes(statement: &Statement) -> Vec<AutomaticRoute<'_>> {
         | Statement::ComboPush { .. }
         | Statement::ReturnIf { .. }
         | Statement::Exit { .. }
+        | Statement::InvalidateLane { .. }
         | Statement::Abort { .. }
         | Statement::DebugStart { .. }
         | Statement::DebugFinish { .. }
