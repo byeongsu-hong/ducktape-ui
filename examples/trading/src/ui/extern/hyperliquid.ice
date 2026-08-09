@@ -86,6 +86,7 @@ extern crate::hyperliquid
   pure book_label(price:f64, buy:bool) -> str
   pure position_label(held:Position) -> str
   pure interval_label(interval:str, shown:bool) -> str
+  pure finer_interval(interval:str, bars:i64) -> str
   pure page_label(page:str, shown:bool) -> str
   pure pane_label(pane:str, open:bool) -> str
   pure hit_open(hit:CandleHit) -> f64

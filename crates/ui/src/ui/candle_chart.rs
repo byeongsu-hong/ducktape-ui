@@ -27,7 +27,10 @@ use iced::window;
 use iced::{Color, Element, Length, Pixels, Point, Rectangle, Size};
 
 const DEFAULT_HEIGHT: f32 = 320.0;
-const DEFAULT_BARS: usize = 120;
+/// How many candles the chart opens showing. Public because it is also what a
+/// caller needs to know to decide whether a tape is worth opening on: a width
+/// carrying fewer bars than this opens on a plot that is mostly empty.
+pub const DEFAULT_BARS: usize = 120;
 const PRICE_AXIS_WIDTH: f32 = 64.0;
 const TIME_AXIS_HEIGHT: f32 = 22.0;
 const VOLUME_RATIO: f32 = 0.2;

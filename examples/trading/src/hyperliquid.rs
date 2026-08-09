@@ -2287,6 +2287,42 @@ pub fn interval_label(interval: String, shown: bool) -> String {
     format!("Show {interval} candles{state}")
 }
 
+/// The widths the chart offers, coarsest first, which is the order it opens
+/// them in. All six are quoted by both venues: Hyperliquid's `interval_secs`
+/// takes each one and Lighter's `RESOLUTIONS` lists all six among its eight,
+/// so one ladder serves the terminal whichever exchange it is reading.
+const WIDTHS: [&str; 6] = ["1d", "4h", "1h", "15m", "5m", "1m"];
+
+/// What a width has to carry before the chart is worth opening on it.
+///
+/// This is the chart's own window rather than a number chosen here: it opens
+/// showing its last `DEFAULT_BARS` candles and draws a 20- and 60-period
+/// average across them, so a width holding fewer than that opens on a plot
+/// that is mostly empty with a long average that never begins. A market listed
+/// last week has four daily bars and four hundred hourly ones, and the hourly
+/// chart is the one that shows it.
+const ENOUGH_BARS: i64 = ducktape_ui::ui::candle_chart::DEFAULT_BARS as i64;
+
+/// The next width down when this one is too thin to open on, and the width
+/// itself when it is not — which is also the answer at `1m`, where there is
+/// nothing finer to step to. A market with three bars at every width settles
+/// there and draws its three.
+///
+/// Only an automatic open walks this ladder. A width the reader pressed is
+/// theirs, and a chart that answered the press by showing a different width
+/// would be refusing it.
+pub fn finer_interval(interval: String, bars: i64) -> String {
+    if bars >= ENOUGH_BARS {
+        return interval;
+    }
+    let next = WIDTHS
+        .iter()
+        .position(|width| *width == interval)
+        .map(|at| at + 1)
+        .and_then(|at| WIDTHS.get(at));
+    next.map_or(interval, |width| (*width).to_owned())
+}
+
 /// A folded-away pane's toggle, by the same rule as the interval tabs: the name
 /// a reader hears is the act the button performs. It says "hide" while the pane
 /// is open because that is what pressing it does — a control that announced the

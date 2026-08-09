@@ -21,7 +21,10 @@ test trading_says_what_broke_without_spending_a_money_colour
   expect text "Hyperliquid unreachable"
   expect alarm.text_color == plain.text_color
   dispatch feed_failed(demo_feed_error())
-  dispatch candles_loaded(0)
+  // A full window, because that is what clearing the request's failure looks
+  // like: a load that answered no bars is a width the chart steps down from
+  // rather than a chart that arrived.
+  dispatch candles_loaded(120)
   expect text "Hyperliquid unreachable"
   expect dropped.text_color == plain.text_color
 

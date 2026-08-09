@@ -250,6 +250,11 @@ on pick_interval(next)
   // candles" over the chart while it re-read the bars it was already drawing.
   return if next == interval
   interval = next
+  // From here the width is the reader's. A market they open next may be too
+  // thin to fill it, and the chart draws what exists there rather than moving
+  // to a width they did not ask for: the step-down is how the app opens a
+  // chart it knows nothing about, not a second opinion on a press.
+  interval_picked = true
   hover = none
   status = "Loading candles"
   tape = tape_focus(tape, coin, next)
@@ -319,10 +324,25 @@ on symbols_loaded(rows)
 // and signals for history, the read has no window to ask about and answers
 // nothing older, and the backfill already in flight is what says the market
 // was never the exhausted one.
-on candles_loaded(_count)
+on candles_loaded(count)
   error = ""
   status = ""
   history_exhausted = false
+  // A chart opens on the widest width and walks down to one the market can
+  // fill. `finer_interval` answers the width itself once the window is full or
+  // once there is nothing finer left, so the walk is at most the five steps
+  // from a day to a minute and a market with three bars everywhere settles on
+  // the minute chart and draws its three. The tab follows because it is drawn
+  // from `interval`, so the width the reader sees lit is the width they got.
+  return if interval_picked
+  let finer = finer_interval(interval, count)
+  return if finer == interval
+  interval = finer
+  hover = none
+  status = "Loading candles"
+  tape = tape_focus(tape, coin, finer)
+  loading_history = false
+  run venue_candles(venue, tape, coin, finer) -> candles_loaded _ | failed _
 
 // An account read with no address to make it for answers nothing rather than
 // failing, so this is also how the app comes back to holding no account at all.
