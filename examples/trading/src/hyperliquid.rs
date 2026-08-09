@@ -1222,6 +1222,31 @@ fn parse_book(value: &Value) -> Book {
     }
 }
 
+/// Every agent key the venue currently lists as live for this account, by
+/// address, with the millisecond `validUntil` it assigned.
+///
+/// `extraAgents` lists *live* approvals only — read across 1,899 of them on 47
+/// accounts while `session.rs` was written, not one was already lapsed at the
+/// moment of reading — so an address missing from this answer is a key that is
+/// either unapproved or finished, and either way not one to sign with. The
+/// window is the exchange's to assign and ours to read back; the approval
+/// action has no field to ask for one.
+///
+/// An entry with no address is dropped rather than carried: the exchange 422s
+/// an approval naming `""`, so a listing containing one is a row this app has
+/// nothing to do with, and `session.rs` refuses to hold it anyway.
+pub async fn hl_agents(chain: Chain, address: String) -> Result<Vec<(String, i64)>, HlError> {
+    let listed = info(chain, json!({ "type": "extraAgents", "user": address })).await?;
+    Ok(listed
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|agent| (text(agent, "address"), value_i64(agent, "validUntil")))
+        .filter(|(address, _)| !address.is_empty())
+        .collect())
+}
+
 pub async fn hl_orders(chain: Chain, address: String) -> Result<Vec<Order>, HlError> {
     Ok(parse_orders(
         &info(chain, json!({ "type": "openOrders", "user": address })).await?,

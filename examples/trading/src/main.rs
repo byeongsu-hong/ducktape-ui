@@ -1,3 +1,4 @@
+mod custody;
 #[cfg(test)]
 mod frame_probe;
 mod hyperliquid;

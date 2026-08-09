@@ -317,11 +317,11 @@ to do, and Escape on the portfolio does not clear a box that is not there.
 
 Nothing is signed and nothing is sent, and the ticket says so where a submit
 button would be a heading: it opens by naming what it does and what it does
-not, rather than closing with a badge. The reason lives on the settings page,
-once. Sending would mean this app holding the key that signs an EIP-712 order,
-which is not a thing an example should ask for. The boundary is the
-interesting part: everything up to the signature is arithmetic worth having,
-and the signature is where a real client starts.
+not, rather than closing with a badge. What may be signed is now a real
+question with an answer — see [custody](#custody) — but nothing is wired to
+this ticket yet, and the settings page says exactly that rather than implying
+otherwise. The boundary is still the interesting part: everything up to the
+signature is arithmetic worth having.
 
 The one figure in that arithmetic that is not arithmetic is the maintenance
 requirement, and it belongs to the venue: Hyperliquid holds half the margin at
@@ -329,6 +329,87 @@ a market's maximum leverage, and another exchange holds something else. So the
 market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
+
+## Custody
+
+The app can hold one key and it is not the account's. An **agent key** is a
+separate keypair the account's own wallet approved at the exchange: it places
+and cancels orders, it cannot withdraw, and the exchange stops honouring it on
+a date the exchange chose. Losing it costs an approval, not a balance. That
+property is the whole reason there is a key here at all.
+
+On macOS its secret lives in the keychain behind Touch ID — one guarded
+generic-password item, biometry or passcode, this device only, and not in this
+process or in a file. Unlocking is that prompt. On a build without a keychain
+there is nowhere to keep a secret and nothing to unlock, and the panel says so
+rather than offering a prompt that can only refuse. The keychain item is filed
+under the deployment *and* the address, because a key approved on mainnet is
+unknown on testnet and a secret read back under the wrong one is a signer the
+venue has never heard of.
+
+Three acts, and the app cannot perform the middle one:
+
+1. **NEW KEY** generates an agent key, stores the secret, and prints the
+   address.
+2. **Approve** — done by the account's own wallet, at the exchange, somewhere
+   that is not this app. An `approveAgent` is signed by the master wallet,
+   which is the one key this design exists to avoid holding.
+3. **UNLOCK** raises Touch ID, reads the secret back, asks the venue which of
+   this account's keys are live, and a listing naming ours is what a tradeable
+   session is made of.
+
+The middle step being somebody else's is the property, not a gap.
+
+### What the screen says, and what it must never blur
+
+The header carries a badge on every page, beside the equity strip rather than
+instead of it: the two answer different questions, and they disagree the moment
+there is a key to hold — an unlocked session over an address with no account,
+and a read-only session over a funded one, are both ordinary. It reads
+`UNLOCKED` only while the session may actually trade, and it takes the clock to
+say so, because a window closes on the exchange's schedule rather than on an
+event: a badge read off the state alone would keep saying yes through every
+millisecond between expiry and the next tick, and forever if the ticks stop —
+which is exactly when a laptop that slept through an expiry starts asking.
+`KEY EXPIRED` is its own word, because a reader whose key lapsed has something
+to renew and a reader who never had one has something to make.
+
+A **refusal and a fault are not the same event** and the panel must not draw
+them alike. Cancelling Touch ID released nothing, is nobody's mistake, and
+leaves the button live with a sentence beside it. A keychain that failed, or a
+build that has none, is not a thing to ask again — the keystore is chosen at
+compile time, so a second prompt fetches the same refusal — so the button goes
+dead and states the platform's own words. `session.rs` draws that line in a
+pure function outside every `cfg`, which is why a Linux machine can test it;
+this seam's job is not to blur it on the way to the screen.
+
+A network this app cannot sign for is refused before any sheet, by name. On
+Lighter there is no write path at all — `lighter_sign.rs` signs the token that
+venue's gated *reads* want and says in its own header that nothing in it can
+place an order or move funds — so `Network.chain` is `None` there and offering
+to hold a key would be the app claiming a capability it does not have.
+
+Changing network or address forgets the key. Carried across either, it is a
+session claiming the app may trade somewhere the key is unknown, and the first
+thing that would say otherwise is a rejected order.
+
+### What needs a Mac
+
+Everything decidable without a Keychain is decided in CI, on Linux: the state
+machine exhaustively, this seam's projections and both refusals, and the panel
+in every state a preset can put it in. None of it touches a keychain, because a
+build without one answers `Unavailable` — a state with a test rather than a gap.
+
+What no runner reaches is the sheet. `security-framework` is a macOS-only
+dependency, so the macOS jobs compile that path and nothing executes it: a CI
+runner has no window server to raise a Touch ID sheet in front of and no
+enrolled finger to answer it with. The nine experiments `session.rs` lists on
+its `impl Keystore` are still owed, and `custody.rs` adds four that only exist
+now that something calls it — one sheet per unlock rather than two, a cancelled
+sheet leaving a live button, the full enrol-approve-unlock round trip, and a
+re-enrolment keeping the secret it replaces when the add fails. Until a person
+on a Mac reports those, the honest claim is that this seam's logic is tested and
+its platform half is compiled, reviewed and unrun.
 
 ## Fixtures are read as evidence
 
