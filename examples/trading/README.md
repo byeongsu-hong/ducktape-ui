@@ -622,8 +622,8 @@ run there.
 | --- | --- | --- |
 | Market list, with the day's figures and the margin rule | yes | yes |
 | Mid prices, book, public tape, market context | yes, on the socket | yes, on the socket |
-| Candle history | yes — 500 bars on open, 500 more per pan back | **no** |
-| Live candles | yes | yes, one bar per interval, from the moment you open the chart |
+| Candle history | yes — 500 bars on open, 500 more per pan back | yes — the same, at `GET /candles` |
+| Live candles | yes | yes |
 | Account equity, margin and positions | yes | yes, on the 5s poll |
 | Resting orders | yes | **no** |
 | Fills, as they print | yes, on the socket | **no** |
@@ -638,13 +638,6 @@ empty list reads as *nothing has happened* and on Lighter nothing *can* happen:
   all this app asks a reader for. Both panels say so where their rows would be,
   and the settings page says it once more beside the venue's name. Connecting
   an address would not change it, so the sentence does not offer that.
-- **Candle history.** `candle/<id>/<res>` answers a subscription with exactly
-  one bar — the one now forming — on all eight resolutions the venue quotes, and
-  REST `/candlesticks` is 403 from CloudFront. So a chart opened on Lighter
-  starts empty and gains a bar per interval, and the line above the interval
-  tabs says that rather than leaving a one-bar chart to read as a market that
-  has not traded. Nothing is folded out of the public tape to stand in for the
-  bars the venue will not send.
 - **Liquidation prints.** Lighter carries them in a second array on the trade
   channel, keyed to merge by trade id, and the copy that arrives with the
   subscription is hours stale — so including them would put old prints on screen

@@ -85,9 +85,8 @@ preset held
     quote = price_ticket("64,000.00", "3.00", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
 
 // The terminal as the other venue actually leaves it, which is the whole point
-// of having the fixture: markets, a book, a tape and an account, and nothing
-// in the three panels Lighter does not serve. No candles either — the tape is
-// the state default, empty, because Lighter publishes no history to fill it.
+// of having the fixture: markets, candles, a book, a tape and an account, and
+// nothing in the two panels Lighter does not serve.
 //
 // Every panel here is a `*_lighter` fixture, and every one of those is a
 // captured Lighter response through the parser the live read uses. A Lighter
@@ -108,6 +107,7 @@ preset lighter
     positions = demo_positions_lighter()
     account = some(demo_account_lighter())
     book = some(demo_book_lighter())
+    tape = demo_candles_for("BTC", 64970.0)
     tape_prints = demo_tape_lighter()
     live = true
     ticket_price = "64,970.00"
