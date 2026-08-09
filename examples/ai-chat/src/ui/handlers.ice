@@ -65,6 +65,9 @@ on reset
 on toggle_row(id)
   entries = toggle_row(session, id)
 
+on choose_model(name)
+  model = some(set_model(session, name))
+
 on suggest(text)
   draft = text
   task widget focus #app/composer/draft
@@ -98,7 +101,7 @@ on code_ready(next)
 
 on signed_in_as(email)
   account = email
-  model = codex_model()
+  model = some(codex_model())
   signed = true
   signing_in = false
   code = ""

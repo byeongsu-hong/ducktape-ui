@@ -75,3 +75,13 @@ test sending_a_message_runs_a_whole_turn
   expect text "https://raw.githubusercontent.com/iced-rs/iced/master/CHANGELOG.md"
   expect text "22,875 in · 321 out · 257 reasoning"
   capture chatted
+
+// The model in force is on screen and can be changed there. A picker that
+// shows nothing, or shows something other than what will answer, is worse than
+// no picker at all.
+test the_header_offers_the_model_that_will_answer
+  preset conversation
+  viewport 920 800
+  target picker = #app/header/model
+  expect text "gpt-5.6-sol" within picker
+  expect picker.visible

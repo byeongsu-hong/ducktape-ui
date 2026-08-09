@@ -184,6 +184,9 @@ struct Transcript {
     input: Vec<Value>,
     entries: Vec<Entry>,
     dark: bool,
+    /// Which model answers. Held here rather than read per turn, so choosing
+    /// one applies to this chat and not to whatever the CLI is configured for.
+    model: String,
     /// Where the screen is listening while a turn runs, if it is.
     watcher: Option<Sender<Vec<Entry>>>,
 }
@@ -231,8 +234,44 @@ impl std::fmt::Debug for Session {
 
 pub fn codex_session() -> Session {
     Session {
-        state: Arc::new(Mutex::new(Transcript::default())),
+        state: Arc::new(Mutex::new(Transcript {
+            model: codex_model(),
+            ..Transcript::default()
+        })),
     }
+}
+
+/// The models Codex itself knows this account can use.
+///
+/// Read from the catalogue the CLI keeps, so the list is the one `codex` would
+/// offer rather than one this app invented. The model in force is always in it,
+/// even when the catalogue has not been written yet — a picker that cannot show
+/// the current selection is worse than no picker.
+pub fn codex_models() -> Vec<String> {
+    let mut models: Vec<String> = std::fs::read_to_string(codex_home().join("models_cache.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|cache| {
+            Some(
+                cache["models"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(|model| model["id"].as_str().map(str::to_owned))
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
+    let current = codex_model();
+    if !models.contains(&current) {
+        models.insert(0, current);
+    }
+    models
+}
+
+/// Answer as this model from the next turn on.
+pub fn set_model(session: Session, model: String) -> String {
+    session.lock().model = model.clone();
+    model
 }
 
 /// Draw the prompt the moment it is typed, before the socket is opened.
@@ -318,9 +357,12 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
         return offline(session, chunks);
     }
     let auth = read_auth()?;
-    let input = session.lock().input.clone();
+    let (input, model) = {
+        let state = session.lock();
+        (state.input.clone(), state.model.clone())
+    };
     let body = json!({
-        "model": codex_model(),
+        "model": model,
         "instructions": INSTRUCTIONS,
         "input": input,
         // Hosted, so the backend runs the search itself. Codex's own shell and
@@ -1075,6 +1117,38 @@ mod tests {
                 "No heading here.\n\nJust prose.".to_owned()
             ),
             "an unheaded summary keeps all of itself"
+        );
+    }
+
+    /// A picker that cannot show what is currently selected is worse than no
+    /// picker, so the model in force is in the list even when the CLI has
+    /// written no catalogue for it to come from.
+    #[test]
+    fn the_model_in_force_is_always_offered() {
+        let models = codex_models();
+        assert!(
+            models.contains(&codex_model()),
+            "the current model must be selectable: {models:?}"
+        );
+    }
+
+    /// Choosing a model has to change what the next turn asks for, and it
+    /// belongs to this chat rather than to whatever the CLI is configured for.
+    #[test]
+    fn choosing_a_model_changes_what_the_next_turn_asks_for() {
+        let session = codex_session();
+        assert_eq!(
+            session.lock().model,
+            codex_model(),
+            "a new chat starts on the CLI's model"
+        );
+
+        set_model(session.clone(), "gpt-5.4-mini".to_owned());
+        assert_eq!(session.lock().model, "gpt-5.4-mini");
+        assert_eq!(
+            codex_model(),
+            codex_model(),
+            "and the CLI's own configuration is untouched"
         );
     }
 

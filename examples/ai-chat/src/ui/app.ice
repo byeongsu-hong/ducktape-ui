@@ -26,7 +26,8 @@ font code family="Monoplex KR"
 state
   session:Session = codex_session()
   account:str = codex_account()
-  model:str = codex_model()
+  model:str? = some(codex_model())
+  models:[str] = codex_models()
   entries:[Entry] = []
   live:markdown = ""
   live_thinking:markdown = ""
@@ -50,7 +51,8 @@ preset conversation
   state
     signed = true
     account = "you@example.com"
-    model = "gpt-5.6-sol"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
     session = sample_session(false)
     entries = sample_entries(false)
 
@@ -58,7 +60,8 @@ preset conversation_night
   state
     signed = true
     account = "you@example.com"
-    model = "gpt-5.6-sol"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
     session = sample_session(true)
     entries = sample_entries(true)
     dark = true
@@ -68,7 +71,8 @@ preset streaming
   state
     signed = true
     account = "you@example.com"
-    model = "gpt-5.6-sol"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
     session = sample_session(false)
     entries = sample_entries(false)
     busy = true
@@ -82,18 +86,21 @@ preset signed_in
   state
     signed = true
     account = "you@example.com"
-    model = "gpt-5.6-sol"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
 
 preset signed_out
   state
     account = ""
-    model = "gpt-5.6-sol"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
     signed = false
 
 preset signing_in
   state
     account = ""
-    model = "gpt-5.6-sol"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
     signed = false
     signing_in = true
     code = "I7DK-7UOAM"
@@ -137,9 +144,16 @@ view
           gap=12.0
           align=center
         Avatar.Agent initials="C"
-        col gap=2.0
+        col gap=1.0
           text "Codex" @pane_header
-          text model @meta
+          pick models model #model -> choose_model _
+            with
+              p=2.0
+              text-size=11.0
+              menu-h=220.0
+            active text=muted handle=muted bg=surface border=surface r=6.0
+            opened-hovered text=fg handle=fg bg=accent border=border r=6.0
+            menu text=fg selected-text=primary_fg selected-bg=primary bg=surface border=border r=8.0 shadow=shadow_popover shadow-y=4.0
         space w=fill
         if !empty(account)
           Typography.Machine content=account

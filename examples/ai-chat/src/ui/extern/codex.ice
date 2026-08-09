@@ -21,6 +21,8 @@ extern crate::codex
   sync signed_in() -> bool
   sync sign_out() -> bool
   sync codex_model() -> str
+  sync codex_models() -> [str]
+  sync set_model(session:Session, model:str) -> str
   sync push_user(session:Session, text:str) -> [Entry]
   sync set_palette(session:Session, dark:bool) -> [Entry]
   sync toggle_row(session:Session, id:i64) -> [Entry]
