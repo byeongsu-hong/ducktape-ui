@@ -76,12 +76,13 @@ test sending_a_message_runs_a_whole_turn
   expect text "22,875 in · 321 out · 257 reasoning"
   capture chatted
 
-// The model in force is on screen and can be changed there. A picker that
-// shows nothing, or shows something other than what will answer, is worse than
-// no picker at all.
-test the_header_offers_the_model_that_will_answer
+// What will answer, and how hard it will think, are both on screen. A picker
+// showing something other than what the next turn asks for is worse than no
+// picker at all.
+test the_header_shows_what_will_answer_and_how_hard
   preset conversation
   viewport 920 800
-  target picker = #app/header/model
-  expect text "gpt-5.6-sol" within picker
-  expect picker.visible
+  target model_chip = #app/header/model/root
+  target effort_chip = #app/header/effort/root
+  expect text "gpt-5.6-sol" within model_chip
+  expect text "xhigh" within effort_chip

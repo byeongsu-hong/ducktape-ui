@@ -28,6 +28,8 @@ state
   account:str = codex_account()
   model:str? = some(codex_model())
   models:[str] = codex_models()
+  effort:str? = some(codex_effort())
+  efforts:[str] = codex_efforts(codex_model())
   entries:[Entry] = []
   live:markdown = ""
   live_thinking:markdown = ""
@@ -53,6 +55,8 @@ preset conversation
     account = "you@example.com"
     model = some("gpt-5.6-sol")
     models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
+    effort = some("xhigh")
+    efforts = ["low", "medium", "high", "xhigh"]
     session = sample_session(false)
     entries = sample_entries(false)
 
@@ -62,6 +66,8 @@ preset conversation_night
     account = "you@example.com"
     model = some("gpt-5.6-sol")
     models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
+    effort = some("xhigh")
+    efforts = ["low", "medium", "high", "xhigh"]
     session = sample_session(true)
     entries = sample_entries(true)
     dark = true
@@ -73,6 +79,8 @@ preset streaming
     account = "you@example.com"
     model = some("gpt-5.6-sol")
     models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
+    effort = some("xhigh")
+    efforts = ["low", "medium", "high", "xhigh"]
     session = sample_session(false)
     entries = sample_entries(false)
     busy = true
@@ -88,12 +96,16 @@ preset signed_in
     account = "you@example.com"
     model = some("gpt-5.6-sol")
     models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
+    effort = some("xhigh")
+    efforts = ["low", "medium", "high", "xhigh"]
 
 preset signed_out
   state
     account = ""
     model = some("gpt-5.6-sol")
     models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
+    effort = some("xhigh")
+    efforts = ["low", "medium", "high", "xhigh"]
     signed = false
 
 preset signing_in
@@ -101,6 +113,8 @@ preset signing_in
     account = ""
     model = some("gpt-5.6-sol")
     models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
+    effort = some("xhigh")
+    efforts = ["low", "medium", "high", "xhigh"]
     signed = false
     signing_in = true
     code = "I7DK-7UOAM"
@@ -146,14 +160,9 @@ view
         Avatar.Agent initials="C"
         col gap=1.0
           text "Codex" @pane_header
-          pick models model #model -> choose_model _
-            with
-              p=2.0
-              text-size=11.0
-              menu-h=220.0
-            active text=muted handle=muted bg=surface border=surface r=6.0
-            opened-hovered text=fg handle=fg bg=accent border=border r=6.0
-            menu text=fg selected-text=primary_fg selected-bg=primary bg=surface border=border r=8.0 shadow=shadow_popover shadow-y=4.0
+          row gap=6.0 align=center
+            Chip #model options=models selected=model -> choose_model _
+            Chip #effort options=efforts selected=effort -> choose_effort _
         space w=fill
         if !empty(account)
           Typography.Machine content=account

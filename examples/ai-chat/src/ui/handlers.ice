@@ -52,7 +52,7 @@ on failed(cause)
   error = cause.message
 
 on reset
-  session = codex_session()
+  session = new_chat(session)
   entries = []
   live = markdown("")
   live_thinking = markdown("")
@@ -67,6 +67,11 @@ on toggle_row(id)
 
 on choose_model(name)
   model = some(set_model(session, name))
+  efforts = codex_efforts(name)
+  effort = some(session_effort(session))
+
+on choose_effort(level)
+  effort = some(set_effort(session, level))
 
 on suggest(text)
   draft = text

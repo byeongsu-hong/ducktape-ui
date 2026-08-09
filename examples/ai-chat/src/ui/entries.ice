@@ -105,3 +105,16 @@ component Usage(detail:str)
   row #root w=fill
     space w=fill h=1.0
     Typography.Machine content=detail
+
+// A quiet dropdown for the header: it reads as a subtitle until it is used.
+// The default pick styling puts a filled highlight behind the selection, which
+// is far too loud for something sitting under the app's own name.
+component Chip(options:[str], selected:str?) -> str
+  pick options selected #root -> emit(_)
+    with
+      p=2.0
+      text-size=11.0
+      menu-h=220.0
+    active text=muted handle=muted bg=surface border=surface r=6.0
+    opened-hovered text=fg handle=fg bg=accent border=border r=6.0
+    menu text=fg selected-text=primary_fg selected-bg=primary bg=surface border=border r=8.0 shadow=shadow_popover shadow-y=4.0

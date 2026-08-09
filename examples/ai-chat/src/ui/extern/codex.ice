@@ -23,6 +23,11 @@ extern crate::codex
   sync codex_model() -> str
   sync codex_models() -> [str]
   sync set_model(session:Session, model:str) -> str
+  sync codex_effort() -> str
+  sync codex_efforts(model:str) -> [str]
+  sync set_effort(session:Session, effort:str) -> str
+  sync session_effort(session:Session) -> str
+  sync new_chat(session:Session) -> Session
   sync push_user(session:Session, text:str) -> [Entry]
   sync set_palette(session:Session, dark:bool) -> [Entry]
   sync toggle_row(session:Session, id:i64) -> [Entry]

@@ -187,6 +187,9 @@ struct Transcript {
     /// Which model answers. Held here rather than read per turn, so choosing
     /// one applies to this chat and not to whatever the CLI is configured for.
     model: String,
+    /// How hard it thinks first. Not every model offers the same levels, so
+    /// this is reconciled against the model whenever the model changes.
+    effort: String,
     /// Where the screen is listening while a turn runs, if it is.
     watcher: Option<Sender<Vec<Entry>>>,
 }
@@ -236,6 +239,7 @@ pub fn codex_session() -> Session {
     Session {
         state: Arc::new(Mutex::new(Transcript {
             model: codex_model(),
+            effort: codex_effort(),
             ..Transcript::default()
         })),
     }
@@ -248,19 +252,7 @@ pub fn codex_session() -> Session {
 /// even when the catalogue has not been written yet — a picker that cannot show
 /// the current selection is worse than no picker.
 pub fn codex_models() -> Vec<String> {
-    let mut models: Vec<String> = std::fs::read_to_string(codex_home().join("models_cache.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .and_then(|cache| {
-            Some(
-                cache["models"]
-                    .as_array()?
-                    .iter()
-                    .filter_map(|model| model["id"].as_str().map(str::to_owned))
-                    .collect(),
-            )
-        })
-        .unwrap_or_default();
+    let mut models: Vec<String> = catalogue().iter().filter_map(slug_of).collect();
     let current = codex_model();
     if !models.contains(&current) {
         models.insert(0, current);
@@ -268,10 +260,112 @@ pub fn codex_models() -> Vec<String> {
     models
 }
 
+/// The whole model catalogue the CLI keeps.
+fn catalogue() -> Vec<Value> {
+    std::fs::read_to_string(codex_home().join("models_cache.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|cache| Some(cache["models"].as_array()?.clone()))
+        .unwrap_or_default()
+}
+
+/// The catalogue names a model by `slug`; `id` is accepted in case it ever
+/// does otherwise.
+fn slug_of(model: &Value) -> Option<String> {
+    model["slug"]
+        .as_str()
+        .or_else(|| model["id"].as_str())
+        .map(str::to_owned)
+}
+
+fn entry_for(model: &str) -> Option<Value> {
+    catalogue()
+        .into_iter()
+        .find(|item| slug_of(item).as_deref() == Some(model))
+}
+
+/// The levels this model offers, as the catalogue declares them.
+///
+/// They differ by model, which is why the picker is rebuilt whenever the model
+/// changes rather than offering one fixed list.
+pub fn codex_efforts(model: String) -> Vec<String> {
+    let declared: Vec<String> = entry_for(&model)
+        .and_then(|item| {
+            Some(
+                item["supported_reasoning_levels"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(|level| level["effort"].as_str().map(str::to_owned))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or_default();
+    if declared.is_empty() {
+        return vec!["low".into(), "medium".into(), "high".into()];
+    }
+    declared
+}
+
+/// How hard the CLI is configured to think, or what this model defaults to.
+pub fn codex_effort() -> String {
+    let configured = config_value("model_reasoning_effort");
+    let model = codex_model();
+    let offered = codex_efforts(model.clone());
+    if offered.contains(&configured) {
+        return configured;
+    }
+    entry_for(&model)
+        .and_then(|item| item["default_reasoning_level"].as_str().map(str::to_owned))
+        .filter(|level| offered.contains(level))
+        .or_else(|| offered.first().cloned())
+        .unwrap_or_else(|| "medium".to_owned())
+}
+
 /// Answer as this model from the next turn on.
+///
+/// The effort comes along: a level the new model does not offer would be
+/// rejected by the backend, so it falls back to that model's own default.
 pub fn set_model(session: Session, model: String) -> String {
-    session.lock().model = model.clone();
+    let offered = codex_efforts(model.clone());
+    let mut state = session.lock();
+    state.model = model.clone();
+    if !offered.contains(&state.effort) {
+        state.effort = entry_for(&model)
+            .and_then(|item| item["default_reasoning_level"].as_str().map(str::to_owned))
+            .filter(|level| offered.contains(level))
+            .or_else(|| offered.first().cloned())
+            .unwrap_or_else(|| "medium".to_owned());
+    }
     model
+}
+
+/// A fresh chat that keeps the model and effort the last one was using.
+///
+/// Starting over should clear what was said, not undo a choice about how to
+/// answer.
+pub fn new_chat(session: Session) -> Session {
+    let (model, effort) = {
+        let state = session.lock();
+        (state.model.clone(), state.effort.clone())
+    };
+    let next = codex_session();
+    {
+        let mut state = next.lock();
+        state.model = model;
+        state.effort = effort;
+    }
+    next
+}
+
+/// Think this hard from the next turn on.
+pub fn set_effort(session: Session, effort: String) -> String {
+    session.lock().effort = effort.clone();
+    effort
+}
+
+/// What the session settled on, after a model change reconciled it.
+pub fn session_effort(session: Session) -> String {
+    session.lock().effort.clone()
 }
 
 /// Draw the prompt the moment it is typed, before the socket is opened.
@@ -357,9 +451,13 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
         return offline(session, chunks);
     }
     let auth = read_auth()?;
-    let (input, model) = {
+    let (input, model, effort) = {
         let state = session.lock();
-        (state.input.clone(), state.model.clone())
+        (
+            state.input.clone(),
+            state.model.clone(),
+            state.effort.clone(),
+        )
     };
     let body = json!({
         "model": model,
@@ -374,7 +472,9 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
         "parallel_tool_calls": false,
         "store": false,
         "stream": true,
-        "reasoning": {"effort": "medium", "summary": "detailed"},
+        // The summary is asked for whatever the model defaults to, because
+        // drawing the reasoning is half of what this window is for.
+        "reasoning": {"effort": effort, "summary": "detailed"},
         "include": ["reasoning.encrypted_content"],
     });
 
@@ -815,16 +915,27 @@ pub fn sign_out() -> bool {
 /// One scan for a top-level `model` key rather than a TOML parse: a model named
 /// only inside a `[profiles.*]` table is missed and the default stands.
 pub fn codex_model() -> String {
+    let model = config_value("model");
+    if model.is_empty() {
+        return DEFAULT_MODEL.to_owned();
+    }
+    model
+}
+
+/// One top-level key out of the CLI's config, or empty.
+///
+/// A scan rather than a TOML parse: a key nested inside a `[profiles.*]` table
+/// is missed and the default stands.
+fn config_value(key: &str) -> String {
     std::fs::read_to_string(codex_home().join("config.toml"))
         .ok()
         .and_then(|text| {
             text.lines().find_map(|line| {
-                let (key, value) = line.split_once('=')?;
-                (key.trim() == "model").then(|| value.trim().trim_matches('"').to_owned())
+                let (found, value) = line.split_once('=')?;
+                (found.trim() == key).then(|| value.trim().trim_matches('"').to_owned())
             })
         })
-        .filter(|model| !model.is_empty())
-        .unwrap_or_else(|| DEFAULT_MODEL.to_owned())
+        .unwrap_or_default()
 }
 
 /// A settled turn with no network behind it.
@@ -1150,6 +1261,54 @@ mod tests {
             codex_model(),
             "and the CLI's own configuration is untouched"
         );
+    }
+
+    /// The catalogue is only useful if it is actually read. It names models by
+    /// `slug`, and reading the wrong key leaves a picker with one entry in it
+    /// — which looks like a working picker and is not one.
+    #[test]
+    #[ignore = "reads the CLI's own catalogue, which a machine may not have"]
+    fn the_catalogue_yields_more_than_the_current_model() {
+        let models = codex_models();
+        eprintln!("models: {models:?}");
+        eprintln!(
+            "efforts for {}: {:?}",
+            codex_model(),
+            codex_efforts(codex_model())
+        );
+        eprintln!("effort in force: {}", codex_effort());
+        assert!(models.len() > 1, "the catalogue was not read: {models:?}");
+    }
+
+    /// Levels differ by model, and the backend rejects one the model does not
+    /// offer. Changing model must therefore carry the effort with it rather
+    /// than leave a setting that will fail on the next turn.
+    #[test]
+    fn an_effort_the_new_model_does_not_offer_is_replaced() {
+        let session = codex_session();
+        set_effort(session.clone(), "ultra".to_owned());
+
+        // A model whose catalogue entry is unknown offers the plain three.
+        set_model(session.clone(), "a-model-no-catalogue-knows".to_owned());
+        let settled = session_effort(session.clone());
+        assert!(
+            codex_efforts("a-model-no-catalogue-knows".to_owned()).contains(&settled),
+            "the effort must be one the model offers, got {settled:?}"
+        );
+        assert_ne!(settled, "ultra", "the unsupported level must not survive");
+    }
+
+    /// Starting over clears what was said, not a choice about how to answer.
+    #[test]
+    fn a_new_chat_keeps_the_model_and_effort() {
+        let session = codex_session();
+        set_model(session.clone(), "gpt-5.4-mini".to_owned());
+        set_effort(session.clone(), "low".to_owned());
+
+        let next = new_chat(session);
+        assert_eq!(next.lock().model, "gpt-5.4-mini");
+        assert_eq!(session_effort(next.clone()), "low");
+        assert!(next.lock().entries.is_empty(), "but the transcript is gone");
     }
 
     /// A refusal is the only place a cause is stated, so it has to survive the

@@ -41,10 +41,15 @@ An item this build does not model still becomes a row rather than being
 dropped, because a chat window that silently swallows part of a turn is
 misreporting it.
 
-The model is picked in the header, from the catalogue the CLI keeps — so the
-list is the one `codex` would offer rather than one this app invented, and the
-model in force is always in it. Choosing one applies to this chat from the next
-turn; the CLI's own configuration is left alone.
+The model and how hard it thinks are both picked in the header, from the
+catalogue the CLI keeps — so the lists are the ones `codex` would offer rather
+than ones this app invented, and what is in force is always in them. Levels
+differ by model, so changing the model carries the effort with it: a level the
+new model does not offer would be rejected on the next turn, and is replaced by
+that model's own default.
+
+Both belong to the chat, not the machine. They apply from the next turn, they
+survive `New chat`, and `~/.codex/config.toml` is only ever read.
 
 Clicking a link copies it; which browser you wanted is not this window's call.
 `Night`/`Day` switches palettes, and settled rows follow.
