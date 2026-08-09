@@ -86,3 +86,17 @@ test trading_a_new_market_opens_at_its_own_price
   expect ticket_price == "148.620"
   dispatch pick_symbol("kPEPE")
   expect ticket_price == "0.008421"
+
+// A rail row is three columns and a button. Announced by its ticker alone it
+// asked a reader who cannot see the two figures beside it to choose a market
+// blind, which is the one thing the rail is for. It names what the columns say.
+test trading_a_market_row_announces_the_figures_beside_its_name
+  preset held
+  viewport 1660 820
+  target app = #app
+  target markets = app/trade/markets
+  target listed = markets/market-list
+  target bitcoin = listed/market("BTC")/row
+  target ether = listed/market("ETH")/row
+  expect a11y bitcoin name "BTC at 64,000.00, +1.25% today"
+  expect a11y ether name "ETH at 3,540.00, +1.14% today"
