@@ -856,6 +856,7 @@ fn button_face(
         || surface.shadow_y.is_some()
         || surface.shadow_blur.is_some()
         || surface.pixel_snap.is_some()
+        || surface.background_alpha.is_some()
     {
         return None;
     }
@@ -937,7 +938,9 @@ fn input_styles_are_empty(styles: &ResolvedInputStyleSet) -> bool {
 }
 
 fn surface_is_plain_background(surface: &ResolvedContainerSurface) -> bool {
-    surface.text_color.is_none()
+    // A computed opacity is per-frame Rust; `ColorRef` holds a constant.
+    surface.background_alpha.is_none()
+        && surface.text_color.is_none()
         && surface.border_color.is_none()
         && surface.border_width.is_none()
         && surface.shadow_color.is_none()

@@ -1,0 +1,2 @@
+E103
+animation state `fade` needs `lifetime mounted`, so its motion starts when the instance appears and is dropped when it leaves

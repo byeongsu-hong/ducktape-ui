@@ -1,0 +1,1 @@
+a computed surface opacity is only accepted on a plain surface background

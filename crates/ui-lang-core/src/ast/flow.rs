@@ -17,6 +17,11 @@ pub struct AnimationOptions {
     pub repeat: Option<u32>,
     pub repeat_forever: bool,
     pub auto_reverse: bool,
+    /// The value the animation holds the instant it comes into being; it then
+    /// travels to the declared one. This is what lets an instance materialized
+    /// by a `for` fade in without an assignment: there is no event to assign
+    /// on, so the transition has to be part of the declaration.
+    pub from: Option<AnimationStart>,
 }
 
 #[derive(Clone, Debug)]
