@@ -31,30 +31,42 @@ component Prompt(body:str)
 // the row itself changes, and cannot see state held anywhere else.
 component Reasoning(row_id:i64, title:str, body:str, open:bool) -> i64
   col #root w=fill gap=7.0
-    button #toggle -> emit(row_id)
-      with
-        label=title
-        p=0.0
-        @ghost_action
+    // A summary is often nothing but its own bold heading. There is no fold
+    // to offer then, and a toggle that opens an empty box is a lie about
+    // there being more to read.
+    if empty(body)
       row
         with
           w=fill
           gap=8.0
           align=center
-        if open
-          text "▾" size=11.0 @text-muted
-        if !open
-          text "▸" size=11.0 @text-muted
+        text "·" size=11.0 @text-muted
         text title @field_label
-    if open
-      box #body
+    if !empty(body)
+      button #toggle -> emit(row_id)
         with
-          w=fill
-          px=15.0
-          py=12.0
-          bg=muted_bg
-          r=10.0
-        text body wrap=word @caption
+          label=title
+          p=0.0
+          @ghost_action
+        row
+          with
+            w=fill
+            gap=8.0
+            align=center
+          if open
+            text "▾" size=11.0 @text-muted
+          if !open
+            text "▸" size=11.0 @text-muted
+          text title @field_label
+      if open
+        box #body
+          with
+            w=fill
+            px=15.0
+            py=12.0
+            bg=muted_bg
+            r=10.0
+          text body wrap=word @caption
 
 // A tool call: what it was, what it was given, and whether it is still going.
 // The mark on the left is the state — a turn in progress and a turn that has

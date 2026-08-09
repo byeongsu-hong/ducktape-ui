@@ -932,6 +932,34 @@ mod tests {
         );
     }
 
+    /// A summary states its subject on a bold first line, and often says
+    /// nothing else. The heading becomes the row's title either way, and a
+    /// heading-only summary must leave no body — the screen offers a fold only
+    /// when there is something folded away.
+    #[test]
+    fn a_reasoning_summary_gives_up_its_heading() {
+        assert_eq!(
+            headed("**Checking the crate**\n\nIt could have moved."),
+            (
+                "Checking the crate".to_owned(),
+                "It could have moved.".to_owned()
+            )
+        );
+        assert_eq!(
+            headed("**Verifying the spelling**"),
+            ("Verifying the spelling".to_owned(), String::new()),
+            "a heading-only summary has no body to fold"
+        );
+        assert_eq!(
+            headed("No heading here.\n\nJust prose."),
+            (
+                "Thought process".to_owned(),
+                "No heading here.\n\nJust prose.".to_owned()
+            ),
+            "an unheaded summary keeps all of itself"
+        );
+    }
+
     /// A refusal is the only place a cause is stated, so it has to survive the
     /// shapes the backend states it in.
     #[test]
