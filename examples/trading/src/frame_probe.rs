@@ -99,6 +99,7 @@ fn symbol_rows(count: usize, coin: &str) -> Vec<SymbolRow> {
                 maintenance: 1.0 / 80.0,
                 size_decimals: 2,
                 selected: index == 0,
+                ..Default::default()
             }
         })
         .collect()
@@ -1092,6 +1093,13 @@ fn markets_stay_memoized_performance_contract() {
         ("prev", |row| row.prev += 0.5),
         ("maintenance", |row| row.maintenance += 0.5),
         ("size_decimals", |row| row.size_decimals += 1),
+        // The group the row is listed under, which the rail heads it with and
+        // reads out beside its ticker. `heading` moves with it — the
+        // derivation sets that the way it sets `selected` — so this move
+        // covers both, and a `Hash` blind to either draws a header over the
+        // wrong row or none at all.
+        ("category", |row| row.category.push('X')),
+        ("collateral", |row| row.collateral.push('X')),
     ];
     for (field, move_it) in moves {
         move_it(&mut driver.state_mut().symbols[0]);

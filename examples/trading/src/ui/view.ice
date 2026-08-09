@@ -351,9 +351,32 @@ view
                                       @text-faint
                               for row in visible
                                 lazy row as market
-                                  MarketRow market=market #market(market.name)
-                                    events
-                                      pick -> pick_symbol _
+                                  col w=fill
+                                    // Inside the memo boundary, not above it:
+                                    // a row's heading is part of the row's own
+                                    // hash, so the header a group opens with
+                                    // is cached and rebuilt on exactly the
+                                    // beats its row is.
+                                    if market.heading
+                                      row
+                                        with
+                                          w=fill
+                                          pl=13.0
+                                          pr=14.0
+                                          pt=10.0
+                                          pb=4.0
+                                          gap=8.0
+                                          align=center
+                                        Label value=market.category
+                                        space w=fill
+                                        text group_note(market)
+                                          with
+                                            size=9.0
+                                            tracking=1.1
+                                            @text-faint
+                                    MarketRow market=market #market(market.name)
+                                      events
+                                        pick -> pick_symbol _
                       rule vertical thickness=1.0 color=edge
                     col w=fill h=fill
                       box #chart-bar
@@ -1138,7 +1161,7 @@ view
                           row w=fill align=center
                             Label value="MARGIN REQUIRED"
                             space w=fill
-                            text fmt_usd(quote.margin)
+                            text fmt_margin(quote.margin, focus)
                               with
                                 size=12.0
                                 font=digits

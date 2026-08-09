@@ -47,6 +47,9 @@ pub(crate) struct ResolvedContainerRadius {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ResolvedContainerSurface {
     pub(crate) background: Option<ResolvedContainerBackground>,
+    /// A computed 0..=100 opacity replacing the background color's own alpha,
+    /// evaluated every view pass so an animated number can reach the surface.
+    pub(crate) background_alpha: Option<CheckedExprUseId>,
     pub(crate) text_color: Option<ResolvedThemeColor>,
     pub(crate) border_color: Option<ResolvedThemeColor>,
     pub(crate) border_width: Option<CheckedExprUseId>,
@@ -398,6 +401,11 @@ impl Lowerer {
                 })
             })
             .transpose()?;
+        let background_alpha = values.optional(
+            style.background_alpha.as_ref(),
+            &Type::F64,
+            "surface background opacity",
+        )?;
         let border_width =
             values.optional(style.border_width.as_ref(), &Type::F64, "border width")?;
         let radius = ResolvedContainerRadius {
@@ -425,6 +433,7 @@ impl Lowerer {
         };
         Ok(ResolvedContainerSurface {
             background,
+            background_alpha,
             text_color: style
                 .text_color
                 .as_deref()

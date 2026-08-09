@@ -131,36 +131,7 @@ fn check(
             require_type(&actual, expected, &state.span)?;
         } else if let Type::Animation(expected) = &state.ty {
             require_type(&actual, expected, &state.span)?;
-            if **expected == Type::F64 {
-                require_f32_literal_range(
-                    &state.initial,
-                    f64::NEG_INFINITY,
-                    None,
-                    "animation value",
-                    &state.span,
-                )?;
-            }
-            if let Some(easing) = state
-                .animation
-                .as_ref()
-                .and_then(|options| options.easing.as_deref())
-                && !ANIMATION_EASINGS.contains(&easing)
-            {
-                let function = extern_function(document, easing, ExternKind::Pure, &state.span)?;
-                if function.params.len() != 1
-                    || function.params[0].1 != Type::F64
-                    || function.output != Type::F64
-                    || function.error.is_some()
-                {
-                    return Err(Error::new(
-                        "E103",
-                        &state.span,
-                        format!(
-                            "animation easing `{easing}` must be `pure {easing}(value:f64) -> f64`"
-                        ),
-                    ));
-                }
-            }
+            check_animation_state(state, expected, document)?;
         } else {
             let text_initial =
                 matches!(state.ty, Type::Markdown | Type::Editor) && actual == Type::Str;
@@ -254,7 +225,10 @@ fn check(
             let actual = analysis.type_of(&state.initial).cloned().ok_or_else(|| {
                 Error::new("E196", &state.span, "missing checked component state type")
             })?;
-            if actual != Type::Unknown && !compatible(&state.ty, &actual) {
+            if let Type::Animation(expected) = &state.ty {
+                require_type(&actual, expected, &state.span)?;
+                check_animation_state(state, expected, document)?;
+            } else if actual != Type::Unknown && !compatible(&state.ty, &actual) {
                 return Err(type_error(&state.span, &state.ty, &actual));
             }
             initializer_analyses.insert(
@@ -614,6 +588,53 @@ fn check(
         controlled_inputs,
         controlled_editors,
     })
+}
+
+/// Checks the settings block an animation state carries, wherever it is
+/// declared. `inner` is the animated type, already matched against the
+/// initializer.
+fn check_animation_state(state: &State, inner: &Type, document: &Document) -> Result<(), Error> {
+    if *inner == Type::F64 {
+        require_f32_literal_range(
+            &state.initial,
+            f64::NEG_INFINITY,
+            None,
+            "animation value",
+            &state.span,
+        )?;
+    }
+    let Some(options) = &state.animation else {
+        return Ok(());
+    };
+    if let Some(easing) = options.easing.as_deref()
+        && !ANIMATION_EASINGS.contains(&easing)
+    {
+        let function = extern_function(document, easing, ExternKind::Pure, &state.span)?;
+        if function.params.len() != 1
+            || function.params[0].1 != Type::F64
+            || function.output != Type::F64
+            || function.error.is_some()
+        {
+            return Err(Error::new(
+                "E103",
+                &state.span,
+                format!("animation easing `{easing}` must be `pure {easing}(value:f64) -> f64`"),
+            ));
+        }
+    }
+    if let Some(from) = options.from
+        && from.ty() != *inner
+    {
+        return Err(Error::new(
+            "E103",
+            &state.span,
+            format!(
+                "animation `from` must be a `{}` value, matching the animated type",
+                inner.display()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn sync_extern_call<'a>(expr: &'a Expr, document: &Document) -> Option<&'a str> {

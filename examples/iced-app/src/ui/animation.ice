@@ -23,6 +23,39 @@ state
     repeat forever
   maybe_progress:f64? = none
   maybe_visibility:f64? = none
+  arrivals:[i64] = []
+
+component ArrivalRow(label:i64, up:bool)
+  lifetime mounted
+  state
+    lit:animation[f64] = 0.0
+      from 100.0
+      easing ease-out
+      duration 900ms
+  stack w=fill h=24.0
+    if up
+      box
+        with
+          w=fill
+          h=24.0
+          bg=primary/(animation.value(lit))
+        space w=fill h=fill
+    if !up
+      box
+        with
+          w=fill
+          h=24.0
+          bg=danger/(animation.value(lit))
+        space w=fill h=fill
+    text label
+
+component FadedSurface(opacity:f64)
+  box #surface
+    with
+      w=120.0
+      h=24.0
+      bg=primary/(opacity)
+    space w=fill h=fill
 
 on start
   expanded = true
@@ -37,6 +70,9 @@ on request_rewind
 on rewind(at)
   progress = 0.0 at at
 
+on arrive
+  arrivals = [1, 2, 3]
+
 on sample
   maybe_progress = animation.project(progress, value, some(value * 2.0))
   maybe_visibility = animation.interpolate(expanded, none, some(1.0))
@@ -46,6 +82,9 @@ view
     button "Start" -> start
     button "Rewind" -> request_rewind
     button "Sample" -> sample
+    button "Arrive" -> arrive
+    keyed arrival in arrivals by=arrival
+      ArrivalRow label=arrival up=(arrival % 2 == 0) #arrival(arrival)
     if animation.value(expanded)
       text "Expanded"
     text animation.interpolate(expanded, 0.0, 1.0)
@@ -60,3 +99,10 @@ view
       text "Sampled progress"
     if maybe_visibility != none
       text "Sampled visibility"
+
+test computed_surface_opacity
+  viewport 200 80
+  mount
+    FadedSurface opacity=50.0 #faded
+  target surface = #faded/surface
+  expect surface.background == background.color(color.scale_alpha(color.rgb8(96, 165, 250), 0.5))

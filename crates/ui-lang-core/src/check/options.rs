@@ -218,7 +218,7 @@ pub(in crate::check) fn check_pane_view_options(
         &pane.span,
         StyleTarget::PaneContent(&pane.style),
     )?;
-    check_container_style_options(&pane.style, env, document, &pane.span, "E187")?;
+    check_container_style_options(&pane.style, env, document, &pane.span, "E187", false)?;
     if let Some(title) = &pane.title {
         for value in [
             &title.padding.all,
@@ -245,7 +245,7 @@ pub(in crate::check) fn check_pane_view_options(
             &title.span,
             StyleTarget::PaneTitle(&title.style),
         )?;
-        check_container_style_options(&title.style, env, document, &title.span, "E187")?;
+        check_container_style_options(&title.style, env, document, &title.span, "E187", false)?;
     }
     Ok(())
 }
@@ -273,9 +273,27 @@ pub(in crate::check) fn check_container_style_options(
     document: &Document,
     span: &Span,
     code: &'static str,
+    computed_alpha: bool,
 ) -> Result<(), Error> {
     if let Some(background) = &style.background {
         check_background_value(background, env, document, span, code, "surface")?;
+    }
+    if let Some(alpha) = &style.background_alpha {
+        if !computed_alpha {
+            return Err(Error::new(
+                code,
+                span,
+                "a computed surface opacity is only accepted on a plain surface background",
+            ));
+        }
+        require_type(&expr_type(alpha, env, document, span)?, &Type::F64, span)?;
+        if !matches!(style.background, Some(BackgroundValue::Color(_))) {
+            return Err(Error::new(
+                code,
+                span,
+                "a computed surface opacity needs a single background color",
+            ));
+        }
     }
     for (color, label) in [
         (&style.text_color, "surface text"),
@@ -659,7 +677,7 @@ pub(in crate::check) fn check_pick_list_styles(
     .flatten()
     {
         let style_span = style.span.as_ref().unwrap_or(span);
-        check_container_style_options(&style.options, env, document, style_span, "E129")?;
+        check_container_style_options(&style.options, env, document, style_span, "E129", false)?;
         for (color, label) in [
             (&style.placeholder_color, "pick placeholder"),
             (&style.handle_color, "pick handle"),
@@ -681,7 +699,7 @@ pub(in crate::check) fn check_menu_style(
 ) -> Result<(), Error> {
     let Some(style) = style else { return Ok(()) };
     let style_span = style.span.as_ref().unwrap_or(span);
-    check_container_style_options(&style.options, env, document, style_span, "E129")?;
+    check_container_style_options(&style.options, env, document, style_span, "E129", false)?;
     if let Some(color) = &style.selected_text_color {
         require_theme_color(color, document, style_span, "E129", "selected text")?;
     }
@@ -740,7 +758,7 @@ pub(in crate::check) fn check_text_input_styles(
     .flatten()
     {
         let style_span = style.span.as_ref().unwrap_or(span);
-        check_container_style_options(&style.options, env, document, style_span, "E129")?;
+        check_container_style_options(&style.options, env, document, style_span, "E129", false)?;
         for (color, label) in [
             (&style.icon_color, "icon"),
             (&style.placeholder_color, "placeholder"),
@@ -775,7 +793,7 @@ pub(in crate::check) fn check_scroll_styles(
             &style.vertical_rail.scroller,
             &style.auto_scroll,
         ] {
-            check_container_style_options(surface, env, document, &style.span, "E129")?;
+            check_container_style_options(surface, env, document, &style.span, "E129", false)?;
         }
         if let Some(gap) = &style.gap {
             check_background_value(gap, env, document, &style.span, "E129", "scroll gap")?;

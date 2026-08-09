@@ -34,8 +34,8 @@ use smol::channel::Receiver;
 
 use crate::Venue;
 use crate::hyperliquid::{
-    Account, Fill, HlError, MarketTick, Order, SymbolRow, Tape, hl_account, hl_candles,
-    hl_fill_feed, hl_history, hl_market_feed, hl_orders, hl_symbols,
+    Account, Fill, HL_CANONICAL, HlError, MarketTick, Order, SymbolRow, Tape, hl_account,
+    hl_candles, hl_fill_feed, hl_history, hl_market_feed, hl_orders, hl_symbols,
 };
 use crate::lighter::{
     lighter_account, lighter_candles, lighter_history, lighter_market_feed, lighter_symbols,
@@ -247,7 +247,9 @@ impl Network {
         gap: "",
         note: "",
         portfolio: |address| Box::pin(hl_portfolio(Chain::Mainnet, address)),
-        markets: || Box::pin(hl_symbols(Chain::Mainnet)),
+        // The canonical group is headed with this network's own name, so the
+        // rail never says a word the header contradicts.
+        markets: || Box::pin(hl_symbols(Chain::Mainnet, HL_CANONICAL)),
         candles: |tape, coin, interval| Box::pin(hl_candles(Chain::Mainnet, tape, coin, interval)),
         history: |tape, coin, interval| Box::pin(hl_history(Chain::Mainnet, tape, coin, interval)),
         // Always an account: an address that has never traded here reads back
@@ -290,7 +292,7 @@ impl Network {
                nothing here until it is funded again here, and nothing traded here \
                is worth anything.",
         portfolio: |address| Box::pin(hl_portfolio(Chain::Testnet, address)),
-        markets: || Box::pin(hl_symbols(Chain::Testnet)),
+        markets: || Box::pin(hl_symbols(Chain::Testnet, "Hyperliquid Testnet")),
         candles: |tape, coin, interval| Box::pin(hl_candles(Chain::Testnet, tape, coin, interval)),
         history: |tape, coin, interval| Box::pin(hl_history(Chain::Testnet, tape, coin, interval)),
         account: |address| {
@@ -1100,7 +1102,7 @@ mod tests {
     #[ignore = "hits the live venue, run explicitly: the whole universe against the rule"]
     fn the_rule_agrees_with_what_hyperliquid_already_parses() {
         crate::hyperliquid::open_the_wire();
-        let rows = smol::block_on(hl_symbols(Chain::Mainnet)).expect("the universe");
+        let rows = smol::block_on(hl_symbols(Chain::Mainnet, HL_CANONICAL)).expect("the universe");
         assert!(rows.len() > 100, "the venue lists a couple hundred markets");
         for row in rows {
             assert_eq!(
@@ -1207,17 +1209,37 @@ mod tests {
                  reading one of them through the other's endpoints looks like"
             );
 
-            // An address is the same string on both and the accounts behind it
-            // are not, which is the fact a reader has to be told rather than
-            // discover. Nothing is asserted about the balance: a test account
-            // is funded by whoever is running this.
-            let held = (test.account)(LIGHTER_ACCOUNT.to_owned())
-                .await
-                .expect("the testnet answers an account read");
+            // HIP-3 is per deployment, and the canonical group's heading is
+            // what says which deployment a categorised rail belongs to. Not
+            // the builder dexs: their names are third-party and *do* collide —
+            // read live, both deployments list a `HyENA` and an `XYZ`, because
+            // anyone may deploy a dex of any name on either. So what is held is
+            // the one group neither a builder nor a rename can move, and it is
+            // exactly what a copy-pasted `Chain` gets wrong.
+            let groups = |rows: &[SymbolRow]| {
+                let mut named: Vec<String> = rows
+                    .iter()
+                    .map(|row| row.category.clone())
+                    .filter(|category| !category.is_empty())
+                    .collect();
+                named.sort_unstable();
+                named.dedup();
+                named
+            };
+            let here = groups(&rows);
+            let there = groups(&live);
             assert!(
-                held.is_some(),
-                "this deployment answers a zeroed account rather than refusing, \
-                 the same way its mainnet does"
+                here.contains(&"Hyperliquid Testnet".to_owned()),
+                "the test deployment heads its own perps with its own name: {here:?}"
+            );
+            assert!(
+                !here.contains(&"Hyperliquid".to_owned()),
+                "and never with the live exchange's: {here:?}"
+            );
+            assert!(
+                there.contains(&"Hyperliquid".to_owned())
+                    && !there.contains(&"Hyperliquid Testnet".to_owned()),
+                "and the live exchange heads its own the other way round: {there:?}"
             );
         });
     }

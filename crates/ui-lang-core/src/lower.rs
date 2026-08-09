@@ -697,6 +697,7 @@ pub(crate) struct ResolvedAnimation {
     pub(crate) repeat: Option<u32>,
     pub(crate) repeat_forever: bool,
     pub(crate) auto_reverse: bool,
+    pub(crate) from: Option<AnimationStart>,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedHandler {
@@ -6976,6 +6977,7 @@ impl Lowerer {
             repeat: options.repeat,
             repeat_forever: options.repeat_forever,
             auto_reverse: options.auto_reverse,
+            from: options.from,
         })
     }
 
@@ -19286,7 +19288,7 @@ view
         );
         assert_eq!(
             snapshot,
-            "app AppStateId(0) progress Animation(F64) use=ExpressionId(0) ValueToAnimation { value: F64 } line=15 animation=Some(ResolvedAnimation { easing: Some(Custom(ExternFnId(0))), duration: Some(Milliseconds(120)), delay_ms: Some(5), repeat: Some(2), repeat_forever: false, auto_reverse: true })\n\
+            "app AppStateId(0) progress Animation(F64) use=ExpressionId(0) ValueToAnimation { value: F64 } line=15 animation=Some(ResolvedAnimation { easing: Some(Custom(ExternFnId(0))), duration: Some(Milliseconds(120)), delay_ms: Some(5), repeat: Some(2), repeat_forever: false, auto_reverse: true, from: None })\n\
              derived DerivedId(0) total F64 use=ExpressionId(1) None line=22\n\
              default ComponentParamId { component: ComponentId(0), index: 0 } label Str use=ExpressionId(2) None line=23\n\
              component-state ComponentStateId { component: ComponentId(0), index: 0 } open Bool use=ExpressionId(3) None line=25 animation=None\n"
