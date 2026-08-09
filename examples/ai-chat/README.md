@@ -13,6 +13,8 @@ codex login          # once, if you have not already
 cargo run -p ai-chat-example
 ```
 
+![A settled turn: the prompt, a folded reasoning summary, two searches, the answer, and what it cost](screenshots/chat.png)
+
 ## What it draws
 
 A turn is not one answer, and the screen does not pretend otherwise. The
@@ -32,6 +34,14 @@ misreporting it.
 
 Clicking a link copies it; which browser you wanted is not this window's call.
 `Night`/`Day` switches palettes, and settled rows follow.
+
+| Mid-turn | Night | Signed out |
+| --- | --- | --- |
+| ![A reply being written, under the work still running](screenshots/streaming.png) | ![The same transcript on the night palette](screenshots/night.png) | ![The empty state, with a turn that could not start](screenshots/signed-out.png) |
+
+Every one of these is generated, not staged: the first by the test that types
+into the composer and presses Send, the rest by `cargo ice inspect` against a
+named preset.
 
 ## How a turn arrives
 
