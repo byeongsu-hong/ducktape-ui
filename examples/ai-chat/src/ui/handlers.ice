@@ -21,7 +21,7 @@ on send
       progress -> streamed _
       done -> settled _
       error -> failed _
-    stream codex_entries(session) -> rows _
+    stream every codex_entries(session) -> rows _
 
 // Two appends and a scroll, once per token. Nothing above is rebuilt: settled
 // rows sit behind `lazy`, and Markdown is appended into the parsed document
@@ -55,7 +55,7 @@ on settled(complete)
       progress -> streamed _
       done -> settled _
       error -> failed _
-    stream codex_entries(session) -> rows _
+    stream every codex_entries(session) -> rows _
 
 on failed(cause)
   busy = false
@@ -127,12 +127,12 @@ on copy_text(text)
 on sign_in
   error = ""
   signing_in = true
-  run begin_sign_in() -> code_ready _ | sign_in_failed _
+  run every begin_sign_in() -> code_ready _ | sign_in_failed _
 
 on code_ready(next)
   code = next.user_code
   code_url = next.verification_uri
-  run finish_sign_in(next) -> signed_in_as _ | sign_in_failed _
+  run every finish_sign_in(next) -> signed_in_as _ | sign_in_failed _
 
 on signed_in_as(email)
   account = email
