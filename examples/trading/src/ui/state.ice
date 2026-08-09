@@ -24,7 +24,15 @@ state
   address = ""
   draft = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
   coin = "BTC"
-  interval = "1m"
+  // The widest width, which is where a chart opens. A market that cannot fill
+  // it steps down to one it can — see `candles_loaded` — so this is where the
+  // chart starts looking rather than where it always lands.
+  interval = "1d"
+  // Whether the width on the chart is the reader's rather than the app's. The
+  // step-down is how a chart opens on a market it knows nothing about; once a
+  // tab has been pressed the width is an answer to that press, and it holds
+  // for the session across every market the reader visits.
+  interval_picked = false
   query = ""
   symbols:[SymbolRow] = []
   focus:SymbolRow? = none
@@ -66,6 +74,7 @@ state
   feed_error = ""
   flashing = false
   loading_history = false
+  history_exhausted = false
   lower_height = 232.0
   rail_open = false
   fills_open = false
@@ -94,6 +103,10 @@ preset held
     focus = symbol_row(demo_symbols(), "BTC")
     positions = demo_positions()
     account = some(demo_account())
+    // The fixture tape is minute bars — `demo_candles_for` builds 120 of
+    // them and points the tape at that width — so the preset says the width
+    // it is holding rather than inheriting the one a chart opens looking at.
+    interval = "1m"
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape()
@@ -128,6 +141,7 @@ preset lighter
     positions = demo_positions_lighter()
     account = some(demo_account_lighter())
     book = some(demo_book_lighter())
+    interval = "1m"
     tape = demo_candles_for("BTC", 64970.0)
     tape_prints = demo_tape_lighter()
     live = true
@@ -171,6 +185,7 @@ preset reading
     address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
     symbols = demo_symbols()
     focus = symbol_row(demo_symbols(), "BTC")
+    interval = "1m"
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape()
@@ -197,6 +212,7 @@ preset browsing
     symbols = demo_symbols()
     focus = symbol_row(demo_symbols(), "BTC")
     quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, 0.0)
+    interval = "1m"
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape()
@@ -224,6 +240,7 @@ preset at_risk
     focus = symbol_row(demo_symbols_at_risk(), "BTC")
     positions = demo_positions_at_risk()
     account = some(demo_account_at_risk())
+    interval = "1m"
     tape = demo_candles_at(58000.0)
     book = some(demo_book_at(58000.0))
     tape_prints = demo_tape_at(58000.0)
@@ -240,6 +257,7 @@ preset hovering
     focus = symbol_row(demo_symbols(), "BTC")
     positions = demo_positions()
     account = some(demo_account())
+    interval = "1m"
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape()
@@ -255,6 +273,7 @@ preset busy
     focus = symbol_row(demo_symbols_many(), "BTC")
     positions = demo_positions()
     account = some(demo_account())
+    interval = "1m"
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape_full()
@@ -274,6 +293,7 @@ preset penny
     symbols = demo_symbols()
     focus = symbol_row(demo_symbols(), "kPEPE")
     account = some(demo_account())
+    interval = "1m"
     tape = demo_candles_for("kPEPE", 0.008421)
     book = some(demo_book_ticked(0.008421, 0.000001))
     tape_prints = demo_tape_ticked(0.008421, 0.000001)
@@ -290,6 +310,7 @@ preset stalled
     focus = symbol_row(demo_symbols(), "BTC")
     positions = demo_positions()
     account = some(demo_account())
+    interval = "1m"
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape()

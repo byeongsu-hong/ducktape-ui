@@ -23,7 +23,7 @@ use tungstenite::stream::MaybeTlsStream;
 
 use crate::hyperliquid::{
     Account, Book, Candle, Event, HlError, Level, MarketTick, Position, SymbolRow, Tape, Trade,
-    merge, wire_is_open,
+    merge, older_than, wire_is_open,
 };
 use crate::venue::lighter_buy;
 
@@ -749,13 +749,18 @@ pub async fn lighter_candles(tape: Tape, coin: String, interval: String) -> Resu
 }
 
 /// The window ending where the tape currently begins, so a chart panned back
-/// to its oldest bar can keep going. Answers the tape's length, unchanged when
-/// the venue has nothing older to give.
+/// to its oldest bar can keep going.
+///
+/// Answers how many older bars it added, on `hl_history`'s contract and for
+/// its reasons: zero is the venue saying it has nothing before the bar the
+/// tape starts at, and the caller stops asking rather than sending the same
+/// request again.
 pub async fn lighter_history(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
-    let Some(end) = lock(&tape.candles).first().map(|candle| candle.ts * 1_000) else {
+    let Some(oldest) = lock(&tape.candles).first().map(|candle| candle.ts) else {
         return Ok(0);
     };
-    fill(&tape, &coin, &interval, end, CANDLE_PAGE).await
+    fill(&tape, &coin, &interval, oldest * 1_000, CANDLE_PAGE).await?;
+    Ok(older_than(&lock(&tape.candles), oldest))
 }
 
 // ---------------------------------------------------------------------------
@@ -2616,11 +2621,15 @@ mod tests {
             assert_eq!(again, CANDLE_PAGE, "a refresh adds at most the live bar");
             assert_eq!(lock(&tape.candles)[0].ts, oldest, "nothing was dropped");
 
-            // And panning past the oldest bar pages further back.
-            let longer = lighter_history(tape.clone(), "BTC".to_owned(), "1h".to_owned())
+            // And panning past the oldest bar pages further back. What comes
+            // back is the count of bars older than the one the tape began at,
+            // which is the figure that tells the chart there was more to page
+            // to — zero is the venue saying there is not.
+            let older = lighter_history(tape.clone(), "BTC".to_owned(), "1h".to_owned())
                 .await
                 .expect("history");
-            assert!(longer > CANDLE_PAGE, "{longer} bars is no more than before");
+            assert!(older > 0, "a page back added no older bars");
+            assert_eq!(lock(&tape.candles).len() as i64, CANDLE_PAGE + older);
             assert!(lock(&tape.candles)[0].ts < oldest);
 
             // A width the venue does not quote never reaches it.

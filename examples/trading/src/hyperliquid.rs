@@ -538,15 +538,32 @@ pub async fn hl_candles(tape: Tape, coin: String, interval: String) -> Result<i6
     Ok(candles.len() as i64)
 }
 
+/// How many of the tape's bars are older than the bar it began at, which is
+/// the whole of what a history read achieved. Counted against a timestamp
+/// rather than against a length, because the live feed appends at the other
+/// end of the same tape: a length that grew by one says nothing about whether
+/// the exchange had anything older to give.
+pub(crate) fn older_than(candles: &[Candle], oldest: i64) -> i64 {
+    candles.partition_point(|candle| candle.ts < oldest) as i64
+}
+
 /// Loads the window of candles that ends where the tape currently begins, so
-/// a chart panned back to its oldest bar can keep going. Returns the tape
-/// length, which is unchanged when the exchange has nothing older to give.
+/// a chart panned back to its oldest bar can keep going.
+///
+/// Answers how many older bars it added. Zero means the venue had nothing
+/// before the bar the tape starts at, and the caller must stop asking: the
+/// window is derived from that same first bar, so an identical request would
+/// come back identically for as long as the chart sits at its left edge. A
+/// read that lands after the reader has moved on adds nothing either, and
+/// answers zero for the same reason a read of an empty tape does — it moved
+/// no left edge.
 pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
     let key = focus_key(&coin, &interval);
-    let end = { lock(&tape.candles).first().map(|candle| candle.ts * 1_000) };
-    let Some(end) = end else {
+    let oldest = { lock(&tape.candles).first().map(|candle| candle.ts) };
+    let Some(oldest) = oldest else {
         return Ok(0);
     };
+    let end = oldest * 1_000;
     let start = end - BACKFILL_BARS * interval_secs(&interval) * 1_000;
     let response = info(json!({
         "type": "candleSnapshot",
@@ -557,10 +574,10 @@ pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i6
     let mut candles = lock(&tape.candles);
     if *lock(&tape.focus) != key {
         // The user moved on while this was in flight.
-        return Ok(candles.len() as i64);
+        return Ok(0);
     }
     merge(&mut candles, parse_candles(&response));
-    Ok(candles.len() as i64)
+    Ok(older_than(&candles, oldest))
 }
 
 /// A market's move against yesterday's close, as a percentage.
@@ -2279,6 +2296,42 @@ pub fn interval_label(interval: String, shown: bool) -> String {
     format!("Show {interval} candles{state}")
 }
 
+/// The widths the chart offers, coarsest first, which is the order it opens
+/// them in. All six are quoted by both venues: Hyperliquid's `interval_secs`
+/// takes each one and Lighter's `RESOLUTIONS` lists all six among its eight,
+/// so one ladder serves the terminal whichever exchange it is reading.
+const WIDTHS: [&str; 6] = ["1d", "4h", "1h", "15m", "5m", "1m"];
+
+/// What a width has to carry before the chart is worth opening on it.
+///
+/// This is the chart's own window rather than a number chosen here: it opens
+/// showing its last `DEFAULT_BARS` candles and draws a 20- and 60-period
+/// average across them, so a width holding fewer than that opens on a plot
+/// that is mostly empty with a long average that never begins. A market listed
+/// last week has four daily bars and four hundred hourly ones, and the hourly
+/// chart is the one that shows it.
+const ENOUGH_BARS: i64 = ducktape_ui::ui::candle_chart::DEFAULT_BARS as i64;
+
+/// The next width down when this one is too thin to open on, and the width
+/// itself when it is not — which is also the answer at `1m`, where there is
+/// nothing finer to step to. A market with three bars at every width settles
+/// there and draws its three.
+///
+/// Only an automatic open walks this ladder. A width the reader pressed is
+/// theirs, and a chart that answered the press by showing a different width
+/// would be refusing it.
+pub fn finer_interval(interval: String, bars: i64) -> String {
+    if bars >= ENOUGH_BARS {
+        return interval;
+    }
+    let next = WIDTHS
+        .iter()
+        .position(|width| *width == interval)
+        .map(|at| at + 1)
+        .and_then(|at| WIDTHS.get(at));
+    next.map_or(interval, |width| (*width).to_owned())
+}
+
 /// A folded-away pane's toggle, by the same rule as the interval tabs: the name
 /// a reader hears is the act the button performs. It says "hide" while the pane
 /// is open because that is what pressing it does — a control that announced the
@@ -2724,6 +2777,16 @@ pub fn demo_tick_at(btc: f64) -> MarketTick {
         book: Some(demo_book()),
         latency: 42,
         context: None,
+    }
+}
+
+/// The chart reporting that the view has been taken back to the oldest bar it
+/// holds, which is the one signal that asks for history. For driving the
+/// handler that answers it.
+pub fn demo_chart_older() -> ChartSignal {
+    ChartSignal {
+        hover: None,
+        older: true,
     }
 }
 
@@ -4036,6 +4099,37 @@ mod tests {
         let switched = tape_focus(held.clone(), "ETH".into(), "5m".into());
         assert_eq!(*lock(&switched.focus), "ETH:5m");
         assert!(lock(&switched.candles).is_empty());
+    }
+
+    /// What a history read answers, and it is the figure the chart stops on: a
+    /// page that carried nothing before the bar the tape began at is the venue
+    /// saying there is no more, and asking again would send the same request.
+    ///
+    /// Counted against that first timestamp rather than against a length,
+    /// because the live feed is merging into the same tape from the other end.
+    /// A length comparison reads a new live bar as a page of history and asks
+    /// again, which is the loop this figure exists to end.
+    #[test]
+    fn a_history_page_is_measured_by_what_it_added_before_the_first_bar() {
+        let bar = |ts: i64| Candle {
+            ts,
+            open: 1.0,
+            high: 2.0,
+            low: 0.5,
+            close: 1.5,
+            volume: 1.0,
+        };
+        let mut tape = vec![bar(120), bar(180)];
+        let oldest = tape[0].ts;
+
+        // The venue answers the same window it already gave, and the live bar
+        // lands while it does.
+        merge(&mut tape, vec![bar(120), bar(180), bar(240)]);
+        assert_eq!(tape.len(), 3, "the feed's bar is on the tape");
+        assert_eq!(older_than(&tape, oldest), 0, "nothing older arrived");
+
+        merge(&mut tape, vec![bar(0), bar(60)]);
+        assert_eq!(older_than(&tape, oldest), 2, "two bars before the first");
     }
 
     #[test]
