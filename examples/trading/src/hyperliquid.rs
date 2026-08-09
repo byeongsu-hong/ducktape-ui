@@ -1882,7 +1882,7 @@ pub fn listed_coin(rows: Vec<SymbolRow>, coin: String) -> String {
 /// one invariant is enforced: **no two listed fills share a `tid`**. The rows
 /// are `lazy`, keyed and parked by that id, and a repeat is not merely a
 /// duplicate on screen — the second row displaces the first in the memo lot.
-/// `trading_a_fill_without_an_id_is_not_listed` and
+/// `a_fill_without_a_trade_id_is_not_listed` and
 /// `push_fills_lists_each_trade_id_once` hold both halves down.
 pub fn push_fills(history: Vec<Fill>, incoming: Vec<Fill>, limit: i64) -> Vec<Fill> {
     // Seeded from the history — which is a previous result of this function,
