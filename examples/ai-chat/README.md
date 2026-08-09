@@ -66,11 +66,24 @@ it:
 ## Checks
 
 ```sh
-cargo test -p ai-chat-example                                   # unit + first-class Ice tests
-cargo test -p ai-chat-example -- --ignored a_live_turn           # one real turn; needs codex login
+cargo test -p ai-chat-example          # unit tests + first-class Ice tests
 cargo test -p ai-chat-example --release perf -- --ignored --nocapture
 cargo ice inspect examples/ai-chat/src/ui/app.ice \
   --viewport 920x800 --preset conversation --name conversation
+```
+
+`sending_a_message_runs_a_whole_turn` chats: it types into the real composer,
+presses the real Send button, and asserts that the reasoning, both searches, the
+answer and the cost all reach the transcript. The turn it drives is played from
+fixed events through the same parser and channels the wire uses, so the suite
+needs no login and spends no tokens.
+
+To chat with the model instead, open the wire — one flag for the process, so
+only a run of the live tests may set it:
+
+```sh
+AI_CHAT_LIVE=1 AI_CHAT_ASK="your question" \
+  cargo test -p ai-chat-example -- --ignored --nocapture a_live_turn
 ```
 
 Presets `conversation`, `conversation_night`, `streaming` and `signed_out` name

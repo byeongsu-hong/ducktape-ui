@@ -69,6 +69,13 @@ preset streaming
     live_thinking = markdown("**Checking the append path**\n\nThe question is whether the tail alone is reparsed.")
     live = markdown("Yes — hold the parsed document and extend it:\n\n```rust\ncontent.push_str(&delta);\n```")
 
+// An empty chat with nobody's address in it, for a test that starts from the
+// welcome screen and captures what it reaches.
+preset signed_in
+  state
+    account = "you@example.com"
+    model = "gpt-5.6-sol"
+
 preset signed_out
   state
     account = ""

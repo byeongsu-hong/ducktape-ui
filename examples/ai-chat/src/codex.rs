@@ -304,9 +304,8 @@ pub fn codex_turn(session: Session) -> impl iced::task::Straw<Vec<Entry>, Chunk,
 /// two channels cannot disagree about the transcript whichever order their
 /// final messages arrive in.
 ///
-/// The channel outlives its turn: it closes when the next turn replaces this
-/// watcher, or when the session is dropped by a new chat. One idle stream can
-/// therefore be waiting between turns; it does not accumulate.
+/// The channel closes when the turn ends, so the stream reading it completes
+/// rather than idling until the next turn replaces it.
 pub fn codex_entries(session: Session) -> Receiver<Vec<Entry>> {
     let (sender, receiver) = smol::channel::unbounded();
     session.lock().watcher = Some(sender);
@@ -315,6 +314,10 @@ pub fn codex_entries(session: Session) -> Receiver<Vec<Entry>> {
 
 /// Post the conversation and read the answer back event by event.
 fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexError> {
+    #[cfg(test)]
+    if !wire_is_open() {
+        return offline(session, chunks);
+    }
     let auth = read_auth()?;
     let input = session.lock().input.clone();
     let body = json!({
@@ -387,6 +390,12 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
         record(session, &event);
     }
 
+    Ok(settle(session, answer))
+}
+
+/// Close the turn: keep the answer for the next request, hand the finished
+/// transcript over, and close the row channel so its stream completes.
+fn settle(session: &Session, answer: String) -> Vec<Entry> {
     let mut state = session.lock();
     state.input.push(json!({
         "type": "message",
@@ -394,7 +403,61 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
         "content": [{"type": "output_text", "text": answer}],
     }));
     state.publish();
-    Ok(state.snapshot())
+    state.watcher = None;
+    state.snapshot()
+}
+
+/// Whether this build may reach the ChatGPT backend.
+///
+/// Closed under test unless the run asks for it, so the ordinary suite never
+/// depends on a login, a network, or tokens spent. `AI_CHAT_LIVE=1` opens it
+/// for a run whose subject is the live API.
+#[cfg(test)]
+fn wire_is_open() -> bool {
+    std::env::var_os("AI_CHAT_LIVE").is_some_and(|value| value == "1")
+}
+
+/// A turn with the same shape as a real one, played from fixed events.
+///
+/// It goes through the same parser and the same channels the wire does, so a
+/// test that drives the screen exercises the real path rather than a stand-in
+/// for it.
+#[cfg(test)]
+fn offline(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexError> {
+    // The shape of a real turn, taken from one: the model reasons, searches,
+    // reasons again, opens a page, then answers with a citation. Anything less
+    // interleaved would not exercise what the transcript exists to draw.
+    const TURN: &[&str] = &[
+        r#"{"type":"response.created"}"#,
+        r#"{"type":"response.reasoning_summary_text.delta","delta":"**Planning a source search**"}"#,
+        r#"{"type":"response.output_item.done","item":{"type":"reasoning","summary":[
+            {"type":"summary_text","text":"**Planning a source search**\n\nThe version could have moved since training, so it is worth a look."}]}}"#,
+        r#"{"type":"response.output_item.added","item":{"type":"web_search_call"}}"#,
+        r#"{"type":"response.output_item.done","item":{"type":"web_search_call","status":"completed",
+            "action":{"type":"search","queries":["site:crates.io/crates/iced latest version","iced-rs releases"]}}}"#,
+        r#"{"type":"response.output_item.done","item":{"type":"reasoning","summary":[
+            {"type":"summary_text","text":"**Reading the changelog**"}]}}"#,
+        r#"{"type":"response.output_item.added","item":{"type":"web_search_call"}}"#,
+        r#"{"type":"response.output_item.done","item":{"type":"web_search_call","status":"completed",
+            "action":{"type":"open_page","url":"https://raw.githubusercontent.com/iced-rs/iced/master/CHANGELOG.md"}}}"#,
+        r#"{"type":"response.output_text.delta","delta":"The newest released `iced` is **0.14.0**. "}"#,
+        r#"{"type":"response.output_text.delta","delta":"One addition is [reactive rendering](https://docs.rs/iced), which skips redraws nothing asked for."}"#,
+        r#"{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text",
+            "text":"The newest released `iced` is **0.14.0**. One addition is [reactive rendering](https://docs.rs/iced), which skips redraws nothing asked for."}]}}"#,
+        r#"{"type":"response.completed","response":{"usage":{"input_tokens":22875,"output_tokens":321,
+            "output_tokens_details":{"reasoning_tokens":257}}}}"#,
+    ];
+    let mut answer = String::new();
+    for raw in TURN {
+        let event: Value = serde_json::from_str(raw).expect("fixture events parse");
+        for chunk in stream_text(&event, &mut answer) {
+            if chunks.send_blocking(chunk).is_err() {
+                return Err(CodexError::new("Turn cancelled."));
+            }
+        }
+        record(session, &event);
+    }
+    Ok(settle(session, answer))
 }
 
 /// The two things that arrive in pieces, handed over as pieces.
@@ -568,15 +631,34 @@ fn failure(event: &Value) -> Option<String> {
 }
 
 fn tokens(usage: &Value) -> String {
-    let count = |key: &str| usage[key].as_i64().unwrap_or(0);
-    let reasoning = usage["output_tokens_details"]["reasoning_tokens"]
-        .as_i64()
-        .unwrap_or(0);
+    let count = |key: &str| grouped(usage[key].as_i64().unwrap_or(0));
+    let reasoning = grouped(
+        usage["output_tokens_details"]["reasoning_tokens"]
+            .as_i64()
+            .unwrap_or(0),
+    );
     format!(
         "{} in · {} out · {reasoning} reasoning",
         count("input_tokens"),
         count("output_tokens"),
     )
+}
+
+/// Thousands grouped, because a turn's input runs to five figures and an
+/// ungrouped one has to be counted rather than read.
+fn grouped(count: i64) -> String {
+    let digits = count.abs().to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    if count < 0 {
+        out.push('-');
+    }
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
 }
 
 /// A one-line field, kept to one line's worth of text.
@@ -902,7 +984,10 @@ mod tests {
     #[ignore = "reaches the ChatGPT backend; needs `codex login`"]
     fn a_live_turn_streams_text_and_settles_into_rows() {
         let session = codex_session();
-        push_user(session.clone(), "Reply with exactly: pong".to_owned());
+        let question =
+            std::env::var("AI_CHAT_ASK").unwrap_or_else(|_| "Reply with exactly: pong".to_owned());
+        eprintln!("\n>>> {question}");
+        push_user(session.clone(), question);
 
         let (chunks, incoming) = smol::channel::unbounded();
         let worker = session.clone();
@@ -921,13 +1006,22 @@ mod tests {
             .expect("worker thread")
             .expect("a finished turn");
 
-        eprintln!("statuses: {statuses:?}");
+        eprintln!("\nstatuses seen: {statuses:?}\n");
         for row in &rows {
-            eprintln!("{:>9}  {}{}", row.kind, row.title, row.detail);
+            eprintln!("--- {} ---", row.kind);
+            if !row.title.is_empty() {
+                eprintln!("{}", row.title);
+            }
+            if !row.detail.is_empty() {
+                eprintln!("{}", row.detail);
+            }
+            if !row.body.is_empty() {
+                eprintln!("{}", row.body);
+            }
         }
         assert!(
-            streamed.to_lowercase().contains("pong"),
-            "the answer must arrive as streamed pieces, got {streamed:?}"
+            !streamed.trim().is_empty(),
+            "the answer must arrive as streamed pieces"
         );
         assert_eq!(rows.first().map(|row| row.kind.as_str()), Some("prompt"));
         assert!(
@@ -993,5 +1087,16 @@ mod tests {
             tokens(&event(r#"{"input_tokens":27,"output_tokens":84}"#)),
             "27 in · 84 out · 0 reasoning"
         );
+    }
+
+    /// A turn's input runs to five figures, and the count is read at a glance
+    /// or not at all.
+    #[test]
+    fn a_token_count_is_grouped_where_it_needs_to_be() {
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(321), "321");
+        assert_eq!(grouped(1_000), "1,000");
+        assert_eq!(grouped(22_875), "22,875");
+        assert_eq!(grouped(1_234_567), "1,234,567");
     }
 }

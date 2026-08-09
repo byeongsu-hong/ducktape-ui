@@ -47,3 +47,31 @@ test a_turn_draws_its_reasoning_searches_and_cost
   expect text "https://crates.io/crates/iced"
   expect text "2,914 in · 268 out · 192 reasoning"
   capture conversation
+
+// The whole turn, driven the way a person drives it: type into the composer,
+// press Send, and let everything the turn produces land in the transcript.
+// Nothing here is dispatched or preset — the widgets are the real ones and so
+// is the path behind them.
+test sending_a_message_runs_a_whole_turn
+  preset signed_in
+  viewport 920 800
+  target composer = #app/composer/draft
+  target send = #app/composer/send
+  expect text "What are we working on?"
+
+  click composer
+  type "Which iced is newest?"
+  expect a11y send disabled false
+
+  click send
+  expect composer.value == ""
+  expect no text "What are we working on?"
+  expect text "Which iced is newest?"
+  expect text "Planning a source search"
+  expect text "Searched the web"
+  expect text "site:crates.io/crates/iced latest version  ·  iced-rs releases"
+  expect text "Reading the changelog"
+  expect text "Opened a page"
+  expect text "https://raw.githubusercontent.com/iced-rs/iced/master/CHANGELOG.md"
+  expect text "22,875 in · 321 out · 257 reasoning"
+  capture chatted
