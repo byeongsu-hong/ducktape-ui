@@ -870,15 +870,27 @@ view
                                   label="Watch this level"
                                   w=fill
                                   p=5.0
+                                  disabled=!empty(watch_refusal)
                                 active bg=raised text=muted r=3.0
                                 hovered bg=edge text=fg r=3.0
+                                disabled bg=raised text=faint r=3.0
                                 text "WATCH THIS LEVEL"
                                   with
                                     size=9.0
                                     w=fill
                                     align-x=center
                                     tracking=1.1
-                                    @text-muted
+                              // A press the list refuses reads as a press that
+                              // worked: the level is simply not there. The
+                              // button goes dead and says which refusal it is,
+                              // in the same shape the gate refuses an address.
+                              if !empty(watch_refusal)
+                                text watch_refusal
+                                  with
+                                    size=10.0
+                                    w=fill
+                                    wrap=word
+                                    @text-faint
                             col gap=8.0 w=fill
                               row gap=6.0 align=center
                                 Label value="SIZE"

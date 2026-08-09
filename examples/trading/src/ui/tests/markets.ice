@@ -87,6 +87,93 @@ test trading_a_new_market_opens_at_its_own_price
   dispatch pick_symbol("kPEPE")
   expect ticket_price == "0.008421"
 
+// Picking the market already on screen is not a pick. A selected row is
+// highlighted and nothing more — it stays pressable, and every position, order
+// and fill row naming the same market presses the same handler — so left
+// ungated, arriving where you already are threw away a half-typed ticket, the
+// book it was priced against and the tape, and put "Loading candles" over a
+// chart that had not moved. The second half of this test is the guard not
+// overreaching, and `trading_a_new_market_opens_at_its_own_price` above is the
+// same claim about the ticket's seed.
+test trading_picking_the_market_already_on_screen_changes_nothing
+  preset held
+  viewport 1660 820
+  target app = #app
+  target trade = app/terminal-fit/trade
+  target listed = trade/markets/market-list
+  target bitcoin = listed/market("BTC")/row
+  target ether = listed/market("ETH")/row
+  expect coin == "BTC"
+  dispatch ticket_sized("1.5")
+  expect ticket_size == "1.5"
+  click bitcoin
+  expect coin == "BTC"
+  // The half-typed order, the book it is priced against, the tape beside it and
+  // the chart's own re-read: none of them belong to a market change that did
+  // not happen.
+  expect ticket_size == "1.5"
+  expect ticket_price == "64,000.00"
+  expect text "64,001.00"
+  expect !empty(tape_prints)
+  expect empty(status)
+  // The row beside it still is one.
+  click ether
+  expect coin == "ETH"
+  expect empty(ticket_size)
+  expect status == "Loading candles"
+  expect empty(tape_prints)
+  expect no text "64,001.00"
+
+// The one thing a self-pick still does. A rail unfolded on a narrow window is
+// open to be picked from, and pressing a row is the pick whether or not the
+// market changes — a picker left open over what was picked is the press
+// unanswered. `trading_an_unfolded_pane_comes_back_beside_the_others` is the
+// same fold for a market that does change.
+test trading_picking_the_market_already_on_screen_still_folds_the_rail
+  preset held
+  viewport 1180 720
+  target app = #app
+  target terminal = app/terminal-fit/trade
+  target rail = terminal/markets
+  target listed = rail/market-list
+  target bitcoin = listed/market("BTC")/row
+  target rail_toggle = terminal/chart-bar/toggle-markets/root/toggle-off
+  expect missing rail
+  click rail_toggle
+  expect exists rail
+  expect coin == "BTC"
+  click bitcoin
+  expect coin == "BTC"
+  expect missing rail
+  // And only the rail: the order typed against this market is still typed.
+  expect ticket_price == "64,000.00"
+  expect ticket_size == "3.00"
+
+// The same rule on the chart's own tabs, where the tab already lit is the one
+// most likely to be pressed twice. Ungated it emptied the candle buffer and
+// re-read the bars already on screen, taking the hovered candle's readout with
+// it — so the second half here is a real interval change still doing exactly
+// that.
+test trading_picking_the_interval_already_showing_changes_nothing
+  preset hovering
+  viewport 1660 820
+  target app = #app
+  target bar = app/terminal-fit/trade/chart-bar
+  target tabs = bar/intervals
+  target showing = tabs/interval-1m/root/tab-on
+  target offered = tabs/interval-5m/root/tab-off
+  target readout = bar/readout
+  expect interval == "1m"
+  expect exists readout
+  click showing
+  expect interval == "1m"
+  expect exists readout
+  expect empty(status)
+  click offered
+  expect interval == "5m"
+  expect missing readout
+  expect status == "Loading candles"
+
 // A rail row is three columns and a button. Announced by its ticker alone it
 // asked a reader who cannot see the two figures beside it to choose a market
 // blind, which is the one thing the rail is for. It names what the columns say.

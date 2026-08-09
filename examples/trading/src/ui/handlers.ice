@@ -76,9 +76,17 @@ on search_key(event)
 on close_held
   let held = position_held(positions, coin)
   return if held == 0.0
+  // ORDER VALUE is the price in the field times the size, and the price in the
+  // field was typed for whatever the ticket was doing before this. Left there,
+  // a close is quoted a dollar figure belonging to an order nobody is placing.
+  // So the close re-seeds the field the way opening the market does: the book's
+  // mid, or the market's last when no book has arrived, which is where a close
+  // actually transacts.
+  let seed = ticket_seed(book, focus)
   ticket_buy = held < 0.0
+  ticket_price = seed
   ticket_size = fmt_size(held)
-  quote = price_ticket(ticket_price, fmt_size(held), ticket_leverage, focus, held < 0.0, held)
+  quote = price_ticket(seed, fmt_size(held), ticket_leverage, focus, held < 0.0, held)
 
 on add_alert_here
   alerts = add_alert(alerts, coin, ticket_price, mark_price(focus))
@@ -121,7 +129,6 @@ on reopen
   abort feeds
 
 on pick_symbol(name)
-  let market = symbol_row(symbols, name)
   // Every row that names a market is a way to it, and the market is drawn on
   // one page. Picking one from the list, a position, an order or a fill and
   // being left on the page you picked it from is a request the app ignored.
@@ -130,7 +137,19 @@ on pick_symbol(name)
   // pick, so it folds itself back and gives the width to the positions table it
   // borrowed it from. At a width that draws the rail anyway the flag is not
   // read at all, so clearing it there costs nothing and is not felt.
+  //
+  // Both of these run for the market already on screen too, because both are
+  // the pick being answered rather than the market changing: the row was
+  // pressed to be taken to it, and a picker left open over what was picked is
+  // the pick unanswered.
   rail_open = false
+  // Everything past here is the market changing, and picking the one already on
+  // screen is not a change. A selected row is highlighted and nothing more — it
+  // stays pressable, and so does every position, order and fill row naming the
+  // same market — so ungated, re-picking it threw away a half-typed ticket, the
+  // book, the tape and the chart to arrive back where it already was.
+  return if name == coin
+  let market = symbol_row(symbols, name)
   // The book on screen belongs to the market being left. Clearing it first is
   // what stops the new ticket opening at the old market's price.
   book = none
@@ -224,6 +243,10 @@ on switch_venue(next)
         stream venue_fill_feed(venue, address) -> fills_streamed _ | failed _
 
 on pick_interval(next)
+  // The width already on the chart is not a change of width. Ungated, pressing
+  // the tab that is already lit emptied the candle buffer and put "Loading
+  // candles" over the chart while it re-read the bars it was already drawing.
+  return if next == interval
   interval = next
   hover = none
   status = "Loading candles"

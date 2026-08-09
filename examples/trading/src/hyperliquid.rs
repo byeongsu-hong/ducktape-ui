@@ -1989,18 +1989,38 @@ pub struct Alert {
     pub fired: bool,
 }
 
-pub fn add_alert(alerts: Vec<Alert>, coin: String, price: String, mark: f64) -> Vec<Alert> {
-    let price = amount(&price);
-    let mut alerts = alerts;
+/// Why a level cannot be watched, or empty when it can. Every refusal
+/// `add_alert` makes is one of these, so the button that calls it reads the
+/// same answer and says which one it is instead of swallowing the press.
+fn alert_refusal(alerts: &[Alert], coin: &str, price: f64, mark: f64) -> &'static str {
+    if coin.is_empty() || mark <= 0.0 {
+        return "This market has no price yet to watch a level against.";
+    }
+    if price <= 0.0 {
+        return "A level is a price above zero.";
+    }
     // A level at the mark has already happened, and a duplicate is not a
     // second alert.
-    if coin.is_empty() || price <= 0.0 || mark <= 0.0 || (price - mark).abs() < f64::EPSILON {
-        return alerts;
+    if (price - mark).abs() < f64::EPSILON {
+        return "That level is where this market is trading now.";
     }
     if alerts
         .iter()
         .any(|held| held.coin == coin && (held.price - price).abs() < f64::EPSILON)
     {
+        return "That level is already being watched.";
+    }
+    ""
+}
+
+pub fn alert_refused(alerts: Vec<Alert>, coin: String, price: String, mark: f64) -> String {
+    alert_refusal(&alerts, &coin, amount(&price), mark).to_owned()
+}
+
+pub fn add_alert(alerts: Vec<Alert>, coin: String, price: String, mark: f64) -> Vec<Alert> {
+    let price = amount(&price);
+    let mut alerts = alerts;
+    if !alert_refusal(&alerts, &coin, price, mark).is_empty() {
         return alerts;
     }
     alerts.push(Alert {
