@@ -41,7 +41,7 @@ fn package_selection_discovers_its_ice_root() {
 
     assert_eq!(
         package_ice_source(root, "demo-app", &["-p".into(), "demo-app".into()]).unwrap(),
-        source
+        source.canonicalize().unwrap()
     );
 }
 
