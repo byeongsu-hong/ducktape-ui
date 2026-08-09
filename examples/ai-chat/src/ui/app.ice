@@ -36,7 +36,7 @@ state
   status = ""
   busy = false
   error = ""
-  draft = ""
+  draft:editor = ""
   signed:bool = signed_in()
   code = ""
   code_url = ""
@@ -45,7 +45,9 @@ state
   active_palette:palette[AppTheme] = AppTheme.app
 
 derived
-  can_send = !busy && !empty(trim(draft))
+  typed = trim(editor_text(draft))
+  can_send = !busy && !empty(typed)
+  can_steer = busy && !empty(typed)
 
 // Deterministic states for capture and test. Each names its own account, so a
 // real address never reaches a screenshot committed to this repository.
@@ -98,6 +100,23 @@ preset signed_in
     models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
     effort = some("xhigh")
     efforts = ["low", "medium", "high", "xhigh"]
+
+// Mid-turn with something already typed: the three things that can be done
+// with a running turn are all on screen.
+preset steering
+  state
+    signed = true
+    account = "you@example.com"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4-mini"]
+    effort = some("xhigh")
+    efforts = ["low", "medium", "high", "xhigh"]
+    entries = sample_running(false)
+    busy = true
+    status = "Responding"
+    draft = editor("Actually, check the changelog instead")
+    live_thinking = markdown("**Checking the append path**")
+    live = markdown("Yes — hold the parsed document and extend it.")
 
 preset signed_out
   state
@@ -317,26 +336,36 @@ view
                     w=fill
                     gap=6.0
                     align=center
-                  input "" #draft <-> draft
+                  editor #draft <-> draft -> send
                     with
-                      submit=send
+                      key-binding=composer_keys()
                       hint="Message Codex…"
-                      description="Message Codex"
-                      w=fill
+                      min-h=22.0
+                      max-h=150.0
                       p=8.0
-                      text-size=13.5
+                      size=13.5
+                      line-h=1.4
                     active bg=muted_bg border=muted_bg placeholder=muted value=fg selection=primary
                     focused-hovered bg=muted_bg border=muted_bg
                     disabled bg=muted_bg border=muted_bg value=muted
-                  button "↑" #send -> send
-                    with
-                      disabled=!can_send
-                      label="Send"
-                      w=30.0
-                      h=30.0
-                    active bg=primary text=primary_fg r=15.0
-                    hovered bg=primary_hover text=primary_fg r=15.0
-                    disabled bg=disabled text=disabled_fg r=15.0
+                  if !busy
+                    button "↑" #send -> send
+                      with
+                        disabled=!can_send
+                        label="Send"
+                        w=30.0
+                        h=30.0
+                      active bg=primary text=primary_fg r=15.0
+                      hovered bg=primary_hover text=primary_fg r=15.0
+                      disabled bg=disabled text=disabled_fg r=15.0
+                  if busy
+                    button "■" #stop -> stop
+                      with
+                        label="Stop"
+                        w=30.0
+                        h=30.0
+                      active bg=muted text=surface r=15.0
+                      hovered bg=fg text=surface r=15.0
               // What will answer sits with the message about to be sent, not
               // up in the chrome: it is a property of this turn, not the app.
               row
@@ -347,7 +376,11 @@ view
                 Chip #model options=models selected=model -> choose_model _
                 Chip #effort options=efforts selected=effort -> choose_effort _
                 space w=fill
-                if busy
+                if can_steer
+                  button "Steer" #steer @outline_action -> steer
+                if can_steer
+                  button "Send after" #queue @outline_action -> queue
+                if busy && !can_steer
                   text status @meta_compact
                 if !busy
                   Kbd label="Enter"

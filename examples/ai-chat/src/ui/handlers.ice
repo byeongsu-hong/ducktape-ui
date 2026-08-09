@@ -6,10 +6,10 @@
 // transcript whenever a block settles or a tool starts or stops.
 
 on send
-  let prompt = trim(draft)
+  let prompt = typed
   return if busy || empty(prompt)
   entries = push_user(session, prompt)
-  draft = ""
+  draft = editor("")
   error = ""
   busy = true
   status = "Thinking"
@@ -38,13 +38,23 @@ on rows(next)
   entries = next
   task widget snap-end #app/transcript
 
+// A turn ends, and a message typed while it ran goes out on its own.
 on settled(complete)
   entries = complete
-  busy = false
-  status = ""
   live = markdown("")
   live_thinking = markdown("")
-  task widget snap-end #app/transcript
+  let next = take_pending(session)
+  busy = !empty(next)
+  status = ""
+  return if empty(next)
+  entries = push_user(session, next)
+  status = "Thinking"
+  parallel
+    sip codex_turn(session)
+      progress -> streamed _
+      done -> settled _
+      error -> failed _
+    stream codex_entries(session) -> rows _
 
 on failed(cause)
   busy = false
@@ -59,7 +69,7 @@ on reset
   status = ""
   busy = false
   error = ""
-  draft = ""
+  draft = editor("")
   task widget focus #app/composer/field/draft
 
 on toggle_row(id)
@@ -73,8 +83,24 @@ on choose_model(name)
 on choose_effort(level)
   effort = some(set_effort(session, level))
 
+// Three things to do with a turn already running: end it, cut it short and
+// say something else instead, or hold what was typed until it is done.
+on stop
+  return if !busy
+  status = stop_turn(session)
+
+on steer
+  return if !busy || empty(typed)
+  status = steer_turn(session, typed)
+  draft = editor("")
+
+on queue
+  return if !busy || empty(typed)
+  status = queue_message(session, typed)
+  draft = editor("")
+
 on suggest(text)
-  draft = text
+  draft = editor(text)
   task widget focus #app/composer/field/draft
 
 on use_night

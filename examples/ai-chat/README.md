@@ -61,12 +61,22 @@ that model's own default.
 Both belong to the chat, not the machine. They apply from the next turn, they
 survive `New chat`, and `~/.codex/config.toml` is only ever read.
 
+The message box is a real editor. Enter sends; Enter held with shift, command
+or both writes a line, so a paragraph can be typed without fighting the box.
+
+A turn already running can be answered in three ways rather than only waited
+out. **Stop** ends it and keeps what was already said — a stopped answer is
+still an answer. **Steer** cuts it short and sends what has been typed instead.
+**Send after** holds the message until the turn finishes and then sends it on
+its own. Steer and Send after appear only once something has been typed to use
+them with.
+
 Clicking a link copies it; which browser you wanted is not this window's call.
 `Night`/`Day` switches palettes, and settled rows follow.
 
-| Mid-turn |
-| --- |
-| ![A reply being written, under the work still running](screenshots/streaming.png) |
+| Mid-turn | Steering one |
+| --- | --- |
+| ![A reply being written, under the work still running](screenshots/streaming.png) | ![Stop, steer, or send after](screenshots/steering.png) |
 
 | The model menu | Waiting for a code |
 | --- | --- |

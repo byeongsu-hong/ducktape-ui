@@ -31,6 +31,10 @@ extern crate::codex
   sync push_user(session:Session, text:str) -> [Entry]
   sync set_palette(session:Session, dark:bool) -> [Entry]
   sync toggle_row(session:Session, id:i64) -> [Entry]
+  sync stop_turn(session:Session) -> str
+  sync queue_message(session:Session, text:str) -> str
+  sync steer_turn(session:Session, text:str) -> str
+  sync take_pending(session:Session) -> str
   pure sample_entries(dark:bool) -> [Entry]
   pure sample_running(dark:bool) -> [Entry]
   sync sample_session(dark:bool) -> Session
@@ -52,3 +56,8 @@ extern crate::auth
   DeviceCode(user_code:str, verification_uri:str, device_auth_id:str)
   begin_sign_in() -> DeviceCode ! CodexError
   finish_sign_in(code:DeviceCode) -> str ! CodexError
+
+// Enter sends; every other way of pressing it writes a line.
+extern crate::composer
+  Send()
+  editor-binding composer_keys() -> Send

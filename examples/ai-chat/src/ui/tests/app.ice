@@ -112,3 +112,31 @@ test sending_a_message_runs_a_whole_turn
   expect no text "Searched the web"
   expect text "22,875 in · 321 out · 257 reasoning"
   capture chatted
+
+// A turn already running can be ended, cut short and redirected, or left to
+// finish with something waiting behind it. Which of those are offered depends
+// on whether anything has been typed to redirect it with.
+test a_running_turn_offers_stop_steer_and_send_after
+  preset steering
+  viewport 920 560
+  target stop = #app/composer/field/stop
+  expect a11y stop name "Stop"
+  expect missing #app/composer/field/send
+  expect exists #app/composer/steer
+  expect exists #app/composer/queue
+
+// Nothing typed, nothing to steer with: stopping is all that is on offer.
+test a_running_turn_with_nothing_typed_offers_only_stop
+  preset streaming
+  viewport 920 560
+  expect exists #app/composer/field/stop
+  expect missing #app/composer/steer
+  expect missing #app/composer/queue
+
+// And with no turn running there is nothing to stop.
+test an_idle_composer_offers_only_send
+  preset conversation
+  viewport 920 560
+  expect exists #app/composer/field/send
+  expect missing #app/composer/field/stop
+  expect missing #app/composer/steer

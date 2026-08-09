@@ -196,6 +196,11 @@ struct Transcript {
     turn: i64,
     /// When the turn in progress started, for what its summary says.
     started: Option<std::time::Instant>,
+    /// Asked to stop. The worker notices between events and settles with what
+    /// it already has rather than throwing the turn away.
+    cancelled: bool,
+    /// A message typed while a turn was running, to send once it is done.
+    pending: String,
     dark: bool,
     /// Which model answers. Held here rather than read per turn, so choosing
     /// one applies to this chat and not to whatever the CLI is configured for.
@@ -450,8 +455,37 @@ pub fn push_user(session: Session, text: String) -> Vec<Entry> {
     }));
     state.turn += 1;
     state.started = Some(std::time::Instant::now());
+    state.cancelled = false;
     state.push(Entry::new("prompt", "").body(text));
     state.snapshot()
+}
+
+/// Ask the turn in progress to stop.
+///
+/// It settles rather than vanishes: whatever was already said stays in the
+/// transcript, because a stopped answer is still an answer.
+pub fn stop_turn(session: Session) -> String {
+    session.lock().cancelled = true;
+    "Stopping".to_owned()
+}
+
+/// Hold a message until the turn in progress finishes.
+pub fn queue_message(session: Session, text: String) -> String {
+    session.lock().pending = text;
+    "Queued".to_owned()
+}
+
+/// Cut the turn short and send this instead — steering rather than waiting.
+pub fn steer_turn(session: Session, text: String) -> String {
+    let mut state = session.lock();
+    state.pending = text;
+    state.cancelled = true;
+    "Steering".to_owned()
+}
+
+/// The message held for after this turn, if there is one. Taking it clears it.
+pub fn take_pending(session: Session) -> String {
+    std::mem::take(&mut session.lock().pending)
 }
 
 /// Fold or unfold one row, and hand back the transcript.
@@ -609,6 +643,15 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
     let mut answer = String::new();
     let reader = BufReader::new(response.into_body().into_reader());
     for line in reader.lines() {
+        // Asked to stop: keep what has been said and close the turn, rather
+        // than discarding an answer someone has already started reading. The
+        // flag is read into a local so the lock is plainly released before
+        // `close_work` takes it again.
+        let stopping = session.lock().cancelled;
+        if stopping {
+            session.lock().close_work();
+            return Ok(settle(session, answer));
+        }
         let line =
             line.map_err(|error| CodexError::new(format!("Codex stream broke off: {error}")))?;
         let Some(data) = line.strip_prefix("data:") else {
@@ -1454,6 +1497,50 @@ mod tests {
         assert_eq!(next.lock().model, "gpt-5.4-mini");
         assert_eq!(session_effort(next.clone()), "low");
         assert!(next.lock().entries.is_empty(), "but the transcript is gone");
+    }
+
+    /// Steering is two things at once: what to say next, and that the turn in
+    /// progress should stop making room for it. Doing only one of them either
+    /// loses the message or leaves it queued behind a turn nobody wants.
+    #[test]
+    fn steering_both_holds_the_message_and_asks_the_turn_to_stop() {
+        let session = codex_session();
+        steer_turn(session.clone(), "check the changelog instead".to_owned());
+
+        assert!(
+            session.lock().cancelled,
+            "the running turn is asked to stop"
+        );
+        assert_eq!(
+            take_pending(session.clone()),
+            "check the changelog instead",
+            "and what to say next is held"
+        );
+        assert_eq!(take_pending(session), "", "taking it clears it");
+    }
+
+    /// Queueing waits; it does not cut the turn short.
+    #[test]
+    fn queueing_holds_a_message_without_stopping_anything() {
+        let session = codex_session();
+        queue_message(session.clone(), "and after that".to_owned());
+        assert!(!session.lock().cancelled, "the turn runs to its own end");
+        assert_eq!(take_pending(session), "and after that");
+    }
+
+    /// A stopped turn keeps what it already said. Starting the next one is
+    /// what clears the flag, so a stop cannot leak into it.
+    #[test]
+    fn a_new_turn_starts_uncancelled() {
+        let session = codex_session();
+        stop_turn(session.clone());
+        assert!(session.lock().cancelled);
+
+        push_user(session.clone(), "next".to_owned());
+        assert!(
+            !session.lock().cancelled,
+            "a stop belongs to the turn it was asked of"
+        );
     }
 
     /// A refusal is the only place a cause is stated, so it has to survive the

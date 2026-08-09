@@ -1,5 +1,6 @@
 mod auth;
 mod codex;
+mod composer;
 mod render;
 
 ui_lang::include_app!("src/ui/app.ice");
