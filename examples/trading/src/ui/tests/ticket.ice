@@ -458,3 +458,30 @@ test trading_a_size_in_dollars_is_the_same_order_as_the_size_in_coins
   expect ticket_size == "3"
   expect ticket_coins == "3"
   expect no text "Sized at 64,000.00, the limit price."
+
+// MAX in dollars and MAX in coins are one press said two ways: the field is
+// filled in the unit being typed, and the order the venue would be sent is the
+// same either way. Filled at one price and read back at another, the button
+// would offer a position the account cannot carry — which is the failure the
+// floor onto the instrument's step already exists to prevent.
+test trading_the_share_buttons_fill_the_unit_the_field_is_typed_in
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target dollars = ticket/size-unit/unit-usd/root/off
+  // 2,200 free at 5x is 11,000 of notional, which at the 64,000 in the field
+  // is 0.171875 of a coin — floored to the five decimals this market quotes.
+  dispatch size_share(1.0)
+  expect !ticket_usd
+  expect ticket_size == "0.17187"
+  expect ticket_coins == "0.17187"
+  click dollars
+  dispatch size_share(1.0)
+  expect ticket_usd
+  expect ticket_size == "11,000.00"
+  // The same order, which is the whole claim: the dollars in the field are
+  // read back at the price they were filled at.
+  expect ticket_coins == "0.17187"
+  // And inside what the account can carry rather than over it.
+  expect quote.notional <= 11000.0

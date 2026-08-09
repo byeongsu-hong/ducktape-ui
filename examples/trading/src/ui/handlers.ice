@@ -99,7 +99,7 @@ on drop_alert_at(at_coin, price)
   alerts = drop_alert(alerts, at_coin, price)
 
 on size_share(share)
-  let sized = ticket_afford(account, ticket_at, focus, quote.leverage, share, ticket_usd)
+  let sized = ticket_afford(account, ticket_unit, focus, quote.leverage, share, ticket_usd)
   return if empty(sized)
   ticket_size = sized
 

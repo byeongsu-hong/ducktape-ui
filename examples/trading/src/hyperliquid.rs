@@ -2943,6 +2943,14 @@ pub fn alert_arrow(alert: Alert) -> String {
 /// in. A share of an account is a dollar figure to begin with — the conversion
 /// runs to reach a size, not away from one — so the USD case is the shorter
 /// arithmetic rather than a second one.
+///
+/// `price` is the one the *field* is read at rather than the one the order
+/// transacts at, and the difference only exists for a market order. A dollar
+/// figure filled in here is turned back into a size by `order_size` at that
+/// same price, so handing this the crossing price would put a size in the box
+/// that the box's own arithmetic disagreed with. What that costs is the
+/// spread, on the one press that is already floored to the instrument's step
+/// for the same reason — and the panel prints what crossing pays a row below.
 pub fn ticket_afford(
     account: Option<Account>,
     price: f64,
