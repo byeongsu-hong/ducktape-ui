@@ -27,7 +27,7 @@ derived
 on submit
   let title = normalized
   return if !can_submit
-  run save(title) -> saved
+  run every save(title) -> saved
 on saved
 view
   button "Save" disabled=!can_submit -> submit

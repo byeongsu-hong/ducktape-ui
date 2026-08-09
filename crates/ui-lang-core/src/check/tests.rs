@@ -239,7 +239,7 @@ derived
 on submit
   let title = normalized
   return if !can_submit
-  run save(title) -> saved
+  run every save(title) -> saved
 on saved
   draft = ""
 view
@@ -381,7 +381,7 @@ on mount
   let top = read_environment()
   value = top
   sequential
-    run load(read_environment()) -> loaded _
+    run every load(read_environment()) -> loaded _
 on loaded(next)
   value = next
 component Reader()
@@ -401,8 +401,8 @@ view
     analyze(source).unwrap();
 
     let effectful_route = source.replace(
-        "run load(read_environment()) -> loaded _",
-        "run load(\"ready\") -> loaded(read_environment())",
+        "run every load(read_environment()) -> loaded _",
+        "run every load(\"ready\") -> loaded(read_environment())",
     );
     let error = analyze(&effectful_route).unwrap_err();
     assert_eq!(error.code, "E152");
@@ -1175,9 +1175,9 @@ fn warns_for_component_local_handler_cycles() {
   fetch() -> i64
 component Loader()
   on start
-    run fetch() -> loaded _
+    run every fetch() -> loaded _
   on loaded(value)
-    run fetch() -> loaded _
+    run every fetch() -> loaded _
   button "Load" -> start
 view
   Loader

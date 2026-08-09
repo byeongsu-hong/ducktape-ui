@@ -166,15 +166,15 @@ view
 }
 
 #[test]
-fn ordinary_run_emits_no_request_lane_state() {
+fn every_run_emits_no_request_lane_state() {
     let source = format!(
-        r#"app OrdinaryRun
+        r#"app EveryRun
 extern crate::backend
   fetch(value:i64) -> i64
 {THEME}state
   value = 0
 on search
-  run fetch(value) -> loaded _
+  run every fetch(value) -> loaded _
 on loaded(next)
   value = next
 view
@@ -182,7 +182,7 @@ view
 "#
     );
 
-    let generated = compile(&source, "ordinary_run.ice").unwrap();
+    let generated = compile(&source, "every_run.ice").unwrap();
 
     assert!(!generated.contains("__ice_run_lane_"));
     assert!(!generated.contains("__RequestLane"));

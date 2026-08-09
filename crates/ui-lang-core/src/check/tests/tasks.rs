@@ -19,7 +19,7 @@ palette app for AppTheme
 state
   items:[Item] = []
 on mount
-  run load() -> loaded _ | failed _
+  run every load() -> loaded _ | failed _
 on loaded(next)
   items = next
 on failed(error)
@@ -560,11 +560,11 @@ preset seeded
   state
     token = "preset"
   boot
-    run request(1) -> future_loaded(_, token, decorated, 1, "preset") | future_failed(_, token, 1, "preset")
+    run every request(1) -> future_loaded(_, token, decorated, 1, "preset") | future_failed(_, token, 1, "preset")
 on start(id)
   let local = decorate(token)
   parallel
-    run request(id) -> future_loaded(_, token, decorated, id, local) | future_failed(_, token, id, local)
+    run every request(id) -> future_loaded(_, token, decorated, id, local) | future_failed(_, token, id, local)
     task cached(id) -> task_loaded(_, token, decorated, id, local) | task_failed(_, token, id, local)
 on future_loaded(value, state_value, derived_value, param_value, local_value)
 on future_failed(error, state_value, param_value, local_value)
@@ -597,16 +597,16 @@ palette app for AppTheme
   primary #333333
   danger #ff0000
 on middle(context)
-  run request() -> finished(context, _)
+  run every request() -> finished(context, _)
 on start(context)
-  run request() -> middle(context)
+  run every request() -> middle(context)
 on finished(context, value)
 view
   button "Start" -> start("launch")
 "#;
     let forward = reversed.replace(
-        "on middle(context)\n  run request() -> finished(context, _)\non start(context)\n  run request() -> middle(context)",
-        "on start(context)\n  run request() -> middle(context)\non middle(context)\n  run request() -> finished(context, _)",
+        "on middle(context)\n  run every request() -> finished(context, _)\non start(context)\n  run every request() -> middle(context)",
+        "on start(context)\n  run every request() -> middle(context)\non middle(context)\n  run every request() -> finished(context, _)",
     );
 
     assert!(
@@ -650,7 +650,7 @@ palette app for AppTheme
         };
         writeln!(
             source,
-            "on step_{index}(context)\n  run request() -> {target}(context)"
+            "on step_{index}(context)\n  run every request() -> {target}(context)"
         )
         .unwrap();
     }
@@ -685,7 +685,7 @@ component Snapshot(label:str)
     token = "initial"
   on start(id)
     let local = token
-    run request(id) -> loaded(_, token, id, local)
+    run every request(id) -> loaded(_, token, id, local)
   on loaded(value, state_value, param_value, local_value)
   button "Start" -> start(1)
 view
@@ -729,10 +729,10 @@ on start
   let captured = runtime_token()
   let window = window_id.unique()
   parallel
-    run request() -> accepted_sync(captured)
-    run request() -> accepted_opaque(opaque_token())
-    run request() -> accepted_handle(captured)
-    run request() -> accepted_window(window)
+    run every request() -> accepted_sync(captured)
+    run every request() -> accepted_opaque(opaque_token())
+    run every request() -> accepted_handle(captured)
+    run every request() -> accepted_window(window)
 on accepted_sync(value)
 on accepted_opaque(value)
 on accepted_handle(value)

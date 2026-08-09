@@ -208,13 +208,17 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
         });
     if let Some((kind, run)) = effect {
         let (mode, run) = if kind == EffectKind::Future {
-            run.strip_prefix("latest ")
-                .map(|run| (FutureMode::Latest, run))
+            run.strip_prefix("every ")
+                .map(|run| (FutureMode::Every, run))
+                .or_else(|| {
+                    run.strip_prefix("latest ")
+                        .map(|run| (FutureMode::Latest, run))
+                })
                 .or_else(|| {
                     run.strip_prefix("replace ")
                         .map(|run| (FutureMode::Replace, run))
                 })
-                .unwrap_or((FutureMode::Every, run))
+                .ok_or_else(|| explicit_run_mode_error(line))?
         } else {
             (FutureMode::Every, run)
         };
@@ -295,6 +299,12 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
         line,
         format!("unknown statement `{}`", line.text),
     ))
+}
+
+fn explicit_run_mode_error(line: &Line) -> Error {
+    error("E050", line, "`run` requires an explicit delivery mode").hint(
+        "write `run every call(...) -> ...` to deliver every completion; use a named `run latest` or `run replace` lane when newer work supersedes older work",
+    )
 }
 
 pub(in crate::parser) fn parse_task_flow(line: &Line) -> Result<Statement, Error> {

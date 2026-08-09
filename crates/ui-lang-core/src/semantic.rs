@@ -439,9 +439,8 @@ impl AnimationStart {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FutureMode {
-    #[default]
     Every,
     Latest,
     Replace,

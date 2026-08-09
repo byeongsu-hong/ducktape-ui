@@ -316,7 +316,7 @@ palette app for AppTheme
   danger #ff0000
 component Search() -> str
   on search
-    run fetch() -> emit(_)
+    run every fetch() -> emit(_)
   button "Search" -> search
 on changed(value)
 view
@@ -1377,7 +1377,7 @@ view
             ..
         }
     ));
-    analyze(&source.replace("run latest lane=search", "run")).unwrap();
+    analyze(&source.replace("run latest lane=search", "run every")).unwrap();
 
     let global = r#"app GlobalLatest
 extern crate::backend

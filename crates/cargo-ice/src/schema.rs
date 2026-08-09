@@ -394,9 +394,9 @@ const COMPLETIONS: &[Completion] = &[
         "responsive #${1:id} size=(${2:width}, ${3:height})\n  $0",
     ),
     Completion::new(
-        "run",
+        "run every",
         "effect",
-        "run ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _",
+        "run every ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _",
     ),
     Completion::new(
         "run latest",
@@ -1723,11 +1723,11 @@ fn construct_schema(item: &Completion) -> Value {
                 ("h", "length", false),
             ]),
         ),
-        "run" | "run latest" | "run replace" => {
+        "run every" | "run latest" | "run replace" => {
             let (mode, syntax, lane_required) = match item.label {
-                "run" => (
-                    "ordinary",
-                    "run <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
+                "run every" => (
+                    "every",
+                    "run every <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
                     false,
                 ),
                 "run latest" => (
@@ -2620,7 +2620,7 @@ pub fn document() -> Value {
             "frozen": false,
             "generative": true,
             "requestLanes": {
-                "ordinary": "run delivers every completion and owns no request lane",
+                "every": "run every delivers every completion and owns no request lane",
                 "name": "a static qualified identifier; each checked state owner has a finite set of named lanes",
                 "qualification": "unaliased app and preset fragments remain in the root namespace and may share root lanes; an aliased component qualifies its internal lane names, but those lanes remain owned by each component instance",
                 "sharing": "the same fully qualified lane name joins members across handlers; one owner cannot mix latest and replace for a lane",
@@ -2741,7 +2741,7 @@ pub fn document() -> Value {
                     "componentStateInitializer": false,
                     "reason": "component rendering may initialize local state again",
                     "runTaskCompletionRouteExpression": {
-                        "statements": ["run Future", "task statement, including built-in tasks"],
+                        "statements": ["run every/latest/replace Future", "task statement, including built-in tasks"],
                         "explicitValues": ["state", "derived value", "handler parameter", "handler let local", "pure expression"],
                         "evaluation": "each explicit success and failure expression becomes an owned snapshot when the statement launches",
                         "valueType": "ordinary cloneable Ice data",
@@ -2962,6 +2962,11 @@ mod tests {
         let schema = document();
         let lanes = &schema["core"]["requestLanes"];
         assert_eq!(
+            lanes["every"],
+            "run every delivers every completion and owns no request lane"
+        );
+        assert!(lanes.get("ordinary").is_none());
+        assert_eq!(
             lanes["owner"]["daemon"],
             "the daemon state shared across all of its windows"
         );
@@ -2983,8 +2988,13 @@ mod tests {
                 .find(|construct| construct["label"] == label)
                 .unwrap_or_else(|| panic!("missing `{label}` construct"))
         };
-        assert_eq!(construct("run")["route"]["mode"], "ordinary");
-        assert_eq!(construct("run")["route"]["lane"]["forbidden"], true);
+        assert_eq!(construct("run every")["route"]["mode"], "every");
+        assert_eq!(construct("run every")["route"]["lane"]["forbidden"], true);
+        assert!(
+            constructs
+                .iter()
+                .all(|construct| construct["label"] != "run")
+        );
         assert_eq!(construct("run latest")["route"]["lane"]["required"], true);
         assert_eq!(
             construct("run latest")["route"]["lane"]["type"],
@@ -3011,8 +3021,13 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing `{label}` completion"))
         };
         assert_eq!(
-            completion("run")["insertText"],
-            "run ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
+            completion("run every")["insertText"],
+            "run every ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
+        );
+        assert!(
+            completions
+                .iter()
+                .all(|completion| completion["label"] != "run")
         );
         assert_eq!(
             completion("run latest")["insertText"],
@@ -3167,7 +3182,7 @@ mod tests {
             "_",
             "#id",
             "extern",
-            "run",
+            "run every",
             "run latest",
             "run replace",
             "invalidate",
@@ -3228,11 +3243,11 @@ mod tests {
         );
         assert_eq!(find("button")["route"]["required"], true);
         assert_eq!(
-            find("run")["route"]["failure"]["requiredWhen"],
+            find("run every")["route"]["failure"]["requiredWhen"],
             "extern declaration has `! <error-type>`"
         );
         assert_eq!(
-            find("run")["route"]["failure"]["forbiddenWhen"],
+            find("run every")["route"]["failure"]["forbiddenWhen"],
             "extern declaration has no error type"
         );
         assert!(
@@ -3264,7 +3279,7 @@ mod tests {
         assert_eq!(
             sync["runTaskCompletionRouteExpression"],
             json!({
-                "statements": ["run Future", "task statement, including built-in tasks"],
+                "statements": ["run every/latest/replace Future", "task statement, including built-in tasks"],
                 "explicitValues": ["state", "derived value", "handler parameter", "handler let local", "pure expression"],
                 "evaluation": "each explicit success and failure expression becomes an owned snapshot when the statement launches",
                 "valueType": "ordinary cloneable Ice data",

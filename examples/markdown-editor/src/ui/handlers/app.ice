@@ -42,7 +42,7 @@ on request_open
   return if history.dirty
   pending = PendingAction.idle
   busy = true
-  run open_document() -> opened _ | failed _
+  run every open_document() -> opened _ | failed _
 
 on request_save
   return if busy || confirming
@@ -50,7 +50,7 @@ on request_save
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_current(path, name, editor_text(document), history.revision) -> saved _ | failed _
+  run every save_current(path, name, editor_text(document), history.revision) -> saved _ | failed _
 
 on request_save_as
   return if busy || confirming
@@ -58,7 +58,7 @@ on request_save_as
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_document_as(name, editor_text(document), history.revision) -> saved _ | failed _
+  run every save_document_as(name, editor_text(document), history.revision) -> saved _ | failed _
 
 on opened(file)
   busy = false
@@ -117,7 +117,7 @@ on discard_open
   pending = PendingAction.idle
   error = ""
   busy = true
-  run open_document() -> opened _ | failed _
+  run every open_document() -> opened _ | failed _
 
 on discard_close
   return if busy
@@ -132,7 +132,7 @@ on save_then_new
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_current(path, name, editor_text(document), history.revision) -> saved_then_new _ | failed_save_new _
+  run every save_current(path, name, editor_text(document), history.revision) -> saved_then_new _ | failed_save_new _
 
 on saved_then_new(file)
   busy = false
@@ -154,7 +154,7 @@ on save_then_open
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_current(path, name, editor_text(document), history.revision) -> saved_then_open _ | failed_save_open _
+  run every save_current(path, name, editor_text(document), history.revision) -> saved_then_open _ | failed_save_open _
 
 on saved_then_open(file)
   busy = false
@@ -166,7 +166,7 @@ on saved_then_open(file)
   find_query = ""
   path = file.path
   name = file.name
-  run open_document() -> opened _ | failed _
+  run every open_document() -> opened _ | failed _
 
 on save_then_close
   return if busy || pending != PendingAction.close_window
@@ -174,7 +174,7 @@ on save_then_close
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_current(path, name, editor_text(document), history.revision) -> saved_then_close _ | failed_save_close _
+  run every save_current(path, name, editor_text(document), history.revision) -> saved_then_close _ | failed_save_close _
 
 on saved_then_close(file)
   busy = false
@@ -242,7 +242,7 @@ on follow_link
   return if editor_has_selection(document)
   let url = link_at_cursor(current_line, caret_column)
   return if empty(url)
-  run open_url(url) -> link_opened | failed _
+  run every open_url(url) -> link_opened | failed _
 
 on link_opened
 

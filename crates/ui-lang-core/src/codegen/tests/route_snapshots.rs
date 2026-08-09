@@ -38,7 +38,7 @@ extern crate::backend
   task cached(value:str) -> str ! AppError
 {THEME}on future(seed)
   let context = "future"
-  run fetch(trim(seed)) -> future_loaded(context, _) | future_failed("future-error", _)
+  run every fetch(trim(seed)) -> future_loaded(context, _) | future_failed("future-error", _)
 on cached(seed)
   let context = "cached"
   task cached(trim(seed)) -> cached_loaded(context, _) | cached_failed("cached-error", _)
@@ -180,7 +180,7 @@ view
 }
 
 #[test]
-fn snapshots_each_nested_run_leaf_without_adding_ordinary_lane_state() {
+fn snapshots_each_nested_every_run_leaf_without_adding_request_lane_state() {
     let source = format!(
         r#"app NestedSnapshots
 extern crate::backend
@@ -190,10 +190,10 @@ extern crate::backend
 {THEME}on start(seed)
   let context = trim(seed)
   parallel
-    run fetch(context) -> loaded(context, _)
+    run every fetch(context) -> loaded(context, _)
     sequential
       task cached(context) -> loaded(context, _)
-      run fetch(context) -> loaded(context, _)
+      run every fetch(context) -> loaded(context, _)
     stream events() -> observed _
 on loaded(context, value)
 on observed(value)

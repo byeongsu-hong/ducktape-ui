@@ -28,11 +28,11 @@ on connect
   status = "Loading"
   tape = tape_focus(tape, coin, interval)
   parallel
-    run venue_symbols(venue) -> symbols_loaded _ | failed _
-    run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
-    run venue_account(venue, trim(draft)) -> account_loaded _ | account_failed _
-    run venue_orders(venue, trim(draft)) -> orders_loaded _ | orders_failed _
-    run venue_portfolio(venue, trim(draft)) -> portfolio_loaded _ | portfolio_failed _
+    run every venue_symbols(venue) -> symbols_loaded _ | failed _
+    run every venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
+    run every venue_account(venue, trim(draft)) -> account_loaded _ | account_failed _
+    run every venue_orders(venue, trim(draft)) -> orders_loaded _ | orders_failed _
+    run every venue_portfolio(venue, trim(draft)) -> portfolio_loaded _ | portfolio_failed _
     abortable feeds abort-on-drop
       parallel
         stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
@@ -45,8 +45,8 @@ on browse
   tape = tape_focus(tape, coin, interval)
   portfolio_history = portfolio_empty()
   parallel
-    run venue_symbols(venue) -> symbols_loaded _ | failed _
-    run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
+    run every venue_symbols(venue) -> symbols_loaded _ | failed _
+    run every venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
     abortable feeds abort-on-drop
       stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
 
@@ -219,7 +219,7 @@ on pick_symbol(name)
   tape = tape_focus(tape, name, interval)
   loading_history = false
   history_exhausted = false
-  run venue_candles(venue, tape, name, interval) -> candles_loaded _ | failed _
+  run every venue_candles(venue, tape, name, interval) -> candles_loaded _ | failed _
 
 // A venue owns every panel on the screen, so this throws away at least what
 // `pick_symbol` throws away, plus everything that belongs to an account. Two
@@ -308,11 +308,11 @@ on switch_venue(next)
   error = ""
   status = "Loading"
   parallel
-    run venue_symbols(venue) -> symbols_loaded _ | failed _
-    run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
-    run venue_account(venue, address) -> account_loaded _ | account_failed _
-    run venue_orders(venue, address) -> orders_loaded _ | orders_failed _
-    run venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
+    run every venue_symbols(venue) -> symbols_loaded _ | failed _
+    run every venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
+    run every venue_account(venue, address) -> account_loaded _ | account_failed _
+    run every venue_orders(venue, address) -> orders_loaded _ | orders_failed _
+    run every venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
     abortable feeds abort-on-drop
       parallel
         stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
@@ -334,7 +334,7 @@ on pick_interval(next)
   tape = tape_focus(tape, coin, next)
   loading_history = false
   history_exhausted = false
-  run venue_candles(venue, tape, coin, next) -> candles_loaded _ | failed _
+  run every venue_candles(venue, tape, coin, next) -> candles_loaded _ | failed _
 
 on search(typed)
   query = typed
@@ -347,15 +347,15 @@ on tick_universe
   // says so — while it still holds the key, which is what lets the panel name
   // what lapsed and offer to approve it again.
   session = tick_agent(session, now)
-  run venue_symbols(venue) -> symbols_loaded _ | failed _
+  run every venue_symbols(venue) -> symbols_loaded _ | failed _
 
 on tick_account
   parallel
-    run venue_account(venue, address) -> account_loaded _ | account_failed _
-    run venue_orders(venue, address) -> orders_loaded _ | orders_failed _
+    run every venue_account(venue, address) -> account_loaded _ | account_failed _
+    run every venue_orders(venue, address) -> orders_loaded _ | orders_failed _
 
 on tick_portfolio
-  run venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
+  run every venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
 
 on pick_portfolio_range(next)
   portfolio_range = next
@@ -398,7 +398,7 @@ on symbols_loaded(rows)
   tape = tape_focus(tape, landed, interval)
   loading_history = false
   history_exhausted = false
-  run venue_candles(venue, tape, landed, interval) -> candles_loaded _ | failed _
+  run every venue_candles(venue, tape, landed, interval) -> candles_loaded _ | failed _
 
 // A window of candles is a new left edge for the chart to be panned back from,
 // so whatever was known about the old one is not about this tape. It also
@@ -424,7 +424,7 @@ on candles_loaded(count)
   status = "Loading candles"
   tape = tape_focus(tape, coin, finer)
   loading_history = false
-  run venue_candles(venue, tape, coin, finer) -> candles_loaded _ | failed _
+  run every venue_candles(venue, tape, coin, finer) -> candles_loaded _ | failed _
 
 // An account read with no address to make it for answers nothing rather than
 // failing, so this is also how the app comes back to holding no account at all.
@@ -501,7 +501,7 @@ on chart_signalled(signal)
   return if !signal.older
   return if loading_history || history_exhausted
   loading_history = true
-  run venue_history(venue, tape, coin, interval) -> history_loaded _ | failed _
+  run every venue_history(venue, tape, coin, interval) -> history_loaded _ | failed _
 
 // How many bars older than the tape's first one the read added, and zero is
 // the venue saying there are none. The window asked for is derived from that
@@ -526,11 +526,11 @@ on lower_resized(_dx, dy)
 on unlock
   return if !session_unlockable(session)
   unlock_note = ""
-  run unlock_agent(venue, address) -> custody_answered _ | custody_failed _
+  run every unlock_agent(venue, address) -> custody_answered _ | custody_failed _
 
 on enrol
   unlock_note = ""
-  run enrol_agent(venue, address) -> custody_answered _ | custody_failed _
+  run every enrol_agent(venue, address) -> custody_answered _ | custody_failed _
 
 // Both acts land here because both answer the same question. A declined sheet,
 // a first run, a build with no keychain and an approval nobody has made are

@@ -70,7 +70,7 @@ on submit
   let title = normalized_draft
   return if !can_submit
   loading = true
-  run create_task(title) -> created _ | failed _
+  run every create_task(title) -> created _ | failed _
 
 view
   col w=fill h=fill p=24.0 gap=16.0 @bg-bg
@@ -90,21 +90,27 @@ a trusted Rust contract: the same arguments must produce the same value without
 observable effects. Immediate `sync` externs may observe the environment,
 perform an effect, or create retained identity, so Ice confines them to
 top-level app state initializers and immediately evaluated handler expressions.
-Explicit expressions producing ordinary cloneable Ice data in `run` Future and
-`task` statement completion routes become owned snapshots when the statement
+Explicit expressions producing ordinary cloneable Ice data in `run every`,
+`run latest`, and `run replace` Future completion routes, and in `task`
+statement completion routes, become owned snapshots when the statement
 launches; both success and failure snapshots are materialized then, while `_`
 is supplied only by the delivered completion.
 They remain pure-only so an unused branch cannot perform an effect. Run a
 `sync` extern in a preceding handler `let` and route that local when an
 immediate value is needed. Stream, sip, flow, and native query route timing is
 unchanged.
-For example, `run fetch(query) -> loaded(query, _)` captures `query` at launch,
-not completion; that explicit value may come from state, a derived value, a
-handler parameter, or a `let` local.
+For example, `run every fetch(query) -> loaded(query, _)` captures `query` at
+launch, not completion; that explicit value may come from state, a derived
+value, a handler parameter, or a `let` local.
 
-Ordinary `run` delivers every Future completion. For superseding requests,
-`run latest lane=<name>` routes only the newest completion without canceling
-older work, while `run replace lane=<name>` also aborts the prior Iced task.
+Every directly routed handler Future names its delivery mode. `run every`
+delivers every completion. For superseding requests, `run latest lane=<name>`
+routes only the newest completion without canceling older work, while
+`run replace lane=<name>` also aborts the prior Iced task. Bare handler `run` is
+not syntax. `run` under a `subscribe` block is the distinct long-lived
+stream-source form; task-flow
+`from run call()` and `then value -> run call(value)` are Task adapters that do
+not route a Future completion directly and therefore have no delivery mode.
 A direct app, daemon, preset, or component handler statement whose immediate
 intent supersedes an in-flight request can use `invalidate lane=<name>` before
 its state changes. Invalidation advances the existing owner-scoped lane without

@@ -193,10 +193,11 @@ The exact initialization capability object includes:
 
 Formatting calls the same `ui_lang_core::format_fragment` implementation as
 `cargo ice fmt`. Completion items come from the generated Core construct table.
-Handler completion offers separate ordinary `run`, `run latest lane=...`,
+Handler completion offers separate `run every`, `run latest lane=...`,
 `run replace lane=...`, and `invalidate lane=...` snippets. The error-route
-quick fix recognizes the three `run` forms and does not treat lane invalidation
-as a routed task.
+quick fix recognizes the three explicit handler Future modes and does not treat
+lane invalidation, subscription `run`, or task-flow `run` sources as routed
+Future statements.
 Current completion is intentionally vocabulary-wide rather than
 cursor-context-aware; let diagnostics reject a construct in the wrong context.
 
