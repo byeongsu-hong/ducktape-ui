@@ -99,7 +99,7 @@ use crate::session::{
     step,
 };
 use crate::signing::{self, Wallet};
-use crate::venue::{Draft, Network, Signing, venue_name};
+use crate::venue::{Draft, Network, Signing, venue_list, venue_name};
 use crate::{Tif, Venue};
 
 /// What one act of custody produced: where the session now stands, and the
@@ -174,11 +174,12 @@ impl CustodyFault {
 //    It lives in this module, behind this seam, and crosses no extern.
 // 2. **Exactly the `Ready` window.** `step` is the one thing that decides
 //    whether a session may sign, so the drop hangs off `step`: every real
-//    transition goes through `advance`, which drops the key on the way past
-//    whenever what comes back is not `Ready`. Lock, expiry, and the network and
-//    address switches that already forget the keychain item need no rule of
-//    their own — they are already transitions, and there is no second ledger to
-//    keep in agreement with the first.
+//    transition goes through `advance`, which drops the keys on the way past
+//    whenever what comes back is not `Ready`. Lock and expiry need no rule of
+//    their own — they are already transitions — and a change of address is held
+//    by `signing_key`, which reaches nothing for a session that is not the one
+//    the vault was unlocked for. Switching *network* is deliberately not on
+//    that list any more: see `Vault`.
 // 3. **`can_trade` is the only gate, held by the compiler.** The key is
 //    reachable only through `signing_key`, which returns `None` unless a
 //    `Ready` session and a clock said yes. A path that reaches it without
@@ -212,8 +213,45 @@ impl fmt::Debug for HeldKey {
     }
 }
 
-fn held_key() -> &'static Mutex<Option<Arc<HeldKey>>> {
-    static HELD: OnceLock<Mutex<Option<Arc<HeldKey>>>> = OnceLock::new();
+/// Every key this address has enrolled, by the network it signs for.
+///
+/// **Decided by the repository owner, 2026-08-10: one unlock activates every
+/// enrolled network of the active address.** Switching network is no longer an
+/// authentication boundary — the key set survives it, and only locking, the
+/// window closing, and changing address take it away.
+///
+/// What that spends is stated so it cannot be forgotten. A switch used to be a
+/// second gate: moving from a test deployment to a live one re-asked for a
+/// finger, and now it does not. **What remains between a reader and an order on
+/// the wrong network is the confirmation panel and the REAL MONEY / TESTNET
+/// kind stated inside it.** That panel is now carrying two decisions' worth of
+/// safety; anyone loosening it is loosening both.
+///
+/// What it does *not* change: the keychain still files one item per exchange,
+/// deployment and address, because a key approved on one deployment is unknown
+/// on the others and a secret read back under the wrong name is a key the venue
+/// has never heard of. This is the in-memory set only.
+///
+/// ponytail: on macOS a *read* is what raises the sheet, so an address enrolled
+/// on several networks may cost more than one prompt during the single unlock
+/// that fills this. The decided behaviour — no prompt on a switch — holds
+/// either way, because every sheet happens at the unlock. Collapsing them to
+/// one needs a shared `LAContext` passed as `kSecUseAuthenticationContext`,
+/// which is the open question `session.rs` already records and not a dependency
+/// to add on a guess. The whole macOS path is compiled and unrun anyway.
+struct Vault {
+    /// The account these keys belong to. Held so a change of address is a
+    /// change of vault rather than a rule somebody has to remember.
+    address: String,
+    /// One entry per network this address has a usable key for. A list rather
+    /// than a map because there are four networks in the whole registry and
+    /// `Venue` is an Ice-declared enum with no `Hash`; a linear scan of four is
+    /// not a thing to buy a derive for.
+    keys: Vec<(Venue, Arc<HeldKey>)>,
+}
+
+fn vault() -> &'static Mutex<Option<Vault>> {
+    static HELD: OnceLock<Mutex<Option<Vault>>> = OnceLock::new();
     HELD.get_or_init(Mutex::default)
 }
 
@@ -238,8 +276,10 @@ fn advance(state: Session, event: Event) -> Session {
     let next = step(state, event);
     if !matches!(next, Session::Ready { .. }) {
         // Taken out of the store before it is dropped, so the store is empty
-        // for the whole of the destructor's run rather than after it.
-        drop(lock(held_key()).take());
+        // for the whole of the destructor's run rather than after it. Every
+        // network's key goes together: they were released by one prompt, so
+        // they are held and forgotten as one thing.
+        drop(lock(vault()).take());
     }
     next
 }
@@ -257,10 +297,29 @@ fn advance(state: Session, event: Event) -> Session {
 /// already on the wire cannot be un-sent. The clone keeps that one send's key
 /// alive until it finishes and no longer; the store's own copy is gone the
 /// moment `advance` says so, so nothing new can be signed with it.
-fn signing_key(session: &Session, now_s: i64) -> Option<Arc<HeldKey>> {
-    can_trade(session, millis(now_s))
-        .then(|| lock(held_key()).clone())
-        .flatten()
+fn signing_key(venue: Venue, session: &Session, now_s: i64) -> Option<Arc<HeldKey>> {
+    if !can_trade(session, millis(now_s)) {
+        return None;
+    }
+    let vault = lock(vault());
+    let vault = vault.as_ref()?;
+    // The address is the third thing that ends a key's life, and it is checked
+    // here rather than left to whichever handler changes one. A vault belongs
+    // to the account it was unlocked for; a session for any other account
+    // reaches nothing, so "changing address forgets the keys" is a property of
+    // this accessor rather than a rule four call sites have to remember.
+    if account(session) != Some(vault.address.as_str()) {
+        return None;
+    }
+    // Per network even though the prompt was not: a session may sign, and this
+    // network is one it holds a key for or it is not. A network the address has
+    // never enrolled reads as needing enrolment rather than as a session that
+    // cannot trade, which is a different sentence and a different fix.
+    vault
+        .keys
+        .iter()
+        .find(|(held, _)| *held == venue)
+        .map(|(_, key)| Arc::clone(key))
 }
 
 /// Milliseconds, which is the unit the exchange reports `validUntil` in and
@@ -430,7 +489,6 @@ pub async fn enrol_agent(venue: Venue, address: String) -> Result<Entry, Custody
 /// listing also answers *which slot*, so the reader is never asked for an index
 /// the venue already knows.
 pub async fn unlock_agent(venue: Venue, address: String) -> Result<Entry, CustodyFault> {
-    let scheme = Network::of(venue).signing;
     let address = address.trim().to_owned();
     if address.is_empty() {
         return Ok(Entry::saying(
@@ -453,85 +511,149 @@ pub async fn unlock_agent(venue: Venue, address: String) -> Result<Entry, Custod
     // Past here the app is `Unlocked`: it knows whose account this is and can
     // sign nothing. What turns that into `Ready` is the venue's own listing.
     let now = now_ms();
-    let (key, signer) = match loaded {
-        Loaded::Agent(wallet) => {
-            let Signing::Eip712(chain) = scheme else {
-                return Ok(mismatched());
-            };
-            let listed = hl_agents(chain, address.clone())
-                .await
-                .map_err(|failure| CustodyFault::new(failure.message))?;
+    let (key, signer) = match approved(venue, &address, loaded, now).await {
+        Ok(pair) => pair,
+        Err(Denied::Refused(note)) => return Ok(Entry::saying(held, &note)),
+        Err(Denied::Fault(message)) => return Err(CustodyFault::new(message)),
+    };
+
+    // And every other network this address has enrolled, released by the same
+    // prompt. A network that is not enrolled, whose key the venue no longer
+    // lists, or whose exchange will not answer right now is simply not held —
+    // it reads as needing enrolment when the reader reaches it, which is what
+    // it would have read as before this unlock too. None of those is a reason
+    // to refuse an unlock the asked network already answered.
+    let mut keys = vec![(venue, Arc::new(signer))];
+    for other in venue_list() {
+        if other == venue {
+            continue;
+        }
+        let secret = {
+            let address = address.clone();
+            smol::unblock(move || secret_for(other, &address)).await
+        };
+        let Some(secret) = secret else {
+            continue;
+        };
+        if let Ok((_, signer)) = approved(other, &address, secret, now).await {
+            keys.push((other, Arc::new(signer)));
+        }
+    }
+
+    // The app's own ceiling, where the set includes a network that has none of
+    // the venue's. Hyperliquid stops honouring a key on a date it chose;
+    // Lighter never does, so `APP_WINDOW_MS` is this app's own limit on holding
+    // one — and a session that reached `Ready` through Hyperliquid's much
+    // longer window must not quietly extend it over a Lighter key it is also
+    // holding. The shorter bound governs, which is the whole of the rule.
+    let key = match keys
+        .iter()
+        .any(|(held, _)| matches!(Network::of(*held).signing, Signing::ApiKey(_)))
+    {
+        true => AgentKey {
+            expires_at: key.expires_at.min(now.saturating_add(APP_WINDOW_MS)),
+            ..key
+        },
+        false => key,
+    };
+
+    // The keys go into the store *before* the transition, and `advance` takes
+    // them straight back out if what comes back is not `Ready` — so there is no
+    // ordering of these two lines that leaves a key held by a session which may
+    // not sign.
+    *lock(vault()) = Some(Vault {
+        address: address.clone(),
+        keys,
+    });
+    Ok(Entry::plain(advance(held, Event::Approved { key, now })))
+}
+
+/// Why a network's key was not admitted, and where the answer belongs.
+///
+/// Two routes because they are two different events. A venue that says this key
+/// is not approved has *answered*, and the answer is a sentence for the panel;
+/// a venue that would not answer at all is a read that failed like any other
+/// and belongs in the app's alarm line beside the rest. Collapsing them would
+/// put "not approved" on screen for an exchange that was merely unreachable.
+enum Denied {
+    Refused(String),
+    Fault(String),
+}
+
+/// Ask one network whether the key this address holds for it may sign, and
+/// build what the session and the store each need from the answer.
+///
+/// One path for both schemes and for every network, asked or not: the question
+/// is the same — is this key listed for this account — and only the read that
+/// answers it differs. A second, more forgiving copy for the networks nobody
+/// asked about is how the two would come to disagree about what "approved"
+/// means.
+async fn approved(
+    venue: Venue,
+    address: &str,
+    loaded: Loaded,
+    now: i64,
+) -> Result<(AgentKey, HeldKey), Denied> {
+    let fault = |failure: HlError| Denied::Fault(failure.message);
+    match (Network::of(venue).signing, loaded) {
+        (Signing::Eip712(chain), Loaded::Agent(wallet)) => {
+            let listed = hl_agents(chain, address.to_owned()).await.map_err(fault)?;
             let ours = wallet.address().to_string();
             let Some(&(_, expires_at)) = listed
                 .iter()
                 .find(|(listed, _)| listed.eq_ignore_ascii_case(&ours))
             else {
-                return Ok(Entry::saying(
-                    held,
-                    &format!(
-                        "{ours} is not an approved API wallet for this account on {}. Approve \
-                         it from the wallet that owns the account, then unlock again. The \
-                         account can be read either way.",
-                        venue_name(venue),
-                    ),
-                ));
+                return Err(Denied::Refused(format!(
+                    "{ours} is not an approved API wallet for this account on {}. Approve it \
+                     from the wallet that owns the account, then unlock again. The account can \
+                     be read either way.",
+                    venue_name(venue),
+                )));
             };
-            (
+            Ok((
                 AgentKey {
                     address: ours,
-                    account: address,
+                    account: address.to_owned(),
                     // The venue reports no approval time. What this app knows
                     // is when it read one, and nothing is inferred from that.
                     approved_at: now,
                     expires_at,
                 },
                 HeldKey::Agent(wallet),
-            )
+            ))
         }
-        Loaded::ApiKey(key) => {
-            let Signing::ApiKey(zone) = scheme else {
-                return Ok(mismatched());
-            };
-            let Some(account) = lighter_account_index(zone, address.clone())
+        (Signing::ApiKey(zone), Loaded::ApiKey(key)) => {
+            let Some(account) = lighter_account_index(zone, address.to_owned())
                 .await
-                .map_err(|failure| CustodyFault::new(failure.message))?
+                .map_err(fault)?
             else {
-                return Ok(Entry::saying(
-                    held,
-                    &format!(
-                        "This address has no account on {} yet, so there is nothing for a key \
-                         to sign for. Fund one there first — the app reads whatever it finds \
-                         either way.",
-                        venue_name(venue),
-                    ),
-                ));
+                return Err(Denied::Refused(format!(
+                    "This address has no account on {} yet, so there is nothing for a key to \
+                     sign for. Fund one there first — the app reads whatever it finds either \
+                     way.",
+                    venue_name(venue),
+                )));
             };
             let ours = hex::encode(key.public_key());
-            let listed = lighter_api_keys(zone, account)
-                .await
-                .map_err(|failure| CustodyFault::new(failure.message))?;
+            let listed = lighter_api_keys(zone, account).await.map_err(fault)?;
             let Some((index, _)) = listed
                 .into_iter()
                 .find(|(_, public)| public.eq_ignore_ascii_case(&ours))
             else {
-                return Ok(Entry::saying(
-                    held,
-                    &format!(
-                        "This key is not registered against account {account} on {}. Register \
-                         its public key from the wallet that owns the account, then unlock \
-                         again — the app finds which slot you used. The account can be read \
-                         either way. {ours}",
-                        venue_name(venue),
-                    ),
-                ));
+                return Err(Denied::Refused(format!(
+                    "This key is not registered against account {account} on {}. Register its \
+                     public key from the wallet that owns the account, then unlock again — the \
+                     app finds which slot you used. The account can be read either way. {ours}",
+                    venue_name(venue),
+                )));
             };
-            (
+            Ok((
                 AgentKey {
                     // The public key is what the venue lists and what a reader
                     // can compare against the panel, so it is what the session
                     // names its key by: the analogue of the agent address.
                     address: ours,
-                    account: address,
+                    account: address.to_owned(),
                     approved_at: now,
                     // The venue puts no expiry on a registered key, so this
                     // window is the app's own. See `APP_WINDOW_MS`.
@@ -542,22 +664,24 @@ pub async fn unlock_agent(venue: Venue, address: String) -> Result<Entry, Custod
                     account,
                     index,
                 },
-            )
+            ))
         }
-    };
-
-    // The key goes into the store *before* the transition, and `advance` takes
-    // it straight back out if what comes back is not `Ready` — so there is no
-    // ordering of these two lines that leaves a key held by a session which may
-    // not sign.
-    *lock(held_key()) = Some(Arc::new(signer));
-    Ok(Entry::plain(advance(held, Event::Approved { key, now })))
+        // A secret stored for one scheme and read back under another, which is
+        // a keychain item left over from a previous shape of this app.
+        // `load_key` parses by the network's own scheme so the pair always
+        // agrees; this exists because the compiler cannot know that.
+        _ => Err(Denied::Refused(
+            "the stored secret is not a key for this network; make a new one to replace it"
+                .to_owned(),
+        )),
+    }
 }
 
 /// A secret stored for one scheme and read back under another, which is a
 /// keychain item left over from a previous shape of this app. `read_key` parses
 /// by the network's own scheme so the pair always agrees — this exists because
 /// the compiler cannot know that and must not be told otherwise.
+#[allow(dead_code)]
 fn mismatched() -> Entry {
     Entry::plain(Session::Unavailable {
         reason: "the stored secret is not a key for this network; make a new one to replace it"
@@ -619,6 +743,19 @@ fn read_key(venue: Venue, address: &str) -> Opened {
             Err(reason) => Opened::Refused(Entry::plain(answered(Unlock::Unavailable(reason)))),
             Ok(loaded) => Opened::Held(answered(Unlock::Platform), loaded),
         },
+    }
+}
+
+/// The same read for a network nobody asked about: the secret, or nothing.
+///
+/// No session events and no sentences. Whether this address has enrolled this
+/// network at all is not a question the unlock is answering, so a missing item,
+/// a declined sheet and an unusable secret are all the same answer here — this
+/// network is not one the vault will hold.
+fn secret_for(venue: Venue, address: &str) -> Option<Loaded> {
+    match PlatformKeystore.load(&item(venue, address)) {
+        Ok(Held::Secret(secret)) => load_key(Network::of(venue).signing, secret.expose()).ok(),
+        _ => None,
     }
 }
 
@@ -742,7 +879,7 @@ pub async fn submit_order(
     if !refused.is_empty() {
         return Err(HlError::new(refused));
     }
-    let key = signing_key(&session, now_s)
+    let key = signing_key(venue, &session, now_s)
         .ok_or_else(|| HlError::new(locked_out(venue, session.clone())))?;
     let order = Order {
         oid: 0,
@@ -827,7 +964,7 @@ pub async fn cancel_resting(
     coin: String,
     oid: i64,
 ) -> Result<String, HlError> {
-    let key = signing_key(&session, now_s)
+    let key = signing_key(venue, &session, now_s)
         .ok_or_else(|| HlError::new(locked_out(venue, session.clone())))?;
     match (Network::of(venue).signing, &*key) {
         (Signing::Eip712(chain), HeldKey::Agent(wallet)) => {
@@ -1063,15 +1200,15 @@ pub fn demo_session_unapproved() -> Session {
 /// A live approval, with the window the venue actually granted the key this
 /// address holds: a shade under 180 days.
 pub fn demo_session_ready(now_s: i64) -> Session {
-    approved(now_s, 88 * 24 * 3_600)
+    demo_approved(now_s, 88 * 24 * 3_600)
 }
 
 /// The same approval, a day after the exchange stopped honouring it.
 pub fn demo_session_expired(now_s: i64) -> Session {
-    approved(now_s, -24 * 3_600)
+    demo_approved(now_s, -24 * 3_600)
 }
 
-fn approved(now_s: i64, left_s: i64) -> Session {
+fn demo_approved(now_s: i64, left_s: i64) -> Session {
     let now = millis(now_s);
     step(
         entered(DEMO_ACCOUNT),
@@ -1105,16 +1242,26 @@ mod tests {
         TURN.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Put a key in the store the way an unlock would, so the retention can be
-    /// tested without a keychain. Answers whether the store holds one, which is
-    /// the only thing about it any test may see: nothing here can read the
-    /// bytes back, because nothing in the module can.
+    /// Put keys in the store the way an unlock would, so the retention can be
+    /// tested without a keychain. Nothing here can read the bytes back, because
+    /// nothing in the module can — what a test may see is which networks are
+    /// held, and for whom.
+    fn seed_keys(venues: &[Venue]) {
+        *lock(vault()) = Some(Vault {
+            address: ACCOUNT.to_owned(),
+            keys: venues
+                .iter()
+                .map(|venue| (*venue, Arc::new(HeldKey::Agent(Wallet::generate()))))
+                .collect(),
+        });
+    }
+
     fn seed_key() {
-        *lock(held_key()) = Some(Arc::new(HeldKey::Agent(Wallet::generate())));
+        seed_keys(&[Venue::Hyperliquid]);
     }
 
     fn holding_a_key() -> bool {
-        lock(held_key()).is_some()
+        lock(vault()).is_some()
     }
 
     /// A priced ticket, as `price_ticket` would answer for the draft below.
@@ -1459,11 +1606,14 @@ mod tests {
         let ready = ready_at(now, 30);
 
         seed_key();
-        assert!(signing_key(&ready, now).is_some(), "a live window signs");
+        assert!(
+            signing_key(Venue::Hyperliquid, &ready, now).is_some(),
+            "a live window signs"
+        );
 
         // The same session, one tick past its window and never ticked.
         assert!(
-            signing_key(&ready, now + 31 * 24 * HOUR).is_none(),
+            signing_key(Venue::Hyperliquid, &ready, now + 31 * 24 * HOUR).is_none(),
             "a lapsed window must not sign on the strength of a tick that never came",
         );
         for locked in [
@@ -1482,7 +1632,7 @@ mod tests {
             },
         ] {
             assert!(
-                signing_key(&locked, now).is_none(),
+                signing_key(Venue::Hyperliquid, &locked, now).is_none(),
                 "{locked:?} may not sign"
             );
         }
@@ -1492,10 +1642,77 @@ mod tests {
         lock_agent();
         assert!(!holding_a_key());
         assert!(
-            signing_key(&ready_at(now, 30), now).is_none(),
+            signing_key(Venue::Hyperliquid, &ready_at(now, 30), now).is_none(),
             "a session built without an unlock holds no key, which is what makes \
              a preset safe to screenshot",
         );
+    }
+
+    /// One unlock, every enrolled network — and nothing else.
+    ///
+    /// The owner's 2026-08-10 scope, from the accessor's side. A key is reached
+    /// per network even though the prompt was not, so a network the address
+    /// never enrolled reaches nothing and reads as needing enrolment; and the
+    /// vault belongs to the account it was unlocked for, so a session for any
+    /// other address reaches nothing either. That last one is what "changing
+    /// address forgets the keys" is made of, and it is here rather than in
+    /// whichever handler changes an address.
+    #[test]
+    fn one_unlock_reaches_every_enrolled_network_and_no_others() {
+        let _turn = one_at_a_time();
+        let now = 1_786_172_634;
+        let ready = ready_at(now, 30);
+
+        // Two of the four enrolled, which is the ordinary case: an address that
+        // trades one exchange's live deployment and the other's testnet.
+        seed_keys(&[Venue::Hyperliquid, Venue::LighterTestnet]);
+        for held in [Venue::Hyperliquid, Venue::LighterTestnet] {
+            assert!(
+                signing_key(held, &ready, now).is_some(),
+                "{} was enrolled and released by the same prompt",
+                venue_name(held),
+            );
+        }
+        for absent in [Venue::HyperliquidTestnet, Venue::Lighter] {
+            assert!(
+                signing_key(absent, &ready, now).is_none(),
+                "{} was never enrolled, so it has nothing to sign with",
+                venue_name(absent),
+            );
+        }
+
+        // The same vault, a session for somebody else. Nothing is reachable,
+        // whatever the session says about itself.
+        let elsewhere = step(
+            step(
+                step(Session::Locked, Event::Prompt),
+                Event::Unlocked {
+                    outcome: Unlock::Platform,
+                    account: "0x0000000000000000000000000000000000000001".to_owned(),
+                },
+            ),
+            Event::Approved {
+                key: AgentKey {
+                    address: AGENT.to_owned(),
+                    account: "0x0000000000000000000000000000000000000001".to_owned(),
+                    approved_at: millis(now),
+                    expires_at: millis(now + 30 * 24 * HOUR),
+                },
+                now: millis(now),
+            },
+        );
+        assert!(can_trade(&elsewhere, millis(now)), "premise: it may sign");
+        assert!(
+            signing_key(Venue::Hyperliquid, &elsewhere, now).is_none(),
+            "a vault belongs to the account it was unlocked for",
+        );
+
+        // And locking still takes every network's key at once: they were
+        // released by one prompt, so they are forgotten as one thing.
+        lock_agent();
+        for venue in [Venue::Hyperliquid, Venue::LighterTestnet] {
+            assert!(signing_key(venue, &ready, now).is_none());
+        }
     }
 
     /// The send refuses before it reaches a venue, and says which half of the

@@ -246,13 +246,12 @@ on switch_venue(next)
   // A level worth being told about was worth it on one exchange, at one
   // exchange's price.
   alerts = []
-  // A key is approved for one account on one deployment. Carried across, it is
-  // a session that says the app may trade on a network the key is unknown on —
-  // and the first thing that would tell the reader otherwise is a rejected
-  // order. The unlock is cheap to repeat; this is not a thing to be clever
-  // about.
-  session = lock_agent()
-  unlock_note = ""
+  // The session survives. One unlock activates every network this address has
+  // enrolled — decided by the repository owner, 2026-08-10 — so switching is no
+  // longer an authentication boundary and no longer costs a prompt. A network
+  // this address has not enrolled still reaches no key and still reads as
+  // needing enrolment, because the keys are held per network even though the
+  // prompt was not.
   // One address, two venues, two sets of positions. Fills and orders arrive as
   // a snapshot the app folds into what it already holds, so anything kept here
   // would be folded in with the next venue's.
@@ -544,7 +543,7 @@ on confirm_sent
   sending = true
   error = ""
   status = "Sending"
-  run submit_order(venue, session, clock, confirm) -> order_sent _ | order_refused _
+  run every submit_order(venue, session, clock, confirm) -> order_sent _ | order_refused _
 
 on order_sent(said)
   sending = false
@@ -565,7 +564,7 @@ on order_refused(reason)
 on cancel_order(coin_of, oid)
   error = ""
   status = "Cancelling"
-  run cancel_resting(venue, session, clock, coin_of, oid) -> order_sent _ | order_refused _
+  run every cancel_resting(venue, session, clock, coin_of, oid) -> order_sent _ | order_refused _
 
 on unlock
   return if !session_unlockable(session)

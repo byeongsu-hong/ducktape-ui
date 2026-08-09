@@ -592,8 +592,9 @@ Held in this module and nowhere else, for exactly the `Ready` window:
 - **Dropped by the transition, not beside it.** `step` is the one thing that
   decides whether a session may sign, so the drop hangs off it: every real
   transition goes through `advance`, which drops the key whenever what comes
-  back is not `Ready`. Lock, expiry, and the network and address switches that
-  already forget the keychain item need no rule of their own.
+  back is not `Ready`. Lock and expiry need no rule of their own — they are
+  already transitions — and a change of address is held by the accessor, which
+  reaches nothing for a session that is not the one the vault was unlocked for.
 - **`can_trade` is the only gate, and the compiler holds it.** The key is
   reachable through one private accessor that returns nothing unless a `Ready`
   session *and a clock* said yes. A laptop that slept through an expiry has a
@@ -605,9 +606,30 @@ deployment. Both venues have a mainnet, one address is read at both, and the
 two hold unrelated secrets — so `Signing::key` spells `hyperliquid-mainnet` and
 `lighter-testnet`, and a second enrolment cannot overwrite the first.
 
-Changing network or address forgets the key. Carried across either, it is a
-session claiming the app may trade somewhere the key is unknown, and the first
-thing that would say otherwise is a rejected order.
+**One unlock activates every network this address has enrolled** — decided by
+the repository owner, 2026-08-10. The prompt releases the whole set; switching
+network is not an authentication boundary and costs no second sheet. That is
+what the header's venue picker needs, and a session that dropped on every switch
+fought it.
+
+What it spends is worth naming: a switch used to re-ask for a finger on the way
+from a test deployment to a live one, and now it does not. **What remains
+between a reader and an order on the wrong network is the confirmation panel and
+the REAL MONEY / TESTNET kind stated inside it** — that panel now carries two
+decisions' worth of safety.
+
+The keychain is unchanged: still one item per exchange, deployment and address,
+because a key approved on one deployment is unknown on the others. Only the
+in-memory set widened. A network this address has *not* enrolled still reaches
+no key and still reads as needing enrolment, because the keys are held per
+network even though the prompt was not.
+
+Changing address forgets them all, and so do locking and expiry.
+
+On macOS a keychain read is what raises the sheet, so an address with keys on
+several networks may see more than one prompt during that single unlock, until a
+shared authentication context lands. The decided behaviour — *no prompt on a
+switch* — holds either way; the sheets, however many, all happen at the unlock.
 
 ### Enrolling on a testnet, end to end
 
