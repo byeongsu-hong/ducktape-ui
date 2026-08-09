@@ -42,15 +42,36 @@ pub(in crate::codegen) fn generate_test_mounts(
                 },
             );
         }
-        let root = render_node_if_present(
-            mount,
-            program,
-            message,
-            &env,
-            &rust_string(program.app_name()),
-            None,
-        )?
-        .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
+        // A mount renders in place of the app view, so it scopes its ids the
+        // same way the app view would — including the window a daemon puts on
+        // a root that retains component state — or the test's own targets
+        // would not address what it drew.
+        let mounted = mounted_component_fields(program);
+        let root_scope = if mounted.is_empty() {
+            rust_string(program.app_name())
+        } else {
+            "__ice_root_scope_ref".into()
+        };
+        let root = render_node_if_present(mount, program, message, &env, &root_scope, None)?
+            .unwrap_or_else(|| "::iced::widget::Column::new().into()".into());
+        let (scope_prelude, scope_epilogue) = if mounted.is_empty() {
+            (String::new(), String::new())
+        } else {
+            (
+                format!(
+                    "let __ice_root_scope = {}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {}",
+                    root_scope_code(program, "window"),
+                    mounted
+                        .iter()
+                        .map(|field| format!("self.{field}.begin_render();"))
+                        .collect::<String>()
+                ),
+                mounted
+                    .iter()
+                    .map(|field| format!("self.{field}.finish_render(__ice_root_scope_ref);"))
+                    .collect::<String>(),
+            )
+        };
         let window_arg = if daemon {
             ", window: ::iced::window::Id"
         } else {
@@ -63,13 +84,13 @@ pub(in crate::codegen) fn generate_test_mounts(
         if daemon {
             writeln!(
                 out,
-                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {root} }}"
+                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {scope_prelude} let __ice_content: __IceElement<'_, {message}> = {root}; {scope_epilogue} __ice_content }}"
             )
             .unwrap();
         } else {
             writeln!(
                 out,
-                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_content: __IceElement<'_, {message}> = {root}; ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into() }}"
+                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {scope_prelude} let __ice_content: __IceElement<'_, {message}> = {root}; {scope_epilogue} ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into() }}"
             )
             .unwrap();
         }
@@ -916,19 +937,18 @@ fn resolved_test_target_path_code(
     env: &HashMap<String, Binding>,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
+    // A target addresses a widget in the rendered view, so its path has to
+    // start at the same root scope the view gives its ids — window-qualified
+    // exactly when the view's is, for the window this driver renders.
+    let mut scope = root_scope_code(program, "__test.window()");
     if target.segments.iter().all(|segment| segment.key.is_none()) {
-        return Ok(rust_string(&format!(
-            "{}/{}",
-            program.app_name(),
-            target
-                .segments
-                .iter()
-                .map(|segment| segment.name.as_str())
-                .collect::<Vec<_>>()
-                .join("/")
-        )));
+        let names = target
+            .segments
+            .iter()
+            .map(|segment| format!("/{}", segment.name))
+            .collect::<String>();
+        return Ok(format!("{scope} + {}", rust_string(&names)));
     }
-    let mut scope = rust_string(program.app_name());
     for segment in &target.segments {
         let borrowed = borrowed_scope(&scope);
         scope = if let Some(key) = segment.key {

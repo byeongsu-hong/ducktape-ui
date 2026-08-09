@@ -123,10 +123,11 @@ same-directory lock tests with the actual Cargo command boundary.
 
 App, implicit mount, component, and preset handler bodies now cross a complete
 normalized HIR boundary before Rust emission. Stable typed arenas own handlers,
-preorder statements, immediate and flow tasks, body routes, checked locals, and
-latest/replace lane members. Route payloads retain ordered indices and concrete
-types; tasks retain output/error types and finality; every node retains a root
-or imported origin chain. Handler code generation has no statement-AST
+preorder statements, immediate and flow tasks, body routes, checked locals,
+latest/replace lane members, and explicit lane invalidations. Route payloads
+retain ordered indices and concrete types; tasks retain output/error types and
+finality; every node retains a root or imported origin chain. Handler code
+generation has no statement-AST
 expression fallback, checker type query, extern name rediscovery, or source-line
 async identity. Snapshot, post-check mutation, invalid-state, imported-marker,
 and compiled fixtures guard those invariants. An ignored full-pipeline
@@ -264,25 +265,40 @@ Handler-local `let` values use the same closed typed
 expression language, are immutable and non-shadowing, and remain available to
 later assignments, guards, and the final task. Parser, checker, codegen, schema,
 README, and reference-app tests are direct evidence for both constructs.
-Named request lanes join Future starts with the same fully qualified lane name
-across handlers and source locations for one state owner. Apps own one top-level
-scope, daemons share one scope across their windows, and each component instance
-is independent. Component lanes are supported both as direct `run` statements
-and as leaves of nested `parallel` and `sequential` task groups. `run latest
-lane=<name>` filters stale success and failure delivery without canceling old
-work; `run replace lane=<name>` also aborts the prior Iced task without rolling
-back effects already performed or detached backend work. Static qualified lane
-names keep bookkeeping finite per owner; component-owner count follows the
-existing retained/mounted lifetime contract. Stale `latest` Futures may retain
-captures until they finish. Parser, checker, formatter, normalized HIR, codegen,
-schema/LSP completions and error-route actions, and controlled cross-handler
-and component lifecycle integration tests provide direct evidence.
+Every handler Future and stream names its delivery mode. `run every` delivers
+every Future completion and `stream every` delivers every stream item without
+a lane. `run latest`, `run replace`, and `stream replace` require a static
+owner-scoped lane; bare handler `run`/`stream` and `stream latest` are rejected.
+Subscription `run` and task-flow `run`/`stream` sources retain their distinct
+source syntax without a directly routed delivery mode.
+Named delivery lanes join starts with the same fully qualified lane name,
+effect kind, and mode across handlers and source locations for one state owner.
+Apps own one top-level scope, daemons share one scope across their windows, and
+each component instance is independent. Component lanes support direct or
+nested `run latest`, `run replace`, and `stream replace`; component
+`stream every` and every handler stream nested under `abortable` are rejected.
+`run latest lane=<name>` filters stale success and failure delivery without
+canceling old work; `run replace` and `stream replace` also abort the prior Iced
+task without rolling back performed effects or stopping detached backend work.
+A replacement stream retains one handle across items and releases it only at
+natural termination, replacement, invalidation, or owner drop. Static qualified names
+keep bookkeeping finite per owner; component-owner count follows the existing
+retained/mounted lifetime contract, while runtime message queues and detached
+work remain outside that bound. If an outer abort suppresses a Future
+replacement completion, one fixed current handle remains until replacement,
+invalidation, or owner drop; handles do not accumulate per owner. A direct
+`invalidate lane=<name>` advances an
+existing owner-scoped lane before aborting replace work, so already queued old
+completions/items are stale. Parser, checker, formatter, normalized HIR,
+terminal-envelope codegen, schema/LSP completions and route actions, controlled
+cross-handler/component lifecycle tests, production stream migrations, and an
+Apple Music queued-completion integration test provide direct evidence.
 Core view control includes checked `if`, `for`, first-match literal `match`
 arms, and exhaustive Option/Result/UI-enum payload patterns. UI enums are
 non-generic, non-recursive cloneable data; fieldless enums support equality,
 while payload enums remain match-only and match payloads are block-scoped.
 Components may own ordinary cloneable state and local handlers, including
-Future externs and instance-owned request lanes.
+Future externs and instance-owned Future/replacement-stream delivery lanes.
 Writable component inputs are explicit `bind` props; calls use `<->` with a
 direct app state, component-local state, or forwarded bind prop. Ordinary props
 never carry write capability.
@@ -312,8 +328,8 @@ Canonical `with` metadata blocks preserve long checked property and utility
 lists without changing the view tree; the formatter alone decides inline versus
 wrapped form and orders metadata before events, forwarding, slots/statuses, and
 content.
-`lifetime mounted` prunes disappeared scopes, dropping local state and request
-lane generations and abort-on-drop handles;
+`lifetime mounted` prunes disappeared scopes, dropping local state, delivery
+lane generations, and abort-on-drop handles;
 the default `retained` lifetime preserves state for the app lifetime.
 Generated state is isolated by hierarchical component ID. Structured native
 status styles inherit the matching `active` fields before applying the
@@ -714,12 +730,12 @@ Ice 2.0 Preview has thirty-four checked Rust boundaries:
 | `selector name(args)` | `fn(...) -> impl widget::selector::Selector<Output = Event>` | custom native matching over every widget candidate with arbitrary checked outputs |
 | `shader name(args)` | `fn(...) -> impl shader::Program<Event>` | native wgpu primitives, pipeline/storage, state, events, redraw, capture, and mouse interaction |
 | `task name(args)` | `fn(...) -> Task<Event>` or `Task<Result<Event, Error>>` | widget/window/clipboard/font/system operations and arbitrary task composition |
-| `stream name(args)` | `fn(...) -> impl Stream<Item = Event>` or `Stream<Item = Result<Event, Error>>` | native repeated `Task::run` output and `Subscription::run`/`run_with` workers from channels, iterators, async generators, and other streams |
+| `stream name(args)` | `fn(...) -> impl Stream<Item = Event>` or `Stream<Item = Result<Event, Error>>` | native repeated `Task::run` output through explicit handler `stream every`/`stream replace` delivery, plus `Subscription::run`/`run_with` workers from channels, iterators, async generators, and other streams |
 | `sip name(args)` | `fn(...) -> impl Sipper<Output, Progress>` or `Straw<Output, Progress, Error>` | native repeated progress plus one final output through `Task::sip` |
 | `recipe name(args)` | `fn(...) -> impl Recipe<Output = Event>` | custom subscription identity, runtime-event input, streams, cancellation, and arbitrary recipe behavior through native `from_recipe` |
 | `event-filter name()` | `fn(subscription::Event) -> Option<Event>` | native raw runtime-event filtering with an explicit hashable identity, including interaction window IDs/status and system-theme changes |
 | `pure name(args)` | `fn(...) -> Output` | trusted same-arguments/same-result, side-effect-free Rust computations usable in every checked expression context, including derived values, views/settings, component defaults and state initializers, subscription filters, easing, handlers, and tests |
-| `sync name(args)` | `fn(...) -> Output` | immediate effect/environment/retained-identity calls in top-level app state initializers and immediately evaluated app/component/preset handler expressions, including nested task arguments; component state initializers are excluded because rendering may recreate them, and async completion route expressions are pure-only because callbacks evaluate them later |
+| `sync name(args)` | `fn(...) -> Output` | immediate effect/environment/retained-identity calls in top-level app state initializers and immediately evaluated app/component/preset handler expressions, including nested task arguments; component state initializers are excluded because rendering may recreate them. Explicit `run every`/`run latest`/`run replace` Future and `task` statement success and failure route expressions are owned snapshots of ordinary cloneable Ice data materialized at statement launch, but direct `sync` and recomputation-unsafe builtin calls remain forbidden because both branches materialize even though only one completion is delivered; evaluate either in a preceding handler `let` and route the local. Stream/sip/flow/native query route timing is unchanged |
 | `subscription name(args)` | `fn(...) -> Subscription<Event>` | event, keyboard, mouse, window, system, channel, timer, stream, and custom subscription sources |
 | `theme name(args)` | `fn(...) -> iced::Theme` | native app and nested default-renderer themes, including `custom`, `custom_with_fn`, and complete palette/extended-palette logic |
 | `themer name(args) -> Event` | factory returning `Option<Theme>`, `Element<'static, Event, Theme>`, and optional Theme-dependent text/background callbacks | native alternate `Theme: Base` subtrees inside the default-Theme app, including `Themer::new`, default Theme fallback, event mapping, `text_color`, and `background` |
@@ -803,7 +819,7 @@ public behavior has direct documented Ice syntax and tests.
 | debug timing | native | `debug-span?` owns exact non-clone `iced::debug::Span` state; checked `debug start name -> state` finishes any prior span before native `time`, `debug finish state` consumes it exactly once, `debug.active(state)` reads its presence, and generic `debug.time_with(name, value)` preserves the value type; iced's `debug` feature activates reporting while its native no-op implementation remains available without the feature |
 | `Theme` and styles | native | a checked semantic-token contract with complete named runtime-selectable palettes, all 22 built-in default-renderer themes, typed native factories including `custom`/`custom_with_fn` and complete extended-palette logic, app/nested selection, dynamically selected token styles, target-scoped utilities, imported semantic recipes with deterministic precedence, complete widget-native catalogs, concrete style fields, and typed runtime callbacks |
 | `theme::Mode` | native | default and all none/light/dark variants, compact kind projection, equality, exact typed extern passage, equivalent app theme/factory behavior, and deliberate ordering/lazy rejection matching the native enum cover the complete public value behavior |
-| `Task` | native | complete public `iced::Task` construction and composition through async/task/stream/sip externs, direct `done`/`none`, system/clipboard/font/widget/window tasks, `batch`, `chain`, abortable handles including abort-on-drop/query and owner-scoped named `run replace` lanes, `map`, output-dependent `then`, optional-or-result `and_then`, `map_err`, result-preserving `collect`, `discard`, and `units`; every immediate task producer has one exhaustively checked final-statement classification, while multiple tasks require `parallel` or `sequential`; `future`/`stream` identity forms are represented by perform/run extern sources, and default/unit conversion by `none` |
+| `Task` | native | complete public `iced::Task` construction and composition through async/task/stream/sip externs, direct `done`/`none`, system/clipboard/font/widget/window tasks, `batch`, `chain`, abortable handles including abort-on-drop/query and owner-scoped named Future/stream replace lanes with explicit invalidation and terminal-only stream-handle release, `map`, output-dependent `then`, optional-or-result `and_then`, `map_err`, result-preserving `collect`, `discard`, and `units`; every immediate task producer has one exhaustively checked final-statement classification, while multiple tasks require `parallel` or `sequential`; `future`/`stream` identity forms are represented by perform/run extern sources, and default/unit conversion by `none` |
 | `Subscription` | native | complete application-facing construction and composition: typed arbitrary adapters, `none`, `batch`, checked conditional activation/status filters, direct every/repeat timers, native `listen`/`listen_with`/`listen_raw` generic events, input-method/keyboard/mouse/touch/window sources (with optional typed IDs on all eleven discrete window events) and system theme changes, typed `run`/`run_with` workers, custom `Recipe` factories through `from_recipe`, raw `EventStream` filters with hashable identity, `with` identity context, typed `map` routing, noncapturing typed `filter_map`, and `units`; advanced `into_recipes` is runtime-consumer plumbing rather than subscription construction or behavior |
 | widget operations | native | all 13 core focus/cursor/selection/scroll operations with checked static/dynamic identity paths through component, layout, slot, keyed, table and pane scopes, typed focus query, native `find`/`find-all` over ID, text, point and focused selectors with complete normalized target metadata, plus custom typed selector factories |
 | clipboard | native | standard and primary read/write tasks; reads preserve iced's optional string payload and writes are checked fire-and-forget effects |
@@ -846,49 +862,48 @@ The free `iced_runtime::task` constructors such as `oneshot`, `channel`,
 this public iced baseline. A typed `task` extern can still adapt runtime-specific
 work when an application intentionally depends on `iced_runtime`.
 
-### Gap: an animation cannot reach a row in a list or a surface's colour
+### Per-row animation and computed surface opacity
 
-The `Animation<T>` row above is a claim about iced's `Animation` API, and it
-holds: every easing, duration, repetition and query is expressible. It is not a
-claim that a given thing on screen can be animated. Three separate limits stand
-between an `animation[f64]` and the two most ordinary uses of one — fading a row
-that has just arrived, and fading anything at all.
+The `Animation<T>` row above is a claim about iced's `Animation` API. Reaching a
+row on screen with one takes three further things, and all three are now
+expressible.
 
-**An animation cannot belong to a row.** `animation[T]` is app state.
-Component-local `state` rejects it: `state lit:animation[f64] = 0.0` inside a
-component fails with `E103 component state supports ordinary cloneable values
-only`. Local state is otherwise keyed by hierarchical instance scope, so a
-`for` body rendered as `Row #row(item.id)` already owns per-instance values —
-animation is the one kind it may not own.
+**An animation may belong to a row.** A component may declare
+`state fade:animation[f64]`, keyed by the component's hierarchical instance
+scope like every other local value, so two rows animate on independent clocks.
+It requires `lifetime mounted`: an animation's identity is the instant it
+started, so its storage is created the first time the instance renders rather
+than re-derived every pass, and dropped when the instance leaves the tree.
+`lifetime retained` is `E103`
+(`crates/ui-lang-core/tests/cases/diagnostic/row-animation-lifetime`).
 
-**Nothing could start it if it could.** Handlers are the only place work
-starts, lifecycle hooks stay at app level, and there is no per-instance
-appearance hook. An instance materialized by a `for` over freshly arrived data
-raises no event, so no assignment runs for it, and an animation only begins on
-assignment. An app-level animation restarted when the data arrives is therefore
-one phase shared by every row, which is wrong as soon as two arrive at
-different times.
+**The declaration starts it.** An `animation_setting` `from` gives the start
+value; the animation is built holding it and sent to the declared value at the
+moment it comes into being. A row materialized by a `for` therefore fades in
+without any event to assign on. A `from` whose literal does not match the
+animated type is `E103`
+(`crates/ui-lang-core/tests/cases/diagnostic/animation-from-type`).
 
-**An animated number cannot reach a colour.** `background_value` is
-`color_ref | linear(...)`, and `color_ref = name ("/" u8)?` — a theme token with
-a *literal* opacity. `bg=up_flash/fill.heat` fails with `E184 unknown surface
-color`. The rich native `color` value type, `color.scale_alpha` included, is not
-accepted by `bg=` at all. No computed number reaches a surface's colour or its
-alpha, from an animation or from anywhere else.
+**A computed number reaches a surface's colour.** A container's `bg=` accepts a
+parenthesised opacity expression — `bg=flash/(animation.project(fade, value, value))` — on the
+same `0..=100` scale as the literal `bg=flash/40`, replacing the colour's alpha
+every view pass. It is a container property with a single background colour;
+anywhere else it is rejected
+(`crates/ui-lang-core/tests/cases/diagnostic/computed-opacity-surface`).
 
-The consequence is that a fade must be written as a discrete ladder of `if`
-arms over literal opacities, stepped by a timer. The trading example's fills
-list is exactly that — `every 700ms when flashing -> cool_flash` counting a
-`heat:i64` down through two `bg=up_flash` arms — and it reads as two hard jumps
-rather than a decay. That shape is not an implementation shortcut there; it is
-the only shape the language offers.
+Component animations keep native frames alive on the same active-only
+`window::frames()` subscription app animations use. Interpolation happens where
+it always did — in the view pass — so an animated surface must sit outside any
+`lazy` boundary that memoizes the row around it; inside one it is frozen at the
+value the subtree was built with, and `SPEC.md` says so.
 
-Closing this needs the three together: `animation[T]` accepted in
-component-local state, a per-instance appearance hook (or an assignment form
-that names an instance scope from an app handler), and a `bg=` that accepts a
-computed colour so the animated number has somewhere to land. Any one alone
-leaves motion unreachable. The trading example is where the gap was found, not
-where it lives.
+Evidence: `crates/ui-lang-core/tests/cases/compile/row-animation` (generated
+`from` transition, per-instance materialization, frame subscription over
+component storage), `crates/ui-lang-core/tests/cases/format/row-animation`,
+`examples/iced-app/src/ui/animation.ice` (`ArrivalRow` demo, and the
+`computed_surface_opacity` first-class test asserting the painted alpha), and
+`a_row_owns_its_fade_and_that_fade_ends` in
+`examples/iced-app/src/tests/tasks.rs`.
 
 ## Evidence rule
 

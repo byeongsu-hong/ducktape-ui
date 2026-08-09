@@ -1270,7 +1270,7 @@ state
   items:[Item] = []
 on mount
   return if false
-  run load(1) -> loaded _ | failed _
+  run every load(1) -> loaded _ | failed _
 on loaded(next)
   items = next
 on failed(error)
@@ -1464,9 +1464,9 @@ state
   ready = false
 preset seeded
   boot
-    stream load() -> loaded _
+    stream every load() -> loaded _
 on mount
-  stream load() -> loaded _
+  stream every load() -> loaded _
 on loaded(value)
   ready = value
 theme contract AppTheme
@@ -1519,7 +1519,7 @@ palette app for AppTheme
   danger #ff0000
 on press
   return if false
-  run save() -> saved
+  run every save() -> saved
 on saved
 view
   button "Save" -> press

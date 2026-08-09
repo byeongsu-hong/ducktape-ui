@@ -22,7 +22,7 @@ component Frame()
     slot
 
 on mount
-  run list_tasks() -> loaded _ | failed _
+  run every list_tasks() -> loaded _ | failed _
 
 on loaded(next)
   tasks = next

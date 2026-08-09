@@ -388,7 +388,21 @@ pub(in crate::codegen) fn render_content(
             )?;
             let mount = (call.storage == ComponentStorage::Mounted).then(|| {
                 let field = component_state_field(name);
-                format!("self.{field}.mount({scope_binding}.clone()); ")
+                // An animation's identity is the instant it started, so an
+                // instance that owns one has to be stored the first time it
+                // renders instead of re-running its initializer every pass.
+                let materialize = if component
+                    .states
+                    .iter()
+                    .any(|state| matches!(state.ty, Type::Animation(_)))
+                {
+                    format!(
+                        "self.{field}.values_mut().entry({scope_binding}.clone()).or_default(); "
+                    )
+                } else {
+                    String::new()
+                };
+                format!("self.{field}.mount({scope_binding}.clone()); {materialize}")
             });
             let body = format!(
                 "{}let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content",

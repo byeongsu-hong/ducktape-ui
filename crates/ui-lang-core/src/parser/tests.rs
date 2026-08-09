@@ -241,7 +241,7 @@ state
   query = ""
 
 on mount
-  run load() -> loaded _ | failed _
+  run every load() -> loaded _ | failed _
 
 on loaded(next)
   items = next

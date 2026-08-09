@@ -307,9 +307,9 @@ pub(in crate::codegen) fn generate_boot(
         )
         .unwrap();
     }
-    for (lane, mode) in app_run_lanes(program) {
+    for (lane, _, mode) in app_run_lanes(program) {
         writeln!(out, "{}: 0,", run_lane_generation_field(lane.0 as usize)).unwrap();
-        if mode == FutureMode::Replace {
+        if mode == DeliveryMode::Replace {
             writeln!(
                 out,
                 "{}: ::std::option::Option::None,",
@@ -619,22 +619,31 @@ pub(in crate::codegen) fn generate_update(
         "{message}::__AccessibilityFocusNext => {{ return ::ui_lang_runtime::focus_next::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__AccessibilityFocusPrevious => {{ return ::ui_lang_runtime::focus_previous::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__TemplateChanged => {{ return ::iced::Task::none(); }},"
     )
     .unwrap();
-    for (lane, mode) in app_run_lanes(program) {
+    for (lane, kind, mode) in app_run_lanes(program) {
         let variant = run_lane_variant(lane.0 as usize);
         let generation = run_lane_generation_field(lane.0 as usize);
-        let clear = if mode == FutureMode::Replace {
-            format!(
-                "self.{} = ::std::option::Option::None; ",
-                run_lane_handle_field(lane.0 as usize)
+        if kind == EffectKind::Stream && mode == DeliveryMode::Replace {
+            let handle = run_lane_handle_field(lane.0 as usize);
+            writeln!(
+                out,
+                "{message}::{variant}(__generation, __message) => {{ if self.{generation} == __generation {{ if let ::std::option::Option::Some(__message) = __message {{ return self.__update(*__message); }} self.{handle} = ::std::option::Option::None; }} return ::iced::Task::none(); }},"
             )
+            .unwrap();
         } else {
-            String::new()
-        };
-        writeln!(
-            out,
-            "{message}::{variant}(__generation, __message) => {{ if self.{generation} == __generation {{ {clear}return self.__update(*__message); }} return ::iced::Task::none(); }},"
-        )
-        .unwrap();
+            let clear = if mode == DeliveryMode::Replace {
+                format!(
+                    "self.{} = ::std::option::Option::None; ",
+                    run_lane_handle_field(lane.0 as usize)
+                )
+            } else {
+                String::new()
+            };
+            writeln!(
+                out,
+                "{message}::{variant}(__generation, __message) => {{ if self.{generation} == __generation {{ {clear}return self.__update(*__message); }} return ::iced::Task::none(); }},"
+            )
+            .unwrap();
+        }
     }
     let app_handler_env = checked_state_env(program, "self");
     for handler in program.app_handlers() {
@@ -694,10 +703,16 @@ pub(in crate::codegen) fn generate_update(
             ),
             ComponentStorage::Stateless => unreachable!(),
         };
-        for (lane, mode) in component_run_lanes(program, &component.handlers) {
+        for (lane, kind, mode) in component_run_lanes(program, &component.handlers) {
             let generation = run_lane_generation_field(lane.0 as usize);
             let variant = run_lane_variant(lane.0 as usize);
-            let clear = if mode == FutureMode::Replace {
+            let stream = kind == EffectKind::Stream && mode == DeliveryMode::Replace;
+            let clear = if stream {
+                format!(
+                    "if __message.is_none() {{ __local.{} = ::std::option::Option::None; }} ",
+                    run_lane_handle_field(lane.0 as usize)
+                )
+            } else if mode == DeliveryMode::Replace {
                 format!(
                     "__local.{} = ::std::option::Option::None; ",
                     run_lane_handle_field(lane.0 as usize)
@@ -714,11 +729,19 @@ pub(in crate::codegen) fn generate_update(
                 ),
                 ComponentStorage::Stateless => unreachable!(),
             };
-            writeln!(
-                out,
-                "{message}::{variant}(__scope, __generation, __message) => {{ let __current = {current}; if __current {{ return self.__update(*__message); }} return ::iced::Task::none(); }},"
-            )
-            .unwrap();
+            if stream {
+                writeln!(
+                    out,
+                    "{message}::{variant}(__scope, __generation, __message) => {{ let __current = {current}; if __current && let ::std::option::Option::Some(__message) = __message {{ return self.__update(*__message); }} return ::iced::Task::none(); }},"
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "{message}::{variant}(__scope, __generation, __message) => {{ let __current = {current}; if __current {{ return self.__update(*__message); }} return ::iced::Task::none(); }},"
+                )
+                .unwrap();
+            }
         }
         let component_handler_env = component
             .states

@@ -11,8 +11,8 @@ state
 
 on start
   parallel
-    stream count_stream(3) -> counted _
-    stream fallible_stream() -> counted _ | failed _
+    stream every count_stream(3) -> counted _
+    stream every fallible_stream() -> counted _ | failed _
 
 on counted(value)
   last = value

@@ -8,7 +8,7 @@ component NativeTheme()
   text "Native component state"
 
 on mount
-  run load_alternate_theme() -> loaded _
+  run every load_alternate_theme() -> loaded _
 
 on loaded(_next)
 

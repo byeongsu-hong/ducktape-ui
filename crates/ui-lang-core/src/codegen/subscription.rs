@@ -388,6 +388,22 @@ pub(in crate::codegen) fn generate_subscription(
                     state.name
                 )
             })
+            .chain(
+                crate::codegen::settings::animated_components(program)
+                    .into_iter()
+                    .map(|(field, states)| {
+                        let animating = states
+                            .iter()
+                            .map(|state| {
+                                format!(
+                                    "__state.{state}.is_animating(::iced::time::Instant::now())"
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" || ");
+                        format!("self.{field}.values().values().any(|__state| {animating})")
+                    }),
+            )
             .collect::<Vec<_>>()
             .join(" || ");
         writeln!(

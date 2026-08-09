@@ -10,6 +10,8 @@ use serde_json::{Value, json};
 
 use crate::Venue;
 use crate::hyperliquid::{Account, Fill, HlError, Position, info};
+use crate::signing::Chain;
+use crate::venue::Network;
 
 const BAR_WIDTH: f64 = 248.0;
 
@@ -251,20 +253,21 @@ fn parse_history(value: &Value) -> PortfolioHistory {
     history
 }
 
+/// This account's realised history on whichever Hyperliquid deployment is
+/// named. One function per operation on the registry rather than one per
+/// network, so a deployment added there is wired by the entry rather than by a
+/// second arm here.
+pub async fn hl_portfolio(chain: Chain, address: String) -> Result<PortfolioHistory, HlError> {
+    info(chain, json!({ "type": "portfolio", "user": address }))
+        .await
+        .map(|value| parse_history(&value))
+}
+
 pub async fn venue_portfolio(venue: Venue, address: String) -> Result<PortfolioHistory, HlError> {
     if address.trim().is_empty() {
         return Ok(portfolio_empty());
     }
-    match venue {
-        Venue::Hyperliquid => info(json!({ "type": "portfolio", "user": address }))
-            .await
-            .map(|value| parse_history(&value)),
-        Venue::Lighter => Ok(PortfolioHistory {
-            note: "Historical performance on Lighter needs a read-only API token; this address-only session still shows current exposure."
-                .to_owned(),
-            ..PortfolioHistory::default()
-        }),
-    }
+    (Network::of(venue).portfolio)(address).await
 }
 
 /// What a range button announces.

@@ -1,7 +1,24 @@
 use crate::ast::*;
 use crate::semantic::*;
 use crate::{CheckedDocument, Error};
-use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet, VecDeque};
+
+#[cfg(test)]
+thread_local! {
+    static HANDLER_SIGNATURE_WORKLIST_VISITS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_handler_signature_worklist_visits() {
+    HANDLER_SIGNATURE_WORKLIST_VISITS.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn handler_signature_worklist_visits() -> usize {
+    HANDLER_SIGNATURE_WORKLIST_VISITS.get()
+}
 
 struct CheckOutput {
     analyses: facts::CheckedAnalyses,
@@ -131,36 +148,7 @@ fn check(
             require_type(&actual, expected, &state.span)?;
         } else if let Type::Animation(expected) = &state.ty {
             require_type(&actual, expected, &state.span)?;
-            if **expected == Type::F64 {
-                require_f32_literal_range(
-                    &state.initial,
-                    f64::NEG_INFINITY,
-                    None,
-                    "animation value",
-                    &state.span,
-                )?;
-            }
-            if let Some(easing) = state
-                .animation
-                .as_ref()
-                .and_then(|options| options.easing.as_deref())
-                && !ANIMATION_EASINGS.contains(&easing)
-            {
-                let function = extern_function(document, easing, ExternKind::Pure, &state.span)?;
-                if function.params.len() != 1
-                    || function.params[0].1 != Type::F64
-                    || function.output != Type::F64
-                    || function.error.is_some()
-                {
-                    return Err(Error::new(
-                        "E103",
-                        &state.span,
-                        format!(
-                            "animation easing `{easing}` must be `pure {easing}(value:f64) -> f64`"
-                        ),
-                    ));
-                }
-            }
+            check_animation_state(state, expected, document)?;
         } else {
             let text_initial =
                 matches!(state.ty, Type::Markdown | Type::Editor) && actual == Type::Str;
@@ -254,7 +242,10 @@ fn check(
             let actual = analysis.type_of(&state.initial).cloned().ok_or_else(|| {
                 Error::new("E196", &state.span, "missing checked component state type")
             })?;
-            if actual != Type::Unknown && !compatible(&state.ty, &actual) {
+            if let Type::Animation(expected) = &state.ty {
+                require_type(&actual, expected, &state.span)?;
+                check_animation_state(state, expected, document)?;
+            } else if actual != Type::Unknown && !compatible(&state.ty, &actual) {
                 return Err(type_error(&state.span, &state.ty, &actual));
             }
             initializer_analyses.insert(
@@ -272,6 +263,16 @@ fn check(
     for component in &document.components {
         for handler in &component.handlers {
             check_structured_tasks(handler)?;
+            if let Some(span) = handler.statements.iter().find_map(component_stream_every) {
+                return Err(Error::new(
+                    "E140",
+                    span,
+                    "component handlers cannot use `stream every`",
+                )
+                .hint(
+                    "use `stream replace lane=name ...` so the component owns one replaceable stream",
+                ));
+            }
             if handler
                 .statements
                 .iter()
@@ -280,7 +281,7 @@ fn check(
                 return Err(Error::new(
                     "E140",
                     &handler.span,
-                    "component handlers support state assignments, scoped widget operations, `run` futures, and task groups composed from those task-producing statements only",
+                    "component handlers support state assignments, scoped widget operations, `run` futures, `stream replace`, and task groups composed from those task-producing statements only",
                 ));
             }
         }
@@ -386,39 +387,130 @@ fn check(
         declarations,
         &mut initializer_analyses,
     )?;
-    let empty_env = HashMap::new();
-    for handler in &document.handlers {
-        with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
-            infer_runs(handler, document, &mut signatures, &app_values, &empty_env)
-        })?;
+    #[derive(Clone, Copy)]
+    enum InferenceSource {
+        App(usize),
+        Preset(usize),
+        Component { component: usize, handler: usize },
     }
-    for handler in &preset_handlers {
-        infer_runs(handler, document, &mut signatures, &app_values, &empty_env)?;
+
+    let mut sources = Vec::new();
+    let mut source_by_signature = HashMap::new();
+    for (index, handler) in document.handlers.iter().enumerate() {
+        source_by_signature.insert(handler.name.clone(), sources.len());
+        sources.push(InferenceSource::App(index));
     }
-    for component in &document.components {
-        let values: HashMap<String, Type> = component
-            .states
-            .iter()
-            .map(|state| (state.name.clone(), state.ty.clone()))
-            .collect();
-        let env = HashMap::from([
-            (component_context_key(&component.name), Type::Unit),
-            (
-                COMPONENT_CONTEXT_INDEX.into(),
-                Type::Named(component.name.clone()),
-            ),
-        ]);
-        for handler in &component.handlers {
-            with_component_scope(
-                &component.name,
-                reachable.contains(&component.name)
-                    && reachable_handlers.component_contains(&component.name, &handler.name),
-                || {
-                    infer_runs(handler, document, &mut signatures, &values, &env)?;
-                    Ok::<_, Error>(())
-                },
-            )?;
+    for index in 0..preset_handlers.len() {
+        sources.push(InferenceSource::Preset(index));
+    }
+    for (component_index, component) in document.components.iter().enumerate() {
+        for (handler_index, handler) in component.handlers.iter().enumerate() {
+            source_by_signature.insert(
+                component_handler_key(&component.name, &handler.name),
+                sources.len(),
+            );
+            sources.push(InferenceSource::Component {
+                component: component_index,
+                handler: handler_index,
+            });
         }
+    }
+    let targets = sources
+        .iter()
+        .map(|source| {
+            let (handler, component) = match *source {
+                InferenceSource::App(index) => (&document.handlers[index], None),
+                InferenceSource::Preset(index) => (&preset_handlers[index], None),
+                InferenceSource::Component { component, handler } => (
+                    &document.components[component].handlers[handler],
+                    Some(document.components[component].name.as_str()),
+                ),
+            };
+            let mut routes = VecDeque::new();
+            collect_statement_routes(&handler.statements, &mut routes);
+            let mut keys = routes
+                .into_iter()
+                .map(|handler| {
+                    component.map_or_else(
+                        || handler.to_owned(),
+                        |component| component_handler_key(component, handler),
+                    )
+                })
+                .filter(|key| signatures.contains_key(key))
+                .collect::<Vec<_>>();
+            keys.sort_unstable();
+            keys.dedup();
+            keys
+        })
+        .collect::<Vec<_>>();
+
+    let empty_env = HashMap::new();
+    let mut queue = (0..sources.len()).collect::<VecDeque<_>>();
+    let mut queued = vec![true; sources.len()];
+    let mut errors = (0..sources.len())
+        .map(|_| None)
+        .collect::<Vec<Option<Error>>>();
+    while let Some(source_index) = queue.pop_front() {
+        queued[source_index] = false;
+        #[cfg(test)]
+        HANDLER_SIGNATURE_WORKLIST_VISITS.with(|visits| visits.set(visits.get() + 1));
+        let previous_targets = targets[source_index]
+            .iter()
+            .map(|key| signatures.get(key).cloned())
+            .collect::<Vec<_>>();
+        let result = match sources[source_index] {
+            InferenceSource::App(index) => {
+                let handler = &document.handlers[index];
+                with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
+                    infer_runs(handler, document, &mut signatures, &app_values, &empty_env)
+                })
+            }
+            InferenceSource::Preset(index) => infer_runs(
+                &preset_handlers[index],
+                document,
+                &mut signatures,
+                &app_values,
+                &empty_env,
+            ),
+            InferenceSource::Component { component, handler } => {
+                let component = &document.components[component];
+                let handler = &component.handlers[handler];
+                let values: HashMap<String, Type> = component
+                    .states
+                    .iter()
+                    .map(|state| (state.name.clone(), state.ty.clone()))
+                    .collect();
+                let env = HashMap::from([
+                    (component_context_key(&component.name), Type::Unit),
+                    (
+                        COMPONENT_CONTEXT_INDEX.into(),
+                        Type::Named(component.name.clone()),
+                    ),
+                ]);
+                with_component_scope(
+                    &component.name,
+                    reachable.contains(&component.name)
+                        && reachable_handlers.component_contains(&component.name, &handler.name),
+                    || infer_runs(handler, document, &mut signatures, &values, &env),
+                )
+            }
+        };
+        errors[source_index] = result.err();
+        for (key, previous) in targets[source_index].iter().zip(previous_targets) {
+            if previous.as_ref() == signatures.get(key) {
+                continue;
+            }
+            let Some(&target_source) = source_by_signature.get(key) else {
+                continue;
+            };
+            if !queued[target_source] {
+                queued[target_source] = true;
+                queue.push_back(target_source);
+            }
+        }
+    }
+    if let Some(error) = errors.into_iter().flatten().next() {
+        return Err(error);
     }
 
     for handler in &mut document.handlers {
@@ -614,6 +706,53 @@ fn check(
         controlled_inputs,
         controlled_editors,
     })
+}
+
+/// Checks the settings block an animation state carries, wherever it is
+/// declared. `inner` is the animated type, already matched against the
+/// initializer.
+fn check_animation_state(state: &State, inner: &Type, document: &Document) -> Result<(), Error> {
+    if *inner == Type::F64 {
+        require_f32_literal_range(
+            &state.initial,
+            f64::NEG_INFINITY,
+            None,
+            "animation value",
+            &state.span,
+        )?;
+    }
+    let Some(options) = &state.animation else {
+        return Ok(());
+    };
+    if let Some(easing) = options.easing.as_deref()
+        && !ANIMATION_EASINGS.contains(&easing)
+    {
+        let function = extern_function(document, easing, ExternKind::Pure, &state.span)?;
+        if function.params.len() != 1
+            || function.params[0].1 != Type::F64
+            || function.output != Type::F64
+            || function.error.is_some()
+        {
+            return Err(Error::new(
+                "E103",
+                &state.span,
+                format!("animation easing `{easing}` must be `pure {easing}(value:f64) -> f64`"),
+            ));
+        }
+    }
+    if let Some(from) = options.from
+        && from.ty() != *inner
+    {
+        return Err(Error::new(
+            "E103",
+            &state.span,
+            format!(
+                "animation `from` must be a `{}` value, matching the animated type",
+                inner.display()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn sync_extern_call<'a>(expr: &'a Expr, document: &Document) -> Option<&'a str> {
@@ -922,8 +1061,14 @@ fn component_handler_statement_supported(statement: &Statement) -> bool {
                 },
             ..
         }
+        | Statement::InvalidateLane { .. }
         | Statement::Run {
             kind: EffectKind::Future,
+            ..
+        }
+        | Statement::Run {
+            kind: EffectKind::Stream,
+            mode: DeliveryMode::Replace,
             ..
         } => true,
         Statement::TaskGroup { statements, .. } => {
@@ -933,20 +1078,51 @@ fn component_handler_statement_supported(statement: &Statement) -> bool {
     }
 }
 
+fn component_stream_every(statement: &Statement) -> Option<&Span> {
+    match statement {
+        Statement::Run {
+            kind: EffectKind::Stream,
+            mode: DeliveryMode::Every,
+            span,
+            ..
+        } => Some(span),
+        Statement::TaskGroup { statements, .. } => {
+            statements.iter().find_map(component_stream_every)
+        }
+        Statement::Abortable { task, .. } => component_stream_every(task),
+        _ => None,
+    }
+}
+
 fn check_run_lanes(document: &Document) -> Result<(), Error> {
-    let mut modes = HashMap::new();
+    let mut contracts = HashMap::new();
     for handler in &document.handlers {
-        check_handler_run_lanes(&handler.statements, None, &mut modes)?;
+        check_handler_run_lanes(&handler.statements, None, &mut contracts)?;
     }
     for preset in &document.presets {
-        check_handler_run_lanes(&preset.statements, None, &mut modes)?;
+        check_handler_run_lanes(&preset.statements, None, &mut contracts)?;
     }
     for component in &document.components {
         for handler in &component.handlers {
             check_handler_run_lanes(
                 &handler.statements,
                 Some(component.name.as_str()),
-                &mut modes,
+                &mut contracts,
+            )?;
+        }
+    }
+    for handler in &document.handlers {
+        check_handler_lane_invalidations(&handler.statements, None, &contracts)?;
+    }
+    for preset in &document.presets {
+        check_handler_lane_invalidations(&preset.statements, None, &contracts)?;
+    }
+    for component in &document.components {
+        for handler in &component.handlers {
+            check_handler_lane_invalidations(
+                &handler.statements,
+                Some(component.name.as_str()),
+                &contracts,
             )?;
         }
     }
@@ -956,17 +1132,33 @@ fn check_run_lanes(document: &Document) -> Result<(), Error> {
 fn check_handler_run_lanes<'a>(
     statements: &'a [Statement],
     owner: Option<&'a str>,
-    modes: &mut HashMap<(Option<&'a str>, &'a str), (FutureMode, &'a Span)>,
+    contracts: &mut HashMap<(Option<&'a str>, &'a str), (EffectKind, DeliveryMode, &'a Span)>,
 ) -> Result<(), Error> {
     fn visit<'a>(
         statements: &'a [Statement],
         owner: Option<&'a str>,
-        modes: &mut HashMap<(Option<&'a str>, &'a str), (FutureMode, &'a Span)>,
+        contracts: &mut HashMap<(Option<&'a str>, &'a str), (EffectKind, DeliveryMode, &'a Span)>,
         seen: &mut HashSet<&'a str>,
     ) -> Result<(), Error> {
         for statement in statements {
             match statement {
                 Statement::Run {
+                    kind: EffectKind::Stream,
+                    mode: DeliveryMode::Latest,
+                    span,
+                    ..
+                } => {
+                    return Err(Error::new(
+                        "E140",
+                        span,
+                        "`stream latest` is not supported",
+                    )
+                    .hint(
+                        "use `stream replace lane=name ...` to abort and suppress the prior stream",
+                    ));
+                }
+                Statement::Run {
+                    kind,
                     mode,
                     lane: Some(lane),
                     span,
@@ -977,37 +1169,42 @@ fn check_handler_run_lanes<'a>(
                             "E140",
                             span,
                             format!(
-                                "request lane `{lane}` cannot be started more than once in the same handler"
+                                "delivery lane `{lane}` cannot be started more than once in the same handler"
                             ),
                         ));
                     }
                     let key = (owner, lane.as_str());
-                    if let Some((expected, first)) = modes.get(&key) {
-                        if expected != mode {
+                    if let Some((expected_kind, expected_mode, first)) = contracts.get(&key) {
+                        if expected_kind != kind || expected_mode != mode {
                             return Err(Error::new(
                                 "E140",
                                 span,
                                 format!(
-                                    "request lane `{lane}` uses both `run {}` and `run {}` for the same owner",
-                                    future_mode_name(*expected),
-                                    future_mode_name(*mode),
+                                    "delivery lane `{lane}` uses both `{}` and `{}` for the same owner",
+                                    delivery_statement_name(*expected_kind, *expected_mode),
+                                    delivery_statement_name(*kind, *mode),
                                 ),
                             )
                             .hint(format!(
-                                "use `run {}` for this lane; it was first declared on line {}",
-                                future_mode_name(*expected),
+                                "use `{}` for this lane; it was first declared on line {}",
+                                delivery_statement_name(*expected_kind, *expected_mode),
                                 first.line,
                             )));
                         }
                     } else {
-                        modes.insert(key, (*mode, span));
+                        contracts.insert(key, (*kind, *mode, span));
                     }
                 }
                 Statement::TaskGroup { statements, .. } => {
-                    visit(statements, owner, modes, seen)?;
+                    visit(statements, owner, contracts, seen)?;
                 }
                 Statement::Abortable { task, .. } => {
-                    visit(::std::slice::from_ref(task.as_ref()), owner, modes, seen)?;
+                    visit(
+                        ::std::slice::from_ref(task.as_ref()),
+                        owner,
+                        contracts,
+                        seen,
+                    )?;
                 }
                 _ => {}
             }
@@ -1015,14 +1212,40 @@ fn check_handler_run_lanes<'a>(
         Ok(())
     }
 
-    visit(statements, owner, modes, &mut HashSet::new())
+    visit(statements, owner, contracts, &mut HashSet::new())
 }
 
-fn future_mode_name(mode: FutureMode) -> &'static str {
-    match mode {
-        FutureMode::Every => "every",
-        FutureMode::Latest => "latest",
-        FutureMode::Replace => "replace",
+fn check_handler_lane_invalidations<'a>(
+    statements: &'a [Statement],
+    owner: Option<&'a str>,
+    contracts: &HashMap<(Option<&'a str>, &'a str), (EffectKind, DeliveryMode, &'a Span)>,
+) -> Result<(), Error> {
+    for statement in statements {
+        if let Statement::InvalidateLane { lane, span } = statement
+            && !contracts.contains_key(&(owner, lane.as_str()))
+        {
+            return Err(Error::new(
+                "E140",
+                span,
+                format!("delivery lane `{lane}` is not declared for this state owner"),
+            )
+            .hint(
+                "declare it with a named `run latest`, `run replace`, or `stream replace` lane for the same state owner",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn delivery_statement_name(kind: EffectKind, mode: DeliveryMode) -> &'static str {
+    match (kind, mode) {
+        (EffectKind::Future, DeliveryMode::Every) => "run every",
+        (EffectKind::Future, DeliveryMode::Latest) => "run latest",
+        (EffectKind::Future, DeliveryMode::Replace) => "run replace",
+        (EffectKind::Stream, DeliveryMode::Every) => "stream every",
+        (EffectKind::Stream, DeliveryMode::Latest) => "stream latest",
+        (EffectKind::Stream, DeliveryMode::Replace) => "stream replace",
+        (EffectKind::Task, _) => "task",
     }
 }
 

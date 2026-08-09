@@ -19,8 +19,8 @@ on info_read(_info)
 
 on create_twice(title)
   parallel
-    run create_task(title) -> tasks_read _ | create_failed _
-    run create_task(title) -> tasks_read _ | create_failed _
+    run every create_task(title) -> tasks_read _ | create_failed _
+    run every create_task(title) -> tasks_read _ | create_failed _
 
 on tasks_read(_tasks)
 

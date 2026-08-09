@@ -23,12 +23,11 @@ use tungstenite::stream::MaybeTlsStream;
 use ui_lang_runtime::{Role, StableId, accessible};
 
 use crate::Venue;
+use crate::signing::{self, Action, Chain, Wallet};
 use crate::venue::venue_name;
 
 pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
 
-const INFO_URL: &str = "https://api.hyperliquid.xyz/info";
-const WS_URL: &str = "wss://api.hyperliquid.xyz/ws";
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// Candles fetched when a market is opened, and when the chart is panned back
 /// past the oldest one it holds.
@@ -47,8 +46,6 @@ const POLL: Duration = Duration::from_millis(200);
 const BEAT: Duration = Duration::from_millis(100);
 /// Pause before a dropped socket is reopened.
 const RETRY: Duration = Duration::from_secs(2);
-/// Decay steps a freshly printed fill flashes for.
-const FLASH_STEPS: i64 = 2;
 /// Book levels shown per side, and the pixel width of a full depth bar.
 const BOOK_DEPTH: usize = 10;
 const BOOK_BAR_WIDTH: f64 = 196.0;
@@ -155,15 +152,21 @@ fn only_the_live_tests_are_running(mut args: impl Iterator<Item = String>) -> bo
     !args.any(|arg| arg == "--include-ignored")
 }
 
-/// Everything the exchange can tell us goes through this one endpoint.
-pub(crate) async fn info(body: Value) -> Result<Value, HlError> {
-    smol::unblock(move || info_blocking(&body)).await
+/// Everything the exchange can tell us goes through this one endpoint, on the
+/// deployment the caller names.
+///
+/// The chain is a parameter rather than a constant because the app reads two
+/// Hyperliquid deployments and one of them is the one where an order costs
+/// nothing to get wrong. A default here would be a network chosen by whoever
+/// forgot to pass one.
+pub(crate) async fn info(chain: Chain, body: Value) -> Result<Value, HlError> {
+    smol::unblock(move || info_blocking(chain, &body)).await
 }
 
 /// The same request without the executor around it, for the two callers that
 /// are already off the UI thread: the batch that reads the whole universe on
 /// one pool of threads, and the feed thread deciding what to subscribe to.
-pub(crate) fn info_blocking(body: &Value) -> Result<Value, HlError> {
+pub(crate) fn info_blocking(chain: Chain, body: &Value) -> Result<Value, HlError> {
     // A test drives the real program, subscriptions included, so the 5s account
     // poll fires inside any test the suite's own load stretches past five
     // seconds and this endpoint answers it from the live exchange. Whichever
@@ -181,7 +184,7 @@ pub(crate) fn info_blocking(body: &Value) -> Result<Value, HlError> {
         ));
     }
     let mut response = agent()
-        .post(INFO_URL)
+        .post(chain.info_url())
         .send_json(body)
         .map_err(|error| HlError::new(format!("Hyperliquid unreachable: {error}")))?;
     response
@@ -293,6 +296,21 @@ pub struct SymbolRow {
     /// rather than to arithmetic, so the venue publishes it per market and
     /// the shared math never learns one exchange's rule.
     pub maintenance: f64,
+    /// This market's index in its own `meta.universe`, which is what an order
+    /// carries on the wire — the name never reaches the exchange.
+    ///
+    /// Read from the universe *before* the volume sort below, because the sort
+    /// is the app's presentation order and the index is the exchange's
+    /// identity. Taking it from the sorted position would name a different
+    /// market on every poll, which is an order for whatever happened to be as
+    /// busy as the one you meant.
+    ///
+    /// Canonical markets only. A builder dex numbers its own universe and the
+    /// wire offsets it, and this app does not place orders there anyway: those
+    /// markets are margined against a clearinghouse it cannot read, and
+    /// `own_clearinghouse` already declines them on the ticket. The order path
+    /// refuses them again rather than trusting that.
+    pub asset: u32,
     /// How finely this market quotes a size. It is the instrument's, not the
     /// size's: the venue accepts the same step whether you trade a thousandth
     /// of a coin or a thousand of them, so a size the app works out for itself
@@ -314,6 +332,7 @@ fn hash_f64(value: f64, state: &mut impl Hasher) {
 impl Hash for SymbolRow {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
+        self.asset.hash(state);
         self.category.hash(state);
         self.collateral.hash(state);
         self.heading.hash(state);
@@ -395,8 +414,8 @@ pub struct Trade {
 ///
 /// `Hash` is hand-written for the same reason `SymbolRow`'s is: the fills list
 /// is a `lazy` boundary keyed on the fill it draws, and the money on a fill is
-/// `f64`. A row's cache is invalidated by any change to that fill, the heat
-/// countdown included, which is exactly what the row renders.
+/// `f64`. A row's cache is invalidated by any change to that fill, which is
+/// exactly what the row renders.
 #[derive(Clone, PartialEq)]
 pub struct Fill {
     pub coin: String,
@@ -405,9 +424,11 @@ pub struct Fill {
     pub size: f64,
     pub buy: bool,
     pub closed_pnl: f64,
-    /// Decay steps left on the highlight a just-printed fill wears, counted
-    /// down to zero by the app. Fills already on the books arrive cold.
-    pub heat: i64,
+    /// Whether this fill arrived on the feed rather than in the opening
+    /// snapshot. Only an arrival flashes; the books a trader already had do
+    /// not announce themselves on first paint. It never changes afterwards —
+    /// the fade is the row's own animation, not a countdown in the data.
+    pub hot: bool,
     /// The exchange's trade id, which is how a fill pushed by the feed is
     /// recognised as one the snapshot already listed, and — because a `lazy`
     /// subtree cannot see which iteration built it — the identity its row is
@@ -420,7 +441,7 @@ impl Hash for Fill {
         self.coin.hash(state);
         self.ts.hash(state);
         self.buy.hash(state);
-        self.heat.hash(state);
+        self.hot.hash(state);
         self.tid.hash(state);
         for value in [self.price, self.size, self.closed_pnl] {
             hash_f64(value, state);
@@ -431,6 +452,10 @@ impl Hash for Fill {
 /// One resting order, listed and drawn on the chart as a level.
 #[derive(Clone, PartialEq)]
 pub struct Order {
+    /// The exchange's own id for this resting order, and the only thing a
+    /// cancel can name it by: a coin and a price identify a level, not an
+    /// order, and an account may rest several at one price.
+    pub oid: u64,
     pub coin: String,
     pub buy: bool,
     pub price: f64,
@@ -549,7 +574,12 @@ pub(crate) fn merge(tape: &mut Vec<Candle>, fresh: Vec<Candle>) {
 /// Brings the tape up to date. An empty tape backfills a full window; a
 /// loaded one only asks for the candles that can still have changed, so the
 /// caller never has to know which of the two it needs.
-pub async fn hl_candles(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
+pub async fn hl_candles(
+    chain: Chain,
+    tape: Tape,
+    coin: String,
+    interval: String,
+) -> Result<i64, HlError> {
     let key = focus_key(&coin, &interval);
     let bars = if lock(&tape.candles).is_empty() {
         BACKFILL_BARS
@@ -558,10 +588,13 @@ pub async fn hl_candles(tape: Tape, coin: String, interval: String) -> Result<i6
     };
     let end = now_ms();
     let start = end - bars * interval_secs(&interval) * 1_000;
-    let response = info(json!({
-        "type": "candleSnapshot",
-        "req": { "coin": coin, "interval": interval, "startTime": start, "endTime": end },
-    }))
+    let response = info(
+        chain,
+        json!({
+            "type": "candleSnapshot",
+            "req": { "coin": coin, "interval": interval, "startTime": start, "endTime": end },
+        }),
+    )
     .await?;
 
     let mut candles = lock(&tape.candles);
@@ -596,7 +629,12 @@ pub(crate) fn older_than(candles: &[Candle], oldest: i64) -> i64 {
 /// read that lands after the reader has moved on adds nothing either, and
 /// answers zero for the same reason a read of an empty tape does — it moved
 /// no left edge.
-pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
+pub async fn hl_history(
+    chain: Chain,
+    tape: Tape,
+    coin: String,
+    interval: String,
+) -> Result<i64, HlError> {
     let key = focus_key(&coin, &interval);
     let oldest = { lock(&tape.candles).first().map(|candle| candle.ts) };
     let Some(oldest) = oldest else {
@@ -604,10 +642,13 @@ pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i6
     };
     let end = oldest * 1_000;
     let start = end - BACKFILL_BARS * interval_secs(&interval) * 1_000;
-    let response = info(json!({
-        "type": "candleSnapshot",
-        "req": { "coin": coin, "interval": interval, "startTime": start, "endTime": end },
-    }))
+    let response = info(
+        chain,
+        json!({
+            "type": "candleSnapshot",
+            "req": { "coin": coin, "interval": interval, "startTime": start, "endTime": end },
+        }),
+    )
     .await?;
 
     let mut candles = lock(&tape.candles);
@@ -646,18 +687,24 @@ fn parse_symbols(value: &Value, category: &str, collateral: &str) -> Vec<SymbolR
     };
     let universe = list(meta, "universe");
     let contexts = contexts.as_array().map(Vec::as_slice).unwrap_or_default();
+    // Enumerated before the delisting filter as well as before the sort: the
+    // index is a position in the venue's own list, and a delisted market still
+    // occupies one. Counting only the survivors would shift every market after
+    // the first delisting by one.
     let mut rows: Vec<SymbolRow> = universe
         .iter()
+        .enumerate()
         .zip(contexts)
-        .filter(|(asset, _)| {
+        .filter(|((_, asset), _)| {
             !asset
                 .get("isDelisted")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
         })
-        .map(|(asset, context)| SymbolRow {
+        .map(|((index, asset), context)| SymbolRow {
             category: category.to_owned(),
             collateral: collateral.to_owned(),
+            asset: index as u32,
             leverage: max_leverage(asset),
             maintenance: maintenance_fraction(max_leverage(asset)),
             size_decimals: size_decimals(asset),
@@ -681,9 +728,10 @@ fn parse_context(name: String, context: &Value) -> SymbolRow {
         change_pct: change_pct(price, previous),
         volume: num(context, "dayNtlVlm"),
         funding_pct: num(context, "funding") * 100.0,
-        // The streamed context does not restate the asset's maximum or its
-        // size step, so the universe's reading of all three is kept by the
-        // caller.
+        // The streamed context restates neither the asset's index nor its
+        // maximum nor its size step, so the universe's reading of all of them
+        // is kept by the caller.
+        asset: 0,
         leverage: 0.0,
         maintenance: 0.0,
         size_decimals: 0,
@@ -718,11 +766,22 @@ fn size_decimals(asset: &Value) -> usize {
         .min(SIZE_DECIMALS)
 }
 
-/// What the canonical perp list is headed with. Hyperliquid's own universe is
-/// one list among several now, and a group of markets with no name over it
-/// reads as "the rest" rather than as the exchange's own book.
-const HL_CANONICAL: &str = "Hyperliquid";
+/// What the live exchange's own perp list is headed with. Hyperliquid's own
+/// universe is one list among several now, and a group of markets with no name
+/// over it reads as "the rest" rather than as the exchange's own book.
+///
+/// The heading is passed in rather than read from here, because it is the
+/// network's own name and the test deployment's name is not this one. This is
+/// the mainnet entry's, named once so the registry and the tests below cannot
+/// drift apart on the exchange's own spelling.
+pub(crate) const HL_CANONICAL: &str = "Hyperliquid";
 /// What canonical Hyperliquid margins in, which is also `collateralToken: 0`.
+///
+/// A constant rather than a network fact, because it is one: both deployments
+/// settle their own canonical perps in their own USDC. What *does* differ
+/// between them is which builder dexs are listed beside those perps — testnet
+/// answers `perpDexs` with `test dex` and `unit dex` where mainnet answers
+/// `xyz` — and that arrives in the response rather than from here.
 const HL_COLLATERAL: &str = "USDC";
 
 /// The builder-deployed markets a HIP-3 dex lists, as the universe request
@@ -784,15 +843,20 @@ fn parse_token_names(value: &Value) -> HashMap<usize, String> {
 /// to end is a rail that arrives a second and a half late. A dex whose
 /// request fails contributes no rows and does not fail the universe: one
 /// builder being unreachable is not the exchange being unreachable.
-pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
+/// `canonical` is what the exchange's own group is headed with, and it is the
+/// network's own name: a rail on the test deployment headed "Hyperliquid" over
+/// markets that are not the live exchange's would be the one place on screen
+/// that contradicts the header. It is the caller's because which deployment
+/// this is is the caller's.
+pub async fn hl_symbols(chain: Chain, canonical: &str) -> Result<Vec<SymbolRow>, HlError> {
     // Only the canonical list is required. Without `perpDexs` there is one
     // group, and one group is an uncategorized list — which is what the app
     // drew before any of this, and it stays honest.
     // Neither of these needs the other, and the universe cannot be asked for
     // until the dex list is back, so they go out together.
     let (dexs, tokens) = smol::future::zip(
-        info(json!({ "type": "perpDexs" })),
-        info(json!({ "type": "spotMeta" })),
+        info(chain, json!({ "type": "perpDexs" })),
+        info(chain, json!({ "type": "spotMeta" })),
     )
     .await;
     let dexs = dexs.as_ref().map(parse_perp_dexs).unwrap_or_default();
@@ -803,10 +867,12 @@ pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
                 .map(|dex| json!({ "type": "metaAndAssetCtxs", "dex": dex.name })),
         )
         .collect();
-    let mut answers = smol::unblock(move || batch(&requests)).await.into_iter();
+    let mut answers = smol::unblock(move || batch(chain, &requests))
+        .await
+        .into_iter();
     // The exchange's own list is the one whose failure is the exchange's.
-    let canonical = answers.next().unwrap_or_else(|| Err(panicked_thread()))?;
-    let mut groups = vec![parse_symbols(&canonical, HL_CANONICAL, HL_COLLATERAL)];
+    let canonical_answer = answers.next().unwrap_or_else(|| Err(panicked_thread()))?;
+    let mut groups = vec![parse_symbols(&canonical_answer, canonical, HL_COLLATERAL)];
     for (dex, answer) in dexs.iter().zip(answers) {
         let Ok(answer) = answer else {
             continue;
@@ -846,11 +912,11 @@ pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
 /// Several `info` requests at once, answered in the order they were asked.
 /// Already off the UI thread, so the requests block a pool of scoped threads
 /// rather than the executor.
-fn batch(requests: &[Value]) -> Vec<Result<Value, HlError>> {
+fn batch(chain: Chain, requests: &[Value]) -> Vec<Result<Value, HlError>> {
     std::thread::scope(|scope| {
         let running: Vec<_> = requests
             .iter()
-            .map(|body| scope.spawn(move || info_blocking(body)))
+            .map(|body| scope.spawn(move || info_blocking(chain, body)))
             .collect();
         running
             .into_iter()
@@ -892,9 +958,9 @@ pub struct Ticket {
 /// Why the ticket is not quoting a cliff, in the words that are true of the
 /// state it is actually in.
 ///
-/// `Ticket.known` is one bit over three different situations and the panel
-/// used to read all three out as "market not loaded". That is true of exactly
-/// one of them. A universe that has arrived and does not carry the market on
+/// `Ticket.known` is one bit over four different situations and the panel
+/// used to read all of them out as "market not loaded". That is true of
+/// exactly one. A universe that has arrived and does not carry the market on
 /// screen is a market this venue does not list — nothing is loading, and
 /// waiting will not change it. A market that is listed but states no
 /// maintenance requirement is loaded in full, and what is missing is the one
@@ -903,7 +969,23 @@ pub struct Ticket {
 /// `loaded` is whether the universe itself has arrived, which is the only
 /// thing that separates the first two: both have no row for the market, and
 /// one of them is going to get one.
-pub fn liquidation_gap(market: Option<SymbolRow>, loaded: bool) -> String {
+///
+/// The fourth belongs to the margin mode rather than to the market. A cross
+/// position dies against the account's equity, so with no account read there
+/// is nothing to measure the fall against — and the market being perfectly
+/// well loaded is exactly why this cannot be said in the market's words.
+pub fn liquidation_gap(
+    market: Option<SymbolRow>,
+    loaded: bool,
+    cross: bool,
+    banked: bool,
+) -> String {
+    if cross && own_clearinghouse(market.as_ref()) {
+        return "separate margin account".to_owned();
+    }
+    if cross && !banked {
+        return "needs the account it is held against".to_owned();
+    }
     match market {
         Some(_) => "no requirement stated".to_owned(),
         None if loaded => "not listed here".to_owned(),
@@ -923,8 +1005,8 @@ pub fn liquidation_gap(market: Option<SymbolRow>, loaded: bool) -> String {
 /// ```
 ///
 /// with `m` the maintenance fraction. A cross position is not this — it dies
-/// against the whole account's equity, which is what the header's rail reads —
-/// so this is the isolated case and the ticket says so.
+/// against the whole account's equity — so this is the isolated case and
+/// `cross_liquidation` is the other one.
 fn ticket_liquidation(price: f64, leverage: f64, maintenance: f64, buy: bool) -> f64 {
     if price <= 0.0 || leverage <= 0.0 {
         return 0.0;
@@ -985,20 +1067,92 @@ fn amount(typed: &str) -> f64 {
     )
 }
 
+/// Where a cross position dies, which is nowhere near where an isolated one
+/// does.
+///
+/// An isolated position stands on the margin posted behind it and on nothing
+/// else, so its cliff falls out of its own entry and leverage. A cross
+/// position stands on the whole account: it is closed when the account's
+/// equity falls to the account's maintenance requirement, and every other
+/// cross position it stands beside has already moved that line. Quoting the
+/// isolated formula for a cross order puts the cliff further away than it is
+/// by however much the account is already carrying — which is precisely the
+/// account whose reader needs the figure.
+///
+/// Holding the other markets still, because they do not move because this one
+/// does, equity and requirement as this market travels to `p` are
+///
+/// ```text
+/// equity(p)      = E + (p - mark)·held + (p - entry)·order
+/// requirement(p) = M - |held|·mark·m + |held + order|·p·m
+/// ```
+///
+/// `E` and `M` are the account's now, so `M` already counts what this market
+/// holds and the term removing it is what stops it being counted twice. They
+/// meet at
+///
+/// ```text
+/// p = (M - |held|·mark·m - E + mark·held + entry·order) / (after - |after|·m)
+/// ```
+///
+/// which reduces to the isolated formula for an account holding nothing else:
+/// `E` is then the posted margin `entry·order/L` and `M` and `held` are zero,
+/// leaving `entry(1 - 1/L)/(1 - m)`.
+fn cross_liquidation(
+    entry: f64,
+    order: f64,
+    held: f64,
+    mark: f64,
+    maintenance: f64,
+    equity: f64,
+    requirement: f64,
+) -> f64 {
+    let after = held + order;
+    let denominator = after - after.abs() * maintenance;
+    if !(denominator.is_finite() && denominator.abs() > f64::EPSILON) {
+        return 0.0;
+    }
+    let numerator =
+        requirement - held.abs() * mark * maintenance - equity + mark * held + entry * order;
+    let price = numerator / denominator;
+    if price.is_finite() && price > 0.0 {
+        price
+    } else {
+        0.0
+    }
+}
+
 /// Prices a ticket from what the panel has typed into it. Leverage is held
 /// inside what the market allows, so a ticket cannot quote a liquidation the
 /// exchange would never have opened.
+///
+/// `entry` is the price the order actually transacts at rather than the one in
+/// the field: a market order has nothing in the field, and is quoted at what
+/// walking the book would pay. `size` is already in the instrument and already
+/// capped by whatever reduce-only promised, because `order_size` does both
+/// before anything here is asked — so this function never learns there was a
+/// unit toggle or a reduce-only box, and cannot disagree with the panel about
+/// which order is being priced.
+///
+/// The margin requirement is the same figure under either mode — the venue
+/// takes `notional/leverage` to open, whichever pocket it comes out of — and
+/// the cliff is not, so `cross` chooses which cliff and `account` carries what
+/// a cross one is measured against.
+#[allow(clippy::too_many_arguments)]
 pub fn price_ticket(
-    price: String,
+    entry: f64,
     size: String,
     leverage: String,
     market: Option<SymbolRow>,
     buy: bool,
     held: f64,
+    cross: bool,
+    account: Option<Account>,
 ) -> Ticket {
-    let (max_leverage, maintenance) =
-        market.map_or((0.0, 0.0), |row| (row.leverage, row.maintenance));
-    let price = amount(&price).max(0.0);
+    let (max_leverage, maintenance) = market
+        .as_ref()
+        .map_or((0.0, 0.0), |row| (row.leverage, row.maintenance));
+    let price = entry.max(0.0);
     let size = amount(&size).abs();
     let ceiling = if max_leverage > 0.0 {
         max_leverage
@@ -1018,7 +1172,47 @@ pub fn price_ticket(
         (size - held.abs()).max(0.0)
     };
     let ready = price > 0.0 && size > 0.0 && leverage > 0.0;
-    let known = maintenance > 0.0;
+    // A cross cliff is measured against an account, so an unread one leaves
+    // nothing to measure — and saying so is the whole reason the panel prints
+    // a sentence there instead of a number.
+    //
+    // A builder-deployed market is not held against the account on screen at
+    // all, so the account being read changes nothing: it is the wrong equity
+    // and the wrong requirement, and the cliff it produces would be the most
+    // confident wrong number in the panel. The isolated cliff is still quoted
+    // there, because that one is the market's own arithmetic.
+    let backing = account
+        .filter(|held| held.cross_value > 0.0)
+        .filter(|_| !own_clearinghouse(market.as_ref()));
+    let known = maintenance > 0.0 && (!cross || backing.is_some());
+    let liquidation = match (ready && known && opening > 0.0, cross, backing) {
+        (false, _, _) => 0.0,
+        (true, false, _) => ticket_liquidation(price, leverage, maintenance, buy),
+        (true, true, None) => 0.0,
+        (true, true, Some(account)) => {
+            // Only what is held cross in this market moves with it; an
+            // isolated position in the same market is standing on its own
+            // margin and is not part of this account's fall.
+            let held_cross = account
+                .positions
+                .iter()
+                .find(|position| {
+                    position.margin_mode == "cross"
+                        && market.as_ref().is_some_and(|row| row.name == position.coin)
+                })
+                .map_or(0.0, |position| position.size);
+            let mark = market.as_ref().map_or(price, |row| row.price);
+            cross_liquidation(
+                price,
+                if buy { size } else { -size },
+                held_cross,
+                if mark > 0.0 { mark } else { price },
+                maintenance,
+                account.cross_value,
+                account.maintenance,
+            )
+        }
+    };
     Ticket {
         notional,
         margin: if ready {
@@ -1026,14 +1220,147 @@ pub fn price_ticket(
         } else {
             0.0
         },
-        liquidation: if ready && known && opening > 0.0 {
-            ticket_liquidation(price, leverage, maintenance, buy)
-        } else {
-            0.0
-        },
+        liquidation,
         leverage,
         ready,
         known,
+    }
+}
+
+/// The size the order is actually for, in the instrument, whatever unit it was
+/// typed in and whatever the venue would let it be.
+///
+/// Two normalizations, and both belong here rather than downstream. The unit
+/// toggle is a wording — `$10,000 of BTC` and `0.156 BTC` are one order — so
+/// USD is converted to the instrument once and nothing below this learns there
+/// was a toggle. And reduce-only is a cap, because the venue trims a
+/// reduce-only order to the position rather than filling past it: an order
+/// typed larger than the position is quoted at what it would actually do, not
+/// at what was typed.
+///
+/// This is the one figure the panel prints and the one a payload is built
+/// from, so the two cannot come apart.
+#[allow(clippy::too_many_arguments)]
+pub fn order_size(
+    size: String,
+    usd: bool,
+    price: f64,
+    market: Option<SymbolRow>,
+    reduce: bool,
+    held: f64,
+    buy: bool,
+) -> String {
+    let step = size_step(market.as_ref());
+    let typed = amount(&size).abs();
+    let coins = if usd {
+        if price <= 0.0 {
+            return String::new();
+        }
+        // Down onto the step: a size rounded up asks the venue to fill past
+        // the dollars that were typed, by however much the step is worth.
+        (typed / price * step).floor() / step
+    } else {
+        typed
+    };
+    // Reduce-only against the side you hold is refused rather than trimmed, so
+    // there is nothing to cap and the refusal beside the box is the answer.
+    let capped = if reduce && held != 0.0 && (held > 0.0) != buy {
+        coins.min(held.abs())
+    } else {
+        coins
+    };
+    if capped <= 0.0 {
+        return String::new();
+    }
+    fmt_size(capped)
+}
+
+/// The instrument's own size step, as a multiplier. A market that publishes no
+/// step is quoted at the finest there is, because rounding a size the venue
+/// would have accepted is the failure the reading exists to prevent.
+fn size_step(market: Option<&SymbolRow>) -> f64 {
+    10_f64.powi(market.map_or(SIZE_DECIMALS, |row| row.size_decimals) as i32)
+}
+
+/// The price a size typed in dollars is converted at, and the price the label
+/// beside the field has to name — a conversion whose rate is not on screen is
+/// a number the reader cannot check.
+///
+/// A limit order converts at the price in the field, because `$10,000 of BTC`
+/// typed over a limit means at that limit. A market order has no such price
+/// and converts at the book's mid.
+///
+/// Deliberately not what crossing would pay: that price is a function of the
+/// size, and the size would then be a function of it.
+pub fn size_price(
+    market: bool,
+    price: String,
+    book: Option<Book>,
+    focus: Option<SymbolRow>,
+) -> f64 {
+    if !market {
+        let typed = amount(&price);
+        if typed > 0.0 {
+            return typed;
+        }
+    }
+    book.map(|depth| depth.mid)
+        .filter(|mid| *mid > 0.0)
+        .or_else(|| focus.map(|row| row.price))
+        .unwrap_or(0.0)
+}
+
+/// The price every figure in the ticket is quoted at.
+///
+/// A limit order is quoted at the price in the field. A market order has no
+/// price in the field — it has no field — and is quoted at what walking the
+/// book on screen would actually pay, which is the figure the panel already
+/// prints one row further down. The same arithmetic read once and spent on the
+/// value, the requirement and the cliff, rather than printed beside figures
+/// that contradict it.
+///
+/// A market order with no book to walk falls back to the seed the ticket would
+/// have opened at, which is the last price the venue stated.
+pub fn order_price(
+    market: bool,
+    price: String,
+    book: Option<Book>,
+    size: String,
+    buy: bool,
+    focus: Option<SymbolRow>,
+) -> f64 {
+    if !market {
+        return amount(&price).max(0.0);
+    }
+    let impact = book_impact(book.clone(), size, buy);
+    if impact.ready {
+        return impact.paid;
+    }
+    book.map(|depth| depth.mid)
+        .filter(|mid| *mid > 0.0)
+        .or_else(|| focus.map(|row| row.price))
+        .unwrap_or(0.0)
+}
+
+/// The same quantity said in the other unit, which is what pressing the unit
+/// toggle asks for. A reader who typed 3 BTC and pressed USD wants to see what
+/// 3 BTC costs; leaving the 3 there would turn the order into three dollars of
+/// it, and the field looks identical either way.
+pub fn retype_size(size: String, usd: bool, price: f64, market: Option<SymbolRow>) -> String {
+    let typed = amount(&size).abs();
+    if typed <= 0.0 || price <= 0.0 {
+        return size;
+    }
+    if usd {
+        format_price(typed * price, 2)
+    } else {
+        let step = size_step(market.as_ref());
+        let coins = (typed / price * step).floor() / step;
+        if coins <= 0.0 {
+            String::new()
+        } else {
+            fmt_size(coins)
+        }
     }
 }
 
@@ -1228,15 +1555,18 @@ fn margin_load(equity: f64, maintenance: f64) -> f64 {
     (maintenance / equity).clamp(0.0, 1.0)
 }
 
-pub async fn hl_account(address: String) -> Result<Account, HlError> {
+pub async fn hl_account(chain: Chain, address: String) -> Result<Account, HlError> {
     Ok(parse_account(
-        &info(json!({ "type": "clearinghouseState", "user": address })).await?,
+        &info(
+            chain,
+            json!({ "type": "clearinghouseState", "user": address }),
+        )
+        .await?,
     ))
 }
 
-/// The account's fills. `heat` is what the list flashes with, so the
-/// snapshot the feed opens with reads cold and everything pushed after it
-/// arrives lit.
+/// The account's fills. `hot` is what the list flashes on, so the snapshot the
+/// feed opens with reads cold and everything pushed after it arrives lit.
 /// The public tape, folded the way it was actually traded. One aggressing
 /// order that eats four resting orders arrives as four messages sharing a
 /// `hash`; four rows at the same price is the wire's bookkeeping rather than
@@ -1289,7 +1619,7 @@ fn parse_trades(value: &Value, coin: &str) -> Vec<Trade> {
 /// them into each other; not listing them loses a row the exchange never
 /// identified. `userFills` always carries one, so this is a malformed payload
 /// either way.
-fn parse_fills(value: &Value, heat: i64) -> Vec<Fill> {
+fn parse_fills(value: &Value, hot: bool) -> Vec<Fill> {
     value
         .as_array()
         .map(Vec::as_slice)
@@ -1304,7 +1634,7 @@ fn parse_fills(value: &Value, heat: i64) -> Vec<Fill> {
                 // "B" is a buy, "A" hits the ask side and is a sell.
                 buy: text(fill, "side") == "B",
                 closed_pnl: num(fill, "closedPnl"),
-                heat,
+                hot,
                 tid: fill.get("tid").and_then(Value::as_i64)?,
             })
         })
@@ -1318,6 +1648,7 @@ fn parse_orders(value: &Value) -> Vec<Order> {
         .unwrap_or_default()
         .iter()
         .map(|order| Order {
+            oid: value_i64(order, "oid").max(0) as u64,
             coin: text(order, "coin"),
             buy: text(order, "side") == "B",
             price: num(order, "limitPx"),
@@ -1384,9 +1715,185 @@ fn parse_book(value: &Value) -> Book {
     }
 }
 
-pub async fn hl_orders(address: String) -> Result<Vec<Order>, HlError> {
+/// Every agent key the venue currently lists as live for this account, by
+/// address, with the millisecond `validUntil` it assigned.
+///
+/// `extraAgents` lists *live* approvals only — read across 1,899 of them on 47
+/// accounts while `session.rs` was written, not one was already lapsed at the
+/// moment of reading — so an address missing from this answer is a key that is
+/// either unapproved or finished, and either way not one to sign with. The
+/// window is the exchange's to assign and ours to read back; the approval
+/// action has no field to ask for one.
+///
+/// An entry with no address is dropped rather than carried: the exchange 422s
+/// an approval naming `""`, so a listing containing one is a row this app has
+/// nothing to do with, and `session.rs` refuses to hold it anyway.
+pub async fn hl_agents(chain: Chain, address: String) -> Result<Vec<(String, i64)>, HlError> {
+    let listed = info(chain, json!({ "type": "extraAgents", "user": address })).await?;
+    Ok(listed
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|agent| (text(agent, "address"), value_i64(agent, "validUntil")))
+        .filter(|(address, _)| !address.is_empty())
+        .collect())
+}
+
+// The order path: complete, tested against the venue's own answers, and
+// pointed at by nothing until the ticket is wired to it. The same shape
+// `lighter_sign.rs` states for its own signer — built and held to its evidence
+// before a button can reach it, rather than appearing in the same change as the
+// button that spends money with it.
+#[allow(dead_code)]
+/// The one endpoint that changes anything, on the deployment the caller names.
+///
+/// Behind the same `wire_is_open` gate every read passes, and that is not
+/// symmetry for its own sake: it is the reason no test in this suite can place
+/// an order. A test drives the real program, subscriptions and handlers
+/// included, so a gate on the reads alone would leave the one path that spends
+/// money as the only one a test could reach.
+pub(crate) async fn exchange(chain: Chain, body: Value) -> Result<Value, HlError> {
+    if !wire_is_open() {
+        return Err(HlError::new(
+            "Hyperliquid unreachable: no wire under test".to_owned(),
+        ));
+    }
+    smol::unblock(move || {
+        let mut response = agent()
+            .post(chain.exchange_url())
+            // A rejection arrives as a 200 carrying `status: "err"`, and a 4xx
+            // is a malformed action rather than a transport failure. Both are
+            // the venue's answer and both have to reach the reader in its own
+            // words, so neither is turned into a thrown transport error here.
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(&body)
+            .map_err(|error| HlError::new(format!("Hyperliquid unreachable: {error}")))?;
+        let status = response.status();
+        response
+            .body_mut()
+            .read_json::<Value>()
+            .map_err(|error| HlError::new(format!("Hyperliquid answered {status} with {error}")))
+    })
+    .await
+}
+
+#[allow(dead_code)]
+/// What the exchange said about one submitted action.
+///
+/// Hyperliquid answers a refusal with HTTP 200 and `status: "err"`, and answers
+/// a *partial* refusal with `status: "ok"` and an `error` inside one of the
+/// per-order statuses — so "the request succeeded" and "the order rested" are
+/// two different questions and only the second one matters. Reading the outer
+/// status alone reports a rejected order as placed.
+fn placed(answer: &Value) -> Result<Vec<u64>, HlError> {
+    if let Some(message) = answer.get("response").and_then(Value::as_str) {
+        return Err(HlError::new(message.to_owned()));
+    }
+    if text(answer, "status") == "err" {
+        // The venue puts its sentence where the payload would be.
+        let said = answer
+            .get("response")
+            .and_then(Value::as_str)
+            .unwrap_or("Hyperliquid refused the action and said nothing");
+        return Err(HlError::new(said.to_owned()));
+    }
+    let statuses = answer
+        .get("response")
+        .and_then(|response| response.get("data"))
+        .map(|data| list(data, "statuses"))
+        .unwrap_or_default();
+    if statuses.is_empty() {
+        return Err(HlError::new(
+            "Hyperliquid accepted the request and reported nothing about the order".to_owned(),
+        ));
+    }
+    let mut ids = Vec::new();
+    for status in statuses {
+        // One refusal among several is still a refusal, and the venue's own
+        // sentence is the only useful thing to say about it.
+        if let Some(said) = status.get("error").and_then(Value::as_str) {
+            return Err(HlError::new(said.to_owned()));
+        }
+        // A resting order answers with its id; one that filled immediately
+        // answers `filled` and has no id to cancel later.
+        if let Some(oid) = status
+            .get("resting")
+            .and_then(|resting| resting.get("oid"))
+            .and_then(Value::as_u64)
+        {
+            ids.push(oid);
+        }
+    }
+    Ok(ids)
+}
+
+#[allow(dead_code)]
+/// Send a signed action and read what the venue made of it.
+async fn acted(chain: Chain, wallet: &Wallet, action: &Action) -> Result<Vec<u64>, HlError> {
+    placed(&exchange(chain, action.request(wallet)).await?)
+}
+
+#[allow(dead_code)]
+/// Place one limit order, and answer the id it rests under.
+///
+/// The market is named by its index, which is what the wire carries — see
+/// `SymbolRow::asset`. A market whose margin lives in a clearinghouse this app
+/// cannot read is refused here as well as on the ticket, because an order is
+/// the one place where being wrong about which account backs it costs money.
+pub async fn hl_place(
+    chain: Chain,
+    wallet: &Wallet,
+    market: &SymbolRow,
+    order: Order,
+    reduce_only: bool,
+) -> Result<Vec<u64>, HlError> {
+    if market.name.contains(':') {
+        return Err(HlError::new(format!(
+            "{} is margined against a clearinghouse this app cannot read, so it will not send \
+             an order there.",
+            market.name,
+        )));
+    }
+    let action = signing::order(
+        chain,
+        &[signing::Order {
+            asset: market.asset,
+            buy: order.buy,
+            price: order.price,
+            size: order.size,
+            reduce_only,
+            tif: signing::Tif::Gtc,
+        }],
+        now_ms() as u64,
+    )?;
+    acted(chain, wallet, &action).await
+}
+
+#[allow(dead_code)]
+/// Pull one resting order by the id the exchange gave it.
+pub async fn hl_cancel(
+    chain: Chain,
+    wallet: &Wallet,
+    market: &SymbolRow,
+    oid: u64,
+) -> Result<(), HlError> {
+    let action = signing::cancel(
+        chain,
+        &[signing::Cancel {
+            asset: market.asset,
+            oid,
+        }],
+        now_ms() as u64,
+    );
+    acted(chain, wallet, &action).await.map(|_| ())
+}
+
+pub async fn hl_orders(chain: Chain, address: String) -> Result<Vec<Order>, HlError> {
     Ok(parse_orders(
-        &info(json!({ "type": "openOrders", "user": address })).await?,
+        &info(chain, json!({ "type": "openOrders", "user": address })).await?,
     ))
 }
 
@@ -1398,7 +1905,7 @@ struct Socket {
 }
 
 impl Socket {
-    fn connect() -> Result<Self, HlError> {
+    fn connect(chain: Chain) -> Result<Self, HlError> {
         // The same gate `info` passes, and for the same reason: a test drives
         // the real program, so a handler that starts a feed would open a
         // socket to the exchange and make the suite depend on it being up.
@@ -1409,7 +1916,7 @@ impl Socket {
                 "Hyperliquid feed unreachable: no wire under test".to_owned(),
             ));
         }
-        let (ws, _) = tungstenite::connect(WS_URL)
+        let (ws, _) = tungstenite::connect(chain.ws_url())
             .map_err(|error| HlError::new(format!("Hyperliquid feed unreachable: {error}")))?;
         // Reads have to time out, or the loop could never look at the clock
         // to ping, or at the app to see that it changed markets.
@@ -1481,7 +1988,7 @@ pub(crate) enum Event<'a> {
 /// connect, so a feed follows the app's market by re-subscribing instead of
 /// reconnecting. The thread reconnects through an error and stops when the
 /// receiver is dropped, which is what aborting the stream does.
-fn feed<T, S, R>(mut subscribe: S, mut read: R) -> Receiver<Result<T, HlError>>
+fn feed<T, S, R>(chain: Chain, mut subscribe: S, mut read: R) -> Receiver<Result<T, HlError>>
 where
     T: Send + 'static,
     S: FnMut() -> Vec<Value> + Send + 'static,
@@ -1490,7 +1997,7 @@ where
     let (sender, receiver) = smol::channel::unbounded();
     std::thread::spawn(move || {
         while !sender.is_closed() {
-            let Err(error) = pump(&mut subscribe, &mut read, &sender) else {
+            let Err(error) = pump(chain, &mut subscribe, &mut read, &sender) else {
                 return;
             };
             if sender.send_blocking(Err(error)).is_err() {
@@ -1512,6 +2019,7 @@ where
 /// One connection's lifetime. Returns `Ok` only when the app has stopped
 /// listening; anything else is an error the caller reconnects through.
 fn pump<T, S, R>(
+    chain: Chain,
     subscribe: &mut S,
     read: &mut R,
     sender: &Sender<Result<T, HlError>>,
@@ -1520,7 +2028,7 @@ where
     S: FnMut() -> Vec<Value>,
     R: FnMut(Event<'_>) -> Option<T>,
 {
-    let mut socket = Socket::connect()?;
+    let mut socket = Socket::connect(chain)?;
     let mut beat = Instant::now();
     let mut ping = Instant::now();
     let mut sent: Option<Instant> = None;
@@ -1610,7 +2118,7 @@ pub struct MarketTick {
 /// candles, and context of whatever market the tape is pointed at. Candles
 /// are merged into the tape in place, so the chart follows them on its own
 /// repaint beat without an app message per tick.
-pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
+pub fn hl_market_feed(chain: Chain, tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
     let subscriptions = tape.clone();
     // `allMids` answers for one dex at a time and the canonical request does
     // not carry the builder ones, so the rail's prices for a hundred-odd
@@ -1620,9 +2128,10 @@ pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
     // list exists to avoid.
     let mut dexs: Option<Vec<String>> = None;
     feed(
+        chain,
         move || {
             let named = dexs.get_or_insert_with(|| {
-                info_blocking(&json!({ "type": "perpDexs" }))
+                info_blocking(chain, &json!({ "type": "perpDexs" }))
                     .as_ref()
                     .map(parse_perp_dexs)
                     .unwrap_or_default()
@@ -1754,8 +2263,9 @@ fn market_reader(tape: Tape) -> impl FnMut(Event<'_>) -> Option<MarketTick> + Se
 /// This account's fills as they print. The exchange opens with a snapshot of
 /// the recent ones and pushes each new one after that; only the pushed ones
 /// are lit, so the list flashes what just happened rather than its history.
-pub fn hl_fill_feed(address: String) -> Receiver<Result<Vec<Fill>, HlError>> {
+pub fn hl_fill_feed(chain: Chain, address: String) -> Receiver<Result<Vec<Fill>, HlError>> {
     feed(
+        chain,
         move || vec![json!({ "type": "userFills", "user": address })],
         move |event| {
             let Event::Payload("userFills", data) = event else {
@@ -1765,7 +2275,7 @@ pub fn hl_fill_feed(address: String) -> Receiver<Result<Vec<Fill>, HlError>> {
                 .get("isSnapshot")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let fills = parse_fills(data.get("fills")?, if snapshot { 0 } else { FLASH_STEPS });
+            let fills = parse_fills(data.get("fills")?, !snapshot);
             (!fills.is_empty()).then_some(fills)
         },
     )
@@ -1781,6 +2291,10 @@ pub fn apply_feed(rows: Vec<SymbolRow>, tick: MarketTick) -> Vec<SymbolRow> {
         && let Some(row) = rows.iter_mut().find(|row| row.name == context.name)
     {
         *row = SymbolRow {
+            // The index is the one field here an order is actually sent with,
+            // and a beat that dropped it would leave every market pointing at
+            // whatever `parse_context` zeroes to — which is a real market.
+            asset: row.asset,
             // All three belong to the asset rather than to the day, and the
             // streamed context does not carry them.
             leverage: row.leverage,
@@ -2232,22 +2746,6 @@ pub fn fmt_sweep(count: i64) -> String {
     format!("×{count}")
 }
 
-/// One step of the highlight decay on the newest fills.
-pub fn cool_fills(rows: Vec<Fill>) -> Vec<Fill> {
-    rows.into_iter()
-        .map(|fill| Fill {
-            heat: (fill.heat - 1).max(0),
-            ..fill
-        })
-        .collect()
-}
-
-/// Whether anything in the list is still lit, which is the only reason to
-/// run the decay timer at all.
-pub fn any_hot(rows: Vec<Fill>) -> bool {
-    rows.iter().any(|fill| fill.heat > 0)
-}
-
 /// An account address is `0x` and forty hexadecimal digits. Worth checking
 /// before the request rather than after it: the exchange answers a malformed
 /// address with a plain-text parser complaint rather than JSON, so a typo
@@ -2440,12 +2938,26 @@ pub fn alert_arrow(alert: Alert) -> String {
 /// floor can land on nothing, and a MAX that fills in "0" offers to send an
 /// order for none of the instrument: there is no size to offer, and this says
 /// so the same way it says the account has nothing free.
+///
+/// It fills the field, so it answers in whatever unit the field is being typed
+/// in. A share of an account is a dollar figure to begin with — the conversion
+/// runs to reach a size, not away from one — so the USD case is the shorter
+/// arithmetic rather than a second one.
+///
+/// `price` is the one the *field* is read at rather than the one the order
+/// transacts at, and the difference only exists for a market order. A dollar
+/// figure filled in here is turned back into a size by `order_size` at that
+/// same price, so handing this the crossing price would put a size in the box
+/// that the box's own arithmetic disagreed with. What that costs is the
+/// spread, on the one press that is already floored to the instrument's step
+/// for the same reason — and the panel prints what crossing pays a row below.
 pub fn ticket_afford(
     account: Option<Account>,
-    price: String,
+    price: f64,
     market: Option<SymbolRow>,
     leverage: f64,
     share: f64,
+    usd: bool,
 ) -> String {
     // Sizing to a share of the balance needs the balance this market is
     // actually margined against, and for a builder-deployed market that is
@@ -2457,12 +2969,15 @@ pub fn ticket_afford(
         return String::new();
     }
     let free = account.map_or(0.0, |held| held.withdrawable);
-    let price = amount(&price);
     if free <= 0.0 || price <= 0.0 || leverage <= 0.0 || share <= 0.0 {
         return String::new();
     }
-    let step = 10_f64.powi(market.map_or(SIZE_DECIMALS, |row| row.size_decimals) as i32);
-    let size = (free * share.min(1.0) * leverage / price * step).floor() / step;
+    let notional = free * share.min(1.0) * leverage;
+    if usd {
+        return format_price(notional, 2);
+    }
+    let step = size_step(market.as_ref());
+    let size = (notional / price * step).floor() / step;
     if size <= 0.0 {
         return String::new();
     }
@@ -2537,11 +3052,11 @@ pub fn order_load(
 ///
 /// Longs pay a positive rate and shorts are paid it, so a long reads negative
 /// when the rate is positive, and a short reads positive.
-pub fn funding_day(market: Option<SymbolRow>, price: String, size: String, buy: bool) -> String {
+pub fn funding_day(market: Option<SymbolRow>, price: f64, size: String, buy: bool) -> String {
     let Some(market) = market else {
         return String::new();
     };
-    let notional = amount(&price).max(0.0) * amount(&size).abs();
+    let notional = price.max(0.0) * amount(&size).abs();
     if notional <= 0.0 {
         return String::new();
     }
@@ -2557,10 +3072,7 @@ pub fn ticket_effect(positions: Vec<Position>, coin: String, size: String, buy: 
     if size <= 0.0 {
         return String::new();
     }
-    let held = positions
-        .into_iter()
-        .find(|position| position.coin == coin)
-        .map_or(0.0, |position| position.size);
+    let held = position_held(positions, coin);
     let side = if buy { "long" } else { "short" };
     // A buy against a short reduces it, and so does a sell against a long.
     if held == 0.0 || (held > 0.0) == buy {
@@ -2587,6 +3099,209 @@ pub fn position_held(positions: Vec<Position>, coin: String) -> f64 {
         .into_iter()
         .find(|position| position.coin == coin)
         .map_or(0.0, |position| position.size)
+}
+
+/// Why reduce-only cannot be sent with the order as typed, or empty when it
+/// can.
+///
+/// Reduce-only is a promise to the venue that the order only ever moves the
+/// position towards zero, and the venue keeps that promise by refusing the
+/// order outright rather than by shrinking it. So an order that would add to
+/// what is held is not sent smaller — it is not sent, and a box that quietly
+/// guaranteed nothing would have been the reader's only warning.
+///
+/// CLOSE POSITION is this same promise with the size and the side filled in,
+/// which is why it sets the box rather than carrying a second path of its own.
+pub fn reduce_refused(positions: Vec<Position>, coin: String, buy: bool) -> String {
+    let held = position_held(positions, coin);
+    if held == 0.0 {
+        return "Reduce-only needs a position to reduce, and there is none in this market."
+            .to_owned();
+    }
+    if (held > 0.0) == buy {
+        let side = if held > 0.0 { "long" } else { "short" };
+        return format!(
+            "This order adds to the {side} you hold. Reduce-only sends nothing rather than a smaller order."
+        );
+    }
+    String::new()
+}
+
+/// What an exit at this level would realize on the order in the ticket: the
+/// same reading the positions table shows against a mark, pointed instead at a
+/// price that has not happened yet. Entry to exit, times the size, signed by
+/// the side the order opens.
+pub fn level_pnl(entry: f64, exit: String, size: String, buy: bool) -> f64 {
+    let exit = amount(&exit);
+    let size = amount(&size).abs();
+    if entry <= 0.0 || exit <= 0.0 || size <= 0.0 {
+        return 0.0;
+    }
+    if buy {
+        (exit - entry) * size
+    } else {
+        (entry - exit) * size
+    }
+}
+
+/// Why a take-profit cannot be attached at that level, or empty when it can.
+///
+/// A target on the wrong side of the entry is a stop wearing the wrong name,
+/// and the venue sends it as one: the trigger is already true when the order
+/// fills, so the position closes at a loss immediately. That is one press away
+/// from the opposite of what was asked for, so it is refused with the reason
+/// rather than accepted quietly.
+///
+/// An empty field is not a refusal. Take-profit is optional, and a blank one
+/// is the order without it.
+pub fn tp_refused(entry: f64, price: String, buy: bool) -> String {
+    if price.trim().is_empty() {
+        return String::new();
+    }
+    if entry <= 0.0 {
+        return "There is no entry price yet to set a target against.".to_owned();
+    }
+    let level = amount(&price);
+    if level <= 0.0 {
+        return "A take-profit is a price above zero.".to_owned();
+    }
+    if (buy && level <= entry) || (!buy && level >= entry) {
+        let side = if buy { "long" } else { "short" };
+        let direction = if buy { "above" } else { "below" };
+        return format!(
+            "A take-profit on a {side} sits {direction} the {} it opens at.",
+            fmt_px(entry)
+        );
+    }
+    String::new()
+}
+
+/// Why a stop-loss cannot be attached at that level, or empty when it can.
+///
+/// Two refusals rather than one. The wrong side of the entry is a target
+/// wearing the wrong name — the take-profit's mistake, mirrored, and refused
+/// in the same words. Past the liquidation is worse than wrong: it is a stop
+/// that reads as protection and is not there, because the engine closes the
+/// position before the trigger is ever reached, at the engine's price and not
+/// at the chosen one.
+pub fn sl_refused(entry: f64, price: String, buy: bool, liquidation: f64) -> String {
+    if price.trim().is_empty() {
+        return String::new();
+    }
+    if entry <= 0.0 {
+        return "There is no entry price yet to set a stop against.".to_owned();
+    }
+    let level = amount(&price);
+    if level <= 0.0 {
+        return "A stop-loss is a price above zero.".to_owned();
+    }
+    let side = if buy { "long" } else { "short" };
+    if (buy && level >= entry) || (!buy && level <= entry) {
+        let direction = if buy { "below" } else { "above" };
+        return format!(
+            "A stop-loss on a {side} sits {direction} the {} it opens at.",
+            fmt_px(entry)
+        );
+    }
+    if liquidation > 0.0 && ((buy && level <= liquidation) || (!buy && level >= liquidation)) {
+        return format!(
+            "The engine closes this {side} at {}, before that stop is reached.",
+            fmt_px(liquidation)
+        );
+    }
+    String::new()
+}
+
+/// A level field's name, carrying the figure drawn beside it. The number is
+/// the whole reason to choose one level over another, and it is painted in the
+/// label row where a reader who cannot see it hears nothing — so the field
+/// says what it is worth as well as what it is.
+pub fn level_label(name: String, pnl: f64) -> String {
+    if pnl == 0.0 {
+        return format!("{name} price");
+    }
+    format!("{name} price, {} at that level", fmt_pnl(pnl))
+}
+
+/// A segmented choice's name, by the rule every tab in this app already
+/// follows: the button is named for the act it performs, and the one already
+/// taken says so in its own name rather than only in its colour. accesskit
+/// carries a toggled state for a checkbox and a switch but not for a button,
+/// so the highlight is the whole answer for everyone who can see it and no
+/// answer at all for anyone who cannot.
+pub fn choice_label(act: String, shown: bool) -> String {
+    let state = if shown { ", already selected" } else { "" };
+    format!("{act}{state}")
+}
+
+/// What the requirement above it is standing on, which is the whole of the
+/// difference between the two margin modes. The figure is the same either way
+/// — the venue takes notional over leverage to open, whichever pocket it comes
+/// out of — so a panel that printed the number and left the mode unsaid was
+/// showing the identical requirement for two orders that die in different
+/// places.
+pub fn margin_note(cross: bool) -> String {
+    if cross {
+        "Cross margin: this order is backed by the whole account and goes when the account does, at the requirement drawn under the equity figure. Everything else held cross moves that line."
+    } else {
+        "Isolated margin: this order stands on the requirement above and on nothing else, at the maintenance this market holds. The rest of the account is untouched by it."
+    }
+    .to_owned()
+}
+
+/// What a market order is quoted at, said where the limit price would have
+/// been typed.
+///
+/// A market order has no price to type, and the field's worth of space is
+/// better spent on the price it is actually being quoted at than on saying
+/// there is none. That price is the book's, and it is the same walk the row
+/// below prints — so the two cannot disagree, and a book too thin to price the
+/// size says so there rather than leaving the figure to look firm.
+pub fn market_note(
+    book: Option<Book>,
+    size: String,
+    buy: bool,
+    focus: Option<SymbolRow>,
+) -> String {
+    let impact = book_impact(book.clone(), size.clone(), buy);
+    if impact.ready {
+        return format!("Crosses the spread now, at {}.", fmt_px(impact.paid));
+    }
+    let seed = order_price(true, String::new(), book, size, buy, focus);
+    if seed > 0.0 {
+        return format!(
+            "Crosses the spread. No book on screen to walk, so it is quoted at the venue's last, {}.",
+            fmt_px(seed)
+        );
+    }
+    "Crosses the spread. Nothing on screen prices it yet.".to_owned()
+}
+
+/// Which price the dollars in the field are being turned into a size at.
+///
+/// A conversion whose rate is off screen is a number a reader has no way to
+/// check, and the two rates this can be are not interchangeable: a limit that
+/// has not traded, and a mid that is moving while the field is being typed.
+pub fn size_note(
+    usd: bool,
+    market: bool,
+    price: String,
+    book: Option<Book>,
+    focus: Option<SymbolRow>,
+) -> String {
+    if !usd {
+        return String::new();
+    }
+    let at = size_price(market, price.clone(), book, focus);
+    if at <= 0.0 {
+        return "Nothing on screen prices this market yet, so dollars cannot be sized.".to_owned();
+    }
+    let source = if !market && amount(&price) > 0.0 {
+        "the limit price"
+    } else {
+        "the market's mid"
+    };
+    format!("Sized at {}, {source}.", fmt_px(at))
 }
 
 /// A tab is named by what pressing it does, like every other control here, so
@@ -3244,10 +3959,10 @@ fn demo_account_of(
     }
 }
 
-/// Fills and resting orders, including one fill still lit, so the flash a
-/// just-printed fill wears is drawn rather than only decayed in a unit test.
+/// Fills and resting orders, including fills that arrived lit, so the wash a
+/// just-printed fill wears is drawn rather than only asserted in a unit test.
 pub fn demo_fills() -> Vec<Fill> {
-    let fill = |tid: i64, price: f64, size: f64, buy: bool, closed_pnl: f64, heat: i64| Fill {
+    let fill = |tid: i64, price: f64, size: f64, buy: bool, closed_pnl: f64, hot: bool| Fill {
         coin: "BTC".to_owned(),
         // Inside the candle window `demo_candles` builds, so each lands on
         // its own candle rather than piling onto the last one.
@@ -3256,13 +3971,13 @@ pub fn demo_fills() -> Vec<Fill> {
         size,
         buy,
         closed_pnl,
-        heat,
+        hot,
         tid,
     };
     vec![
-        fill(1, 64_010.0, 0.25, false, 1_240.0, FLASH_STEPS),
-        fill(2, 63_940.0, 0.50, true, 0.0, 1),
-        fill(3, 63_880.0, 0.75, true, 0.0, 0),
+        fill(1, 64_010.0, 0.25, false, 1_240.0, true),
+        fill(2, 63_940.0, 0.50, true, 0.0, true),
+        fill(3, 63_880.0, 0.75, true, 0.0, false),
     ]
 }
 
@@ -3293,7 +4008,7 @@ pub fn demo_fills_many(count: i64) -> Vec<Fill> {
                 } else {
                     (step as f64 * 13.7) % 900.0 - 400.0
                 },
-                heat: (FLASH_STEPS - step).max(0),
+                hot: step == 0,
                 tid: 4_000_000 + step,
             }
         })
@@ -3314,6 +4029,7 @@ pub fn demo_fills_opening() -> Vec<Fill> {
 pub fn demo_orders() -> Vec<Order> {
     vec![
         Order {
+            oid: 71_234_567_890,
             coin: "BTC".to_owned(),
             buy: true,
             price: 63_600.0,
@@ -3321,6 +4037,7 @@ pub fn demo_orders() -> Vec<Order> {
             ts: now_ms() / 1_000 - 7_200,
         },
         Order {
+            oid: 71_234_567_891,
             coin: "BTC".to_owned(),
             buy: false,
             price: 64_440.0,
@@ -3703,6 +4420,201 @@ pub(crate) mod probe {
 
 #[cfg(test)]
 mod tests {
+
+    /// The whole order path against the live test deployment: place, see it
+    /// resting, cancel it, see it gone.
+    ///
+    /// Testnet only, and structurally so — `Chain::Testnet` is the only chain
+    /// this builds, so there is no argument to get wrong. The account and its
+    /// approved agent key come from the environment because they are the
+    /// owner's: enrolment needs a signature from the wallet that owns the
+    /// account, which this app will never hold. Until those are set this test
+    /// says what is missing and stops, rather than passing quietly on nothing.
+    ///
+    /// The order rests far from the market on purpose — a bid at a fraction of
+    /// the mark cannot fill, so the round trip ends with the book exactly as it
+    /// started.
+    #[test]
+    #[ignore = "hits Hyperliquid testnet with a real order; needs ICE_HL_TESTNET_ACCOUNT and ICE_HL_TESTNET_AGENT_KEY"]
+    fn the_order_path_places_rests_and_cancels_on_the_test_deployment() {
+        let (Ok(account), Ok(secret)) = (
+            std::env::var("ICE_HL_TESTNET_ACCOUNT"),
+            std::env::var("ICE_HL_TESTNET_AGENT_KEY"),
+        ) else {
+            panic!(
+                "set ICE_HL_TESTNET_ACCOUNT to the funded testnet address and \
+                 ICE_HL_TESTNET_AGENT_KEY to the hex secret of an agent key that \
+                 address has approved — see the enrolment checklist in README.md"
+            );
+        };
+        open_the_wire();
+        let bytes: [u8; 32] = hex::decode(secret.trim_start_matches("0x"))
+            .expect("a hex agent key")
+            .try_into()
+            .expect("32 bytes");
+        let wallet = Wallet::from_secret(&bytes).expect("an agent key");
+
+        smol::block_on(async {
+            let markets = hl_symbols(Chain::Testnet, HL_CANONICAL)
+                .await
+                .expect("the testnet universe");
+            let market = markets
+                .iter()
+                .find(|row| row.name == "BTC")
+                .expect("testnet lists BTC")
+                .clone();
+
+            // A tenth of the mark: a bid nothing will cross.
+            let resting = Order {
+                oid: 0,
+                coin: market.name.clone(),
+                buy: true,
+                price: (market.price / 10.0).round(),
+                size: 0.001,
+                ts: 0,
+            };
+            let ids = hl_place(Chain::Testnet, &wallet, &market, resting, false)
+                .await
+                .expect("the order is accepted");
+            let oid = *ids.first().expect("a resting order has an id");
+
+            let open = hl_orders(Chain::Testnet, account.clone())
+                .await
+                .expect("open orders");
+            assert!(
+                open.iter().any(|order| order.oid == oid),
+                "the order the venue said it rested is the one it lists back"
+            );
+
+            hl_cancel(Chain::Testnet, &wallet, &market, oid)
+                .await
+                .expect("the cancel is accepted");
+
+            let after = hl_orders(Chain::Testnet, account)
+                .await
+                .expect("open orders");
+            assert!(
+                !after.iter().any(|order| order.oid == oid),
+                "a cancel the venue accepted is an order it stops listing"
+            );
+        });
+    }
+
+    /// The venue answers a refusal with HTTP 200, so "the request worked" and
+    /// "the order rested" are different questions. Reading only the outer
+    /// status reports a rejected order as placed, which is the one failure on
+    /// this path that costs money by being quiet.
+    #[test]
+    fn a_refusal_is_read_as_a_refusal_however_the_venue_spells_it() {
+        // Rested: the id comes back and is what a cancel later names.
+        let resting = json!({
+            "status": "ok",
+            "response": { "type": "order", "data": { "statuses": [
+                { "resting": { "oid": 77_665_544 } }
+            ]}},
+        });
+        assert_eq!(placed(&resting).expect("a resting order"), vec![77_665_544]);
+
+        // Refused outright, at the top level.
+        let refused = json!({ "status": "err", "response": "Insufficient margin to place order." });
+        let said = placed(&refused).expect_err("a refusal is not a placement");
+        assert_eq!(
+            said.message, "Insufficient margin to place order.",
+            "the venue's own sentence, not a sentence about the venue"
+        );
+
+        // Refused *inside* an otherwise ok response, which is the shape that
+        // reads as success to anything looking at `status` alone.
+        let partial = json!({
+            "status": "ok",
+            "response": { "type": "order", "data": { "statuses": [
+                { "error": "Order price cannot be more than 95% away from the reference price" }
+            ]}},
+        });
+        let said = placed(&partial).expect_err("an error inside an ok is still an error");
+        assert!(said.message.contains("95%"), "{}", said.message);
+
+        // Accepted and said nothing about the order: not a success to report.
+        let silent =
+            json!({ "status": "ok", "response": { "type": "order", "data": { "statuses": [] }}});
+        assert!(placed(&silent).is_err(), "silence is not a placement");
+
+        // Filled immediately: no resting id, and no error either.
+        let filled = json!({
+            "status": "ok",
+            "response": { "type": "order", "data": { "statuses": [
+                { "filled": { "totalSz": "1.0", "avgPx": "64000.0", "oid": 5 } }
+            ]}},
+        });
+        assert!(
+            placed(&filled).expect("a fill is not a failure").is_empty(),
+            "a filled order rests under no id, so there is none to hand back"
+        );
+    }
+
+    /// The index an order is sent with is the venue's, and the row order on
+    /// screen is the app's. Reading the index off the sorted list names
+    /// whichever market happened to be as busy as the one you meant — an order
+    /// for the wrong asset, with every figure on screen still correct.
+    #[test]
+    fn the_asset_index_survives_the_sort_and_the_delisting_filter() {
+        let response = json!([
+            { "universe": [
+                { "name": "AAA", "szDecimals": 2, "maxLeverage": 10 },
+                { "name": "GONE", "szDecimals": 2, "maxLeverage": 10, "isDelisted": true },
+                { "name": "BBB", "szDecimals": 2, "maxLeverage": 10 }
+            ]},
+            [
+                { "markPx": "1.0", "prevDayPx": "1.0", "dayNtlVlm": "5" },
+                { "markPx": "1.0", "prevDayPx": "1.0", "dayNtlVlm": "9" },
+                { "markPx": "1.0", "prevDayPx": "1.0", "dayNtlVlm": "100" }
+            ],
+        ]);
+        let rows = parse_symbols(&response, HL_CANONICAL, HL_COLLATERAL);
+        let index = |name: &str| {
+            rows.iter()
+                .find(|row| row.name == name)
+                .unwrap_or_else(|| panic!("{name} is listed"))
+                .asset
+        };
+        // BBB sorts first on volume and is the venue's third asset.
+        assert_eq!(rows[0].name, "BBB", "the rows are sorted by volume");
+        assert_eq!(
+            index("BBB"),
+            2,
+            "and carry the venue's index, not the row's"
+        );
+        assert_eq!(index("AAA"), 0);
+        assert_eq!(
+            rows.len(),
+            2,
+            "the delisted market is dropped but still occupied its slot"
+        );
+    }
+
+    /// A beat carries a price, not an identity. Dropping the index on one
+    /// would leave every market pointing at asset zero, which is a real market.
+    #[test]
+    fn a_streamed_beat_does_not_move_which_asset_a_row_is() {
+        let held = SymbolRow {
+            name: "ETH".into(),
+            price: 3_500.0,
+            asset: 4,
+            ..Default::default()
+        };
+        // A context off the socket, which carries no index — `parse_context`
+        // zeroes it, and zero is a real market.
+        let beat = MarketTick {
+            context: Some(parse_context(
+                "ETH".into(),
+                &json!({ "markPx": "3600.0", "prevDayPx": "3500.0" }),
+            )),
+            ..MarketTick::default()
+        };
+        let after = apply_feed(vec![held], beat);
+        assert_eq!(after[0].price, 3_600.0, "the price is the beat's");
+        assert_eq!(after[0].asset, 4, "the index is not");
+    }
     use super::*;
 
     /// A builder-deployed market's name carries a colon, and the tape holds
@@ -4070,7 +4982,7 @@ mod tests {
             size: 0.5,
             buy: true,
             closed_pnl: 10.0,
-            heat: 2,
+            hot: true,
             tid: 3,
         };
         let fill_moves: &[FieldMutation<Fill>] = &[
@@ -4080,7 +4992,7 @@ mod tests {
             ("size", |fill| fill.size += 0.5),
             ("buy", |fill| fill.buy = !fill.buy),
             ("closed_pnl", |fill| fill.closed_pnl += 0.5),
-            ("heat", |fill| fill.heat += 1),
+            ("hot", |fill| fill.hot = !fill.hot),
             ("tid", |fill| fill.tid += 1),
         ];
         for (field, move_it) in fill_moves {
@@ -4146,25 +5058,25 @@ mod tests {
         // 0.00125% an hour on 192,000 of notional is 2.40 an hour, 57.60 a
         // day. A long pays it and a short is paid it.
         assert_eq!(
-            funding_day(btc.clone(), "64,000.00".to_owned(), "3".to_owned(), true),
+            funding_day(btc.clone(), 64_000.0, "3".to_owned(), true),
             "-$57.60/day"
         );
         assert_eq!(
-            funding_day(btc.clone(), "64,000.00".to_owned(), "3".to_owned(), false),
+            funding_day(btc.clone(), 64_000.0, "3".to_owned(), false),
             "+$57.60/day"
         );
 
         // A negative rate turns it around: shorts pay and longs are paid.
         let sol = symbol_row(demo_symbols(), "SOL".to_owned());
-        let paid = funding_day(sol, "148.62".to_owned(), "100".to_owned(), true);
+        let paid = funding_day(sol, 148.62, "100".to_owned(), true);
         assert!(
             paid.starts_with('+'),
             "a long is paid a negative rate: {paid}"
         );
 
         // Nothing to say without a market or a size.
-        assert!(funding_day(None, "1".to_owned(), "1".to_owned(), true).is_empty());
-        assert!(funding_day(btc, "64,000.00".to_owned(), "".to_owned(), true).is_empty());
+        assert!(funding_day(None, 1.0, "1".to_owned(), true).is_empty());
+        assert!(funding_day(btc, 64_000.0, "".to_owned(), true).is_empty());
     }
 
     #[test]
@@ -4569,14 +5481,14 @@ mod tests {
                 { "coin": "BTC", "px": "64000.0", "sz": "0.1", "side": "B", "time": 1_786_092_480_123i64, "closedPnl": "0.0", "dir": "Open Long", "tid": 1 },
                 { "coin": "BTC", "px": "64500.0", "sz": "0.1", "side": "A", "time": 1_786_092_540_000i64, "closedPnl": "50.0", "dir": "Close Long", "tid": 2 },
             ]),
-            FLASH_STEPS,
+            true,
         );
 
         assert!(fills[0].buy);
         assert_eq!(fills[0].ts, 1_786_092_480, "chart timestamps are seconds");
         assert!(!fills[1].buy);
         assert_eq!(fills[1].closed_pnl, 50.0);
-        assert_eq!(fills[1].heat, FLASH_STEPS, "a pushed fill arrives lit");
+        assert!(fills[1].hot, "a pushed fill arrives lit");
     }
 
     #[test]
@@ -4658,7 +5570,7 @@ mod tests {
                 size: 0.5,
                 buy: true,
                 closed_pnl: 0.0,
-                heat: 0,
+                hot: false,
                 tid: 1,
             },
             Fill {
@@ -4668,7 +5580,7 @@ mod tests {
                 size: 2.0,
                 buy: true,
                 closed_pnl: 0.0,
-                heat: 0,
+                hot: false,
                 tid: 2,
             },
             Fill {
@@ -4678,7 +5590,7 @@ mod tests {
                 size: 0.5,
                 buy: false,
                 closed_pnl: 250.0,
-                heat: 0,
+                hot: false,
                 tid: 3,
             },
         ];
@@ -5170,6 +6082,7 @@ mod tests {
         );
 
         let order = Order {
+            oid: 1,
             coin: "BTC".into(),
             buy: true,
             price: 60_000.0,
@@ -5192,7 +6105,7 @@ mod tests {
             size: 0.5,
             buy,
             closed_pnl,
-            heat: 0,
+            hot: false,
             tid: 0,
         };
         // A fill that closed something is named by what it took and what it
@@ -5351,12 +6264,14 @@ mod tests {
         };
         let quoted = |price: &str, size: &str, leverage: &str, buy: bool| {
             price_ticket(
-                price.into(),
+                amount(price),
                 size.into(),
                 leverage.into(),
                 Some(market(40.0)),
                 buy,
                 0.0,
+                false,
+                None,
             )
         };
 
@@ -5419,7 +6334,7 @@ mod tests {
         // not quote a cliff. Treating an unknown requirement as zero puts the
         // liquidation further from the entry than it really is, which is the
         // one direction a risk number must never be wrong in.
-        let unknown = price_ticket("100".into(), "2".into(), "10".into(), None, true, 0.0);
+        let unknown = price_ticket(100.0, "2".into(), "10".into(), None, true, 0.0, false, None);
         assert!(unknown.ready, "the order is still describable");
         assert_eq!(unknown.notional, 200.0);
         assert_eq!(unknown.margin, 20.0);
@@ -5429,17 +6344,20 @@ mod tests {
         // Only one of them is a load in progress; the other two are finished
         // reads, and "market not loaded" over either is the panel describing a
         // wait that is not happening.
-        assert_eq!(liquidation_gap(None, false), "market not loaded");
-        assert_eq!(liquidation_gap(None, true), "not listed here");
         assert_eq!(
-            liquidation_gap(Some(market(40.0)), true),
+            liquidation_gap(None, false, false, false),
+            "market not loaded"
+        );
+        assert_eq!(liquidation_gap(None, true, false, false), "not listed here");
+        assert_eq!(
+            liquidation_gap(Some(market(40.0)), true, false, false),
             "no requirement stated"
         );
         // A row is a row whether or not the universe around it arrived, so the
         // market's own answer does not depend on the list.
         assert_eq!(
-            liquidation_gap(Some(market(40.0)), false),
-            liquidation_gap(Some(market(40.0)), true)
+            liquidation_gap(Some(market(40.0)), false, false, false),
+            liquidation_gap(Some(market(40.0)), true, false, false)
         );
         // What it would have said: 100 * (1 - 1/10) / (1 - 0) = 90, a cliff
         // ten percent away when the real one is nearer.
@@ -5456,12 +6374,14 @@ mod tests {
             ..market(40.0)
         };
         let quoted_strict = price_ticket(
-            "100".into(),
+            100.0,
             "2".into(),
             "10".into(),
             Some(strict),
             true,
             0.0,
+            false,
+            None,
         );
         assert!(
             quoted_strict.liquidation > quoted("100", "2", "10", true).liquidation,
@@ -5553,7 +6473,7 @@ mod tests {
         };
         let btc = symbol_row(demo_symbols(), "BTC".into());
         let size =
-            |share: f64| ticket_afford(held(10_000.0), "100".into(), btc.clone(), 5.0, share);
+            |share: f64| ticket_afford(held(10_000.0), 100.0, btc.clone(), 5.0, share, false);
 
         // 10,000 free at 5x is 50,000 of notional; a quarter of it at 100 is
         // 125. Equity is 100,000 and would say ten times that, which is the
@@ -5565,19 +6485,19 @@ mod tests {
         // Nothing to deploy, nothing to price against, nothing levered.
         assert_eq!(size(0.0), "");
         assert_eq!(
-            ticket_afford(held(0.0), "100".into(), btc.clone(), 5.0, 0.5),
+            ticket_afford(held(0.0), 100.0, btc.clone(), 5.0, 0.5, false),
             ""
         );
         assert_eq!(
-            ticket_afford(held(10_000.0), "".into(), btc.clone(), 5.0, 0.5),
+            ticket_afford(held(10_000.0), 0.0, btc.clone(), 5.0, 0.5, false),
             ""
         );
         assert_eq!(
-            ticket_afford(held(10_000.0), "100".into(), btc.clone(), 0.0, 0.5),
+            ticket_afford(held(10_000.0), 100.0, btc.clone(), 0.0, 0.5, false),
             ""
         );
         assert_eq!(
-            ticket_afford(None, "100".into(), btc, 5.0, 0.5),
+            ticket_afford(None, 100.0, btc, 5.0, 0.5, false),
             "",
             "no account"
         );
@@ -5587,7 +6507,7 @@ mod tests {
         // MAX rounded up is an order the margin engine refuses.
         let sol = symbol_row(demo_symbols(), "SOL".into()).expect("a market");
         let exact = 10_000.0 * 5.0 / 148.62;
-        let filled = ticket_afford(held(10_000.0), "148.62".into(), Some(sol.clone()), 5.0, 1.0);
+        let filled = ticket_afford(held(10_000.0), 148.62, Some(sol.clone()), 5.0, 1.0, false);
         assert_eq!(sol.size_decimals, 2, "the venue quotes SOL to a hundredth");
         assert_eq!(filled, "336.42");
         assert!(
@@ -5600,21 +6520,24 @@ mod tests {
         // number would fill in an order the margin engine refuses, by exactly
         // the factor it overshot.
         let capped = price_ticket(
-            "100".into(),
+            100.0,
             "".into(),
             "40".into(),
             symbol_row(demo_symbols(), "kPEPE".into()),
             true,
             0.0,
+            false,
+            None,
         );
         assert_eq!(capped.leverage, 10.0, "the market caps it at ten");
         assert_eq!(
             ticket_afford(
                 held(10_000.0),
-                "100".into(),
+                100.0,
                 symbol_row(demo_symbols(), "kPEPE".into()),
                 capped.leverage,
-                1.0
+                1.0,
+                false
             ),
             "1,000"
         );
@@ -5631,17 +6554,18 @@ mod tests {
         assert_eq!(
             ticket_afford(
                 held(10_000.0),
-                "64,000".into(),
+                64_000.0,
                 Some(whole.clone()),
                 5.0,
-                1.0
+                1.0,
+                false
             ),
             "",
             "10,000 free at 5x buys 0.78 of a coin that only trades whole"
         );
         // Enough for one, and there is a size to offer again.
         assert_eq!(
-            ticket_afford(held(13_000.0), "64,000".into(), Some(whole), 5.0, 1.0),
+            ticket_afford(held(13_000.0), 64_000.0, Some(whole), 5.0, 1.0, false),
             "1"
         );
     }
@@ -5692,7 +6616,7 @@ mod tests {
     fn a_closing_order_ties_up_nothing_and_has_no_cliff() {
         let quote = |size: &str, buy: bool, held: f64| {
             price_ticket(
-                "100".into(),
+                100.0,
                 size.into(),
                 "10".into(),
                 Some(SymbolRow {
@@ -5711,6 +6635,8 @@ mod tests {
                 }),
                 buy,
                 held,
+                false,
+                None,
             )
         };
 
@@ -5736,6 +6662,321 @@ mod tests {
         assert_eq!(adding.margin, 300.0);
         assert!(adding.liquidation > 0.0);
         assert_eq!(quote("30", true, 0.0).margin, 300.0, "nothing held");
+    }
+
+    /// An isolated position stands on its own margin and a cross one stands on
+    /// the account. The two arithmetics have to agree where they describe the
+    /// same thing — an account holding nothing else is exactly the isolated
+    /// case — and diverge everywhere else, because everything else the account
+    /// carries has already moved the line the fall is measured to.
+    #[test]
+    fn a_cross_cliff_is_the_accounts_fall_and_an_isolated_one_is_its_own() {
+        let maintenance = 1.0 / 80.0;
+        let market = SymbolRow {
+            name: "BTC".into(),
+            price: 100.0,
+            leverage: 40.0,
+            maintenance,
+            size_decimals: 5,
+            ..Default::default()
+        };
+        let lone = |equity: f64, requirement: f64, positions: Vec<Position>| {
+            Some(Account {
+                value: equity,
+                cross_value: equity,
+                pnl: 0.0,
+                withdrawable: equity,
+                notional: 0.0,
+                maintenance: requirement,
+                health: 0.0,
+                margin_pct: 0.0,
+                positions,
+            })
+        };
+
+        let isolated = price_ticket(
+            100.0,
+            "2".into(),
+            "10".into(),
+            Some(market.clone()),
+            true,
+            0.0,
+            false,
+            None,
+        );
+        assert!(isolated.known);
+        assert!((isolated.liquidation - 100.0 * 0.9 / (1.0 - maintenance)).abs() < 1e-9);
+
+        // The same order held cross against an account whose whole equity is
+        // the margin this position would post, and which owes nothing else.
+        // That is the isolated case written the other way round, so the two
+        // have to land on the same price.
+        let alone = price_ticket(
+            100.0,
+            "2".into(),
+            "10".into(),
+            Some(market.clone()),
+            true,
+            0.0,
+            true,
+            lone(20.0, 0.0, Vec::new()),
+        );
+        assert!(
+            (alone.liquidation - isolated.liquidation).abs() < 1e-6,
+            "cross {} vs isolated {}",
+            alone.liquidation,
+            isolated.liquidation
+        );
+
+        // Give the account more equity than the position needs and the cliff
+        // moves away; make it owe maintenance on something else and it moves
+        // back. Neither is visible to the isolated formula, which is the whole
+        // reason the mode chooses between them.
+        let rich = price_ticket(
+            100.0,
+            "2".into(),
+            "10".into(),
+            Some(market.clone()),
+            true,
+            0.0,
+            true,
+            lone(200.0, 0.0, Vec::new()),
+        );
+        assert!(
+            rich.liquidation < alone.liquidation,
+            "more equity is a longer fall: {} vs {}",
+            rich.liquidation,
+            alone.liquidation
+        );
+        let owing = price_ticket(
+            100.0,
+            "2".into(),
+            "10".into(),
+            Some(market.clone()),
+            true,
+            0.0,
+            true,
+            lone(200.0, 100.0, Vec::new()),
+        );
+        assert!(
+            owing.liquidation > rich.liquidation,
+            "a requirement elsewhere raises the floor: {} vs {}",
+            owing.liquidation,
+            rich.liquidation
+        );
+
+        // No account is no cliff, and the panel says so rather than quoting
+        // the isolated one under a cross label.
+        let unbanked = price_ticket(
+            100.0,
+            "2".into(),
+            "10".into(),
+            Some(market.clone()),
+            true,
+            0.0,
+            true,
+            None,
+        );
+        assert!(!unbanked.known);
+        assert_eq!(unbanked.liquidation, 0.0);
+        assert_eq!(
+            liquidation_gap(Some(market.clone()), true, true, false),
+            "needs the account it is held against"
+        );
+        // And a builder market is never held against this account at all, so
+        // reading one changes nothing.
+        let builder = SymbolRow {
+            name: "xyz:NVDA".into(),
+            ..market.clone()
+        };
+        let elsewhere = price_ticket(
+            100.0,
+            "2".into(),
+            "10".into(),
+            Some(builder.clone()),
+            true,
+            0.0,
+            true,
+            lone(200.0, 0.0, Vec::new()),
+        );
+        assert!(!elsewhere.known, "the account on screen is the wrong one");
+        assert_eq!(elsewhere.liquidation, 0.0);
+        assert_eq!(
+            liquidation_gap(Some(builder.clone()), true, true, true),
+            "separate margin account"
+        );
+        // Isolated is the market's own arithmetic and is not gated by any of
+        // that, which is the point of not gating the whole panel.
+        assert!(
+            price_ticket(
+                100.0,
+                "2".into(),
+                "10".into(),
+                Some(builder),
+                true,
+                0.0,
+                false,
+                None
+            )
+            .liquidation
+                > 0.0
+        );
+    }
+
+    /// The size the venue would be sent, which is neither what was typed nor
+    /// what was typed rounded: dollars become the instrument at a stated price,
+    /// and reduce-only trims an order to the position it promised not to pass.
+    #[test]
+    fn an_order_is_sized_in_the_instrument_whatever_unit_it_was_typed_in() {
+        let sol = symbol_row(demo_symbols(), "SOL".into()).expect("a market");
+        assert_eq!(sol.size_decimals, 2, "the venue quotes SOL to a hundredth");
+        let sized = |typed: &str, usd: bool, price: f64| {
+            order_size(
+                typed.into(),
+                usd,
+                price,
+                Some(sol.clone()),
+                false,
+                0.0,
+                true,
+            )
+        };
+
+        // Coins pass through; dollars divide, and land on the venue's step
+        // downward so the order never asks for more than was typed.
+        assert_eq!(sized("3", false, 100.0), "3");
+        assert_eq!(sized("300", true, 100.0), "3");
+        assert_eq!(sized("1,000", true, 148.62), "6.72");
+        assert!(
+            amount(&sized("1,000", true, 148.62)) <= 1_000.0 / 148.62,
+            "a size rounded up buys past the dollars that were typed"
+        );
+        // Dollars with nothing to price them against is not a size.
+        assert_eq!(sized("1,000", true, 0.0), "");
+        assert_eq!(sized("0", false, 100.0), "");
+
+        // Reduce-only against the other side is a cap, because the venue fills
+        // to the position and no further.
+        let capped = |typed: &str, held: f64, buy: bool| {
+            order_size(
+                typed.into(),
+                false,
+                100.0,
+                Some(sol.clone()),
+                true,
+                held,
+                buy,
+            )
+        };
+        assert_eq!(capped("50", -30.0, true), "30", "trimmed to the short");
+        assert_eq!(capped("10", -30.0, true), "10", "under it, untouched");
+        assert_eq!(capped("50", 30.0, false), "30", "and the long mirrors it");
+        // On the side already held there is nothing to trim to: the venue
+        // refuses the order outright and the sentence beside the box says so,
+        // so the size is left as typed rather than quietly becoming another.
+        assert_eq!(capped("50", -30.0, false), "50");
+        assert_eq!(capped("50", 0.0, true), "50");
+
+        // The same quantity said the other way, which is what the toggle asks
+        // for. Three at 148.62 is 445.86 of them and back again.
+        assert_eq!(
+            retype_size("3".into(), true, 148.62, Some(sol.clone())),
+            "445.86"
+        );
+        assert_eq!(
+            retype_size("445.86".into(), false, 148.62, Some(sol.clone())),
+            "3"
+        );
+        // Nothing typed and nothing to price it at leave the field alone
+        // rather than emptying it under the reader.
+        assert_eq!(retype_size("".into(), true, 148.62, Some(sol.clone())), "");
+        assert_eq!(retype_size("3".into(), true, 0.0, Some(sol)), "3");
+    }
+
+    /// A level on the wrong side of the entry is the other kind of order, and
+    /// the venue sends it as one. A stop past the cliff is not an order at all
+    /// by the time it would fire.
+    #[test]
+    fn a_level_on_the_wrong_side_of_the_entry_is_refused_with_the_reason() {
+        // Two bitcoin long from 64,000: a thousand either way is two thousand.
+        assert_eq!(
+            level_pnl(64_000.0, "65,000".into(), "2".into(), true),
+            2_000.0
+        );
+        assert_eq!(
+            level_pnl(64_000.0, "63,000".into(), "2".into(), true),
+            -2_000.0
+        );
+        // The short is the mirror, which is what makes the sign the side's
+        // rather than the level's.
+        assert_eq!(
+            level_pnl(64_000.0, "63,000".into(), "2".into(), false),
+            2_000.0
+        );
+        // Nothing to measure between is nothing.
+        assert_eq!(level_pnl(0.0, "63,000".into(), "2".into(), true), 0.0);
+        assert_eq!(level_pnl(64_000.0, "".into(), "2".into(), true), 0.0);
+
+        // An empty field is the order without the level, not a refusal.
+        assert!(tp_refused(64_000.0, "".into(), true).is_empty());
+        assert!(sl_refused(64_000.0, "  ".into(), true, 0.0).is_empty());
+
+        assert!(tp_refused(64_000.0, "65,000".into(), true).is_empty());
+        assert_eq!(
+            tp_refused(64_000.0, "63,000".into(), true),
+            "A take-profit on a long sits above the 64,000.00 it opens at."
+        );
+        assert!(tp_refused(64_000.0, "63,000".into(), false).is_empty());
+        assert_eq!(
+            tp_refused(64_000.0, "65,000".into(), false),
+            "A take-profit on a short sits below the 64,000.00 it opens at."
+        );
+        assert_eq!(
+            tp_refused(0.0, "65,000".into(), true),
+            "There is no entry price yet to set a target against."
+        );
+
+        assert!(sl_refused(64_000.0, "63,000".into(), true, 0.0).is_empty());
+        assert_eq!(
+            sl_refused(64_000.0, "65,000".into(), true, 0.0),
+            "A stop-loss on a long sits below the 64,000.00 it opens at."
+        );
+        // On the right side, and still not there: the engine closes the
+        // position at 60,000 and the stop never fires.
+        assert_eq!(
+            sl_refused(64_000.0, "59,000".into(), true, 60_000.0),
+            "The engine closes this long at 60,000.00, before that stop is reached."
+        );
+        assert!(
+            sl_refused(64_000.0, "61,000".into(), true, 60_000.0).is_empty(),
+            "inside the cliff is where a stop belongs"
+        );
+        // Without a cliff there is no second refusal to make.
+        assert!(sl_refused(64_000.0, "59,000".into(), true, 0.0).is_empty());
+    }
+
+    /// Reduce-only is refused rather than shrunk, so the box has to say which
+    /// of the two ways it is wrong.
+    #[test]
+    fn reduce_only_says_why_the_venue_would_drop_the_order() {
+        let held = demo_positions();
+        // Short 30 bitcoin: a buy reduces it and a sell adds to it.
+        assert!(reduce_refused(held.clone(), "BTC".into(), true).is_empty());
+        assert_eq!(
+            reduce_refused(held.clone(), "BTC".into(), false),
+            "This order adds to the short you hold. Reduce-only sends nothing rather than a smaller order."
+        );
+        // Long 40 ether is the mirror.
+        assert!(reduce_refused(held.clone(), "ETH".into(), false).is_empty());
+        assert!(
+            reduce_refused(held.clone(), "ETH".into(), true)
+                .starts_with("This order adds to the long")
+        );
+        // And a market nothing is held in has nothing to reduce either way.
+        assert_eq!(
+            reduce_refused(held, "kPEPE".into(), true),
+            "Reduce-only needs a position to reduce, and there is none in this market."
+        );
     }
 
     #[test]
@@ -6037,7 +7278,7 @@ mod tests {
         assert_eq!(lines[0].price, 60_000.0);
     }
 
-    fn fill(ts: i64, tid: i64, heat: i64) -> Fill {
+    fn fill(ts: i64, tid: i64, hot: bool) -> Fill {
         Fill {
             coin: "BTC".into(),
             ts,
@@ -6045,36 +7286,27 @@ mod tests {
             size: 1.0,
             buy: true,
             closed_pnl: 0.0,
-            heat,
+            hot,
             tid,
         }
     }
 
     #[test]
     fn pushed_fills_stack_newest_first_without_repeating_the_snapshot() {
-        let snapshot = push_fills(Vec::new(), vec![fill(10, 1, 0), fill(30, 3, 0)], 4);
+        let snapshot = push_fills(Vec::new(), vec![fill(10, 1, false), fill(30, 3, false)], 4);
         assert_eq!(snapshot[0].ts, 30, "newest first");
 
         // The feed re-sends a fill the snapshot already showed alongside a
         // new one; only the new one lands, and only it is lit.
-        let pushed = push_fills(
-            snapshot,
-            vec![fill(30, 3, FLASH_STEPS), fill(40, 4, FLASH_STEPS)],
-            4,
-        );
+        let pushed = push_fills(snapshot, vec![fill(30, 3, true), fill(40, 4, true)], 4);
         assert_eq!(pushed.len(), 3, "the repeat is dropped");
         assert_eq!(pushed[0].ts, 40);
-        assert_eq!(pushed[0].heat, FLASH_STEPS);
-        assert_eq!(pushed[1].heat, 0, "the fill it already held stays cold");
-        assert!(any_hot(pushed.clone()), "the list is flashing");
+        assert!(pushed[0].hot, "a fill the feed pushed arrives lit");
+        assert!(!pushed[1].hot, "the fill it already held stays cold");
 
-        let capped = push_fills(pushed, vec![fill(50, 5, FLASH_STEPS)], 2);
+        let capped = push_fills(pushed, vec![fill(50, 5, true)], 2);
         assert_eq!(capped.len(), 2, "the list is capped");
         assert_eq!(capped[0].ts, 50);
-
-        // Two beats of decay put the highlight out.
-        let cooled = cool_fills(cool_fills(capped));
-        assert!(!any_hot(cooled), "nothing stays lit");
     }
 
     /// The listed fills' one invariant: a trade id appears once. The rows are
@@ -6083,9 +7315,9 @@ mod tests {
     #[test]
     fn push_fills_lists_each_trade_id_once() {
         let listed = push_fills(
-            vec![fill(10, 1, 0)],
+            vec![fill(10, 1, false)],
             // One repeat of the history, and one repeat inside the batch.
-            vec![fill(10, 1, 0), fill(20, 2, 0), fill(21, 2, 0)],
+            vec![fill(10, 1, false), fill(20, 2, false), fill(21, 2, false)],
             10,
         );
         let mut ids: Vec<i64> = listed.iter().map(|fill| fill.tid).collect();
@@ -6104,7 +7336,7 @@ mod tests {
                 { "coin": "BTC", "px": "64500.0", "sz": "0.1", "side": "A", "time": 1_786_092_540_000i64, "closedPnl": "50.0" },
                 { "coin": "ETH", "px": "3100.0", "sz": "2.0", "side": "B", "time": 1_786_092_600_000i64, "closedPnl": "0.0" },
             ]),
-            0,
+            false,
         );
         assert_eq!(
             fills.iter().map(|fill| fill.tid).collect::<Vec<_>>(),
@@ -6188,7 +7420,9 @@ mod tests {
     fn live_api_matches_the_shapes_parsed_here() {
         open_the_wire();
         smol::block_on(async {
-            let symbols = hl_symbols().await.expect("symbol list");
+            let symbols = hl_symbols(Chain::Mainnet, HL_CANONICAL)
+                .await
+                .expect("symbol list");
             assert!(symbols.len() > 20, "got {} markets", symbols.len());
             let btc = symbols.iter().find(|row| row.name == "BTC").expect("BTC");
             assert!(btc.price > 0.0 && btc.volume > 0.0, "BTC context is empty");
@@ -6224,7 +7458,11 @@ mod tests {
                 .iter()
                 .find(|row| row.price > 0.0)
                 .expect("a builder market with a price");
-            let book = info(json!({ "type": "l2Book", "coin": listed.name })).await;
+            let book = info(
+                Chain::Mainnet,
+                json!({ "type": "l2Book", "coin": listed.name }),
+            )
+            .await;
             assert_eq!(
                 text(&book.expect("book for a builder market"), "coin"),
                 listed.name,
@@ -6233,7 +7471,7 @@ mod tests {
 
             // A fresh tape adopts the first market loaded into it.
             let tape = tape_new();
-            let bars = hl_candles(tape.clone(), "BTC".into(), "1m".into())
+            let bars = hl_candles(Chain::Mainnet, tape.clone(), "BTC".into(), "1m".into())
                 .await
                 .expect("candle backfill");
             assert!(bars > 100, "expected a backfill, got {bars} candles");
@@ -6252,16 +7490,19 @@ mod tests {
             }
 
             // A vault address: reachable, and its summary parses.
-            let account = hl_account("0xdfc24b077bc1425ad1dea75bcb6f8158e10df303".into())
-                .await
-                .expect("clearinghouse state");
+            let account = hl_account(
+                Chain::Mainnet,
+                "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303".into(),
+            )
+            .await
+            .expect("clearinghouse state");
             assert!(account.value > 0.0, "the HLP vault holds a balance");
 
             // The exchange reports a mark, a PnL, and a return; the feed only
             // sends a price. Hand its own marks back to the arithmetic that
             // turns one into the others, and it has to land where the
             // exchange did — position by position, on a live book.
-            let watched = hl_account(WATCHED.to_owned())
+            let watched = hl_account(Chain::Mainnet, WATCHED.to_owned())
                 .await
                 .expect("clearinghouse state");
             assert!(
@@ -6327,7 +7568,7 @@ mod tests {
     fn the_live_feed_fills_the_tape_and_the_book() {
         open_the_wire();
         let tape = tape_focus(tape_new(), "BTC".into(), "1m".into());
-        let feed = hl_market_feed(tape.clone());
+        let feed = hl_market_feed(Chain::Mainnet, tape.clone());
         let deadline = Instant::now() + Duration::from_secs(45);
         let mut ticks = Vec::new();
 

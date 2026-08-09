@@ -16,6 +16,9 @@ struct StateSites {
     name: String,
     span: Span,
     image_handle: bool,
+    /// An animation whose `from` setting makes the declaration itself the
+    /// transition; there is nothing left for a handler to write.
+    declared_transition: bool,
     reads: BTreeSet<(usize, usize)>,
     writes: BTreeSet<(usize, usize)>,
 }
@@ -62,6 +65,10 @@ impl UsageSession {
                     name: state.name.clone(),
                     span: state.span.clone(),
                     image_handle: matches!(state.ty, Type::Image),
+                    declared_transition: state
+                        .animation
+                        .as_ref()
+                        .is_some_and(|options| options.from.is_some()),
                     reads: BTreeSet::new(),
                     writes: BTreeSet::new(),
                 },
@@ -80,6 +87,10 @@ impl UsageSession {
                         name: state.name.clone(),
                         span: state.span.clone(),
                         image_handle: matches!(state.ty, Type::Image),
+                        declared_transition: state
+                            .animation
+                            .as_ref()
+                            .is_some_and(|options| options.from.is_some()),
                         reads: BTreeSet::new(),
                         writes: BTreeSet::new(),
                     },
@@ -214,7 +225,7 @@ impl UsageSession {
                         "remove the state or connect it to reachable view behavior",
                     ))
                 } else if state.writes.is_empty() {
-                    if state.image_handle {
+                    if state.image_handle || state.declared_transition {
                         // Init-only image handles are the documented pattern: SPEC requires
                         // storing `encoded`/`rgba` handles in state so a handle is not minted
                         // on every view pass.
