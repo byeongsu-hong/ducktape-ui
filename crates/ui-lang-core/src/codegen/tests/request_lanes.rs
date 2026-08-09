@@ -229,6 +229,49 @@ view
 }
 
 #[test]
+fn replace_stream_lane_keeps_its_handle_until_one_matching_terminal() {
+    let source = format!(
+        r#"app ReplaceStreamLane
+extern crate::backend
+  stream feed(id:i64) -> str
+{THEME}state
+  value = "waiting"
+on start
+  stream replace lane=feed feed(1) -> received _
+on received(next)
+  value = next
+view
+  text value
+"#
+    );
+
+    let generated = compile(&source, "replace_stream_lane.ice").unwrap();
+    let state = item_body(&generated, "pub struct ReplaceStreamLane {");
+    let messages = item_body(&generated, "pub(crate) enum __ReplaceStreamLaneMessage {");
+    let terminal = "::iced::Task::done(__ReplaceStreamLaneMessage::__RequestLane0(__generation, ::std::option::Option::None))";
+
+    assert!(state.contains("pub(crate) __ice_run_lane_0_generation: u64,"));
+    assert!(state.contains("pub(crate) __ice_run_lane_0_handle:"));
+    assert!(messages.contains(
+        "__RequestLane0(u64, ::std::option::Option<::std::boxed::Box<__ReplaceStreamLaneMessage>>)"
+    ));
+    assert!(generated.contains(
+        "__RequestLane0(__generation, ::std::option::Option::Some(::std::boxed::Box::new(__message)))"
+    ));
+    assert_eq!(generated.matches(terminal).count(), 1);
+    assert!(
+        generated.find(terminal).unwrap()
+            < generated
+                .find("let (__task, __handle) = __task.abortable();")
+                .unwrap(),
+        "the item stream and its terminal must be one abortable task"
+    );
+    assert!(generated.contains(
+        "if let ::std::option::Option::Some(__message) = __message { return self.__update(*__message); } self.__ice_run_lane_0_handle = ::std::option::Option::None;"
+    ));
+}
+
+#[test]
 fn invalidates_shared_app_and_preset_lanes_in_place() {
     let source = format!(
         r#"app InvalidateAppLanes

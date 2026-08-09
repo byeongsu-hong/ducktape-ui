@@ -772,11 +772,11 @@ over the terminal rather than replacing it, so whatever the last address put
 on screen is still drawn behind it — which is why going back to the prompt
 clears the fills, the orders, the positions, the account, the live badge and
 its round trip. Both lines in the chart's own bar go with them. The feed's
-complaint describes a socket that `abort feeds` is closing on the way out, and
-a request's failure names the address the request was made for: every fetch
-this app makes is made for one account, so `Hyperliquid unreachable` about the
-account you just left is a failure reported over the next one's positions.
-That is the same defect twice, and the same fix.
+complaint describes sockets whose `market_feed` and `fill_feed` delivery lanes
+are invalidated on the way out, and a request's failure names the address the
+request was made for: every fetch this app makes is made for one account, so
+`Hyperliquid unreachable` about the account you just left is a failure reported
+over the next one's positions. That is the same defect twice, and the same fix.
 
 ## Lists longer than the panels that hold them
 
@@ -1247,8 +1247,8 @@ Hyperliquid publishes no channel that pushes them. The universe is re-read once
 a minute for the figures that move on a daily clock; the market on screen gets
 its own `activeAssetCtx`, so the header is live. Both stop while the address
 prompt is up (`when` conditions on the `subscribe` block, so iced drops the
-timers instead of ignoring their messages), and `abort feeds` closes the
-sockets with them.
+timers instead of ignoring their messages), and invalidating both replacement
+stream lanes closes the sockets with them.
 
 Waiting five seconds to find out what a position is worth is not a position
 panel, so between polls the feed values them itself. Every beat re-marks each
@@ -1449,8 +1449,8 @@ asks for what was in it — the book, the tape, the levels, the market list, the
 account, its positions, orders and fills — and switching back reads the first
 network again rather than restoring what was on screen before it left. Every
 socket and every REST read refuses to open under test, so a dispatched switch
-starts the feeds of the network being opened without any of them reaching an
-exchange; a feed that cannot reach one ends rather than retrying, or the app
+replaces both feed lanes with the network being opened without either reaching
+an exchange; a feed that cannot reach one ends rather than retrying, or the app
 would never settle and no test could dispatch a switch at all.
 
 Two of those tests are about the label rather than the data, because the label

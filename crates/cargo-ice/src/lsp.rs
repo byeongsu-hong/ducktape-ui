@@ -1414,10 +1414,13 @@ fn effect_completions(document: &ui_lang_core::Document) -> Vec<Value> {
         .functions
         .iter()
         .filter_map(|function| {
-            let keyword = match function.kind {
-                ui_lang_core::ExternKind::Future => "run every",
-                ui_lang_core::ExternKind::Task => "task",
-                ui_lang_core::ExternKind::Stream => "stream",
+            let (keyword, prefix) = match function.kind {
+                ui_lang_core::ExternKind::Future => ("run every", "run every".to_owned()),
+                ui_lang_core::ExternKind::Task => ("task", "task".to_owned()),
+                ui_lang_core::ExternKind::Stream => (
+                    "stream replace",
+                    format!("stream replace lane={}", function.name),
+                ),
                 _ => return None,
             };
             let error = function.error.as_ref().map_or(String::new(), |_| {
@@ -1428,7 +1431,7 @@ fn effect_completions(document: &ui_lang_core::Document) -> Vec<Value> {
                 "kind": 3,
                 "detail": format!("Ice {keyword} extern -> {}", function.output.display()),
                 "insertText": format!(
-                    "{keyword} {}(${{1}}) -> ${{2:{}_completed}} ${{3:_}}{error}",
+                    "{prefix} {}(${{1}}) -> ${{2:{}_completed}} ${{3:_}}{error}",
                     function.name, function.name
                 ),
                 "insertTextFormat": 2,
@@ -2748,11 +2751,15 @@ fn fallible_route_action(
         return;
     }
     let trimmed = current.trim();
-    let call = if let Some(call) = trimmed.strip_prefix("run every ") {
+    let call = if let Some(call) = trimmed
+        .strip_prefix("run every ")
+        .or_else(|| trimmed.strip_prefix("stream every "))
+    {
         call
     } else if let Some(lane_and_call) = trimmed
         .strip_prefix("run latest ")
         .or_else(|| trimmed.strip_prefix("run replace "))
+        .or_else(|| trimmed.strip_prefix("stream replace "))
     {
         let Some(lane_and_call) = lane_and_call.strip_prefix("lane=") else {
             return;
@@ -2764,10 +2771,7 @@ fn fallible_route_action(
             return;
         }
         lane_and_call[separator..].trim_start()
-    } else if let Some(call) = trimmed
-        .strip_prefix("task ")
-        .or_else(|| trimmed.strip_prefix("stream "))
-    {
+    } else if let Some(call) = trimmed.strip_prefix("task ") {
         call
     } else {
         return;
@@ -5168,6 +5172,16 @@ mod tests {
             "run replace lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
         );
         assert_eq!(
+            effect("stream every")["insertText"],
+            "stream every ${1:source}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
+        );
+        assert_eq!(
+            effect("stream replace")["insertText"],
+            "stream replace lane=${1:stream} ${2:source}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
+        );
+        assert!(handler.iter().all(|item| item["label"] != "stream"));
+        assert!(handler.iter().all(|item| item["label"] != "stream latest"));
+        assert_eq!(
             effect("invalidate")["insertText"],
             "invalidate lane=${1:request}"
         );
@@ -5190,7 +5204,7 @@ mod tests {
                 && item["insertText"]
                     .as_str()
                     .unwrap()
-                    .starts_with("stream changes(")
+                    .starts_with("stream replace lane=changes changes(")
         }));
         assert!(!handler.iter().any(|item| item["label"] == "button"));
 
@@ -5848,9 +5862,9 @@ mod tests {
     }
 
     #[test]
-    fn fallible_route_action_recognizes_runs_and_ignores_lane_invalidation() {
-        let uri = "file:///tmp/request-lane-actions.ice";
-        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non every\n  run every load(\"every\") -> loaded _\non cancel_search\n  invalidate lane=search\non newest\n  run latest lane=search load(\"latest\") -> loaded _\non replacing\n  run replace lane=refresh load(\"replace\") -> loaded _\non loaded(_value)\nview\n  text \"Ready\"\n";
+    fn fallible_route_action_recognizes_delivery_modes_and_ignores_invalidation() {
+        let uri = "file:///tmp/delivery-lane-actions.ice";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\n  stream watch(topic:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non every\n  run every load(\"every\") -> loaded _\non cancel_search\n  invalidate lane=search\non newest\n  run latest lane=search load(\"latest\") -> loaded _\non replacing\n  run replace lane=refresh load(\"replace\") -> loaded _\non loaded(_value)\nview\n  text \"Ready\"\n";
         let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
 
         for statement in [
@@ -5885,11 +5899,35 @@ mod tests {
         }
 
         let document = ui_lang_core::parse(source).unwrap();
+        for statement in [
+            "  stream every watch(\"every\") -> loaded _",
+            "  stream replace lane=feed watch(\"replace\") -> loaded _",
+        ] {
+            let mut actions = Vec::new();
+            super::fallible_route_action(source, 0, statement, &document, uri, &mut actions);
+            let action = actions
+                .iter()
+                .find(|action| action["title"] == "Add error route for `watch`")
+                .unwrap_or_else(|| panic!("missing error-route action for `{statement}`"));
+            assert_eq!(
+                action["edit"]["changes"][uri][0]["newText"],
+                " | watch_failed _"
+            );
+        }
         let mut bare_actions = Vec::new();
         super::fallible_route_action(
             source,
             0,
             "  run load(\"bare\") -> loaded _",
+            &document,
+            uri,
+            &mut bare_actions,
+        );
+        assert!(bare_actions.is_empty());
+        super::fallible_route_action(
+            source,
+            0,
+            "  stream watch(\"bare\") -> loaded _",
             &document,
             uri,
             &mut bare_actions,

@@ -601,6 +601,16 @@ fn check_task_finality(statement: &Statement, is_final: bool) -> Result<(), Erro
 
 pub(in crate::check) fn check_structured_tasks(handler: &Handler) -> Result<(), Error> {
     for (index, statement) in handler.statements.iter().enumerate() {
+        if let Some(span) = stream_inside_abortable(statement, false) {
+            return Err(Error::new(
+                "E143",
+                span,
+                "`stream` cannot be nested inside `abortable`",
+            )
+            .hint(
+                "use `stream replace lane=name ...` for owned replacement, or `stream every ...` without an outer `abortable`",
+            ));
+        }
         match statement {
             Statement::TaskGroup { statements, .. } => {
                 check_task_finality(statement, index + 1 == handler.statements.len())?;
@@ -626,6 +636,21 @@ pub(in crate::check) fn check_structured_tasks(handler: &Handler) -> Result<(), 
         }
     }
     Ok(())
+}
+
+fn stream_inside_abortable(statement: &Statement, inside_abortable: bool) -> Option<&Span> {
+    match statement {
+        Statement::Run {
+            kind: EffectKind::Stream,
+            span,
+            ..
+        } if inside_abortable => Some(span),
+        Statement::TaskGroup { statements, .. } => statements
+            .iter()
+            .find_map(|statement| stream_inside_abortable(statement, inside_abortable)),
+        Statement::Abortable { task, .. } => stream_inside_abortable(task, true),
+        _ => None,
+    }
 }
 
 pub(in crate::check) fn invalid_task_producer(statement: &Statement) -> Option<&Span> {

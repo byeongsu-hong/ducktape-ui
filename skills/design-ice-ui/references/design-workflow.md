@@ -200,14 +200,18 @@ Use `return if` as a UI guard and `disabled=` for feedback, while retaining
 authoritative validation in Rust. Prevent stale search or preview results from
 every handler that starts the same logical work with one fully qualified
 `run latest` lane when completion filtering is enough, or a named `run replace`
-lane when the prior Iced task should be aborted. Use `run every` only when every
-completion still matters. App and preset handlers split across files share a
-root lane only through unaliased imports; aliased component
+lane when the prior Iced task should be aborted. For repeated output, use
+`stream every` only when every independently started stream and item matters;
+otherwise use one `stream replace` lane and invalidate it when the owning state
+transition stops the feed. App and preset handlers split across files share a
+root delivery lane only through unaliased imports; aliased component
 lanes remain instance-owned. When an immediate app, daemon, preset, or
 component handler transition supersedes in-flight lane work without starting
 another request, invalidate that existing owner-scoped lane directly before
-changing the state. Confirm that the Rust boundary does not rely on abort to
-roll back an effect or stop detached work.
+changing the state. Do not put a handler stream under `abortable`; use
+compiler-owned replacement/invalidation or a subscription lifecycle. Confirm that the
+Rust boundary does not rely on abort to roll back an effect, stop detached work,
+or retract an item already queued by the runtime.
 
 Do not hide errors only in logs. Do not use color as the only state signal.
 

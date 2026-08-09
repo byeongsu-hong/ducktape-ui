@@ -410,7 +410,7 @@ Available effect families include:
 
 - bare async extern + explicit `run every`/`latest`/`replace` delivery mode;
 - `task` extern + `task`;
-- `stream` extern + `stream`;
+- `stream` extern + explicit handler `stream every`/`stream replace`;
 - `sip` extern + `sip`;
 - `flow` task composition;
 - `parallel` and `sequential` groups;
@@ -418,45 +418,52 @@ Available effect families include:
 - native clipboard, font, system, widget, window, pane, image, time, and debug
   operations.
 
-Every handler Future names its delivery mode. `run every` delivers every
-completion. Use a named request lane when later work supersedes earlier work:
-`run latest lane=search` filters stale success and failure messages without
-stopping the old Future, while `run replace lane=preview` also aborts the prior
-Iced task. Equal fully qualified lane names
-join calls across handlers for one state owner. A fragment imported `as
-catalog` may contribute an aliased component whose internal lane is likewise
-qualified, but that lane remains owned by each component instance. Unaliased
-app and preset fragments remain in the root namespace and may share root lanes.
-The app owns one
-scope, a daemon shares one scope across its windows, and each component instance
-is independent. Names are static qualified identifiers and therefore finite per
-owner; one owner cannot mix `latest` and `replace` for a name.
+Every handler Future and stream names its delivery mode. `run every` delivers
+every Future completion and `stream every` delivers every item until that
+stream ends. Use a named delivery lane when later work supersedes earlier work:
+`run latest lane=search` filters stale Future messages without stopping the old
+Future, while `run replace lane=preview` and `stream replace lane=feed` also
+abort the prior Iced task. Equal fully qualified lane names join calls across
+handlers for one state owner. A fragment imported `as catalog` may contribute
+an aliased component whose internal lane is likewise qualified, but that lane
+remains owned by each component instance. Unaliased app and preset fragments
+remain in the root namespace and may share root lanes. The app owns one scope,
+a daemon shares one scope across its windows, and each component instance is
+independent. Names are static qualified identifiers and therefore finite per
+owner; one lane cannot mix Future and stream effects or `latest` and `replace`
+modes.
 
-Bare handler `run` is rejected. Subscription `run` is a long-lived stream
-source, while task-flow `from run call()` and `then value -> run call(value)`
-are Task adapters; neither routes a Future completion directly, so neither has
-a delivery mode.
+Bare handler `run` and `stream`, plus `stream latest`, are rejected.
+Subscription `run` is a long-lived stream source. Task-flow `from run call()`
+and `from stream call()`, plus corresponding `then` sources, are Task adapters;
+they do not route a completion/item directly and have no delivery mode.
 
 When a synchronous app, daemon, preset, or component handler supersedes pending
 work without starting another request, write `invalidate lane=search` directly
 in that handler before the state transition. It must resolve to an existing
-lane of the same owner, may refer forward to that lane's `run latest` or
-`run replace`, and never declares a lane or starts a task. It advances the
-generation so earlier success
-and failure messages are stale. A `latest` Future keeps running; a `replace`
-task is aborted and its current handle released. A component affects only its
+lane of the same owner, may refer forward to that lane's `run latest`,
+`run replace`, or `stream replace`, and never declares a lane or starts a task.
+It advances the generation first, so earlier Future completions and already
+queued stream items are stale. A `latest` Future keeps running; a `replace` task
+is aborted and its current handle released. A component affects only its
 runtime instance. `parallel`, `sequential`, and `abortable` task composition
 reject invalidation because it produces no task.
 
 `latest` leaves stale Futures and their captured values live until completion.
 `replace` drops work owned by the aborted task but cannot roll back effects
-already performed or stop detached or blocking Rust work. Choose a backend
-boundary with cancellation semantics that match the lane. Generated bookkeeping
-is fixed per declared lane for each state owner; component-owner count follows
-the retained/mounted lifetime contract. If an outer abort prevents the matching
-completion from reaching update, one current replacement handle can remain
-until the next replacement, explicit invalidation, or owner drop; it does not
-accumulate.
+already performed, stop detached or blocking Rust work, or retract messages
+already queued by the runtime. A replacement stream keeps one handle across all
+current-generation items and releases it only after natural termination,
+replacement, invalidation, or owner drop. Generated bookkeeping is fixed per
+declared lane for each state owner; component-owner count follows the
+retained/mounted lifetime contract. Component handlers allow `stream replace`
+but reject `stream every`; all handler streams are rejected under `abortable`.
+If an outer `abortable` suppresses a Future replacement completion, that lane's
+one current handle remains until replacement, invalidation, or owner drop; it
+does not accumulate.
+At app/daemon/preset scope, repeatedly starting a nonterminating `stream every` keeps
+each independent producer and its captures alive; extern-aware completion
+defaults to a function-named `stream replace` lane for that reason.
 
 Read [rust-boundary.md](rust-boundary.md) before adding one.
 

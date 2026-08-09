@@ -1109,7 +1109,7 @@ fn warns_for_repeated_stream_feedback_cycles() {
         r#"extern crate::backend
   stream ticks() -> i64
 on start
-  stream ticks() -> ticked _
+  stream every ticks() -> ticked _
 on ticked(value)
   flow
     from done value

@@ -46,6 +46,10 @@ Apply these rules before editing:
   materialized when the statement launches; direct recomputation-unsafe
   builtins are rejected, and `_` is supplied by the delivered completion.
   Other completion route families keep their documented timing.
+- Give every routed handler stream an explicit mode: `stream every` for
+  independent finite work, or `stream replace lane=<name>` for compiler-owned
+  replacement and invalidation. Do not use bare handler `stream`,
+  `stream latest`, or nest a handler stream under `abortable`.
 - Prefer the canonical checked representation recorded for the pinned Iced
   capability: direct Ice syntax for common concepts and a typed Rust adapter
   for higher-order or custom native behavior. Do not add a keyword merely to
@@ -126,6 +130,7 @@ Choose the boundary first:
 | pure domain conversion missing from expressions | Rust + `pure` extern |
 | immediate effect, environment read, or retained identity | Rust + `sync` extern in a top-level app state initializer or immediately evaluated app/component/preset handler expression; never an async completion route expression |
 | I/O future whose every completion matters | Rust async function + bare extern + `run every` |
+| repeated task output | Rust `stream` extern + `stream every`, or `stream replace lane=<name>` when newer work supersedes it |
 | existing `iced::Task` | Rust `task` extern + `task` statement |
 | custom widget, shader, subscription, or style | matching typed extern adapter |
 | missing public application-facing Iced capability | inspect the coverage ledger, then add one checked direct or typed representation through a language revision |

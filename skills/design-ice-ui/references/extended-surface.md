@@ -28,6 +28,7 @@ Stop at the first row that meets the need:
 | pure conversion | Rust `pure` extern |
 | immediate effect, environment read, retained identity | Rust `sync` extern in a top-level app state initializer or immediately evaluated handler expression, not an async completion route |
 | domain/I/O future | bare async extern + explicit `run every`/`latest`/`replace` delivery mode |
+| repeated handler output | stream extern + explicit `stream every` or `stream replace lane=<name>` delivery mode |
 | covered native operation | built-in `task`/widget/window/pane statement |
 | existing native task/stream/subscription | matching typed extern |
 | custom visual or widget | shader/component/canvas typed surface |

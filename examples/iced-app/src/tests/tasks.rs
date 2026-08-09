@@ -220,6 +220,241 @@ mod request_lane_lifecycle {
 }
 
 #[cfg(test)]
+mod stream_lane_lifecycle {
+    ui_lang::include_app!("src/ui/stream_lane_lifecycle.ice");
+
+    fn next_output<Message>(
+        stream: &mut (impl iced::futures::Stream<Item = iced_runtime::Action<Message>> + Unpin),
+    ) -> Option<Message> {
+        use iced::futures::StreamExt;
+
+        iced::futures::executor::block_on(async {
+            while let Some(action) = stream.next().await {
+                if let iced_runtime::Action::Output(message) = action {
+                    return Some(message);
+                }
+            }
+            None
+        })
+    }
+
+    #[test]
+    fn restart_aborts_the_old_stream_and_filters_an_already_queued_item() {
+        let (mut app, _) = StreamLaneLifecycle::__boot();
+        let first = app.__update(__StreamLaneLifecycleMessage::Start(701));
+        let mut first = iced_runtime::task::into_stream(first).expect("first stream task");
+        let first_observer = app.__ice_run_lane_0_handle.as_ref().unwrap().clone();
+
+        crate::backend::emit_controlled_stream(701, "stale queued");
+        let stale = next_output(&mut first).expect("queued stale item");
+
+        let second = app.__update(__StreamLaneLifecycleMessage::Start(702));
+        let mut second = iced_runtime::task::into_stream(second).expect("replacement stream task");
+        assert!(first_observer.is_aborted());
+        assert!(app.__ice_run_lane_0_handle.is_some());
+        assert!(
+            next_output(&mut first).is_none(),
+            "the restarted stream must stop"
+        );
+        assert!(crate::backend::controlled_stream_was_cancelled(701));
+
+        let _ = app.__update(stale);
+        assert_eq!(app.result, "waiting");
+        assert!(app.__ice_run_lane_0_handle.is_some());
+
+        crate::backend::emit_controlled_stream(702, "current");
+        let _ = app.__update(next_output(&mut second).expect("current item"));
+        assert_eq!(app.result, "current");
+        assert!(app.__ice_run_lane_0_handle.is_some());
+
+        crate::backend::finish_controlled_stream(702);
+        let _ = app.__update(next_output(&mut second).expect("natural terminal"));
+        assert!(app.__ice_run_lane_0_handle.is_none());
+        assert!(next_output(&mut second).is_none());
+    }
+
+    #[test]
+    fn multiple_items_keep_the_handle_until_the_natural_terminal() {
+        let (mut app, _) = StreamLaneLifecycle::__boot();
+        let task = app.__update(__StreamLaneLifecycleMessage::Start(711));
+        let mut stream = iced_runtime::task::into_stream(task).expect("stream task");
+        let observer = app.__ice_run_lane_0_handle.as_ref().unwrap().clone();
+
+        crate::backend::emit_controlled_stream(711, "first");
+        let _ = app.__update(next_output(&mut stream).expect("first item"));
+        assert_eq!(app.result, "first");
+        assert!(app.__ice_run_lane_0_handle.is_some());
+        assert!(!observer.is_aborted());
+
+        crate::backend::emit_controlled_stream(711, "second");
+        let _ = app.__update(next_output(&mut stream).expect("second item"));
+        assert_eq!(app.result, "second");
+        assert!(app.__ice_run_lane_0_handle.is_some());
+
+        crate::backend::finish_controlled_stream(711);
+        if let Some(terminal) = next_output(&mut stream) {
+            let _ = app.__update(terminal);
+        }
+        assert!(
+            app.__ice_run_lane_0_handle.is_none(),
+            "the natural terminal must clear the lane handle"
+        );
+        assert!(next_output(&mut stream).is_none());
+        assert!(!crate::backend::controlled_stream_was_cancelled(711));
+    }
+
+    #[test]
+    fn invalidate_aborts_the_stream_and_advances_its_generation() {
+        let (mut app, _) = StreamLaneLifecycle::__boot();
+        let task = app.__update(__StreamLaneLifecycleMessage::Start(721));
+        let mut stream = iced_runtime::task::into_stream(task).expect("stream task");
+        let started_generation = app.__ice_run_lane_0_generation;
+        let observer = app.__ice_run_lane_0_handle.as_ref().unwrap().clone();
+
+        let _ = app.__update(__StreamLaneLifecycleMessage::InvalidateFeed);
+        assert!(app.__ice_run_lane_0_generation > started_generation);
+        assert!(observer.is_aborted());
+        assert!(app.__ice_run_lane_0_handle.is_none());
+        assert!(next_output(&mut stream).is_none());
+        assert!(crate::backend::controlled_stream_was_cancelled(721));
+        assert_eq!(app.result, "waiting");
+    }
+
+    #[test]
+    fn retained_stream_lanes_are_isolated_by_instance() {
+        let (mut app, _) = StreamLaneLifecycle::__boot();
+        let first_scope = "StreamLaneLifecycle/retained-first";
+        let second_scope = "StreamLaneLifecycle/retained-second";
+        let first = app.__update(__StreamLaneLifecycleMessage::__RetainedHandleStart(
+            first_scope.into(),
+            731,
+        ));
+        let second = app.__update(__StreamLaneLifecycleMessage::__RetainedHandleStart(
+            second_scope.into(),
+            732,
+        ));
+        let mut first = iced_runtime::task::into_stream(first).expect("first retained stream");
+        let mut second = iced_runtime::task::into_stream(second).expect("second retained stream");
+        let first_observer = app.__ice_component_retained[first_scope]
+            .__ice_run_lane_1_handle
+            .as_ref()
+            .unwrap()
+            .clone();
+
+        let _ = app.__update(
+            __StreamLaneLifecycleMessage::__RetainedHandleInvalidateFeed(first_scope.into()),
+        );
+        assert!(first_observer.is_aborted());
+        assert!(
+            app.__ice_component_retained[first_scope]
+                .__ice_run_lane_1_handle
+                .is_none()
+        );
+        assert!(
+            app.__ice_component_retained[second_scope]
+                .__ice_run_lane_1_handle
+                .is_some()
+        );
+        assert!(next_output(&mut first).is_none());
+        assert!(crate::backend::controlled_stream_was_cancelled(731));
+
+        crate::backend::emit_controlled_stream(732, "second current");
+        let _ = app.__update(next_output(&mut second).expect("second retained item"));
+        assert_eq!(app.__ice_component_retained[first_scope].result, "waiting");
+        assert_eq!(
+            app.__ice_component_retained[second_scope].result,
+            "second current"
+        );
+        assert!(
+            app.__ice_component_retained[second_scope]
+                .__ice_run_lane_1_handle
+                .is_some()
+        );
+
+        crate::backend::finish_controlled_stream(732);
+        let _ = app.__update(next_output(&mut second).expect("second retained terminal"));
+        assert!(
+            app.__ice_component_retained[second_scope]
+                .__ice_run_lane_1_handle
+                .is_none()
+        );
+        assert!(!crate::backend::controlled_stream_was_cancelled(732));
+    }
+
+    #[test]
+    fn mounted_stream_lane_rejects_old_instance_items_after_remount() {
+        let (mut app, _) = StreamLaneLifecycle::__boot();
+        let scope = "StreamLaneLifecycle/mounted";
+        let _ = app.__view();
+        let old = app.__update(__StreamLaneLifecycleMessage::__MountedHandleStart(
+            scope.into(),
+            741,
+        ));
+        let mut old = iced_runtime::task::into_stream(old).expect("old mounted stream");
+        let old_generation =
+            app.__ice_component_mounted.values()[scope].__ice_run_lane_2_generation;
+        assert!(
+            app.__ice_component_mounted.values()[scope]
+                .__ice_run_lane_2_handle
+                .is_some()
+        );
+
+        crate::backend::emit_controlled_stream(741, "old queued");
+        let old_item = next_output(&mut old).expect("old queued item");
+        let _ = app.__update(__StreamLaneLifecycleMessage::HideMounted);
+        let _ = app.__view();
+        // Pruning lands one pass late; see `begin_render`.
+        let _ = app.__view();
+        assert!(app.__ice_component_mounted.values().is_empty());
+        assert!(next_output(&mut old).is_none());
+        assert!(crate::backend::controlled_stream_was_cancelled(741));
+
+        let _ = app.__update(__StreamLaneLifecycleMessage::ShowMounted);
+        let _ = app.__view();
+        let current = app.__update(__StreamLaneLifecycleMessage::__MountedHandleStart(
+            scope.into(),
+            742,
+        ));
+        let mut current = iced_runtime::task::into_stream(current).expect("current mounted stream");
+        let current_generation =
+            app.__ice_component_mounted.values()[scope].__ice_run_lane_2_generation;
+        assert!(current_generation > old_generation);
+
+        let _ = app.__update(old_item);
+        assert_eq!(
+            app.__ice_component_mounted.values()[scope].result,
+            "waiting"
+        );
+        assert!(
+            app.__ice_component_mounted.values()[scope]
+                .__ice_run_lane_2_handle
+                .is_some()
+        );
+
+        crate::backend::emit_controlled_stream(742, "current");
+        let _ = app.__update(next_output(&mut current).expect("current mounted item"));
+        assert_eq!(
+            app.__ice_component_mounted.values()[scope].result,
+            "current"
+        );
+        assert!(
+            app.__ice_component_mounted.values()[scope]
+                .__ice_run_lane_2_handle
+                .is_some()
+        );
+
+        crate::backend::finish_controlled_stream(742);
+        let _ = app.__update(next_output(&mut current).expect("current mounted terminal"));
+        assert!(
+            app.__ice_component_mounted.values()[scope]
+                .__ice_run_lane_2_handle
+                .is_none()
+        );
+        assert!(!crate::backend::controlled_stream_was_cancelled(742));
+    }
+}
+
+#[cfg(test)]
 mod route_snapshot_lifecycle {
     ui_lang::include_app!("src/ui/route_snapshot_lifecycle.ice");
 

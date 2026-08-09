@@ -171,6 +171,39 @@ view
 }
 
 #[test]
+fn rejects_handler_streams_anywhere_inside_abortable() {
+    for task in [
+        "abortable request\n    stream every ticks() -> ticked _",
+        "parallel\n    abortable request\n      sequential\n        stream replace lane=ticks ticks() -> ticked _",
+    ] {
+        let source = warning_app(&format!(
+            r#"extern crate::backend
+  stream ticks() -> i64
+state
+  request:task-handle? = none
+on start
+  {task}
+on ticked(value)
+view
+  text "Ticks"
+"#
+        ));
+        let error = analyze(&source).unwrap_err();
+        assert_eq!(error.code, "E143");
+        assert_eq!(
+            error.message,
+            "`stream` cannot be nested inside `abortable`"
+        );
+        assert_eq!(
+            error.hint.as_deref(),
+            Some(
+                "use `stream replace lane=name ...` for owned replacement, or `stream every ...` without an outer `abortable`"
+            )
+        );
+    }
+}
+
+#[test]
 fn checks_typed_task_streams() {
     let source = r#"app Streams
 extern crate::backend
@@ -194,8 +227,8 @@ state
   count = 0
 on start
   parallel
-    stream numbers(3) -> number _
-    stream fallible() -> text _ | failed _
+    stream every numbers(3) -> number _
+    stream every fallible() -> text _ | failed _
 on number(value)
   count = value
 on text(value)
@@ -239,28 +272,29 @@ view
     assert_eq!(error.code, "E101");
 
     let error = analyze(&source.replace(
-        "stream fallible() -> text _ | failed _",
-        "stream fallible() -> text _",
+        "stream every fallible() -> text _ | failed _",
+        "stream every fallible() -> text _",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E131");
 
     let error = analyze(&source.replace(
-        "stream numbers(3) -> number _",
-        "stream numbers(3) -> number count",
+        "stream every numbers(3) -> number _",
+        "stream every numbers(3) -> number count",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E127");
     assert!(error.message.contains("at most one `_`"));
 
     let error = analyze(&source.replace(
-        "stream numbers(3) -> number _",
-        "stream numbers(3) -> number _ _",
+        "stream every numbers(3) -> number _",
+        "stream every numbers(3) -> number _ _",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E127");
 
-    let error = analyze(&source.replace("stream numbers(3)", "stream missing(3)")).unwrap_err();
+    let error =
+        analyze(&source.replace("stream every numbers(3)", "stream every missing(3)")).unwrap_err();
     assert_eq!(error.code, "E130");
     assert!(error.message.contains("extern stream"));
 
