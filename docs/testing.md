@@ -379,6 +379,12 @@ cap `push_fills` imposes — was larger than the market list had ever been:
 re-measured against 200 distinct fills, 1858us of a 6029us frame, 9.3us a row
 against the market rows' 2.5us behind their boundary.
 
+One row of that table prices nothing, and knowing which saves re-deriving it:
+the probe seeds the **portfolio** page, where the market list is not drawn, so
+`market rows` ablates a list that is not on screen and comes back inside its own
+noise — negative as often as not. The market list is measured on its own page,
+by `markets_stay_memoized_performance_contract` and by the symbol sweep above.
+
 It took the same three things the market list took, and one more:
 
 - **`Hash` on `Fill`**, over the float bits, like `SymbolRow`'s.
@@ -505,12 +511,17 @@ two binaries three seconds apart into two fresh `ICE_TEST_ARTIFACT_DIR`s.
 
 What is left is inherent, and worth naming so nobody re-measures it:
 
-- **The chrome is 44% of the frame and has no boundary available.** The ticket
-  panel is the largest block in it and holds four `input`s, which `lazy` rejects
-  outright — *input cannot live in lazy because iced text input borrows app
-  state*, `check/options.rs`; the header strip and the
-  ticket's quote both move on every beat, so a boundary there would miss every
-  time it mattered.
+- **The chrome is most of the frame now, and it has no boundary available.** No
+  percentage is quoted here, because there is no honest one to quote: the
+  boundary took cost out of the rows and left the chrome untouched, so the
+  chrome's *share* necessarily rose — any figure read before the change is wrong
+  for this sentence — and the share moves with the machine besides. The reading
+  is `frame_panels`, `without any rows` against `full screen`, both out of one
+  interleaved sweep. The ticket panel is the largest block in it and holds four
+  `input`s, which `lazy` rejects outright — *input cannot live in lazy because
+  iced text input borrows app state*, `check/options.rs`; the header strip and
+  the ticket's quote both move on every beat, so a boundary there would miss
+  every time it mattered.
 - **The frame after a beat still costs ~1.5ms more than an idle one**, before
   and after this change alike — +1491us without the boundary, +1593us with it,
   n=11 interleaved runs of `beat_cost` each. `allMids` republishes every market,
