@@ -25,6 +25,7 @@ enum Venue
   hyperliquid
   hyperliquid_testnet
   lighter
+  lighter_testnet
 
 state
   page:Page = Page.terminal
