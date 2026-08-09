@@ -130,6 +130,7 @@ this Core contract.
 cargo run -p iced-app          # the reference task app + native-surface fixtures
 cargo run -p music-example     # macOS-Music-style flows, liquid-glass player
 cargo run -p browser-example   # native CEF child inside an Ice shell (see examples/cef-browser)
+cargo ice dev examples/hotreload/src/ui/app.ice -- -p hotreload-example # side-by-side hot reload preview and Ice editor
 cargo run -p markdown-example  # native Markdown editor (see examples/markdown-editor/DESIGN.md)
 cargo run -p terminal-example  # native PTY terminal component (see examples/terminal)
 cargo run -p showcase          # the ducktape-ui component catalog (crates/ui)
