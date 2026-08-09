@@ -394,6 +394,28 @@ two rows are what a reader runs to see it. The market list also keeps its own
 count-based contract in `markets_stay_memoized_performance_contract`, which
 counts rows rebuilt rather than microseconds and is the one CI can hold.
 
+**The trap either contract sets, and it is quiet.** Both count through a row's
+accessibility label — `market_label`, `fill_label` — with a `#[cfg(test)]
+count(&…)` as the function's first line, while the probes that read the counters
+are `#![cfg(not(debug_assertions))]`. So a debug `cargo test --workspace` never
+compiles the reader, and a `fill_label` that loses its counting line is green
+everywhere except the release job. Seen for real: a merge took the upstream side
+of that function and dropped the line, and the whole workspace stayed green
+until `cargo test --release -p trading-example` reported **0 rows built cold for
+200 rows**. Read a zero there as a missing counter first and a broken memo
+second. Before trusting either contract after touching those functions or the
+panes that draw them:
+
+```sh
+cargo test --release -p trading-example memoized_performance_contract -- --ignored --nocapture
+```
+
+`selected` is the one `SymbolRow` field that contract cannot move directly:
+`visible` is derived by `filter_symbols(symbols, query, coin)`, which sets
+`selected` from `coin`. The way to move it is to move the selection, and that
+rebuilds two rows — the one losing the highlight and the one taking it. Two is
+the assertion; a `Hash` blind to `selected` would rebuild neither.
+
 It took the same three things the market list took, and one more:
 
 - **`Hash` on `Fill`**, over the float bits, like `SymbolRow`'s.

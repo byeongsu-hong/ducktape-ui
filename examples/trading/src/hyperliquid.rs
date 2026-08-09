@@ -2333,6 +2333,8 @@ pub(crate) fn count(counter: &'static std::thread::LocalKey<std::cell::Cell<usiz
 /// A fill names what it did and where. Its realized PnL is the point when it
 /// closed something, and its size when it opened.
 pub fn fill_label(fill: Fill) -> String {
+    #[cfg(test)]
+    count(&FILL_LABELS);
     let side = if fill.buy { "bought" } else { "sold" };
     let outcome = if fill.closed_pnl == 0.0 {
         fmt_size(fill.size)

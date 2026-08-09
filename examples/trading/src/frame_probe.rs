@@ -1060,6 +1060,28 @@ fn markets_stay_memoized_performance_contract() {
         "a redraw of {rows} unchanged markets must rebuild none of them"
     );
 
+    // The rail draws `visible`, which is derived — `filter_symbols(symbols,
+    // query, coin)` — so the state a mover can reach is `symbols` and the
+    // derivation is part of what is under test.
+    //
+    // `selected` goes first, and it is the one field no caller writes: the
+    // derivation sets it from `coin`, so the only way to move it is to move the
+    // selection — and that moves two rows, the one losing the highlight and the
+    // one taking it. Two is the assertion. A `Hash` blind to `selected` would
+    // rebuild neither, and the rail would go on highlighting the market that
+    // was left. It runs before the loop below because that loop's first move
+    // renames row 0, which is the row currently holding the selection.
+    let taking = driver.state_mut().symbols[1].name.clone();
+    driver.state_mut().coin = taking.clone();
+    driver.redraw(here());
+    assert_eq!(
+        MARKET_ROWS.with(Cell::take),
+        2,
+        "selecting {taking} must rebuild the row that took the highlight and the \
+         one that lost it, and no others"
+    );
+
+    // The other ten pass straight through the derivation.
     let moves: &[(&str, fn(&mut SymbolRow))] = &[
         ("name", |row| row.name.push('X')),
         ("price", |row| row.price += 0.5),
@@ -1071,10 +1093,9 @@ fn markets_stay_memoized_performance_contract() {
         ("prev", |row| row.prev += 0.5),
         ("maintenance", |row| row.maintenance += 0.5),
         ("size_decimals", |row| row.size_decimals += 1),
-        ("selected", |row| row.selected = !row.selected),
     ];
     for (field, move_it) in moves {
-        move_it(&mut driver.state_mut().visible[0]);
+        move_it(&mut driver.state_mut().symbols[0]);
         driver.redraw(here());
         assert_eq!(
             MARKET_ROWS.with(Cell::take),
@@ -1086,7 +1107,7 @@ fn markets_stay_memoized_performance_contract() {
 
     eprintln!(
         "\n{rows} markets: {first} rows built cold, {unchanged} on an unchanged redraw, \
-         1 after each of the {} fields of one market moved",
+         2 after the selection moved, 1 after each of the {} fields of one market moved",
         moves.len()
     );
 }
