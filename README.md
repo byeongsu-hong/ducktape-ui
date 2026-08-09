@@ -195,12 +195,15 @@ cargo run -p tray-example      # the smallest macOS menu bar app: status item, l
 The `tray` app-setting block puts an app in the macOS menu bar: codec-free
 RGBA status icons selected by `when` guards, a live `label` expression beside
 them, and a native `menu` whose rows are expressions and whose routed rows
-call handlers. The platform owns the menu's opening, placement and dismissal,
-so a program declares no window for it and carries no tray state.
+call handlers. A row that carries an indented block is a submenu, to any
+depth; it names no route, because the platform opens it rather than delivering
+it. The platform owns the menu's opening, placement and dismissal, so a
+program declares no window for it and carries no tray state.
 `expect tray label|icon|item|command` asserts what the program decided the
-item should show, and `tray choose` runs a menu row the way the platform does;
-both run on every platform. Other targets compile the same source with the
-tray as a no-op; see `SPEC.md` for the mapping.
+item should show, and `tray choose` runs a menu row the way the platform does
+— a nested row by its text like any other, since the row table is flat at
+every depth; both run on every platform. Other targets compile the same source
+with the tray as a no-op; see `SPEC.md` for the mapping.
 
 `showcase` also exercises the 100k-row collection widgets behind typed extern
 boundaries — no Core syntax involved: [`VirtualList`](crates/ui/docs/virtual-list.md),

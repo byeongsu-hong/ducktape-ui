@@ -1322,6 +1322,9 @@ pub(crate) enum ResolvedTrayRow {
         /// `subscribe` route carries, so codegen reaches the handler through
         /// the one path payload-free routes already use.
         route: Option<String>,
+        /// How many of the rows after this one it owns. Non-zero makes the row
+        /// a submenu the platform opens; the menu itself stays flat.
+        nested: usize,
     },
     Separator,
 }
@@ -1340,6 +1343,7 @@ impl ResolvedTraySettings {
                     row,
                     ResolvedTrayRow::Item {
                         text: ResolvedTrayText::Expression(_),
+                        nested: 0,
                         ..
                     }
                 )
@@ -4921,8 +4925,10 @@ impl Lowerer {
                         TrayRow::Item {
                             text: source_text,
                             route,
+                            nested,
                             span,
                         } => Ok(ResolvedTrayRow::Item {
+                            nested: *nested,
                             text: text(AppSettingExprId::TrayMenuRow(index as u32), source_text)?,
                             route: route
                                 .as_ref()
@@ -10047,13 +10053,14 @@ fn tray_icon_shape(tray: &TraySettings) -> Vec<(&WindowIcon, bool)> {
 }
 
 /// The menu facts generated code bakes in: how many rows there are, which are
-/// separators, and where each row's chosen event goes.
-fn tray_menu_shape(tray: &TraySettings) -> Vec<(bool, Option<&String>)> {
+/// separators, which own a nested block, and where each row's chosen event
+/// goes.
+fn tray_menu_shape(tray: &TraySettings) -> Vec<(bool, usize, Option<&String>)> {
     tray.menu
         .iter()
         .map(|row| match row {
-            TrayRow::Item { route, .. } => (true, route.as_ref()),
-            TrayRow::Separator { .. } => (false, None),
+            TrayRow::Item { route, nested, .. } => (true, *nested, route.as_ref()),
+            TrayRow::Separator { .. } => (false, 0, None),
         })
         .collect()
 }
@@ -19773,11 +19780,13 @@ view
             [
                 ResolvedTrayRow::Item {
                     text: ResolvedTrayText::Expression(_),
+                    nested: 0,
                     route: None,
                 },
                 ResolvedTrayRow::Separator,
                 ResolvedTrayRow::Item {
                     text: ResolvedTrayText::Literal(_),
+                    nested: 0,
                     route: Some(route),
                 },
             ] if route == "quit"

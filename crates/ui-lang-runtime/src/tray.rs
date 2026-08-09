@@ -33,6 +33,11 @@ pub struct TrayIcon {
 }
 
 /// A row of the status item's native menu, in declaration order.
+///
+/// The list is flat even when the menu is not. A row that owns a nested block
+/// says how many of the rows after it are its own, which keeps one row index
+/// meaning one authored row through the snapshot, the native menu and the
+/// row-to-handler table alike.
 #[derive(Clone, Copy, Debug)]
 pub enum TrayRow {
     /// A row carrying text. `command` is the whole of the redesign's central
@@ -41,6 +46,12 @@ pub enum TrayRow {
     /// disabling it, so `command` is also the row's enabled flag.
     Item {
         command: bool,
+        /// How many of the rows that follow belong to this one, descendants
+        /// included. Zero is an ordinary row; anything else is a submenu,
+        /// which is a third thing beside a command and a stat: the platform
+        /// opens it rather than delivering it, so it is enabled without being
+        /// choosable.
+        nested: usize,
     },
     Separator,
 }
@@ -223,6 +234,8 @@ pub fn set_item(index: usize, value: &str) {
             .config
             .and_then(|config| config.rows.get(index))
             .is_some_and(|row| matches!(row, TrayRow::Item { .. }))
+        // A submenu's own text is set through this same path: its title is a
+        // row expression like any other.
     });
     if !text_row {
         return;
@@ -253,7 +266,20 @@ pub fn is_command(index: usize) -> bool {
         record
             .config
             .and_then(|config| config.rows.get(index).copied())
-            .is_some_and(|row| matches!(row, TrayRow::Item { command: true }))
+            .is_some_and(|row| matches!(row, TrayRow::Item { command: true, .. }))
+    })
+}
+
+/// Whether the row declared at `index` opens a submenu. A submenu is enabled
+/// but not choosable, so this is what tells a failed `tray choose` whether the
+/// reader was refused a disabled stat or handed a menu to open.
+#[must_use]
+pub fn is_submenu(index: usize) -> bool {
+    RECORD.with_borrow(|record| {
+        record
+            .config
+            .and_then(|config| config.rows.get(index).copied())
+            .is_some_and(|row| matches!(row, TrayRow::Item { nested, .. } if nested > 0))
     })
 }
 
@@ -308,15 +334,108 @@ pub fn events() -> iced::Subscription<usize> {
 mod platform {
     use std::cell::{Cell, RefCell};
 
-    use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+    use tray_icon::menu::{
+        IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+    };
 
     use super::{TrayConfig, TrayIcon, TrayRow};
 
+    /// One built native row, in declaration order.
+    ///
+    /// A submenu is kept beside the items rather than inside them because the
+    /// row index is flat: `set_item` addresses a submenu's title by the same
+    /// number that addresses any other row's text.
+    enum Row {
+        Item(MenuItem),
+        Submenu(Submenu),
+        Separator,
+    }
+
+    impl Row {
+        /// The id the platform reports when a reader chooses this row, if it
+        /// is a row a reader can choose at all. Opening a submenu is not a
+        /// choice, and macOS reports none for it.
+        fn id(&self) -> Option<&MenuId> {
+            match self {
+                Row::Item(item) => Some(item.id()),
+                Row::Submenu(_) | Row::Separator => None,
+            }
+        }
+
+        fn set_text(&self, value: &str) {
+            match self {
+                Row::Item(item) => item.set_text(value),
+                Row::Submenu(submenu) => submenu.set_text(value),
+                Row::Separator => {}
+            }
+        }
+    }
+
+    /// Where a row is appended: the menu itself, or a submenu inside it.
+    enum Parent<'a> {
+        Root(&'a Menu),
+        Nested(&'a Submenu),
+    }
+
+    impl Parent<'_> {
+        fn append(&self, item: &dyn IsMenuItem) {
+            let appended = match self {
+                Parent::Root(menu) => menu.append(item),
+                Parent::Nested(submenu) => submenu.append(item),
+            };
+            if let Err(error) = appended {
+                eprintln!("ice tray: menu row rejected: {error}");
+            }
+        }
+    }
+
+    /// Builds `rows[range]` under `parent`, pushing every row it creates onto
+    /// `out` in declaration order — a submenu immediately before the rows it
+    /// owns, exactly as the flat table lists them.
+    fn build(rows: &[TrayRow], range: std::ops::Range<usize>, parent: &Parent, out: &mut Vec<Row>) {
+        let mut index = range.start;
+        while index < range.end {
+            let nested = match rows[index] {
+                TrayRow::Separator => {
+                    parent.append(&PredefinedMenuItem::separator());
+                    out.push(Row::Separator);
+                    0
+                }
+                // The bool is the row's enabled flag: a stat is a row the
+                // platform draws but will not let the reader choose.
+                TrayRow::Item { command, nested: 0 } => {
+                    let item = MenuItem::new("", command, None);
+                    parent.append(&item);
+                    out.push(Row::Item(item));
+                    0
+                }
+                TrayRow::Item { nested, .. } => {
+                    // Enabled unconditionally: a disabled submenu is one the
+                    // reader cannot open, which would hide its rows rather
+                    // than mark them unchoosable.
+                    let submenu = Submenu::new("", true);
+                    parent.append(&submenu);
+                    let mut children = Vec::new();
+                    build(
+                        rows,
+                        index + 1..index + 1 + nested,
+                        &Parent::Nested(&submenu),
+                        &mut children,
+                    );
+                    out.push(Row::Submenu(submenu));
+                    out.extend(children);
+                    nested
+                }
+            };
+            index += 1 + nested;
+        }
+    }
+
     struct TrayState {
         icon: tray_icon::TrayIcon,
-        /// Declaration order, `None` where the row is a separator, so a row
-        /// index from generated code lands on the row the author wrote.
-        items: Vec<Option<MenuItem>>,
+        /// Declaration order, so a row index from generated code lands on the
+        /// row the author wrote whatever depth it sits at.
+        items: Vec<Row>,
     }
 
     thread_local! {
@@ -336,28 +455,15 @@ mod platform {
     pub fn init(config: TrayConfig) {
         let menu = Menu::new();
         let mut items = Vec::with_capacity(config.rows.len());
-        for row in config.rows {
-            let item = match row {
-                // The bool is the row's enabled flag: a stat is a row the
-                // platform draws but will not let the reader choose.
-                TrayRow::Item { command } => Some(MenuItem::new("", *command, None)),
-                TrayRow::Separator => None,
-            };
-            let appended = match &item {
-                Some(item) => menu.append(item),
-                None => menu.append(&PredefinedMenuItem::separator()),
-            };
-            if let Err(error) = appended {
-                eprintln!("ice tray: menu row rejected: {error}");
-            }
-            items.push(item);
-        }
+        build(
+            config.rows,
+            0..config.rows.len(),
+            &Parent::Root(&menu),
+            &mut items,
+        );
         // The handler must be `Send + Sync`, which a `MenuItem` is not, so it
         // carries the ids instead. Six rows is a scan, not a map.
-        let ids: Vec<Option<MenuId>> = items
-            .iter()
-            .map(|item| item.as_ref().map(|item| item.id().clone()))
-            .collect();
+        let ids: Vec<Option<MenuId>> = items.iter().map(|row| row.id().cloned()).collect();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let row = ids.iter().position(|id| id.as_ref() == Some(&event.id));
             trace!("native menu event {:?} -> row {row:?}", event.id);
@@ -447,12 +553,8 @@ mod platform {
 
     pub fn set_item(index: usize, value: &str) {
         TRAY.with_borrow(|slot| {
-            if let Some(Some(item)) = slot
-                .as_ref()
-                .map(|state| &state.items)
-                .map(|items| items.get(index).and_then(std::option::Option::as_ref))
-            {
-                item.set_text(value);
+            if let Some(row) = slot.as_ref().and_then(|state| state.items.get(index)) {
+                row.set_text(value);
             }
         });
     }
@@ -495,9 +597,15 @@ mod tests {
     ];
 
     static ROWS: &[TrayRow] = &[
-        TrayRow::Item { command: false },
+        TrayRow::Item {
+            command: false,
+            nested: 0,
+        },
         TrayRow::Separator,
-        TrayRow::Item { command: true },
+        TrayRow::Item {
+            command: true,
+            nested: 0,
+        },
     ];
 
     fn config() -> TrayConfig {
@@ -694,5 +802,63 @@ mod tests {
         assert!(!is_command(1), "a separator is not a command");
         assert!(is_command(2), "a routed row is a command");
         assert!(!is_command(9), "there is no row 9");
+    }
+
+    /// A submenu is neither a command nor a stat, and the flat table is what
+    /// makes the difference readable: the row that owns a block, and the rows
+    /// it owns, are entries of one vector at their own declaration indices.
+    static NESTED_ROWS: &[TrayRow] = &[
+        TrayRow::Item {
+            command: false,
+            nested: 2,
+        },
+        TrayRow::Item {
+            command: false,
+            nested: 0,
+        },
+        TrayRow::Item {
+            command: true,
+            nested: 0,
+        },
+        TrayRow::Item {
+            command: true,
+            nested: 0,
+        },
+    ];
+
+    fn nested_config() -> TrayConfig {
+        TrayConfig {
+            icons: ICONS,
+            rows: NESTED_ROWS,
+            icon_template: false,
+        }
+    }
+
+    #[test]
+    fn a_submenu_row_is_neither_a_command_nor_a_stat() {
+        record(nested_config());
+        assert!(is_submenu(0), "row 0 owns the two rows after it");
+        assert!(
+            !is_command(0),
+            "the platform opens a submenu instead of delivering it"
+        );
+        assert!(!is_submenu(1), "a row inside a submenu owns nothing itself");
+        assert!(!is_submenu(3), "a row after the block owns nothing");
+        assert!(
+            is_command(2),
+            "a routed row inside a submenu is still a command"
+        );
+    }
+
+    #[test]
+    fn a_nested_row_takes_its_own_text_slot() {
+        record(nested_config());
+        set_item(0, "Session length");
+        set_item(2, "50 minutes");
+        assert_eq!(
+            rendered().items,
+            ["Session length", "", "50 minutes", ""],
+            "a submenu title and the rows it owns are separate slots at their own indices"
+        );
     }
 }

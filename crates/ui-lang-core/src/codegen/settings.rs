@@ -223,9 +223,10 @@ pub(in crate::codegen) fn tray_init_code(
         .iter()
         .map(|row| match row {
             // A routed row is a command; an unrouted one is a figure to read,
-            // and the platform draws one of those by disabling it.
-            ResolvedTrayRow::Item { route, .. } => format!(
-                "::ui_lang_runtime::tray::TrayRow::Item {{ command: {} }},",
+            // and the platform draws one of those by disabling it. A row that
+            // owns nested rows is neither: the platform opens it.
+            ResolvedTrayRow::Item { route, nested, .. } => format!(
+                "::ui_lang_runtime::tray::TrayRow::Item {{ command: {}, nested: {nested}usize }},",
                 route.is_some()
             ),
             ResolvedTrayRow::Separator => "::ui_lang_runtime::tray::TrayRow::Separator,".to_owned(),

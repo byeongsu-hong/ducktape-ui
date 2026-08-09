@@ -278,12 +278,23 @@ fn check_tray(
     for row in &tray.menu {
         let TrayRow::Item {
             route: Some(route),
+            nested,
             span,
             ..
         } = row
         else {
             continue;
         };
+        // A submenu is opened, not chosen. The platform gives its row no
+        // activation to deliver, so a route on one would name a handler
+        // nothing could ever reach.
+        if *nested > 0 {
+            return Err(
+                Error::new("E015", span, "a tray submenu row cannot name a route").hint(
+                    "the platform opens a submenu instead of activating it; route its rows instead",
+                ),
+            );
+        }
         if !document
             .handlers
             .iter()

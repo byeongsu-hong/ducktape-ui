@@ -1,0 +1,2 @@
+E015
+a tray submenu row cannot name a route
