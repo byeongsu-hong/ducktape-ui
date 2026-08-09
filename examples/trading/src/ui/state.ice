@@ -89,6 +89,15 @@ state
   fills_open = false
   portfolio_history:PortfolioHistory = portfolio_empty()
   portfolio_range = "month"
+  // What this app may sign with. Opaque: the rules that move it are a tested
+  // state machine in Rust, and a copy of them here would be a second opinion
+  // about when an order may be signed.
+  session:Session = session_start()
+  // Why the session is where it is, when the state alone cannot say. A
+  // declined sheet and never having pressed the button are both `Locked`, so
+  // without this the panel draws the same thing for "you cancelled" and "you
+  // have not asked".
+  unlock_note = ""
 
 derived
   visible = filter_symbols(symbols, query, coin)
@@ -97,6 +106,57 @@ derived
   // can. `add_alert` refuses silently, so the button reads this to disable
   // itself and print the reason rather than answering a press with nothing.
   watch_refusal = alert_refused(alerts, coin, ticket_price, mark_price(focus))
+
+// The custody panel in each state it can be drawn in. `clock` is the same
+// reading the view asks `session_can_trade` with, so a fixture is live or
+// lapsed against the clock the screen is holding rather than against one it
+// was built with.
+preset unlocked
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    book = some(demo_book())
+    live = true
+    session = demo_session_ready(now_seconds())
+
+preset key_expired
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    account = some(demo_account())
+    live = true
+    session = demo_session_expired(now_seconds())
+
+// A build with no keychain, which is every build that is not macOS. The panel
+// has to say so rather than offer a prompt that can only refuse.
+preset no_keystore
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    account = some(demo_account())
+    live = true
+    session = demo_session_unavailable()
+
+// Touch ID answered and nobody has approved a key for this account yet, which
+// is where a first unlock lands and where it stays until the account's own
+// wallet approves the address the app is showing.
+preset unapproved
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    account = some(demo_account())
+    live = true
+    session = demo_session_unapproved()
 
 preset gate
 

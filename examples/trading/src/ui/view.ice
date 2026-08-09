@@ -241,6 +241,25 @@ view
                             font=digits
                             @text-faint
                 rule vertical thickness=1.0 color=edge
+                // What the app may do, on every page and in every state. It is
+                // beside the equity rather than instead of it, because the two
+                // answer different questions: whether an account is being read,
+                // and whether this app may act on it. A read-only session over
+                // a funded account, and an unlocked one over an address with no
+                // account, are both ordinary.
+                //
+                // It takes the clock, so a window that closed while the app was
+                // asleep stops reading UNLOCKED without waiting for a tick.
+                //
+                // A plain text rather than a `Label`, because this one is
+                // targeted: a component call is an identity scope and has no
+                // rendered box of its own to assert against.
+                text session_badge(session, clock) #session-badge
+                  with
+                    size=10.0
+                    tracking=1.1
+                    @text-faint
+                rule vertical thickness=1.0 color=edge
                 Stat #feed name="FEED" value=fmt_latency(latency)
             rule horizontal thickness=1.0 color=edge
             // What broke belongs to the app, not to the page that happened to be
@@ -2012,27 +2031,97 @@ view
                                 wrap=word
                                 @text-muted
                       col gap=12.0 w=480.0
-                        Label value="DEMO ONLY"
-                        text "It signs nothing and sends nothing."
+                        Label value="CUSTODY"
+                        text "The wallet key is never here."
                           with
                             size=16.0
                             w=fill
                             wrap=word
                             @text-fg
                             @font-bold
-                        text "This app reads the venue named beside this and prices orders against that margin engine's own arithmetic, which is the whole of what it does."
+                        text "What this app can hold is an agent key: a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance."
                           with
                             size=12.0
                             w=fill
                             wrap=word
                             @text-muted
-                        text "It reads: the tradeable universe, candles, the book, the public tape, and — for the address beside this — that account's equity, positions, resting orders and fills. What a venue will not answer is said above and in the panel it empties."
+                        text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session below says rather than something this paragraph decides. Locking forgets it; so does changing network or address, because a key is approved for one account on one deployment."
                           with
                             size=12.0
                             w=fill
                             wrap=word
                             @text-muted
-                        text "It will not place, amend or cancel an order, move margin, or ask for a key. Sending would mean this app holding the key that signs an EIP-712 order, which is not a thing an example should ask for. Everything up to that signature is arithmetic worth having, and the signature is where a real client starts."
+                        col #custody gap=8.0 w=fill
+                          row gap=8.0 align=center
+                            Label value="SESSION"
+                            Label value=session_badge(session, clock) #custody-badge
+                          if !empty(session_agent(session))
+                            text session_agent(session) #custody-agent
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                font=digits
+                                @text-fg
+                          if !empty(session_window(session, clock))
+                            text session_window(session, clock) #custody-window
+                              with
+                                size=11.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                          if !empty(session_reason(session))
+                            text session_reason(session) #custody-reason
+                              with
+                                size=11.0
+                                w=fill
+                                wrap=word
+                                @text-down
+                          if !empty(unlock_note)
+                            text unlock_note #custody-note
+                              with
+                                size=11.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                          row gap=8.0 w=fill
+                            button #unlock -> unlock
+                              with
+                                label="Unlock with Touch ID"
+                                p=9.0
+                                disabled=!empty(session_refusal(venue, session))
+                              active bg=fg text=fg_invert r=4.0
+                              hovered bg=fg text=fg_invert r=4.0
+                              disabled bg=raised text=faint r=4.0
+                              text "UNLOCK" size=11.0 tracking=1.1
+                            button #enrol -> enrol
+                              with
+                                label="Make a new agent key"
+                                p=9.0
+                                disabled=!empty(session_refusal(venue, session))
+                              active bg=raised text=muted r=4.0
+                              hovered bg=edge text=fg r=4.0
+                              disabled bg=raised text=faint r=4.0
+                              text "NEW KEY" size=11.0 tracking=1.1
+                            space w=fill
+                            button #lock label="Lock and forget the key" p=9.0 -> lock
+                              active bg=panel text=muted r=4.0
+                              hovered bg=raised text=fg r=4.0
+                              text "LOCK" size=11.0 tracking=1.1
+                          if !empty(session_refusal(venue, session))
+                            text session_refusal(venue, session) #unlock-refusal
+                              with
+                                size=11.0
+                                w=fill
+                                wrap=word
+                                @text-faint
+                        text "It still sends nothing. Unlocking decides what may be signed; the ticket has nothing wired to it yet, and until it does this app reads the network beside this and prices orders against that margin engine's own arithmetic."
+                          with
+                            size=12.0
+                            w=fill
+                            wrap=word
+                            @text-muted
+                        text "What it will never do: hold the key that owns the account, move collateral, or withdraw. An agent key cannot do any of those, which is the whole reason it is the only key here."
                           with
                             size=12.0
                             w=fill

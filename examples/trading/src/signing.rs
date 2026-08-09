@@ -467,6 +467,17 @@ impl Chain {
         }
     }
 
+    /// A short, stable name for this deployment, for anything that has to file
+    /// something under it. Not for a reader — `venue.rs` names networks — and
+    /// deliberately not the wire spelling, so changing what a keychain item is
+    /// called can never change what a signature says.
+    pub fn key(self) -> &'static str {
+        match self {
+            Chain::Mainnet => "mainnet",
+            Chain::Testnet => "testnet",
+        }
+    }
+
     /// Whether this deployment trades money that is worth something.
     ///
     /// Read by the screen rather than by the signer: what it changes is how

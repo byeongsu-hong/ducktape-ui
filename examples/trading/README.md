@@ -317,11 +317,11 @@ to do, and Escape on the portfolio does not clear a box that is not there.
 
 Nothing is signed and nothing is sent, and the ticket says so where a submit
 button would be a heading: it opens by naming what it does and what it does
-not, rather than closing with a badge. The reason lives on the settings page,
-once. Sending would mean this app holding the key that signs an EIP-712 order,
-which is not a thing an example should ask for. The boundary is the
-interesting part: everything up to the signature is arithmetic worth having,
-and the signature is where a real client starts.
+not, rather than closing with a badge. What may be signed is now a real
+question with an answer — see [custody](#custody) — but nothing is wired to
+this ticket yet, and the settings page says exactly that rather than implying
+otherwise. The boundary is still the interesting part: everything up to the
+signature is arithmetic worth having.
 
 The one figure in that arithmetic that is not arithmetic is the maintenance
 requirement, and it belongs to the venue: Hyperliquid holds half the margin at
@@ -329,6 +329,224 @@ a market's maximum leverage, and another exchange holds something else. So the
 market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
+
+## Custody
+
+The app can hold one key and it is not the account's. An **agent key** is a
+separate keypair the account's own wallet approved at the exchange: it places
+and cancels orders, it cannot withdraw, and the exchange stops honouring it on
+a date the exchange chose. Losing it costs an approval, not a balance. That
+property is the whole reason there is a key here at all.
+
+On macOS its secret lives in the keychain behind Touch ID — one guarded
+generic-password item, biometry or passcode, this device only, and not in this
+process or in a file. Unlocking is that prompt. On a build without a keychain
+there is nowhere to keep a secret and nothing to unlock, and the panel says so
+rather than offering a prompt that can only refuse. The keychain item is filed
+under the deployment *and* the address, because a key approved on mainnet is
+unknown on testnet and a secret read back under the wrong one is a signer the
+venue has never heard of.
+
+Three acts, and the app cannot perform the middle one:
+
+1. **NEW KEY** generates an agent key, stores the secret, and prints the
+   address.
+2. **Approve** — done by the account's own wallet, at the exchange, somewhere
+   that is not this app. An `approveAgent` is signed by the master wallet,
+   which is the one key this design exists to avoid holding.
+3. **UNLOCK** raises Touch ID, reads the secret back, asks the venue which of
+   this account's keys are live, and a listing naming ours is what a tradeable
+   session is made of.
+
+The middle step being somebody else's is the property, not a gap.
+
+### What the screen says, and what it must never blur
+
+The header carries a badge on every page, beside the equity strip rather than
+instead of it: the two answer different questions, and they disagree the moment
+there is a key to hold — an unlocked session over an address with no account,
+and a read-only session over a funded one, are both ordinary. It reads
+`UNLOCKED` only while the session may actually trade, and it takes the clock to
+say so, because a window closes on the exchange's schedule rather than on an
+event: a badge read off the state alone would keep saying yes through every
+millisecond between expiry and the next tick, and forever if the ticks stop —
+which is exactly when a laptop that slept through an expiry starts asking.
+`KEY EXPIRED` is its own word, because a reader whose key lapsed has something
+to renew and a reader who never had one has something to make.
+
+A **refusal and a fault are not the same event** and the panel must not draw
+them alike. Cancelling Touch ID released nothing, is nobody's mistake, and
+leaves the button live with a sentence beside it. A keychain that failed, or a
+build that has none, is not a thing to ask again — the keystore is chosen at
+compile time, so a second prompt fetches the same refusal — so the button goes
+dead and states the platform's own words. `session.rs` draws that line in a
+pure function outside every `cfg`, which is why a Linux machine can test it;
+this seam's job is not to blur it on the way to the screen.
+
+A network this app cannot sign for **yet** is refused before any sheet, by
+name. Lighter is that case today, and the distinction is worth stating
+precisely because the first version of this sentence got it wrong: the *venue*
+has a write path. Lighter's orders are L2 transactions signed by an API key the
+account registers — the `api_key_index` in the token `lighter_sign.rs` already
+mints, over the curve it already implements. What is missing is this app's
+transaction half. "Nothing in this module can place an order" is that module
+saying what it implements, not what Lighter can do.
+
+So `Network.chain` is `None` there, meaning "no write path here yet", and the
+refusal says the same. Both stop being true when the Lighter path lands, and
+both go in that change rather than outliving it.
+
+Changing network or address forgets the key. Carried across either, it is a
+session claiming the app may trade somewhere the key is unknown, and the first
+thing that would say otherwise is a rejected order.
+
+### Enrolling on a testnet, end to end
+
+Both venues need the account's own wallet once, and neither lets this app stand
+in for it — that is the property rather than a gap. Both are written down here
+together so neither arrives as a surprise halfway through.
+
+The app generates the key and never surrenders it; the wallet approves an
+address and never enters this process. What crosses between them is an address
+one way and a confirmation the other, and the app checks that confirmation
+against the venue rather than taking anyone's word for it.
+
+#### Hyperliquid Testnet
+
+1. **Fund the account.** The perp account needs testnet USDC, and the faucet is
+   a web action at <https://app.hyperliquid-testnet.xyz/drip>, not an API. Its
+   eligibility rule is Hyperliquid's and is not published through `info`, so
+   check rather than assume — one request answers whether an address has the
+   mainnet standing the drip has historically wanted:
+
+   ```bash
+   curl -s -X POST https://api.hyperliquid.xyz/info \
+     -H 'content-type: application/json' \
+     -d '{"type":"clearinghouseState","user":"0xYOURADDRESS"}' \
+     | python3 -c 'import sys,json;print(json.load(sys.stdin)["marginSummary"]["accountValue"])'
+   ```
+
+   A non-zero figure is the signal. Zero, and the cheapest path is to use an
+   address that already trades on Hyperliquid mainnet rather than to bootstrap
+   one — nothing here needs that address to be the same one used elsewhere.
+   Confirm the drip landed with the same request against
+   `api.hyperliquid-testnet.xyz`.
+
+2. **What the app has already done.** `NEW KEY` on the settings page generated a
+   secp256k1 agent key, put its secret in this Mac's keychain under
+   `testnet:0xYOURADDRESS`, and printed the agent's address. Nothing else has
+   left the machine.
+
+3. **Approve that address.** This is the master wallet's signature and the one
+   action this app will never build a path for. The Hyperliquid UI's own API
+   Wallet page generates a key for you, which is the wrong direction — the key
+   already exists here. So sign the payload for *this* address:
+
+   ```json
+   {
+     "domain": { "name": "HyperliquidSignTransaction", "version": "1",
+                 "chainId": 421614,
+                 "verifyingContract": "0x0000000000000000000000000000000000000000" },
+     "primaryType": "HyperliquidTransaction:ApproveAgent",
+     "types": {
+       "EIP712Domain": [ {"name":"name","type":"string"},
+                         {"name":"version","type":"string"},
+                         {"name":"chainId","type":"uint256"},
+                         {"name":"verifyingContract","type":"address"} ],
+       "HyperliquidTransaction:ApproveAgent": [
+         {"name":"hyperliquidChain","type":"string"},
+         {"name":"agentAddress","type":"address"},
+         {"name":"agentName","type":"string"},
+         {"name":"nonce","type":"uint64"} ]
+     },
+     "message": { "hyperliquidChain": "Testnet",
+                  "agentAddress": "0xTHE-ADDRESS-THE-APP-PRINTED",
+                  "agentName": "",
+                  "nonce": 1786000000000 }
+   }
+   ```
+
+   `nonce` is milliseconds since the epoch and must be recent. `chainId` is
+   `0x66eee`, Arbitrum Sepolia, and it is the *signature's* domain rather than
+   where anything settles.
+
+   Sign it with Foundry, which is what pins this payload's own test vector in
+   `signing.rs` — so the tool checking the app is the tool producing the
+   approval:
+
+   ```bash
+   cast wallet sign --from-keystore <keystore> --data --from-file approve.json
+   ```
+
+   Then post it, with `signatureChainId` back in the action — it names the
+   domain rather than sitting in it, so the exchange reads it from the body:
+
+   ```bash
+   curl -s -X POST https://api.hyperliquid-testnet.xyz/exchange \
+     -H 'content-type: application/json' \
+     -d '{"action":{"type":"approveAgent","hyperliquidChain":"Testnet",
+                    "signatureChainId":"0x66eee",
+                    "agentAddress":"0xTHE-ADDRESS","agentName":"","nonce":1786000000000},
+          "nonce":1786000000000,
+          "signature":{"r":"0x…","s":"0x…","v":27}}'
+   ```
+
+4. **Hand back: nothing.** The app verifies this itself. `UNLOCK` reads
+   `extraAgents` for the account and looks for the address it generated; a
+   listing naming it, with a window still ahead of it, is what `Ready` is made
+   of. If the approval did not land the panel says so and the account stays
+   readable.
+
+#### Lighter Testnet
+
+Landing with the Lighter order path; the steps are here so both venues are
+planned together rather than one at a time.
+
+1. **Fund the account.** One request, and it creates the account as well as
+   funding it:
+
+   ```bash
+   curl -s "https://testnet.zklighter.elliot.ai/api/v1/faucet?l1_address=0xYOURADDRESS"
+   ```
+
+   Confirm with
+   `.../api/v1/accountsByL1Address?l1_address=0xYOURADDRESS`, which answers the
+   `account_index` the next step needs. A fresh account arrives with 10,000
+   collateral.
+
+2. **What the app has already done.** Generated an ECgFp5 key over the curve
+   `lighter_sign.rs` already implements and stored its secret in the keychain
+   under `lighter-testnet:0xYOURADDRESS`.
+
+3. **Register that public key.** A fresh account has no registered API key, and
+   the first registration is signed by the L1 wallet — the same line
+   `approveAgent` draws. Do it at <https://testnet.app.lighter.xyz/>, then hand
+   back the **`account_index`** and the **`api_key_index`** you registered
+   under. Those two are account coordinates rather than secrets, and the app
+   has no way to discover which slot was used.
+
+4. **The app verifies it.** `apikeys?account_index=…&api_key_index=…` publishes
+   the registered public key, so the app compares it against the one it
+   generated before claiming the session may trade — exactly what `extraAgents`
+   does on the other venue.
+
+### What needs a Mac
+
+Everything decidable without a Keychain is decided in CI, on Linux: the state
+machine exhaustively, this seam's projections and both refusals, and the panel
+in every state a preset can put it in. None of it touches a keychain, because a
+build without one answers `Unavailable` — a state with a test rather than a gap.
+
+What no runner reaches is the sheet. `security-framework` is a macOS-only
+dependency, so the macOS jobs compile that path and nothing executes it: a CI
+runner has no window server to raise a Touch ID sheet in front of and no
+enrolled finger to answer it with. The nine experiments `session.rs` lists on
+its `impl Keystore` are still owed, and `custody.rs` adds four that only exist
+now that something calls it — one sheet per unlock rather than two, a cancelled
+sheet leaving a live button, the full enrol-approve-unlock round trip, and a
+re-enrolment keeping the secret it replaces when the add fails. Until a person
+on a Mac reports those, the honest claim is that this seam's logic is tested and
+its platform half is compiled, reviewed and unrun.
 
 ## Fixtures are read as evidence
 
