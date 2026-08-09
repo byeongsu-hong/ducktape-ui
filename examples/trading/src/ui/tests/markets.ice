@@ -187,3 +187,186 @@ test trading_a_market_row_announces_the_figures_beside_its_name
   target ether = listed/market("ETH")/row
   expect a11y bitcoin name "BTC at 64,000.00, +1.25% today"
   expect a11y ether name "ETH at 3,540.00, +1.14% today"
+
+// Hyperliquid's universe is not one list any more. HIP-3 lets anyone deploy a
+// perp dex on the same exchange, and read live the day this was written
+// `perpDexs` answered with the canonical list plus nine builder deployments —
+// `xyz` alone listing 94 live markets. Flattened into one rail they read as
+// Hyperliquid's own markets, which is what a group header is here to deny.
+//
+// The collateral rides on the header because it is the fact that separates two
+// lists that otherwise look interchangeable: a builder dex names its own, and
+// the live ones settle in USDH, USDe and USDT0 as well as USDC.
+test trading_the_rail_heads_each_dex_with_the_name_it_deployed_under
+  preset categorized
+  viewport 1660 820
+  target app = #app
+  target markets = app/terminal-fit/trade/markets
+  target listed = markets/market-list
+  expect text "Hyperliquid" within listed
+  expect text "HyENA" within listed
+  // The exchange's own collateral is what every reader already assumes, so it
+  // is the one the header does not spend a column saying.
+  expect text "USDe" within listed
+  expect no text "USDC" within listed
+
+// A header is a heading: a reader moving row by row does not carry it down the
+// list with them, so each row says which list it came out of and what that list
+// settles in. The canonical rows say so too — under a grouped rail "BTC" alone
+// no longer says which of several books it is on.
+test trading_a_market_row_announces_the_dex_it_is_listed_on
+  preset categorized
+  viewport 1660 820
+  target app = #app
+  target markets = app/terminal-fit/trade/markets
+  target listed = markets/market-list
+  target bitcoin = listed/market("BTC")/row
+  target builder = listed/market("xyz:NVDA")/row
+  target foreign = listed/market("hyna:HYPE")/row
+  expect a11y bitcoin name "BTC at 64,000.00, +1.25% today, Hyperliquid market settled in USDC"
+  expect a11y builder name "xyz:NVDA at 224.510, +0.29% today, XYZ market settled in USDC"
+  expect a11y foreign name "hyna:HYPE at 38.420, +1.37% today, HyENA market settled in USDe"
+
+// Grouping organizes one list; it does not create destinations. The search box
+// still reaches every category, and a group whose first row the search removed
+// is still headed by whatever is left of it — which is why the heading is
+// decided by the filter that orders the rows rather than baked in when the
+// universe is read. `xyz:SP500` is the second row of its group, so a rail that
+// stamped headings at parse time loses the XYZ header entirely here.
+test trading_a_search_reaches_every_dex_and_re_heads_what_it_leaves
+  preset categorized
+  viewport 1660 820
+  target app = #app
+  target markets = app/terminal-fit/trade/markets
+  target listed = markets/market-list
+  target search = markets/search
+  expect text "Hyperliquid" within listed
+  focus search
+  type "SP500"
+  expect text "xyz:SP500" within listed
+  expect text "XYZ" within listed
+  // The groups the search emptied are not headed over nothing.
+  expect no text "Hyperliquid" within listed
+  expect no text "HyENA" within listed
+  expect no text "BTC" within listed
+
+// The identity half. A builder market is named `dex:SYMBOL` on the wire and
+// that whole string is what the book, the tape and the candle requests take —
+// verified live: `l2Book` and `candleSnapshot` answer for `xyz:NVDA` with no
+// `dex` parameter at all, and answer `null` for a bare `NVDA`. So picking one
+// from the rail has to point every panel at the qualified name, and the
+// self-pick guard has to go on meaning "the same market" against it.
+test trading_a_builder_market_opens_every_panel_at_its_qualified_name
+  preset categorized
+  viewport 1660 820
+  target app = #app
+  target markets = app/terminal-fit/trade/markets
+  target listed = markets/market-list
+  target builder = listed/market("xyz:NVDA")/row
+  expect coin == "BTC"
+  click builder
+  expect coin == "xyz:NVDA"
+  expect ticket_price == "224.510"
+  expect status == "Loading candles"
+  expect empty(tape_prints)
+  // And the guard still reads it as one market rather than as a dex: pressing
+  // the row it is already on throws nothing away.
+  dispatch ticket_sized("2.5")
+  click builder
+  expect coin == "xyz:NVDA"
+  expect ticket_size == "2.5"
+  expect ticket_price == "224.510"
+
+// The rail folds below 1280 and is unfolded to be picked from. Grouping has to
+// survive that fold: it organizes one list rather than creating a destination,
+// so the narrow rail is the same list with the same headings over it and not a
+// flattened version of it.
+test trading_the_folded_rail_keeps_its_dex_headings
+  preset categorized
+  viewport 1180 720
+  target app = #app
+  target terminal = app/terminal-fit/trade
+  target rail = terminal/markets
+  target rail_toggle = terminal/chart-bar/toggle-markets/root/toggle-off
+  expect missing rail
+  click rail_toggle
+  expect exists rail
+  expect text "Hyperliquid" within rail
+  expect text "HyENA" within rail
+  expect text "USDe" within rail
+
+// The margin trap. A builder dex is a separate clearinghouse, not a section of
+// the exchange's own: read live, one address held $127,575 against canonical
+// Hyperliquid and $5,235,542 against the `xyz` dex in the same second, with
+// four open positions on the second and none on the first.
+//
+// So every figure the ticket measures against the account on screen is about
+// an account this order would never touch. AGAINST THE ENGINE says which
+// account it cannot see instead of quoting the wrong one, and the share
+// buttons decline to size a position out of a balance that is not there.
+//
+// What is not gated is the market's own arithmetic. The maintenance rule holds
+// across dexs — checked live, `xyz:SKHX` at 10x maintains at exactly 1/20th of
+// its position value, which is the same half-of-max-leverage rule the app
+// already prices canonical markets with — so the isolated liquidation is still
+// quoted, and quoting it is the point of not gating the whole panel.
+test trading_a_builder_market_declines_the_account_it_is_not_held_against
+  preset categorized
+  viewport 1660 900
+  target app = #app
+  target markets = app/terminal-fit/trade/markets
+  target listed = markets/market-list
+  target builder = listed/market("xyz:NVDA")/row
+  target bitcoin = listed/market("BTC")/row
+  // The canonical market quotes the account's load, which is what makes the
+  // builder market's refusal a difference rather than an empty panel.
+  click bitcoin
+  dispatch ticket_sized("30")
+  // The fixture is short 30 bitcoin, so buying 30 flattens it and the
+  // requirement it carried goes with it. Any reading at all is the point here:
+  // this is the arithmetic the builder market below has to refuse rather than
+  // repeat.
+  expect order_load(account, coin, ticket_size, ticket_buy, focus) == "1% → 0%"
+  click builder
+  dispatch ticket_sized("1.5")
+  expect order_load(account, coin, ticket_size, ticket_buy, focus) == "separate margin account"
+  expect text "separate margin account"
+  // Sizing out of an account that does not hold this market is the same lie
+  // with a number on it. MAX declines, leaving what was typed rather than
+  // replacing it with a share of the wrong balance — and on the canonical
+  // market below, the same press answers, which is what makes this a refusal
+  // rather than a button that never worked.
+  dispatch size_share(1.0)
+  expect ticket_size == "1.5"
+  // The market's own arithmetic is not the account's and is not gated: the
+  // cliff is still priced.
+  expect quote.known
+  expect quote.liquidation > 0.0
+  click bitcoin
+  dispatch ticket_sized("1.5")
+  dispatch size_share(1.0)
+  expect ticket_size != "1.5"
+
+// A dex that settles in something other than the exchange's own collateral
+// makes MARGIN REQUIRED a figure in that token. Read live, `hyna` margins in
+// USDe, `flx`/`vntl`/`km` in USDH and `cash` in USDT0 — so a dollar sign in
+// front of the figure is the panel claiming a peg it never checked.
+test trading_a_margin_requirement_names_the_token_it_is_posted_in
+  preset categorized
+  viewport 1660 900
+  target app = #app
+  target markets = app/terminal-fit/trade/markets
+  target listed = markets/market-list
+  target foreign = listed/market("hyna:HYPE")/row
+  // A market the fixture holds no position in, so the ticket is opening one
+  // and the requirement is the opening margin rather than nothing.
+  target canonical = listed/market("SOL")/row
+  click canonical
+  dispatch ticket_sized("1.0")
+  expect quote.margin > 0.0
+  expect fmt_margin(quote.margin, focus) == "$29.72"
+  click foreign
+  dispatch ticket_sized("10.0")
+  expect quote.margin > 0.0
+  expect fmt_margin(quote.margin, focus) == "76.84 USDe"
+  expect text "76.84 USDe"

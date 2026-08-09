@@ -32,6 +32,7 @@ mod tests {
             maintenance: 0.0,
             size_decimals: 2,
             selected: false,
+            ..Default::default()
         }
     }
 

@@ -41,6 +41,11 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 /// which is the 50x the venue advertises.
 const BASIS: f64 = 10_000.0;
 
+/// What every Lighter perp margins in. One token across the whole universe:
+/// `quote_asset_id` is 0 on all 222 of them, and the venue has no second
+/// clearinghouse to settle anything anywhere else.
+const LIGHTER_COLLATERAL: &str = "USDC";
+
 /// `/funding-rates` publishes every venue's rate over the same eight-hour
 /// window, and `SymbolRow.funding_pct` is the hourly figure `fmt_funding`
 /// labels.
@@ -269,6 +274,17 @@ fn parse_symbol(detail: &Value, funding: &HashMap<i64, f64>) -> SymbolRow {
         // by the app floors onto whole units rather than onto a step the venue
         // would refuse.
         size_decimals: value_i64(detail, "size_decimals").max(0) as usize,
+        // Lighter lists one flat perp universe and says so: read live,
+        // `/orderBookDetails` answers with 222 markets whose `market_type` is
+        // `perp` and nothing else, and not one of its forty-four fields names
+        // a deployer, a builder, a sub-exchange or a second collateral. There
+        // is no Lighter equivalent of a HIP-3 dex to reflect, so the rail
+        // draws this venue's list with no headings over it rather than
+        // inventing one group to sit under a header for symmetry with the
+        // other venue.
+        category: String::new(),
+        collateral: LIGHTER_COLLATERAL.to_owned(),
+        heading: false,
         selected: false,
     }
 }
@@ -1097,6 +1113,12 @@ fn parse_stats(stats: &Value) -> SymbolRow {
         leverage: 0.0,
         maintenance: 0.0,
         size_decimals: 0,
+        // Nor does the stream restate the group or the collateral, so these
+        // read as empty and the caller keeps the universe's reading — which
+        // on this venue is one flat list settled in one token.
+        category: String::new(),
+        collateral: String::new(),
+        heading: false,
         open_interest: open_interest(num(stats, "open_interest"), price),
         prev: previous_price(price, change_pct),
         selected: false,
@@ -3351,6 +3373,7 @@ mod tests {
             maintenance: 0.0,
             size_decimals,
             selected: false,
+            ..Default::default()
         }
     }
 

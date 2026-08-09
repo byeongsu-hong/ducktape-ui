@@ -4,7 +4,7 @@ extern crate::hyperliquid
   // `funding_pct` and `open_interest` live on the Rust struct but not here:
   // the menu-bar popover that drew them is gone, and what still needs them is
   // Rust — the hand-written `Hash` and the ticket's rent-per-day figure.
-  SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, leverage:f64, selected:bool)
+  SymbolRow(name:str, category:str, heading:bool, price:f64, change_pct:f64, volume:f64, leverage:f64, selected:bool)
   Position(coin:str, size:f64, entry:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
   Account(value:f64, cross_value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, margin_pct:f64)
   Trade(ts:i64, price:f64, size:f64, buy:bool, sweep:i64)
@@ -63,6 +63,7 @@ extern crate::hyperliquid
   pure demo_tick_at(btc:f64) -> MarketTick
   pure demo_feed_error() -> HlError
   pure demo_symbols_many() -> [SymbolRow]
+  pure demo_symbols_categorized() -> [SymbolRow]
   pure demo_tape_full() -> [Trade]
   pure demo_tape_at(mid:f64) -> [Trade]
   pure demo_tape() -> [Trade]
@@ -80,6 +81,7 @@ extern crate::hyperliquid
   pure order_load(account:Account?, coin:str, size:str, buy:bool, market:SymbolRow?) -> str
   pure funding_day(market:SymbolRow?, price:str, size:str, buy:bool) -> str
   pure market_label(market:SymbolRow) -> str
+  pure group_note(market:SymbolRow) -> str
   pure order_label(order:Order) -> str
   pure fill_label(fill:Fill) -> str
   pure book_label(price:f64, buy:bool) -> str
@@ -99,6 +101,7 @@ extern crate::hyperliquid
   pure header_inset() -> f64
   pure fmt_px(value:f64) -> str
   pure fmt_usd(value:f64) -> str
+  pure fmt_margin(value:f64, market:SymbolRow?) -> str
   pure fmt_pct(value:f64) -> str
   pure fmt_size(value:f64) -> str
   pure fmt_volume(value:f64) -> str
