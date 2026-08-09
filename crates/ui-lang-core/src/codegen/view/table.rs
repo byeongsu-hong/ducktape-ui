@@ -42,7 +42,10 @@ pub(in crate::codegen) fn render_table(
         let cell_scope =
             format!("format!(\"{{}}/row({{}})/col({index})\", __ice_table_scope, __row)");
         let header = render_node(column.header, document, message, env, &header_scope, slot)?;
-        let cell = render_node(column.cell, document, message, &cell_env, &cell_scope, slot)?;
+        let cell = {
+            let _derived_guard = enter_escaping_derived_reads();
+            render_node(column.cell, document, message, &cell_env, &cell_scope, slot)?
+        };
         let mut code = format!(
             "{{ let __ice_table_scope = ({scope}).to_owned(); let __ice_table_recon = ({table_recon}).to_owned(); let _ = (&__ice_table_scope, &__ice_table_recon); let __table_header: __IceElement<'_, {message}> = {header}; let __table_header = ::ui_lang_runtime::bounded_fill_element(__table_header, __table_row_count, false); ::iced::widget::table::column(__table_header, move |(__row, {item_name}): (usize, {row_rust})| -> __IceElement<'_, {message}> {{ let _ = &{item_name}; let __table_cell: __IceElement<'_, {message}> = {cell}; ::ui_lang_runtime::bounded_fill_element(__table_cell, __table_row_count, false) }})"
         );

@@ -2603,6 +2603,18 @@ pub fn document() -> Value {
                 "mounted": "state, latest generations, and replace handles are dropped when the scope leaves its rendered root",
                 "unmountEffects": false,
             },
+            "derivedValues": {
+                "syntax": "derived\n  <name> = <pure-expression>",
+                "model": {
+                    "kind": "pure read-only computation",
+                    "evaluation": "observable evaluation cardinality is not guaranteed; the compiler may coalesce equivalent safe reads within one eager view build",
+                    "signal": false,
+                    "persistentCache": false,
+                    "runtimeDependencyGraph": false,
+                    "handlerMaintainedMirror": false,
+                    "retainedAcrossFrames": false,
+                },
+            },
             "documentPrelude": {
                 "syntax": "app <Name>\ntheme contract <Contract>\n  bg\n  fg\n  primary\n  danger\npalette <name> for <Contract>\n  bg <color>\n  fg <color>\n  primary <color>\n  danger <color>",
                 "requiredDeclarations": ["app", "theme contract", "palette", "view"],

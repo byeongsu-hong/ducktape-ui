@@ -355,6 +355,7 @@ fn append_resolved_text_options(
         write!(code, ".font({font})").unwrap();
     }
     if let Some(custom) = &options.custom_style {
+        let _derived_guard = enter_escaping_derived_reads();
         let arguments = custom
             .arguments
             .iter()

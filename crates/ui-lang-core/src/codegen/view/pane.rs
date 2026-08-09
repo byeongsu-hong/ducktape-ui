@@ -30,6 +30,7 @@ pub(in crate::codegen) fn render_pane_grid(
     // bound right before the closure and moved into it.
     let pane_outer_scope = reconciliation_scope(scope, env).to_owned();
     let pane_type = (!pane_grid.templates.is_empty()).then(|| pane_type(&pane_grid.name));
+    let _pane_derived_guard = enter_escaping_derived_reads();
     let mut arms = panes
         .iter()
         .zip(&pane_grid.panes)
@@ -122,6 +123,7 @@ pub(in crate::codegen) fn render_pane_grid(
         ));
     }
     let arms = arms.join(", ");
+    drop(_pane_derived_guard);
     let field = pane_field(&pane_grid.name);
     let pane_value = if pane_type.is_some() {
         "__pane_name"
@@ -172,6 +174,7 @@ pub(in crate::codegen) fn render_pane_grid(
         .unwrap();
     }
     if let Some(route) = &pane_grid.click {
+        let _derived_guard = enter_escaping_derived_reads();
         if pane_type.is_some() {
             let route =
                 resolved_interaction_route_code(route, &["__pane_name"], env, program, message)?;
@@ -214,6 +217,7 @@ pub(in crate::codegen) fn append_pane_grid_style(
     env: &dyn BindingEnvironment,
     document: &LoweredProgram,
 ) -> Result<(), Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let program = document;
     let style = &pane_grid.style;
     let has_radius = resolved_pane_radius_present(&style.region_radius);
@@ -555,6 +559,7 @@ fn resolved_pane_surface_style_value(
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<Option<String>, Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let has_typed = surface.background.is_some()
         || surface.text_color.is_some()
         || surface.border_color.is_some()

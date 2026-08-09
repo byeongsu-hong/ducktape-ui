@@ -55,16 +55,29 @@ pub(in crate::codegen) struct SlotContent {
     pub(in crate::codegen) recorder: Option<std::rc::Rc<RecordingSink>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::codegen) enum ValueMode {
     Owned,
     Borrowed,
+    /// A borrow consumed while building the current Rust expression or loop.
+    /// Unlike `Borrowed`, it cannot be retained by the returned element.
+    TransientBorrowed,
 }
 
 const COMPONENT_CONTEXT_PREFIX: &str = "\0component:";
 const COMPONENT_CONTEXT_INDEX: &str = "\0component-context";
 const COMPONENT_OUTPUT_PREFIX: &str = "\0component-output:";
 const COMPONENT_EVENT_PREFIX: &str = "\0component-event:";
+const DERIVED_TRANSIENT_PREFIX: &str = "\0derived-transient:";
+pub(in crate::codegen) const DERIVED_SNAPSHOT_BINDING: &str = "\0derived-snapshot";
+
+pub(in crate::codegen) fn derived_transient_key(name: &str) -> String {
+    format!("{DERIVED_TRANSIENT_PREFIX}{name}")
+}
+
+pub(in crate::codegen) fn is_derived_transient_key(name: &str) -> bool {
+    name.starts_with(DERIVED_TRANSIENT_PREFIX)
+}
 
 pub(in crate::codegen) fn component_context_key(component: &str) -> String {
     format!("{COMPONENT_CONTEXT_PREFIX}{component}")
@@ -287,6 +300,10 @@ pub(in crate::codegen) fn derived_method(name: &str) -> String {
     format!("__ice_derived_{name}")
 }
 
+pub(in crate::codegen) fn derived_snapshot_method(name: &str) -> String {
+    format!("__ice_snapshot_{name}")
+}
+
 pub(in crate::codegen) fn checked_state_env(
     program: &LoweredProgram,
     name: &str,
@@ -319,6 +336,49 @@ pub(in crate::codegen) fn checked_state_env(
             },
         )
     }));
+    env
+}
+
+pub(in crate::codegen) fn checked_view_state_env(
+    program: &LoweredProgram,
+    name: &str,
+    snapshot: &str,
+    cached: &HashSet<crate::hir::DerivedId>,
+) -> HashMap<String, Binding> {
+    let mut env = checked_state_env(program, name);
+    if cached.is_empty() {
+        return env;
+    }
+    for derived in program
+        .derived()
+        .iter()
+        .filter(|derived| cached.contains(&derived.id))
+    {
+        let accessor = format!(
+            "{name}.{}({snapshot})",
+            derived_snapshot_method(&derived.name)
+        );
+        env.insert(
+            derived_transient_key(&derived.name),
+            Binding {
+                code: format!("(*{accessor})"),
+                ty: derived.ty.clone(),
+                local: true,
+                state: None,
+                owner: Some(BindingOwner::Value(ResolvedValueRef::Derived(derived.id))),
+            },
+        );
+    }
+    env.insert(
+        DERIVED_SNAPSHOT_BINDING.into(),
+        Binding {
+            code: snapshot.into(),
+            ty: Type::Unit,
+            local: true,
+            state: None,
+            owner: None,
+        },
+    );
     env
 }
 

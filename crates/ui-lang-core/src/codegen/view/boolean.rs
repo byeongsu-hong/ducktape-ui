@@ -298,6 +298,7 @@ fn resolved_checkbox_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let custom = resolved_boolean_custom_style(styles.custom.as_ref(), program, env)?;
     let preset = match styles.preset.unwrap_or(ResolvedCheckboxPreset::Primary) {
         ResolvedCheckboxPreset::Primary => "primary",
@@ -399,6 +400,7 @@ fn resolved_toggler_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let custom = resolved_boolean_custom_style(styles.custom.as_ref(), program, env)?;
     let overrides = [
         ("Active", true, &styles.active_checked),
@@ -525,6 +527,7 @@ fn resolved_radio_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
+    let _derived_guard = enter_escaping_derived_reads();
     let custom = resolved_boolean_custom_style(styles.custom.as_ref(), program, env)?;
     let overrides = [
         ("Active", true, &styles.active_selected),

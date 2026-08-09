@@ -288,8 +288,12 @@ derived
 
 Derived values may depend on app state and other derived values and may call a
 declared `pure` extern. They cannot be assigned or bound with `<->`; dependency
-cycles are errors. They are recomputed when read, not cached. They reject
-`sync` externs and recomputation-unsafe built-ins: `window_id.unique`,
+cycles are errors. They are pure read-only computations, not signals, persistent
+caches, runtime dependency nodes, or state mirrors that handlers must update.
+Their observable evaluation count is not guaranteed: the compiler may coalesce
+equivalent safe reads within one eager view build, but retains nothing across
+frames. They reject `sync` externs and recomputation-unsafe built-ins:
+`window_id.unique`,
 `aborted`, `debug.time_with`, `image.upgrade`, the unqualified `encoded` and
 `rgba` image constructors, and animation queries whose instant is omitted. The
 category covers both runtime reads and calls that create a fresh retained
