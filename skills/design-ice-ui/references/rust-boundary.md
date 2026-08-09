@@ -222,21 +222,23 @@ Call it only from a handler:
 on submit
   return if loading || empty(trim(draft))
   loading = true
-  run save_task(trim(draft)) -> saved _ | failed _
+  run every save_task(trim(draft)) -> saved _ | failed _
 ```
 
-`run` lowers to `iced::Task::perform`. A fallible declaration requires both
-routes; an infallible declaration forbids the failure route. The task statement
-must be last. Its arguments are evaluated immediately and may call a declared
-`sync` extern, including inside nested task groups. Each explicit expression in
-the success and failure routes becomes an owned snapshot when the statement
-launches; both branches are materialized then, while `_` is supplied only by the
-delivered completion. Route expressions remain pure-only so an unused branch
-cannot perform an effect; their results must be ordinary cloneable Ice data,
-and direct recomputation-unsafe builtins are rejected. Evaluate either runtime
-value once in a preceding handler `let` and route that local instead. The same
-snapshot rule applies to every `task` statement completion route, including
-built-in tasks; stream, sip, flow, and native query route timing is unchanged.
+Every handler Future names one delivery mode: `run every`, `run latest`, or
+`run replace`; all three lower through `iced::Task::perform`. A fallible
+declaration requires both routes; an infallible declaration forbids the failure
+route. The task statement must be last. Its arguments are evaluated immediately
+and may call a declared `sync` extern, including inside nested task groups. Each
+explicit expression in the success and failure routes becomes an owned snapshot
+when the statement launches; both branches are materialized then, while `_` is
+supplied only by the delivered completion. Route expressions remain pure-only
+so an unused branch cannot perform an effect; their results must be ordinary
+cloneable Ice data, and direct recomputation-unsafe builtins are rejected.
+Evaluate either runtime value once in a preceding handler `let` and route that
+local instead. The same snapshot rule applies to every `task` statement
+completion route, including built-in tasks; stream, sip, flow, and native query
+route timing is unchanged.
 
 Use a named request lane when starts from one or more handlers supersede the
 same logical work:
@@ -257,17 +259,23 @@ component Search()
     button "Search" -> search
 ```
 
-Ordinary `run` delivers every completion. Equal fully qualified lane names
-share one lifecycle across handlers for an app, across all windows of a daemon,
-or within one component instance; component instances remain independent. A
-component imported under an alias qualifies its internal lane into that
-namespace, but the lane remains component-instance-owned. Unaliased app and
-preset fragments remain in the root namespace and may share root lanes. `run latest` does not
-stop stale Futures, so their captures remain live until completion. Use
-`run replace lane=<name>` when the prior Iced task should be aborted, while
-remembering that abort cannot undo an effect already performed or stop work
-detached by the Rust backend. Lane names are static and finite per owner.
+`run every` delivers every completion and owns no lane. Equal fully qualified
+lane names share one lifecycle across handlers for an app, across all windows
+of a daemon, or within one component instance; component instances remain
+independent. A component imported under an alias qualifies its internal lane
+into that namespace, but the lane remains component-instance-owned. Unaliased
+app and preset fragments remain in the root namespace and may share root lanes.
+`run latest` does not stop stale Futures, so their captures remain live until
+completion. Use `run replace lane=<name>` when the prior Iced task should be
+aborted, while remembering that abort cannot undo an effect already performed
+or stop work detached by the Rust backend. Lane names are static and finite per
+owner.
 Component-owner count follows the retained/mounted lifetime contract.
+
+Bare handler `run` is rejected. Subscription `run` remains a long-lived stream
+source, and task-flow `from run call()`/`then value -> run call(value)` remain
+Task adapters without a direct completion route, so those distinct constructs
+do not select a delivery mode.
 
 Use `invalidate lane=<name>` directly in an app, daemon, preset, or component
 handler when an immediate state transition supersedes an existing lane without
@@ -305,7 +313,8 @@ debug work. Use a typed `task` extern for a native operation that has no
 canonical source form.
 
 Do not wrap an ordinary async function in `iced::Task` merely to use the
-`task` spelling; use the simpler bare extern and `run`.
+`task` spelling; use the simpler bare extern and `run every` when every
+completion matters.
 
 ## Streams, sippers, groups, and cancellation
 
@@ -346,8 +355,8 @@ Group independent tasks in parallel:
 ```ice
 on refresh
   parallel
-    run load_tasks() -> tasks_loaded _ | failed _
-    run load_profile() -> profile_loaded _ | failed _
+    run every load_tasks() -> tasks_loaded _ | failed _
+    run every load_profile() -> profile_loaded _ | failed _
 ```
 
 Group ordered runtime actions sequentially:
@@ -355,8 +364,8 @@ Group ordered runtime actions sequentially:
 ```ice
 on save_then_refresh
   sequential
-    run save_draft() -> saved _ | failed _
-    run load_tasks() -> tasks_loaded _ | failed _
+    run every save_draft() -> saved _ | failed _
+    run every load_tasks() -> tasks_loaded _ | failed _
 ```
 
 Sequential construction reads inputs and state before the tasks run. Use a
@@ -370,7 +379,7 @@ state
 
 on start
   abortable request abort-on-drop
-    run load_tasks() -> loaded _ | failed _
+    run every load_tasks() -> loaded _ | failed _
 
 on cancel
   abort request
@@ -553,7 +562,8 @@ the relevant app compilation/tests.
 - Preserve direct `ui-lang-runtime` dependency.
 - Preserve the direct `ui-lang-build` build dependency and standard `build.rs`
   call.
-- Use bare extern/`run` for ordinary futures.
+- Use a bare extern plus an explicit `run every`/`latest`/`replace` delivery
+  mode for ordinary futures.
 - Use the matching typed adapter for native Iced return types.
 - Route every fallible effect to success and failure.
 - Keep task-producing statements final.

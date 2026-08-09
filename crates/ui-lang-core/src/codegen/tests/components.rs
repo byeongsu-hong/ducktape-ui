@@ -1245,13 +1245,13 @@ view
     assert!(generated.contains("__local.__ice_run_lane_0_generation == __generation"));
     assert!(generated.contains("return self.__update(*__message)"));
 
-    let ordinary = compile(
-        &source.replace("run latest lane=request", "run"),
+    let every = compile(
+        &source.replace("run latest lane=request", "run every"),
         "search.ice",
     )
     .unwrap();
-    assert!(!ordinary.contains("RequestLane0"));
-    assert!(!ordinary.contains("wrapping_add(1)"));
+    assert!(!every.contains("RequestLane0"));
+    assert!(!every.contains("wrapping_add(1)"));
 }
 
 #[test]

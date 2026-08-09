@@ -1345,7 +1345,7 @@ mod tests {
     #[test]
     fn rejects_global_handler_routes_from_component_handlers() {
         let fixture = Fixture::new();
-        let root = "app Demo\nextern crate::backend\n  fetch() -> str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Search()\n  on search\n    run fetch() -> loaded _\n  button \"Search\" -> search\non loaded(value)\nview\n  Search\n";
+        let root = "app Demo\nextern crate::backend\n  fetch() -> str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Search()\n  on search\n    run every fetch() -> loaded _\n  button \"Search\" -> search\non loaded(value)\nview\n  Search\n";
         fixture.write("app.ice", root);
 
         let error = analyze_file_with_source(fixture.path("app.ice"), root).unwrap_err();

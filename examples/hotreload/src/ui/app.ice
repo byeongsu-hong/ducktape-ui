@@ -35,13 +35,13 @@ preset ready
 on mount
   return if source_ready
   busy = true
-  run load_source() -> source_loaded _ | source_failed _
+  run every load_source() -> source_loaded _ | source_failed _
 
 on reload_source
   busy = true
   error = ""
   status = "Reading src/ui/screen.ice…"
-  run load_source() -> source_loaded _ | source_failed _
+  run every load_source() -> source_loaded _ | source_failed _
 
 on source_loaded(next)
   source = editor(next)
@@ -53,13 +53,13 @@ on save_source_file
   busy = true
   error = ""
   status = "Saving…"
-  run save_source(editor_text(source)) -> source_saved _ | source_failed _
+  run every save_source(editor_text(source)) -> source_saved _ | source_failed _
 
 on save_source_shortcut(_command)
   busy = true
   error = ""
   status = "Saving…"
-  run save_source(editor_text(source)) -> source_saved _ | source_failed _
+  run every save_source(editor_text(source)) -> source_saved _ | source_failed _
 
 on source_saved(next)
   busy = false

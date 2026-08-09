@@ -10576,7 +10576,7 @@ preset seeded
     value = 7
 on mount
   let request = value + 1
-  run fetch(request) -> loaded _
+  run every fetch(request) -> loaded _
 on loaded(next)
   value = next
 component Card()
@@ -10871,11 +10871,11 @@ extern crate::backend
   second = 2
 on start
   first = first + 1
-  run fetch(first) -> loaded _
+  run every fetch(first) -> loaded _
 on loaded(value)
   first = value
 on route_alternate
-  run fetch(first) -> alternate _
+  run every fetch(first) -> alternate _
 on alternate(value)
   first = value
 on empty
@@ -11068,7 +11068,7 @@ view
     fn malformed_handler_hir_ids_are_fallible_source_mapped_invariants() {
         fn program() -> LoweredProgram {
             let source = format!(
-                "app InvalidIds\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value + 1) -> loaded(7)\non loaded(next)\n  value = next\nview\n  text value\n"
+                "app InvalidIds\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run every fetch(value + 1) -> loaded(7)\non loaded(next)\n  value = next\nview\n  text value\n"
             );
             lower(analyze(&source).unwrap()).unwrap()
         }
@@ -11452,7 +11452,7 @@ view
     fn malformed_checked_handler_local_expression_and_extern_ids_do_not_panic() {
         fn checked() -> CheckedDocument {
             let source = format!(
-                "app InvalidFacts\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run fetch(value + 1) -> loaded _\non loaded(next)\n  value = next\nview\n  text value\n"
+                "app InvalidFacts\nextern crate::backend\n  fetch(value:i64) -> i64\n{THEME}state\n  value = 1\non start\n  run every fetch(value + 1) -> loaded _\non loaded(next)\n  value = next\nview\n  text value\n"
             );
             analyze(&source).unwrap()
         }

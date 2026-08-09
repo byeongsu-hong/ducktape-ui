@@ -1415,7 +1415,7 @@ fn effect_completions(document: &ui_lang_core::Document) -> Vec<Value> {
         .iter()
         .filter_map(|function| {
             let keyword = match function.kind {
-                ui_lang_core::ExternKind::Future => "run",
+                ui_lang_core::ExternKind::Future => "run every",
                 ui_lang_core::ExternKind::Task => "task",
                 ui_lang_core::ExternKind::Stream => "stream",
                 _ => return None,
@@ -2748,24 +2748,22 @@ fn fallible_route_action(
         return;
     }
     let trimmed = current.trim();
-    let call = if let Some(call) = trimmed.strip_prefix("run ") {
-        let named = call
-            .strip_prefix("latest ")
-            .or_else(|| call.strip_prefix("replace "));
-        if let Some(lane_and_call) = named {
-            let Some(lane_and_call) = lane_and_call.strip_prefix("lane=") else {
-                return;
-            };
-            let Some(separator) = lane_and_call.find(char::is_whitespace) else {
-                return;
-            };
-            if separator == 0 {
-                return;
-            }
-            lane_and_call[separator..].trim_start()
-        } else {
-            call
+    let call = if let Some(call) = trimmed.strip_prefix("run every ") {
+        call
+    } else if let Some(lane_and_call) = trimmed
+        .strip_prefix("run latest ")
+        .or_else(|| trimmed.strip_prefix("run replace "))
+    {
+        let Some(lane_and_call) = lane_and_call.strip_prefix("lane=") else {
+            return;
+        };
+        let Some(separator) = lane_and_call.find(char::is_whitespace) else {
+            return;
+        };
+        if separator == 0 {
+            return;
         }
+        lane_and_call[separator..].trim_start()
     } else if let Some(call) = trimmed
         .strip_prefix("task ")
         .or_else(|| trimmed.strip_prefix("stream "))
@@ -5125,7 +5123,7 @@ mod tests {
         assert!(completions.iter().any(|item| item["label"] == "text"));
         assert!(completions.iter().any(|item| item["label"] == "button"));
         assert!(!completions.iter().any(|item| item["label"] == "state"));
-        assert!(!completions.iter().any(|item| item["label"] == "run"));
+        assert!(!completions.iter().any(|item| item["label"] == "run every"));
     }
 
     #[test]
@@ -5157,9 +5155,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {label} completion"))
         };
         assert_eq!(
-            effect("run")["insertText"],
-            "run ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
+            effect("run every")["insertText"],
+            "run every ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
         );
+        assert!(handler.iter().all(|item| item["label"] != "run"));
         assert_eq!(
             effect("run latest")["insertText"],
             "run latest lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
@@ -5177,7 +5176,7 @@ mod tests {
                 && item["insertText"]
                     .as_str()
                     .unwrap()
-                    .starts_with("run load(")
+                    .starts_with("run every load(")
         }));
         assert!(handler.iter().any(|item| {
             item["label"] == "save"
@@ -5799,7 +5798,7 @@ mod tests {
     #[test]
     fn code_actions_cover_handlers_errors_accessibility_and_long_nodes() {
         let uri = "file:///tmp/more-actions.ice";
-        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non loaded(value)\n  return if true\non submit\n  run load(\"x\") -> loaded _\nview\n  col\n    button #go w=fill h=40.0 p=8.0 disabled=false @w-full px-4 rounded-2 -> missing _\n      text \"Go\"\n";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non loaded(value)\n  return if true\non submit\n  run every load(\"x\") -> loaded _\nview\n  col\n    button #go w=fill h=40.0 p=8.0 disabled=false @w-full px-4 rounded-2 -> missing _\n      text \"Go\"\n";
         let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
         let actions = code_actions_at(
             &documents,
@@ -5851,11 +5850,11 @@ mod tests {
     #[test]
     fn fallible_route_action_recognizes_runs_and_ignores_lane_invalidation() {
         let uri = "file:///tmp/request-lane-actions.ice";
-        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non ordinary\n  run load(\"ordinary\") -> loaded _\non cancel_search\n  invalidate lane=search\non newest\n  run latest lane=search load(\"latest\") -> loaded _\non replacing\n  run replace lane=refresh load(\"replace\") -> loaded _\non loaded(_value)\nview\n  text \"Ready\"\n";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non every\n  run every load(\"every\") -> loaded _\non cancel_search\n  invalidate lane=search\non newest\n  run latest lane=search load(\"latest\") -> loaded _\non replacing\n  run replace lane=refresh load(\"replace\") -> loaded _\non loaded(_value)\nview\n  text \"Ready\"\n";
         let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
 
         for statement in [
-            "  run load(\"ordinary\") -> loaded _",
+            "  run every load(\"every\") -> loaded _",
             "  run latest lane=search load(\"latest\") -> loaded _",
             "  run replace lane=refresh load(\"replace\") -> loaded _",
         ] {
@@ -5884,6 +5883,18 @@ mod tests {
                 " | load_failed _"
             );
         }
+
+        let document = ui_lang_core::parse(source).unwrap();
+        let mut bare_actions = Vec::new();
+        super::fallible_route_action(
+            source,
+            0,
+            "  run load(\"bare\") -> loaded _",
+            &document,
+            uri,
+            &mut bare_actions,
+        );
+        assert!(bare_actions.is_empty());
 
         let invalidate_line = source
             .lines()
@@ -5914,13 +5925,13 @@ mod tests {
     fn route_handler_parses_canonical_parenthesized_route() {
         assert_eq!(
             super::route_handler(
-                "  run load(snapshot) -> loaded(snapshot, _) | failed(snapshot, _)"
+                "  run every load(snapshot) -> loaded(snapshot, _) | failed(snapshot, _)"
             ),
             Some(("loaded", 2))
         );
         assert_eq!(
             super::route_handler(
-                "  run load(\"a->b\") -> loaded(flag || ready, \"a|b\", _) | failed(_)"
+                "  run every load(\"a->b\") -> loaded(flag || ready, \"a|b\", _) | failed(_)"
             ),
             Some(("loaded", 3))
         );
@@ -5929,12 +5940,13 @@ mod tests {
     #[test]
     fn handler_skeleton_action_uses_parenthesized_route_name_and_arity() {
         let uri = "file:///tmp/route-snapshot-action.ice";
-        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non submit\n  let snapshot = \"launch\"\n  run load(\"a->b\") -> loaded(snapshot, true || false, \"a|b\", _)\nview\n  text \"Ready\"\n";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non submit\n  let snapshot = \"launch\"\n  run every load(\"a->b\") -> loaded(snapshot, true || false, \"a|b\", _)\nview\n  text \"Ready\"\n";
         let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
         let line = source
             .lines()
             .position(|candidate| {
-                candidate == "  run load(\"a->b\") -> loaded(snapshot, true || false, \"a|b\", _)"
+                candidate
+                    == "  run every load(\"a->b\") -> loaded(snapshot, true || false, \"a|b\", _)"
             })
             .unwrap();
         let actions = code_actions_at(

@@ -133,7 +133,7 @@ state
 
 on mount
   loading = true
-  run list_tasks() -> loaded _ | failed _
+  run every list_tasks() -> loaded _ | failed _
 
 on loaded(next)
   tasks = next
@@ -298,9 +298,9 @@ frames. They reject `sync` externs and recomputation-unsafe built-ins:
 `rgba` image constructors, and animation queries whose instant is omitted. The
 category covers both runtime reads and calls that create a fresh retained
 identity. The checker still permits the set in top-level app state initializers,
-views, and handler expressions other than direct `run`/`task` completion route
-expressions. Evaluate one in a preceding handler `let` and route that local, or
-capture it in state when it must remain stable across view passes.
+views, and handler expressions other than direct Future-mode/`task` completion
+route expressions. Evaluate one in a preceding handler `let` and route that
+local, or capture it in state when it must remain stable across view passes.
 
 The expression language is deliberately closed:
 
@@ -317,11 +317,12 @@ The expression language is deliberately closed:
 - declared `pure` extern calls in every expression context;
 - declared `sync` extern calls only in top-level app state initializers and
   immediately evaluated app/component/preset handler expressions, including
-  arguments inside nested task statements; explicit `run` Future and `task`
-  statement success and failure route expressions are pure-only owned snapshots
-  materialized when the statement launches, while `_` is supplied by the
-  delivered completion. Use a preceding handler `let` to route a value produced
-  by `sync`; stream, sip, flow, and native query route timing is unchanged;
+  arguments inside nested task statements; explicit `run every`, `run latest`,
+  and `run replace` Future success and failure route expressions, and `task`
+  statement route expressions, are pure-only owned snapshots materialized when
+  the statement launches, while `_` is supplied by the delivered completion.
+  Use a preceding handler `let` to route a value produced by `sync`; stream,
+  sip, flow, and native query route timing is unchanged;
 - checked native constructor/query families documented by the specification.
 
 Examples:
@@ -358,7 +359,7 @@ on submit
   let title = trim(draft)
   return if loading || empty(title)
   loading = true
-  run create_task(title) -> created _ | failed _
+  run every create_task(title) -> created _ | failed _
 
 on created(next)
   tasks = next
@@ -378,9 +379,10 @@ Rules:
 - Use `return if <bool>` as an early guard.
 - Use `sync` externs only in expressions evaluated while the handler runs, such
   as `let` initializers, assignment right-hand sides, guards, and nested task
-  arguments. Explicit `run` Future and `task` statement success and failure
-  route expressions become owned snapshots when the statement launches, while
-  `_` is supplied by the delivered completion. Both branches materialize at
+  arguments. Explicit `run every`, `run latest`, and `run replace` Future
+  success and failure route expressions, and `task` statement route
+  expressions, become owned snapshots when the statement launches, while `_`
+  is supplied by the delivered completion. Both branches materialize at
   launch but remain pure-only so an unused branch cannot perform an effect;
   evaluate `sync` in a preceding `let` and route that local. Stream, sip, flow,
   and native query route timing is unchanged.
@@ -396,7 +398,7 @@ The punctuation is semantic:
 | `input "Title" <-> draft` | two-way binding to supported state |
 | `button "Save" -> submit` | send a unit interaction to `submit` |
 | `checkbox task.title ... -> toggle(task.id, _)` | pass an expression and emitted bool |
-| `run save() -> saved _` | forward async output |
+| `run every save() -> saved _` | deliver each launched Future completion |
 | `_` | current route's emitted payload |
 | `#row` / `#row(task.id)` | static/dynamic scoped identity |
 | `@bg-surface` | checked semantic utility |
@@ -406,7 +408,7 @@ offers a payload. A parameterless route may intentionally discard a payload.
 
 Available effect families include:
 
-- bare async extern + `run`;
+- bare async extern + explicit `run every`/`latest`/`replace` delivery mode;
 - `task` extern + `task`;
 - `stream` extern + `stream`;
 - `sip` extern + `sip`;
@@ -416,10 +418,11 @@ Available effect families include:
 - native clipboard, font, system, widget, window, pane, image, time, and debug
   operations.
 
-Ordinary `run` delivers every completion. Use a named request lane when later
-work supersedes earlier work: `run latest lane=search` filters stale success
-and failure messages without stopping the old Future, while `run replace
-lane=preview` also aborts the prior Iced task. Equal fully qualified lane names
+Every handler Future names its delivery mode. `run every` delivers every
+completion. Use a named request lane when later work supersedes earlier work:
+`run latest lane=search` filters stale success and failure messages without
+stopping the old Future, while `run replace lane=preview` also aborts the prior
+Iced task. Equal fully qualified lane names
 join calls across handlers for one state owner. A fragment imported `as
 catalog` may contribute an aliased component whose internal lane is likewise
 qualified, but that lane remains owned by each component instance. Unaliased
@@ -429,11 +432,17 @@ scope, a daemon shares one scope across its windows, and each component instance
 is independent. Names are static qualified identifiers and therefore finite per
 owner; one owner cannot mix `latest` and `replace` for a name.
 
+Bare handler `run` is rejected. Subscription `run` is a long-lived stream
+source, while task-flow `from run call()` and `then value -> run call(value)`
+are Task adapters; neither routes a Future completion directly, so neither has
+a delivery mode.
+
 When a synchronous app, daemon, preset, or component handler supersedes pending
 work without starting another request, write `invalidate lane=search` directly
 in that handler before the state transition. It must resolve to an existing
-lane of the same owner, may refer forward to that lane's `run`, and never
-declares a lane or starts a task. It advances the generation so earlier success
+lane of the same owner, may refer forward to that lane's `run latest` or
+`run replace`, and never declares a lane or starts a task. It advances the
+generation so earlier success
 and failure messages are stale. A `latest` Future keeps running; a `replace`
 task is aborted and its current handle released. A component affects only its
 runtime instance. `parallel`, `sequential`, and `abortable` task composition
@@ -676,7 +685,7 @@ ordinary Cargo discovers the same generated tests.
 | `<Button onClick={save}>` | `button "Save" -> save` |
 | `value={draft} onChange={setDraft}` | `input "Title" <-> draft` |
 | `useState(false)` | `state` block + assignment in `on` handler |
-| `useEffect(() => load(), [])` | `on mount` ending in `run`/`task` |
+| `useEffect(() => load(), [])` | `on mount` ending in an explicit Future `run` mode or `task` |
 | component closure over app state | explicit typed prop and route |
 | `children` prop | declared `slot` |
 | conditional JSX | indented `if` or `match` |

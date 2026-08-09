@@ -252,12 +252,12 @@ view
 }
 
 #[test]
-fn request_modes_require_named_lanes_while_bare_run_remains_every() {
+fn parses_explicit_every_while_request_modes_require_named_lanes() {
     let source = r#"app Demo
 extern crate::backend
   fetch() -> str
 on search
-  run fetch() -> loaded _
+  run every fetch() -> loaded _
 on loaded(value)
 view
   text "Demo"
@@ -273,7 +273,8 @@ view
     ));
 
     for mode in ["latest", "replace"] {
-        let error = parse(&source.replace("run fetch", &format!("run {mode} fetch"))).unwrap_err();
+        let error =
+            parse(&source.replace("run every fetch", &format!("run {mode} fetch"))).unwrap_err();
         assert_eq!(error.code, "E050");
         assert_eq!(
             error.message,
@@ -284,6 +285,30 @@ view
             Some(format!("write `run {mode} lane=request_name call(...) -> ...`").as_str())
         );
     }
+}
+
+#[test]
+fn rejects_run_without_an_explicit_delivery_mode() {
+    let error = parse(
+        r#"app Demo
+extern crate::backend
+  fetch() -> str
+on search
+  run fetch() -> loaded _
+on loaded(value)
+view
+  text "Demo"
+"#,
+    )
+    .expect_err("bare run must not select a delivery mode implicitly");
+    assert_eq!(error.code, "E050");
+    assert_eq!(error.message, "`run` requires an explicit delivery mode");
+    assert_eq!(
+        error.hint.as_deref(),
+        Some(
+            "write `run every call(...) -> ...` to deliver every completion; use a named `run latest` or `run replace` lane when newer work supersedes older work"
+        )
+    );
 }
 
 #[test]
@@ -387,8 +412,8 @@ fn parses_all_native_time_operations() {
 #[test]
 fn parses_structured_task_groups() {
     let source = SOURCE.replace(
-            "  run load() -> loaded _ | failed _",
-            "  parallel\n    run load() -> loaded _ | failed _\n    sequential\n      task clipboard read -> clipboard_read _\n      task system theme -> theme_read _",
+            "  run every load() -> loaded _ | failed _",
+            "  parallel\n    run every load() -> loaded _ | failed _\n    sequential\n      task clipboard read -> clipboard_read _\n      task system theme -> theme_read _",
         );
     let document = parse(&source).unwrap();
     let Statement::TaskGroup {
@@ -408,8 +433,8 @@ fn parses_structured_task_groups() {
         } if statements.len() == 2
     ));
 
-    let error =
-        parse(&SOURCE.replace("  run load() -> loaded _ | failed _", "  parallel")).unwrap_err();
+    let error = parse(&SOURCE.replace("  run every load() -> loaded _ | failed _", "  parallel"))
+        .unwrap_err();
     assert_eq!(error.code, "E050");
     assert!(error.message.contains("at least one"));
 }
@@ -422,8 +447,8 @@ fn parses_abortable_tasks_and_handles() {
             "  query = \"\"\n  request:task-handle? = none",
         )
         .replace(
-            "  run load() -> loaded _ | failed _",
-            "  abortable request abort-on-drop\n    run load() -> loaded _ | failed _",
+            "  run every load() -> loaded _ | failed _",
+            "  abortable request abort-on-drop\n    run every load() -> loaded _ | failed _",
         );
     let document = parse(&source).unwrap();
     assert_eq!(
@@ -441,16 +466,16 @@ fn parses_abortable_tasks_and_handles() {
     ));
 
     let error = parse(&SOURCE.replace(
-        "  run load() -> loaded _ | failed _",
-        "  abortable request later\n    run load() -> loaded _ | failed _",
+        "  run every load() -> loaded _ | failed _",
+        "  abortable request later\n    run every load() -> loaded _ | failed _",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E050");
     assert!(error.message.contains("abort-on-drop"));
 
     let error = parse(&SOURCE.replace(
-            "  run load() -> loaded _ | failed _",
-            "  abortable request\n    run load() -> loaded _ | failed _\n    run load() -> loaded _ | failed _",
+            "  run every load() -> loaded _ | failed _",
+            "  abortable request\n    run every load() -> loaded _ | failed _\n    run every load() -> loaded _ | failed _",
         ))
         .unwrap_err();
     assert_eq!(error.code, "E050");

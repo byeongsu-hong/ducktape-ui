@@ -1,6 +1,6 @@
 on mount
   loading = true
-  run load_home() -> home_loaded _ | failed _
+  run every load_home() -> home_loaded _ | failed _
 
 on home_loaded(feed)
   top_picks = feed.top_picks
@@ -14,7 +14,7 @@ on navigate(next_section)
 on sign_in
   return if loading
   loading = true
-  run authenticate() -> authenticated _ | failed _
+  run every authenticate() -> authenticated _ | failed _
 
 on authenticated(session)
   signed_in = true
@@ -31,7 +31,7 @@ on search
   loading = true
   section = MusicSection.search
   queue_open = false
-  run search_catalog(search_query) -> searched _ | failed _
+  run every search_catalog(search_query) -> searched _ | failed _
 
 on searched(results)
   search_results = results

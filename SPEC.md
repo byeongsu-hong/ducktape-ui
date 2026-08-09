@@ -548,7 +548,7 @@ component_widget_operation = ("focus" | "focused" | "cursor-front" | "cursor-end
                            | ("snap" | "scroll-to" | "scroll-by") widget_target expr expr
                            | "find" "id" widget_target
 
-run_statement = "run" (("latest" | "replace") "lane=" qualified_name)?
+run_statement = "run" ("every" | (("latest" | "replace") "lane=" qualified_name))
                 call "->" route ("|" route)?
 invalidate_statement = "invalidate" "lane=" qualified_name
 qualified_name = name ("::" name)*
@@ -1585,7 +1585,7 @@ preset seeded
     draft = "Preset task"
     loading = true
   boot
-    run list_tasks() -> loaded _ | failed _
+    run every list_tasks() -> loaded _ | failed _
 ```
 
 Each preset starts from declared state and internal widget layout state without
@@ -2443,9 +2443,10 @@ extern crate::backend
 A `sync` call is accepted in a top-level app state initializer or an immediately
 evaluated app, component, or preset handler expression. This includes handler
 `let` initializers, assignment right-hand sides, guards, and task arguments,
-including arguments inside nested task groups. Explicit expressions in `run`
-Future and `task` statement success and failure routes become owned snapshots
-when the statement launches; `_` is supplied only by the delivered completion.
+including arguments inside nested task groups. Explicit expressions in
+`run every`, `run latest`, and `run replace` Future success and failure routes,
+and in `task` statement routes, become owned snapshots when the statement
+launches; `_` is supplied only by the delivered completion.
 Both branches are materialized at launch, so their expressions remain pure-only
 and a direct `sync` call is rejected even though the snapshot is immediate.
 Each result must be ordinary cloneable Ice data. Direct recomputation-unsafe
@@ -2876,7 +2877,7 @@ on submit
   let title = trim(draft)
   return if loading || empty(title)
   loading = true
-  run create_task(title) -> created _ | failed _
+  run every create_task(title) -> created _ | failed _
 ```
 
 Rules:
@@ -2893,16 +2894,18 @@ Rules:
 - `return if` requires `bool`;
 - `sync` externs are allowed in immediately evaluated app, component, and preset
   handler expressions, including `let` initializers, assignment right-hand
-  sides, and arguments in nested task statements; explicit `run` Future and
-  `task` statement success and failure route expressions become owned snapshots
-  when the statement launches, while `_` is supplied by the delivered
-  completion. Both branches materialize at launch but remain pure-only so an
+  sides, and arguments in nested task statements; explicit `run every`,
+  `run latest`, and `run replace` Future success and failure route expressions,
+  and `task` statement route expressions, become owned snapshots when the
+  statement launches, while `_` is supplied by the delivered completion. Both
+  branches materialize at launch but remain pure-only so an
   unused branch cannot perform an effect. Each result must be ordinary cloneable
   Ice data, and direct recomputation-unsafe builtins are rejected; evaluate a
   runtime value in a preceding `let` and route that local. Stream, sip, flow,
   and native query route timing is unchanged;
 - every statement that immediately returns an iced `Task` must be final:
-  `exit`, `run`, `task`, `stream`, `sip`, `flow`, task groups, abortable tasks,
+  `exit`, any Future `run` mode, `task`, `stream`, `sip`, `flow`, task groups,
+  abortable tasks,
   clipboard writes, widget operations, window tasks, and pane queries;
 - `return if` is a conditional guard, pane mutations are synchronous state
   changes, and `invalidate lane=<name>` only advances existing request-lane
@@ -2914,20 +2917,28 @@ Rules:
 - incompatible incoming payloads are a type error;
 - `_` means the payload produced by the current widget or action route.
 
-`run` wraps an async Rust function with `Task::perform`. `task` directly maps a
+Every handler Future explicitly selects one delivery mode: `run every`,
+`run latest lane=<qualified-name>`, or `run replace lane=<qualified-name>`.
+Bare handler `run` is E050. `run` inside `subscribe` is the separate long-lived
+stream-source construct; task-flow `from run call()` and
+`then value -> run call(value)` are Task adapters that do not route a Future
+completion directly and therefore have no delivery mode. All three Future
+modes wrap an async Rust function with `Task::perform`. `task` directly maps a
 Rust function that already returns an iced `Task`, which exposes clipboard,
 window, focus, scroll, font, system, cancellation, batching, and other runtime
 operations without duplicating their implementation in Ice.
 
-One in-flight `run` Future or `task` statement owns one set of explicit route
-snapshots. The set is released when that work completes or is dropped, including
-a `replace` abort. A stale `latest` Future retains its set until it finishes. A
-multi-output `task` retains only the original set and clones values into each
+One in-flight Future-mode statement or `task` statement owns one set of
+explicit route snapshots. The set is released when that work completes or is
+dropped, including a `replace` abort. A stale `latest` Future retains its set
+until it finishes. A multi-output `task` retains only the original set and
+clones values into each
 delivered message; there is no global snapshot map or completion-by-completion
 accumulation.
 
-Ordinary `run` delivers every completion. Request/response work that can be
-superseded uses a statically named request lane:
+`run every` delivers every completion and owns no request lane.
+Request/response work that can be superseded uses a statically named request
+lane:
 
 ```ice
 on search
@@ -2969,9 +2980,9 @@ and releases the current replacement handle. A component invalidates only that
 runtime instance's lane. `parallel`, `sequential`, and `abortable` task
 composition do not accept this non-task statement.
 
-In a component handler, a named `run` may be direct or a leaf of nested
-`parallel` and `sequential` task structure. Its lane still belongs to that
-component instance.
+In a component handler, a named `run latest` or `run replace` may be direct or
+a leaf of nested `parallel` and `sequential` task structure. Its lane still
+belongs to that component instance.
 
 `latest` advances the lane generation and routes only the current generation's
 success or failure. It does not cancel stale Futures: they and their captured
@@ -3001,13 +3012,13 @@ Multiple tasks can be composed as one structured final statement:
 ```ice
 on refresh
   parallel
-    run load_tasks() -> tasks_loaded _ | failed _
-    run load_profile() -> profile_loaded _ | failed _
+    run every load_tasks() -> tasks_loaded _ | failed _
+    run every load_profile() -> profile_loaded _ | failed _
 
 on save_then_refresh
   sequential
-    run save_draft() -> saved _ | failed _
-    run load_tasks() -> tasks_loaded _ | failed _
+    run every save_draft() -> saved _ | failed _
+    run every load_tasks() -> tasks_loaded _ | failed _
 ```
 
 `parallel` lowers to `Task::batch`; `sequential` lowers to repeated
@@ -3026,7 +3037,7 @@ state
 
 on start
   abortable request abort-on-drop
-    run load_tasks() -> tasks_loaded _ | failed _
+    run every load_tasks() -> tasks_loaded _ | failed _
 
 on cancel
   abort request
@@ -3165,11 +3176,11 @@ Examples of payload flow:
 
 ```ice
 checkbox task.title checked=task.done -> toggle(task.id, _)
-run list_tasks() -> loaded _ | failed _
+run every list_tasks() -> loaded _ | failed _
 task copy_text(draft) -> copied
 
 on toggle(id, checked)
-  run set_task_done(id, checked) -> updated _ | failed _
+  run every set_task_done(id, checked) -> updated _ | failed _
 ```
 
 `on mount` runs once during app initialization and has no parameters. Generated
@@ -3656,7 +3667,8 @@ component Counter(label:str)
 They have one root, typed inputs, and no implicit capture of app state. A local
 `state` block accepts self-contained ordinary cloneable values. Local `on`
 handlers may assign that state, stop with `return if`, or end with a Future
-extern call using `run`. Future runs and scoped widget operations may compose
+extern call using an explicit `run every`, `run latest`, or `run replace`
+delivery mode. Future runs and scoped widget operations may compose
 with `parallel` and `sequential`; `abortable`, other native tasks, streams,
 lifecycle hooks, and implicit prop capture stay at app level. Pass a prop or
 event value explicitly through the route when a local handler needs it.
@@ -5867,9 +5879,10 @@ the same parser/checker/source map as the compiler. Completion distinguishes
 top-level, handler, view, typed-match-arm, widget-status, component-call,
 theme-contract, and test contexts.
 Checked component calls expose only their read/bind/default props, slots, and
-named events; handler completion lowers each Future, Task, and Stream extern to
-its valid `run`, `task`, or `stream` form. Component hover and signature help
-show the complete contract, while recipe hover flattens utilities base-first.
+named events; handler completion lowers each Future extern to `run every`, each
+Task extern to `task`, and each Stream extern to `stream`. Component hover and
+signature help show the complete contract, while recipe hover flattens utilities
+base-first.
 Code actions return direct workspace edits for binding syntax, missing event and
 error routes, handler skeletons, accessible child-content button labels, and
 long-node `with` conversion. They can also extract an identical sequence of two

@@ -48,7 +48,7 @@ preset seeded
     draft = "Preset task"
     loading = true
   boot
-    run list_tasks() -> loaded _ | failed _
+    run every list_tasks() -> loaded _ | failed _
 
 test workspace_pane_operations
   dispatch resize_workspace
