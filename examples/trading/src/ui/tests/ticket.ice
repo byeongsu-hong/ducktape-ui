@@ -104,3 +104,384 @@ test trading_the_ticket_side_says_which_side_is_selected
   expect !ticket_buy
   expect a11y selling name "Sell, already selected"
   expect a11y buy_offered name "Buy"
+
+// A market order has no price to type, and the panel quoted one anyway:
+// whatever was left in the limit field, from whatever order was being written
+// before. Every figure under the rule — what it is worth, what it ties up,
+// where it dies — was then about an order nobody was placing. A market order's
+// price is the book's, and it is the price the panel already prints one row
+// down, so the two cannot come apart.
+test trading_a_market_order_is_quoted_at_the_book_it_would_cross
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target market = ticket/ticket-kind/kind-market/root/off
+  target limit = ticket/limit-group
+  dispatch ticket_sized("1.0")
+  // A limit order is quoted at the field, which the fixture seeded at the
+  // market's own price.
+  expect !ticket_market
+  expect exists limit
+  expect ticket_at ~= mark_price(focus)
+  expect quote.notional ~= mark_price(focus)
+  expect text "IF YOU CROSS"
+  click market
+  expect ticket_market
+  // There is no price to type, so there is no field to type it in, and the
+  // row that priced a choice between resting and crossing is now the price.
+  expect missing limit
+  expect text "FILLS AT"
+  expect no text "IF YOU CROSS"
+  // Crossing to buy lifts the asks, so the order pays above the mid — and
+  // every figure priced off it moves with it rather than staying on the
+  // number the field used to hold.
+  expect ticket_at > mark_price(focus)
+  expect quote.notional > mark_price(focus)
+  // Exactly the walk rather than near it: one bitcoin of order is one bitcoin
+  // of book, and the figure the row prints is the figure the panel spent.
+  expect quote.notional ~= ticket_at
+  expect text "Crosses the spread now, at 64,001.00."
+  capture ticket_market_order
+
+// Which order type and which resting rule are selected was the highlight and
+// nothing else. accesskit carries a toggled state for a checkbox and a switch,
+// not for a button, so a reader who cannot see the highlight was one press
+// from an order that fills now when they meant one that rests.
+test trading_the_order_type_and_its_life_say_which_is_selected
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target limit_on = ticket/ticket-kind/kind-limit/root/on
+  target market_off = ticket/ticket-kind/kind-market/root/off
+  target market_on = ticket/ticket-kind/kind-market/root/on
+  target tif = ticket/limit-group/ticket-tif
+  target resting = tif/tif-gtc/root/on
+  target crossing = tif/tif-ioc/root/off
+  target crossing_on = tif/tif-ioc/root/on
+  target resting_off = tif/tif-gtc/root/off
+  expect a11y limit_on name "Rest at a price you choose, already selected"
+  expect a11y market_off name "Cross the spread now"
+  expect a11y resting name "Rest until cancelled, already selected"
+  expect a11y crossing name "Fill now or cancel the rest"
+  click crossing
+  expect ticket_tif == Tif.ioc
+  expect a11y crossing_on name "Fill now or cancel the rest, already selected"
+  expect a11y resting_off name "Rest until cancelled"
+  click market_off
+  expect ticket_market
+  expect a11y market_on name "Cross the spread now, already selected"
+  // A market order has no resting rule to choose, so the row is not there to
+  // be announced at all.
+  expect missing tif
+
+// Read live from Lighter's own SDK: its three are IMMEDIATE_OR_CANCEL,
+// GOOD_TILL_TIME and POST_ONLY. There is no rest-until-cancelled — an order
+// carries a deadline it was signed with — so a button reading GTC over that is
+// this app inventing a guarantee the venue never made.
+test trading_a_venue_that_expires_an_order_does_not_call_it_cancelled
+  preset lighter
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target resting = ticket/limit-group/ticket-tif/tif-gtc/root/on
+  target crossing = ticket/limit-group/ticket-tif/tif-ioc/root/off
+  expect venue == Venue.lighter
+  expect ticket_tif == Tif.gtc
+  expect text "GTT" within ticket
+  expect no text "GTC" within ticket
+  expect a11y resting name "Rest until its deadline, already selected"
+  expect text "Lighter has no rest-until-cancelled: the order carries a deadline it is signed with and expires there."
+  // And the other two mean the same thing at both exchanges, so neither is
+  // renamed and neither carries a sentence.
+  click crossing
+  expect ticket_tif == Tif.ioc
+  expect text "IOC" within ticket
+  expect no text "expires there"
+
+// A target on the wrong side of the entry is a stop wearing the wrong name,
+// and the venue sends it as one: the trigger is already true when the order
+// fills, so the position closes at a loss immediately. That is one press from
+// the opposite of what was asked for, so it is refused with the reason.
+test trading_a_target_on_the_wrong_side_of_the_entry_is_refused_with_the_reason
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target attach = ticket/ticket-attach
+  target take = ticket/ticket-levels/ticket-tp
+  dispatch ticket_sized("2.0")
+  // Folded away, and folded away is not attached: there is no field to type
+  // a level into and no level on the order.
+  expect missing take
+  click attach
+  expect ticket_levels
+  expect ticket_buy
+  expect ticket_at ~= mark_price(focus)
+  // Two fields open at the foot of a panel that scrolls by design, so reading
+  // what they paint is a scroll — the reader's, and this one. Every statement
+  // that follows a change in what the panel holds scrolls again, because the
+  // foot of it has moved.
+  scroll-to ticket 0.0 400.0
+  // Typed into the field rather than dispatched, because the route from that
+  // field to the order is part of the claim. Above the entry on a long: two
+  // bitcoin taken 1,000 higher is 2,000.
+  focus take
+  replace "65,000.00"
+  expect ticket_tp == "65,000.00"
+  expect empty(tp_refusal)
+  expect tp_pnl ~= 2000.0
+  expect a11y take name "Take profit price, +$2,000.00 at that level"
+  expect text "+$2,000.00"
+  // Below it, and the same field is a stop that fires on fill. Dispatched from
+  // here on: the field's route is proved above, and what is left is the
+  // arithmetic and the sentence, neither of which is about typing.
+  dispatch ticket_took("63,000.00")
+  expect tp_refusal == "A take-profit on a long sits above the 64,000.00 it opens at."
+  expect a11y take name "Take profit price, -$2,000.00 at that level"
+  scroll-to ticket 0.0 400.0
+  expect text tp_refusal
+  capture ticket_levels_refused
+  // The figure goes with the refusal rather than sitting beside it saying the
+  // order loses 2,000 on purpose. It was painted one statement ago, which is
+  // what stops this being an assertion about text that was never there.
+  expect no text "+$2,000.00"
+  expect no text "-$2,000.00"
+  // The short is the mirror, and it is the assertion that stops this reading
+  // "any level below the entry is refused".
+  dispatch ticket_side(false)
+  expect empty(tp_refusal)
+  expect tp_pnl ~= 2000.0
+
+// A stop past the cliff is worse than a stop on the wrong side: it reads as
+// protection and is not there. The engine closes the position before the
+// trigger is reached, at the engine's price rather than the chosen one.
+test trading_a_stop_past_the_cliff_says_the_engine_gets_there_first
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target attach = ticket/ticket-attach
+  target stop = ticket/ticket-levels/ticket-sl
+  click attach
+  // A sell adds to the short the fixture holds, so the order opens a position
+  // and has a cliff to be past. A buy would close one and have none.
+  dispatch ticket_side(false)
+  dispatch ticket_sized("2.0")
+  expect quote.liquidation > ticket_at
+  // Between the entry and the cliff, which is where a stop belongs — typed,
+  // because the route from the field to the order is part of the claim.
+  focus stop
+  replace "70,000.00"
+  expect ticket_sl == "70,000.00"
+  expect empty(sl_refusal)
+  expect sl_pnl ~= -12000.0
+  // Below the entry on a short is the other kind of order, refused in the
+  // take-profit's words. Establishing it here is what makes the last
+  // assertion about a sentence that was really on screen.
+  dispatch ticket_stopped("60,000.00")
+  expect sl_refusal == "A stop-loss on a short sits above the 64,000.00 it opens at."
+  scroll-to ticket 0.0 400.0
+  expect text sl_refusal
+  // Past the cliff, and the stop is decoration: still on the right side of the
+  // entry, so this is the second refusal rather than the first firing twice.
+  dispatch ticket_stopped("80,000.00")
+  expect sl_refusal == "The engine closes this short at 75,851.85, before that stop is reached."
+  scroll-to ticket 0.0 400.0
+  expect text sl_refusal
+  expect no text "A stop-loss on a short sits above the 64,000.00 it opens at."
+
+// Lighter's public API takes no take-profit or stop-loss attached to an entry
+// — its SDK exposes them only as whole independent orders, with nothing
+// anywhere naming a parent. Two fields the app would have to drop are worse
+// than no fields: the entry would go and the protection would not.
+test trading_a_venue_that_attaches_no_levels_says_so_instead_of_offering_them
+  preset lighter
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target attach = ticket/ticket-attach
+  expect missing attach
+  expect no text "Attach a take-profit and a stop-loss"
+  // The sentence is the last thing in a panel that scrolls, and it is prose
+  // rather than a control: every control the ticket has is on screen already.
+  scroll-to ticket 0.0 400.0
+  expect text "Lighter attaches no levels to an entry. Its API takes them as separate orders once the position exists, which this app does not place."
+  // And the venue that does take them offers them, which is what makes this a
+  // gap rather than a feature nobody built.
+  dispatch switch_venue(Venue.hyperliquid)
+  dispatch symbols_loaded(demo_symbols())
+  expect exists attach
+  expect text "Attach a take-profit and a stop-loss"
+  expect no text "Lighter attaches no levels to an entry"
+
+// Reduce-only is a promise to the venue that the order only moves the position
+// towards zero, and the venue keeps it by refusing the order rather than by
+// shrinking it. A box that quietly guaranteed nothing would have been the
+// reader's only warning.
+test trading_reduce_only_refuses_to_add_to_what_is_held
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target reduce = ticket/ticket-reduce
+  dispatch ticket_sized("2.0")
+  // The fixture is short 30 bitcoin, so a buy reduces it and the promise is
+  // one the order keeps.
+  expect position_held(positions, coin) < 0.0
+  expect ticket_buy
+  click reduce
+  expect ticket_reduce
+  expect empty(reduce_refusal)
+  expect no text "Reduce-only sends nothing"
+  // A sell adds to it, and the same box now describes an order the venue
+  // would drop on the floor.
+  dispatch ticket_side(false)
+  expect reduce_refusal == "This order adds to the short you hold. Reduce-only sends nothing rather than a smaller order."
+  expect text reduce_refusal
+  // Unticked, the same order is ordinary and says nothing.
+  click reduce
+  expect !ticket_reduce
+  expect no text "Reduce-only sends nothing"
+
+// CLOSE POSITION is a reduce-only order with the size and the side already
+// known. It sets the box rather than being a fourth path that happens to agree
+// with it, so everything that follows from the box follows here: the order is
+// capped at the position, opens nothing, and asks for no margin.
+test trading_a_close_is_the_reduce_only_order_it_says_it_is
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target close = ticket/close-held
+  expect !ticket_reduce
+  click close
+  expect ticket_reduce
+  expect ticket_buy
+  expect ticket_size == "30"
+  expect quote.margin ~= 0.0
+  expect quote.liquidation ~= 0.0
+  // And the cap is the box's rather than the button's: typing past the
+  // position leaves the order at the position, because that is all the venue
+  // would fill.
+  dispatch ticket_sized("50")
+  expect ticket_size == "50"
+  expect ticket_coins == "30"
+  expect text "Closes your short"
+  expect quote.margin ~= 0.0
+
+// An isolated position stands on the margin posted behind it and its cliff
+// falls out of its own entry and leverage. A cross position stands on the
+// whole account and dies when the account does. Quoting the isolated formula
+// for a cross order puts the cliff further from the entry than it is — or, on
+// an account this size, a great deal nearer than it is. Either way it is the
+// wrong order's cliff.
+test trading_a_cross_order_dies_against_the_account_and_an_isolated_one_does_not
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target cross = ticket/margin-mode/mode-cross/root/off
+  target isolated = ticket/margin-mode/mode-isolated/root/off
+  dispatch ticket_side(false)
+  dispatch ticket_sized("1.0")
+  expect !ticket_cross
+  // Isolated: 64,000 × (1 + 1/5) ÷ (1 + 1/80), the closed form for a short at
+  // the leverage the ticket priced at and the requirement this market holds.
+  expect quote.liquidation ~= 75851.851851
+  expect text "Isolated margin: this order stands on the requirement above and on nothing else, at the maintenance this market holds. The rest of the account is untouched by it."
+  click cross
+  expect ticket_cross
+  // Cross: the account is $3.7m against a $24k requirement, so the same order
+  // has a very long way to fall before anything closes it. The isolated
+  // figure would have said 75,851 — nearer than the truth by 100,000.
+  expect quote.liquidation > 180000.0
+  expect quote.known
+  expect text "Cross margin: this order is backed by the whole account and goes when the account does, at the requirement drawn under the equity figure. Everything else held cross moves that line."
+  // The requirement itself is the same figure either way. It is where it
+  // stands and what kills it that differ, which is why the mode is said out
+  // loud rather than left to the number.
+  expect quote.margin ~= 12800.0
+  click isolated
+  expect !ticket_cross
+  expect quote.liquidation ~= 75851.851851
+
+// A cross cliff is measured against an account. Read without one, the same
+// arithmetic has nothing to measure the fall against, and a panel that filled
+// the gap with the isolated figure would be answering a question nobody asked.
+test trading_a_cross_cliff_needs_the_account_it_is_measured_against
+  preset browsing
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target cross = ticket/margin-mode/mode-cross/root/off
+  dispatch ticket_priced("64,000.00")
+  dispatch ticket_sized("1.0")
+  // No address, so no account — and isolated needs none, so it still answers.
+  expect !account_read(account)
+  expect quote.known
+  expect quote.liquidation > 0.0
+  click cross
+  expect !quote.known
+  expect quote.liquidation ~= 0.0
+  expect text "needs the account it is held against"
+  expect no text "market not loaded"
+
+// The unit toggle is a change of wording rather than a change of order. A
+// reader who typed three bitcoin and pressed USD wants to see what three
+// bitcoin costs; left alone the 3 would become three dollars of it, and the
+// field looks identical either way.
+test trading_a_size_in_dollars_is_the_same_order_as_the_size_in_coins
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target dollars = ticket/size-unit/unit-usd/root/off
+  target coins = ticket/size-unit/unit-coin/root/off
+  dispatch ticket_sized("3")
+  expect !ticket_usd
+  expect ticket_coins == "3"
+  expect quote.notional ~= 192000.0
+  click dollars
+  expect ticket_usd
+  // Three bitcoin at the limit price is 192,000 of them, and it is the same
+  // order: the size the venue would be sent has not moved.
+  expect ticket_size == "192,000.00"
+  expect ticket_coins == "3"
+  expect quote.notional ~= 192000.0
+  // And the rate is on screen, because a conversion nobody can check is a
+  // number nobody can check.
+  expect text "Sized at 64,000.00, the limit price."
+  click coins
+  expect !ticket_usd
+  expect ticket_size == "3"
+  expect ticket_coins == "3"
+  expect no text "Sized at 64,000.00, the limit price."
+
+// MAX in dollars and MAX in coins are one press said two ways: the field is
+// filled in the unit being typed, and the order the venue would be sent is the
+// same either way. Filled at one price and read back at another, the button
+// would offer a position the account cannot carry — which is the failure the
+// floor onto the instrument's step already exists to prevent.
+test trading_the_share_buttons_fill_the_unit_the_field_is_typed_in
+  preset held
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target dollars = ticket/size-unit/unit-usd/root/off
+  // 2,200 free at 5x is 11,000 of notional, which at the 64,000 in the field
+  // is 0.171875 of a coin — floored to the five decimals this market quotes.
+  dispatch size_share(1.0)
+  expect !ticket_usd
+  expect ticket_size == "0.17187"
+  expect ticket_coins == "0.17187"
+  click dollars
+  dispatch size_share(1.0)
+  expect ticket_usd
+  expect ticket_size == "11,000.00"
+  // The same order, which is the whole claim: the dollars in the field are
+  // read back at the price they were filled at.
+  expect ticket_coins == "0.17187"
+  // And inside what the account can carry rather than over it.
+  expect quote.notional <= 11000.0

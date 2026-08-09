@@ -252,14 +252,6 @@ fn app(screen: Screen) -> Trading {
     state.tape = hyperliquid::demo_candles();
     state.ticket_price = "64,000.00".to_owned();
     state.ticket_size = "3.00".to_owned();
-    state.quote = hyperliquid::price_ticket(
-        state.ticket_price.clone(),
-        state.ticket_size.clone(),
-        state.ticket_leverage.clone(),
-        state.focus.clone(),
-        state.ticket_buy,
-        0.0,
-    );
     state
 }
 
@@ -730,7 +722,14 @@ fn direct_call_cost() {
         "funding_day(focus)",
         hyperliquid::funding_day(
             state.focus.clone(),
-            state.ticket_price.clone(),
+            hyperliquid::order_price(
+                false,
+                state.ticket_price.clone(),
+                state.book.clone(),
+                state.ticket_size.clone(),
+                state.ticket_buy,
+                state.focus.clone()
+            ),
             state.ticket_size.clone(),
             state.ticket_buy
         )
@@ -864,12 +863,21 @@ fn direct_call_cost() {
     price_fold!(
         "price_ticket(focus)",
         hyperliquid::price_ticket(
-            state.ticket_price.clone(),
+            hyperliquid::order_price(
+                false,
+                state.ticket_price.clone(),
+                state.book.clone(),
+                state.ticket_size.clone(),
+                state.ticket_buy,
+                state.focus.clone()
+            ),
             state.ticket_size.clone(),
             state.ticket_leverage.clone(),
             state.focus.clone(),
             state.ticket_buy,
-            0.0
+            0.0,
+            state.ticket_cross,
+            state.account.clone()
         )
     );
     price_fold!(
@@ -1224,7 +1232,6 @@ impl ProbeClone for Trading {
         state.tape = self.tape.clone();
         state.ticket_price = self.ticket_price.clone();
         state.ticket_size = self.ticket_size.clone();
-        state.quote = self.quote.clone();
         state
     }
 }

@@ -21,6 +21,11 @@ extern crate::venue
   pure venue_note(venue:Venue) -> str
   pure venue_account_note(venue:Venue, watching:bool, missing:bool, failure:str) -> str
   pure venue_orders_note(venue:Venue, watching:bool, failure:str) -> str
+  pure tif_name(venue:Venue, tif:Tif) -> str
+  pure tif_act(venue:Venue, tif:Tif) -> str
+  pure venue_tif_note(venue:Venue, tif:Tif) -> str
+  pure venue_attaches_levels(venue:Venue) -> bool
+  pure venue_levels_note(venue:Venue) -> str
   pure venue_fills_note(venue:Venue, watching:bool, failure:str) -> str
   venue_symbols(venue:Venue) -> [SymbolRow] ! HlError
   venue_candles(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError

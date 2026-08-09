@@ -27,6 +27,23 @@ enum Venue
   lighter
   lighter_testnet
 
+// What kind of order the ticket is describing. Not a filter over one order
+// shape: a market order has no price to type and is quoted off the book, a
+// limit order is quoted off the field, and the two answer MARGIN REQUIRED and
+// LIQUIDATION with different numbers for the same size.
+enum OrderKind
+  market
+  limit
+
+// How long a limit order lives, which is one fact about it and not three. A
+// post-only order that was also immediate-or-cancel would be an order that
+// must not cross and must fill now; two booleans can hold that and an enum
+// cannot, which is the whole reason this is one.
+enum Tif
+  gtc
+  ioc
+  alo
+
 state
   page:Page = Page.terminal
   venue:Venue = Venue.hyperliquid
@@ -52,11 +69,35 @@ state
   fills:[Fill] = []
   tape_prints:[Trade] = []
   alerts:[Alert] = []
+  // The order being described, field by field. Every one of these is a fact a
+  // real order carries on the wire, and nothing else here is: the readouts
+  // below the ticket are all projections of this handful, computed in the
+  // `derived` block so no handler can set one and forget another.
   ticket_buy = true
+  ticket_kind:OrderKind = OrderKind.limit
+  ticket_tif:Tif = Tif.gtc
   ticket_price = ""
   ticket_size = ""
+  // Which unit the size is being typed in. It is a wording rather than a
+  // second size: `ticket_coins` below is the order either way, and pressing
+  // the toggle rewrites the field so the quantity survives the press.
+  ticket_usd = false
   ticket_leverage = "5"
-  quote:Ticket = price_ticket("", "", "5", none, true, 0.0)
+  // Isolated by default, which is the mode this panel has always quoted and
+  // the only one it can quote without an account. Neither venue documents
+  // which mode a new market opens in, and defaulting to the one the arithmetic
+  // below can actually answer beats defaulting to a guess about the venue.
+  ticket_cross = false
+  // A promise to the venue that the order only moves the position towards
+  // zero. CLOSE POSITION is this with the size and side filled in, so it sets
+  // this rather than carrying a path of its own.
+  ticket_reduce = false
+  // Whether the two level fields are unfolded. A view flag rather than a
+  // fact about the order — closing it clears both, so a level can never be
+  // attached out of sight.
+  ticket_levels = false
+  ticket_tp = ""
+  ticket_sl = ""
   orders:[Order] = []
   book:Book? = none
   hover:CandleHit? = none
@@ -106,6 +147,36 @@ derived
   // can. `add_alert` refuses silently, so the button reads this to disable
   // itself and print the reason rather than answering a press with nothing.
   watch_refusal = alert_refused(alerts, coin, ticket_price, mark_price(focus))
+  // The order, normalized, and everything the panel says about it. This chain
+  // used to be eight copies of one `price_ticket` call, re-assigned by hand in
+  // every handler that touched a field — which is a quote that goes stale the
+  // first time a new field forgets to join the list. Derived, a field cannot
+  // be set without the figures following it.
+  ticket_market = ticket_kind == OrderKind.market
+  // What the size is denominated against when it is typed in dollars, and the
+  // rate `size_note` prints so the reader can check it.
+  ticket_unit = size_price(ticket_market, ticket_price, book, focus)
+  // The order's size in the instrument: the unit toggle converted, and
+  // reduce-only capped at the position it promises not to exceed. This is what
+  // every figure below is computed from and what a payload is built from, so
+  // the panel and the wire cannot describe different orders.
+  ticket_coins = order_size(ticket_size, ticket_usd, ticket_unit, focus, ticket_reduce, position_held(positions, coin), ticket_buy)
+  // The price the order actually transacts at. A limit order's is in the
+  // field; a market order has no field, and is quoted at what walking the book
+  // would pay — the same walk IF YOU CROSS prints, spent once here rather than
+  // printed beside a typed number that contradicts it.
+  ticket_at = order_price(ticket_market, ticket_price, book, ticket_coins, ticket_buy, focus)
+  quote = price_ticket(ticket_at, ticket_coins, ticket_leverage, focus, ticket_buy, position_held(positions, coin), ticket_cross, account)
+  // Why the order as typed cannot be sent, one refusal per control. Each is a
+  // sentence beside the control that caused it rather than a press that
+  // answers with nothing, which is the rule WATCH THIS LEVEL already follows.
+  reduce_refusal = reduce_refused(positions, coin, ticket_buy)
+  tp_refusal = tp_refused(ticket_at, ticket_tp, ticket_buy)
+  sl_refusal = sl_refused(ticket_at, ticket_sl, ticket_buy, quote.liquidation)
+  // What each level would realize if it were reached, which is the whole of
+  // why one level is chosen over another.
+  tp_pnl = level_pnl(ticket_at, ticket_tp, ticket_coins, ticket_buy)
+  sl_pnl = level_pnl(ticket_at, ticket_sl, ticket_coins, ticket_buy)
 
 // The custody panel in each state it can be drawn in. `clock` is the same
 // reading the view asks `session_can_trade` with, so a fixture is live or
@@ -185,7 +256,6 @@ preset held
     live = true
     ticket_price = "64,000.00"
     ticket_size = "3.00"
-    quote = price_ticket("64,000.00", "3.00", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
     portfolio_history = demo_portfolio_history()
 
 // The terminal as the other venue actually leaves it, which is the whole point
@@ -216,7 +286,6 @@ preset lighter
     live = true
     ticket_price = "64,970.00"
     ticket_size = "3.00"
-    quote = price_ticket("64,970.00", "3.00", "5", symbol_row(demo_symbols_lighter(), "BTC"), true, position_held(demo_positions_lighter(), "BTC"))
     portfolio_history = portfolio_unavailable("Historical performance on Lighter needs a read-only API token; this address-only session still shows current exposure.")
 
 // The test deployment of the exchange the app boots on. Nothing here is a
@@ -240,7 +309,6 @@ preset testnet
     live = true
     ticket_price = "64,000.00"
     ticket_size = "3.00"
-    quote = price_ticket("64,000.00", "3.00", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
 
 // The same terminal, read for an address that has no account on this venue —
 // which is the ordinary shape of one address read at two exchanges rather than
@@ -303,7 +371,6 @@ preset browsing
     gate = false
     symbols = demo_symbols()
     focus = symbol_row(demo_symbols(), "BTC")
-    quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, 0.0)
     interval = "1m"
     tape = demo_candles()
     book = some(demo_book())
@@ -339,7 +406,6 @@ preset at_risk
     live = true
     ticket_price = "58,000.00"
     ticket_size = "5.00"
-    quote = price_ticket("58,000.00", "5.00", "5", symbol_row(demo_symbols_at_risk(), "BTC"), true, 5.0)
 
 preset hovering
   state
@@ -355,7 +421,6 @@ preset hovering
     tape_prints = demo_tape()
     live = true
     hover = some(demo_hover())
-    quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
 
 preset busy
   state
@@ -375,7 +440,6 @@ preset busy
     live = true
     ticket_price = "64,000.00"
     ticket_size = "3.00"
-    quote = price_ticket("64,000.00", "3.00", "5", symbol_row(demo_symbols_many(), "BTC"), true, -30.0)
 
 // A universe with more than one dex in it, which is what Hyperliquid's is
 // since HIP-3: the exchange's own perps, and markets a third party deployed
@@ -410,7 +474,6 @@ preset penny
     live = true
     ticket_price = "0.008421"
     ticket_size = "1,200,000"
-    quote = price_ticket("0.008421", "1,200,000", "5", symbol_row(demo_symbols(), "kPEPE"), true, 0.0)
 
 preset stalled
   state
@@ -427,7 +490,6 @@ preset stalled
     fills = demo_fills()
     orders = demo_orders()
     ticket_price = "64,000.00"
-    quote = price_ticket("64,000.00", "", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
     feed_error = "Hyperliquid feed dropped"
     latency = 0
 
