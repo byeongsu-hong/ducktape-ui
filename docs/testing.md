@@ -291,7 +291,14 @@ can stop at, and the repo has two:
   the subtree. (Plain `iced::widget::Lazy` caches only the element and still
   re-walks; the distinction is the whole point of the fork.) The runtime probe
   re-lays-out 150 lazy chat rows in ~35us, against showcase's ~3.3ms for a
-  comparable tree with no lazy boundary anywhere.
+  comparable tree with no lazy boundary anywhere. Unmounting parks the subtree
+  in a per-thread lot keyed `(codegen site, dependency hash)` and capped at
+  1024, so re-entering a torn-down screen reclaims it instead of rebuilding —
+  `frame_probe`'s `memo_parking_cost` prices that at **4.3ms against a 21ms
+  first mount** for trading's dense terminal, whose 400 boundaries (200 markets,
+  200 fills) sit flat in the lot across 60 mount/unmount cycles because a
+  remount reclaims exactly what it parked. Flat, but not small against the cap:
+  this one screen is 39% of it, and the eviction scan is O(n).
 - **`virtual_list`** mounts only the rows a viewport can hold, so nothing
   off-screen exists to lay out. `tests/virtual_list_performance.rs` covers 1000
   rows in ~1.0ms where a plain lazy column needs 13.1ms for 150.
@@ -312,14 +319,20 @@ of them real waste — was worth ~19us. Measure before spending effort there.
 showcase: lists whose rows are a near-pure function of one row value.
 
 ```sh
-TRADING_PROBE_SYMBOLS=0   cargo test --release -p trading-example -- --ignored --nocapture frame_cost
-TRADING_PROBE_SYMBOLS=120 cargo test --release -p trading-example -- --ignored --nocapture frame_cost
+cargo test --release -p trading-example -- --ignored --nocapture frame_        # cost, panels, scaling
+cargo test --release -p trading-example -- --ignored --nocapture beat_cost     # a beat of the feed
+cargo test --release -p trading-example -- --ignored --nocapture sync_cost     # the sync boundary
+cargo test --release -p trading-example -- --ignored --nocapture memo_parking  # the memo lot
 ```
+
+Read `frame_cost`'s own footer before reading its table: two of its rows are
+not what they look like, and it says which.
 
 Every list on that screen is filled by a network task and starts empty, so a
 headless boot measures the chrome alone; the probe seeds the symbol universe
-the way the task would. Run the two counts back to back — a busy machine moves
-both, and an earlier reading taken minutes apart was wrong by 40%.
+the way the task would. Two row counts have to be measured inside one run —
+which is what `frame_scaling` does — because a busy machine moves both, and an
+earlier reading taken minutes apart was wrong by 40%.
 
 At 1600x1000: **1276us with no symbols, 2094us with 120** — the rows are 39% of
 the frame, ~6.8us each, and a real perp universe is larger than 120.
@@ -354,9 +367,173 @@ the weather.
 
 Two things this does not show. The universe is rebuilt on every market tick, so
 a row whose price moved misses its cache and re-lays-out — the win is on frames
-where the data holds still, which is most of them. And the remaining 1274us of
-chrome has no boundary in it at all; that, not the rows, is now the largest
-single number on this screen.
+where the data holds still, which is most of them. And the chrome around the
+lists has no boundary in it at all.
+
+### The other list, and what an unbounded list is worth
+
+The claim that the chrome was then the largest number was wrong, because only
+the market list had been measured. `frame_panels` prices every panel by paired
+ablation, and on a connected account the **recent-fills list** — 200 rows, the
+cap `push_fills` imposes — was larger than the market list had ever been:
+re-measured against 200 distinct fills, 1858us of a 6029us frame, 9.3us a row
+against the market rows' 2.5us behind their boundary.
+
+One row of that table prices nothing, and knowing which saves re-deriving it:
+the probe seeds the **portfolio** page, where the market list is not drawn, so
+`market rows` ablates a list that is not on screen and comes back inside its own
+noise — negative as often as not. The market list is measured on its own page,
+by `markets_stay_memoized_performance_contract` and by the symbol sweep above.
+
+It took the same three things the market list took, and one more:
+
+- **`Hash` on `Fill`**, over the float bits, like `SymbolRow`'s.
+- **The whole row as the dependency.** A fill row already read nothing but its
+  fill, so no field had to move onto it.
+- **An identity that comes from the row, not from the loop.** This is the one
+  the market list hid. A `lazy` subtree is built from its dependency alone, so
+  the generated body cannot see which iteration mounted it and the enclosing
+  `@for:(index)` scope is not in scope inside it. Rows that carry their own id
+  — `#market(market.name)`, `#position(held.coin)` — never noticed. A fill has
+  no natural name, so all 200 rows landed on one runtime id and every `capture`
+  in the suite failed as `E194`-shaped ambiguity. The fix is to publish the
+  exchange trade id `push_fills` already dedupes on and spell the row
+  `#fill(printed.tid)`. **A list going behind `lazy` needs a per-row id drawn
+  from the row.**
+- **And something has to guarantee that id is distinct**, which nothing did.
+  `tid` came out of the payload through `unwrap_or_default`, so a fill the
+  exchange sent no trade id for got the id `0` — and so did the next one. A
+  duplicate row identity is not cosmetic here: the rows share a memo entry and
+  a parking slot, and until the runtime fix above, one of them was dropped
+  inside the lot's own borrow. The requirement is now written where every
+  listed fill passes: `parse_fills` drops a fill with no `tid` rather than
+  inventing one, and `push_fills` admits each `tid` once — across the history
+  and within the incoming batch, which it did not do either.
+  `a_fill_without_a_trade_id_is_not_listed` and
+  `push_fills_lists_each_trade_id_once` are the two halves.
+
+#### Two wrong bases, and the number after correcting both
+
+An earlier reading of this claimed **31% off the whole frame**, from
+`__view build 2875us -> 1400us` and `idle redraw 5346us -> 3692us`. Both halves
+of that were measured wrong, in opposite directions, and the corrected answer is
+smaller. Everything below is a re-measurement.
+
+**The fixture was three fills.** `frame_probe`'s 200-fill screen was
+`demo_fills()` — three of them — cycled up to the cap, on the reasoning that a
+repeated row is the same widget count and the same formatter work. That stopped
+being true the moment the rows went behind a `lazy` keyed on the fill: 200 rows
+over three values are 200 rows over **three cache keys**. What that actually
+does is worth stating precisely, because two of the three answers are nothing:
+
+- *Mounted, it does nothing.* Each row's `MemoLazy` owns its own slot in the
+  widget tree, paired by position, so rows never read each other's cache and
+  the screen is correct. Measured, too: fifteen interleaved runs of `frame_cost`
+  on one binary, distinct fixture against cycled, moved no number in the table
+  by more than 1% and none of them resolved from its own spread.
+- *Unmounted, it throws the list away.* The lot is keyed `(site, hash)`, so 200
+  rows park **three** entries and 197 live subtrees are displaced. `frame_probe`'s
+  `memo_parking_cost` prices the difference: with distinct fills the lot holds
+  **400** entries (200 markets + 200 fills) and a remount costs **4.3ms**
+  against a 21ms first mount; with the cycled fixture it holds **203** and the
+  remount costs **7.0ms**, because 197 rows it had thrown away have to be built
+  again. The fixture was hiding half the lot and overstating remount by 63%.
+- *Displacing a parked subtree was a latent panic.* `park` dropped the entry it
+  replaced inside the lot's `RefCell` borrow, and dropping a parked subtree
+  re-enters the lot to park its own nested lazy state — `RefCell already
+  borrowed`. Eviction had been written carefully around exactly this; the
+  replacement path had not, and needs no full lot to reach: two rows sharing a
+  key are enough. `parking_a_key_twice_reparks_the_subtree_it_displaces` is that
+  test, and it panicked before the fix.
+
+**And an absolute number is not comparable across two builds of the app.**
+`__view` is one enormous function, so removing a boundary anywhere inside it
+re-optimizes all of it. The two binaries differ by **299us [10%]** on a screen
+holding *no fills at all* — work that is identical in both. `frame_cost` now
+drives that empty screen in the same rounds as the full one, so the fills'
+worth is a difference taken inside one binary rather than between two.
+
+Twenty-five interleaved runs of `frame_cost` per binary, alternating which goes
+first, 60 samples a run, p50 with the interquartile spread:
+
+| | no boundary | behind `lazy` |
+|---|---|---|
+| **what the 200 fill rows cost** (paired, one binary) | **1380us [1354..1424]** | **319us [310..341]** |
+| idle frame, end to end | 4497us [4419..4606] | 3129us [3053..3190] |
+| the same screen with no fills — control | 3128us [3075..3190] | 2829us [2774..2925] |
+| `__view` build only | 2410us [2377..2464] | 1237us [1225..1263] |
+| cold redraw | 20758us [20436..21300] | 21063us [20423..21600] |
+
+The row that means something is the first: **the 200 fill rows cost 1380us
+unmemoized and 319us memoized, so the boundary takes ~1.06ms off an idle
+frame** — 4.3x on the rows, and **24% of the 4497us frame**, not 31%. The
+cross-binary idle frames differ by 1368us, of which 299us is the control, and
+1069us is left: the same answer twice, which is why both rows are printed.
+
+`frame_panels`' paired ablation agrees from the other side — five interleaved
+runs per binary, 300 pairs each: the fills' own rows are **1858us [1706..2174]
+of the frame without the boundary and 408us [295..455] with it**, and
+1351us -> 137us of the view build.
+
+Read only the large rows of that table. Each variant is a driver of its own, so
+alternating the order inside a pair cancels which one runs first but not what a
+particular driver's allocations happen to cost — and the small panels come back
+*negative*: removing the alerts is worth -248us, the book -174us, the chart
+-220us. Those are not savings from deleting rows, they are the per-driver bias
+showing through a panel too small to clear it. The fills, the markets and the
+everything-at-once ablation are the three that resolve.
+
+`__view build only` halving (2410us -> 1237us, 0.51x) is real and is **not**
+1.17ms off the frame. `lazy` lowers to a widget holding a closure and its
+dependency: building the view stores those, and the row is built — or found
+cached — later, in the tree walk inside the redraw. Work crossing that line
+leaves the build and arrives in the frame, and only the frame is a frame. On a
+steady screen the deferred work is then skipped entirely, which is why the
+frame moved at all; on the frame where a row does change, it is paid.
+
+`fills_stay_memoized_performance_contract` holds it down with a count rather
+than a clock: `fill_label` runs once per fill row actually built, so a cold
+redraw is 200 and an unchanged redraw is 0. Then **each of `Fill`'s eight
+fields is moved in turn and each must rebuild exactly one row** — the
+invalidation rule executed, field by field. Moving only `heat`, as this
+contract first did, passes just as well against a `Hash` that has quietly
+dropped `price`: deleting `price` and `size` from `Fill`'s `Hash` leaves the
+old contract green and fails the widened one on `price`.
+
+The nine `capture` PNGs come out byte-identical with the boundary and without
+it, which was also worth re-checking rather than re-quoting: when it was first
+claimed, every preset held the same three fills, so nine identical captures
+proved nine renderings of three rows. The `busy` preset — the one whose test is
+named `trading_lists_longer_than_their_panels_render` — now holds
+`demo_fills_many(200)`, so the comparison runs over 200 distinct rows, 200
+distinct runtime ids and 200 distinct cache keys. Nine of nine still match, from
+two binaries three seconds apart into two fresh `ICE_TEST_ARTIFACT_DIR`s.
+
+What is left is inherent, and worth naming so nobody re-measures it:
+
+- **The chrome is most of the frame now, and it has no boundary available.** No
+  percentage is quoted here, because there is no honest one to quote: the
+  boundary took cost out of the rows and left the chrome untouched, so the
+  chrome's *share* necessarily rose — any figure read before the change is wrong
+  for this sentence — and the share moves with the machine besides. The reading
+  is `frame_panels`, `without any rows` against `full screen`, both out of one
+  interleaved sweep. The ticket panel is the largest block in it and holds four
+  `input`s, which `lazy` rejects outright — *input cannot live in lazy because
+  iced text input borrows app state*, `check/options.rs`; the header strip and
+  the ticket's quote both move on every beat, so a boundary there would miss
+  every time it mattered.
+- **The frame after a beat still costs ~1.5ms more than an idle one**, before
+  and after this change alike — +1491us without the boundary, +1593us with it,
+  n=11 interleaved runs of `beat_cost` each. `allMids` republishes every market,
+  so in the probe's worst case all 200 rows genuinely changed and all 200 memos
+  correctly missed. Only mounting fewer rows — `virtual_list`, not `lazy` —
+  moves that one.
+- **The win is steady-state only.** The cold redraw is 20758us against 21063us,
+  spreads overlapping, n=25 each: not resolvable, which is the expected answer —
+  the first frame builds all 200 rows either way, and a boundary can only skip
+  work it has already done. What the boundary does buy off the cold path is
+  *re*mounting: a screen torn down and re-entered reclaims its rows from the
+  parking lot for 4.3ms instead of building them for 21ms.
 
 Two controls in that probe are there to foreclose the easy explanations, and
 both come back negative:

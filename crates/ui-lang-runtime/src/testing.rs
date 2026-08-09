@@ -2114,6 +2114,18 @@ where
         &self.state
     }
 
+    /// The state a probe wants to put a screen into directly, rather than
+    /// through the handlers that would reach it. Ablating one panel to price
+    /// it is not a sequence of messages — several panels share a handler, and
+    /// the ones that do not are cleared by a handler that clears three more.
+    ///
+    /// Not an interaction. A test that asserts about behaviour reaches its
+    /// state through `dispatch`, because what the handlers do to state is
+    /// part of what it is asserting.
+    pub fn state_mut(&mut self) -> &mut P::State {
+        &mut self.state
+    }
+
     pub fn window(&self) -> window::Id {
         self.window
     }

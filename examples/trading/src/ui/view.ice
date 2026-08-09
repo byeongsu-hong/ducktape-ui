@@ -1100,9 +1100,10 @@ view
                                       wrap=word
                                       @text-faint
                               for fill in fills
-                                FillRow fill=fill
-                                  events
-                                    pick -> pick_symbol _
+                                lazy fill as printed
+                                  FillRow fill=printed #fill(printed.tid)
+                                    events
+                                      pick -> pick_symbol _
                 Page.settings
                   scroll #settings
                     with

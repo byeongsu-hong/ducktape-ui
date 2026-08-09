@@ -19,11 +19,13 @@ test trading_a_search_that_matches_nothing_says_so
   focus search
   type "ZZZ"
   expect text "No market matches that."
-  expect no text "AVAX"
+  // Scoped to the market list, because this account has traded AVAX and the
+  // fills panel goes on saying so while the search narrows the universe.
+  expect no text "AVAX" within markets
   type "!"
   expect text "No market matches that."
   key escape
-  expect text "AVAX"
+  expect text "AVAX" within markets
   expect no text "No market matches that."
 
 test trading_escape_clears_a_search

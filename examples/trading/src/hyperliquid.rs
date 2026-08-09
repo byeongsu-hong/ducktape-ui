@@ -359,6 +359,11 @@ pub struct Trade {
 }
 
 /// One executed trade, which is what the chart marks.
+///
+/// `Hash` is hand-written for the same reason `SymbolRow`'s is: the fills list
+/// is a `lazy` boundary keyed on the fill it draws, and the money on a fill is
+/// `f64`. A row's cache is invalidated by any change to that fill, the heat
+/// countdown included, which is exactly what the row renders.
 #[derive(Clone, PartialEq)]
 pub struct Fill {
     pub coin: String,
@@ -371,8 +376,23 @@ pub struct Fill {
     /// down to zero by the app. Fills already on the books arrive cold.
     pub heat: i64,
     /// The exchange's trade id, which is how a fill pushed by the feed is
-    /// recognised as one the snapshot already listed.
-    tid: i64,
+    /// recognised as one the snapshot already listed, and — because a `lazy`
+    /// subtree cannot see which iteration built it — the identity its row is
+    /// listed under.
+    pub tid: i64,
+}
+
+impl Hash for Fill {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.coin.hash(state);
+        self.ts.hash(state);
+        self.buy.hash(state);
+        self.heat.hash(state);
+        self.tid.hash(state);
+        for value in [self.price, self.size, self.closed_pnl] {
+            hash_f64(value, state);
+        }
+    }
 }
 
 /// One resting order, listed and drawn on the chart as a level.
@@ -1049,22 +1069,31 @@ fn parse_trades(value: &Value, coin: &str) -> Vec<Trade> {
     tape
 }
 
+/// A fill the exchange did not give a trade id to is dropped rather than
+/// listed. `tid` is this row's identity — the key `push_fills` dedupes on and
+/// the key its `lazy` row is cached and parked under — and a missing one reads
+/// as `0`, which every such fill would then share. Listing them would collapse
+/// them into each other; not listing them loses a row the exchange never
+/// identified. `userFills` always carries one, so this is a malformed payload
+/// either way.
 fn parse_fills(value: &Value, heat: i64) -> Vec<Fill> {
     value
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default()
         .iter()
-        .map(|fill| Fill {
-            coin: text(fill, "coin"),
-            ts: value_i64(fill, "time") / 1_000,
-            price: num(fill, "px"),
-            size: num(fill, "sz"),
-            // "B" is a buy, "A" hits the ask side and is a sell.
-            buy: text(fill, "side") == "B",
-            closed_pnl: num(fill, "closedPnl"),
-            heat,
-            tid: value_i64(fill, "tid"),
+        .filter_map(|fill| {
+            Some(Fill {
+                coin: text(fill, "coin"),
+                ts: value_i64(fill, "time") / 1_000,
+                price: num(fill, "px"),
+                size: num(fill, "sz"),
+                // "B" is a buy, "A" hits the ask side and is a sell.
+                buy: text(fill, "side") == "B",
+                closed_pnl: num(fill, "closedPnl"),
+                heat,
+                tid: fill.get("tid").and_then(Value::as_i64)?,
+            })
         })
         .collect()
 }
@@ -1694,6 +1723,13 @@ pub fn fmt_time(ts: i64) -> String {
 /// fixed width, and a fraction typed out to fifteen places renders as a string
 /// as long as it was typed.
 pub fn fmt_leverage(value: f64) -> String {
+    // MAX LEVERAGE is the last column of a market row, and on the markets page
+    // nothing else draws it — which makes this the market list's row counter.
+    // `markets_stay_memoized_performance_contract` asserts the cold count is a
+    // whole multiple of the rows on screen, so a second caller appearing on
+    // that page fails the contract rather than quietly skewing it.
+    #[cfg(test)]
+    count(&MARKET_ROWS);
     let value = format!("{value:.2}");
     format!("{}x", value.trim_end_matches('0').trim_end_matches('.'))
 }
@@ -1844,11 +1880,21 @@ pub fn listed_coin(rows: Vec<SymbolRow>, coin: String) -> String {
 /// newest first, ignoring any the opening snapshot had already shown, and
 /// capped so the list builds a bounded number of rows however long the
 /// account trades for.
+///
+/// Every fill the app lists comes through here, so this is where the list's
+/// one invariant is enforced: **no two listed fills share a `tid`**. The rows
+/// are `lazy`, keyed and parked by that id, and a repeat is not merely a
+/// duplicate on screen — the second row displaces the first in the memo lot.
+/// `a_fill_without_a_trade_id_is_not_listed` and
+/// `push_fills_lists_each_trade_id_once` hold both halves down.
 pub fn push_fills(history: Vec<Fill>, incoming: Vec<Fill>, limit: i64) -> Vec<Fill> {
-    let held: HashSet<i64> = history.iter().map(|fill| fill.tid).collect();
+    // Seeded from the history — which is a previous result of this function,
+    // and unique by induction — then grown as each incoming fill is admitted,
+    // so a batch that repeats a trade id lists it once.
+    let mut seen: HashSet<i64> = history.iter().map(|fill| fill.tid).collect();
     let mut rows: Vec<Fill> = incoming
         .into_iter()
-        .filter(|fill| !held.contains(&fill.tid))
+        .filter(|fill| seen.insert(fill.tid))
         .chain(history)
         .collect();
     rows.sort_by_key(|fill| std::cmp::Reverse(fill.ts));
@@ -2237,9 +2283,36 @@ pub fn order_label(order: Order) -> String {
     )
 }
 
+// One count per row built, on the thread that built it — which is what the
+// `lazy` boundaries in `frame_probe` are held down with: a redraw that rebuilds
+// a memoized row shows up in these counters and nowhere else.
+//
+// Per THREAD, not per process. libtest runs the probes concurrently and every
+// one of them builds the same 200-row screen, so a global counter reads its
+// neighbours' cold builds as its own — which is how the memo contract came to
+// report 85 rows rebuilt for a fill whose row rebuilt exactly once. The memo
+// parking lot in `ui-lang-runtime` is thread-local for the same reason.
+#[cfg(test)]
+thread_local! {
+    /// Fill rows built: `fill_label` is called once per `FillRow` and nowhere
+    /// else.
+    pub(crate) static FILL_LABELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Market rows built: on the markets page `fmt_leverage` is MarketRow's
+    /// alone.
+    pub(crate) static MARKET_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Adds one to a per-thread row counter. Reading one is `Cell::take`.
+#[cfg(test)]
+pub(crate) fn count(counter: &'static std::thread::LocalKey<std::cell::Cell<usize>>) {
+    counter.with(|rows| rows.set(rows.get() + 1));
+}
+
 /// A fill names what it did and where. Its realized PnL is the point when it
 /// closed something, and its size when it opened.
 pub fn fill_label(fill: Fill) -> String {
+    #[cfg(test)]
+    count(&FILL_LABELS);
     let side = if fill.buy { "bought" } else { "sold" };
     let outcome = if fill.closed_pnl == 0.0 {
         fmt_size(fill.size)
@@ -2686,6 +2759,40 @@ pub fn demo_fills() -> Vec<Fill> {
     ]
 }
 
+/// A trading history filling the list to its cap, every fill different from
+/// every other one.
+///
+/// The rows are `lazy`, cached and parked under `tid`, so a fixture that
+/// repeats a fill measures a list of repeats: it shares one cache entry
+/// between every row that repeats it, and parks one subtree where a real list
+/// parks that many. Nothing here repeats — not the id, not the timestamp, not
+/// the money, and not the coin, whose `String` the row's hash walks.
+pub fn demo_fills_many(count: i64) -> Vec<Fill> {
+    const COINS: [&str; 8] = ["BTC", "ETH", "SOL", "HYPE", "AVAX", "LINK", "ARB", "SUI"];
+    (0..count.max(0))
+        .map(|step| {
+            let coin = COINS[step as usize % COINS.len()];
+            // Prices that belong to their market, so a row formats the way the
+            // real one does — six figures for BTC, cents for the small caps.
+            let base = 64_000.0 / (1.0 + (step % COINS.len() as i64) as f64 * 3.7);
+            Fill {
+                coin: coin.to_owned(),
+                ts: 1_786_110_000 - step * 37,
+                price: base + step as f64 * 0.31,
+                size: 0.05 + step as f64 * 0.017,
+                buy: step % 3 != 0,
+                closed_pnl: if step % 4 == 0 {
+                    0.0
+                } else {
+                    (step as f64 * 13.7) % 900.0 - 400.0
+                },
+                heat: (FLASH_STEPS - step).max(0),
+                tid: 4_000_000 + step,
+            }
+        })
+        .collect()
+}
+
 pub fn demo_orders() -> Vec<Order> {
     vec![
         Order {
@@ -2939,12 +3046,224 @@ pub fn chart(
         .into()
 }
 
+/// Traffic in the shape one connection carries, for probes that need a beat
+/// larger than the fixtures. A `MarketTick` holds private fields on purpose —
+/// the app folds one rather than building one — so the way to a real beat is
+/// to drive the real reader over real-shaped JSON, which is also the only way
+/// to price the reader itself.
+#[cfg(all(test, not(debug_assertions)))]
+pub(crate) mod probe {
+    use super::*;
+
+    pub(crate) fn market(index: usize) -> String {
+        if index == 0 {
+            "BTC".to_owned()
+        } else {
+            format!("SYM{index}")
+        }
+    }
+
+    /// Every mid on the exchange, as decimal strings. This is the whole
+    /// `allMids` payload, and it arrives on every beat whatever moved.
+    pub(crate) fn all_mids(markets: usize, mid: f64) -> Value {
+        let mids: serde_json::Map<String, Value> = (0..markets)
+            .map(|index| {
+                (
+                    market(index),
+                    Value::String(format!("{:.4}", mid + index as f64)),
+                )
+            })
+            .collect();
+        json!({ "mids": mids })
+    }
+
+    pub(crate) fn l2_book(coin: &str, depth: usize, mid: f64) -> Value {
+        let side = |sign: f64| -> Vec<Value> {
+            (1..=depth)
+                .map(|step| {
+                    json!({
+                        "px": format!("{:.1}", mid + sign * step as f64),
+                        "sz": "1.7",
+                        "n": 3,
+                    })
+                })
+                .collect()
+        };
+        json!({
+            "coin": coin,
+            "time": 1_786_117_888_000_i64,
+            "levels": [side(-1.0), side(1.0)],
+        })
+    }
+
+    pub(crate) fn prints(coin: &str, count: usize, mid: f64) -> Value {
+        Value::Array(
+            (0..count)
+                .map(|step| {
+                    json!({
+                        "coin": coin,
+                        "side": if step % 3 == 1 { "A" } else { "B" },
+                        "px": format!("{:.1}", mid + (step % 3) as f64),
+                        "sz": "0.42",
+                        "time": 1_786_117_888_000_i64 + step as i64,
+                        "hash": format!("0x{step:064x}"),
+                        "tid": 900_000 + step as i64,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    pub(crate) fn context(coin: &str, mid: f64) -> Value {
+        json!({
+            "coin": coin,
+            "ctx": {
+                "markPx": format!("{mid:.1}"),
+                "prevDayPx": format!("{:.1}", mid - 400.0),
+                "dayNtlVlm": "1284000000.0",
+                "funding": "0.0000125",
+                "openInterest": "24000.0",
+            },
+        })
+    }
+
+    /// Drives the real reader through one beat's traffic and returns the beat
+    /// it publishes.
+    pub(crate) fn beat(markets: usize, depth: usize, count: usize, mid: f64) -> MarketTick {
+        let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+        let mut read = market_reader(tape);
+        let (mids, book) = (all_mids(markets, mid), l2_book("BTC", depth, mid));
+        let (tape_prints, ctx) = (prints("BTC", count, mid), context("BTC", mid));
+        read(Event::Beat);
+        read(Event::Payload("allMids", &mids));
+        read(Event::Payload("l2Book", &book));
+        read(Event::Payload("activeAssetCtx", &ctx));
+        read(Event::Payload("trades", &tape_prints));
+        read(Event::Pong(42));
+        read(Event::Beat).expect("a beat that carried traffic publishes a tick")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     // The other venue's fixture universe, which lives with the parsers that
     // built it out of the payloads that venue answered.
     use crate::lighter::demo_symbols_lighter;
+
+    /// Median nanoseconds per call over `rounds` batches. Batched because the
+    /// cheap end of this boundary is faster than the clock reads.
+    #[cfg(not(debug_assertions))]
+    fn per_call(batch: usize, rounds: usize, mut call: impl FnMut()) -> f64 {
+        for _ in 0..8 {
+            call();
+        }
+        let mut samples: Vec<u128> = (0..rounds)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                for _ in 0..batch {
+                    call();
+                }
+                started.elapsed().as_nanos()
+            })
+            .collect();
+        samples.sort_unstable();
+        samples[rounds / 2] as f64 / batch as f64
+    }
+
+    /// What one connection's traffic costs before the app ever sees it.
+    ///
+    ///     cargo test --release -p trading-example -- --ignored --nocapture feed_cost
+    #[test]
+    #[ignore = "feed-cost probe, run explicitly: prints per-message costs, asserts nothing"]
+    #[cfg(not(debug_assertions))]
+    fn feed_cost() {
+        const MARKETS: usize = 200;
+        const ROUNDS: usize = 40;
+        let mid = 64_000.0;
+
+        let mids = probe::all_mids(MARKETS, mid);
+        let book = probe::l2_book("BTC", BOOK_DEPTH, mid);
+        let trades = probe::prints("BTC", 8, mid);
+        let ctx = probe::context("BTC", mid);
+        let mids_text = mids.to_string();
+        let book_text = book.to_string();
+
+        eprintln!("\nhyperliquid feed, {MARKETS} markets, book depth {BOOK_DEPTH}");
+        eprintln!(
+            "{:<34} {:>7} bytes",
+            "allMids payload on the wire",
+            mids_text.len()
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  serde_json::from_str",
+            "allMids parse to Value",
+            per_call(200, ROUNDS, || {
+                std::hint::black_box(serde_json::from_str::<Value>(&mids_text).unwrap());
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  serde_json::from_str",
+            "l2Book parse to Value",
+            per_call(2_000, ROUNDS, || {
+                std::hint::black_box(serde_json::from_str::<Value>(&book_text).unwrap());
+            })
+        );
+
+        // What the reader makes of each message, given the Value.
+        let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+        let mut read = market_reader(tape.clone());
+        read(Event::Beat);
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, allMids",
+            "allMids fold to mids map",
+            per_call(200, ROUNDS, || {
+                std::hint::black_box(read(Event::Payload("allMids", &mids)));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, l2Book",
+            "l2Book fold to a Book",
+            per_call(2_000, ROUNDS, || {
+                std::hint::black_box(read(Event::Payload("l2Book", &book)));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, trades",
+            "trades fold to prints",
+            per_call(2_000, ROUNDS, || {
+                std::hint::black_box(read(Event::Payload("trades", &trades)));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, activeAssetCtx",
+            "activeAssetCtx fold",
+            per_call(2_000, ROUNDS, || {
+                std::hint::black_box(read(Event::Payload("activeAssetCtx", &ctx)));
+            })
+        );
+
+        eprintln!(
+            "{:<34} {:>9.0}ns  reader, every message + publish",
+            "one whole beat, folded",
+            per_call(200, ROUNDS, || {
+                read(Event::Payload("allMids", &mids));
+                read(Event::Payload("l2Book", &book));
+                read(Event::Payload("activeAssetCtx", &ctx));
+                read(Event::Payload("trades", &trades));
+                read(Event::Pong(42));
+                std::hint::black_box(read(Event::Beat));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  from_str on both payloads",
+            "one whole beat, parsed",
+            per_call(200, ROUNDS, || {
+                std::hint::black_box(serde_json::from_str::<Value>(&mids_text).unwrap());
+                std::hint::black_box(serde_json::from_str::<Value>(&book_text).unwrap());
+            })
+        );
+    }
 
     /// The chart is a canvas with no text in it, so its accessibility name is
     /// the entire chart for a reader who cannot see it — and both halves of
@@ -4915,6 +5234,42 @@ mod tests {
         // Two beats of decay put the highlight out.
         let cooled = cool_fills(cool_fills(capped));
         assert!(!any_hot(cooled), "nothing stays lit");
+    }
+
+    /// The listed fills' one invariant: a trade id appears once. The rows are
+    /// `lazy`, keyed on that id, so a repeat is not a cosmetic duplicate — the
+    /// two rows share a cache entry and a parking slot.
+    #[test]
+    fn push_fills_lists_each_trade_id_once() {
+        let listed = push_fills(
+            vec![fill(10, 1, 0)],
+            // One repeat of the history, and one repeat inside the batch.
+            vec![fill(10, 1, 0), fill(20, 2, 0), fill(21, 2, 0)],
+            10,
+        );
+        let mut ids: Vec<i64> = listed.iter().map(|fill| fill.tid).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2], "two trade ids, two rows");
+    }
+
+    /// A payload with no trade id has no identity to list the row under, and
+    /// `unwrap_or_default` would give every such fill the id `0` — one shared
+    /// row identity for unrelated trades. It is dropped instead.
+    #[test]
+    fn a_fill_without_a_trade_id_is_not_listed() {
+        let fills = parse_fills(
+            &json!([
+                { "coin": "BTC", "px": "64000.0", "sz": "0.1", "side": "B", "time": 1_786_092_480_123i64, "closedPnl": "0.0", "tid": 7 },
+                { "coin": "BTC", "px": "64500.0", "sz": "0.1", "side": "A", "time": 1_786_092_540_000i64, "closedPnl": "50.0" },
+                { "coin": "ETH", "px": "3100.0", "sz": "2.0", "side": "B", "time": 1_786_092_600_000i64, "closedPnl": "0.0" },
+            ]),
+            0,
+        );
+        assert_eq!(
+            fills.iter().map(|fill| fill.tid).collect::<Vec<_>>(),
+            vec![7],
+            "the two without an id would have shared the id 0"
+        );
     }
 
     #[test]

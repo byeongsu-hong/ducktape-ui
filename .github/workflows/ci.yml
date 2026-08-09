@@ -143,6 +143,7 @@ jobs:
           cargo test --release --locked -p ui-lang-runtime --test tree_view_performance -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test data_grid_performance -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test frame_probe -- --ignored --nocapture --test-threads=1
+          cargo test --release --locked -p trading-example performance_contract -- --ignored --nocapture --test-threads=1
           cargo test --locked -p ui-lang-build performance_contract -- --ignored --test-threads=1
           cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
           cargo test --locked -p cargo-ice qualification_snapshot_cost -- --ignored --nocapture --test-threads=1

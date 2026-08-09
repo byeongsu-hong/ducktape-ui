@@ -2405,6 +2405,171 @@ mod tests {
         });
     }
 
+    /// Median nanoseconds per call over `rounds` batches.
+    #[cfg(not(debug_assertions))]
+    fn per_call(batch: usize, rounds: usize, mut call: impl FnMut()) -> f64 {
+        for _ in 0..8 {
+            call();
+        }
+        let mut samples: Vec<u128> = (0..rounds)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                for _ in 0..batch {
+                    call();
+                }
+                started.elapsed().as_nanos()
+            })
+            .collect();
+        samples.sort_unstable();
+        samples[rounds / 2] as f64 / batch as f64
+    }
+
+    /// The universe at the size the venue actually publishes it, built from
+    /// the same fields the trimmed fixture carries.
+    #[cfg(not(debug_assertions))]
+    fn wide_details(markets: usize) -> Value {
+        let rows: Vec<Value> = (0..markets)
+            .map(|index| {
+                json!({
+                    "symbol": format!("SYM{index}"), "market_id": index as i64,
+                    "market_type": "perp", "status": "active", "size_decimals": 3,
+                    "maintenance_margin_fraction": 120,
+                    "min_initial_margin_fraction": 200,
+                    "default_initial_margin_fraction": 500,
+                    "mark_price": format!("{}.3", 64_000 + index),
+                    "index_price": format!("{}.1", 64_000 + index),
+                    "daily_price_change": 0.6118286879673691,
+                    "daily_quote_token_volume": 618_847_551.336_845 - index as f64,
+                    "daily_base_token_volume": 9520.35,
+                    "daily_price_low": 64_270.5, "daily_price_high": 65_349.4,
+                    "open_interest": 1836.69392
+                })
+            })
+            .collect();
+        json!({ "code": 200, "order_book_details": rows })
+    }
+
+    /// Lighter republishes the rates of the venues it indexes, so the payload
+    /// is several times the size of the part that is kept.
+    #[cfg(not(debug_assertions))]
+    fn wide_rates(markets: usize) -> Value {
+        let mut rows = Vec::with_capacity(markets * 3);
+        for index in 0..markets {
+            for exchange in ["binance", "hyperliquid", "lighter"] {
+                rows.push(json!({
+                    "market_id": index as i64, "exchange": exchange,
+                    "symbol": format!("SYM{index}"), "rate": 6.4e-05
+                }));
+            }
+        }
+        json!({ "code": 200, "funding_rates": rows })
+    }
+
+    /// `orderBookOrders` serves resting orders rather than levels, and the
+    /// adapter asks for `ORDER_FETCH` of them a side to fold into `BOOK_DEPTH`.
+    #[cfg(not(debug_assertions))]
+    fn wide_book(orders: usize) -> Value {
+        let side = |sign: f64| -> Vec<Value> {
+            (0..orders)
+                .map(|step| {
+                    json!({
+                        "price": format!("{:.1}", 64_000.0 + sign * (step / 20) as f64),
+                        "remaining_base_amount": "0.31",
+                        "initial_base_amount": "0.50",
+                    })
+                })
+                .collect()
+        };
+        json!({ "code": 200, "bids": side(-1.0), "asks": side(1.0) })
+    }
+
+    /// What Lighter costs the terminal per response. It has no websocket: the
+    /// three reads are polled, so its "per message" is one HTTP body parsed
+    /// and folded, and its "per beat" is whatever the poll interval asks for.
+    ///
+    ///     cargo test --release -p trading-example -- --ignored --nocapture feed_cost
+    #[test]
+    #[ignore = "feed-cost probe, run explicitly: prints per-message costs, asserts nothing"]
+    #[cfg(not(debug_assertions))]
+    fn feed_cost_lighter() {
+        const MARKETS: usize = 222;
+        const ROUNDS: usize = 40;
+
+        let details = wide_details(MARKETS);
+        let rates = wide_rates(MARKETS);
+        let book = wide_book(ORDER_FETCH);
+        let held = captured_account();
+        let details_text = details.to_string();
+        let rates_text = rates.to_string();
+        let book_text = book.to_string();
+
+        eprintln!("\nlighter reads, {MARKETS} markets, {ORDER_FETCH} orders a side");
+        eprintln!(
+            "{:<34} {:>7} bytes  orderBookDetails",
+            "universe payload",
+            details_text.len()
+        );
+        eprintln!(
+            "{:<34} {:>7} bytes  funding-rates",
+            "funding payload",
+            rates_text.len()
+        );
+        eprintln!(
+            "{:<34} {:>7} bytes  orderBookOrders",
+            "book payload",
+            book_text.len()
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  serde_json::from_str",
+            "universe parse to Value",
+            per_call(20, ROUNDS, || {
+                std::hint::black_box(serde_json::from_str::<Value>(&details_text).unwrap());
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  serde_json::from_str",
+            "funding parse to Value",
+            per_call(20, ROUNDS, || {
+                std::hint::black_box(serde_json::from_str::<Value>(&rates_text).unwrap());
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  serde_json::from_str",
+            "book parse to Value",
+            per_call(200, ROUNDS, || {
+                std::hint::black_box(serde_json::from_str::<Value>(&book_text).unwrap());
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  parse_symbols",
+            "universe fold to rows",
+            per_call(20, ROUNDS, || {
+                std::hint::black_box(parse_symbols(&details, &rates));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  parse_ids",
+            "universe fold to the id table",
+            per_call(20, ROUNDS, || {
+                std::hint::black_box(parse_ids(&details));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  parse_book",
+            "book fold to a Book",
+            per_call(200, ROUNDS, || {
+                std::hint::black_box(parse_book(&book));
+            })
+        );
+        eprintln!(
+            "{:<34} {:>9.0}ns  parse_account",
+            "account fold to an Account",
+            per_call(2_000, ROUNDS, || {
+                std::hint::black_box(parse_account(&held));
+            })
+        );
+    }
+
     /// Candle history, on the wire, against the venue this file once recorded
     /// as serving none. The length is the whole point: the reported bug is a
     /// chart holding one bar, so a page that is not a page is the failure.

@@ -17,9 +17,6 @@ enum Venue
   lighter
 
 state
-  // The terminal window, opened on mount. A daemon starts with none, and the
-  // view needs to know which of its windows it is drawing.
-  main:window-id? = none
   page:Page = Page.trade
   venue:Venue = Venue.hyperliquid
   gate = true
@@ -190,7 +187,7 @@ preset busy
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape_full()
-    fills = demo_fills()
+    fills = demo_fills_many(200)
     orders = demo_orders()
     alerts = add_alert(add_alert(demo_alerts(), "BTC", "64,400.00", 64000.0), "BTC", "63,700.00", 64000.0)
     live = true
