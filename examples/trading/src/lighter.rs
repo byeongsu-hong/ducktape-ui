@@ -27,7 +27,39 @@ use crate::hyperliquid::{
 };
 use crate::venue::lighter_buy;
 
-const BASE: &str = "https://mainnet.zklighter.elliot.ai/api/v1";
+/// Which Lighter deployment a read is addressed to.
+///
+/// The same reason Hyperliquid's reads carry a `Chain`: the app reads two
+/// deployments and one of them is the one where an order costs nothing to get
+/// wrong. They are separate books with separate accounts and separate market
+/// ids — read live, testnet lists BTC as market 1 and mainnet lists 222
+/// markets — so nothing derived from one is meaningful against the other, and
+/// a default here would be a deployment chosen by whoever forgot to pass one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Zone {
+    Mainnet,
+    Testnet,
+}
+
+impl Zone {
+    pub fn api_url(self) -> &'static str {
+        match self {
+            Zone::Mainnet => "https://mainnet.zklighter.elliot.ai/api/v1",
+            Zone::Testnet => "https://testnet.zklighter.elliot.ai/api/v1",
+        }
+    }
+
+    pub fn stream_url(self) -> &'static str {
+        match self {
+            Zone::Mainnet => "wss://mainnet.zklighter.elliot.ai/stream",
+            Zone::Testnet => "wss://testnet.zklighter.elliot.ai/stream",
+        }
+    }
+
+    pub fn testnet(self) -> bool {
+        matches!(self, Zone::Testnet)
+    }
+}
 const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Margin fractions arrive as integers out of 10_000.
@@ -138,7 +170,7 @@ const NO_ACCOUNT: i64 = 21100;
 /// succeeded, since the venue also carries its own `code` on a 200 — so the
 /// code is what this answers, and a status that failed with nothing to say
 /// stands in as one.
-async fn read(path: String) -> Result<(i64, Value), HlError> {
+async fn read(zone: Zone, path: String) -> Result<(i64, Value), HlError> {
     // The same gate the socket passes, and the same reason: a test drives the
     // real program, so a handler that reads the universe would read it from the
     // live venue and assert against whatever it happened to hold.
@@ -146,7 +178,7 @@ async fn read(path: String) -> Result<(i64, Value), HlError> {
         return Err(fail("Lighter unreachable: no wire under test".to_owned()));
     }
     smol::unblock(move || {
-        let url = format!("{BASE}/{path}");
+        let url = format!("{}/{path}", zone.api_url());
         let mut response = agent()
             .get(&url)
             .call()
@@ -172,8 +204,8 @@ async fn read(path: String) -> Result<(i64, Value), HlError> {
 /// The same read with every verdict but success as a failure, which is what
 /// all but the account read wants: nothing else this app asks Lighter for has
 /// an answer that means "there is nothing here".
-async fn get(path: String) -> Result<Value, HlError> {
-    match read(path.clone()).await? {
+async fn get(zone: Zone, path: String) -> Result<Value, HlError> {
+    match read(zone, path.clone()).await? {
         (OK, body) => Ok(body),
         (code, body) => Err(refused(&path, code, &body)),
     }
@@ -249,6 +281,10 @@ fn parse_symbol(detail: &Value, funding: &HashMap<i64, f64>) -> SymbolRow {
     let change_pct = num(detail, "daily_price_change");
     SymbolRow {
         name: text(detail, "symbol"),
+        // Lighter keys a book by `market_id`, which this deployment's own
+        // universe supplies; the Hyperliquid universe index this field carries
+        // is not a thing Lighter has, and the order path never reaches here.
+        asset: 0,
         price,
         change_pct,
         // The quote-denominated leg, which is what Hyperliquid's `dayNtlVlm`
@@ -348,21 +384,21 @@ fn parse_ids(details: &Value) -> HashMap<String, i64> {
         .collect()
 }
 
-pub async fn lighter_symbols() -> Result<Vec<SymbolRow>, HlError> {
-    let details = get("orderBookDetails".to_owned()).await?;
+pub async fn lighter_symbols(zone: Zone) -> Result<Vec<SymbolRow>, HlError> {
+    let details = get(zone, "orderBookDetails".to_owned()).await?;
     // Free, since the universe is already in hand.
     *lock(ids()) = parse_ids(&details);
-    let rates = get("funding-rates".to_owned()).await?;
+    let rates = get(zone, "funding-rates".to_owned()).await?;
     Ok(parse_symbols(&details, &rates))
 }
 
 /// The market id a ticker trades under, fetching the universe only if nothing
 /// has yet.
-async fn market_id(coin: &str) -> Result<i64, HlError> {
+async fn market_id(zone: Zone, coin: &str) -> Result<i64, HlError> {
     if let Some(id) = lock(ids()).get(coin) {
         return Ok(*id);
     }
-    let details = get("orderBookDetails".to_owned()).await?;
+    let details = get(zone, "orderBookDetails".to_owned()).await?;
     let fresh = parse_ids(&details);
     let found = fresh.get(coin).copied();
     *lock(ids()) = fresh;
@@ -459,12 +495,13 @@ fn parse_book(value: &Value) -> Book {
 /// The book, keyed by ticker rather than by market id so it reads like the
 /// other venue's. The asks come back best-first; the panel reverses them
 /// itself, the same way it does for the feed it already has.
-pub async fn lighter_book(coin: String) -> Result<Book, HlError> {
-    let id = market_id(&coin).await?;
+pub async fn lighter_book(zone: Zone, coin: String) -> Result<Book, HlError> {
+    let id = market_id(zone, &coin).await?;
     Ok(parse_book(
-        &get(format!(
-            "orderBookOrders?market_id={id}&limit={ORDER_FETCH}"
-        ))
+        &get(
+            zone,
+            format!("orderBookOrders?market_id={id}&limit={ORDER_FETCH}"),
+        )
         .await?,
     ))
 }
@@ -647,9 +684,9 @@ fn parse_account_body(account: &Value) -> Account {
 /// as an error it would put "Lighter refused" over a screen that is working,
 /// and hide the true and useful thing, which is that there is nothing here to
 /// draw.
-pub async fn lighter_account(address: String) -> Result<Option<Account>, HlError> {
+pub async fn lighter_account(zone: Zone, address: String) -> Result<Option<Account>, HlError> {
     let path = format!("account?by=l1_address&value={address}");
-    match read(path.clone()).await? {
+    match read(zone, path.clone()).await? {
         (OK, body) => Ok(Some(parse_account(&body))),
         (NO_ACCOUNT, _) => Ok(None),
         (code, body) => Err(refused(&path, code, &body)),
@@ -714,6 +751,7 @@ fn candles_path(id: i64, width: &str, secs: i64, end_ms: i64, bars: i64) -> Stri
 /// while an exchange is answering, and a window folded in after that would be
 /// the previous coin's bars drawn as this one's.
 async fn fill(
+    zone: Zone,
     tape: &Tape,
     coin: &str,
     interval: &str,
@@ -726,8 +764,8 @@ async fn fill(
             widths()
         ))
     })?;
-    let id = market_id(coin).await?;
-    let body = get(candles_path(id, width, secs, end_ms, bars)).await?;
+    let id = market_id(zone, coin).await?;
+    let body = get(zone, candles_path(id, width, secs, end_ms, bars)).await?;
     let fresh: Vec<Candle> = list(&body, "c").iter().map(parse_candle).collect();
 
     let mut candles = lock(&tape.candles);
@@ -755,13 +793,18 @@ async fn fill(
 /// same way — `/info`, `/openapi.json` and `/nonsense` all 403 while
 /// `/candles` and `/orderBookDetails` beside them answer 200. A 403 there is
 /// the edge failing to route, not the venue withholding history.
-pub async fn lighter_candles(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
+pub async fn lighter_candles(
+    zone: Zone,
+    tape: Tape,
+    coin: String,
+    interval: String,
+) -> Result<i64, HlError> {
     let bars = if lock(&tape.candles).is_empty() {
         CANDLE_PAGE
     } else {
         CANDLE_REFRESH
     };
-    fill(&tape, &coin, &interval, now_ms(), bars).await
+    fill(zone, &tape, &coin, &interval, now_ms(), bars).await
 }
 
 /// The window ending where the tape currently begins, so a chart panned back
@@ -771,11 +814,16 @@ pub async fn lighter_candles(tape: Tape, coin: String, interval: String) -> Resu
 /// its reasons: zero is the venue saying it has nothing before the bar the
 /// tape starts at, and the caller stops asking rather than sending the same
 /// request again.
-pub async fn lighter_history(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
+pub async fn lighter_history(
+    zone: Zone,
+    tape: Tape,
+    coin: String,
+    interval: String,
+) -> Result<i64, HlError> {
     let Some(oldest) = lock(&tape.candles).first().map(|candle| candle.ts) else {
         return Ok(0);
     };
-    fill(&tape, &coin, &interval, oldest * 1_000, CANDLE_PAGE).await?;
+    fill(zone, &tape, &coin, &interval, oldest * 1_000, CANDLE_PAGE).await?;
     Ok(older_than(&lock(&tape.candles), oldest))
 }
 
@@ -790,7 +838,6 @@ pub async fn lighter_history(tape: Tape, coin: String, interval: String) -> Resu
 // took all four as parameters would be a protocol description with two
 // implementations rather than a shared socket.
 
-const STREAM: &str = "wss://mainnet.zklighter.elliot.ai/stream";
 /// Mirrors of `hyperliquid`'s feed timings, for the same reason the geometry
 /// above is mirrored: that module publishes no `pub const`. A venue switch
 /// must not change how often the screen is asked to redraw, so the beat in
@@ -1105,6 +1152,10 @@ fn parse_stats(stats: &Value) -> SymbolRow {
     let change_pct = num(stats, "daily_price_change");
     SymbolRow {
         name: text(stats, "symbol"),
+        // Lighter keys a book by `market_id`, which this deployment's own
+        // universe supplies; the Hyperliquid universe index this field carries
+        // is not a thing Lighter has, and the order path never reaches here.
+        asset: 0,
         price,
         change_pct,
         volume: num(stats, "daily_quote_token_volume"),
@@ -1157,7 +1208,7 @@ fn open_interest(quote: f64, price: f64) -> f64 {
 /// interval, where the other venue backfills five hundred. The candles that do
 /// arrive are the venue's own; nothing is folded out of the tape to stand in
 /// for the ones it will not send.
-pub fn lighter_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
+pub fn lighter_market_feed(zone: Zone, tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
     let (sender, receiver) = smol::channel::unbounded();
     // What the reader hands the socket: the channels whose held state it had
     // to throw away, which only a fresh snapshot can restore.
@@ -1168,7 +1219,7 @@ pub fn lighter_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> 
         let mut subscribe = move || channels(&subscriptions);
         let mut read = market_reader(tape, refresh);
         while !sender.is_closed() {
-            let Err(error) = pump(&mut subscribe, &mut read, &sender, &stale) else {
+            let Err(error) = pump(zone, &mut subscribe, &mut read, &sender, &stale) else {
                 return;
             };
             if sender.send_blocking(Err(error)).is_err() {
@@ -1324,7 +1375,7 @@ struct Socket {
 }
 
 impl Socket {
-    fn connect() -> Result<Self, HlError> {
+    fn connect(zone: Zone) -> Result<Self, HlError> {
         // The same gate the REST reads pass: a test drives the real program,
         // subscriptions included, so an ungated socket would make the suite
         // depend on an exchange being up.
@@ -1333,7 +1384,7 @@ impl Socket {
                 "Lighter feed unreachable: no wire under test".to_owned(),
             ));
         }
-        let (ws, _) = tungstenite::connect(STREAM)
+        let (ws, _) = tungstenite::connect(zone.stream_url())
             .map_err(|error| fail(format!("Lighter feed unreachable: {error}")))?;
         // Reads have to time out, or the loop could never look at the clock to
         // ping, or at the app to see that it changed markets.
@@ -1398,12 +1449,13 @@ impl Socket {
 /// One connection's lifetime. Returns `Ok` only when the app has stopped
 /// listening; anything else is an error the caller reconnects through.
 fn pump(
+    zone: Zone,
     subscribe: &mut impl FnMut() -> Result<Vec<String>, HlError>,
     read: &mut impl FnMut(Event<'_>) -> Option<MarketTick>,
     sender: &Sender<Result<MarketTick, HlError>>,
     refresh: &Mutex<Vec<String>>,
 ) -> Result<(), HlError> {
-    let mut socket = Socket::connect()?;
+    let mut socket = Socket::connect(zone)?;
     let mut beat = Instant::now();
     let mut ping = Instant::now();
     let mut sent: Option<Instant> = None;
@@ -2383,18 +2435,21 @@ mod tests {
     fn the_requests_reach_the_venue() {
         crate::hyperliquid::open_the_wire();
         smol::block_on(async {
-            let rows = lighter_symbols().await.expect("markets");
+            let rows = lighter_symbols(Zone::Mainnet).await.expect("markets");
             assert!(rows.len() > 100, "the venue lists a couple hundred markets");
             assert!(rows[0].price > 0.0 && rows[0].maintenance > 0.0);
             // Sorted, so the busiest market is the one the id table is asked
             // for, and it has to resolve without a second universe fetch.
-            let book = lighter_book(rows[0].name.clone()).await.expect("book");
+            let book = lighter_book(Zone::Mainnet, rows[0].name.clone())
+                .await
+                .expect("book");
             assert!(book.mid > 0.0 && !book.bids.is_empty() && !book.asks.is_empty());
             assert!(book.asks[0].price > book.bids[0].price, "crossed book");
             // The address the fixtures are drawn for, which has to be one the
             // venue actually holds a book for — a Lighter screen drawn for an
             // address with no Lighter account is a fixture pretending twice.
-            let Ok(Some(account)) = lighter_account(demo_address_lighter()).await else {
+            let Ok(Some(account)) = lighter_account(Zone::Mainnet, demo_address_lighter()).await
+            else {
                 panic!("the fixture address has no account on Lighter");
             };
             assert!(account.value > 0.0);
@@ -2407,7 +2462,11 @@ mod tests {
             // alarm over a working screen.
             assert!(
                 matches!(
-                    lighter_account("0x8cc94dc843e1ea7a19805e0cca43001123512b6a".to_owned()).await,
+                    lighter_account(
+                        Zone::Mainnet,
+                        "0x8cc94dc843e1ea7a19805e0cca43001123512b6a".to_owned()
+                    )
+                    .await,
                     Ok(None)
                 ),
                 "an address with no account here is an absence, not a failure"
@@ -2420,7 +2479,7 @@ mod tests {
             // same 400 carries both `21100` and this.
             // `Account` has no `Debug`, so the error comes out of a match
             // rather than `expect_err`.
-            let Err(refused) = lighter_account("0xdead".to_owned()).await else {
+            let Err(refused) = lighter_account(Zone::Mainnet, "0xdead".to_owned()).await else {
                 panic!("the venue should not accept 0xdead as an address");
             };
             assert!(
@@ -2607,9 +2666,14 @@ mod tests {
         smol::block_on(async {
             let now = now_ms() / 1_000;
             let tape = tape_focus(tape_new(), "BTC".to_owned(), "1h".to_owned());
-            let filled = lighter_candles(tape.clone(), "BTC".to_owned(), "1h".to_owned())
-                .await
-                .expect("candles");
+            let filled = lighter_candles(
+                Zone::Mainnet,
+                tape.clone(),
+                "BTC".to_owned(),
+                "1h".to_owned(),
+            )
+            .await
+            .expect("candles");
             assert_eq!(filled, CANDLE_PAGE, "a chart opens on a full page");
 
             let bars = lock(&tape.candles).clone();
@@ -2637,9 +2701,14 @@ mod tests {
             // A loaded tape refreshes rather than paging itself in again, and
             // the length it answers is the length it still holds.
             let oldest = bars[0].ts;
-            let again = lighter_candles(tape.clone(), "BTC".to_owned(), "1h".to_owned())
-                .await
-                .expect("refresh");
+            let again = lighter_candles(
+                Zone::Mainnet,
+                tape.clone(),
+                "BTC".to_owned(),
+                "1h".to_owned(),
+            )
+            .await
+            .expect("refresh");
             assert_eq!(again, CANDLE_PAGE, "a refresh adds at most the live bar");
             assert_eq!(lock(&tape.candles)[0].ts, oldest, "nothing was dropped");
 
@@ -2647,15 +2716,21 @@ mod tests {
             // back is the count of bars older than the one the tape began at,
             // which is the figure that tells the chart there was more to page
             // to — zero is the venue saying there is not.
-            let older = lighter_history(tape.clone(), "BTC".to_owned(), "1h".to_owned())
-                .await
-                .expect("history");
+            let older = lighter_history(
+                Zone::Mainnet,
+                tape.clone(),
+                "BTC".to_owned(),
+                "1h".to_owned(),
+            )
+            .await
+            .expect("history");
             assert!(older > 0, "a page back added no older bars");
             assert_eq!(lock(&tape.candles).len() as i64, CANDLE_PAGE + older);
             assert!(lock(&tape.candles)[0].ts < oldest);
 
             // A width the venue does not quote never reaches it.
-            let Err(refused) = lighter_candles(tape, "BTC".to_owned(), "3h".to_owned()).await
+            let Err(refused) =
+                lighter_candles(Zone::Mainnet, tape, "BTC".to_owned(), "3h".to_owned()).await
             else {
                 panic!("3h is not one of the venue's resolutions");
             };
@@ -3474,11 +3549,11 @@ mod tests {
     fn the_live_feed_folds_a_book_a_tape_and_a_context() {
         crate::hyperliquid::open_the_wire();
         // Fills the ticker-to-id table, which is what names the channels.
-        let universe = smol::block_on(lighter_symbols()).expect("markets");
+        let universe = smol::block_on(lighter_symbols(Zone::Mainnet)).expect("markets");
         assert!(universe.iter().any(|row| row.name == "BTC"));
 
         let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
-        let feed = lighter_market_feed(tape.clone());
+        let feed = lighter_market_feed(Zone::Mainnet, tape.clone());
         let deadline = Instant::now() + Duration::from_secs(60);
         let (mut books, mut prints, mut context, mut latency) = (0, 0, 0, 0);
 
@@ -3568,7 +3643,7 @@ mod tests {
     #[ignore = "hits the live venue, run explicitly: the feed following a market switch"]
     fn the_live_feed_follows_a_switch_and_takes_a_dropped_channel_back() {
         crate::hyperliquid::open_the_wire();
-        let universe = smol::block_on(lighter_symbols()).expect("markets");
+        let universe = smol::block_on(lighter_symbols(Zone::Mainnet)).expect("markets");
         let published = |coin: &str| {
             universe
                 .iter()
@@ -3578,7 +3653,7 @@ mod tests {
         };
 
         let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
-        let feed = lighter_market_feed(tape.clone());
+        let feed = lighter_market_feed(Zone::Mainnet, tape.clone());
         smol::block_on(async {
             // Bitcoin, then ether, then bitcoin again: the third leg subscribes
             // to a channel this socket has already unsubscribed from.

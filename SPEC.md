@@ -2443,9 +2443,15 @@ extern crate::backend
 A `sync` call is accepted in a top-level app state initializer or an immediately
 evaluated app, component, or preset handler expression. This includes handler
 `let` initializers, assignment right-hand sides, guards, and task arguments,
-including arguments inside nested task groups. An async completion route
-expression is different: it is evaluated when the callback runs, so declared
-extern calls there are pure-only and a `sync` call is rejected. Component state
+including arguments inside nested task groups. Explicit expressions in `run`
+Future and `task` statement success and failure routes become owned snapshots
+when the statement launches; `_` is supplied only by the delivered completion.
+Both branches are materialized at launch, so their expressions remain pure-only
+and a direct `sync` call is rejected even though the snapshot is immediate.
+Each result must be ordinary cloneable Ice data. Direct recomputation-unsafe
+builtins are also rejected. Evaluate either runtime value once in a preceding
+handler `let` and route that local instead.
+Stream, sip, flow, and native query route timing is unchanged. Component state
 initializers also reject `sync` because rendering may initialize them again.
 Capture a runtime value in top-level state or an immediately evaluated handler
 expression, then pass that value into `pure` computations. Neither synchronous
@@ -2887,9 +2893,14 @@ Rules:
 - `return if` requires `bool`;
 - `sync` externs are allowed in immediately evaluated app, component, and preset
   handler expressions, including `let` initializers, assignment right-hand
-  sides, and arguments in nested task statements; async completion route
-  expressions are evaluated when their callback runs and may call only `pure`
-  externs;
+  sides, and arguments in nested task statements; explicit `run` Future and
+  `task` statement success and failure route expressions become owned snapshots
+  when the statement launches, while `_` is supplied by the delivered
+  completion. Both branches materialize at launch but remain pure-only so an
+  unused branch cannot perform an effect. Each result must be ordinary cloneable
+  Ice data, and direct recomputation-unsafe builtins are rejected; evaluate a
+  runtime value in a preceding `let` and route that local. Stream, sip, flow,
+  and native query route timing is unchanged;
 - every statement that immediately returns an iced `Task` must be final:
   `exit`, `run`, `task`, `stream`, `sip`, `flow`, task groups, abortable tasks,
   clipboard writes, widget operations, window tasks, and pane queries;
@@ -2907,6 +2918,13 @@ Rules:
 Rust function that already returns an iced `Task`, which exposes clipboard,
 window, focus, scroll, font, system, cancellation, batching, and other runtime
 operations without duplicating their implementation in Ice.
+
+One in-flight `run` Future or `task` statement owns one set of explicit route
+snapshots. The set is released when that work completes or is dropped, including
+a `replace` abort. A stale `latest` Future retains its set until it finishes. A
+multi-output `task` retains only the original set and clones values into each
+delivered message; there is no global snapshot map or completion-by-completion
+accumulation.
 
 Ordinary `run` delivers every completion. Request/response work that can be
 superseded uses a statically named request lane:
@@ -3677,7 +3695,12 @@ recomputation-unsafe built-ins forbidden in component prop defaults, including
 the unqualified `encoded` and `rgba` image constructors.
 
 `lifetime mounted` marks the scopes present in each rendered root and removes
-entries that disappear from that root. Removing an entry drops its local state
+entries that disappear from that root, at the start of the pass after the one
+that stopped rendering them. The delay is required, not incidental: a
+`responsive` and every other deferred builder constructs its subtree during
+layout, so components under one are marked after their root has finished
+rendering, and removing entries any earlier would drop state the same pass was
+still about to claim. Removing an entry drops its local state
 and request-lane bookkeeping, including any `run replace` abort-on-drop handles.
 Daemon roots include their window ID, so rendering one window never prunes
 another window's scopes. There is no `on unmount` hook or other arbitrary
@@ -5451,7 +5474,7 @@ A container's `bg=` alone also accepts a *computed* opacity, written
 parenthesised: `bg=flash/(fade)` takes any `f64` expression on the same
 `0..=100` percentage scale as the literal form, clamped, and replaces the
 color's own alpha on every view pass. It is what lets an animated number reach a
-surface — `bg=flash/(animation.value(fade))` fades a row. It needs a single
+surface — `bg=flash/(animation.project(fade, value, value))` fades a row. It needs a single
 background color, so a gradient is rejected, and it is a container property:
 every other color position stays a literal token. A view using one keeps its
 compiled Rust rather than publishing a template, because the published view

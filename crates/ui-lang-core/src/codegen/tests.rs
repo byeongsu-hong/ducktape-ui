@@ -117,6 +117,8 @@ mod platform;
 mod render_coverage;
 #[path = "tests/request_lanes.rs"]
 mod request_lanes;
+#[path = "tests/route_snapshots.rs"]
+mod route_snapshots;
 #[path = "tests/sum_types.rs"]
 mod sum_types;
 #[path = "tests/testing.rs"]

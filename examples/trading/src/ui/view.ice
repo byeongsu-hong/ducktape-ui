@@ -702,11 +702,14 @@ view
                                           align-x=center
                                           wrap=word
                                           @text-faint
-                                  for fill in fills
-                                    lazy fill as printed
-                                      FillRow fill=printed #fill(printed.tid)
-                                        events
-                                          pick -> pick_symbol _
+                                  keyed fill in fills by=fill.tid
+                                    stack w=fill h=26.0
+                                      lazy fill as printed
+                                        FillRow fill=printed #fill(printed.tid)
+                                          events
+                                            pick -> pick_symbol _
+                                      if fill.hot
+                                        FillFlash up=fill.buy #flash(fill.tid)
                     rule vertical thickness=1.0 color=edge
                     box #book
                       with

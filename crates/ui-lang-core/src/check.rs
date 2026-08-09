@@ -1,7 +1,24 @@
 use crate::ast::*;
 use crate::semantic::*;
 use crate::{CheckedDocument, Error};
-use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet, VecDeque};
+
+#[cfg(test)]
+thread_local! {
+    static HANDLER_SIGNATURE_WORKLIST_VISITS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_handler_signature_worklist_visits() {
+    HANDLER_SIGNATURE_WORKLIST_VISITS.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn handler_signature_worklist_visits() -> usize {
+    HANDLER_SIGNATURE_WORKLIST_VISITS.get()
+}
 
 struct CheckOutput {
     analyses: facts::CheckedAnalyses,
@@ -360,39 +377,130 @@ fn check(
         declarations,
         &mut initializer_analyses,
     )?;
-    let empty_env = HashMap::new();
-    for handler in &document.handlers {
-        with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
-            infer_runs(handler, document, &mut signatures, &app_values, &empty_env)
-        })?;
+    #[derive(Clone, Copy)]
+    enum InferenceSource {
+        App(usize),
+        Preset(usize),
+        Component { component: usize, handler: usize },
     }
-    for handler in &preset_handlers {
-        infer_runs(handler, document, &mut signatures, &app_values, &empty_env)?;
+
+    let mut sources = Vec::new();
+    let mut source_by_signature = HashMap::new();
+    for (index, handler) in document.handlers.iter().enumerate() {
+        source_by_signature.insert(handler.name.clone(), sources.len());
+        sources.push(InferenceSource::App(index));
     }
-    for component in &document.components {
-        let values: HashMap<String, Type> = component
-            .states
-            .iter()
-            .map(|state| (state.name.clone(), state.ty.clone()))
-            .collect();
-        let env = HashMap::from([
-            (component_context_key(&component.name), Type::Unit),
-            (
-                COMPONENT_CONTEXT_INDEX.into(),
-                Type::Named(component.name.clone()),
-            ),
-        ]);
-        for handler in &component.handlers {
-            with_component_scope(
-                &component.name,
-                reachable.contains(&component.name)
-                    && reachable_handlers.component_contains(&component.name, &handler.name),
-                || {
-                    infer_runs(handler, document, &mut signatures, &values, &env)?;
-                    Ok::<_, Error>(())
-                },
-            )?;
+    for index in 0..preset_handlers.len() {
+        sources.push(InferenceSource::Preset(index));
+    }
+    for (component_index, component) in document.components.iter().enumerate() {
+        for (handler_index, handler) in component.handlers.iter().enumerate() {
+            source_by_signature.insert(
+                component_handler_key(&component.name, &handler.name),
+                sources.len(),
+            );
+            sources.push(InferenceSource::Component {
+                component: component_index,
+                handler: handler_index,
+            });
         }
+    }
+    let targets = sources
+        .iter()
+        .map(|source| {
+            let (handler, component) = match *source {
+                InferenceSource::App(index) => (&document.handlers[index], None),
+                InferenceSource::Preset(index) => (&preset_handlers[index], None),
+                InferenceSource::Component { component, handler } => (
+                    &document.components[component].handlers[handler],
+                    Some(document.components[component].name.as_str()),
+                ),
+            };
+            let mut routes = VecDeque::new();
+            collect_statement_routes(&handler.statements, &mut routes);
+            let mut keys = routes
+                .into_iter()
+                .map(|handler| {
+                    component.map_or_else(
+                        || handler.to_owned(),
+                        |component| component_handler_key(component, handler),
+                    )
+                })
+                .filter(|key| signatures.contains_key(key))
+                .collect::<Vec<_>>();
+            keys.sort_unstable();
+            keys.dedup();
+            keys
+        })
+        .collect::<Vec<_>>();
+
+    let empty_env = HashMap::new();
+    let mut queue = (0..sources.len()).collect::<VecDeque<_>>();
+    let mut queued = vec![true; sources.len()];
+    let mut errors = (0..sources.len())
+        .map(|_| None)
+        .collect::<Vec<Option<Error>>>();
+    while let Some(source_index) = queue.pop_front() {
+        queued[source_index] = false;
+        #[cfg(test)]
+        HANDLER_SIGNATURE_WORKLIST_VISITS.with(|visits| visits.set(visits.get() + 1));
+        let previous_targets = targets[source_index]
+            .iter()
+            .map(|key| signatures.get(key).cloned())
+            .collect::<Vec<_>>();
+        let result = match sources[source_index] {
+            InferenceSource::App(index) => {
+                let handler = &document.handlers[index];
+                with_app_handler_scope(reachable_handlers.app_contains(&handler.name), || {
+                    infer_runs(handler, document, &mut signatures, &app_values, &empty_env)
+                })
+            }
+            InferenceSource::Preset(index) => infer_runs(
+                &preset_handlers[index],
+                document,
+                &mut signatures,
+                &app_values,
+                &empty_env,
+            ),
+            InferenceSource::Component { component, handler } => {
+                let component = &document.components[component];
+                let handler = &component.handlers[handler];
+                let values: HashMap<String, Type> = component
+                    .states
+                    .iter()
+                    .map(|state| (state.name.clone(), state.ty.clone()))
+                    .collect();
+                let env = HashMap::from([
+                    (component_context_key(&component.name), Type::Unit),
+                    (
+                        COMPONENT_CONTEXT_INDEX.into(),
+                        Type::Named(component.name.clone()),
+                    ),
+                ]);
+                with_component_scope(
+                    &component.name,
+                    reachable.contains(&component.name)
+                        && reachable_handlers.component_contains(&component.name, &handler.name),
+                    || infer_runs(handler, document, &mut signatures, &values, &env),
+                )
+            }
+        };
+        errors[source_index] = result.err();
+        for (key, previous) in targets[source_index].iter().zip(previous_targets) {
+            if previous.as_ref() == signatures.get(key) {
+                continue;
+            }
+            let Some(&target_source) = source_by_signature.get(key) else {
+                continue;
+            };
+            if !queued[target_source] {
+                queued[target_source] = true;
+                queue.push_back(target_source);
+            }
+        }
+    }
+    if let Some(error) = errors.into_iter().flatten().next() {
+        return Err(error);
     }
 
     for handler in &mut document.handlers {

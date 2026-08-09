@@ -8,7 +8,7 @@ extern crate::hyperliquid
   Position(coin:str, size:f64, entry:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
   Account(value:f64, cross_value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, margin_pct:f64)
   Trade(ts:i64, price:f64, size:f64, buy:bool, sweep:i64)
-  Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, heat:i64, tid:i64)
+  Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, hot:bool, tid:i64)
   Order(coin:str, buy:bool, price:f64, size:f64, ts:i64)
   Level(price:f64, size:f64, bar:f64)
   Book(bids:[Level], asks:[Level], spread_pct:f64, mid:f64)
@@ -49,8 +49,6 @@ extern crate::hyperliquid
   pure liquidation_gap(market:SymbolRow?, loaded:bool, cross:bool, banked:bool) -> str
   pure push_trades(tape:[Trade], tick:MarketTick, limit:i64) -> [Trade]
   pure push_fills(history:[Fill], incoming:[Fill], limit:i64) -> [Fill]
-  pure cool_fills(rows:[Fill]) -> [Fill]
-  pure any_hot(rows:[Fill]) -> bool
   pure valid_address(address:str) -> bool
   pure demo_symbols() -> [SymbolRow]
   pure demo_positions() -> [Position]

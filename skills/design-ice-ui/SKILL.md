@@ -40,8 +40,11 @@ Apply these rules before editing:
   domain operations behind typed `pure` externs, immediate effects/environment
   reads/retained identity behind app-initializer-or-immediate-handler-only
   `sync` externs, and asynchronous work behind async externs instead of
-  embedding Rust. Async completion route expressions run later and are
-  pure-only.
+  embedding Rust. Explicit `run` Future and `task` statement completion route
+  expressions are pure-only owned snapshots of ordinary cloneable Ice data,
+  materialized when the statement launches; direct recomputation-unsafe
+  builtins are rejected, and `_` is supplied by the delivered completion. Other
+  completion route families keep their documented timing.
 - Prefer the canonical checked representation recorded for the pinned Iced
   capability: direct Ice syntax for common concepts and a typed Rust adapter
   for higher-order or custom native behavior. Do not add a keyword merely to

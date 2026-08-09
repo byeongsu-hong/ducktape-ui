@@ -228,9 +228,15 @@ on submit
 `run` lowers to `iced::Task::perform`. A fallible declaration requires both
 routes; an infallible declaration forbids the failure route. The task statement
 must be last. Its arguments are evaluated immediately and may call a declared
-`sync` extern, including inside nested task groups. A completion route expression
-is evaluated later when the callback runs, so declared extern calls there are
-pure-only and `sync` is rejected.
+`sync` extern, including inside nested task groups. Each explicit expression in
+the success and failure routes becomes an owned snapshot when the statement
+launches; both branches are materialized then, while `_` is supplied only by the
+delivered completion. Route expressions remain pure-only so an unused branch
+cannot perform an effect; their results must be ordinary cloneable Ice data,
+and direct recomputation-unsafe builtins are rejected. Evaluate either runtime
+value once in a preceding handler `let` and route that local instead. The same
+snapshot rule applies to every `task` statement completion route, including
+built-in tasks; stream, sip, flow, and native query route timing is unchanged.
 
 Use a named request lane when starts from one or more handlers supersede the
 same logical work:

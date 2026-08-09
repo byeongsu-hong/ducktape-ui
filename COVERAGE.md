@@ -724,7 +724,7 @@ Ice 2.0 Preview has thirty-four checked Rust boundaries:
 | `recipe name(args)` | `fn(...) -> impl Recipe<Output = Event>` | custom subscription identity, runtime-event input, streams, cancellation, and arbitrary recipe behavior through native `from_recipe` |
 | `event-filter name()` | `fn(subscription::Event) -> Option<Event>` | native raw runtime-event filtering with an explicit hashable identity, including interaction window IDs/status and system-theme changes |
 | `pure name(args)` | `fn(...) -> Output` | trusted same-arguments/same-result, side-effect-free Rust computations usable in every checked expression context, including derived values, views/settings, component defaults and state initializers, subscription filters, easing, handlers, and tests |
-| `sync name(args)` | `fn(...) -> Output` | immediate effect/environment/retained-identity calls in top-level app state initializers and immediately evaluated app/component/preset handler expressions, including nested task arguments; component state initializers are excluded because rendering may recreate them, and async completion route expressions are pure-only because callbacks evaluate them later |
+| `sync name(args)` | `fn(...) -> Output` | immediate effect/environment/retained-identity calls in top-level app state initializers and immediately evaluated app/component/preset handler expressions, including nested task arguments; component state initializers are excluded because rendering may recreate them. Explicit `run` Future and `task` statement success and failure route expressions are owned snapshots of ordinary cloneable Ice data materialized at statement launch, but direct `sync` and recomputation-unsafe builtin calls remain forbidden because both branches materialize even though only one completion is delivered; evaluate either in a preceding handler `let` and route the local. Stream/sip/flow/native query route timing is unchanged |
 | `subscription name(args)` | `fn(...) -> Subscription<Event>` | event, keyboard, mouse, window, system, channel, timer, stream, and custom subscription sources |
 | `theme name(args)` | `fn(...) -> iced::Theme` | native app and nested default-renderer themes, including `custom`, `custom_with_fn`, and complete palette/extended-palette logic |
 | `themer name(args) -> Event` | factory returning `Option<Theme>`, `Element<'static, Event, Theme>`, and optional Theme-dependent text/background callbacks | native alternate `Theme: Base` subtrees inside the default-Theme app, including `Themer::new`, default Theme fallback, event mapping, `text_color`, and `background` |
@@ -874,7 +874,7 @@ animated type is `E103`
 (`crates/ui-lang-core/tests/cases/diagnostic/animation-from-type`).
 
 **A computed number reaches a surface's colour.** A container's `bg=` accepts a
-parenthesised opacity expression — `bg=flash/(animation.value(fade))` — on the
+parenthesised opacity expression — `bg=flash/(animation.project(fade, value, value))` — on the
 same `0..=100` scale as the literal `bg=flash/40`, replacing the colour's alpha
 every view pass. It is a container property with a single background colour;
 anywhere else it is rejected

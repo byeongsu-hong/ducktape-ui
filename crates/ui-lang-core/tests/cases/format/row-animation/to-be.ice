@@ -22,7 +22,7 @@ component Row(label:i64)
     with
       w=fill
       h=24.0
-      bg=primary/(animation.value(fade))
+      bg=primary/(animation.project(fade, value, value))
     text label
 view
   col

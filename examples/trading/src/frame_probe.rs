@@ -170,6 +170,10 @@ fn prints(count: usize) -> Vec<hyperliquid::Trade> {
 fn orders(count: usize, coin: &str) -> Vec<Order> {
     (0..count)
         .map(|index| Order {
+            // Distinct per row, and deliberately not defaulted: an order id is
+            // what a cancel names, so a fixture where every row shares one
+            // would draw a list no cancel could tell apart.
+            oid: 70_000_000_000 + index as u64,
             coin: if index % 3 == 0 {
                 coin.to_owned()
             } else {
@@ -1003,7 +1007,7 @@ fn fills_stay_memoized_performance_contract() {
     // The one-sentence invalidation, executed: a row is rebuilt exactly when
     // the fill it draws changes. Every field the fill has is moved in turn,
     // because a `Hash` that skipped one would leave rows showing a number the
-    // state no longer holds — and a contract that moved only `heat` would pass
+    // state no longer holds — and a contract that moved only `hot` would pass
     // just the same.
     let moves: &[(&str, fn(&mut Fill))] = &[
         ("coin", |fill| fill.coin.push('X')),
@@ -1012,7 +1016,7 @@ fn fills_stay_memoized_performance_contract() {
         ("size", |fill| fill.size += 0.5),
         ("buy", |fill| fill.buy = !fill.buy),
         ("closed_pnl", |fill| fill.closed_pnl += 0.5),
-        ("heat", |fill| fill.heat += 1),
+        ("hot", |fill| fill.hot = !fill.hot),
         ("tid", |fill| fill.tid += 1_000_000),
     ];
     for (field, move_it) in moves {

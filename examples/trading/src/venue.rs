@@ -37,7 +37,7 @@ use crate::hyperliquid::{
     hl_candles, hl_fill_feed, hl_history, hl_market_feed, hl_orders, hl_symbols,
 };
 use crate::lighter::{
-    lighter_account, lighter_candles, lighter_history, lighter_market_feed, lighter_symbols,
+    Zone, lighter_account, lighter_candles, lighter_history, lighter_market_feed, lighter_symbols,
 };
 use crate::portfolio::{PortfolioHistory, hl_portfolio, portfolio_unavailable};
 use crate::signing::Chain;
@@ -95,10 +95,11 @@ pub fn venue_list() -> Vec<Venue> {
 /// point rather than an inconvenience: a network whose reads were wired and
 /// whose capability sentence was forgotten is a screen that silently claims
 /// the wrong exchange answers a panel it will leave empty.
-const NETWORKS: [Network; 3] = [
+const NETWORKS: [Network; 4] = [
     Network::HYPERLIQUID,
     Network::HYPERLIQUID_TESTNET,
     Network::LIGHTER,
+    Network::LIGHTER_TESTNET,
 ];
 
 /// What a reader hears on the switch, by the rule the page and interval tabs
@@ -254,6 +255,7 @@ impl Network {
             Venue::Hyperliquid => Network::HYPERLIQUID,
             Venue::HyperliquidTestnet => Network::HYPERLIQUID_TESTNET,
             Venue::Lighter => Network::LIGHTER,
+            Venue::LighterTestnet => Network::LIGHTER_TESTNET,
         }
     }
 
@@ -365,16 +367,78 @@ impl Network {
                 ))
             })
         },
-        markets: || Box::pin(lighter_symbols()),
-        candles: |tape, coin, interval| Box::pin(lighter_candles(tape, coin, interval)),
-        history: |tape, coin, interval| Box::pin(lighter_history(tape, coin, interval)),
-        account: |address| Box::pin(lighter_account(address)),
+        markets: || Box::pin(lighter_symbols(Zone::Mainnet)),
+        candles: |tape, coin, interval| {
+            Box::pin(lighter_candles(Zone::Mainnet, tape, coin, interval))
+        },
+        history: |tape, coin, interval| {
+            Box::pin(lighter_history(Zone::Mainnet, tape, coin, interval))
+        },
+        account: |address| Box::pin(lighter_account(Zone::Mainnet, address)),
         // `account_all/<index>` and the order channels are keyed by account
         // index rather than L1 address, and want an API-key-signed token an
         // address alone cannot get (`code 20001`). An address is all this app
         // asks a reader for, so there are no orders and no fills here.
         orders: |_address| Box::pin(async { Ok(Vec::new()) }),
-        market_feed: lighter_market_feed,
+        market_feed: |tape| lighter_market_feed(Zone::Mainnet, tape),
+        fill_feed: |_address| no_stream(),
+    };
+
+    /// The same exchange's test deployment, verified live rather than assumed:
+    /// it answers the same reads over the same shapes, streams the same
+    /// `order_book:N` channels over the same `/stream`, and its faucet creates
+    /// and funds an account from one request.
+    ///
+    /// A separate entry rather than a flag, for the reason the Hyperliquid pair
+    /// is: the market ids are the deployment's own — BTC is 1 here against a
+    /// mainnet universe of 222 — so nothing derived from one deployment means
+    /// anything against the other, and the adapter reads the ticker-to-id table
+    /// out of whichever universe it was handed.
+    pub const LIGHTER_TESTNET: Network = Network {
+        venue: Venue::LighterTestnet,
+        name: "Lighter Testnet",
+        testnet: true,
+        // Nothing yet, and the reason is this app rather than the venue.
+        // Lighter's orders are L2 transactions signed by an API key the account
+        // registers — the `api_key_index` in the token `lighter_sign.rs`
+        // already mints, over the curve it already implements — so the missing
+        // half is the transaction, not the signing. `None` here means "this app
+        // has no write path", and when that changes this field changes shape:
+        // Lighter's writes are not pinned to an EIP-712 chain, so carrying both
+        // schemes is the seam's own next revision rather than a `Chain` bent to
+        // fit.
+        chain: None,
+        gap: "Lighter serves resting orders and this account's fills only to an \
+              API-key-signed token, which an address alone cannot get and this app \
+              does not hold.",
+        note: "This is Lighter's test deployment. It is a separate book with its \
+               own accounts and its own market ids — BTC is market 1 here and the live \
+               exchange lists two hundred more — so an account funded on mainnet has \
+               nothing here, and nothing traded here is worth anything. \
+               `GET /api/v1/faucet?l1_address=…` creates and funds one.",
+        portfolio: |_address| {
+            Box::pin(async {
+                Ok(portfolio_unavailable(
+                    "Historical performance on Lighter needs a read-only API token; \
+                     this address-only session still shows current exposure."
+                        .to_owned(),
+                ))
+            })
+        },
+        markets: || Box::pin(lighter_symbols(Zone::Testnet)),
+        candles: |tape, coin, interval| {
+            Box::pin(lighter_candles(Zone::Testnet, tape, coin, interval))
+        },
+        history: |tape, coin, interval| {
+            Box::pin(lighter_history(Zone::Testnet, tape, coin, interval))
+        },
+        account: |address| Box::pin(lighter_account(Zone::Testnet, address)),
+        // `account_all/<index>` and the order channels are keyed by account
+        // index rather than L1 address, and want an API-key-signed token an
+        // address alone cannot get (`code 20001`). An address is all this app
+        // asks a reader for, so there are no orders and no fills here.
+        orders: |_address| Box::pin(async { Ok(Vec::new()) }),
+        market_feed: |tape| lighter_market_feed(Zone::Testnet, tape),
         fill_feed: |_address| no_stream(),
     };
 }
@@ -797,14 +861,38 @@ mod tests {
     /// compiles and is caught by review, not by this.
     #[test]
     fn a_network_signs_for_the_deployment_it_says_it_is() {
+        // Where a network carries a signing deployment, it must be the one the
+        // badge names. Where it carries none this says nothing — a network
+        // this app cannot write to yet is not thereby a mainnet, which is what
+        // the first version of this assertion accidentally claimed and what
+        // Lighter Testnet caught the moment it was added.
         for network in NETWORKS {
+            let Some(chain) = network.chain else {
+                continue;
+            };
             assert_eq!(
                 network.testnet,
-                network.chain.is_some_and(Chain::testnet),
+                chain.testnet(),
                 "{}: the badge and the signing chain name different deployments",
                 network.name,
             );
         }
+
+        // And the other half, which the `if let` above would otherwise let
+        // rot: every network that can be written to at all is accounted for
+        // here, so a new entry silently carrying no scheme is a compile-time
+        // arm rather than a test that quietly skips it.
+        let writable: Vec<&str> = NETWORKS
+            .iter()
+            .filter(|network| network.chain.is_some())
+            .map(|network| network.name)
+            .collect();
+        assert_eq!(
+            writable,
+            vec!["Hyperliquid", "Hyperliquid Testnet"],
+            "the networks this app can sign for changed; the refusal sentences \
+             and the enrolment checklist are part of that change"
+        );
 
         assert_eq!(
             Network::HYPERLIQUID.chain.map(Chain::info_url),
@@ -819,12 +907,14 @@ mod tests {
             Network::HYPERLIQUID_TESTNET.chain,
             "one exchange's two deployments have to be two chains"
         );
-        assert_eq!(
-            Network::LIGHTER.chain,
-            None,
-            "this app has no Lighter write path yet, and an EIP-712 chain here \
-             would claim both that it has one and that it is that scheme"
-        );
+        for lighter in [Network::LIGHTER, Network::LIGHTER_TESTNET] {
+            assert_eq!(
+                lighter.chain, None,
+                "{}: this app has no Lighter write path yet, and an EIP-712 chain \
+                 here would claim both that it has one and that it is that scheme",
+                lighter.name,
+            );
+        }
     }
 
     /// A switch that says which venue is being read only in its highlight
@@ -1260,7 +1350,9 @@ mod tests {
 
             // Keyed by the ticker the markets read carries, which is the whole
             // claim the seam makes about naming a market.
-            let book = lighter_book(top.name.clone()).await.expect("book");
+            let book = lighter_book(Zone::Mainnet, top.name.clone())
+                .await
+                .expect("book");
             assert!(!book.bids.is_empty() && !book.asks.is_empty());
             assert!(book.asks[0].price > book.bids[0].price, "crossed book");
 
@@ -1350,6 +1442,50 @@ mod tests {
                     && !there.contains(&"Hyperliquid Testnet".to_owned()),
                 "and the live exchange heads its own the other way round: {there:?}"
             );
+        });
+    }
+
+    /// Lighter's test deployment answering the same reads as its live one, and
+    /// answering them about its own book.
+    ///
+    /// The ids are the point. Lighter keys a book by a numeric `market_id`
+    /// rather than by ticker, and the two deployments number their markets
+    /// independently — so a ticker-to-id table built from one and used against
+    /// the other opens the wrong book under the right name, which is a screen
+    /// that looks entirely correct. Reading BTC here and finding a BTC book is
+    /// the whole claim, because it can only be true if the table came from this
+    /// deployment's own universe.
+    #[test]
+    #[ignore = "hits the live venue, run explicitly: the Lighter testnet seam"]
+    fn the_lighter_test_deployment_reads_its_own_book() {
+        crate::hyperliquid::open_the_wire();
+        let test = Network::of(Venue::LighterTestnet);
+        assert_eq!(test.name, "Lighter Testnet");
+        assert!(test.testnet);
+
+        smol::block_on(async {
+            let rows = (test.markets)().await.expect("the testnet universe");
+            assert!(!rows.is_empty(), "the deployment lists markets");
+            let live = (Network::LIGHTER.markets)()
+                .await
+                .expect("the live universe");
+            assert!(
+                live.len() > rows.len(),
+                "the live exchange lists far more markets than the test one; \
+                 equal counts is one read through the other's endpoints"
+            );
+
+            // Keyed by ticker through this deployment's own id table.
+            let btc = rows
+                .iter()
+                .find(|row| row.name == "BTC")
+                .expect("the test deployment lists BTC");
+            assert!(btc.price > 0.0 && btc.maintenance > 0.0 && btc.leverage > 0.0);
+            let book = lighter_book(Zone::Testnet, btc.name.clone())
+                .await
+                .expect("its book");
+            assert!(!book.bids.is_empty() && !book.asks.is_empty());
+            assert!(book.asks[0].price > book.bids[0].price, "crossed book");
         });
     }
 

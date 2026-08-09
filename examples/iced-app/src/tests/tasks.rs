@@ -186,6 +186,8 @@ mod request_lane_lifecycle {
 
         app.show_mounted = false;
         let _ = app.__view();
+        // Pruning lands one pass late; see `begin_render`.
+        let _ = app.__view();
         assert!(app.__ice_component_mounted.values().is_empty());
         app.show_mounted = true;
         let _ = app.__view();
@@ -213,6 +215,116 @@ mod request_lane_lifecycle {
         assert_eq!(
             app.__ice_component_mounted.values()[scope].result,
             "current"
+        );
+    }
+}
+
+#[cfg(test)]
+mod route_snapshot_lifecycle {
+    ui_lang::include_app!("src/ui/route_snapshot_lifecycle.ice");
+
+    fn output(
+        task: iced::Task<__RouteSnapshotLifecycleMessage>,
+    ) -> Option<__RouteSnapshotLifecycleMessage> {
+        use iced::futures::StreamExt;
+
+        let mut stream = iced_runtime::task::into_stream(task).expect("snapshot task stream");
+        iced::futures::executor::block_on(async move {
+            while let Some(action) = stream.next().await {
+                if let iced_runtime::Action::Output(message) = action {
+                    return Some(message);
+                }
+            }
+            None
+        })
+    }
+
+    #[test]
+    fn future_routes_receive_launch_state_derived_param_and_local_values() {
+        let (mut app, _) = RouteSnapshotLifecycle::__boot();
+        let task = app.__update(__RouteSnapshotLifecycleMessage::StartFuture(
+            501,
+            "param launch".into(),
+        ));
+        let _ = app.__update(__RouteSnapshotLifecycleMessage::Change("changed".into()));
+
+        crate::backend::complete_controlled_request(501, "future payload");
+        let _ = app.__update(output(task).expect("future completion"));
+
+        assert_eq!(app.future_state, "state launch");
+        assert_eq!(app.future_derived, "derived launch");
+        assert_eq!(app.future_param, "param launch");
+        assert_eq!(app.future_local, "local launch");
+        assert_eq!(app.future_payload, "future payload");
+        assert_eq!(app.token, "changed");
+        assert_eq!(app.derived_source, "derived changed");
+    }
+
+    #[test]
+    fn task_routes_receive_launch_state_values() {
+        let (mut app, _) = RouteSnapshotLifecycle::__boot();
+        let task = app.__update(__RouteSnapshotLifecycleMessage::StartTask("launch".into()));
+        let _ = app.__update(__RouteSnapshotLifecycleMessage::Change("changed".into()));
+
+        let _ = app.__update(output(task).expect("task completion"));
+
+        assert_eq!(app.task_state, "launch");
+        assert_eq!(app.task_payload, 42);
+        assert_eq!(app.token, "changed");
+    }
+
+    #[test]
+    fn component_routes_snapshot_each_instance_state() {
+        let (mut app, _) = RouteSnapshotLifecycle::__boot();
+        let first_scope = "RouteSnapshotLifecycle/first";
+        let second_scope = "RouteSnapshotLifecycle/second";
+        let first = app.__update(__RouteSnapshotLifecycleMessage::__SnapshotHandleStart(
+            first_scope.into(),
+            601,
+            "first launch".into(),
+        ));
+        let second = app.__update(__RouteSnapshotLifecycleMessage::__SnapshotHandleStart(
+            second_scope.into(),
+            602,
+            "second launch".into(),
+        ));
+        let _ = app.__update(__RouteSnapshotLifecycleMessage::__SnapshotHandleChange(
+            first_scope.into(),
+            "first changed".into(),
+        ));
+        let _ = app.__update(__RouteSnapshotLifecycleMessage::__SnapshotHandleChange(
+            second_scope.into(),
+            "second changed".into(),
+        ));
+
+        crate::backend::complete_controlled_request(602, "second payload");
+        let _ = app.__update(output(second).expect("second completion"));
+        crate::backend::complete_controlled_request(601, "first payload");
+        let _ = app.__update(output(first).expect("first completion"));
+
+        assert_eq!(
+            app.__ice_component_snapshot[first_scope].captured,
+            "first launch"
+        );
+        assert_eq!(
+            app.__ice_component_snapshot[first_scope].payload,
+            "first payload"
+        );
+        assert_eq!(
+            app.__ice_component_snapshot[second_scope].captured,
+            "second launch"
+        );
+        assert_eq!(
+            app.__ice_component_snapshot[second_scope].payload,
+            "second payload"
+        );
+        assert_eq!(
+            app.__ice_component_snapshot[first_scope].token,
+            "first changed"
+        );
+        assert_eq!(
+            app.__ice_component_snapshot[second_scope].token,
+            "second changed"
         );
     }
 }
@@ -419,7 +531,7 @@ mod animation {
 
         std::thread::sleep(std::time::Duration::from_millis(200));
         let _ = app.__view();
-        std::thread::sleep(std::time::Duration::from_millis(900));
+        std::thread::sleep(std::time::Duration::from_millis(1400));
         let _ = app.__view();
         assert_eq!(
             app.__subscription().units(),

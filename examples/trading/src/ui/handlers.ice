@@ -159,7 +159,6 @@ on reopen
   orders_error = ""
   fills_error = ""
   portfolio_history = portfolio_empty()
-  flashing = false
   // The feed the gate opens over is about to be aborted, so its last reading
   // describes nothing: left alone, the terminal behind the gate goes on
   // claiming a live price at whatever the round trip was when it died.
@@ -268,7 +267,6 @@ on switch_venue(next)
   account_error = ""
   orders_error = ""
   fills_error = ""
-  flashing = false
   // The ticket was priced off the book of the venue being left, at a market
   // the next one may not even list.
   ticket_price = ""
@@ -362,10 +360,6 @@ on tick_portfolio
 on pick_portfolio_range(next)
   portfolio_range = next
 
-on cool_flash
-  fills = cool_fills(fills)
-  flashing = any_hot(fills)
-
 // A universe is the first thing that can say whether the market on screen
 // exists here. The ticker does not travel: the venues list different markets
 // under different spellings, so the one being carried in — across a switch,
@@ -448,7 +442,6 @@ on account_loaded(next)
 on fills_streamed(rows)
   fills_error = ""
   fills = push_fills(fills, rows, 200)
-  flashing = any_hot(fills)
 
 on orders_loaded(rows)
   error = ""
@@ -565,4 +558,3 @@ subscribe
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 60s when !gate && !empty(address) -> tick_portfolio
-  every 700ms when flashing -> cool_flash
