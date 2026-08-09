@@ -1,8 +1,9 @@
 # Design with the extended native surface
 
 Use this reference only after Core layout/widgets, components, handlers, and
-typed async externs are insufficient. Ice's extended surface is implemented,
-but it is not a promise to mirror every Iced API.
+typed async externs are insufficient. Ice's extended surface and typed
+boundaries complete the pinned public, application-facing Iced surface. That
+contract does not require a dedicated keyword for every Rust method.
 
 ## Contents
 
@@ -29,10 +30,13 @@ Stop at the first row that meets the need:
 | covered native operation | built-in `task`/widget/window/pane statement |
 | existing native task/stream/subscription | matching typed extern |
 | custom visual or widget | shader/component/canvas typed surface |
-| genuinely common missing authoring concept | language design + revision |
+| missing public application-facing Iced capability | coverage decision + language revision |
 
-Do not add syntax just because Iced exposes a method. The language's stable Core
-is deliberately smaller than its backend.
+Do not add syntax just because Iced exposes a method. Choose the smallest
+checked representation that preserves the native behavior: direct syntax for a
+common declarative concept, otherwise a typed boundary. A partial or missing
+coverage row is still a language gap even when the right representation is not
+new syntax.
 
 ## Extended widget inventory
 

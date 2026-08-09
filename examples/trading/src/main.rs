@@ -2,6 +2,7 @@
 mod frame_probe;
 mod hyperliquid;
 mod lighter;
+mod lighter_sign;
 mod session;
 mod signing;
 mod venue;
@@ -14,7 +15,7 @@ fn main() -> iced::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{__TradingMessage, Trading};
+    use super::{__TradingMessage, Trading, Venue};
     use crate::hyperliquid::SymbolRow;
     use ui_lang_runtime::tray::{TrayEvent, TrayRect};
 
@@ -56,6 +57,27 @@ mod tests {
 
         let _ = app.__update(__TradingMessage::PickSymbol("ETH".into()));
         assert_eq!(marked(&app), ["ETH"], "picking must rebuild the rows");
+    }
+
+    /// The defect a venue switch can hide where no panel shows it. The feed
+    /// being aborted holds a clone of the tape and keeps merging into it until
+    /// its thread notices, and `tape_focus` only turns away a market it was not
+    /// asked for — both venues ask for the same market at the same width. So a
+    /// re-pointed tape takes the old exchange's candles under the new
+    /// exchange's name, and the chart draws them. A fresh tape is the only
+    /// thing that severs it, and nothing in the type system says the switch has
+    /// to hand one over.
+    #[test]
+    fn switching_venues_hands_over_a_tape_the_old_feed_cannot_write_to() {
+        let (mut app, _) = Trading::__boot();
+        let held = app.tape.clone();
+        assert!(app.tape == held, "a tape is the candles it points at");
+
+        let _ = app.__update(__TradingMessage::SwitchVenue(Venue::Lighter));
+        assert!(
+            app.tape != held,
+            "the switch re-pointed the tape the old feed still writes to"
+        );
     }
 
     fn tray_click() -> __TradingMessage {

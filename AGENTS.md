@@ -52,6 +52,14 @@ checker, or codegen modules. For end-to-end behavior, add
 coverage target. Changes to supported Ice behavior should satisfy the evidence
 rules in `COVERAGE.md`.
 
+Use the `test-ice-ui` skill whenever adding, changing, or reviewing first-class
+Ice UI tests. A new regression test is incomplete until command evidence shows
+that its intended assertion fails against the pre-fix behavior or one minimal
+temporary behavior mutation, then passes after restoration. Parse, compile,
+timeout, target-resolution, and setup failures do not count as Red evidence.
+`capture` alone is not an assertion, and `dispatch` alone does not prove a
+widget route or interaction works.
+
 ## Commit & Pull Request Guidelines
 
 Recent history favors concise imperative subjects, often Conventional Commit

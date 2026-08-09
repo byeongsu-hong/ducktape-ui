@@ -2,10 +2,11 @@
 
 Status: implemented candidate
 
-Ice is a small frontend language with an iced backend. It is not Rust syntax,
-JSX, or a token shortcut around a procedural macro. A frontend parses `.ice`
-source, resolves names and types, checks UI semantics, and lowers a typed tree
-to backend code.
+Ice is a statically checked declarative frontend language for iced. It covers
+the pinned public, application-facing iced surface without embedding Rust
+syntax, JSX, or a token shortcut around a procedural macro. A frontend parses
+`.ice` source, resolves names and types, checks UI semantics, and lowers a typed
+tree to backend code.
 
 This document describes what the repository implements. A section explicitly
 marked “planned” is a design constraint, not accepted candidate syntax.
@@ -28,6 +29,8 @@ The language therefore follows these rules:
    are errors.
 5. Domain work crosses a typed `extern` boundary.
 6. The compiler has one parser and checker shared by every frontend.
+7. Every public, application-facing capability in the pinned iced baseline has
+   a checked representation through canonical Ice syntax or a typed boundary.
 
 Ice owns transient/display state, layout, style, event routing, and calls to
 actions. Rust owns validation, invariants, persistence, networking, security,
@@ -40,26 +43,32 @@ interaction -> handler -> extern async Rust fn -> result handler -> state -> vie
 UI validation such as disabling an empty submit button is only a convenience.
 The Rust action must still validate its input.
 
-### Core and backend boundary
+### Complete authoring surface and backend boundary
 
-Ice Core is the stable authoring surface: `app`, `use`, `enum`, `state`, `derived`,
+The stable authoring surface combines direct declarative syntax with typed Rust
+boundaries. Ice Core provides `app`, `use`, `enum`, `state`, `derived`,
 `component`, `slot`, `on`, `view`, `if`, `match`, `for`, `keyed`, and `lazy`;
 common row, column, stack, scroll, and box layout; text, input, button,
 checkbox, and image widgets; bindings, routes, payloads, scoped IDs, typed
-extern calls, and basic async success/failure routing.
+extern calls, and basic async success/failure routing. The extended native
+surface and typed boundaries complete the application-facing iced baseline.
 
 A new Core construct must be common UI authoring, have one canonical source
-form, and not fit an existing typed Rust boundary. The implemented 2.0
-vocabulary is frozen during preview stabilization. Spellings removed in this
-revision are syntax errors and the formatter never translates old vocabulary.
-Vocabulary changes require an explicit language design decision and revision;
-removed forms and their callers are deleted in the same change rather than
-retained behind compatibility paths.
+form, and be meaningfully more declarative than an existing typed Rust
+boundary. Completeness does not require a dedicated keyword for every iced
+method, but every coverage gap must close through one of those two checked
+representations. The implemented 2.0 vocabulary is frozen during preview
+stabilization. Spellings removed in this revision are syntax errors and the
+formatter never translates old vocabulary. Vocabulary changes require an
+explicit language design decision and revision; removed forms and their callers
+are deleted in the same change rather than retained behind compatibility paths.
 
 Canvas paths, complete PaneGrid mutation, raw window/platform values, shaders,
 custom renderers, task-composition variants, and exhaustive native status styles
-are the extended surface. It is not a parity roadmap and must not grow only
-because iced exposes another public type or method.
+are the extended surface. They are first-class parts of the complete authoring
+contract. A new iced type or method does not automatically require new syntax;
+the coverage decision chooses direct syntax or a typed boundary while preserving
+the native behavior and static guarantees.
 
 Language revisions and Cargo package versions use separate schemes. This
 document specifies language revision 2.0. The workspace packages are
@@ -68,7 +77,7 @@ resolved iced/iced_widget versions are a third, independent backend baseline.
 
 ### Accessibility contract
 
-Ice owns a small accessibility layer above stock Iced. Generated Core nodes
+Ice owns a checked accessibility layer above stock Iced. Generated Core nodes
 produce a deterministic AccessKit tree with these mappings:
 
 | Ice node | AccessKit role | Semantic state |
@@ -5665,18 +5674,26 @@ above.
 
 ## 13. Current coverage and escape hatches
 
-The 2.0 native backend covers both windowed applications and windowless
-daemons alongside CRUD/settings-style screens, selection, media, hover
-overlays, declarative canvas geometry, and pointer events. Borrowed custom
-widgets and an application-wide renderer type remain the escape hatch for
-specialized native behavior. [`COVERAGE.md`](COVERAGE.md) is the exact
-versioned ledger.
+The 2.0 native backend covers the complete public, application-facing surface
+of the pinned iced baseline across windowed applications, windowless daemons,
+widgets, layout, tasks, subscriptions, native values, and custom rendering
+boundaries. Borrowed custom widgets and an application-wide renderer type
+retain arbitrary native behavior without admitting unchecked expressions into
+Ice. [`COVERAGE.md`](COVERAGE.md) is the exact versioned completeness ledger.
 
 The language must not grow one ad-hoc syntax form for every iced API. Thirty-three
 typed Rust boundaries cover domain work, native elements and programs, runtime
 tasks and subscriptions, Markdown viewers, and native style callbacks without
 admitting arbitrary Rust into expressions or duplicating iced in the core
-grammar. Direct native syntax remains preferable for common UI concepts.
+grammar. These boundaries are part of the complete declarative contract, not a
+second-class fallback. Direct native syntax remains preferable for common UI
+concepts.
+
+When the pinned iced baseline changes, every new or changed public,
+application-facing behavior is a coverage obligation. The upgrade is not
+complete until the ledger records a native checked representation and the
+evidence rule in `COVERAGE.md` passes. This obligation may extend direct syntax
+or an existing typed boundary; it does not by itself justify another keyword.
 
 Native language coverage and system coverage are therefore separate:
 

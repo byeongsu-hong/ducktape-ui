@@ -8,20 +8,17 @@
 At the time of adoption, successful Ice analysis produced a nominal
 `CheckedDocument` that contained and dereferenced to the source `Document`.
 The Rust code generator consumed that checked AST directly and imported checker
-helpers for some semantic decisions. As component defaults, bindings, named
-events, slots, recipes, typed matches, scoped widget identity, and asynchronous
-lifetimes grew, this made it increasingly easy to repeat or diverge on the same
-decision in the checker and code generator.
+helpers for some semantic decisions. As the language grew, this made it easy to
+repeat or diverge on the same decision in the checker and code generator.
 
-New Core syntax was frozen while this boundary was established. The objective
-was not to introduce another public language surface or prepare speculative
-backends. It was to make every accepted Ice construct have one checked,
-canonical meaning before backend emission begins.
+The objective was to give every accepted Ice construct one checked, canonical
+meaning before backend emission without adding a public language surface or
+preparing speculative backends.
 
 ## Decision
 
 Ice uses a complete, private, typed high-level intermediate representation named
-`LoweredProgram`. The pipeline is:
+`LoweredProgram`:
 
 ```text
 Source AST
@@ -32,711 +29,67 @@ Source AST
 
 The source AST preserves how a program was written for parsing, formatting,
 editor features, and diagnostics. `LoweredProgram` preserves what the checked
-program means. It contains Ice semantics, runtime-required identities, and the
-resolved target names or paths required at native boundaries, but no prebuilt
-Rust token fragments or Iced library types. Lowering fixes semantic target
-identity; concrete Rust token construction and Iced API calls remain the
-responsibility of the backend emitter.
+program means. It contains Ice semantics, runtime-required identities, and
+resolved native-boundary names or paths, but no prebuilt Rust tokens or Iced
+library types. Concrete Rust construction and Iced API calls remain backend
+responsibilities.
 
 The lowering boundary has these invariants:
 
-1. Only the lowering module can construct a `LoweredProgram`.
+1. Only lowering can construct a `LoweredProgram`.
 2. Rust code generation accepts a `LoweredProgram`, never a source `Document`
    or `CheckedDocument`.
 3. Code generation does not import checker helpers or repeat semantic
    validation.
 4. HIR contracts that emit source markers or backend diagnostics carry an
-   `OriginId`; nodes with no source-mapping role do not retain one. A shared
-   origin table stores root and imported locations without copying paths into
-   each referencing node.
+   `OriginId`; a shared origin table stores root and imported locations.
 5. Invalid or unresolved states are not representable in HIR. Lowering either
    produces a complete program or returns a source-mapped diagnostic.
 
-Before code generation, lowering resolves or removes all language sugar,
-including:
+Before emission, lowering resolves language sugar and all choices that would
+otherwise require semantic interpretation in the backend. This includes typed
+declaration identities, component contracts and calls, event routes, slots,
+recipes and themes, matches, widget identity, asynchronous call sites,
+lifetime behavior, application settings, and tests.
 
-- declaration and reference names into stable typed IDs;
-- component prop ordering, defaults, read/bind capability, and concrete state
-  references;
-- named event routes, default-event shorthand, and `forward` blocks;
-- required and optional slots and folded `provided(Slot)` expressions;
-- recipe inheritance, utilities, variants, palettes, and theme token IDs;
-- exhaustive match arms and payload bindings;
-- component scopes, widget identity, and reconciliation identity;
-- task, stream, `run latest`, and `run replace` call-site identity;
-- retained or mounted lifetime behavior and its cleanup obligations;
-- all remaining type, capability, and ownership choices required by emission.
-
-The HIR specification covers the whole accepted language. Delivery was
-incremental: component calls and contracts first, then styles and themes,
-expressions and matches, asynchronous behavior and lifetime, application
-settings and tests, and finally the remaining backend surface. Each slice
-removed its old code-generation path in the same change. There is no
-permanent mixed AST/HIR fallback or compatibility shim.
-
-### Implementation status
-
-The component-contract and component-call slice is implemented. The private
-owned `LoweredProgram` is now the only input accepted by Rust generation.
-Component and call IDs, ordered props with selected defaults, writable state
-references, direct/forwarded named events, ordered required/optional slots,
-output routes, scope identity, and storage lifetime are fixed before emission.
-Lowering classifies component calls by source site, while the render path selects
-the resolved call and contract through the `ComponentCallId` owned by canonical
-view topology. At that stage, paths outside the slice still consumed AST names
-and nodes; the subsequent slices documented below removed those dependencies.
-Component state storage, boot, update, mounted cleanup, and call rendering
-consume the resolved contract.
-
-Supplied component arguments now carry an unconditional checked expression-use
-ID; defaults retain the same representation. Bind writability is decided from
-the checked path root and projections, so lowering no longer re-resolves a raw
-argument expression or keeps a second argument-expression variant. Component
-calls and checked view facts share one `ComponentCallId`/`ViewId` arena.
-
-Component-call delivery is now a completed route sub-slice. A dedicated checked
-call-route record fixes the call, view, and component IDs; exact output type;
-declared event IDs, names, payload types, and direct/forward topology; outer
-event IDs; ordered route IDs; and parented physical origins. Direct output and
-named-event routes lower to `ResolvedInteractionRoute`, including target IDs,
-checked expression-use IDs, payload indexes, and source/destination types.
-Generation no longer receives a raw `Route`, `Expr`, or source component
-declaration for this path, and the former raw route callback helper family is
-removed. Component root/slot child traversal and the general expression
-fallback were outside that route cut and were removed by subsequent slices.
-
-Normalized component records carry root/import locations through `OriginId`.
-At that stage, the table's parent links scaffolded future expansion stacks while
-lowering errors and generated source markers still used source spans and the
-existing physical line-origin map. Subsequent slices made the shared origin
-arena authoritative across the complete program.
-
-The recipe/utility and theme-declaration slice is also implemented. Typed
-recipe, style-use, target, variant, theme-contract, theme-token, palette, and
-extern-function IDs preserve the checked relationships. Recipe inheritance is
-flattened once into a fixed-size backend-neutral semantic style, and direct
-utilities are applied once at each source site. The ten render paths that use
-Core utilities consume only the resolved style and no longer inspect recipe
-names, inheritance, or utility strings. Theme contracts and palettes carry
-token declaration order and complete RGBA tables; app and nested theme
-selection, static or dynamic active palettes, native theme factory calls,
-nested gradients, token references, and opacity are resolved before their
-migrated emitters run.
-
-Subsequent style and view slices completed the remaining style-shaped surface.
-Expression-bearing native widget status blocks, direct view colors, palette
-enum paths, and every accepted widget option now lower to normalized HIR records
-or checked expression IDs before emission. No compatibility fallback remains.
-In the slice summaries below, each feature-specific `Resolved*` record owns that
-slice's semantics, while every view renderer also consumes the applicable kind,
-identity, and child IDs from the shared canonical `ResolvedView`. No production
-renderer receives a source-AST node; references to raw or source poisoning
-describe test-only evidence that the backend cannot observe the sidecar.
-Migrated handler and application-setting generation uses the shared origin arena
-directly for imported and root source markers.
-
-The checker now also preserves the first expression-family facts in a private,
-owned arena. Stable expression, expression-use, value-owner, and view-owner IDs
-connect initializer expression trees to concrete types and to resolved value,
-enum, palette, extern, builtin, field-projection, and operator facts. The arena
-uses direct typed-ID indexing and does not recover facts from AST locations
-during lowering. Structs, struct fields, enums, enum variants, and extern
-functions are origin-aware semantic declaration records rather than positional
-lookups back into `Document` vectors. Declaration references use the same
-`AppStateId`, `DerivedId`, `ComponentParamId`, `ComponentStateId`, `PaletteId`,
-`ExternFnId`, struct, and enum identities as the rest of HIR. Checked facts,
-component lowering, and style lowering also allocate from one shared origin
-arena. Imported physical locations and declaration-parent links therefore
-survive across expression and declaration slices without a parallel origin
-table.
-
-This slice covers app-state, derived-value, component-default, component-state,
-and supplied component-argument expressions through production Rust emission.
-Lowering retains their checked expression-use IDs, explicit initializer
-coercions, and resolved animation options, including a typed extern ID for
-custom easing. The backend emits those facts directly. The former initializer
-and component-argument AST helpers, unchecked `Default` recovery, and optional
-raw-expression argument representation are removed.
-
-Lexical view-flow expressions are normalized as well. Checked view records own
-`if`, `for`, exhaustive typed `match`, keyed, lazy, table, pane-template, and
-responsive expression uses plus their resolved local bindings. Match arms carry
-resolved option/result/enum/palette patterns, variant or palette IDs, payload
-locals, and arm origins. `provided(Slot)` carries a resolved
-`ComponentSlotId`. Daemon windows, loop items, match payloads, keyed items, lazy
-dependencies, table rows, pane maximized/template locals, and responsive size
-locals all have explicit owner roles. Ordinary and flex flow generation,
-component arguments, keyed/table/lazy/pane/responsive generation consume this
-checked arena. Component call facts also fix whether each prop was supplied or
-defaulted; raw argument topology cannot silently change that choice after
-checking. Lowering matches checked paths to semantic value/local owner IDs and
-validates source view kinds and children against the stable checked topology
-before publishing canonical `ResolvedView` records. Emission consumes normalized
-records and stable IDs. Invalid owner, topology, match binding, and enum
-IDs therefore fail with source-mapped `E196`. Imported expressions retain
-physical locations and parent chains. Missing, duplicate, or leftover
-authoritative analyses also fail with `E196`.
-Subsequent widget slices extend the same ownership and topology guarantees to
-every expression-bearing option and close the full-HIR view boundary.
-
-Handler bodies are now a completed production HIR slice. One deterministic
-preorder arena owns app, implicit `mount`, component, and preset handlers;
-nested statements; immediate and flow tasks; body routes; and latest/replace
-run sites. Checked locals have explicit handler-parameter, statement-let, or
-task-transform owners. Every operand has a statement, task, or route owner and
-retains its checked expression-use ID, concrete type, resolved writable state,
-extern ID, task output/error/finality, and route target/payload contract.
-`RunSiteId` is independent of source lines and is the sole generation and
-replacement identity used by component state and messages.
-
-Lowering validates handler, statement, task, route, and run-site ownership,
-preorder parentage, complete arena consumption, task finality, and origin
-chains. Generated handler code consumes only `ResolvedHandler` and
-`ResolvedStatement`; it does not inspect statement AST expressions, rerun
-expression typing, rediscover extern functions, or derive async identity from a
-line number. Nested statement scopes use borrowed binding layers instead of
-cloning the full environment. Structured HIR snapshots cover app, mount,
-component, preset, group, sip, flow, abortable, route, payload, transform, and
-stable run-site records. Post-check AST mutation, imported-origin, invalid-state,
-compiled-fixture, and 500/4,000-statement contracts prove checked-fact
-authority, source mapping, linear growth, zero handler type rechecks, and zero
-full environment clones.
-
-An integration ratchet inventories selected lexical markers for backend escapes
-through `LoweredProgram::document`, the `RenderDocument` raw-document wrapper,
-checker imports and uses, type or extern re-resolution, raw expression fallback,
-and exported source-AST identifiers. A dependency-free Rust lexer strips
-comments and literals before it records normalized containing-item and
-call-site fingerprints, so same-file delete/add swaps change the reviewed
-ledger while identifier prefixes do not become false AST matches. It discovers
-only top-level AST exports and follows import-reachable globs, names, module
-aliases, grouped and nested aliases, alias chains, qualified paths, and local
-uses without treating unrelated same-named backend items as AST references.
-Checker glob imports remain rejected. Every selected production count is now
-zero. The ratchet remains a lexical defense rather than a Rust semantic
-resolver, so ordinary semantic review continues to guard unrepresented paths.
-
-Application and daemon settings are now normalized as one complete vertical
-slice. `AppSettingExprId` and `NamedWindowId` identify the retained title,
-theme, palette, background, foreground, scale, theme-factory arguments, and
-ordered named windows. The checker hands one authoritative analysis per
-expression to fact construction; dynamic theme and palette classification is
-recovered from those facts, not from source spelling. A typed current-window
-local supplies daemon callback scope. The HIR also owns renderer and executor
-choices, ordered font assets, the exact default-font
-family/weight/stretch/style and declaration origin, common application settings, a folded
-runtime-default primary window, every common and platform-specific window
-field, icon metadata, and physical origins. Checked facts retain the complete
-static setting topology and program kind; lowering rejects any post-check
-static mutation with a source-mapped `E196`, including parser-invariant bypasses
-such as absolute asset paths or duplicate windows. Renderer, executor, app
-fields, fonts, window fields, icons, and platform subfields retain their exact
-declaration origins for generated Rust diagnostics. Rust emission for this family no
-longer accepts `AppSettings`/`WindowSettings`, rereads a setting expression, or
-calls checker/type-inference helpers. Missing, extra, or reclassified retained
-facts fail with `E196`; post-check expression mutation cannot change output. A
-shared visited-set graph validator checks retained expression IDs, ownership,
-topology, and types exactly once per reachable node. Settings contribute only
-their owner policy (app state, derived state, expression bindings, and the
-daemon-window local), so every expression owner uses the same graph contract
-without copying a settings-specific semantic checker.
-Structured snapshots, imported extern/origin and direct source-marker tests,
-the existing complete application/window compile surface, and a 5,000 named
-window lowering contract are the executable evidence.
-
-Application subscriptions are normalized into the same checked arena. Every
-subscription has a stable `SubscriptionId`; extern-backed sources and filters
-carry `ExternFnId`s; condition, context, worker arguments, and event identity
-carry retained typed expression-use IDs; native and extern source payloads are
-fixed before filtering; post-filter/context payloads are recorded separately;
-and the checked route carries a stable App `HandlerId` plus ordered payload
-indices. Lowering shares the settings expression-graph validator and the
-handler payload-route core, then publishes private `ResolvedSubscription`,
-`ResolvedSubscriptionSource`, and `ResolvedSubscriptionRoute` records with
-typed route arguments. The expression policy preserves the checker's
-app-state-only scope. The source `Document` subscription list is not consulted
-and may be cleared after checking without changing generated Rust. The Rust
-subscription emitter iterates only resolved records and expression IDs; it
-performs no declaration, extern-name, or raw-subscription lookup. Imported
-lowering diagnostics and source markers keep the subscription origin. A
-500-to-4,000 contract measures the complete analyze, lower, and codegen path
-while verifying exact generated subscription counts, linear expression growth,
-one shared app scope, zero full-scope clones, and a bounded debug-build wall
-time.
-
-Canvas is now a completed vertical slice. Stable Canvas-local, command, event,
-route, and expression IDs partition every Canvas view. Lowering freezes its
-options and static topology with checked semantic keys and exhaustively converts
-all draw commands, paths, transforms, paints, fonts, interactions, state
-updates, redraw actions, and routes into `ResolvedCanvas`. Every dynamic operand
-uses the shared checked expression arena; loop and event bindings use typed local
-IDs; named values, fonts, theme colors, and payload routes are resolved before
-emission. The backend no longer accepts raw Canvas options, commands, events,
-paths, or expressions, repeats type inference, or recovers named types, fonts,
-and theme-token positions from `Document`. Corrupt graph IDs and post-check
-static mutations fail with source-mapped `E196`; post-lowering raw Canvas and
-theme-token mutations cannot affect generated Rust. Structural snapshots and an
-ignored 4,000-command lower+emit budget complete the executable evidence.
-
-Image, SVG, and viewer Media views are now a completed vertical slice. Stable
-Media expression owners partition every dynamic source and option operand.
-Checked semantic keys freeze kind, option presence, memory mode, filters,
-colors, explicit hover-none behavior, and SVG style call topology. Lowering
-retains source and fixed-length types, folds viewer scale defaults, resolves
-theme colors and exact SVG style extern IDs, and publishes private
-`ResolvedMedia` records. The backend no longer reads raw Media expressions or
-options, repeats type inference, rediscovers SVG style externs, or recovers
-theme-token positions from `Document`. Static post-check drift and corrupt
-expression graphs fail with source-mapped `E196`; post-lowering Media AST and
-theme-token mutations cannot affect output. Structural, mutation, production
-generation, and ignored 4,000-node lower+emit tests provide the evidence.
-
-Tooltip is now a completed vertical slice. Deterministic Tooltip expression
-owners retain geometry, timing, custom-style arguments, gradients, borders,
-radii, shadows, and pixel snapping. Checked facts freeze position, option and
-style topology, exact container-style extern identity, and theme-color
-spellings; lowering resolves those colors to token IDs and publishes a private
-`ResolvedTooltip`. Rust emission reads only that record and checked expression
-IDs. Post-check expression mutation is ignored, static drift fails with `E196`,
-post-lowering raw options and theme-token order cannot change output, and the
-4,000-node lower+emit contract remains below two seconds.
-
-MouseArea and ResizeHandle are completed interaction-wrapper slices. Stable
-interaction expression and route IDs retain every handler, component output,
-named component event, route argument, payload index/type, cursor choice, and
-source origin. Lowering validates exact view scope, target identity, ordered
-payload contracts, component callback context, expression DAGs, and complete
-arena consumption before publishing `ResolvedMouseArea` and
-`ResolvedResizeHandle`. Their emitters no longer inspect raw options, routes,
-route expressions, or handler names. App and component route generation,
-post-check/static mutation, malformed IDs, post-lowering poisoning, and a
-4,000-node lower+emit budget provide the executable evidence.
-
-Sensor is a completed interaction-wrapper slice. Its checked contract freezes
-the distinct show, resize, and hide route positions plus key, anticipation, and
-delay presence. The shared interaction route arena retains app/component
-targets, ordered size payloads, argument expressions, and origins, while
-canonical option-expression IDs retain the key and timing values. Lowering
-revalidates scope, types, expression DAGs, route topology, and complete arena
-consumption before publishing `ResolvedSensor`. Its emitter consumes only that
-record and checked expression IDs. Post-check expression mutation, static
-drift, post-lowering option/route poisoning, component routes, and an ignored
-4,000-node lower+emit budget provide the executable evidence.
-
-Float is a completed structural-wrapper slice. Its checked expression arena
-owns scale, translation, shadow, and radius operands, while eight typed view
-locals model the original and viewport geometry visible only to the translation
-callback. The static contract freezes shadow-color identity and style-field
-presence. Lowering revalidates expression DAGs, exact local roles and scope,
-theme-token IDs, and complete arena consumption before publishing
-`ResolvedFloat`. Rust emission consumes only that record and checked IDs; the
-old raw Float style emitter has been removed. Expression/static mutation,
-post-lowering AST/theme poisoning, malformed IDs, and an ignored 4,000-node
-lower+emit budget provide the executable evidence.
-
-Pin is a completed structural-wrapper slice. Its checked expression arena owns
-position and fixed-dimension operands, and its static contract freezes absent,
-fill, fill-portion, shrink, and fixed length topology. Lowering distinguishes
-numeric-fixed from native-length-fixed dimensions, revalidates expression DAGs,
-scope, types, and complete arena consumption, then publishes `ResolvedPin`.
-Rust emission consumes only that record and checked IDs. Expression/static
-mutation, post-lowering AST poisoning, malformed IDs, and an ignored 4,000-node
-lower+emit budget provide the executable evidence.
-
-Responsive is a completed structural-wrapper slice. Stable expression IDs own
-the breakpoint and fixed outer dimensions, while typed locals model size-mode
-width and height bindings. The checked flow freezes mode, binding names, and
-dimension topology. Lowering revalidates expression DAGs, scope, exact local
-roles, types, and dimension contracts before publishing `ResolvedResponsive`.
-Rust emission consumes that record and checked IDs; canonical
-`ResolvedViewKind::ResponsiveBreakpoint` or `ResponsiveSize` topology supplies
-the breakpoint or content child IDs. Expression/static mutation, post-lowering
-AST poisoning, malformed expression/local IDs, and an ignored 4,000-node
-lower+emit budget provide the executable evidence.
-
-Lazy is a completed structural-wrapper slice. Its checked flow owns the stable
-dependency expression and typed callback local. Lowering revalidates expression
-owner mapping, DAG, scope and type plus the local name/type/owner role before
-publishing `ResolvedLazy`. Rust emission consumes that record and the canonical
-`ResolvedViewKind::Lazy` child ID. Dependency/binding mutation, post-lowering AST
-poisoning, malformed expression/local IDs, owned-static codegen, and an ignored
-4,000-node lower+emit budget provide the executable evidence.
-
-KeyedColumn is a completed structural collection slice. Its checked flow owns
-the stable list and key expressions, typed item local, normalized dimension
-variants, spacing, padding, maximum width, and alignment. Lowering revalidates
-expression owner mappings and DAGs, scope, types, local ownership, and static
-option topology before publishing `ResolvedKeyedColumn`. Rust emission consumes
-that record and the canonical `ResolvedViewKind::KeyedColumn` child ID.
-Malformed IDs,
-post-check expression/static mutation, post-lowering AST poisoning, configured
-codegen, and an ignored 4,000-node lower+emit budget provide the executable
-evidence.
-
-If is a completed control-flow slice. Its checked flow owns a stable boolean
-condition expression. Lowering revalidates owner mapping, DAG, scope, type, and
-coercion before publishing `ResolvedConditional`. Normal-layout and flex-layout
-emission consume that record and the canonical `ResolvedViewKind::If` child IDs.
-Malformed expression IDs, post-check and post-lowering condition poisoning,
-existing layout codegen, and an ignored 4,000-node lower+emit budget provide the
-executable evidence.
-
-For is a completed control-flow slice. Its checked flow owns a stable list
-expression and typed item local, and lowering resolves the reconciliation site
-identity. Lowering revalidates owner mapping, DAG, scope, list/item types, local
-ID, and local owner role before publishing `ResolvedIteration`. Normal-layout
-and flex-layout emission consume that record and the canonical
-`ResolvedViewKind::For` child IDs. Malformed IDs, post-check list/binding
-mutation, post-lowering flow
-poisoning, existing reconciliation codegen, and an ignored 4,000-node lower+emit
-budget provide the executable evidence.
-
-Table is a completed structural collection slice. Its checked flow owns the row
-list, typed row local, table width and bounded metrics, and each column's width,
-alignments, and origin. Lowering separates numeric and native-length fixed
-widths, revalidates expression ownership and DAGs, scope, list/row types, local
-role, origin parentage, and static table/column topology, then publishes
-`ResolvedTable`. Rust emission consumes that record and the canonical
-`ResolvedViewKind::Table` header and cell IDs. Malformed IDs, post-check
-expression/static
-mutation, post-lowering AST poisoning, complete configured codegen, and an
-ignored 4,000-table lower+emit budget provide the executable evidence.
-
-PaneGrid is a completed stateful structural collection slice. One checked
-record owns its persistent identity, recursive split configuration, dimensions,
-metrics, resize/drag/click behavior, custom and typed grid styles, static panes,
-dynamic templates, typed item/maximized locals, pane/title surfaces, control
-topology, and parented origins. Lowering validates exact lexical-local contracts
-for every expression along with DAGs, scope, types, routes, externs, theme
-tokens, local roles, and origin links before publishing `ResolvedPaneGrid`.
-Application storage, enum/configuration generation, messages, updates, helper
-discovery, and rendering consume that record and the canonical pane/template
-content, title, and control IDs. Structural snapshots, malformed IDs,
-pre-/post-lowering AST poisoning, source-merged style ownership before physical
-origin remapping, complete production codegen, and an ignored 4,000-grid
-lower+emit budget provide the executable evidence.
-
-Overlay is a completed structural interaction slice. The checker retains its
-visibility and padding expressions and optional dismiss route in the shared
-interaction fact arena. Lowering revalidates expression ownership, DAGs, scope,
-types, route IDs, target/argument shape, and origin parentage, resolves backdrop
-color and alignment, and publishes `ResolvedOverlay`. Production emission reads
-that record plus canonical content/layer IDs and resolved view identity.
-Structural assertions, malformed IDs, pre-lowering
-semantic mutation, post-lowering AST poisoning, existing native overlay
-codegen, and an ignored 4,000-overlay lower+emit budget provide the executable
-evidence.
-
-Container is a completed structural layout slice. A checked record freezes the
-expression partition and static contract for box layout, custom and typed
-surface styles, dashed borders, and CSS flex-child metadata. Lowering resolves
-theme colors, the box-style extern, utilities, length variants, alignments,
-flex basis, and effective per-side margins into `ResolvedContainer` with stable
-view identity and physical origin. Box rendering and flex item construction use
-that record plus the canonical content ID and resolved view identity.
-Structural assertions, malformed facts, pre- and post-lowering AST
-poisoning, imported source markers, full style/flex codegen, and an ignored
-4,000-container lower+emit budget provide the executable evidence.
-
-Layout is a completed structural slice. The shared interaction arena freezes
-the identity, expression and route partitions, static topology, custom
-scroll-style identity, and parented status origins for Column, Row, Grid, Stack,
-Flexbox, and Scroll. Lowering validates complete arena consumption and resolves
-lengths, padding, grid sizing and minimum-cell sugar, flex flow, scroll geometry,
-anchors, status selectors and surfaces, theme colors, utilities, and payload
-routes into `ResolvedLayout`. Production emission consumes that record while
-canonical topology supplies child IDs and resolved view identity. Structural
-assertions, malformed facts, pre-/post-lowering AST poisoning, imported origins,
-complete native codegen, and an ignored 4,000-layout lower+emit budget provide
-the executable evidence.
-
-Text and RichText are completed content slices. Shared checked interaction
-records own deterministic expression and route partitions while a dedicated
-text record retains exact custom-style identity and parented span origins.
-Lowering resolves plain and rich values, dimensions, typography, fonts, theme
-colors, utility styles, gradients, borders, padding, decorations, custom-style
-arguments, and optional link delivery into `ResolvedText` and
-`ResolvedRichSpan`. Production emission consumes only those records and checked
-expression IDs; source text options, spans, colors, routes, and extern names are
-not reread. Structural assertions, malformed facts, pre-/post-lowering AST
-poisoning, imported root/span/route origins, complete native generation, and an
-ignored 4,000-text lower+emit budget provide the executable evidence.
-
-Input is a completed controlled-content slice. The checked interaction arena
-freezes its writable state identity, expression and route partitions, static
-option topology, exact input-style extern, and parented icon and five-state
-surface origins. Lowering resolves concrete writable IDs, accessibility,
-dimensions, typography, fonts, theme colors, utilities, status surfaces, and
-payload routes into `ResolvedInput`. Checked App-level controlled bindings are
-retained by `AppStateId`; message and update generation therefore no longer
-walk the raw view graph to rediscover Input state. Production emission consumes
-the HIR record and identity from the canonical `ResolvedView`.
-Structural assertions, malformed expression and controlled-state IDs,
-pre-/post-lowering mutation, imported origin chains, complete native codegen,
-and an ignored 4,000-input lower+emit budget provide the executable evidence.
-
-Button is a completed interaction slice. The checked interaction arena freezes
-label-versus-child topology, option and custom-style expression partitions, the
-required route, exact Button-style extern identity, and parented status origins.
-Lowering resolves accessibility, child identity, dimensions, preset/custom and
-utility styles, theme colors, complete status surfaces, and route delivery into
-`ResolvedButton`. Production emission consumes that record plus the optional
-canonical content ID and resolved view identity. Structural, corrupt-ID,
-same-arena identity-swap, pre-/post-lowering mutation, imported-origin, native
-codegen, and 4,000-button performance contracts provide the executable evidence.
-
-TextEditor is a completed controlled-document slice. The checked interaction
-arena freezes its writable editor state, expression and route partitions,
-highlighting and option topology, exact highlighter/key-binding/action/style
-extern identities, and parented status origins. Lowering resolves exact App
-state IDs and bind-prop forwarding, dimensions, typography, fonts, theme colors, status styles,
-key-binding delivery, and extern arguments into `ResolvedTextEditor`.
-Checked App-level editor state/action pairs are retained as exact
-`AppStateId`/`ExternFnId` identities, so application message and update
-generation cannot rediscover them through raw source traversal. Production
-emission consumes the HIR record and identity from the canonical
-`ResolvedView`. Structural, corrupt-ID, same-kind identity-swap,
-pre-/post-lowering
-mutation, imported-origin, native codegen, and 4,000-editor performance
-contracts provide the executable evidence.
-
-PickList and ComboBox are completed selection-control slices. The checked
-interaction arena owns their deterministic expression and route partitions,
-generic selection types, exact widget/menu style externs, font and handle/icon
-topology, parented status/menu origins, and ComboBox's concrete
-`CheckedValueRef` state. Lowering resolves these into `ResolvedPickList` and
-`ResolvedComboBox`; production emission reads only those records and canonical
-view identities. The old selection style emitter is removed. App callback
-emission
-also avoids snapshotting the complete binding environment when no component
-scope requires capture, preventing an App-state-count by callback-count
-quadratic path. Complete structural, corruption, raw-poisoning,
-imported-origin, native-output, and 4,000-node/distinct-state performance
-contracts provide the executable evidence.
-
-Rule, QrCode, and Space are completed content-primitive slices. The checked
-interaction arena freezes stable view identity, exact ordered expression uses,
-static option topology, and parented source origins, while the QrCode-specific
-fact retains the exact payload type. Lowering resolves Rule styling and fill,
-canonical QrCode version/correction/default and size modes, theme colors, and
-Space length variants into named records. Production emission consumes those
-records and checked expression IDs; the deleted Rule and QR style helpers no
-longer provide a raw semantic path. Structural, raw-poisoning, same-type and
-cross-widget identity, corrupt-fact, imported-origin, native-output, and mixed
-4,000-node performance contracts provide the executable evidence.
-
-Markdown is a completed document-content slice. Its checked contract freezes
-the exact markdown state identity, ordered settings and style operands, font
-choices, viewer extern identity and arguments, optional link route, and
-parented physical origins. Lowering resolves those facts into
-`ResolvedMarkdown`, including canonical defaults and route payload delivery.
-Production emission consumes only that record and checked expression IDs; raw
-content names, settings, styles, viewer names, arguments, and routes cannot
-change output after lowering. Structural and cross-owner corruption,
-pre-/post-lowering raw poisoning, imported-origin and source-marker coverage,
-native generation, and a 4,000-node lower+emit budget provide the executable
-evidence.
-
-ExternComponent is a completed native-boundary slice. Its checked contract
-freezes the exact component extern ID and Rust path, parameter types and borrow
-modes, ordered argument expressions, output type, optional route, and parented
-widget/declaration/argument/route origins. Lowering publishes call-site
-`ResolvedExternComponent` records and declaration-level
-`ResolvedExternComponentDeclaration` records for used and unused component
-externs. Production rendering and probes consume those records and checked
-expression IDs; raw declaration names, Rust paths, parameters, borrow flags,
-outputs, spans, argument syntax, and routes cannot affect output after lowering.
-Direct, component-local, output, and unit routes; call-site/declaration raw
-poisoning; cross-owner and corrupt-ID failures; imported source markers and
-diagnostics; native generation; and separate 4,000-call and 4,000-unused-probe
-lower+emit budgets provide the executable evidence.
-
-Themer and Shader now extend the extern-view-adapter HIR boundary. Their stable
-checked records own exact extern identity, typed argument slots, output routes,
-and origins; lowering fixes Rust paths and call modes before emission. Shader
-dimensions are canonical length variants rather than raw expressions requiring
-backend type inference. Both remain owned-argument surfaces under the existing
-grammar, while ExternComponent retains its explicit borrowed modes. Their
-production renderers and noop discovery do not reread extern names, arguments,
-route presence, or Shader dimensions from the source AST. Imported diagnostics,
-raw poisoning, identity corruption, the lexical ratchet, and explicit
-4,000-node budgets guard the boundary without adding Core syntax.
-
-Nested Theme is now a completed wrapper slice distinct from the native Themer
-adapter. Its stable `ViewId` selects checked facts that freeze the preset or
-exact theme-factory declaration, ordered owned arguments, text and background
-token identities, gradient topology, and parented physical origins. Lowering
-publishes a `ResolvedNestedTheme` keyed by that ID, fixes the factory Rust path,
-and replaces factory, angle, and stop expressions with checked expression-use
-IDs. Production rendering consumes that record plus the canonical
-`ResolvedViewKind::Theme` content ID and resolved view identity; it does not
-reread preset, factory name or args, colors, gradient values, or theme-token
-declaration order. Raw poisoning,
-cross-owner and corrupt-ID/origin failures, imported source mapping, the lexical
-ratchet, and an explicit 4,000-node budget guard the boundary.
-
-Match is a completed control-flow slice. Its checked flow owns the stable value
-expression, exhaustive patterns, typed payload locals, arm origins, and ordered
-child view IDs for each arm.
-Lowering revalidates expression ownership and DAG, scope and value type,
-Option/Result/enum/palette contracts, payload local types and owner roles,
-declaration IDs, checked duplicate/missing/wildcard coverage, origin
-parent/source identity, and per-arm child topology before publishing
-`ResolvedMatch` with resolved Rust owner and variant names. Normal-layout and
-flex-layout emission consume its payload binding type without reopening checked
-Match flow/local types or pattern declaration-index entries. During lowering,
-raw child spans are mapped to stable view IDs only to verify that their subtrees
-remain attached to their resolved arms. Malformed IDs fail at the source-mapped
-arm during lowering; post-check and post-lowering AST poisoning, coverage/topology
-corruption, imported diagnostics, typed-pattern coverage, and an ignored
-4,000-node lower+emit budget provide the executable evidence.
-
-First-class tests are now a completed HIR slice. `TestId`, `TestTargetId`, and
-`TestStepId` form parented declaration arenas; target aliases are typed locals,
-and every dynamic target key or step operand has a deterministic checked
-expression owner. Test configuration, target path topology, static action
-metadata, dispatch handler identity, and exact source spelling are frozen as
-checked semantic contracts before lowering. Lowering converts every action,
-key/IME/window/touch event, accessibility assertion, and expectation into a
-`ResolvedTestStepKind`; direct paths retain resolved checked key expressions,
-aliases retain target IDs, dispatch retains an App `HandlerId`, and equality
-assertions retain the checked comparison children used for `check_eq` or
-`check_ne`. Numeric range, index, positive-count, expression-owner, handler
-signature, origin, and complete-arena contracts are revalidated while the HIR
-is built.
-
-The test backend iterates only `ResolvedTest` records and checked expression
-IDs. It does not consume `TestDecl`, `TestStep`, raw `Expr`, or raw route
-semantics, and post-check expression mutations cannot affect generated Rust or
-the retained diagnostic statement. Test mount rendering uses the same normalized
-general view renderer and does not retain a test-specific raw fallback.
-Structural ID/owner snapshots,
-config/target/step corruption tests, post-check AST poisoning, imported source
-locations, complete semantic-action generation, and an ignored 4,000-step
-lower+emit budget are the executable evidence.
-
-Initializer typing and fact lowering are linear in the expression tree. The
-checker performs one authoritative post-order analysis for each initializer and
-hands the owned result to fact construction; fact construction cannot invoke a
-second analysis. It consumes that table instead of restarting subtree type
-checks.
-Composite list, optional, and result evidence is unified recursively before an
-otherwise unconstrained type variable is canonically erased to `unit`; parent
-and child facts consequently retain one exact concrete type. Initializer uses
-record their source type, destination type, and explicit state-construction
-coercion separately, including list-to-combo and value-to-animation conversion.
-Context-sensitive builtins share one signature/context model between checking
-and fact construction. That model distinguishes ordinary values, binding-name
-arguments, and expressions evaluated under a binding. Consequently,
-`animation.project` retains its binder as a typed local ID with an owning
-expression use and body-argument scope; reads in the projection body resolve to
-that local rather than to an unresolved source path. Exact analysis-pass,
-query, analyzed-node, cache-hit, local, lowered-expression, layered-scope, and
-full-clone counters make the linearity and scope contracts testable. Each
-lexical scope constructs its base path and type views once. Binding bodies such
-as `animation.project` and view-flow locals borrow that base through small
-overlays in checking, fact lowering, and code generation instead of cloning the
-full environment. The 500-to-4,000 repeated-projection and sibling-scope
-contracts verify exact overlay growth, linear binding allocations, and zero
-full-scope clones under wall-clock ceilings. The thread-local
-collection context is guarded across both ordinary errors and panic unwinding.
-
-The program-metadata boundary no longer retains a source `Document` in release
-`LoweredProgram` values. Application identity, app state, presets, generated
-enums, extern structs and functions, borrowed parameter shapes, named type Rust
-paths, and probe-helper discovery are emitted from normalized settings and
-declaration arenas. Production code generation has zero `Document` references,
-zero `CheckedDocument` escapes, and zero extern-name fallback resolution. A
-test-only source sidecar remains available exclusively to adversarial tests
-that poison the parsed AST after lowering and prove the backend cannot observe
-it; release HIR does not allocate or expose that sidecar.
-
-The release expression backend now consumes a normalized expression arena owned
-by `LoweredProgram`. HIR-owned expression, value, and local IDs carry its
-semantic references, while builtin dispatch and enum target identities are
-fixed during lowering and rendered into Rust tokens only by code generation.
-Release `LoweredProgram` no longer carries `CheckedFacts`; only a
-test-only sidecar retains checker facts for adversarial lowering tests.
-Production code generation has zero checker semantic references, checked-fact
-escapes, or declaration-index escapes.
-
-`CheckedDocument` also no longer implements `Deref<Target = Document>`.
-Syntax-oriented tooling must request `source_document()` explicitly, while
-semantic consumers use checked APIs or lower to HIR. This closes accidental
-AST access without preventing the formatter, LSP, review selector, API
-fingerprinter, and asset discovery from inspecting source syntax when that is
-their stated job.
-
-The Full HIR migration is now complete at the production backend boundary.
-Shared value types and operators are physically owned by the backend-neutral
-`semantic` module rather than the source AST. Canvas event sources normalize to
-an event-only HIR enum during lowering, and Rust type rendering is private to
-code generation. Production code generation has no source-AST import, raw
-source node, checker reference, checked-fact escape, or declaration-index
-escape. The empty boundary inventory and a semantic review of indirect module
-paths jointly enforce this claim.
-
-The HIR type surface itself is also source-AST-free. AST-facing declaration
-indexing and traversal (declaration-index construction, handler-operation
-contracts, view-kind and child walks) live in the dedicated `hir::from_ast`
-bridge, which is the only file in the `hir` module tree allowed to read the
-source AST. `src/hir.rs` is included in the scanned lexical boundary
-inventory, so a reintroduced AST reference in the HIR type surface fails the
-same reviewed-inventory test as a codegen escape.
-
-The migration is complete when:
-
-- the code-generation module has no source-AST or checker dependency;
-- `CheckedDocument` no longer dereferences to `Document` as an escape hatch;
-- structured HIR fixtures cover every accepted semantic family;
-- backend tests assert only backend-specific output where possible;
-- imported-source diagnostics and generated Rust source maps retain their
-  existing behavior; and
-- lowering and generation remain within explicit performance budgets.
+The HIR covers the whole accepted language. There is no mixed AST/HIR fallback
+or compatibility shim.
 
 ## Rejected alternatives
 
 ### Keep generating from the checked AST
 
 This leaves syntactic alternatives visible to the backend and permits semantic
-decisions to spread between checking and emission. The cost grows with every
-feature even while Core syntax is frozen.
+decisions to spread between checking and emission.
 
 ### Add isolated, permanent mini-IRs
 
-Feature-specific lowering can help migration, but leaving unrelated AST and HIR
-paths as the final architecture preserves the same ambiguous boundary. Mini-IRs
-are accepted only as steps toward the complete `LoweredProgram`.
+Feature-specific lowering can help migration, but permanent independent paths
+would preserve an ambiguous compiler boundary.
 
 ### Put Rust or Iced constructs in HIR
 
-Backend-shaped nodes would make semantic tooling depend on emission details and
-would prevent API inspection and other consumers from sharing the canonical
-program meaning. Backend-specific planning stays private to code generation.
+Backend-shaped nodes would make semantic tooling depend on emission details.
+Backend-specific planning stays private to code generation.
 
 ### Replace the pipeline in one large change
 
-A big-bang conversion would make source-map and generated-program regressions
-difficult to isolate. The destination remains complete HIR, but migration is
-split into independently verified vertical slices.
+A big-bang conversion would have made source-map and generated-program
+regressions difficult to isolate. The migration instead used verified vertical
+slices while retaining one complete destination.
 
 ## Consequences
 
-The compiler gains another owned representation and an explicit lowering pass.
-That adds implementation work and some build-time memory, which must be
-measured. In return, the checker and lowering boundary become the single source
-of semantic truth, code generation becomes a translation step, HIR fixtures can
-test meaning without comparing large Rust strings, and future tooling can
-consume the same canonical program model.
-
-During migration, every pull request identified the semantic family it moved,
-the old path it deleted, its invalid cases, its source-origin evidence, and any
-performance change.
+The compiler has another owned representation and an explicit lowering pass,
+adding some build-time work and memory. In return, lowering is the single source
+of semantic truth, code generation is a translation step, HIR fixtures can test
+meaning without comparing large Rust strings, and other tooling can consume the
+same canonical model.
 
 ## Revisit trigger
 
 Revisit the representation when measurements show that HIR construction or
-retention materially violates compiler performance budgets, or when an accepted
-Ice semantic cannot be represented without backend knowledge. A revisit may
-change storage, IDs, or internal node boundaries; it must not restore an AST or
-checker backdoor into code generation.
+retention materially violates compiler performance budgets, or when an
+accepted Ice semantic cannot be represented without backend knowledge. A
+revisit may change storage, IDs, or internal node boundaries; it must not
+restore an AST or checker backdoor into code generation.

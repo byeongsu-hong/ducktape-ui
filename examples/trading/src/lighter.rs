@@ -1,24 +1,31 @@
 //! Lighter read into the model `hyperliquid` defines, so a row from either
-//! venue means the same thing to the panel that draws it. Lighter is a REST
-//! API with query strings rather than one POST endpoint, and it mixes JSON
-//! strings with JSON numbers in the same object — sometimes for the same
-//! quantity — so every field goes through the same tolerant readers
-//! `hyperliquid` uses rather than a derive.
+//! venue means the same thing to the panel that draws it. The reads are a REST
+//! API with query strings rather than one POST endpoint, and the live feed is
+//! a websocket of its own shape; both mix JSON strings with JSON numbers in
+//! the same object — sometimes for the same quantity — so every field goes
+//! through the same tolerant readers `hyperliquid` uses rather than a derive.
 //!
-//! The three units that could each be read two ways were settled against live
-//! responses rather than guessed; each one carries the identity that proved it.
+//! Every unit that could be read two ways was settled against live responses
+//! rather than guessed, and each one carries the identity that proved it.
 
 // Read-only and complete, but nothing points at it until the venue switch
 // lands.
 #![allow(dead_code)]
 
-use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
-use std::time::Duration;
+use std::collections::{BTreeMap, HashMap};
+use std::net::TcpStream;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{Value, json};
+use smol::channel::{Receiver, Sender};
+use tungstenite::stream::MaybeTlsStream;
 
-use crate::hyperliquid::{Account, Book, HlError, Level, Position, SymbolRow};
+use crate::hyperliquid::{
+    Account, Book, Candle, Event, HlError, Level, MarketTick, Position, SymbolRow, Tape, Trade,
+    merge, wire_is_open,
+};
+use crate::venue::lighter_buy;
 
 const BASE: &str = "https://mainnet.zklighter.elliot.ai/api/v1";
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -104,13 +111,35 @@ fn fail(message: String) -> HlError {
     HlError { message }
 }
 
-/// One GET off the UI thread, reporting whatever the venue said about a
-/// failure. Two shapes of refusal were seen live and both are worth quoting:
-/// a path the REST surface does not serve answers 403 with an empty body, so
-/// the status is all there is, and a bad parameter answers 400 with a `code`
-/// and a `message`. A body that parsed is still not a body that succeeded,
-/// since the venue also carries its own `code` on a 200.
-async fn get(path: String) -> Result<Value, HlError> {
+/// Lighter's verdict on a read that did answer, which is a different thing
+/// from the read having failed.
+///
+/// `21100 account not found` is the whole reason this is a number rather than
+/// a boolean: an address with no account here is a fact about the address, not
+/// a broken request, and the account read is the one call this app makes that
+/// the venue can truthfully answer "nothing". Live, `account?by=l1_address&
+/// value=0x8cc94dc843e1ea7a19805e0cca43001123512b6a` — an address with a real
+/// Hyperliquid account — comes back HTTP 400 with
+/// `{"code":21100,"message":"account not found"}`, while a malformed address
+/// comes back `21103 invalid account l1 address`, which is a failure.
+const OK: i64 = 200;
+const NO_ACCOUNT: i64 = 21100;
+
+/// One GET off the UI thread, answering the venue's own verdict beside the
+/// body it arrived with. Two shapes of refusal were seen live and both are
+/// worth quoting: a path the REST surface does not serve answers 403 with an
+/// empty body, so the status is all there is, and a bad parameter answers 400
+/// with a `code` and a `message`. A body that parsed is still not a body that
+/// succeeded, since the venue also carries its own `code` on a 200 — so the
+/// code is what this answers, and a status that failed with nothing to say
+/// stands in as one.
+async fn read(path: String) -> Result<(i64, Value), HlError> {
+    // The same gate the socket passes, and the same reason: a test drives the
+    // real program, so a handler that reads the universe would read it from the
+    // live venue and assert against whatever it happened to hold.
+    if !wire_is_open() {
+        return Err(fail("Lighter unreachable: no wire under test".to_owned()));
+    }
     smol::unblock(move || {
         let url = format!("{BASE}/{path}");
         let mut response = agent()
@@ -122,17 +151,34 @@ async fn get(path: String) -> Result<Value, HlError> {
             .body_mut()
             .read_json::<Value>()
             .map_err(|error| fail(format!("Lighter answered {path} with {status}: {error}")))?;
-        let code = body.get("code").and_then(Value::as_i64).unwrap_or(200);
-        if status.is_success() && code == 200 {
-            Ok(body)
-        } else {
-            Err(fail(format!(
-                "Lighter refused {path}: {status}, code {code} {}",
-                text(&body, "message")
-            )))
-        }
+        let stated = body.get("code").and_then(Value::as_i64);
+        Ok((
+            stated.unwrap_or(if status.is_success() {
+                OK
+            } else {
+                i64::from(status.as_u16())
+            }),
+            body,
+        ))
     })
     .await
+}
+
+/// The same read with every verdict but success as a failure, which is what
+/// all but the account read wants: nothing else this app asks Lighter for has
+/// an answer that means "there is nothing here".
+async fn get(path: String) -> Result<Value, HlError> {
+    match read(path.clone()).await? {
+        (OK, body) => Ok(body),
+        (code, body) => Err(refused(&path, code, &body)),
+    }
+}
+
+fn refused(path: &str, code: i64, body: &Value) -> HlError {
+    fail(format!(
+        "Lighter refused {path}: code {code} {}",
+        text(body, "message")
+    ))
 }
 
 /// Lighter sends prices and sizes as strings and volumes and changes as
@@ -263,6 +309,17 @@ fn parse_funding(rates: &Value) -> HashMap<i64, f64> {
 /// The mapping is a fact about the venue rather than about the day, so it is
 /// resolved once and held: a book request would otherwise pay for the whole
 /// 222-market universe every time it ran.
+///
+/// It is the one piece of venue data that outlives the venue being on screen —
+/// nothing in `switch_venue` clears it — and that is safe rather than
+/// overlooked. It only ever holds Lighter's own tickers against Lighter's own
+/// ids; the other adapter keys its requests by ticker and never reads or
+/// writes this. Both writers replace the whole map rather than merging into
+/// it, so it cannot come to hold two snapshots at once, and a switch away and
+/// back rewrites it from `lighter_symbols` before anything reads it. What is
+/// left is one stale entry for a ticker delisted while the terminal was
+/// reading the other exchange, and the read that would use it is a book for a
+/// market `listed_coin` has already moved the terminal off.
 fn ids() -> &'static Mutex<HashMap<String, i64>> {
     static IDS: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
     IDS.get_or_init(Mutex::default)
@@ -332,18 +389,27 @@ fn parse_levels(side: &[Value]) -> Vec<Level> {
             }
         }
     }
-    let deepest = rows.last().map_or(0.0, |level| level.total);
-    if deepest > 0.0 {
-        for level in &mut rows {
-            level.bar = level.total / deepest * BOOK_BAR_WIDTH;
-        }
-    }
+    scale_bars(&mut rows);
     rows
 }
 
-fn parse_book(value: &Value) -> Book {
-    let bids = parse_levels(list(value, "bids"));
-    let asks = parse_levels(list(value, "asks"));
+/// The depth bar behind each row, as a share of the deepest level shown. The
+/// REST book and the streamed one both draw it, so the arithmetic is here once
+/// rather than in each.
+fn scale_bars(rows: &mut [Level]) {
+    let deepest = rows.last().map_or(0.0, |level| level.total);
+    if deepest > 0.0 {
+        for level in rows {
+            level.bar = level.total / deepest * BOOK_BAR_WIDTH;
+        }
+    }
+}
+
+/// Two sides, each nearest price first, into the book the panel reads. Shared
+/// for the same reason `scale_bars` is: the spread and the mid are the panel's
+/// reading of a book rather than either source's, so a book read over REST and
+/// one folded from the stream cannot answer them differently.
+fn book_of(bids: Vec<Level>, asks: Vec<Level>) -> Book {
     let (best_bid, best_ask) = (
         bids.first().map_or(0.0, |level| level.price),
         asks.first().map_or(0.0, |level| level.price),
@@ -365,6 +431,13 @@ fn parse_book(value: &Value) -> Book {
         spread_pct: if mid > 0.0 { spread / mid * 100.0 } else { 0.0 },
         mid,
     }
+}
+
+fn parse_book(value: &Value) -> Book {
+    book_of(
+        parse_levels(list(value, "bids")),
+        parse_levels(list(value, "asks")),
+    )
 }
 
 /// The book, keyed by ticker rather than by market id so it reads like the
@@ -547,260 +620,1232 @@ fn parse_account_body(account: &Value) -> Account {
     }
 }
 
-/// The account behind an L1 address. Lighter also keys accounts by its own
-/// index, but an address is what the app already asks the reader for and what
-/// the other venue takes.
-pub async fn lighter_account(address: String) -> Result<Account, HlError> {
-    Ok(parse_account(
-        &get(format!("account?by=l1_address&value={address}")).await?,
-    ))
+/// The account behind an L1 address, or nothing when the address has none
+/// here. Lighter also keys accounts by its own index, but an address is what
+/// the app already asks the reader for and what the other venue takes.
+///
+/// The absence is an answer rather than a failure, and this is the only read
+/// that can tell the difference. One address is typed once and read at
+/// whichever venue is on screen, so an address that trades on the other
+/// exchange and has never opened an account here is the ordinary case — drawn
+/// as an error it would put "Lighter refused" over a screen that is working,
+/// and hide the true and useful thing, which is that there is nothing here to
+/// draw.
+pub async fn lighter_account(address: String) -> Result<Option<Account>, HlError> {
+    let path = format!("account?by=l1_address&value={address}");
+    match read(path.clone()).await? {
+        (OK, body) => Ok(Some(parse_account(&body))),
+        (NO_ACCOUNT, _) => Ok(None),
+        (code, body) => Err(refused(&path, code, &body)),
+    }
 }
 
-// Candles are not reachable. `GET /candlesticks` answers 403 from CloudFront
-// for every parameter set tried, with and without browser `Origin`, `Referer`,
-// and `User-Agent` headers, so the refusal is at the edge rather than in the
-// API. Nothing else on the REST surface carries OHLC: `orderBookDetails` has
-// a `daily_chart` key, but it is `{}` on all 222 markets, and the only other
-// history endpoints are trades and funding.
-//
-// So there is no `lighter_candles`. A chart pointed at this venue has one
-// route left — folding `recentTrades` into bars locally — which is a different
-// thing from a candle the venue agrees with, and is not written here rather
-// than written and quietly wrong.
+// There is no `lighter_candles`, and no REST route to write one down. `GET
+// /candlesticks` answers 403 from CloudFront for every parameter set tried,
+// with and without browser `Origin`, `Referer` and `User-Agent` headers, so
+// the refusal is at the edge rather than in the API. Nothing else on the REST
+// surface carries OHLC: `orderBookDetails` has a `daily_chart` key, but it is
+// `{}` on all 222 markets, and the only other history endpoints are trades and
+// funding. The websocket's `candle` channel is the only route, and what it
+// hands back is one bar — see `lighter_market_feed`.
 
-// `recentTrades` parses cleanly and its side is settled: `is_maker_ask` true
-// means the resting order was the sell, so the aggressor bought. Confirmed on
-// consecutive live prints by watching `maker_position_size_before` move
-// against the trade size — 43.08300 to 43.08280 on a 0.00020 print with
-// `is_maker_ask` true is a maker who sold, and -0.14077 to -0.14071 on a
-// 0.00006 print with it false is a maker who bought.
+// ---------------------------------------------------------------------------
+// The live feed.
 //
-// The parser is still missing, because `hyperliquid::Trade` has a private
-// `tid` field and a struct outside that module cannot name it. One `pub` there
-// is the whole gap.
+// Same shape as `hl_market_feed`: one socket on its own thread, folding
+// whatever arrives into a `MarketTick` and emitting at most one per beat.
+// The transport is written again here rather than shared, because only the
+// loop is common — Lighter spells a subscription, a ping, an error and a
+// payload differently at every one of those four points, and a socket that
+// took all four as parameters would be a protocol description with two
+// implementations rather than a shared socket.
+
+const STREAM: &str = "wss://mainnet.zklighter.elliot.ai/stream";
+/// Mirrors of `hyperliquid`'s feed timings, for the same reason the geometry
+/// above is mirrored: that module publishes no `pub const`. A venue switch
+/// must not change how often the screen is asked to redraw, so the beat in
+/// particular is the app's rate rather than either venue's.
+const POLL: Duration = Duration::from_millis(200);
+const BEAT: Duration = Duration::from_millis(100);
+const PING: Duration = Duration::from_secs(15);
+const RETRY: Duration = Duration::from_secs(2);
+
+/// Every market's day, which is where the mid prices for the market list come
+/// from. The per-market `market_stats/<id>` channel carries the same object,
+/// so the focused market's context is read out of this one stream too.
+const ALL_STATS: &str = "market_stats/all";
+const ALL_STATS_ECHO: &str = "market_stats:all";
+
+/// The candle widths the venue quotes, which are not the app's tabs.
+///
+/// Checked by subscribing to all thirteen a chart might plausibly offer: the
+/// eight here answered with a candle and `2h`, `6h`, `8h`, `3d` and `1w` each
+/// answered `{"error":{"code":30005,"message":"Invalid Channel:  (invalid
+/// resolution)"}}`. The refusal does not name the channel it refused, which is
+/// why an unsupported interval is turned away here rather than on the wire.
+const RESOLUTIONS: [&str; 8] = ["1m", "5m", "15m", "30m", "1h", "4h", "12h", "1d"];
+
+/// The venue's spelling of an interval the app asked for, or nothing if it
+/// does not quote one that width. The two vocabularies happen to agree on
+/// every tab this app offers, so the map is a lookup rather than a table of
+/// pairs — but it is a lookup against the venue's list, so a tab the venue
+/// dropped becomes a refusal instead of a chart drawn at the wrong width.
+fn resolution(interval: &str) -> Option<&'static str> {
+    RESOLUTIONS.iter().copied().find(|known| *known == interval)
+}
+
+/// The channels the feed wants open for the market the tape is pointed at.
+///
+/// The resolution is checked before the market id, so an interval the venue
+/// does not quote is refused whether or not the ticker table has been filled.
+/// A ticker with no id yet is not an error: the table is filled by the
+/// universe read, and until it lands the feed holds the exchange-wide stats
+/// and nothing per-market.
+fn channels(tape: &Tape) -> Result<Vec<String>, HlError> {
+    let mut wanted = vec![ALL_STATS.to_owned()];
+    let Some((coin, interval)) = tape.focus() else {
+        return Ok(wanted);
+    };
+    let width = resolution(&interval).ok_or_else(|| {
+        fail(format!(
+            "Lighter quotes no {interval} candle: it has {}",
+            RESOLUTIONS.join(", ")
+        ))
+    })?;
+    let Some(id) = lock(ids()).get(&coin).copied() else {
+        return Ok(wanted);
+    };
+    wanted.push(format!("order_book/{id}"));
+    wanted.push(format!("trade/{id}"));
+    wanted.push(format!("candle/{id}/{width}"));
+    Ok(wanted)
+}
+
+/// The three per-market channels the reader will fold, in the spelling the
+/// replies carry: a subscription is sent with slashes and echoed back with
+/// colons, so `order_book/1` is answered on `order_book:1`.
+///
+/// Empty until the market is known, and empty strings never match a channel a
+/// message arrived on — which is the guard that stops the book of a market the
+/// app just left from being drawn as this one's.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Focused {
+    coin: String,
+    book: String,
+    prints: String,
+    bars: String,
+}
+
+fn focused(tape: &Tape) -> Focused {
+    let Some((coin, interval)) = tape.focus() else {
+        return Focused::default();
+    };
+    let (Some(id), Some(width)) = (lock(ids()).get(&coin).copied(), resolution(&interval)) else {
+        // The market list has not landed yet, or the app is asking for a width
+        // this venue does not quote. Either way there is nothing per-market to
+        // fold, but the coin is still the one the context belongs to.
+        return Focused {
+            coin,
+            ..Focused::default()
+        };
+    };
+    Focused {
+        coin,
+        book: format!("order_book:{id}"),
+        prints: format!("trade:{id}"),
+        bars: format!("candle:{id}:{width}"),
+    }
+}
+
+/// The levels a book is holding between deltas.
+///
+/// Keyed by the price's bit pattern rather than by the price itself: a
+/// positive `f64` orders the same as its bits read as an integer, so the map
+/// sorts by price without an `Ord` on `f64` and without knowing the market's
+/// tick size. Iterating gives the whole side in price order, and the panel
+/// only ever wants its first ten.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Depth {
+    bids: BTreeMap<u64, f64>,
+    asks: BTreeMap<u64, f64>,
+    /// The update the held levels are at. Zero until a snapshot lands, which
+    /// is what makes a delta arriving before one a gap rather than a book.
+    nonce: i64,
+}
+
+impl Depth {
+    /// The top of the book, nearest price first on both sides.
+    fn book(&self) -> Book {
+        book_of(top(self.bids.iter().rev()), top(self.asks.iter()))
+    }
+}
+
+/// One side's best `BOOK_DEPTH` levels with the depth behind each resolved,
+/// which is the same shape `parse_levels` builds out of REST orders.
+fn top<'a>(side: impl Iterator<Item = (&'a u64, &'a f64)>) -> Vec<Level> {
+    let mut total = 0.0;
+    let mut rows: Vec<Level> = side
+        .take(BOOK_DEPTH)
+        .map(|(price, size)| {
+            total += size;
+            Level {
+                price: f64::from_bits(*price),
+                size: *size,
+                total,
+                bar: 0.0,
+            }
+        })
+        .collect();
+    scale_bars(&mut rows);
+    rows
+}
+
+/// What one `order_book` message did to the levels it was applied to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fold {
+    /// The message was the next one, and the levels now include it.
+    Applied,
+    /// The message is one the held levels have already had. Applying it again
+    /// would write an old size over a newer one, because a delta states what a
+    /// level *is* rather than how it changed.
+    Stale,
+    /// At least one message between the held levels and this one was missed.
+    /// What those messages said is unrecoverable — an absolute size for a
+    /// level nobody mentioned again is gone — so the caller throws the book
+    /// away and asks for a fresh snapshot rather than drifting.
+    Gap,
+}
+
+/// Applies one `order_book` message to the levels held for that market.
+///
+/// Pure, and the whole reason the book folds correctly: everything about
+/// keeping a delta stream honest is decided here, where a test can drive it
+/// through an insert, an update, a removal, a replayed message and a gap
+/// without a socket.
+///
+/// The nonces are the venue's own sequencing: each update states the
+/// `begin_nonce` it expects the reader to be holding, which is the previous
+/// update's `nonce`. Anything else is a message out of order, and the two
+/// directions are not the same failure — one is already applied and one is
+/// missing.
+fn fold_book(held: Depth, message: &Value) -> (Depth, Fold) {
+    let body = message.get("order_book").unwrap_or(&Value::Null);
+    let nonce = value_i64(body, "nonce");
+    // The venue answers a subscription with `subscribed/order_book` carrying
+    // the whole book, and pushes `update/order_book` after it. Only the first
+    // may replace what is held.
+    if text(message, "type").starts_with("subscribed") {
+        let mut fresh = Depth {
+            nonce,
+            ..Depth::default()
+        };
+        apply(&mut fresh.bids, list(body, "bids"));
+        apply(&mut fresh.asks, list(body, "asks"));
+        return (fresh, Fold::Applied);
+    }
+    if held.nonce == 0 {
+        // Nothing to apply a delta to. The venue opens with a snapshot, so
+        // this is a subscription that has to be restarted rather than a
+        // message to fold.
+        return (held, Fold::Gap);
+    }
+    if value_i64(body, "begin_nonce") != held.nonce {
+        // Behind what is held is a message already applied; ahead of it is one
+        // or more that never arrived.
+        let fold = if nonce <= held.nonce {
+            Fold::Stale
+        } else {
+            Fold::Gap
+        };
+        return (held, fold);
+    }
+    let mut folded = Depth { nonce, ..held };
+    apply(&mut folded.bids, list(body, "bids"));
+    apply(&mut folded.asks, list(body, "asks"));
+    (folded, Fold::Applied)
+}
+
+/// One side of a delta. A row states what the level now holds, and a size of
+/// zero states that it holds nothing — live `order_book` messages carry
+/// `"0.00000"` for a level that has just emptied, and a reader that kept it
+/// would show depth nobody can trade against and eventually a crossed book.
+fn apply(side: &mut BTreeMap<u64, f64>, rows: &[Value]) {
+    for row in rows {
+        let price = num(row, "price");
+        if !(price > 0.0 && price.is_finite()) {
+            continue;
+        }
+        let size = num(row, "size");
+        if size > 0.0 {
+            side.insert(price.to_bits(), size);
+        } else {
+            side.remove(&price.to_bits());
+        }
+    }
+}
+
+/// The public tape, folded the way it was traded rather than the way it was
+/// messaged — the same fold `hyperliquid` does over its `hash`. One aggressing
+/// order that takes five resting orders arrives as five prints sharing a taker
+/// order id, and five rows at one price is the wire's bookkeeping rather than
+/// the market's.
+///
+/// Which id is the taker's follows from `is_maker_ask`: the maker being the
+/// ask makes the bid the aggressor, so the taker is `bid_id`, and the other
+/// way round when the maker was the bid.
+///
+/// The venue lists its prints newest first — checked across a live
+/// subscription, where every message's `trade_id` descended — and `MarketTick`
+/// carries a beat's prints oldest first for `push_trades` to reverse onto the
+/// panel, so the array is walked backwards.
+///
+/// `liquidation_trades` rides in the same message and is deliberately not on
+/// this tape: it is a separate recent-liquidations list rather than this
+/// stream's prints, and the copy that arrives with the subscription was hours
+/// old when it was read.
+fn parse_prints(message: &Value) -> Vec<Trade> {
+    let mut tape: Vec<Trade> = Vec::new();
+    let mut aggressor = 0;
+    for print in list(message, "trades").iter().rev() {
+        let maker_ask = print
+            .get("is_maker_ask")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let taker = value_i64(print, if maker_ask { "bid_id" } else { "ask_id" });
+        let price = num(print, "price");
+        let size = num(print, "size");
+        match tape.last_mut() {
+            // A missing id is not an identity, so it never merges.
+            Some(held) if taker != 0 && taker == aggressor => {
+                let total = held.size + size;
+                if total > 0.0 {
+                    held.price = (held.price * held.size + price * size) / total;
+                }
+                held.size = total;
+                held.sweep += 1;
+            }
+            _ => {
+                aggressor = taker;
+                tape.push(Trade {
+                    // The venue's prints are stamped in milliseconds; the tape
+                    // reads seconds.
+                    ts: value_i64(print, "timestamp") / 1_000,
+                    price,
+                    size,
+                    buy: lighter_buy(maker_ask),
+                    sweep: 1,
+                    tid: value_i64(print, "trade_id"),
+                });
+            }
+        }
+    }
+    tape
+}
+
+/// One market's day out of `market_stats`, in the shape `apply_feed` writes
+/// onto the row of that name. Leverage, maintenance and the size step belong
+/// to the asset rather than to the day and are not restated here, so they read
+/// as zero and the caller keeps whatever the universe said — the same contract
+/// `hyperliquid`'s streamed context has.
+fn parse_stats(stats: &Value) -> SymbolRow {
+    let price = num(stats, "mark_price");
+    let change_pct = num(stats, "daily_price_change");
+    SymbolRow {
+        name: text(stats, "symbol"),
+        price,
+        change_pct,
+        volume: num(stats, "daily_quote_token_volume"),
+        // Already the hourly rate as a percentage, which is exactly what
+        // `SymbolRow.funding_pct` is and is *not* the unit `/funding-rates`
+        // publishes. Settled against that endpoint in the same minute: across
+        // all 196 markets both quote with a non-zero rate, this field over the
+        // REST rate is 12.5 with every quartile on 12.5 — which is the 100/8
+        // that turns an eight-hour fraction into an hourly percentage.
+        funding_pct: num(stats, "current_funding_rate"),
+        leverage: 0.0,
+        maintenance: 0.0,
+        size_decimals: 0,
+        open_interest: open_interest(num(stats, "open_interest"), price),
+        prev: previous_price(price, change_pct),
+        selected: false,
+    }
+}
+
+/// Open interest in coins, which is the unit the market list holds and the
+/// unit `/orderBookDetails` publishes. The stream states it in dollars
+/// instead, so it is divided back out by the mark it was valued at.
+///
+/// Settled rather than inferred from the magnitude: against the universe read
+/// in the same minute, this quotient over the published figure is 1.0 across
+/// all 207 markets that carry any, spanning 0.99991 to 1.00004 — while the two
+/// figures taken as the same unit differ by a median factor of 1.885, which is
+/// just the price of a coin.
+fn open_interest(quote: f64, price: f64) -> f64 {
+    if price > 0.0 { quote / price } else { 0.0 }
+}
+
+/// The market data feed: every market's mid price, and the book, prints,
+/// candles and context of whatever market the tape is pointed at. Candles are
+/// merged into the tape in place, so the chart follows them on its own repaint
+/// beat without an app message per bar.
+///
+/// The same signature and the same behaviour as `hl_market_feed`, so the app
+/// cannot tell which venue it is holding — with one difference it cannot hide:
+/// the tape only fills forward. Lighter's `candle` channel answers a
+/// subscription with exactly one candle, the one now forming, on every
+/// resolution it quotes — checked on all eight — and no REST route serves
+/// history. So a chart opened here starts with a single bar and gains one per
+/// interval, where the other venue backfills five hundred. The candles that do
+/// arrive are the venue's own; nothing is folded out of the tape to stand in
+/// for the ones it will not send.
+pub fn lighter_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
+    let (sender, receiver) = smol::channel::unbounded();
+    // What the reader hands the socket: the channels whose held state it had
+    // to throw away, which only a fresh snapshot can restore.
+    let refresh: Arc<Mutex<Vec<String>>> = Arc::default();
+    let stale = refresh.clone();
+    let subscriptions = tape.clone();
+    std::thread::spawn(move || {
+        let mut subscribe = move || channels(&subscriptions);
+        let mut read = market_reader(tape, refresh);
+        while !sender.is_closed() {
+            let Err(error) = pump(&mut subscribe, &mut read, &sender, &stale) else {
+                return;
+            };
+            if sender.send_blocking(Err(error)).is_err() {
+                return;
+            }
+            // Retrying is for a connection that dropped. Under test there is no
+            // wire to reconnect to, and a feed that kept trying would never let
+            // the app settle — a handler that starts one could not be dispatched
+            // by a test at all.
+            if !wire_is_open() {
+                return;
+            }
+            std::thread::sleep(RETRY);
+        }
+    });
+    receiver
+}
+
+/// What the market feed makes of one connection's traffic. Apart from the
+/// socket so that a test can walk it through the sequence a market switch
+/// produces, which is the only way to reach these arms without the exchange.
+fn market_reader(
+    tape: Tape,
+    refresh: Arc<Mutex<Vec<String>>>,
+) -> impl FnMut(Event<'_>) -> Option<MarketTick> + Send + 'static {
+    let mut tick = MarketTick::default();
+    let mut changed = false;
+    let mut depth = Depth::default();
+    // Which market the per-market fields belong to. Recomputed every beat
+    // rather than only when the app moves, because the ticker-to-id table can
+    // fill in after the feed has already started and the channels are named
+    // for the id.
+    let mut held = Focused::default();
+    move |event| match event {
+        Event::Payload(channel, message) if channel == ALL_STATS_ECHO => {
+            // Keyed by market id, one market per update and every market in
+            // the snapshot. Folded into the mids the app already holds rather
+            // than replacing them, because a beat carries whichever markets
+            // moved during it rather than the whole exchange.
+            for stats in message.get("market_stats")?.as_object()?.values() {
+                let name = text(stats, "symbol");
+                let price = num(stats, "mark_price");
+                if name.is_empty() || price <= 0.0 {
+                    continue;
+                }
+                if name == held.coin {
+                    tick.context = Some(parse_stats(stats));
+                }
+                // The mark rather than the mid, because the mark is what the
+                // universe read put on the row and what the venue values a
+                // position at. Two quantities alternating in one column would
+                // read as a market that never stops ticking.
+                tick.mids.insert(name, price);
+                changed = true;
+            }
+            None
+        }
+        Event::Payload(channel, message) if channel == held.book => {
+            let (folded, fold) = fold_book(std::mem::take(&mut depth), message);
+            depth = folded;
+            match fold {
+                // Already applied: the levels are ahead of this message.
+                Fold::Stale => None,
+                Fold::Gap => {
+                    // The levels cannot be brought forward, so they are not
+                    // drawn. Asking the socket for a fresh snapshot is the
+                    // whole recovery; a book missing its deltas would go on
+                    // rendering, slowly wrong, and eventually crossed.
+                    depth = Depth::default();
+                    lock(&refresh).push(channel.replace(':', "/"));
+                    changed |= tick.book.is_some();
+                    tick.book = None;
+                    None
+                }
+                Fold::Applied => {
+                    let mut book = depth.book();
+                    // The book renders from the top down, so the asks are
+                    // reversed here and the view just walks both lists — the
+                    // same thing `hl_market_feed` does to its own.
+                    book.asks.reverse();
+                    changed |= tick.book.as_ref() != Some(&book);
+                    tick.book = Some(book);
+                    None
+                }
+            }
+        }
+        Event::Payload(channel, message) if channel == held.prints => {
+            let fresh = parse_prints(message);
+            changed |= !fresh.is_empty();
+            tick.trades.extend(fresh);
+            None
+        }
+        Event::Payload(channel, message) if channel == held.bars => {
+            // Merged in place and deliberately not counted as a change: the
+            // chart repaints off the shared tape on its own beat, so a bar
+            // costs no app message at all.
+            merge(&mut lock(&tape.candles), parse_candles(message));
+            None
+        }
+        Event::Payload(..) => None,
+        Event::Pong(round_trip) => {
+            changed |= tick.latency != round_trip;
+            tick.latency = round_trip;
+            None
+        }
+        Event::Beat => {
+            let fresh = focused(&tape);
+            if fresh != held {
+                // Everything per-market belongs to the market that was on
+                // screen a moment ago. The socket keeps serving the old
+                // subscriptions until the unsubscribe takes effect, and the
+                // channel names above are what turns those away.
+                held = fresh;
+                depth = Depth::default();
+                tick.book = None;
+                tick.context = None;
+                tick.trades.clear();
+                changed = false;
+                return None;
+            }
+            let ready = changed;
+            changed = false;
+            // Nothing moved: an unchanged message would rebuild the view for
+            // no reason.
+            ready.then(|| MarketTick {
+                // Both are consumed once: the app folds them into what it
+                // already holds, so replaying them on a quiet beat would
+                // re-apply prices and repeat the tape.
+                mids: std::mem::take(&mut tick.mids),
+                trades: std::mem::take(&mut tick.trades),
+                ..tick.clone()
+            })
+        }
+    }
+}
+
+/// The bars one `candle` message carries. The venue sends OHLCV as JSON
+/// floats here and prices as JSON strings nearly everywhere else, which costs
+/// nothing to read because every field on this venue already goes through a
+/// reader that takes either.
+fn parse_candles(message: &Value) -> Vec<Candle> {
+    list(message, "candles")
+        .iter()
+        .map(|candle| Candle {
+            // Milliseconds on the wire; the chart wants seconds.
+            ts: value_i64(candle, "t") / 1_000,
+            open: num(candle, "o"),
+            high: num(candle, "h"),
+            low: num(candle, "l"),
+            close: num(candle, "c"),
+            // The base leg. `V` beside it is the same volume in dollars, and
+            // the chart's volume pane is the other venue's base leg.
+            volume: num(candle, "v"),
+        })
+        .collect()
+}
+
+/// One websocket connection, plus the channels it is currently holding open.
+struct Socket {
+    ws: tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
+    open: Vec<String>,
+}
+
+impl Socket {
+    fn connect() -> Result<Self, HlError> {
+        // The same gate the REST reads pass: a test drives the real program,
+        // subscriptions included, so an ungated socket would make the suite
+        // depend on an exchange being up.
+        if !wire_is_open() {
+            return Err(fail(
+                "Lighter feed unreachable: no wire under test".to_owned(),
+            ));
+        }
+        let (ws, _) = tungstenite::connect(STREAM)
+            .map_err(|error| fail(format!("Lighter feed unreachable: {error}")))?;
+        // Reads have to time out, or the loop could never look at the clock to
+        // ping, or at the app to see that it changed markets.
+        let stream = match ws.get_ref() {
+            MaybeTlsStream::Plain(stream) => stream,
+            MaybeTlsStream::Rustls(tls) => tls.get_ref(),
+            _ => return Err(fail("Unknown Lighter transport".to_owned())),
+        };
+        stream
+            .set_read_timeout(Some(POLL))
+            .map_err(|error| fail(format!("Lighter feed unreadable: {error}")))?;
+        Ok(Self {
+            ws,
+            open: Vec::new(),
+        })
+    }
+
+    fn send(&mut self, request: &Value) -> Result<(), HlError> {
+        self.ws
+            .send(tungstenite::Message::Text(request.to_string().into()))
+            .map_err(|error| fail(format!("Lighter feed refused: {error}")))
+    }
+
+    /// Holds exactly `wanted` open, sending only the difference. Switching
+    /// markets therefore costs two frames rather than a new connection, and
+    /// asking for what is already open costs nothing — which is not only
+    /// thrift: subscribing twice to one channel is answered `{"code":30003,
+    /// "message":"Already Subscribed to : order_book:1"}`, and this loop reads
+    /// any error as a failed connection.
+    fn want(&mut self, wanted: Vec<String>) -> Result<(), HlError> {
+        let gone: Vec<String> = self
+            .open
+            .iter()
+            .filter(|held| !wanted.contains(held))
+            .cloned()
+            .collect();
+        let fresh: Vec<String> = wanted
+            .iter()
+            .filter(|want| !self.open.contains(want))
+            .cloned()
+            .collect();
+        for channel in gone {
+            self.send(&json!({ "type": "unsubscribe", "channel": channel }))?;
+        }
+        for channel in fresh {
+            self.send(&json!({ "type": "subscribe", "channel": channel }))?;
+        }
+        self.open = wanted;
+        Ok(())
+    }
+
+    /// Asks a channel for its snapshot again, which is how a book that missed
+    /// a delta gets back to a state it can apply the next one to. Dropped
+    /// before it is re-taken because a second subscribe to a channel already
+    /// open is refused rather than answered.
+    fn resubscribe(&mut self, channel: &str) -> Result<(), HlError> {
+        self.send(&json!({ "type": "unsubscribe", "channel": channel }))?;
+        self.send(&json!({ "type": "subscribe", "channel": channel }))
+    }
+}
+
+/// One connection's lifetime. Returns `Ok` only when the app has stopped
+/// listening; anything else is an error the caller reconnects through.
+fn pump(
+    subscribe: &mut impl FnMut() -> Result<Vec<String>, HlError>,
+    read: &mut impl FnMut(Event<'_>) -> Option<MarketTick>,
+    sender: &Sender<Result<MarketTick, HlError>>,
+    refresh: &Mutex<Vec<String>>,
+) -> Result<(), HlError> {
+    let mut socket = Socket::connect()?;
+    let mut beat = Instant::now();
+    let mut ping = Instant::now();
+    let mut sent: Option<Instant> = None;
+    loop {
+        if sender.is_closed() {
+            return Ok(());
+        }
+        // Before the blocking read, so the first pass subscribes rather than
+        // waiting out a timeout first.
+        let now = Instant::now();
+        if now >= beat {
+            beat = now + BEAT;
+            socket.want(subscribe()?)?;
+            // Deduplicated because every delta arriving between the gap and
+            // the fresh snapshot asks again, and each ask costs a whole book.
+            let mut stale = std::mem::take(&mut *lock(refresh));
+            stale.sort_unstable();
+            stale.dedup();
+            for channel in stale {
+                socket.resubscribe(&channel)?;
+            }
+            if let Some(item) = read(Event::Beat)
+                && sender.send_blocking(Ok(item)).is_err()
+            {
+                return Ok(());
+            }
+        }
+        if now >= ping {
+            ping = now + PING;
+            sent = Some(now);
+            socket.send(&json!({ "type": "ping" }))?;
+        }
+        match socket.ws.read() {
+            Ok(tungstenite::Message::Text(body)) => {
+                let message: Value = serde_json::from_str(&body)
+                    .map_err(|error| fail(format!("Lighter feed sent bad JSON: {error}")))?;
+                if let Some(refused) = message.get("error") {
+                    // A rejected subscription is silence otherwise, and
+                    // silence is indistinguishable from a quiet market.
+                    return Err(fail(format!(
+                        "Lighter feed rejected a request: code {} {}",
+                        value_i64(refused, "code"),
+                        text(refused, "message")
+                    )));
+                }
+                let item = if text(&message, "type") == "pong" {
+                    let round_trip = sent.take().map_or(0, |at| at.elapsed().as_millis() as i64);
+                    read(Event::Pong(round_trip))
+                } else {
+                    // The venue nests nothing: a payload is the frame it
+                    // arrived in, and `connected` carries no channel at all.
+                    let channel = text(&message, "channel");
+                    if channel.is_empty() {
+                        None
+                    } else {
+                        read(Event::Payload(&channel, &message))
+                    }
+                };
+                if let Some(item) = item
+                    && sender.send_blocking(Ok(item)).is_err()
+                {
+                    return Ok(());
+                }
+            }
+            Ok(_) => {}
+            // A read that found nothing before its timeout, which is the
+            // normal way out of the blocking read below the beat rate.
+            Err(tungstenite::Error::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) => return Err(fail(format!("Lighter feed dropped: {error}"))),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// What Lighter actually answered.
+//
+// Four responses off the live venue, trimmed in rows and in fields but never
+// in figures. They are the fixtures this module's parsers are checked against
+// and, run through those same parsers, they are also the Lighter the app draws
+// when it is drawing a fixture rather than a feed. One copy serves both on
+// purpose: a demo universe written by hand beside a captured one is a second
+// opinion about what this venue lists, and the two drift the moment either is
+// touched. Every number a Lighter screen shows therefore comes back to a
+// number the venue published.
+//
+// The four were taken within the same market day and cross-check each other:
+// the account's positions are markets the universe lists, and multiplying each
+// position's value by its market's published maintenance fraction reproduces
+// the requirement the account states — which is the check
+// `maintenance_in_basis_points_reproduces_the_accounts_requirement` runs.
+
+/// `GET /orderBookDetails`, trimmed to the markets the fixtures need out of
+/// the 222 the venue lists.
+///
+/// The trim is not arbitrary: every market the captured account holds a
+/// position in is here, so the two payloads describe one terminal; MKR is here
+/// because a retired market keeps its row and has to be dropped by `status`
+/// rather than by its numbers; and AAPL and 1000PEPE are here because they are
+/// the two shapes of difference from the other venue's universe — a market
+/// Hyperliquid does not list at all, and a coin it lists under another
+/// spelling.
+fn captured_universe() -> Value {
+    json!({
+        "code": 200,
+        "order_book_details": [
+            {
+                "symbol": "MKR", "market_id": 28, "market_type": "perp",
+                "status": "inactive", "size_decimals": 4,
+                "maintenance_margin_fraction": 0,
+                "min_initial_margin_fraction": 0,
+                "mark_price": "0.00", "index_price": "0.00",
+                "daily_price_change": 0, "daily_quote_token_volume": 0,
+                "daily_base_token_volume": 0, "open_interest": 0
+            },
+            {
+                "symbol": "ASTER", "market_id": 83, "market_type": "perp",
+                "status": "active", "size_decimals": 1,
+                "maintenance_margin_fraction": 1200,
+                "min_initial_margin_fraction": 2000,
+                "default_initial_margin_fraction": 2000,
+                "mark_price": "0.60108", "index_price": "0.60140",
+                "daily_price_change": -0.02161407242376883,
+                "daily_quote_token_volume": 129411.264773,
+                "daily_base_token_volume": 216005.6,
+                "daily_price_low": 0.59635, "daily_price_high": 0.60212,
+                "open_interest": 1463278.2
+            },
+            {
+                "symbol": "BTC", "market_id": 1, "market_type": "perp",
+                "status": "active", "size_decimals": 5,
+                "maintenance_margin_fraction": 120,
+                "min_initial_margin_fraction": 200,
+                "default_initial_margin_fraction": 500,
+                "mark_price": "64975.3", "index_price": "64980.1",
+                "daily_price_change": 0.6118286879673691,
+                "daily_quote_token_volume": 618847551.336845,
+                "daily_base_token_volume": 9520.35,
+                "daily_price_low": 64270.5, "daily_price_high": 65349.4,
+                "open_interest": 1836.69392
+            },
+            {
+                "symbol": "ETH", "market_id": 0, "market_type": "perp",
+                "status": "active", "size_decimals": 4,
+                "maintenance_margin_fraction": 120,
+                "min_initial_margin_fraction": 200,
+                "default_initial_margin_fraction": 500,
+                "mark_price": "1918.42", "index_price": "1918.63",
+                "daily_price_change": 0.27967421874183196,
+                "daily_quote_token_volume": 111002380.342004,
+                "daily_base_token_volume": 57891.4413,
+                "daily_price_low": 1904.51, "daily_price_high": 1925.62,
+                "open_interest": 42741.2792
+            },
+            {
+                "symbol": "SOL", "market_id": 2, "market_type": "perp",
+                "status": "active", "size_decimals": 3,
+                "maintenance_margin_fraction": 240,
+                "min_initial_margin_fraction": 400,
+                "default_initial_margin_fraction": 1000,
+                "mark_price": "75.460", "index_price": "75.472",
+                "daily_price_change": 2.4113879389893067,
+                "daily_quote_token_volume": 27263870.348171,
+                "daily_base_token_volume": 366209.573,
+                "daily_price_low": 73.152, "daily_price_high": 75.685,
+                "open_interest": 150485.366
+            },
+            {
+                "symbol": "ENA", "market_id": 29, "market_type": "perp",
+                "status": "active", "size_decimals": 1,
+                "maintenance_margin_fraction": 600,
+                "min_initial_margin_fraction": 1000,
+                "default_initial_margin_fraction": 2000,
+                "mark_price": "0.09090", "index_price": "0.09093",
+                "daily_price_change": -3.6327049353950436,
+                "daily_quote_token_volume": 544490.761735,
+                "daily_base_token_volume": 5904329.4,
+                "daily_price_low": 0.08937, "daily_price_high": 0.09594,
+                "open_interest": 25634609.1
+            },
+            {
+                "symbol": "SUI", "market_id": 16, "market_type": "perp",
+                "status": "active", "size_decimals": 1,
+                "maintenance_margin_fraction": 600,
+                "min_initial_margin_fraction": 1000,
+                "default_initial_margin_fraction": 2000,
+                "mark_price": "0.69232", "index_price": "0.69245",
+                "daily_price_change": 3.845577211394303,
+                "daily_quote_token_volume": 284005.289459,
+                "daily_base_token_volume": 416781.4,
+                "daily_price_low": 0.66409, "daily_price_high": 0.69587,
+                "open_interest": 858813.5
+            },
+            {
+                "symbol": "AAPL", "market_id": 113, "market_type": "perp",
+                "status": "active", "size_decimals": 3,
+                "maintenance_margin_fraction": 300,
+                "min_initial_margin_fraction": 500,
+                "default_initial_margin_fraction": 1000,
+                "mark_price": "312.351", "index_price": "312.402",
+                "daily_price_change": -0.49991084392592405,
+                "daily_quote_token_volume": 202518.34768,
+                "daily_base_token_volume": 645.821,
+                "daily_price_low": 311.494, "daily_price_high": 314.873,
+                "open_interest": 2200.689
+            },
+            {
+                "symbol": "1000PEPE", "market_id": 4, "market_type": "perp",
+                "status": "active", "size_decimals": 0,
+                "maintenance_margin_fraction": 600,
+                "min_initial_margin_fraction": 1000,
+                "default_initial_margin_fraction": 2000,
+                "mark_price": "0.002856", "index_price": "0.002857",
+                "daily_price_change": 1.1693834160170091,
+                "daily_quote_token_volume": 71666.242926,
+                "daily_base_token_volume": 25373122,
+                "daily_price_low": 0.002794, "daily_price_high": 0.002879,
+                "open_interest": 135356889
+            },
+            {
+                "symbol": "OP", "market_id": 55, "market_type": "perp",
+                "status": "active", "size_decimals": 1,
+                "maintenance_margin_fraction": 399,
+                "min_initial_margin_fraction": 666,
+                "default_initial_margin_fraction": 1332,
+                "mark_price": "0.08849", "index_price": "0.08851",
+                "daily_price_change": 2.458256029684601,
+                "daily_quote_token_volume": 29502.738809,
+                "daily_base_token_volume": 336881.5,
+                "daily_price_low": 0.08576, "daily_price_high": 0.08916,
+                "open_interest": 2103923.9
+            },
+            {
+                "symbol": "STRK", "market_id": 104, "market_type": "perp",
+                "status": "active", "size_decimals": 1,
+                "maintenance_margin_fraction": 1200,
+                "min_initial_margin_fraction": 2000,
+                "default_initial_margin_fraction": 4000,
+                "mark_price": "0.02518", "index_price": "0.02519",
+                "daily_price_change": 1.2257809410834322,
+                "daily_quote_token_volume": 4901.07704,
+                "daily_base_token_volume": 194998.6,
+                "daily_price_low": 0.0247, "daily_price_high": 0.02561,
+                "open_interest": 1527130.8
+            },
+            {
+                "symbol": "NMR", "market_id": 74, "market_type": "perp",
+                "status": "active", "size_decimals": 2,
+                "maintenance_margin_fraction": 2000,
+                "min_initial_margin_fraction": 3333,
+                "default_initial_margin_fraction": 6666,
+                "mark_price": "8.4603", "index_price": "8.4611",
+                "daily_price_change": -0.11517758503161507,
+                "daily_quote_token_volume": 872.92694,
+                "daily_base_token_volume": 103.19,
+                "daily_price_low": 8.4606, "daily_price_high": 8.515,
+                "open_interest": 6540.92
+            }
+        ]
+    })
+}
+
+/// `GET /funding-rates`, keeping every market above and the two venues Lighter
+/// only republishes for BTC, so the filter has something to reject.
+fn captured_rates() -> Value {
+    json!({
+        "code": 200,
+        "funding_rates": [
+            { "market_id": 1, "exchange": "binance", "symbol": "BTC", "rate": 4.183e-05 },
+            { "market_id": 1, "exchange": "hyperliquid", "symbol": "BTC", "rate": 3.20592e-05 },
+            { "market_id": 1, "exchange": "lighter", "symbol": "BTC", "rate": 6.4e-05 },
+            { "market_id": 0, "exchange": "lighter", "symbol": "ETH", "rate": 9.6e-05 },
+            { "market_id": 2, "exchange": "lighter", "symbol": "SOL", "rate": 9.6e-05 },
+            { "market_id": 4, "exchange": "lighter", "symbol": "1000PEPE", "rate": 9.6e-05 },
+            { "market_id": 16, "exchange": "lighter", "symbol": "SUI", "rate": 9.6e-05 },
+            { "market_id": 29, "exchange": "lighter", "symbol": "ENA", "rate": 9.6e-05 },
+            { "market_id": 55, "exchange": "lighter", "symbol": "OP", "rate": 9.6e-05 },
+            { "market_id": 74, "exchange": "lighter", "symbol": "NMR", "rate": 9.6e-05 },
+            { "market_id": 83, "exchange": "lighter", "symbol": "ASTER", "rate": 0.0001 },
+            { "market_id": 104, "exchange": "lighter", "symbol": "STRK", "rate": 9.6e-05 },
+            { "market_id": 113, "exchange": "lighter", "symbol": "AAPL", "rate": 3.2e-05 }
+        ]
+    })
+}
+
+/// A live `GET /account?by=index&value=702384`, trimmed in fields but not
+/// in rows: all six positions are here because the account's totals are
+/// the sum over all six, and a subset of them proves nothing.
+///
+/// `l1_address` is the address the fixtures are drawn for, and it is this
+/// account's rather than a plausible-looking one: an address is what the app
+/// asks a reader for, and a Lighter screen showing an address with no account
+/// on Lighter is the same fixture mistake as showing the wrong venue's
+/// markets.
+fn captured_account() -> Value {
+    json!({
+        "code": 200,
+        "total": 1,
+        "accounts": [{
+            "account_index": 702384,
+            "account_type": 0,
+            "l1_address": "0x3f4ec7684F679F83c782e485b358A2D43045d6A2",
+            "collateral": "1837526.962274",
+            "available_balance": "1753357.208845",
+            "total_asset_value": "1837610.4619429999",
+            "cross_asset_value": "1837610.4619429999",
+            "cross_initial_margin_requirement": "84253.253098",
+            "cross_maintenance_margin_requirement": "3084.930401",
+            "positions": [
+                {
+                    "market_id": 1, "symbol": "BTC",
+                    "initial_margin_fraction": "33.33",
+                    "sign": 1, "position": "3.87333",
+                    "avg_entry_price": "64969.5",
+                    "position_value": "251677.750743",
+                    "unrealized_pnl": "29.306261",
+                    "realized_pnl": "0.000000",
+                    "liquidation_price": "0",
+                    "total_funding_paid_out": "-17.314739",
+                    "margin_mode": 0, "allocated_margin": "0.000000"
+                },
+                {
+                    "market_id": 16, "symbol": "SUI",
+                    "initial_margin_fraction": "33.33",
+                    "sign": -1, "position": "1382.1",
+                    "avg_entry_price": "0.75987",
+                    "position_value": "942.882441",
+                    "unrealized_pnl": "107.336382",
+                    "realized_pnl": "0.000000",
+                    "liquidation_price": "1252.8958441209281",
+                    "total_funding_paid_out": "10.905219",
+                    "margin_mode": 0, "allocated_margin": "0.000000"
+                },
+                {
+                    "market_id": 29, "symbol": "ENA",
+                    "initial_margin_fraction": "33.33",
+                    "sign": 1, "position": "125.5",
+                    "avg_entry_price": "0.11002",
+                    "position_value": "11.374065",
+                    "unrealized_pnl": "-2.433445",
+                    "liquidation_price": "0",
+                    "total_funding_paid_out": "-0.327232",
+                    "margin_mode": 0, "allocated_margin": "0.000000"
+                },
+                {
+                    "market_id": 55, "symbol": "OP",
+                    "initial_margin_fraction": "33.33",
+                    "sign": 1, "position": "1640.9",
+                    "avg_entry_price": "0.11977",
+                    "position_value": "142.266030",
+                    "unrealized_pnl": "-54.264563",
+                    "liquidation_price": "0",
+                    "total_funding_paid_out": "-3.851005",
+                    "margin_mode": 0, "allocated_margin": "0.000000"
+                },
+                {
+                    "market_id": 74, "symbol": "NMR",
+                    "initial_margin_fraction": "33.33",
+                    "sign": -1, "position": "0.85",
+                    "avg_entry_price": "8.3569",
+                    "position_value": "7.173065",
+                    "unrealized_pnl": "-0.069700",
+                    "liquidation_price": "1798562.881587889",
+                    "total_funding_paid_out": "0.167017",
+                    "margin_mode": 0, "allocated_margin": "0.000000"
+                },
+                {
+                    "market_id": 104, "symbol": "STRK",
+                    "initial_margin_fraction": "33.33",
+                    "sign": -1, "position": "144.7",
+                    "avg_entry_price": "0.04987",
+                    "position_value": "3.591454",
+                    "unrealized_pnl": "3.624735",
+                    "liquidation_price": "11319.784492361827",
+                    "total_funding_paid_out": "0.047498",
+                    "margin_mode": 0, "allocated_margin": "0.000000"
+                }
+            ]
+        }]
+    })
+}
+
+/// Trimmed from a live `GET /orderBookOrders?market_id=1`, keeping the
+/// two bids that rest at the same price.
+fn captured_orders() -> Value {
+    json!({
+        "code": 200,
+        "total_asks": 3,
+        "asks": [
+            { "order_id": "562953070761608", "owner_account_index": 27927,
+              "initial_base_amount": "0.00020", "remaining_base_amount": "0.00020",
+              "price": "64973.7" },
+            { "order_id": "562953070761603", "owner_account_index": 27927,
+              "initial_base_amount": "0.00021", "remaining_base_amount": "0.00020",
+              "price": "64974.3" },
+            { "order_id": "562953070761589", "owner_account_index": 702384,
+              "initial_base_amount": "0.64351", "remaining_base_amount": "0.64335",
+              "price": "64978.1" }
+        ],
+        "total_bids": 4,
+        "bids": [
+            { "order_id": "844421764488015", "owner_account_index": 702384,
+              "initial_base_amount": "0.06759", "remaining_base_amount": "0.06759",
+              "price": "64973.3" },
+            { "order_id": "844421764488027", "owner_account_index": 702384,
+              "initial_base_amount": "0.49604", "remaining_base_amount": "0.49604",
+              "price": "64973.2" },
+            { "order_id": "844421764488011", "owner_account_index": 726982,
+              "initial_base_amount": "0.00308", "remaining_base_amount": "0.00308",
+              "price": "64973.1" },
+            { "order_id": "844421764488009", "owner_account_index": 726941,
+              "initial_base_amount": "0.00308", "remaining_base_amount": "0.00308",
+              "price": "64973.1" }
+        ]
+    })
+}
+
+/// Trimmed from a live `update/trade` on market 1: one taker sweeping
+/// three resting asks, then a second taker's single print. The venue lists
+/// them newest first, which is the order these are in.
+fn captured_prints() -> Value {
+    json!({
+        "channel": "trade:1",
+        "type": "update/trade",
+        "liquidation_trades": [],
+        "trades": [
+            { "trade_id": 27_074_589_733_i64, "timestamp": 1_786_189_598_959_i64,
+              "is_maker_ask": false, "bid_id": 844_421_764_109_748_i64,
+              "ask_id": 562_953_071_100_242_i64, "price": "64940.6", "size": "0.00006" },
+            { "trade_id": 27_074_589_705_i64, "timestamp": 1_786_189_598_601_i64,
+              "is_maker_ask": true, "bid_id": 844_421_764_109_750_i64,
+              "ask_id": 562_953_071_096_525_i64, "price": "64941.0", "size": "0.00228" },
+            { "trade_id": 27_074_589_704_i64, "timestamp": 1_786_189_598_601_i64,
+              "is_maker_ask": true, "bid_id": 844_421_764_109_750_i64,
+              "ask_id": 562_953_071_096_526_i64, "price": "64940.9", "size": "0.00148" },
+            { "trade_id": 27_074_589_703_i64, "timestamp": 1_786_189_598_601_i64,
+              "is_maker_ask": true, "bid_id": 844_421_764_109_750_i64,
+              "ask_id": 562_953_071_096_527_i64, "price": "64940.8", "size": "0.00068" }
+        ]
+    })
+}
+
+/// The L1 address the Lighter fixtures are drawn for: the owner of the
+/// captured account, which is an address that genuinely holds a book here.
+///
+/// Harvested the way the venue offers them — `orderBookOrders` names an
+/// `owner_account_index` on every resting order, and `account?by=index`
+/// answers that account's `l1_address` — so it is a real participant rather
+/// than an address chosen for looking like one. 702384 rests two of the four
+/// bids in `captured_orders`.
+pub fn demo_address_lighter() -> String {
+    text(
+        list(&captured_account(), "accounts")
+            .first()
+            .unwrap_or(&Value::Null),
+        "l1_address",
+    )
+}
+
+/// Lighter's universe as Lighter published it: its own tickers, its own price
+/// scales, its own size steps and its own leverage caps — 50x on bitcoin
+/// against a 3x on NMR, which is a spread the other venue's fixture does not
+/// have.
+pub fn demo_symbols_lighter() -> Vec<SymbolRow> {
+    parse_symbols(&captured_universe(), &captured_rates())
+}
+
+/// The captured account, through the parser the live read uses. Every figure
+/// on the equity strip is the venue's own, including the ones the app cannot
+/// rebuild — `withdrawable` above all, which no other field pins down.
+pub fn demo_account_lighter() -> Account {
+    parse_account(&captured_account())
+}
+
+/// Its open positions, taken from the account rather than written beside it,
+/// so the rows and the totals over them cannot disagree.
+pub fn demo_positions_lighter() -> Vec<Position> {
+    demo_account_lighter().positions
+}
+
+/// The captured bitcoin book, at Lighter's tick and with its levels folded the
+/// way the venue serves them — resting orders rather than price levels, two of
+/// which share a price.
+pub fn demo_book_lighter() -> Book {
+    parse_book(&captured_orders())
+}
+
+/// The captured prints, newest first, which is the order the panel holds a
+/// tape in and the order `push_trades` leaves the feed's own beat in.
+pub fn demo_tape_lighter() -> Vec<Trade> {
+    let mut prints = parse_prints(&captured_prints());
+    prints.reverse();
+    prints
+}
 
 #[cfg(test)]
 mod tests {
+    use crate::hyperliquid::{apply_feed, symbol_row, tape_focus, tape_new};
+
+    use super::*;
+
+    /// The row of one market out of the captured universe, by name — because
+    /// the rows come back in volume order and an index is a claim about the
+    /// day rather than about the market being asserted on.
+    fn listed_market(name: &str) -> SymbolRow {
+        symbol_row(demo_symbols_lighter(), name.to_owned())
+            .unwrap_or_else(|| panic!("{name} is not in the sample"))
+    }
 
     /// The step a size is quoted to belongs to the market, and each venue
     /// publishes its own. Reading it off the wrong field, or defaulting it,
     /// would let the app work out a size the venue then refuses.
     #[test]
     fn a_market_carries_the_step_the_venue_quotes_it_at() {
-        let rows = parse_symbols(&details(), &rates());
-        let step = |name: &str| {
-            rows.iter()
-                .find(|row| row.name == name)
-                .unwrap_or_else(|| panic!("{name} is not in the sample"))
-                .size_decimals
-        };
-        // ASTER quotes to a tenth of a coin and MKR to a ten-thousandth,
-        // which are the venue's own published steps for those two markets.
-        assert_eq!(step("ASTER"), 1);
-    }
-    use super::*;
-    use serde_json::json;
-
-    /// Trimmed from a live `GET /orderBookDetails`: the busiest market, a
-    /// mid-table one, and a delisted one, with the fields the parser reads.
-    fn details() -> Value {
-        json!({
-            "code": 200,
-            "order_book_details": [
-                {
-                    "symbol": "MKR", "market_id": 28, "market_type": "perp",
-                    "status": "inactive", "size_decimals": 4,
-                    "maintenance_margin_fraction": 0,
-                    "min_initial_margin_fraction": 0,
-                    "mark_price": "0.00", "index_price": "0.00",
-                    "daily_price_change": 0, "daily_quote_token_volume": 0,
-                    "daily_base_token_volume": 0, "open_interest": 0
-                },
-                {
-                    "symbol": "ASTER", "market_id": 83, "market_type": "perp",
-                    "status": "active", "size_decimals": 1,
-                    "maintenance_margin_fraction": 1200,
-                    "min_initial_margin_fraction": 2000,
-                    "default_initial_margin_fraction": 2000,
-                    "mark_price": "0.60108", "index_price": "0.60140",
-                    "daily_price_change": -0.02161407242376883,
-                    "daily_quote_token_volume": 129411.264773,
-                    "daily_base_token_volume": 216005.6,
-                    "daily_price_low": 0.59635, "daily_price_high": 0.60212,
-                    "open_interest": 1463278.2
-                },
-                {
-                    "symbol": "BTC", "market_id": 1, "market_type": "perp",
-                    "status": "active",
-                    "maintenance_margin_fraction": 120,
-                    "min_initial_margin_fraction": 200,
-                    "default_initial_margin_fraction": 500,
-                    "mark_price": "64975.3", "index_price": "64980.1",
-                    "daily_price_change": 0.6118286879673691,
-                    "daily_quote_token_volume": 618847551.336845,
-                    "daily_base_token_volume": 9520.35,
-                    "daily_price_low": 64270.5, "daily_price_high": 65349.4,
-                    "open_interest": 1836.69392
-                }
-            ]
-        })
-    }
-
-    /// Trimmed from a live `GET /funding-rates`, keeping one venue Lighter
-    /// only republishes so the filter has something to reject.
-    fn rates() -> Value {
-        json!({
-            "code": 200,
-            "funding_rates": [
-                { "market_id": 1, "exchange": "binance", "symbol": "BTC", "rate": 4.183e-05 },
-                { "market_id": 1, "exchange": "hyperliquid", "symbol": "BTC", "rate": 3.20592e-05 },
-                { "market_id": 1, "exchange": "lighter", "symbol": "BTC", "rate": 6.4e-05 },
-                { "market_id": 83, "exchange": "lighter", "symbol": "ASTER", "rate": 0.0001 }
-            ]
-        })
+        // The venue's own published steps: bitcoin to five decimals, ether to
+        // four, sol to three, aster to a tenth of a coin — and a coin worth a
+        // fraction of a cent trades in whole units.
+        assert_eq!(listed_market("BTC").size_decimals, 5);
+        assert_eq!(listed_market("ETH").size_decimals, 4);
+        assert_eq!(listed_market("SOL").size_decimals, 3);
+        assert_eq!(listed_market("ASTER").size_decimals, 1);
+        assert_eq!(listed_market("1000PEPE").size_decimals, 0);
     }
 
     #[test]
     fn markets_sort_by_volume_and_drop_the_delisted() {
-        let rows = parse_symbols(&details(), &rates());
+        let rows = demo_symbols_lighter();
         assert_eq!(
             rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
-            ["BTC", "ASTER"],
+            [
+                "BTC", "ETH", "SOL", "ENA", "SUI", "AAPL", "ASTER", "1000PEPE", "OP", "STRK", "NMR"
+            ],
             "busiest first, and MKR is not tradeable"
         );
     }
 
     #[test]
     fn margin_fractions_read_as_basis_points() {
-        let rows = parse_symbols(&details(), &rates());
-        // 120 bp of a position's value is what the engine holds against it.
-        assert!((rows[0].maintenance - 0.012).abs() < 1e-12);
-        // 200 bp is the smallest initial margin, so 50x is the ceiling.
-        assert!((rows[0].leverage - 50.0).abs() < 1e-12);
-        assert!((rows[1].maintenance - 0.12).abs() < 1e-12);
-        assert!((rows[1].leverage - 5.0).abs() < 1e-12);
+        // 120 bp of a position's value is what the engine holds against
+        // bitcoin, and 200 bp is the smallest initial margin, so 50x is the
+        // ceiling.
+        assert!((listed_market("BTC").maintenance - 0.012).abs() < 1e-12);
+        assert!((listed_market("BTC").leverage - 50.0).abs() < 1e-12);
+        // A market the venue holds a hundredfold tighter, so a fixture that
+        // read the scale wrong could not pass both.
+        assert!((listed_market("ASTER").maintenance - 0.12).abs() < 1e-12);
+        assert!((listed_market("ASTER").leverage - 5.0).abs() < 1e-12);
+        // And the tightest of them, whose 3333 bp is not a round cap.
+        assert!((listed_market("NMR").maintenance - 0.2).abs() < 1e-12);
+        assert!((listed_market("NMR").leverage - 10_000.0 / 3_333.0).abs() < 1e-12);
     }
 
     /// The check that would catch the fraction/percent slip: a previous close
     /// outside the day's own range is the arithmetic saying it read the change
-    /// in the wrong unit.
+    /// in the wrong unit. Every market in the sample, against the low and high
+    /// that market itself published, because the price twenty-four hours ago
+    /// is inside the last twenty-four hours' range by construction.
     #[test]
     fn yesterdays_close_lands_inside_the_days_range() {
-        let rows = parse_symbols(&details(), &rates());
-        assert!(
-            (64_270.5..=65_349.4).contains(&rows[0].prev),
-            "BTC previous close {} is outside 64270.5..65349.4",
-            rows[0].prev
-        );
-        assert!((0.59635..=0.60212).contains(&rows[1].prev));
-        // And it still reconstructs the mark it was backed out of.
-        let round_trip = rows[0].prev * (1.0 + rows[0].change_pct / 100.0);
-        assert!((round_trip - rows[0].price).abs() < 1e-6);
+        for detail in list(&captured_universe(), "order_book_details") {
+            let name = text(detail, "symbol");
+            if text(detail, "status") != "active" {
+                continue;
+            }
+            let row = listed_market(&name);
+            let range = num(detail, "daily_price_low")..=num(detail, "daily_price_high");
+            assert!(
+                range.contains(&row.prev),
+                "{name} previous close {} is outside {range:?}",
+                row.prev
+            );
+            // And it still reconstructs the mark it was backed out of.
+            let round_trip = row.prev * (1.0 + row.change_pct / 100.0);
+            assert!((round_trip - row.price).abs() < 1e-6);
+        }
     }
 
     #[test]
     fn funding_is_the_hourly_share_of_the_published_eight_hour_rate() {
-        let rows = parse_symbols(&details(), &rates());
+        let btc = listed_market("BTC");
         // 6.4e-05 over eight hours is 8.0e-06 an hour, which is 0.0008%.
-        assert!((rows[0].funding_pct - 6.4e-05 / 8.0 * 100.0).abs() < 1e-15);
-        assert!((rows[0].funding_pct - 0.000_8).abs() < 1e-12);
-        assert_eq!(rows[0].volume, 618_847_551.336_845);
-    }
-
-    /// A live `GET /account?by=index&value=702384`, trimmed in fields but not
-    /// in rows: all six positions are here because the account's totals are
-    /// the sum over all six, and a subset of them proves nothing.
-    fn account() -> Value {
-        json!({
-            "code": 200,
-            "total": 1,
-            "accounts": [{
-                "account_index": 702384,
-                "account_type": 0,
-                "l1_address": "0x3f4ec7684F679F83c782e485b358A2D43045d6A2",
-                "collateral": "1837526.962274",
-                "available_balance": "1753357.208845",
-                "total_asset_value": "1837610.4619429999",
-                "cross_asset_value": "1837610.4619429999",
-                "cross_initial_margin_requirement": "84253.253098",
-                "cross_maintenance_margin_requirement": "3084.930401",
-                "positions": [
-                    {
-                        "market_id": 1, "symbol": "BTC",
-                        "initial_margin_fraction": "33.33",
-                        "sign": 1, "position": "3.87333",
-                        "avg_entry_price": "64969.5",
-                        "position_value": "251677.750743",
-                        "unrealized_pnl": "29.306261",
-                        "realized_pnl": "0.000000",
-                        "liquidation_price": "0",
-                        "total_funding_paid_out": "-17.314739",
-                        "margin_mode": 0, "allocated_margin": "0.000000"
-                    },
-                    {
-                        "market_id": 16, "symbol": "SUI",
-                        "initial_margin_fraction": "33.33",
-                        "sign": -1, "position": "1382.1",
-                        "avg_entry_price": "0.75987",
-                        "position_value": "942.882441",
-                        "unrealized_pnl": "107.336382",
-                        "realized_pnl": "0.000000",
-                        "liquidation_price": "1252.8958441209281",
-                        "total_funding_paid_out": "10.905219",
-                        "margin_mode": 0, "allocated_margin": "0.000000"
-                    },
-                    {
-                        "market_id": 29, "symbol": "ENA",
-                        "initial_margin_fraction": "33.33",
-                        "sign": 1, "position": "125.5",
-                        "avg_entry_price": "0.11002",
-                        "position_value": "11.374065",
-                        "unrealized_pnl": "-2.433445",
-                        "liquidation_price": "0",
-                        "total_funding_paid_out": "-0.327232",
-                        "margin_mode": 0, "allocated_margin": "0.000000"
-                    },
-                    {
-                        "market_id": 55, "symbol": "OP",
-                        "initial_margin_fraction": "33.33",
-                        "sign": 1, "position": "1640.9",
-                        "avg_entry_price": "0.11977",
-                        "position_value": "142.266030",
-                        "unrealized_pnl": "-54.264563",
-                        "liquidation_price": "0",
-                        "total_funding_paid_out": "-3.851005",
-                        "margin_mode": 0, "allocated_margin": "0.000000"
-                    },
-                    {
-                        "market_id": 74, "symbol": "NMR",
-                        "initial_margin_fraction": "33.33",
-                        "sign": -1, "position": "0.85",
-                        "avg_entry_price": "8.3569",
-                        "position_value": "7.173065",
-                        "unrealized_pnl": "-0.069700",
-                        "liquidation_price": "1798562.881587889",
-                        "total_funding_paid_out": "0.167017",
-                        "margin_mode": 0, "allocated_margin": "0.000000"
-                    },
-                    {
-                        "market_id": 104, "symbol": "STRK",
-                        "initial_margin_fraction": "33.33",
-                        "sign": -1, "position": "144.7",
-                        "avg_entry_price": "0.04987",
-                        "position_value": "3.591454",
-                        "unrealized_pnl": "3.624735",
-                        "liquidation_price": "11319.784492361827",
-                        "total_funding_paid_out": "0.047498",
-                        "margin_mode": 0, "allocated_margin": "0.000000"
-                    }
-                ]
-            }]
-        })
+        assert!((btc.funding_pct - 6.4e-05 / 8.0 * 100.0).abs() < 1e-15);
+        assert!((btc.funding_pct - 0.000_8).abs() < 1e-12);
+        assert_eq!(btc.volume, 618_847_551.336_845);
     }
 
     #[test]
     fn sign_and_size_become_one_signed_size() {
-        let held = parse_account(&account()).positions;
+        let held = parse_account(&captured_account()).positions;
         assert!((held[0].size - 3.87333).abs() < 1e-12, "sign 1 is a long");
         assert!((held[1].size + 1382.1).abs() < 1e-12, "sign -1 is a short");
         // Neither field alone is the size, and the short is the one that
@@ -810,7 +1855,7 @@ mod tests {
 
     #[test]
     fn a_position_is_marked_at_what_the_venue_says_it_is_worth() {
-        let held = parse_account(&account()).positions;
+        let held = parse_account(&captured_account()).positions;
         assert!((held[0].mark - 251_677.750_743 / 3.87333).abs() < 1e-9);
         // A short is worth a positive amount, so the mark stays positive.
         assert!((held[1].mark - 942.882_441 / 1382.1).abs() < 1e-12);
@@ -819,7 +1864,7 @@ mod tests {
 
     #[test]
     fn cross_positions_carry_their_share_of_the_accounts_requirement() {
-        let parsed = parse_account(&account());
+        let parsed = parse_account(&captured_account());
         let margin: f64 = parsed.positions.iter().map(|held| held.margin).sum();
         // The identity that fixed the unit: the per-position initial margin
         // sums to the total the venue reports for the cross book.
@@ -834,7 +1879,7 @@ mod tests {
 
     #[test]
     fn return_on_equity_is_the_pnl_over_what_was_posted_to_open() {
-        let held = parse_account(&account()).positions;
+        let held = parse_account(&captured_account()).positions;
         let opening = 64_969.5 * 3.87333 * 0.3333;
         assert!((held[0].roe_pct - 29.306_261 / opening * 100.0).abs() < 1e-12);
         // Both are gains here, so both read positive whichever way they lean.
@@ -848,7 +1893,7 @@ mod tests {
     /// than copies, so dropping the negation cannot pass.
     #[test]
     fn funding_is_the_cost_charged_rather_than_the_cash_paid_out() {
-        let raw = account();
+        let raw = captured_account();
         let published = |index: usize| {
             num(
                 &raw["accounts"][0]["positions"][index],
@@ -865,7 +1910,7 @@ mod tests {
 
     #[test]
     fn the_account_totals_are_the_venues_own_and_agree_with_its_positions() {
-        let parsed = parse_account(&account());
+        let parsed = parse_account(&captured_account());
         assert!((parsed.value - 1_837_610.461_943).abs() < 1e-6);
         assert!((parsed.withdrawable - 1_753_357.208_845).abs() < 1e-6);
         assert!((parsed.maintenance - 3_084.930_401).abs() < 1e-9);
@@ -887,26 +1932,17 @@ mod tests {
     /// a hundredfold either way, so nothing else can pass this.
     #[test]
     fn maintenance_in_basis_points_reproduces_the_accounts_requirement() {
-        // `maintenance_margin_fraction` for these six markets, from the same
-        // live `/orderBookDetails` the account snapshot was taken beside.
-        let published = [
-            ("BTC", 120.0),
-            ("SUI", 600.0),
-            ("ENA", 600.0),
-            ("OP", 399.0),
-            ("NMR", 2000.0),
-            ("STRK", 1200.0),
-        ];
-        let parsed = parse_account(&account());
+        // The fraction is not restated here: it is read out of the captured
+        // universe, which is the same `/orderBookDetails` the account snapshot
+        // was taken beside. So this is also the check that the two payloads
+        // describe one terminal rather than two moments.
+        let parsed = parse_account(&captured_account());
         let held: f64 = parsed
             .positions
             .iter()
             .map(|position| {
-                let (_, basis_points) = published
-                    .iter()
-                    .find(|(name, _)| *name == position.coin)
-                    .expect("every position's market is listed");
-                position.mark * position.size.abs() * basis_points / BASIS
+                let market = listed_market(&position.coin);
+                position.mark * position.size.abs() * market.maintenance
             })
             .sum();
         assert!(
@@ -918,7 +1954,7 @@ mod tests {
 
     #[test]
     fn account_health_is_the_requirement_against_the_cross_equity() {
-        let parsed = parse_account(&account());
+        let parsed = parse_account(&captured_account());
         let load = 3_084.930_401 / 1_837_610.461_943;
         assert!((parsed.margin_pct - load * 100.0).abs() < 1e-9);
         assert!((parsed.health - load * RISK_RAIL_WIDTH).abs() < 1e-9);
@@ -1147,49 +2183,14 @@ mod tests {
         assert!(held.mark > held.entry);
         assert_eq!(held.risk, 0.0);
         // And a position the venue quotes no liquidation for has no rail.
-        let flat = parse_account(&account()).positions;
+        let flat = parse_account(&captured_account()).positions;
         assert_eq!(flat[0].liq, 0.0);
         assert_eq!(flat[0].risk, 0.0);
     }
 
-    /// Trimmed from a live `GET /orderBookOrders?market_id=1`, keeping the
-    /// two bids that rest at the same price.
-    fn orders() -> Value {
-        json!({
-            "code": 200,
-            "total_asks": 3,
-            "asks": [
-                { "order_id": "562953070761608", "owner_account_index": 27927,
-                  "initial_base_amount": "0.00020", "remaining_base_amount": "0.00020",
-                  "price": "64973.7" },
-                { "order_id": "562953070761603", "owner_account_index": 27927,
-                  "initial_base_amount": "0.00021", "remaining_base_amount": "0.00020",
-                  "price": "64974.3" },
-                { "order_id": "562953070761589", "owner_account_index": 702384,
-                  "initial_base_amount": "0.64351", "remaining_base_amount": "0.64335",
-                  "price": "64978.1" }
-            ],
-            "total_bids": 4,
-            "bids": [
-                { "order_id": "844421764488015", "owner_account_index": 702384,
-                  "initial_base_amount": "0.06759", "remaining_base_amount": "0.06759",
-                  "price": "64973.3" },
-                { "order_id": "844421764488027", "owner_account_index": 702384,
-                  "initial_base_amount": "0.49604", "remaining_base_amount": "0.49604",
-                  "price": "64973.2" },
-                { "order_id": "844421764488011", "owner_account_index": 726982,
-                  "initial_base_amount": "0.00308", "remaining_base_amount": "0.00308",
-                  "price": "64973.1" },
-                { "order_id": "844421764488009", "owner_account_index": 726941,
-                  "initial_base_amount": "0.00308", "remaining_base_amount": "0.00308",
-                  "price": "64973.1" }
-            ]
-        })
-    }
-
     #[test]
     fn orders_at_one_price_are_one_level() {
-        let book = parse_book(&orders());
+        let book = parse_book(&captured_orders());
         assert_eq!(book.bids.len(), 3, "four orders rest at three prices");
         assert!((book.bids[2].price - 64_973.1).abs() < 1e-9);
         assert!((book.bids[2].size - 0.00616).abs() < 1e-12, "0.00308 twice");
@@ -1197,7 +2198,7 @@ mod tests {
 
     #[test]
     fn depth_accumulates_down_the_side() {
-        let book = parse_book(&orders());
+        let book = parse_book(&captured_orders());
         assert!((book.bids[0].total - 0.06759).abs() < 1e-12);
         assert!((book.bids[1].total - (0.06759 + 0.49604)).abs() < 1e-12);
         let deepest = 0.06759 + 0.49604 + 0.00616;
@@ -1210,14 +2211,14 @@ mod tests {
     /// A partly filled order is only depth for what is left of it.
     #[test]
     fn a_level_counts_what_remains_rather_than_what_was_placed() {
-        let book = parse_book(&orders());
+        let book = parse_book(&captured_orders());
         assert!((book.asks[2].size - 0.64335).abs() < 1e-12);
         assert!((book.asks[1].size - 0.00020).abs() < 1e-12);
     }
 
     #[test]
     fn the_spread_is_between_the_two_best_prices() {
-        let book = parse_book(&orders());
+        let book = parse_book(&captured_orders());
         assert!((book.spread - (64_973.7 - 64_973.3)).abs() < 1e-9);
         assert!((book.mid - (64_973.7 + 64_973.3) / 2.0).abs() < 1e-9);
         assert!((book.spread_pct - book.spread / book.mid * 100.0).abs() < 1e-12);
@@ -1230,6 +2231,7 @@ mod tests {
     #[test]
     #[ignore = "hits the live venue, run explicitly: checks the URLs still answer"]
     fn the_requests_reach_the_venue() {
+        crate::hyperliquid::open_the_wire();
         smol::block_on(async {
             let rows = lighter_symbols().await.expect("markets");
             assert!(rows.len() > 100, "the venue lists a couple hundred markets");
@@ -1239,14 +2241,33 @@ mod tests {
             let book = lighter_book(rows[0].name.clone()).await.expect("book");
             assert!(book.mid > 0.0 && !book.bids.is_empty() && !book.asks.is_empty());
             assert!(book.asks[0].price > book.bids[0].price, "crossed book");
-            let account = lighter_account("0x3f4ec7684F679F83c782e485b358A2D43045d6A2".to_owned())
-                .await
-                .expect("account");
+            // The address the fixtures are drawn for, which has to be one the
+            // venue actually holds a book for — a Lighter screen drawn for an
+            // address with no Lighter account is a fixture pretending twice.
+            let Ok(Some(account)) = lighter_account(demo_address_lighter()).await else {
+                panic!("the fixture address has no account on Lighter");
+            };
             assert!(account.value > 0.0);
-            // And a refusal quotes the venue instead of a bare number. This is
-            // the half that cannot be checked from a captured payload: ureq
-            // makes every 4xx an error and drops the body, and the body is the
-            // only place Lighter says what was wrong.
+
+            // The three answers this read has, and the two that are not
+            // failures. An address with a real account at the *other* exchange
+            // and none here is the ordinary case of one address read at two
+            // venues: `21100 account not found` is Lighter answering that
+            // there is nothing here, and drawn as a failure it would put an
+            // alarm over a working screen.
+            assert!(
+                matches!(
+                    lighter_account("0x8cc94dc843e1ea7a19805e0cca43001123512b6a".to_owned()).await,
+                    Ok(None)
+                ),
+                "an address with no account here is an absence, not a failure"
+            );
+
+            // A refusal that *is* one quotes the venue instead of a bare
+            // number. This is the half that cannot be checked from a captured
+            // payload: ureq makes every 4xx an error and drops the body, and
+            // the body is the only place Lighter says what was wrong — the
+            // same 400 carries both `21100` and this.
             // `Account` has no `Debug`, so the error comes out of a match
             // rather than `expect_err`.
             let Err(refused) = lighter_account("0xdead".to_owned()).await else {
@@ -1435,5 +2456,836 @@ mod tests {
         assert_eq!(parsed.value, 0.0);
         assert_eq!(parsed.margin_pct, 0.0);
         assert!(parse_symbols(&json!({ "code": 200 }), &json!({})).is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // The live feed.
+
+    fn rung(price: &str, size: &str) -> Value {
+        json!({ "price": price, "size": size })
+    }
+
+    /// The shape a subscription is answered with: the whole book, and the
+    /// nonce every delta after it will be measured against. Prices are the
+    /// live ones from a `subscribed/order_book` on market 1.
+    fn book_snapshot(nonce: i64) -> Value {
+        json!({
+            "channel": "order_book:1",
+            "type": "subscribed/order_book",
+            "order_book": {
+                "code": 0,
+                "asks": [rung("64941.8", "0.02772"), rung("64944.3", "1.23355")],
+                "bids": [rung("64939.5", "0.70469"), rung("64931.6", "0.08625")],
+                "nonce": nonce, "begin_nonce": 0, "offset": 9_865_330_i64
+            }
+        })
+    }
+
+    fn book_delta(begin: i64, nonce: i64, bids: Value, asks: Value) -> Value {
+        json!({
+            "channel": "order_book:1",
+            "type": "update/order_book",
+            "order_book": {
+                "code": 0, "asks": asks, "bids": bids,
+                "nonce": nonce, "begin_nonce": begin, "offset": 9_865_331_i64
+            }
+        })
+    }
+
+    /// The nonces are the venue's own: an update states the nonce it expects
+    /// the reader to be holding, and carries the one it leaves behind.
+    const FIRST: i64 = 18_744_130_787;
+    const SECOND: i64 = 18_744_130_812;
+    const THIRD: i64 = 18_744_130_849;
+
+    fn seeded() -> Depth {
+        let (depth, fold) = fold_book(Depth::default(), &book_snapshot(FIRST));
+        assert_eq!(fold, Fold::Applied);
+        depth
+    }
+
+    fn sizes(side: &BTreeMap<u64, f64>) -> Vec<(f64, f64)> {
+        side.iter()
+            .map(|(price, size)| (f64::from_bits(*price), *size))
+            .collect()
+    }
+
+    #[test]
+    fn a_snapshot_replaces_the_levels_and_sets_the_nonce() {
+        let depth = seeded();
+        assert_eq!(depth.nonce, FIRST);
+        assert_eq!(
+            sizes(&depth.bids),
+            [(64_931.6, 0.08625), (64_939.5, 0.70469)]
+        );
+        assert_eq!(
+            sizes(&depth.asks),
+            [(64_941.8, 0.02772), (64_944.3, 1.23355)]
+        );
+
+        // And it replaces rather than merges: a second snapshot is the whole
+        // book, so a level the first one had and the second does not is gone.
+        let (again, fold) = fold_book(
+            depth,
+            &json!({
+                "channel": "order_book:1",
+                "type": "subscribed/order_book",
+                "order_book": {
+                    "asks": [rung("64941.8", "0.02772")],
+                    "bids": [rung("64939.5", "0.70469")],
+                    "nonce": SECOND, "begin_nonce": 0
+                }
+            }),
+        );
+        assert_eq!(fold, Fold::Applied);
+        assert_eq!(again.nonce, SECOND);
+        assert_eq!(sizes(&again.bids), [(64_939.5, 0.70469)]);
+    }
+
+    #[test]
+    fn a_delta_inserts_a_level_the_book_did_not_have() {
+        let (depth, fold) = fold_book(
+            seeded(),
+            &book_delta(
+                FIRST,
+                SECOND,
+                json!([rung("64936.5", "0.01608")]),
+                json!([]),
+            ),
+        );
+        assert_eq!(fold, Fold::Applied);
+        assert_eq!(depth.nonce, SECOND);
+        // In price order, between the two the snapshot held.
+        assert_eq!(
+            sizes(&depth.bids),
+            [
+                (64_931.6, 0.08625),
+                (64_936.5, 0.01608),
+                (64_939.5, 0.70469)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_delta_restates_a_level_rather_than_adding_to_it() {
+        let (depth, fold) = fold_book(
+            seeded(),
+            &book_delta(
+                FIRST,
+                SECOND,
+                json!([rung("64931.6", "0.08317")]),
+                json!([]),
+            ),
+        );
+        assert_eq!(fold, Fold::Applied);
+        // What the level now holds, not what it held plus what arrived: the
+        // sum would be 0.16942 and the size behind the best bid would grow
+        // every time a maker repriced.
+        assert_eq!(
+            sizes(&depth.bids),
+            [(64_931.6, 0.08317), (64_939.5, 0.70469)]
+        );
+    }
+
+    #[test]
+    fn a_size_of_zero_removes_the_level() {
+        let (depth, fold) = fold_book(
+            seeded(),
+            &book_delta(
+                FIRST,
+                SECOND,
+                json!([rung("64939.5", "0.00000")]),
+                json!([rung("64941.8", "0.00000")]),
+            ),
+        );
+        assert_eq!(fold, Fold::Applied);
+        // The best bid and the best ask both left, so the top of the book is
+        // now the pair behind them.
+        assert_eq!(sizes(&depth.bids), [(64_931.6, 0.08625)]);
+        assert_eq!(sizes(&depth.asks), [(64_944.3, 1.23355)]);
+        // A level that is gone is gone rather than resting at nothing: a zero
+        // kept would be drawn as depth and would sit in front of a real bid.
+        assert!(!depth.bids.contains_key(&64_939.5_f64.to_bits()));
+    }
+
+    #[test]
+    fn a_message_the_book_already_has_is_not_applied_twice() {
+        let held = seeded();
+        let first = book_delta(
+            FIRST,
+            SECOND,
+            json!([rung("64931.6", "0.08317")]),
+            json!([]),
+        );
+        let (moved, fold) = fold_book(held, &first);
+        assert_eq!(fold, Fold::Applied);
+
+        // The same message again — a replay, or the tail of a resubscription
+        // overlapping what is held.
+        let (after, fold) = fold_book(moved.clone(), &first);
+        assert_eq!(fold, Fold::Stale);
+        assert_eq!(after, moved, "a replay must not move the book");
+
+        // And one older still: it ends before what is held began.
+        let (after, fold) = fold_book(
+            moved.clone(),
+            &book_delta(
+                FIRST - 20,
+                FIRST,
+                json!([rung("64931.6", "0.99999")]),
+                json!([]),
+            ),
+        );
+        assert_eq!(fold, Fold::Stale);
+        assert_eq!(after, moved, "an old size must not land on a newer one");
+    }
+
+    #[test]
+    fn a_message_that_never_arrived_is_a_gap_rather_than_a_drift() {
+        let held = seeded();
+        // Begins where the reader is not: whatever the message in between
+        // said about levels nobody mentions again is unrecoverable.
+        let (after, fold) = fold_book(
+            held.clone(),
+            &book_delta(
+                SECOND,
+                THIRD,
+                json!([rung("64939.5", "0.00000")]),
+                json!([]),
+            ),
+        );
+        assert_eq!(fold, Fold::Gap);
+        assert_eq!(
+            after, held,
+            "a gap must leave the book alone rather than half-applying"
+        );
+
+        // The next one in sequence still applies, which is what makes the gap
+        // a statement about the message rather than about the connection.
+        let (after, fold) = fold_book(
+            held,
+            &book_delta(
+                FIRST,
+                SECOND,
+                json!([rung("64939.5", "0.00000")]),
+                json!([]),
+            ),
+        );
+        assert_eq!(fold, Fold::Applied);
+        assert_eq!(after.nonce, SECOND);
+    }
+
+    #[test]
+    fn a_delta_before_any_snapshot_is_a_gap() {
+        // Nothing to apply it to. Reading it as a book would draw two levels
+        // and call them the market.
+        let (after, fold) = fold_book(
+            Depth::default(),
+            &book_delta(0, FIRST, json!([rung("64939.5", "0.70469")]), json!([])),
+        );
+        assert_eq!(fold, Fold::Gap);
+        assert_eq!(after, Depth::default());
+    }
+
+    #[test]
+    fn the_top_of_the_book_reads_nearest_price_first_on_both_sides() {
+        let mut depth = Depth::default();
+        // Twelve levels a side, so the panel's ten are a choice rather than
+        // everything there was.
+        for step in 0..12 {
+            let bid = 64_939.5 - f64::from(step);
+            let ask = 64_941.8 + f64::from(step);
+            depth.bids.insert(bid.to_bits(), 1.0 + f64::from(step));
+            depth.asks.insert(ask.to_bits(), 2.0 + f64::from(step));
+        }
+        let book = depth.book();
+        assert_eq!(book.bids.len(), BOOK_DEPTH);
+        assert_eq!(book.asks.len(), BOOK_DEPTH);
+        assert_eq!(book.bids[0].price, 64_939.5, "the best bid is the highest");
+        assert_eq!(book.asks[0].price, 64_941.8, "the best ask is the lowest");
+        assert!(
+            book.bids
+                .windows(2)
+                .all(|pair| pair[0].price > pair[1].price)
+        );
+        assert!(
+            book.asks
+                .windows(2)
+                .all(|pair| pair[0].price < pair[1].price)
+        );
+        // Depth accumulates away from the touch, and the bar is each level's
+        // share of the deepest shown.
+        assert_eq!(book.bids[0].total, book.bids[0].size);
+        assert_eq!(book.bids[1].total, book.bids[0].size + book.bids[1].size);
+        assert_eq!(book.bids[BOOK_DEPTH - 1].bar, BOOK_BAR_WIDTH);
+        assert!(book.bids[0].bar < book.bids[1].bar);
+        assert_eq!(book.spread, 64_941.8 - 64_939.5);
+        assert_eq!(book.mid, (64_941.8 + 64_939.5) / 2.0);
+    }
+
+    /// The streamed book and the REST book are read by the same panel, so a
+    /// venue switch that changed which one filled it must not change what it
+    /// draws.
+    #[test]
+    fn a_folded_book_reads_the_same_as_one_read_over_rest() {
+        let folded = seeded().book();
+        let over_rest = parse_book(&json!({
+            "bids": [
+                { "remaining_base_amount": "0.70469", "price": "64939.5" },
+                { "remaining_base_amount": "0.08625", "price": "64931.6" }
+            ],
+            "asks": [
+                { "remaining_base_amount": "0.02772", "price": "64941.8" },
+                { "remaining_base_amount": "1.23355", "price": "64944.3" }
+            ]
+        }));
+        assert_eq!(folded.bids, over_rest.bids);
+        assert_eq!(folded.asks, over_rest.asks);
+        assert_eq!(folded.mid, over_rest.mid);
+        assert_eq!(folded.spread_pct, over_rest.spread_pct);
+    }
+
+    #[test]
+    fn one_aggressor_across_several_resting_orders_is_one_print() {
+        let tape = parse_prints(&captured_prints());
+        assert_eq!(tape.len(), 2, "four messages, two orders crossed");
+        // Oldest first, which is the order `push_trades` reverses onto the
+        // panel: the sweep happened before the single print that followed it.
+        assert_eq!(tape[0].sweep, 3);
+        assert_eq!(tape[1].sweep, 1);
+        assert!(tape[0].ts <= tape[1].ts);
+
+        // What that order paid on average, weighted by what it took at each
+        // level — not the last price it reached.
+        let (sizes, notional) = [
+            (0.00068, 64_940.8),
+            (0.00148, 64_940.9),
+            (0.00228, 64_941.0),
+        ]
+        .into_iter()
+        .fold((0.0, 0.0), |(sizes, notional), (size, price)| {
+            (sizes + size, notional + size * price)
+        });
+        assert!((tape[0].size - sizes).abs() < 1e-12);
+        assert!((tape[0].price - notional / sizes).abs() < 1e-9);
+        assert!(
+            tape[0].price < 64_941.0,
+            "the average is under the last fill"
+        );
+    }
+
+    #[test]
+    fn the_side_that_crossed_is_the_one_that_was_not_resting() {
+        let tape = parse_prints(&captured_prints());
+        // The maker was the ask, so the aggressor bought.
+        assert!(tape[0].buy);
+        // And the other way round on the print that followed.
+        assert!(!tape[1].buy);
+        // Seconds, because that is what the tape holds; the venue stamps
+        // milliseconds.
+        assert_eq!(tape[1].ts, 1_786_189_598_959 / 1_000);
+    }
+
+    /// A live `subscribed/market_stats` object for market 1, whole.
+    fn stats() -> Value {
+        json!({
+            "base_interest_rate": "0.0100",
+            "best_ask_price": "64940.9", "best_bid_price": "64940.6",
+            "current_funding_rate": "0.0005",
+            "daily_base_token_volume": 8039.38822,
+            "daily_price_change": -0.4717357053966074,
+            "daily_price_high": 65349.4, "daily_price_low": 64489.1,
+            "daily_quote_token_volume": 522580275.211415,
+            "funding_rate": "0.0005", "funding_timestamp": 1_786_186_800_002_i64,
+            "index_price": "64969.9", "last_trade_price": "64940.9",
+            "mark_price": "64939.2", "market_id": 1, "mid_price": "64940.8",
+            "open_interest": "119270958.327360", "premium": "-0.0456", "symbol": "BTC"
+        })
+    }
+
+    /// The stream and `/funding-rates` state the same rate in different units,
+    /// and the row can only carry one of them. The fixture's REST rate is the
+    /// eight-hour fraction this hourly percentage would have been published
+    /// as, so the two readings have to land on the same number.
+    #[test]
+    fn the_streamed_funding_rate_is_already_the_row_s_own_unit() {
+        let streamed = parse_stats(&stats());
+        let hourly_pct = 0.0005;
+        let over_rest = parse_symbols(
+            &captured_universe(),
+            &json!({ "funding_rates": [
+                { "market_id": 1, "exchange": "lighter", "symbol": "BTC",
+                  "rate": hourly_pct / 100.0 * FUNDING_HOURS }
+            ]}),
+        );
+        let btc = over_rest.iter().find(|row| row.name == "BTC").expect("BTC");
+        assert!((streamed.funding_pct - btc.funding_pct).abs() < 1e-15);
+        assert!((streamed.funding_pct - hourly_pct).abs() < 1e-15);
+    }
+
+    #[test]
+    fn the_streamed_open_interest_is_turned_back_into_coins() {
+        let streamed = parse_stats(&stats());
+        // The venue's own two figures: dollars of open interest over the mark
+        // they were valued at.
+        assert_eq!(streamed.open_interest, 119_270_958.327_360 / 64_939.2);
+        // And that is the quantity the universe publishes for the same
+        // market, which the dollars themselves are nowhere near.
+        let universe = parse_symbols(&captured_universe(), &captured_rates());
+        let btc = universe.iter().find(|row| row.name == "BTC").expect("BTC");
+        assert!(
+            (streamed.open_interest - btc.open_interest).abs() < btc.open_interest * 0.01,
+            "{} coins against the universe's {}",
+            streamed.open_interest,
+            btc.open_interest
+        );
+        // A market with no mark to divide by states no open interest rather
+        // than a number of dollars pretending to be coins.
+        assert_eq!(open_interest(119_270_958.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn the_streamed_context_leaves_the_assets_own_figures_alone() {
+        let streamed = parse_stats(&stats());
+        assert_eq!(streamed.name, "BTC");
+        assert_eq!(streamed.price, 64_939.2, "the mark, as the universe read");
+        assert_eq!(streamed.volume, 522_580_275.211_415);
+        // The day says nothing about the margin engine or the size step, so
+        // these read zero and `apply_feed` keeps what the universe said.
+        assert_eq!(streamed.leverage, 0.0);
+        assert_eq!(streamed.maintenance, 0.0);
+        assert_eq!(streamed.size_decimals, 0);
+        // Yesterday's close, backed out of the move, lands inside the day.
+        assert!((64_489.1..=65_349.4).contains(&streamed.prev));
+    }
+
+    /// A ticker only this test uses, so seeding the shared id table cannot
+    /// disturb another one.
+    fn charted(coin: &str, id: i64, interval: &str) -> Tape {
+        lock(ids()).insert(coin.to_owned(), id);
+        tape_focus(tape_new(), coin.to_owned(), interval.to_owned())
+    }
+
+    #[test]
+    fn the_channels_are_the_focused_market_s_and_the_stats_of_everything() {
+        // Nothing on screen yet: the market list still wants its prices.
+        let idle = tape_new();
+        assert_eq!(channels(&idle).expect("channels"), [ALL_STATS]);
+
+        let tape = charted("ICEONE", 4_242, "15m");
+        let wanted = channels(&tape).expect("channels");
+        assert_eq!(
+            wanted,
+            [
+                ALL_STATS,
+                "order_book/4242",
+                "trade/4242",
+                "candle/4242/15m"
+            ]
+        );
+
+        // The reader listens on the same channels, spelled the way the venue
+        // echoes them back.
+        let listening = focused(&tape);
+        assert_eq!(listening.coin, "ICEONE");
+        assert_eq!(listening.book, wanted[1].replace('/', ":"));
+        assert_eq!(listening.prints, wanted[2].replace('/', ":"));
+        assert_eq!(listening.bars, wanted[3].replace('/', ":"));
+    }
+
+    #[test]
+    fn a_market_with_no_id_yet_asks_for_nothing_per_market() {
+        // The universe read fills the ticker table; until it lands there is no
+        // channel to name, and asking for `order_book/` would be refused.
+        let tape = tape_focus(tape_new(), "ICEUNLISTED".to_owned(), "1m".to_owned());
+        assert_eq!(channels(&tape).expect("channels"), [ALL_STATS]);
+        assert_eq!(focused(&tape).book, "");
+    }
+
+    #[test]
+    fn an_interval_the_venue_does_not_quote_is_refused_rather_than_charted() {
+        assert_eq!(resolution("4h"), Some("4h"));
+        // The venue answers `candle/1/2h` with `Invalid Channel: (invalid
+        // resolution)` and does not say which channel it refused, so the
+        // chart would simply stay empty with nothing said about why.
+        assert_eq!(resolution("2h"), None);
+        assert_eq!(resolution("1w"), None);
+
+        let tape = charted("ICETWO", 4_243, "2h");
+        let Err(refused) = channels(&tape) else {
+            panic!("a 2h chart must not be drawn from a venue with no 2h candle");
+        };
+        assert!(
+            refused.message.contains("2h") && refused.message.contains("12h"),
+            "the refusal should name the interval and the ones on offer: {}",
+            refused.message
+        );
+        // And the refusal does not depend on the market: it is the width the
+        // venue does not quote, not the ticker.
+        let unlisted = tape_focus(tape_new(), "ICEUNLISTED".to_owned(), "2h".to_owned());
+        assert!(channels(&unlisted).is_err());
+    }
+
+    #[test]
+    fn every_interval_the_app_offers_is_one_the_venue_quotes() {
+        // The chart's own tabs, which is the vocabulary this map exists to
+        // hold the venue against.
+        for interval in ["1m", "5m", "15m", "1h", "4h", "1d"] {
+            assert_eq!(resolution(interval), Some(interval), "{interval}");
+        }
+    }
+
+    #[test]
+    fn candles_arrive_as_floats_and_land_on_the_tape_in_seconds() {
+        let bars = parse_candles(&json!({
+            "channel": "candle:1:1m", "type": "update/candle",
+            "candles": [{
+                "V": 29652.644232000035, "c": 64940.9, "h": 64944.2,
+                "i": 27_074_544_215_i64, "l": 64935.4, "o": 64936.5,
+                "t": 1_786_189_440_000_i64, "v": 0.4565999999999997
+            }]
+        }));
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].ts, 1_786_189_440_000 / 1_000);
+        assert_eq!(bars[0].open, 64_936.5);
+        assert_eq!(bars[0].close, 64_940.9);
+        assert_eq!(bars[0].high, 64_944.2);
+        assert_eq!(bars[0].low, 64_935.4);
+        // The base leg. `V` beside it is the same volume in dollars, and it is
+        // four orders of magnitude away.
+        assert_eq!(bars[0].volume, 0.4565999999999997);
+    }
+
+    /// Walks the reader the way a connection would, which is the only way to
+    /// reach these arms without the exchange.
+    fn reader(
+        tape: &Tape,
+    ) -> (
+        impl FnMut(Event<'_>) -> Option<MarketTick>,
+        Arc<Mutex<Vec<String>>>,
+    ) {
+        let refresh: Arc<Mutex<Vec<String>>> = Arc::default();
+        (market_reader(tape.clone(), refresh.clone()), refresh)
+    }
+
+    #[test]
+    fn a_beat_carries_the_book_and_nothing_is_sent_when_nothing_moved() {
+        let tape = charted("ICETHREE", 4_244, "1m");
+        let (mut read, _) = reader(&tape);
+        // The first beat adopts the market on screen.
+        assert!(read(Event::Beat).is_none());
+
+        assert!(read(Event::Payload("order_book:4244", &book_snapshot(FIRST))).is_none());
+        let tick = read(Event::Beat).expect("a book is worth a beat");
+        let book = tick.book.expect("the book");
+        // Reversed, because the panel walks the asks from the top of the
+        // screen down: the best ask is the last row.
+        assert_eq!(book.asks.last().expect("an ask").price, 64_941.8);
+        assert_eq!(book.bids[0].price, 64_939.5);
+
+        // Nothing arrived since, so there is nothing to redraw.
+        assert!(read(Event::Beat).is_none());
+    }
+
+    #[test]
+    fn a_gap_drops_the_book_and_asks_for_a_fresh_snapshot() {
+        let tape = charted("ICEFOUR", 4_245, "1m");
+        let (mut read, refresh) = reader(&tape);
+        assert!(read(Event::Beat).is_none());
+        assert!(read(Event::Payload("order_book:4245", &book_snapshot(FIRST))).is_none());
+        assert!(read(Event::Beat).expect("a book").book.is_some());
+
+        // A message that begins after the one held: whatever was in between
+        // is unrecoverable.
+        let missed = book_delta(
+            SECOND,
+            THIRD,
+            json!([rung("64939.5", "0.00000")]),
+            json!([]),
+        );
+        assert!(read(Event::Payload("order_book:4245", &missed)).is_none());
+        let tick = read(Event::Beat).expect("the dropped book is a change");
+        assert!(
+            tick.book.is_none(),
+            "a book that missed a delta must not go on being drawn"
+        );
+        assert_eq!(
+            *lock(&refresh),
+            ["order_book/4245"],
+            "the socket is asked for the snapshot, in the spelling it takes"
+        );
+
+        // And the fresh snapshot puts it back.
+        assert!(read(Event::Payload("order_book:4245", &book_snapshot(THIRD))).is_none());
+        assert!(read(Event::Beat).expect("the book is back").book.is_some());
+    }
+
+    #[test]
+    fn the_book_of_the_market_just_left_is_not_drawn_as_this_one_s() {
+        let tape = charted("ICEFIVE", 4_246, "1m");
+        lock(ids()).insert("ICESIX".to_owned(), 4_247);
+        let (mut read, _) = reader(&tape);
+        assert!(read(Event::Beat).is_none());
+        assert!(read(Event::Payload("order_book:4246", &book_snapshot(FIRST))).is_none());
+        assert!(read(Event::Beat).expect("a book").book.is_some());
+
+        // The app moves. The socket keeps serving the old subscription until
+        // the unsubscribe takes effect.
+        tape_focus(tape.clone(), "ICESIX".to_owned(), "1m".to_owned());
+        assert!(
+            read(Event::Beat).is_none(),
+            "the switch itself is not a tick"
+        );
+        assert!(read(Event::Payload("order_book:4246", &book_snapshot(SECOND))).is_none());
+
+        // Something the whole exchange shares moves, so the next beat is sent
+        // — and it must not carry the book of the market that was left. The
+        // one the app is looking at has no book yet, and no book is the honest
+        // answer to that.
+        assert!(read(Event::Payload(ALL_STATS_ECHO, &all_stats())).is_none());
+        let tick = read(Event::Beat).expect("the prices moved");
+        assert!(
+            tick.book.is_none(),
+            "the market just left is still on screen"
+        );
+    }
+
+    /// A row as the universe read it, before any beat has touched it.
+    fn listed(name: &str, size_decimals: usize) -> SymbolRow {
+        SymbolRow {
+            name: name.to_owned(),
+            price: 0.0,
+            change_pct: 0.0,
+            volume: 0.0,
+            funding_pct: 0.0,
+            leverage: 0.0,
+            open_interest: 0.0,
+            prev: 0.0,
+            maintenance: 0.0,
+            size_decimals,
+            selected: false,
+        }
+    }
+
+    /// `market_stats/all` as it arrives: keyed by market id, two live markets.
+    fn all_stats() -> Value {
+        json!({
+            "channel": ALL_STATS_ECHO, "type": "update/market_stats",
+            "market_stats": {
+                "0": {
+                    "symbol": "ETH", "market_id": 0, "mark_price": "1918.51",
+                    "index_price": "1919.57", "mid_price": "1918.52",
+                    "daily_price_change": -0.6529618889809445,
+                    "daily_quote_token_volume": 152445945.005175,
+                    "current_funding_rate": "0.0009",
+                    "open_interest": "82013802.489619"
+                },
+                "1": stats()
+            }
+        })
+    }
+
+    #[test]
+    fn the_stats_of_every_market_become_mids_and_one_context() {
+        // Charted on the market the stats object does not end with, so a
+        // context taken off the wrong row is the wrong row rather than the
+        // right one by coincidence.
+        let tape = charted("ETH", 0, "1m");
+        let (mut read, _) = reader(&tape);
+        assert!(read(Event::Beat).is_none());
+        assert!(read(Event::Payload(ALL_STATS_ECHO, &all_stats())).is_none());
+        let tick = read(Event::Beat).expect("prices moved");
+        assert_eq!(
+            tick.context.as_ref().expect("a day").name,
+            "ETH",
+            "the day republished is the charted market's"
+        );
+
+        let rows = apply_feed(vec![listed("BTC", 5), listed("ETH", 4)], tick);
+        // Every market's price, so the whole list re-marks.
+        assert_eq!(rows[0].price, 64_939.2);
+        assert_eq!(rows[1].price, 1_918.51);
+        // The charted market's day lands whole, and the size step the universe
+        // read survives it rather than being zeroed by the context.
+        assert_eq!(rows[1].volume, 152_445_945.005_175);
+        assert_eq!(rows[1].size_decimals, 4);
+        // The rest are re-priced and nothing more.
+        assert_eq!(
+            rows[0].volume, 0.0,
+            "the day of a market nobody charted is not republished"
+        );
+    }
+
+    #[test]
+    fn a_beat_with_no_market_still_carries_the_prices() {
+        // The markets page before anything is charted: no book, no candles,
+        // and a list that still has to tick.
+        let tape = tape_new();
+        let (mut read, _) = reader(&tape);
+        assert!(read(Event::Beat).is_none());
+        assert!(read(Event::Payload(ALL_STATS_ECHO, &all_stats())).is_none());
+        let tick = read(Event::Beat).expect("prices moved");
+        assert!(tick.book.is_none());
+        assert!(tick.context.is_none(), "no market, no market's day");
+        let rows = apply_feed(vec![listed("BTC", 5), listed("ETH", 4)], tick);
+        assert_eq!(rows[0].price, 64_939.2);
+        assert_eq!(rows[1].price, 1_918.51);
+    }
+
+    /// The round trip the header shows. It is the only honest latency reading
+    /// available — a round trip needs no agreement between our clock and the
+    /// venue's — and an unchanged one is not worth a redraw.
+    #[test]
+    fn a_pong_moves_the_latency_and_only_when_it_changed() {
+        let tape = tape_new();
+        let (mut read, _) = reader(&tape);
+        assert!(read(Event::Beat).is_none());
+        assert!(read(Event::Pong(31)).is_none());
+        assert_eq!(read(Event::Beat).expect("latency moved").latency, 31);
+        assert!(read(Event::Pong(31)).is_none());
+        assert!(read(Event::Beat).is_none(), "the same reading is no news");
+    }
+
+    /// Everything the captured payloads cannot check: that the channel names
+    /// are still the venue's, that a delta stream folded over a live minute
+    /// stays a book, and that the tape fills. Kept out of the default run
+    /// because it fails on a train rather than on a bug.
+    #[test]
+    #[ignore = "hits the live venue, run explicitly: the feed against the exchange"]
+    fn the_live_feed_folds_a_book_a_tape_and_a_context() {
+        crate::hyperliquid::open_the_wire();
+        // Fills the ticker-to-id table, which is what names the channels.
+        let universe = smol::block_on(lighter_symbols()).expect("markets");
+        assert!(universe.iter().any(|row| row.name == "BTC"));
+
+        let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+        let feed = lighter_market_feed(tape.clone());
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let (mut books, mut prints, mut context, mut latency) = (0, 0, 0, 0);
+
+        smol::block_on(async {
+            while Instant::now() < deadline {
+                let tick = match feed.recv().await {
+                    Ok(Ok(tick)) => tick,
+                    Ok(Err(error)) => panic!("the feed reported {}", error.message),
+                    Err(_) => break,
+                };
+                assert!(!tick.mids.is_empty() || tick.book.is_some() || tick.latency > 0);
+                if let Some(price) = tick.mids.get("BTC") {
+                    assert!(*price > 0.0, "BTC at {price}");
+                }
+                if tick.latency > 0 {
+                    latency = tick.latency;
+                }
+                if let Some(row) = &tick.context {
+                    assert_eq!(row.name, "BTC");
+                    assert!(row.price > 0.0 && row.volume > 0.0);
+                    // Coins rather than dollars: bitcoin's open interest is a
+                    // few thousand coins and a few hundred million dollars.
+                    assert!(row.open_interest < 1e6, "{} coins", row.open_interest);
+                    context += 1;
+                }
+                prints += tick.trades.len();
+                let Some(book) = &tick.book else {
+                    continue;
+                };
+                books += 1;
+                // The whole claim the delta fold makes, held against a live
+                // minute of it: a book that stopped deleting levels, or
+                // applied a message twice, crosses within seconds.
+                let best_bid = book.bids.first().expect("a bid side").price;
+                let best_ask = book.asks.last().expect("an ask side").price;
+                assert!(
+                    best_bid < best_ask,
+                    "crossed book after {books} folds: {best_bid} bid against {best_ask} ask"
+                );
+                assert!(book.bids.iter().all(|level| level.size > 0.0));
+                assert!(book.asks.iter().all(|level| level.size > 0.0));
+                // Both sides descend down the screen: the bids from the touch
+                // and the asks toward it, which is the reversal the panel
+                // draws from.
+                assert!(
+                    book.bids
+                        .windows(2)
+                        .all(|pair| pair[0].price > pair[1].price)
+                );
+                assert!(
+                    book.asks
+                        .windows(2)
+                        .all(|pair| pair[0].price > pair[1].price)
+                );
+                assert_eq!(book.bids.len(), BOOK_DEPTH, "bitcoin is deeper than ten");
+                if books > 100 && prints > 0 && context > 0 && latency > 0 {
+                    break;
+                }
+            }
+        });
+
+        assert!(books > 100, "only {books} books folded in a minute");
+        assert!(prints > 0, "no prints crossed in a minute of bitcoin");
+        assert!(context > 0, "the market's own day never arrived");
+        assert!(latency > 0, "no ping round trip came back");
+
+        // One candle per interval is all this venue sends, and it sends the
+        // one now forming — so a minute of feed is one bar, merged in place.
+        let candles = lock(&tape.candles);
+        assert!(!candles.is_empty(), "the tape stayed empty");
+        assert!(candles.windows(2).all(|pair| pair[0].ts < pair[1].ts));
+        assert!(
+            candles
+                .iter()
+                .all(|bar| bar.high >= bar.low && bar.close > 0.0)
+        );
+    }
+
+    /// The other half of the socket: that it follows the app off one market
+    /// and onto another, and that a channel it has dropped can be taken back.
+    ///
+    /// The last leg is the recovery a gap asks for — `resubscribe` sends the
+    /// same two frames a switch back does — and it is the one thing about the
+    /// gap path no captured payload can check, because the venue refuses a
+    /// second subscribe to a channel it is already serving.
+    #[test]
+    #[ignore = "hits the live venue, run explicitly: the feed following a market switch"]
+    fn the_live_feed_follows_a_switch_and_takes_a_dropped_channel_back() {
+        crate::hyperliquid::open_the_wire();
+        let universe = smol::block_on(lighter_symbols()).expect("markets");
+        let published = |coin: &str| {
+            universe
+                .iter()
+                .find(|row| row.name == coin)
+                .unwrap_or_else(|| panic!("{coin} is listed"))
+                .price
+        };
+
+        let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+        let feed = lighter_market_feed(tape.clone());
+        smol::block_on(async {
+            // Bitcoin, then ether, then bitcoin again: the third leg subscribes
+            // to a channel this socket has already unsubscribed from.
+            for coin in ["BTC", "ETH", "BTC"] {
+                tape_focus(tape.clone(), coin.to_owned(), "1m".to_owned());
+                let want = published(coin);
+                let deadline = Instant::now() + Duration::from_secs(30);
+                let mid = loop {
+                    assert!(Instant::now() < deadline, "no {coin} book in 30 seconds");
+                    let tick = match feed.recv().await {
+                        Ok(Ok(tick)) => tick,
+                        Ok(Err(error)) => panic!("the feed reported {}", error.message),
+                        Err(_) => panic!("the feed hung up"),
+                    };
+                    let Some(book) = tick.book else {
+                        continue;
+                    };
+                    // Which market a book belongs to is only visible in what
+                    // it is priced at, which is the whole reason the reader
+                    // turns away the channels it did not ask for.
+                    if (book.mid - want).abs() < want * 0.1 {
+                        break book.mid;
+                    }
+                };
+                assert!(mid > 0.0, "{coin} at {mid} against a published {want}");
+            }
+        });
     }
 }

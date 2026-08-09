@@ -44,6 +44,13 @@ jobs:
           # Without this the job id joins the key and the shared one is moot.
           add-job-id-key: false
       - run: cargo ice fmt --check
+      - name: Check complete Iced coverage ledger
+        run: |
+          if grep -Eq '^\|[^|]+\|[[:space:]]*(partial|missing)[[:space:]]*\|' COVERAGE.md; then
+            echo "::error file=COVERAGE.md::the pinned Iced baseline has a partial or missing application-facing row"
+            grep -En '^\|[^|]+\|[[:space:]]*(partial|missing)[[:space:]]*\|' COVERAGE.md
+            exit 1
+          fi
       - run: cargo ice clippy
       - name: Check public Ice API baseline
         env:
