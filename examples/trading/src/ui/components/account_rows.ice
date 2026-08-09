@@ -105,6 +105,37 @@ component PositionRow(held:Position)
             size=10.0
             width=104.0
 
+// The wash a just-printed fill wears, and the reason it is a component of its
+// own: the fade is per-row animation state, and animation state is read where
+// the view is built. Inside the `lazy` that memoizes the row it would freeze at
+// whatever alpha the subtree was built with, so it is mounted beside that
+// boundary instead — the row keeps its zero rebuilds and the wash keeps its
+// clock. One ease-out over a second: most of the colour is gone in the first
+// few frames, which is where the eye is, and the tail lets go rather than
+// switching off.
+component FillFlash(up:bool)
+  lifetime mounted
+  state
+    fade:animation[f64] = 0.0
+      from 40.0
+      easing ease-out
+      duration 1000ms
+  stack w=fill h=26.0
+    if up
+      box
+        with
+          w=fill
+          h=26.0
+          bg=up_flash/(animation.value(fade))
+        space w=fill h=fill
+    if !up
+      box
+        with
+          w=fill
+          h=26.0
+          bg=down_flash/(animation.value(fade))
+        space w=fill h=fill
+
 component FillRow(fill:Fill)
   emits
     pick(str)
@@ -115,111 +146,81 @@ component FillRow(fill:Fill)
       p=0.0
     active bg=panel r=0.0
     hovered bg=raised r=0.0
-    stack w=fill h=26.0
-      row w=fill h=26.0
-        if fill.heat > 1 && fill.buy
-          box
-            with
-              w=fill
-              h=26.0
-              bg=up_flash
-            space w=fill h=fill
-        if fill.heat > 1 && !fill.buy
-          box
-            with
-              w=fill
-              h=26.0
-              bg=down_flash
-            space w=fill h=fill
-        if fill.heat == 1 && fill.buy
-          box
-            with
-              w=fill
-              h=26.0
-              bg=up_soft
-            space w=fill h=fill
-        if fill.heat == 1 && !fill.buy
-          box
-            with
-              w=fill
-              h=26.0
-              bg=down_soft
-            space w=fill h=fill
-      row
+    row
+      with
+        w=fill
+        h=26.0
+        pl=14.0
+        pr=18.0
+        gap=6.0
+        align=center
+      text fmt_time(fill.ts)
         with
-          w=fill
-          h=26.0
-          pl=14.0
-          pr=18.0
-          gap=6.0
-          align=center
-        text fmt_time(fill.ts)
+          size=11.0
+          w=52.0
+          font=digits
+          @text-faint
+      text fill.coin
+        with
+          size=11.0
+          w=52.0
+          @text-muted
+      // The side used to be the colour of the price and nothing else, which
+      // is one statement for a reader who can see two inks and none for
+      // anybody else. The row has the width for the word now.
+      if fill.buy
+        text "BUY"
           with
-            size=11.0
+            size=10.0
             w=52.0
-            font=digits
-            @text-faint
-        text fill.coin
-          with
-            size=11.0
-            w=52.0
+            tracking=0.8
             @text-muted
-        // The side used to be the colour of the price and nothing else, which
-        // is one statement for a reader who can see two inks and none for
-        // anybody else. The row has the width for the word now.
-        if fill.buy
-          text "BUY"
-            with
-              size=10.0
-              w=52.0
-              tracking=0.8
-              @text-muted
-        if !fill.buy
-          text "SELL"
-            with
-              size=10.0
-              w=52.0
-              tracking=0.8
-              @text-muted
-        space w=fill
-        Delta
+      if !fill.buy
+        text "SELL"
           with
-            value=fmt_px(fill.price)
-            up=fill.buy
-            size=11.0
-            width=88.0
-        text fmt_size(fill.size)
-          with
-            size=11.0
-            w=72.0
-            align-x=right
-            font=digits
-            @text-faint
-        col w=88.0
-          if fill.closed_pnl > 0.0
-            text fmt_pnl(fill.closed_pnl)
-              with
-                size=11.0
-                w=fill
-                align-x=right
-                font=digits
-                @text-up
-          if fill.closed_pnl < 0.0
-            text fmt_pnl(fill.closed_pnl)
-              with
-                size=11.0
-                w=fill
-                align-x=right
-                font=digits
-                @text-down
-          if fill.closed_pnl == 0.0
-            text "—"
-              with
-                size=11.0
-                w=fill
-                align-x=right
-                font=digits
-                @text-faint
+            size=10.0
+            w=52.0
+            tracking=0.8
+            @text-muted
+      space w=fill
+      Delta
+        with
+          value=fmt_px(fill.price)
+          up=fill.buy
+          size=11.0
+          width=88.0
+      text fmt_size(fill.size)
+        with
+          size=11.0
+          w=72.0
+          align-x=right
+          font=digits
+          @text-faint
+      col w=88.0
+        if fill.closed_pnl > 0.0
+          text fmt_pnl(fill.closed_pnl)
+            with
+              size=11.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-up
+        if fill.closed_pnl < 0.0
+          text fmt_pnl(fill.closed_pnl)
+            with
+              size=11.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-down
+        if fill.closed_pnl == 0.0
+          text "—"
+            with
+              size=11.0
+              w=fill
+              align-x=right
+              font=digits
+              @text-faint
 
 component OrderRow(order:Order, now:i64)
   emits

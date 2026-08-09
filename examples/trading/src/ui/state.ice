@@ -81,7 +81,6 @@ state
   clock:i64 = now_seconds()
   live = false
   feed_error = ""
-  flashing = false
   loading_history = false
   history_exhausted = false
   lower_height = 232.0
