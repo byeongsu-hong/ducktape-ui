@@ -3168,7 +3168,11 @@ correctly to assistive tech needs a real list widget instead.
 An `overlay` keeps the two trees explicit instead of relying on child order.
 When its bool condition is true, `layer` floats over `content`; the backdrop
 blocks button and scroll input and an optional `dismiss=` route handles a left
-click outside the layer. Pointer events inside the layer do not dismiss it:
+click outside the layer. Pointer events inside the layer do not dismiss it.
+An open overlay is modal to the keyboard as well: Tab and Shift+Tab stay inside
+`layer`, focus that `content` held when the overlay opened is dropped, and no
+keystroke reaches `content` while the backdrop is covering it. Nothing declares
+this — a backdrop that swallows every press is what makes it true:
 
 ```ice
 overlay when=about_open dismiss=close_about backdrop=black/60 p=24.0

@@ -471,8 +471,12 @@ view
             text "Dialog"
 "#;
     let generated = compile(source, "dialog.ice").unwrap();
+    assert!(generated.contains("let __overlay_open = self.shown;"));
     assert!(generated.contains(
-        "let __overlay_stack = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_base); if self.shown"
+        "if __overlay_open { ::ui_lang_runtime::focus_barrier(__overlay_base).into() } else { __overlay_base }"
+    ));
+    assert!(generated.contains(
+        "let __overlay_stack = ::iced::widget::Stack::new().width(::iced::Fill).height(::iced::Fill).push(__overlay_base); if __overlay_open"
     ));
     assert!(generated.contains("else { __overlay_stack.into() }"));
     assert!(generated.contains("::iced::widget::float(__overlay_surface)"));
