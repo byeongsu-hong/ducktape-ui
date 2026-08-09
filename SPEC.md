@@ -514,6 +514,7 @@ animation_setting = "easing" name
                   | "delay" duration
                   | "repeat" (u32 | "forever")
                   | "auto-reverse" bool
+                  | "from" (bool | number)
 
 preset_decl    = "preset" name (INDENT preset_section*)?
 preset_section = preset_state | preset_boot
@@ -888,7 +889,7 @@ surface_style_property
                  | "r-tr=" | "r-br=" | "r-bl="
                  | "shadow-x=" | "shadow-y=" | "shadow-blur="
                  | "px-snap=") expr
-background_value = color_ref
+background_value = surface_color
                  | "linear(" expr ("," color_ref "@" expr){0,8} ")"
 pane_axis      = "horizontal" | "vertical"
 keyed_column   = "keyed" name "in" expr "by=" expr id? keyed_property*
@@ -1079,6 +1080,7 @@ toggler_style_property = ("bg=" | "fg=") background_value
 text_alignment = "default" | "left" | "center" | "right" | "justified"
 text_wrapping  = "none" | "word" | "glyph" | "word-or-glyph"
 color_ref      = name ("/" u8)?
+surface_color  = name ("/" (u8 | "(" expr ")"))?
 slider         = "slider" expr id? "min=" expr "max=" expr slider_property*
                  styles? "->" route (INDENT slider_status+)?
 slider_property = ("step=" | "default=" | "shift-step=") expr
@@ -2704,6 +2706,23 @@ plays twice), while `repeat forever` and `auto-reverse true` map directly to the
 native builders. Ice subscribes to native window frames only while at least one
 animation is active.
 
+`from` makes the declaration itself the transition: the animation is created
+holding that literal and travels to the declared value the moment it comes into
+being. It exists because an assignment is otherwise the only thing that starts
+motion, and an instance materialized by a `for` has no event to assign on.
+
+A component may own `animation[T]` state, and then each instance animates on its
+own clock, keyed by the component's hierarchical instance scope exactly like
+every other local value. Such a component requires `lifetime mounted`: an
+animation's identity is the instant it started, so its storage is created the
+first time the instance renders — instead of re-running the initializer every
+pass — and dropped when the instance leaves the rendered tree. Component
+animations keep native frames alive on the same active-only subscription app
+animations use. A component animation read inside a `lazy` subtree is frozen at
+the value it held when the subtree was built, because `lazy` rebuilds only when
+its dependency hash changes; keep an animated surface outside the boundary that
+memoizes the row.
+
 The expression language contains:
 
 - literals: strings, booleans, `i64`, `f64`, `none`, list literals such as
@@ -3624,7 +3643,7 @@ recomputation-unsafe set is the same one rejected by derived expressions,
 including the unqualified `encoded` and `rgba` image constructors.
 Mutable component-only values such as `editor`,
 `markdown`, `combo`, `animation`, task handles, and debug spans cannot have
-defaults. A supplied argument always overrides the default.
+defaults, and only `animation` may be declared as component state at all. A supplied argument always overrides the default.
 
 Local state is keyed by the component's hierarchical instance scope, so two
 explicit component IDs own independent values. The declared initializer is
@@ -5399,6 +5418,16 @@ next view. Unknown variants and contract mismatches are compile-time errors.
 Selection is an exhaustive generated match, not a string lookup or reactive
 theme graph. `white`, `black`, and `transparent` remain built in and cannot be
 redeclared. A color may carry opacity, such as `bg-primary/70`.
+
+A container's `bg=` alone also accepts a *computed* opacity, written
+parenthesised: `bg=flash/(fade)` takes any `f64` expression on the same
+`0..=100` percentage scale as the literal form, clamped, and replaces the
+color's own alpha on every view pass. It is what lets an animated number reach a
+surface — `bg=flash/(animation.value(fade))` fades a row. It needs a single
+background color, so a gradient is rejected, and it is a container property:
+every other color position stays a literal token. A view using one keeps its
+compiled Rust rather than publishing a template, because the published view
+format carries only constant colors.
 
 Apps and nested subtrees may use `default`, `app`, or any of iced's 22 built-in
 default-renderer themes. A typed Rust factory covers arbitrary native

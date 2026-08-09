@@ -284,6 +284,25 @@ pub(in crate::parser) fn parse_pane_ratio(value: &str, line: &Line) -> Result<f3
     Ok(ratio)
 }
 
+/// Splits `token/(expression)` into its token and its computed opacity. The
+/// literal form `token/40` stays inside the colour string, and a gradient keeps
+/// its own parentheses, so only a parenthesised tail is a computed opacity.
+fn split_background_alpha<'a>(
+    source: &'a str,
+    line: &Line,
+) -> Result<(&'a str, Option<Expr>), Error> {
+    if source.starts_with("linear(") {
+        return Ok((source, None));
+    }
+    let Some((name, alpha)) = source.split_once("/(") else {
+        return Ok((source, None));
+    };
+    let alpha = alpha
+        .strip_suffix(')')
+        .ok_or_else(|| error("E184", line, "surface color opacity is missing `)`"))?;
+    Ok((name, Some(parse_expr(alpha, line)?)))
+}
+
 pub(in crate::parser) fn parse_background_value(
     source: &str,
     line: &Line,
@@ -337,6 +356,8 @@ pub(in crate::parser) fn parse_container_style_option(
 ) -> Result<bool, Error> {
     let parse = |value: &str| parse_expr(strip_wrapping_parens(value), line);
     if let Some(value) = part.strip_prefix("bg=") {
+        let (value, alpha) = split_background_alpha(value, line)?;
+        style.background_alpha = alpha;
         style.background = Some(parse_background_value(value, line)?);
     } else if let Some(value) = part.strip_prefix("text=") {
         style.text_color = Some(value.to_owned());

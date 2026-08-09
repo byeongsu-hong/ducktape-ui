@@ -62,6 +62,7 @@ pub(crate) fn layout_expression_roots(options: &LayoutOptions) -> Vec<&Expr> {
         if let Some(background) = &surface.background {
             push_background(roots, background);
         }
+        roots.extend(surface.background_alpha.as_ref());
         roots.extend(
             [
                 &surface.border_width,
@@ -414,6 +415,7 @@ pub(crate) fn container_expression_roots(options: &ContainerOptions) -> Vec<&Exp
         roots.push(angle);
         roots.extend(stops.iter().map(|stop| &stop.offset));
     }
+    roots.extend(options.style.background_alpha.as_ref());
     roots.extend(
         [
             &options.style.border_width,
@@ -794,6 +796,9 @@ pub struct GradientStop {
 #[derive(Clone, Debug, Default)]
 pub struct ContainerStyleOptions {
     pub background: Option<BackgroundValue>,
+    /// A computed 0..=100 opacity written as `bg=token/(expression)`, replacing
+    /// the literal `bg=token/40` percentage. Only a plain surface takes one.
+    pub background_alpha: Option<Expr>,
     pub text_color: Option<String>,
     pub border_color: Option<String>,
     pub border_width: Option<Expr>,

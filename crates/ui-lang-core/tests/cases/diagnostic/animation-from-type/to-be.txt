@@ -1,0 +1,2 @@
+E103
+animation `from` must be a `bool` value, matching the animated type

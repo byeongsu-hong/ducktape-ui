@@ -86,7 +86,21 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
             }
         }
         for state in &component.states {
-            if !component_value_is_cloneable(&state.ty) {
+            if matches!(state.ty, Type::Animation(_)) {
+                // An animation is per-instance motion, so its storage has to be
+                // created the first time the instance renders and dropped when
+                // the instance leaves. Only `mounted` storage does both.
+                if component.lifetime != ComponentLifetime::Mounted {
+                    return Err(Error::new(
+                        "E103",
+                        &state.span,
+                        format!(
+                            "animation state `{}` needs `lifetime mounted`, so its motion starts when the instance appears and is dropped when it leaves",
+                            state.name
+                        ),
+                    ));
+                }
+            } else if !component_value_is_cloneable(&state.ty) {
                 return Err(Error::new(
                     "E103",
                     &state.span,

@@ -259,6 +259,41 @@ mod animation {
             0
         );
     }
+
+    /// A row's fade belongs to the row: it starts when the instance first
+    /// renders, keeps native frames alive on its own, and — because the stored
+    /// animation is what later renders read — settles instead of restarting
+    /// every pass. Re-evaluating the initializer per render would leave the
+    /// frame subscription up forever.
+    #[test]
+    fn a_row_owns_its_fade_and_that_fade_ends() {
+        let (mut app, _) = NativeAnimation::__boot();
+        let quiet = app.__subscription().units();
+
+        let _ = app.__update(__NativeAnimationMessage::Arrive);
+        assert_eq!(
+            app.__subscription().units(),
+            quiet,
+            "rows that have never rendered own no animation yet"
+        );
+
+        let _ = app.__view();
+        assert_eq!(
+            app.__subscription().units(),
+            quiet + 1,
+            "the first render of a row starts its fade and asks for native frames"
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let _ = app.__view();
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        let _ = app.__view();
+        assert_eq!(
+            app.__subscription().units(),
+            quiet,
+            "the fade runs on one clock across renders and stops when it is over"
+        );
+    }
 }
 
 #[cfg(test)]

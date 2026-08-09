@@ -14,6 +14,26 @@ pub(in crate::codegen) fn resolved_initializer_code(
     let Some(options) = &initializer.animation else {
         return Ok(code);
     };
+    // `from` makes the declaration itself the transition: the animation is
+    // built holding the start value and sent to the declared one the moment it
+    // exists. Nothing else can start a row's motion, because a row materialized
+    // by a `for` raises no event to assign on.
+    let target = if let Some(from) = options.from {
+        let target = resolved_animation_target_code(program, initializer.expression)?;
+        code = format!(
+            "::iced::Animation::new({})",
+            match from {
+                AnimationStart::Bool(value) => value.to_string(),
+                AnimationStart::Number(value) => format!("{value:?}f32"),
+            }
+        );
+        Some(target)
+    } else {
+        None
+    };
+    let go = target.map_or_else(String::new, |target| {
+        format!(".go({target}, ::iced::time::Instant::now())")
+    });
     if let Some(easing) = &options.easing {
         let easing = match easing {
             ResolvedAnimationEasing::Builtin(easing) => {
@@ -34,13 +54,13 @@ pub(in crate::codegen) fn resolved_initializer_code(
             AnimationDuration::VerySlow => ".very_slow()",
             AnimationDuration::Milliseconds(milliseconds) => {
                 return Ok(format!(
-                    "{code}.duration(::std::time::Duration::from_millis({milliseconds})){}",
+                    "{code}.duration(::std::time::Duration::from_millis({milliseconds})){}{go}",
                     animation_tail(options)
                 ));
             }
         });
     }
-    Ok(format!("{code}{}", animation_tail(options)))
+    Ok(format!("{code}{}{go}", animation_tail(options)))
 }
 
 fn animation_tail(options: &ResolvedAnimation) -> String {

@@ -846,49 +846,48 @@ The free `iced_runtime::task` constructors such as `oneshot`, `channel`,
 this public iced baseline. A typed `task` extern can still adapt runtime-specific
 work when an application intentionally depends on `iced_runtime`.
 
-### Gap: an animation cannot reach a row in a list or a surface's colour
+### Per-row animation and computed surface opacity
 
-The `Animation<T>` row above is a claim about iced's `Animation` API, and it
-holds: every easing, duration, repetition and query is expressible. It is not a
-claim that a given thing on screen can be animated. Three separate limits stand
-between an `animation[f64]` and the two most ordinary uses of one — fading a row
-that has just arrived, and fading anything at all.
+The `Animation<T>` row above is a claim about iced's `Animation` API. Reaching a
+row on screen with one takes three further things, and all three are now
+expressible.
 
-**An animation cannot belong to a row.** `animation[T]` is app state.
-Component-local `state` rejects it: `state lit:animation[f64] = 0.0` inside a
-component fails with `E103 component state supports ordinary cloneable values
-only`. Local state is otherwise keyed by hierarchical instance scope, so a
-`for` body rendered as `Row #row(item.id)` already owns per-instance values —
-animation is the one kind it may not own.
+**An animation may belong to a row.** A component may declare
+`state fade:animation[f64]`, keyed by the component's hierarchical instance
+scope like every other local value, so two rows animate on independent clocks.
+It requires `lifetime mounted`: an animation's identity is the instant it
+started, so its storage is created the first time the instance renders rather
+than re-derived every pass, and dropped when the instance leaves the tree.
+`lifetime retained` is `E103`
+(`crates/ui-lang-core/tests/cases/diagnostic/row-animation-lifetime`).
 
-**Nothing could start it if it could.** Handlers are the only place work
-starts, lifecycle hooks stay at app level, and there is no per-instance
-appearance hook. An instance materialized by a `for` over freshly arrived data
-raises no event, so no assignment runs for it, and an animation only begins on
-assignment. An app-level animation restarted when the data arrives is therefore
-one phase shared by every row, which is wrong as soon as two arrive at
-different times.
+**The declaration starts it.** An `animation_setting` `from` gives the start
+value; the animation is built holding it and sent to the declared value at the
+moment it comes into being. A row materialized by a `for` therefore fades in
+without any event to assign on. A `from` whose literal does not match the
+animated type is `E103`
+(`crates/ui-lang-core/tests/cases/diagnostic/animation-from-type`).
 
-**An animated number cannot reach a colour.** `background_value` is
-`color_ref | linear(...)`, and `color_ref = name ("/" u8)?` — a theme token with
-a *literal* opacity. `bg=up_flash/fill.heat` fails with `E184 unknown surface
-color`. The rich native `color` value type, `color.scale_alpha` included, is not
-accepted by `bg=` at all. No computed number reaches a surface's colour or its
-alpha, from an animation or from anywhere else.
+**A computed number reaches a surface's colour.** A container's `bg=` accepts a
+parenthesised opacity expression — `bg=flash/(animation.value(fade))` — on the
+same `0..=100` scale as the literal `bg=flash/40`, replacing the colour's alpha
+every view pass. It is a container property with a single background colour;
+anywhere else it is rejected
+(`crates/ui-lang-core/tests/cases/diagnostic/computed-opacity-surface`).
 
-The consequence is that a fade must be written as a discrete ladder of `if`
-arms over literal opacities, stepped by a timer. The trading example's fills
-list is exactly that — `every 700ms when flashing -> cool_flash` counting a
-`heat:i64` down through two `bg=up_flash` arms — and it reads as two hard jumps
-rather than a decay. That shape is not an implementation shortcut there; it is
-the only shape the language offers.
+Component animations keep native frames alive on the same active-only
+`window::frames()` subscription app animations use. Interpolation happens where
+it always did — in the view pass — so an animated surface must sit outside any
+`lazy` boundary that memoizes the row around it; inside one it is frozen at the
+value the subtree was built with, and `SPEC.md` says so.
 
-Closing this needs the three together: `animation[T]` accepted in
-component-local state, a per-instance appearance hook (or an assignment form
-that names an instance scope from an app handler), and a `bg=` that accepts a
-computed colour so the animated number has somewhere to land. Any one alone
-leaves motion unreachable. The trading example is where the gap was found, not
-where it lives.
+Evidence: `crates/ui-lang-core/tests/cases/compile/row-animation` (generated
+`from` transition, per-instance materialization, frame subscription over
+component storage), `crates/ui-lang-core/tests/cases/format/row-animation`,
+`examples/iced-app/src/ui/animation.ice` (`ArrivalRow` demo, and the
+`computed_surface_opacity` first-class test asserting the painted alpha), and
+`a_row_owns_its_fade_and_that_fade_ends` in
+`examples/iced-app/src/tests/tasks.rs`.
 
 ## Evidence rule
 

@@ -62,6 +62,7 @@ pub(in crate::check) fn infer_controls_group(
                     document,
                     &status.span,
                     "E129",
+                    false,
                 )?;
             }
             infer_route(route, None, env, document, signatures)?;
