@@ -86,8 +86,9 @@ AI_CHAT_LIVE=1 AI_CHAT_ASK="your question" \
   cargo test -p ai-chat-example -- --ignored --nocapture a_live_turn
 ```
 
-Presets `conversation`, `conversation_night`, `streaming` and `signed_out` name
-their own account, so no real address reaches a committed artifact.
+Every preset names its own account — `conversation`, `conversation_night`,
+`streaming`, `signed_in` and `signed_out` — so no real address reaches a
+committed artifact.
 
 ### Measured
 
