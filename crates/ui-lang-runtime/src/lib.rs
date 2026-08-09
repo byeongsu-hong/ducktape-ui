@@ -80,10 +80,22 @@ use std::sync::{Arc, Mutex};
 const ROOT_ID: NodeId = NodeId(0);
 
 /// Stores state for component scopes that only live while mounted.
+///
+/// Pruning happens one pass late, at the START of the next render, and that is
+/// deliberate: `view` returning is not the end of building the tree. A
+/// `responsive` (and any other deferred builder) constructs its subtree during
+/// layout, so components under one call `mount` after `finish_render` has
+/// already run. Pruning there saw an empty active set, dropped their state, and
+/// the next pass built it again from scratch — which for ordinary state is
+/// invisible, and for an animation means restarting the motion every frame.
+/// Holding the root until the next `begin_render` lets the active set collect
+/// the whole pass, deferred builders included.
 #[derive(Debug)]
 pub struct MountedComponentState<T> {
     values: RefCell<HashMap<String, T>>,
     active: RefCell<HashSet<String>>,
+    /// The root whose finished render is still waiting to be pruned.
+    pending: RefCell<Option<String>>,
     next_generation: Cell<u64>,
 }
 
@@ -92,14 +104,18 @@ impl<T> Default for MountedComponentState<T> {
         Self {
             values: RefCell::new(HashMap::new()),
             active: RefCell::new(HashSet::new()),
+            pending: RefCell::new(None),
             next_generation: Cell::new(0),
         }
     }
 }
 
 impl<T> MountedComponentState<T> {
-    /// Starts tracking scopes for one rendered root.
+    /// Prunes the previous render's scopes, then starts tracking a new one.
     pub fn begin_render(&self) {
+        if let Some(root) = self.pending.borrow_mut().take() {
+            self.prune(&root);
+        }
         self.active.borrow_mut().clear();
     }
 
@@ -108,8 +124,13 @@ impl<T> MountedComponentState<T> {
         self.active.borrow_mut().insert(scope);
     }
 
-    /// Drops state for scopes under `root` that were not rendered.
+    /// Records that `root` finished rendering. Scopes under it that never
+    /// mounted are dropped at the next [`Self::begin_render`].
     pub fn finish_render(&self, root: &str) {
+        self.pending.borrow_mut().replace(root.to_owned());
+    }
+
+    fn prune(&self, root: &str) {
         let active = self.active.borrow();
         self.values.borrow_mut().retain(|scope, _| {
             let suffix = scope.strip_prefix(root);
@@ -2127,15 +2148,48 @@ mod tests {
         state.begin_render();
         state.mount("app/keep".into());
         state.finish_render("app");
+        // Pruning lands at the start of the next pass, so a subtree still
+        // being built cannot be mistaken for one that left.
+        state.begin_render();
 
         assert!(observer.is_aborted());
         assert_eq!(state.values().len(), 2);
         assert!(state.values().contains_key("app/keep"));
         assert!(state.values().contains_key("other/search"));
-        state.begin_render();
         state.finish_render("app");
+        state.begin_render();
         assert_eq!(state.values().len(), 1);
         assert_eq!(state.next_generation(), 2);
+    }
+
+    /// `view` returning is not the end of building the tree: a `responsive`
+    /// builds its subtree during layout, so a component under one mounts after
+    /// its root has finished rendering. Pruning there would drop state the
+    /// pass was still about to claim — and rebuilding it every pass restarts
+    /// any animation it holds, which is a highlight that never goes out.
+    #[test]
+    fn a_scope_mounted_after_its_root_finished_survives_the_next_pass() {
+        let state = MountedComponentState::<u32>::default();
+
+        state.begin_render();
+        state.finish_render("app");
+        // The deferred builder runs now, after the root reported it was done.
+        state.values_mut().insert("app/deferred".into(), 7);
+        state.mount("app/deferred".into());
+
+        state.begin_render();
+        state.finish_render("app");
+        assert_eq!(
+            state.values().get("app/deferred"),
+            Some(&7),
+            "a deferred mount is not a scope that left the tree"
+        );
+
+        // A scope that really does stop rendering still goes, one pass later.
+        state.begin_render();
+        state.finish_render("app");
+        state.begin_render();
+        assert!(state.values().is_empty());
     }
 
     #[test]

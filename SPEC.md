@@ -3695,7 +3695,12 @@ recomputation-unsafe built-ins forbidden in component prop defaults, including
 the unqualified `encoded` and `rgba` image constructors.
 
 `lifetime mounted` marks the scopes present in each rendered root and removes
-entries that disappear from that root. Removing an entry drops its local state
+entries that disappear from that root, at the start of the pass after the one
+that stopped rendering them. The delay is required, not incidental: a
+`responsive` and every other deferred builder constructs its subtree during
+layout, so components under one are marked after their root has finished
+rendering, and removing entries any earlier would drop state the same pass was
+still about to claim. Removing an entry drops its local state
 and request-lane bookkeeping, including any `run replace` abort-on-drop handles.
 Daemon roots include their window ID, so rendering one window never prunes
 another window's scopes. There is no `on unmount` hook or other arbitrary
@@ -5469,7 +5474,7 @@ A container's `bg=` alone also accepts a *computed* opacity, written
 parenthesised: `bg=flash/(fade)` takes any `f64` expression on the same
 `0..=100` percentage scale as the literal form, clamped, and replaces the
 color's own alpha on every view pass. It is what lets an animated number reach a
-surface — `bg=flash/(animation.value(fade))` fades a row. It needs a single
+surface — `bg=flash/(animation.project(fade, value, value))` fades a row. It needs a single
 background color, so a gradient is rejected, and it is a container property:
 every other color position stays a literal token. A view using one keeps its
 compiled Rust rather than publishing a template, because the published view

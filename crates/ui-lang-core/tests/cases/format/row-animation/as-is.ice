@@ -18,7 +18,7 @@ component Row(label:i64)
             from 100.0
             easing ease-out
             duration 900ms
-    box w=fill h=24.0 bg=primary/(animation.value(fade))
+    box w=fill h=24.0 bg=primary/(animation.project(fade, value, value))
         text label
 view
     col

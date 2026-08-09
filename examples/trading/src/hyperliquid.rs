@@ -46,8 +46,6 @@ const POLL: Duration = Duration::from_millis(200);
 const BEAT: Duration = Duration::from_millis(100);
 /// Pause before a dropped socket is reopened.
 const RETRY: Duration = Duration::from_secs(2);
-/// Decay steps a freshly printed fill flashes for.
-const FLASH_STEPS: i64 = 2;
 /// Book levels shown per side, and the pixel width of a full depth bar.
 const BOOK_DEPTH: usize = 10;
 const BOOK_BAR_WIDTH: f64 = 196.0;
@@ -400,8 +398,8 @@ pub struct Trade {
 ///
 /// `Hash` is hand-written for the same reason `SymbolRow`'s is: the fills list
 /// is a `lazy` boundary keyed on the fill it draws, and the money on a fill is
-/// `f64`. A row's cache is invalidated by any change to that fill, the heat
-/// countdown included, which is exactly what the row renders.
+/// `f64`. A row's cache is invalidated by any change to that fill, which is
+/// exactly what the row renders.
 #[derive(Clone, PartialEq)]
 pub struct Fill {
     pub coin: String,
@@ -410,9 +408,11 @@ pub struct Fill {
     pub size: f64,
     pub buy: bool,
     pub closed_pnl: f64,
-    /// Decay steps left on the highlight a just-printed fill wears, counted
-    /// down to zero by the app. Fills already on the books arrive cold.
-    pub heat: i64,
+    /// Whether this fill arrived on the feed rather than in the opening
+    /// snapshot. Only an arrival flashes; the books a trader already had do
+    /// not announce themselves on first paint. It never changes afterwards —
+    /// the fade is the row's own animation, not a countdown in the data.
+    pub hot: bool,
     /// The exchange's trade id, which is how a fill pushed by the feed is
     /// recognised as one the snapshot already listed, and — because a `lazy`
     /// subtree cannot see which iteration built it — the identity its row is
@@ -425,7 +425,7 @@ impl Hash for Fill {
         self.coin.hash(state);
         self.ts.hash(state);
         self.buy.hash(state);
-        self.heat.hash(state);
+        self.hot.hash(state);
         self.tid.hash(state);
         for value in [self.price, self.size, self.closed_pnl] {
             hash_f64(value, state);
@@ -1277,9 +1277,8 @@ pub async fn hl_account(chain: Chain, address: String) -> Result<Account, HlErro
     ))
 }
 
-/// The account's fills. `heat` is what the list flashes with, so the
-/// snapshot the feed opens with reads cold and everything pushed after it
-/// arrives lit.
+/// The account's fills. `hot` is what the list flashes on, so the snapshot the
+/// feed opens with reads cold and everything pushed after it arrives lit.
 /// The public tape, folded the way it was actually traded. One aggressing
 /// order that eats four resting orders arrives as four messages sharing a
 /// `hash`; four rows at the same price is the wire's bookkeeping rather than
@@ -1332,7 +1331,7 @@ fn parse_trades(value: &Value, coin: &str) -> Vec<Trade> {
 /// them into each other; not listing them loses a row the exchange never
 /// identified. `userFills` always carries one, so this is a malformed payload
 /// either way.
-fn parse_fills(value: &Value, heat: i64) -> Vec<Fill> {
+fn parse_fills(value: &Value, hot: bool) -> Vec<Fill> {
     value
         .as_array()
         .map(Vec::as_slice)
@@ -1347,7 +1346,7 @@ fn parse_fills(value: &Value, heat: i64) -> Vec<Fill> {
                 // "B" is a buy, "A" hits the ask side and is a sell.
                 buy: text(fill, "side") == "B",
                 closed_pnl: num(fill, "closedPnl"),
-                heat,
+                hot,
                 tid: fill.get("tid").and_then(Value::as_i64)?,
             })
         })
@@ -1836,7 +1835,7 @@ pub fn hl_fill_feed(chain: Chain, address: String) -> Receiver<Result<Vec<Fill>,
                 .get("isSnapshot")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let fills = parse_fills(data.get("fills")?, if snapshot { 0 } else { FLASH_STEPS });
+            let fills = parse_fills(data.get("fills")?, !snapshot);
             (!fills.is_empty()).then_some(fills)
         },
     )
@@ -2301,22 +2300,6 @@ pub fn fmt_sweep(count: i64) -> String {
         return String::new();
     }
     format!("×{count}")
-}
-
-/// One step of the highlight decay on the newest fills.
-pub fn cool_fills(rows: Vec<Fill>) -> Vec<Fill> {
-    rows.into_iter()
-        .map(|fill| Fill {
-            heat: (fill.heat - 1).max(0),
-            ..fill
-        })
-        .collect()
-}
-
-/// Whether anything in the list is still lit, which is the only reason to
-/// run the decay timer at all.
-pub fn any_hot(rows: Vec<Fill>) -> bool {
-    rows.iter().any(|fill| fill.heat > 0)
 }
 
 /// An account address is `0x` and forty hexadecimal digits. Worth checking
@@ -3315,10 +3298,10 @@ fn demo_account_of(
     }
 }
 
-/// Fills and resting orders, including one fill still lit, so the flash a
-/// just-printed fill wears is drawn rather than only decayed in a unit test.
+/// Fills and resting orders, including fills that arrived lit, so the wash a
+/// just-printed fill wears is drawn rather than only asserted in a unit test.
 pub fn demo_fills() -> Vec<Fill> {
-    let fill = |tid: i64, price: f64, size: f64, buy: bool, closed_pnl: f64, heat: i64| Fill {
+    let fill = |tid: i64, price: f64, size: f64, buy: bool, closed_pnl: f64, hot: bool| Fill {
         coin: "BTC".to_owned(),
         // Inside the candle window `demo_candles` builds, so each lands on
         // its own candle rather than piling onto the last one.
@@ -3327,13 +3310,13 @@ pub fn demo_fills() -> Vec<Fill> {
         size,
         buy,
         closed_pnl,
-        heat,
+        hot,
         tid,
     };
     vec![
-        fill(1, 64_010.0, 0.25, false, 1_240.0, FLASH_STEPS),
-        fill(2, 63_940.0, 0.50, true, 0.0, 1),
-        fill(3, 63_880.0, 0.75, true, 0.0, 0),
+        fill(1, 64_010.0, 0.25, false, 1_240.0, true),
+        fill(2, 63_940.0, 0.50, true, 0.0, true),
+        fill(3, 63_880.0, 0.75, true, 0.0, false),
     ]
 }
 
@@ -3364,7 +3347,7 @@ pub fn demo_fills_many(count: i64) -> Vec<Fill> {
                 } else {
                     (step as f64 * 13.7) % 900.0 - 400.0
                 },
-                heat: (FLASH_STEPS - step).max(0),
+                hot: step == 0,
                 tid: 4_000_000 + step,
             }
         })
@@ -4141,7 +4124,7 @@ mod tests {
             size: 0.5,
             buy: true,
             closed_pnl: 10.0,
-            heat: 2,
+            hot: true,
             tid: 3,
         };
         let fill_moves: &[FieldMutation<Fill>] = &[
@@ -4151,7 +4134,7 @@ mod tests {
             ("size", |fill| fill.size += 0.5),
             ("buy", |fill| fill.buy = !fill.buy),
             ("closed_pnl", |fill| fill.closed_pnl += 0.5),
-            ("heat", |fill| fill.heat += 1),
+            ("hot", |fill| fill.hot = !fill.hot),
             ("tid", |fill| fill.tid += 1),
         ];
         for (field, move_it) in fill_moves {
@@ -4640,14 +4623,14 @@ mod tests {
                 { "coin": "BTC", "px": "64000.0", "sz": "0.1", "side": "B", "time": 1_786_092_480_123i64, "closedPnl": "0.0", "dir": "Open Long", "tid": 1 },
                 { "coin": "BTC", "px": "64500.0", "sz": "0.1", "side": "A", "time": 1_786_092_540_000i64, "closedPnl": "50.0", "dir": "Close Long", "tid": 2 },
             ]),
-            FLASH_STEPS,
+            true,
         );
 
         assert!(fills[0].buy);
         assert_eq!(fills[0].ts, 1_786_092_480, "chart timestamps are seconds");
         assert!(!fills[1].buy);
         assert_eq!(fills[1].closed_pnl, 50.0);
-        assert_eq!(fills[1].heat, FLASH_STEPS, "a pushed fill arrives lit");
+        assert!(fills[1].hot, "a pushed fill arrives lit");
     }
 
     #[test]
@@ -4729,7 +4712,7 @@ mod tests {
                 size: 0.5,
                 buy: true,
                 closed_pnl: 0.0,
-                heat: 0,
+                hot: false,
                 tid: 1,
             },
             Fill {
@@ -4739,7 +4722,7 @@ mod tests {
                 size: 2.0,
                 buy: true,
                 closed_pnl: 0.0,
-                heat: 0,
+                hot: false,
                 tid: 2,
             },
             Fill {
@@ -4749,7 +4732,7 @@ mod tests {
                 size: 0.5,
                 buy: false,
                 closed_pnl: 250.0,
-                heat: 0,
+                hot: false,
                 tid: 3,
             },
         ];
@@ -5263,7 +5246,7 @@ mod tests {
             size: 0.5,
             buy,
             closed_pnl,
-            heat: 0,
+            hot: false,
             tid: 0,
         };
         // A fill that closed something is named by what it took and what it
@@ -6108,7 +6091,7 @@ mod tests {
         assert_eq!(lines[0].price, 60_000.0);
     }
 
-    fn fill(ts: i64, tid: i64, heat: i64) -> Fill {
+    fn fill(ts: i64, tid: i64, hot: bool) -> Fill {
         Fill {
             coin: "BTC".into(),
             ts,
@@ -6116,36 +6099,27 @@ mod tests {
             size: 1.0,
             buy: true,
             closed_pnl: 0.0,
-            heat,
+            hot,
             tid,
         }
     }
 
     #[test]
     fn pushed_fills_stack_newest_first_without_repeating_the_snapshot() {
-        let snapshot = push_fills(Vec::new(), vec![fill(10, 1, 0), fill(30, 3, 0)], 4);
+        let snapshot = push_fills(Vec::new(), vec![fill(10, 1, false), fill(30, 3, false)], 4);
         assert_eq!(snapshot[0].ts, 30, "newest first");
 
         // The feed re-sends a fill the snapshot already showed alongside a
         // new one; only the new one lands, and only it is lit.
-        let pushed = push_fills(
-            snapshot,
-            vec![fill(30, 3, FLASH_STEPS), fill(40, 4, FLASH_STEPS)],
-            4,
-        );
+        let pushed = push_fills(snapshot, vec![fill(30, 3, true), fill(40, 4, true)], 4);
         assert_eq!(pushed.len(), 3, "the repeat is dropped");
         assert_eq!(pushed[0].ts, 40);
-        assert_eq!(pushed[0].heat, FLASH_STEPS);
-        assert_eq!(pushed[1].heat, 0, "the fill it already held stays cold");
-        assert!(any_hot(pushed.clone()), "the list is flashing");
+        assert!(pushed[0].hot, "a fill the feed pushed arrives lit");
+        assert!(!pushed[1].hot, "the fill it already held stays cold");
 
-        let capped = push_fills(pushed, vec![fill(50, 5, FLASH_STEPS)], 2);
+        let capped = push_fills(pushed, vec![fill(50, 5, true)], 2);
         assert_eq!(capped.len(), 2, "the list is capped");
         assert_eq!(capped[0].ts, 50);
-
-        // Two beats of decay put the highlight out.
-        let cooled = cool_fills(cool_fills(capped));
-        assert!(!any_hot(cooled), "nothing stays lit");
     }
 
     /// The listed fills' one invariant: a trade id appears once. The rows are
@@ -6154,9 +6128,9 @@ mod tests {
     #[test]
     fn push_fills_lists_each_trade_id_once() {
         let listed = push_fills(
-            vec![fill(10, 1, 0)],
+            vec![fill(10, 1, false)],
             // One repeat of the history, and one repeat inside the batch.
-            vec![fill(10, 1, 0), fill(20, 2, 0), fill(21, 2, 0)],
+            vec![fill(10, 1, false), fill(20, 2, false), fill(21, 2, false)],
             10,
         );
         let mut ids: Vec<i64> = listed.iter().map(|fill| fill.tid).collect();
@@ -6175,7 +6149,7 @@ mod tests {
                 { "coin": "BTC", "px": "64500.0", "sz": "0.1", "side": "A", "time": 1_786_092_540_000i64, "closedPnl": "50.0" },
                 { "coin": "ETH", "px": "3100.0", "sz": "2.0", "side": "B", "time": 1_786_092_600_000i64, "closedPnl": "0.0" },
             ]),
-            0,
+            false,
         );
         assert_eq!(
             fills.iter().map(|fill| fill.tid).collect::<Vec<_>>(),

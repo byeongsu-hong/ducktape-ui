@@ -201,6 +201,10 @@ mod component_lifecycle {
         assert!(app.__ice_component_search.values().contains_key(scope));
         app.show = false;
         let _ = app.__view();
+        // Pruning lands at the start of the pass after the one that stopped
+        // rendering the scope, so a deferred builder still owed a `mount` is
+        // never mistaken for an instance that left.
+        let _ = app.__view();
         assert!(app.__ice_component_search.values().is_empty());
     }
 
@@ -223,6 +227,8 @@ mod component_lifecycle {
 
         let _ = app.__view();
         app.show = false;
+        let _ = app.__view();
+        // Pruning lands one pass late; see `begin_render`.
         let _ = app.__view();
         assert!(app.__ice_component_search.values().is_empty());
 

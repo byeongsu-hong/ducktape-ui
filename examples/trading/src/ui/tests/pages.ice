@@ -411,8 +411,8 @@ test trading_a_fill_row_announces_both_the_size_and_what_it_realized
   target app = #app
   target lower = app/terminal-fit/trade/lower
   target printed = lower/fills/fill-list
-  target closing = printed/fill(1)/root
-  target opening = printed/fill(2)/root
+  target closing = printed/key(1)/fill(1)/root
+  target opening = printed/key(2)/fill(2)/root
   expect a11y closing name "BTC sold 0.25 at 64,010.00, realized +$1,240.00"
   expect a11y opening name "BTC bought 0.5 at 63,940.00"
 
