@@ -43,6 +43,29 @@ test trading_terminal_search_keeps_the_selected_market
   key escape
   expect text "3,540.00"
 
+// Escape is bound app-wide and the box it clears is on the terminal. Pressed
+// on a page without one it cleared a filter the reader could not see, and the
+// rail came back narrowed to a word nothing on screen showed. One page fewer
+// does not retire the guard: portfolio and settings still have no search.
+test trading_escape_away_from_the_terminal_leaves_the_search_alone
+  preset terminal
+  viewport 1660 820
+  target app = #app
+  target markets = app/trade/markets
+  target search = markets/search
+  focus search
+  type "ZZZ"
+  expect query == "ZZZ"
+  dispatch navigate(Page.portfolio)
+  key escape
+  expect query == "ZZZ"
+  dispatch navigate(Page.settings)
+  key escape
+  expect query == "ZZZ"
+  dispatch navigate(Page.terminal)
+  key escape
+  expect query == ""
+
 test trading_interval_tabs_name_the_selected_width
   preset browsing
   viewport 1660 820
