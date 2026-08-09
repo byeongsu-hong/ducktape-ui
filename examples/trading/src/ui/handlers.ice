@@ -374,9 +374,10 @@ on lower_resized(_dx, dy)
   lower_height = pane_height(lower_height - dy)
 
 subscribe
-  // Escape clears the search box, and the search box is on the markets page.
-  // App-scoped, it cleared a filter the reader could not see from anywhere
-  // else, so the list came back narrowed to a word nothing on screen showed.
+  // Escape clears the search box, and the search box is in the market rail on
+  // the terminal. App-scoped, it cleared a filter the reader could not see from
+  // anywhere else, so the list came back narrowed to a word nothing on screen
+  // showed.
   keyboard press when page == Page.terminal && !gate && !empty(query) -> search_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account

@@ -562,45 +562,76 @@ view
                           Label value="ORDER BOOK"
                           space w=fill
                         rule horizontal thickness=1.0 color=edge
-                        match book
-                          some(depth)
-                            col w=fill
-                              for level in depth.asks
-                                BookRow level=level buy=false
-                                  events
-                                    pick -> seed_ticket _ _
-                              row
-                                with
-                                  w=fill
-                                  h=30.0
-                                  pl=14.0
-                                  pr=14.0
-                                  gap=8.0
-                                  align=center
-                                text fmt_px(depth.mid)
+                        // The book is the one list in this column whose length
+                        // the venue chooses rather than the layout: ten levels
+                        // a side at 18px, with the 30px spread row between
+                        // them, is 390px of content. The chrome around it is
+                        // fixed — four headers at 34+32+32+32, seven rules, the
+                        // 88px alert list and the 120px order list, so 345px —
+                        // and at the window's own 720px minimum the column is
+                        // 661px. That leaves 316px for the book and the tape
+                        // together. Drawn whole the book took all of it and
+                        // 74px more, and what it overran was the tape, the
+                        // alerts and the resting orders: panes squeezed to
+                        // nothing below the fold with no way to reach them.
+                        //
+                        // Two portions against the tape's one is the smallest
+                        // split that keeps the line the book exists for: 210px
+                        // of the 316 is exactly the 180px of asks plus the
+                        // spread row, so the mid is still on screen at the
+                        // minimum, and the rest of the depth is a scroll like
+                        // every other list in this column.
+                        scroll #book-list
+                          with
+                            h=fill(2)
+                            bar-w=6.0
+                            bar-m=2.0
+                            scroller-w=6.0
+                          active
+                            y-rail bg=panel
+                            y-scroller bg=edge r=3.0
+                          hovered
+                            y-rail bg=panel
+                            y-scroller bg=faint r=3.0
+                          col w=fill
+                            match book
+                              some(depth)
+                                for level in depth.asks
+                                  BookRow level=level buy=false
+                                    events
+                                      pick -> seed_ticket _ _
+                                row
                                   with
-                                    size=13.0
-                                    font=digits
-                                    @text-fg
-                                space w=fill
-                                Label value="SPREAD"
-                                text fmt_bps(depth.spread_pct)
+                                    w=fill
+                                    h=30.0
+                                    pl=14.0
+                                    pr=14.0
+                                    gap=8.0
+                                    align=center
+                                  text fmt_px(depth.mid)
+                                    with
+                                      size=13.0
+                                      font=digits
+                                      @text-fg
+                                  space w=fill
+                                  Label value="SPREAD"
+                                  text fmt_bps(depth.spread_pct)
+                                    with
+                                      size=11.0
+                                      font=digits
+                                      @text-muted
+                                for level in depth.bids
+                                  BookRow level=level buy=true
+                                    events
+                                      pick -> seed_ticket _ _
+                              none
+                                box
                                   with
-                                    size=11.0
-                                    font=digits
-                                    @text-muted
-                              for level in depth.bids
-                                BookRow level=level buy=true
-                                  events
-                                    pick -> seed_ticket _ _
-                          none
-                            box
-                              with
-                                w=fill
-                                h=120.0
-                                align-x=center
-                                align-y=center
-                              text "Loading book" size=12.0 @text-faint
+                                    w=fill
+                                    h=120.0
+                                    align-x=center
+                                    align-y=center
+                                  text "Loading book" size=12.0 @text-faint
                         rule horizontal thickness=1.0 color=edge
                         row
                           with
@@ -1818,7 +1849,7 @@ view
                           w=fill
                           wrap=word
                           @text-muted
-                      text "It will not place, amend or cancel an order, move collateral, or ask for a key. Sending would mean this app holding the key that signs an EIP-712 order, which is not a thing an example should ask for. Everything up to that signature is arithmetic worth having, and the signature is where a real client starts."
+                      text "It will not place, amend or cancel an order, move margin, or ask for a key. Sending would mean this app holding the key that signs an EIP-712 order, which is not a thing an example should ask for. Everything up to that signature is arithmetic worth having, and the signature is where a real client starts."
                         with
                           size=12.0
                           w=fill

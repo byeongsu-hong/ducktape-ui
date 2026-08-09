@@ -1,7 +1,8 @@
 // Three surfaces. The terminal keeps market discovery and account activity on
-// one screen; only the account dashboard and settings leave it.
-// navigation, so it is an enum and a match: there is no history to walk, no
-// path to parse, and no state a page keeps that the app does not already hold.
+// one screen; only the account dashboard and settings leave it. Moving between
+// them is an enum and a match rather than navigation: there is no history to
+// walk, no path to parse, and no state a page keeps that the app does not
+// already hold.
 enum Page
   terminal
   portfolio
@@ -162,6 +163,20 @@ preset browsing
     tape = demo_candles()
     book = some(demo_book())
     tape_prints = demo_tape()
+    live = true
+
+// The same terminal with the book at the depth the socket delivers. Every
+// other fixture here is three levels a side, which fits any column ever drawn
+// and so said nothing about the one case the panel has to survive: ten levels
+// a side, which is what both venues publish.
+preset deep_book
+  state
+    gate = false
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    book = some(demo_book_deep())
+    tape_prints = demo_tape()
+    orders = demo_orders()
     live = true
 
 preset at_risk

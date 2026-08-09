@@ -11,7 +11,7 @@
 // terminal on Lighter. The two pictures come from the `lighter` preset below,
 // which is the state the switch settles into.
 
-// Everything the trade page draws belongs to the exchange it was read from.
+// Everything the terminal draws belongs to the exchange it was read from.
 test trading_switching_venue_leaves_the_old_venues_market_behind
   preset held
   viewport 1660 820
