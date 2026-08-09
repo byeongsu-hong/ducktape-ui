@@ -28,15 +28,13 @@ on connect
   status = "Loading"
   tape = tape_focus(tape, coin, interval)
   parallel
-    run venue_symbols(venue) -> symbols_loaded _ | failed _
-    run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
-    run venue_account(venue, trim(draft)) -> account_loaded _ | account_failed _
-    run venue_orders(venue, trim(draft)) -> orders_loaded _ | orders_failed _
-    run venue_portfolio(venue, trim(draft)) -> portfolio_loaded _ | portfolio_failed _
-    abortable feeds abort-on-drop
-      parallel
-        stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
-        stream venue_fill_feed(venue, trim(draft)) -> fills_streamed _ | fills_failed _
+    run every venue_symbols(venue) -> symbols_loaded _ | failed _
+    run every venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
+    run every venue_account(venue, trim(draft)) -> account_loaded _ | account_failed _
+    run every venue_orders(venue, trim(draft)) -> orders_loaded _ | orders_failed _
+    run every venue_portfolio(venue, trim(draft)) -> portfolio_loaded _ | portfolio_failed _
+    stream replace lane=market_feed venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
+    stream replace lane=fill_feed venue_fill_feed(venue, trim(draft)) -> fills_streamed _ | fills_failed _
 
 on browse
   address = ""
@@ -44,35 +42,49 @@ on browse
   status = "Loading"
   tape = tape_focus(tape, coin, interval)
   portfolio_history = portfolio_empty()
+  invalidate lane=fill_feed
   parallel
-    run venue_symbols(venue) -> symbols_loaded _ | failed _
-    run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
-    abortable feeds abort-on-drop
-      stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
+    run every venue_symbols(venue) -> symbols_loaded _ | failed _
+    run every venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
+    stream replace lane=market_feed venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
 
 on seed_ticket(price, buy)
   let seed = fmt_px(price)
   ticket_buy = buy
   ticket_price = seed
   ticket_size = ""
-  quote = price_ticket(seed, "", ticket_leverage, focus, buy, position_held(positions, coin))
 
 on ticket_priced(typed)
   ticket_price = typed
-  quote = price_ticket(typed, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_sized(typed)
   ticket_size = typed
-  quote = price_ticket(ticket_price, typed, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_levered(typed)
   ticket_leverage = typed
-  quote = price_ticket(ticket_price, ticket_size, typed, focus, ticket_buy, position_held(positions, coin))
 
 on search_key(event)
   return if event.key != key.named("Escape")
   query = ""
 
+// The network picker, opened from the block in the header that names the
+// network. There is no toggle here because there cannot be a second press: the
+// panel opens over a backdrop that takes every click outside it, so the way
+// back out is that backdrop, Escape, or picking a row.
+on open_venues
+  venues_open = true
+
+on close_venues
+  venues_open = false
+
+on venues_key(event)
+  return if event.key != key.named("Escape")
+  venues_open = false
+
+// A close is a reduce-only order with the size and the side already known, so
+// this fills those three in rather than being a fourth path that happens to
+// agree with them. What follows from the box being set follows here too: the
+// order is capped at the position, opens nothing, and asks for no margin.
 on close_held
   let held = position_held(positions, coin)
   return if held == 0.0
@@ -85,8 +97,12 @@ on close_held
   let seed = ticket_seed(book, focus)
   ticket_buy = held < 0.0
   ticket_price = seed
+  // The size that flattens a position is in the instrument, so the field goes
+  // back to the instrument to hold it. Left in dollars it would read as the
+  // position's notional, which is a different number that looks like a size.
+  ticket_usd = false
   ticket_size = fmt_size(held)
-  quote = price_ticket(seed, fmt_size(held), ticket_leverage, focus, held < 0.0, held)
+  ticket_reduce = true
 
 on add_alert_here
   alerts = add_alert(alerts, coin, ticket_price, mark_price(focus))
@@ -95,14 +111,47 @@ on drop_alert_at(at_coin, price)
   alerts = drop_alert(alerts, at_coin, price)
 
 on size_share(share)
-  let sized = ticket_afford(account, ticket_price, focus, quote.leverage, share)
+  let sized = ticket_afford(account, ticket_unit, focus, quote.leverage, share, ticket_usd)
   return if empty(sized)
   ticket_size = sized
-  quote = price_ticket(ticket_price, sized, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_side(buy)
   ticket_buy = buy
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, buy, position_held(positions, coin))
+
+on ticket_kinded(next)
+  ticket_kind = next
+
+on ticket_timed(next)
+  ticket_tif = next
+
+on ticket_moded(cross)
+  ticket_cross = cross
+
+on ticket_reduced(on)
+  ticket_reduce = on
+
+// The unit toggle is a change of wording rather than a change of order, so the
+// number in the field is rewritten to hold the same quantity. Left alone, a
+// reader who typed three bitcoin and pressed USD would be offering to buy
+// three dollars of it, and the field looks identical either way.
+on ticket_denom(usd)
+  return if usd == ticket_usd
+  ticket_size = retype_size(ticket_size, usd, ticket_unit, focus)
+  ticket_usd = usd
+
+on ticket_attached(on)
+  ticket_levels = on
+  return if on
+  // Folded away, a level nobody can see is a level the order would still
+  // carry. The fold is a view flag; the fields it hides are the order.
+  ticket_tp = ""
+  ticket_sl = ""
+
+on ticket_took(typed)
+  ticket_tp = typed
+
+on ticket_stopped(typed)
+  ticket_sl = typed
 
 on reopen
   draft = address
@@ -122,7 +171,6 @@ on reopen
   orders_error = ""
   fills_error = ""
   portfolio_history = portfolio_empty()
-  flashing = false
   // The feed the gate opens over is about to be aborted, so its last reading
   // describes nothing: left alone, the terminal behind the gate goes on
   // claiming a live price at whatever the round trip was when it died.
@@ -133,7 +181,12 @@ on reopen
   // the same strip as the feed's. Kept, the account that could not be read is
   // reported over the next account's positions.
   error = ""
-  abort feeds
+  // The key belongs to the account being left, and the next address is not
+  // that account.
+  session = lock_agent()
+  unlock_note = ""
+  invalidate lane=market_feed
+  invalidate lane=fill_feed
 
 on pick_symbol(name)
   // Every row that names a market is a way to it, and the market is drawn on
@@ -164,7 +217,14 @@ on pick_symbol(name)
   coin = name
   ticket_price = seed
   ticket_size = ""
-  quote = price_ticket(seed, "", ticket_leverage, market, ticket_buy, position_held(positions, name))
+  // A take-profit and a stop-loss are prices of the market being left, and
+  // reduce-only is a promise about a position held in it. Carried over they
+  // are levels on the wrong instrument and a promise about nothing, and both
+  // look exactly like levels and a promise.
+  ticket_tp = ""
+  ticket_sl = ""
+  ticket_levels = false
+  ticket_reduce = false
   tape_prints = []
   focus = symbol_row(symbols, name)
   hover = none
@@ -172,7 +232,7 @@ on pick_symbol(name)
   tape = tape_focus(tape, name, interval)
   loading_history = false
   history_exhausted = false
-  run venue_candles(venue, tape, name, interval) -> candles_loaded _ | failed _
+  run every venue_candles(venue, tape, name, interval) -> candles_loaded _ | failed _
 
 // A venue owns every panel on the screen, so this throws away at least what
 // `pick_symbol` throws away, plus everything that belongs to an account. Two
@@ -181,6 +241,10 @@ on pick_symbol(name)
 // across the switch is the exchange being left, drawn under the name of the
 // one being opened, and it looks entirely plausible.
 on switch_venue(next)
+  // The pick is answered before it is acted on, and it is answered either way:
+  // a picker left open over the network that was just chosen is the press going
+  // unanswered, which is the rule `pick_symbol` follows for the market rail.
+  venues_open = false
   return if next == venue
   venue = next
   // The universe and everything drawn from it. The focused row carries the
@@ -199,6 +263,13 @@ on switch_venue(next)
   // A level worth being told about was worth it on one exchange, at one
   // exchange's price.
   alerts = []
+  // A key is approved for one account on one deployment. Carried across, it is
+  // a session that says the app may trade on a network the key is unknown on —
+  // and the first thing that would tell the reader otherwise is a rejected
+  // order. The unlock is cheap to repeat; this is not a thing to be clever
+  // about.
+  session = lock_agent()
+  unlock_note = ""
   // One address, two venues, two sets of positions. Fills and orders arrive as
   // a snapshot the app folds into what it already holds, so anything kept here
   // would be folded in with the next venue's.
@@ -213,11 +284,18 @@ on switch_venue(next)
   account_error = ""
   orders_error = ""
   fills_error = ""
-  flashing = false
   // The ticket was priced off the book of the venue being left, at a market
   // the next one may not even list.
   ticket_price = ""
   ticket_size = ""
+  // A take-profit and a stop-loss are prices of the market being left, and
+  // reduce-only is a promise about a position held in it. Carried over they
+  // are levels on the wrong instrument and a promise about nothing, and both
+  // look exactly like levels and a promise.
+  ticket_tp = ""
+  ticket_sl = ""
+  ticket_levels = false
+  ticket_reduce = false
   // The typed leverage stays, and it is the only typed field that does. A
   // price and a size are readings of one market — the price came off a book
   // and the size is denominated in a coin — but "5x" is how much risk the
@@ -228,7 +306,6 @@ on switch_venue(next)
   // the clamp is re-applied the moment `symbols_loaded` brings a row to clamp
   // against. Resetting it here would also mean resetting it in `pick_symbol`,
   // which changes market and cap for the same reason and deliberately does not.
-  quote = price_ticket("", "", ticket_leverage, none, ticket_buy, 0.0)
   hover = none
   loading_history = false
   history_exhausted = false
@@ -248,15 +325,13 @@ on switch_venue(next)
   error = ""
   status = "Loading"
   parallel
-    run venue_symbols(venue) -> symbols_loaded _ | failed _
-    run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
-    run venue_account(venue, address) -> account_loaded _ | account_failed _
-    run venue_orders(venue, address) -> orders_loaded _ | orders_failed _
-    run venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
-    abortable feeds abort-on-drop
-      parallel
-        stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
-        stream venue_fill_feed(venue, address) -> fills_streamed _ | fills_failed _
+    run every venue_symbols(venue) -> symbols_loaded _ | failed _
+    run every venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
+    run every venue_account(venue, address) -> account_loaded _ | account_failed _
+    run every venue_orders(venue, address) -> orders_loaded _ | orders_failed _
+    run every venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
+    stream replace lane=market_feed venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
+    stream replace lane=fill_feed venue_fill_feed(venue, address) -> fills_streamed _ | fills_failed _
 
 on pick_interval(next)
   // The width already on the chart is not a change of width. Ungated, pressing
@@ -274,29 +349,31 @@ on pick_interval(next)
   tape = tape_focus(tape, coin, next)
   loading_history = false
   history_exhausted = false
-  run venue_candles(venue, tape, coin, next) -> candles_loaded _ | failed _
+  run every venue_candles(venue, tape, coin, next) -> candles_loaded _ | failed _
 
 on search(typed)
   query = typed
 
 on tick_universe
-  clock = now_seconds()
-  run venue_symbols(venue) -> symbols_loaded _ | failed _
+  let now = now_seconds()
+  clock = now
+  // A window closes on the exchange's schedule rather than on an event, so the
+  // clock arriving is what turns a key that has run out into a session that
+  // says so — while it still holds the key, which is what lets the panel name
+  // what lapsed and offer to approve it again.
+  session = tick_agent(session, now)
+  run every venue_symbols(venue) -> symbols_loaded _ | failed _
 
 on tick_account
   parallel
-    run venue_account(venue, address) -> account_loaded _ | account_failed _
-    run venue_orders(venue, address) -> orders_loaded _ | orders_failed _
+    run every venue_account(venue, address) -> account_loaded _ | account_failed _
+    run every venue_orders(venue, address) -> orders_loaded _ | orders_failed _
 
 on tick_portfolio
-  run venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
+  run every venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
 
 on pick_portfolio_range(next)
   portfolio_range = next
-
-on cool_flash
-  fills = cool_fills(fills)
-  flashing = any_hot(fills)
 
 // A universe is the first thing that can say whether the market on screen
 // exists here. The ticker does not travel: the venues list different markets
@@ -313,7 +390,6 @@ on symbols_loaded(rows)
   coin = landed
   focus = symbol_row(rows, landed)
   status = ""
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, landed))
   return if !moved
   // Past here the market changed under the reader, so this owes what
   // `pick_symbol` owes: the book, the prints and the typed order belong to the
@@ -324,13 +400,20 @@ on symbols_loaded(rows)
   tape_prints = []
   ticket_price = ""
   ticket_size = ""
-  quote = price_ticket("", "", ticket_leverage, focus, ticket_buy, position_held(positions, landed))
+  // A take-profit and a stop-loss are prices of the market being left, and
+  // reduce-only is a promise about a position held in it. Carried over they
+  // are levels on the wrong instrument and a promise about nothing, and both
+  // look exactly like levels and a promise.
+  ticket_tp = ""
+  ticket_sl = ""
+  ticket_levels = false
+  ticket_reduce = false
   hover = none
   status = "Loading candles"
   tape = tape_focus(tape, landed, interval)
   loading_history = false
   history_exhausted = false
-  run venue_candles(venue, tape, landed, interval) -> candles_loaded _ | failed _
+  run every venue_candles(venue, tape, landed, interval) -> candles_loaded _ | failed _
 
 // A window of candles is a new left edge for the chart to be panned back from,
 // so whatever was known about the old one is not about this tape. It also
@@ -356,7 +439,7 @@ on candles_loaded(count)
   status = "Loading candles"
   tape = tape_focus(tape, coin, finer)
   loading_history = false
-  run venue_candles(venue, tape, coin, finer) -> candles_loaded _ | failed _
+  run every venue_candles(venue, tape, coin, finer) -> candles_loaded _ | failed _
 
 // An account read with no address to make it for answers nothing rather than
 // failing, so this is also how the app comes back to holding no account at all.
@@ -370,12 +453,10 @@ on account_loaded(next)
   account_missing = !account_read(next)
   account = next
   positions = held_positions(next)
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on fills_streamed(rows)
   fills_error = ""
   fills = push_fills(fills, rows, 200)
-  flashing = any_hot(fills)
 
 on orders_loaded(rows)
   error = ""
@@ -399,7 +480,6 @@ on market_ticked(tick)
   account = mark_account(account, positions)
   tape_prints = push_trades(tape_prints, tick, 60)
   alerts = check_alerts(alerts, tick)
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on failed(reason)
   error = reason.message
@@ -436,7 +516,7 @@ on chart_signalled(signal)
   return if !signal.older
   return if loading_history || history_exhausted
   loading_history = true
-  run venue_history(venue, tape, coin, interval) -> history_loaded _ | failed _
+  run every venue_history(venue, tape, coin, interval) -> history_loaded _ | failed _
 
 // How many bars older than the tape's first one the read added, and zero is
 // the venue saying there are none. The window asked for is derived from that
@@ -452,13 +532,48 @@ on history_loaded(older)
 on lower_resized(_dx, dy)
   lower_height = pane_height(lower_height - dy)
 
+// Custody. Three acts and one clock, and none of them decides anything: the
+// state machine in Rust does, and what lands here is whatever came out of it.
+//
+// Every act clears the note first. A sentence left over from the last attempt
+// beside the result of this one is the panel reporting a refusal that has
+// already been answered.
+on unlock
+  return if !session_unlockable(session)
+  unlock_note = ""
+  run every unlock_agent(venue, address) -> custody_answered _ | custody_failed _
+
+on enrol
+  unlock_note = ""
+  run every enrol_agent(venue, address) -> custody_answered _ | custody_failed _
+
+// Both acts land here because both answer the same question. A declined sheet,
+// a first run, a build with no keychain and an approval nobody has made are
+// states with sentences, not failures, and the machine has already sorted them.
+on custody_answered(entry)
+  session = entry.session
+  unlock_note = entry.note
+
+// The one outcome that is a read that failed rather than an answer: the venue
+// would not say which of this account's keys are live. The session is left
+// exactly where it was, because nothing about it was learned.
+on custody_failed(reason)
+  unlock_note = reason.message
+
+on lock
+  session = lock_agent()
+  unlock_note = ""
+
 subscribe
   // Escape clears the search box, and the search box is in the market rail on
   // the terminal. App-scoped, it cleared a filter the reader could not see from
   // anywhere else, so the list came back narrowed to a word nothing on screen
   // showed.
-  keyboard press when page == Page.terminal && !gate && !empty(query) -> search_key _
+  keyboard press when page == Page.terminal && !gate && !venues_open && !empty(query) -> search_key _
+  // Escape shuts the picker, and it shuts it before it clears the search box:
+  // one press is one act, and the act a reader means is the panel covering
+  // the screen rather than a word in a rail behind it.
+  keyboard press when venues_open -> venues_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 60s when !gate && !empty(address) -> tick_portfolio
-  every 700ms when flashing -> cool_flash

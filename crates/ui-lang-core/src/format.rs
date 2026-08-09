@@ -476,12 +476,12 @@ mod tests {
     }
 
     #[test]
-    fn formats_component_lifetime_and_replace() {
-        let source = "app Demo\nextern crate::backend\n    fetch() -> str\ncomponent Search()\n    lifetime mounted\n    on search\n        run replace lane=search fetch() -> loaded _\n    button \"Search\" -> search\non loaded(value)\nview\n    Search\n";
+    fn formats_component_lifetime_replace_and_lane_invalidation() {
+        let source = "app Demo\nextern crate::backend\n    fetch() -> str\ncomponent Search()\n    lifetime mounted\n    on cancel\n        invalidate lane=search\n    on search\n        run replace lane=search fetch() -> loaded _\n    col\n        button \"Search\" -> search\n        button \"Cancel\" -> cancel\non loaded(value)\nview\n    Search\n";
         let formatted = format_source(source).unwrap();
         assert_eq!(
             formatted,
-            "app Demo\nextern crate::backend\n  fetch() -> str\ncomponent Search()\n  lifetime mounted\n  on search\n    run replace lane=search fetch() -> loaded _\n  button \"Search\" -> search\non loaded(value)\nview\n  Search\n"
+            "app Demo\nextern crate::backend\n  fetch() -> str\ncomponent Search()\n  lifetime mounted\n  on cancel\n    invalidate lane=search\n  on search\n    run replace lane=search fetch() -> loaded _\n  col\n    button \"Search\" -> search\n    button \"Cancel\" -> cancel\non loaded(value)\nview\n  Search\n"
         );
     }
 

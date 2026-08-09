@@ -219,7 +219,7 @@ view
     assert!(matches!(
         document.components[0].handlers[0].statements[0],
         Statement::Run {
-            mode: FutureMode::Replace,
+            mode: DeliveryMode::Replace,
             lane: Some(ref lane),
             ..
         } if lane == "requests::search"
@@ -252,12 +252,12 @@ view
 }
 
 #[test]
-fn request_modes_require_named_lanes_while_bare_run_remains_every() {
+fn parses_explicit_every_while_replacement_modes_require_named_delivery_lanes() {
     let source = r#"app Demo
 extern crate::backend
   fetch() -> str
 on search
-  run fetch() -> loaded _
+  run every fetch() -> loaded _
 on loaded(value)
 view
   text "Demo"
@@ -266,24 +266,205 @@ view
     assert!(matches!(
         document.handlers[0].statements[0],
         Statement::Run {
-            mode: FutureMode::Every,
+            mode: DeliveryMode::Every,
             lane: None,
             ..
         }
     ));
 
     for mode in ["latest", "replace"] {
-        let error = parse(&source.replace("run fetch", &format!("run {mode} fetch"))).unwrap_err();
+        let error =
+            parse(&source.replace("run every fetch", &format!("run {mode} fetch"))).unwrap_err();
         assert_eq!(error.code, "E050");
         assert_eq!(
             error.message,
-            format!("`run {mode}` requires a named request lane")
+            format!("`run {mode}` requires a named delivery lane")
         );
         assert_eq!(
             error.hint.as_deref(),
-            Some(format!("write `run {mode} lane=request_name call(...) -> ...`").as_str())
+            Some(format!("write `run {mode} lane=name call(...) -> ...`").as_str())
         );
     }
+}
+
+#[test]
+fn parses_explicit_stream_delivery_modes() {
+    let source = r#"app Demo
+extern crate::backend
+  stream watch() -> str
+on observe
+  stream every watch() -> observed _
+on replace
+  stream replace lane=feed watch() -> observed _
+on observed(value)
+view
+  text "Demo"
+"#;
+    let document = parse(source).unwrap();
+
+    assert!(matches!(
+        &document.handlers[0].statements[0],
+        Statement::Run {
+            kind: EffectKind::Stream,
+            mode: DeliveryMode::Every,
+            lane: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &document.handlers[1].statements[0],
+        Statement::Run {
+            kind: EffectKind::Stream,
+            mode: DeliveryMode::Replace,
+            lane: Some(lane),
+            ..
+        } if lane == "feed"
+    ));
+
+    let error = parse(&source.replace(
+        "stream every watch() -> observed _",
+        "stream replace watch() -> observed _",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E050");
+    assert_eq!(
+        error.message,
+        "`stream replace` requires a named delivery lane"
+    );
+    assert_eq!(
+        error.hint.as_deref(),
+        Some("write `stream replace lane=name call(...) -> ...`")
+    );
+}
+
+#[test]
+fn rejects_stream_without_an_explicit_delivery_mode() {
+    let error = parse(
+        r#"app Demo
+extern crate::backend
+  stream watch() -> str
+on observe
+  stream watch() -> observed _
+on observed(value)
+view
+  text "Demo"
+"#,
+    )
+    .expect_err("bare stream must not select a delivery mode implicitly");
+    assert_eq!(error.code, "E050");
+    assert_eq!(error.message, "`stream` requires an explicit delivery mode");
+    assert_eq!(
+        error.hint.as_deref(),
+        Some(
+            "write `stream every call(...) -> ...` to deliver every item; use a named `stream replace` lane when a new stream supersedes the old one"
+        )
+    );
+}
+
+#[test]
+fn rejects_stream_latest() {
+    let error = parse(
+        r#"app Demo
+extern crate::backend
+  stream watch() -> str
+on observe
+  stream latest lane=feed watch() -> observed _
+on observed(value)
+view
+  text "Demo"
+"#,
+    )
+    .expect_err("stream latest cannot define a completion-based lane");
+    assert_eq!(error.code, "E050");
+    assert_eq!(error.message, "`stream latest` is not supported");
+    assert_eq!(
+        error.hint.as_deref(),
+        Some(
+            "use `stream replace lane=name call(...) -> ...` to abort and suppress the prior stream"
+        )
+    );
+}
+
+#[test]
+fn rejects_run_without_an_explicit_delivery_mode() {
+    let error = parse(
+        r#"app Demo
+extern crate::backend
+  fetch() -> str
+on search
+  run fetch() -> loaded _
+on loaded(value)
+view
+  text "Demo"
+"#,
+    )
+    .expect_err("bare run must not select a delivery mode implicitly");
+    assert_eq!(error.code, "E050");
+    assert_eq!(error.message, "`run` requires an explicit delivery mode");
+    assert_eq!(
+        error.hint.as_deref(),
+        Some(
+            "write `run every call(...) -> ...` to deliver every completion; use a named `run latest` or `run replace` lane when newer work supersedes older work"
+        )
+    );
+}
+
+#[test]
+fn parses_only_canonical_qualified_delivery_lane_invalidation() {
+    let source = r#"app Demo
+extern crate::backend
+  fetch() -> str
+on stop
+  invalidate lane=requests::search
+on search
+  run latest lane=requests::search fetch() -> loaded _
+on loaded(value)
+view
+  text "Demo"
+"#;
+    let document = parse(source).unwrap();
+    assert!(matches!(
+        &document.handlers[0].statements[0],
+        Statement::InvalidateLane { lane, .. } if lane == "requests::search"
+    ));
+    let namespaces = source
+        .lines()
+        .map(|line| {
+            (line.trim_start().starts_with("invalidate ")
+                || line.trim_start().starts_with("run latest "))
+            .then(|| "imported".to_owned())
+        })
+        .collect::<Vec<_>>();
+    let (imported, _) = parse_with_symbols_and_namespaces(source, &namespaces).unwrap();
+    assert!(matches!(
+        &imported.handlers[0].statements[0],
+        Statement::InvalidateLane { lane, .. } if lane == "imported::requests::search"
+    ));
+    assert!(matches!(
+        &imported.handlers[1].statements[0],
+        Statement::Run { lane: Some(lane), .. } if lane == "imported::requests::search"
+    ));
+
+    for invalid in ["invalidate", "invalidate requests::search"] {
+        let error =
+            parse(&source.replace("invalidate lane=requests::search", invalid)).unwrap_err();
+        assert_eq!(error.code, "E050");
+        assert_eq!(
+            error.message,
+            "`invalidate` requires `lane=<qualified-identifier>`"
+        );
+        assert_eq!(
+            error.hint.as_deref(),
+            Some("write `invalidate lane=request_name`")
+        );
+    }
+
+    let error = parse(&source.replace(
+        "invalidate lane=requests::search",
+        "invalidate lane=requests::search now",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E072");
 }
 
 #[test]
@@ -329,8 +510,8 @@ fn parses_all_native_time_operations() {
 #[test]
 fn parses_structured_task_groups() {
     let source = SOURCE.replace(
-            "  run load() -> loaded _ | failed _",
-            "  parallel\n    run load() -> loaded _ | failed _\n    sequential\n      task clipboard read -> clipboard_read _\n      task system theme -> theme_read _",
+            "  run every load() -> loaded _ | failed _",
+            "  parallel\n    run every load() -> loaded _ | failed _\n    sequential\n      task clipboard read -> clipboard_read _\n      task system theme -> theme_read _",
         );
     let document = parse(&source).unwrap();
     let Statement::TaskGroup {
@@ -350,8 +531,8 @@ fn parses_structured_task_groups() {
         } if statements.len() == 2
     ));
 
-    let error =
-        parse(&SOURCE.replace("  run load() -> loaded _ | failed _", "  parallel")).unwrap_err();
+    let error = parse(&SOURCE.replace("  run every load() -> loaded _ | failed _", "  parallel"))
+        .unwrap_err();
     assert_eq!(error.code, "E050");
     assert!(error.message.contains("at least one"));
 }
@@ -364,8 +545,8 @@ fn parses_abortable_tasks_and_handles() {
             "  query = \"\"\n  request:task-handle? = none",
         )
         .replace(
-            "  run load() -> loaded _ | failed _",
-            "  abortable request abort-on-drop\n    run load() -> loaded _ | failed _",
+            "  run every load() -> loaded _ | failed _",
+            "  abortable request abort-on-drop\n    run every load() -> loaded _ | failed _",
         );
     let document = parse(&source).unwrap();
     assert_eq!(
@@ -383,16 +564,16 @@ fn parses_abortable_tasks_and_handles() {
     ));
 
     let error = parse(&SOURCE.replace(
-        "  run load() -> loaded _ | failed _",
-        "  abortable request later\n    run load() -> loaded _ | failed _",
+        "  run every load() -> loaded _ | failed _",
+        "  abortable request later\n    run every load() -> loaded _ | failed _",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E050");
     assert!(error.message.contains("abort-on-drop"));
 
     let error = parse(&SOURCE.replace(
-            "  run load() -> loaded _ | failed _",
-            "  abortable request\n    run load() -> loaded _ | failed _\n    run load() -> loaded _ | failed _",
+            "  run every load() -> loaded _ | failed _",
+            "  abortable request\n    run every load() -> loaded _ | failed _\n    run every load() -> loaded _ | failed _",
         ))
         .unwrap_err();
     assert_eq!(error.code, "E050");

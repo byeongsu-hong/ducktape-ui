@@ -394,9 +394,9 @@ const COMPLETIONS: &[Completion] = &[
         "responsive #${1:id} size=(${2:width}, ${3:height})\n  $0",
     ),
     Completion::new(
-        "run",
+        "run every",
         "effect",
-        "run ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _",
+        "run every ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _",
     ),
     Completion::new(
         "run latest",
@@ -408,6 +408,17 @@ const COMPLETIONS: &[Completion] = &[
         "effect",
         "run replace lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _",
     ),
+    Completion::new(
+        "stream every",
+        "effect",
+        "stream every ${1:source}(${2}) -> ${3:succeeded} _ | ${4:failed} _",
+    ),
+    Completion::new(
+        "stream replace",
+        "effect",
+        "stream replace lane=${1:stream} ${2:source}(${3}) -> ${4:succeeded} _ | ${5:failed} _",
+    ),
+    Completion::new("invalidate", "effect", "invalidate lane=${1:request}"),
     Completion::new("<->", "operator", "<-> ${1:state}"),
     Completion::new("->", "operator", "-> ${1:handler}"),
     Completion::new("~=", "operator", "~= ${1:expected}"),
@@ -1722,11 +1733,11 @@ fn construct_schema(item: &Completion) -> Value {
                 ("h", "length", false),
             ]),
         ),
-        "run" | "run latest" | "run replace" => {
+        "run every" | "run latest" | "run replace" => {
             let (mode, syntax, lane_required) = match item.label {
-                "run" => (
-                    "ordinary",
-                    "run <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
+                "run every" => (
+                    "every",
+                    "run every <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
                     false,
                 ),
                 "run latest" => (
@@ -1766,6 +1777,56 @@ fn construct_schema(item: &Completion) -> Value {
                 Vec::new(),
             )
         }
+        "stream every" | "stream replace" => {
+            let (mode, syntax, lane_required) = match item.label {
+                "stream every" => (
+                    "every",
+                    "stream every <extern-stream>(<args>) -> <success-handler> _ [| <failure-handler> _]",
+                    false,
+                ),
+                "stream replace" => (
+                    "replace",
+                    "stream replace lane=<qualified-identifier> <extern-stream>(<args>) -> <success-handler> _ [| <failure-handler> _]",
+                    true,
+                ),
+                _ => unreachable!(),
+            };
+            details(
+                &["handler-statement"],
+                syntax,
+                leaf(),
+                no_binding(),
+                json!({
+                    "required": true,
+                    "operator": "->",
+                    "mode": mode,
+                    "lane": {
+                        "required": lane_required,
+                        "forbidden": !lane_required,
+                        "type": "static qualified identifier",
+                        "sharedBy": "stream replace starts with the same fully qualified lane name in one state owner"
+                    },
+                    "success": { "required": true, "payload": "each successful stream item" },
+                    "failure": {
+                        "payload": "each failed stream item; an error item does not end the stream",
+                        "requiredWhen": "extern declaration has `! <error-type>`",
+                        "forbiddenWhen": "extern declaration has no error type"
+                    },
+                    "latest": false,
+                    "component": "stream replace only",
+                    "abortableMember": false
+                }),
+                Vec::new(),
+            )
+        }
+        "invalidate" => details(
+            &["handler-statement"],
+            "invalidate lane=<qualified-identifier>",
+            leaf(),
+            no_binding(),
+            no_route(),
+            properties(&[("lane", "static qualified identifier", true)]),
+        ),
         "<->" => details(
             &["binding-position"],
             "<-> <state-identifier>",
@@ -2610,27 +2671,48 @@ pub fn document() -> Value {
             "candidateRevision": LANGUAGE_REVISION,
             "frozen": false,
             "generative": true,
-            "requestLanes": {
-                "ordinary": "run delivers every completion and owns no request lane",
-                "name": "a static qualified identifier; each checked state owner has a finite set of named lanes",
+            "deliveryLanes": {
+                "every": {
+                    "future": "run every delivers every Future completion",
+                    "stream": "stream every delivers every item from every independently started stream",
+                    "ownsLane": false,
+                    "compilerOwnedHandle": false,
+                    "memory": "repeatedly starting a stream that does not terminate intentionally keeps every producer and its captures alive",
+                    "safeStreamCompletionDefault": "stream replace lane=<qualified-function-name>"
+                },
+                "name": "a static qualified identifier; each checked state owner has a finite set of named delivery lanes",
                 "qualification": "unaliased app and preset fragments remain in the root namespace and may share root lanes; an aliased component qualifies its internal lane names, but those lanes remain owned by each component instance",
-                "sharing": "the same fully qualified lane name joins members across handlers; one owner cannot mix latest and replace for a lane",
-                "storage": "fixed per state owner by the source-declared lanes; component-owner count follows retained/mounted lifetime; a replace lane retains only its current abort handle and releases it when its matching completion is accepted, the next replacement starts, or the owner drops",
+                "sharing": "the same fully qualified lane name joins members across handlers; one owner cannot mix Future and stream effects or latest and replace delivery modes for a lane",
+                "storage": "fixed per state owner by the source-declared lanes; component-owner count follows retained/mounted lifetime; a Future replace lane releases its current abort handle when its matching terminal completion is accepted, the next replacement starts, the lane is invalidated, or its owner drops, while a stream replace lane retains its handle across items and releases it only after natural stream termination, the next replacement, invalidation, or owner drop",
                 "owner": {
                     "app": "the top-level application state",
                     "daemon": "the daemon state shared across all of its windows",
                     "component": "one component instance; equal fully qualified lane names in different instances are independent"
                 },
                 "latest": {
+                    "effects": ["Future"],
                     "delivery": "only the current generation may route success or failure",
                     "cancelsStaleWork": false,
                     "memory": "stale futures and their captures remain live until they finish or their backend drops them"
                 },
                 "replace": {
-                    "delivery": "only the current generation may route success or failure",
+                    "effects": ["Future", "stream"],
+                    "delivery": "only the current generation may route a Future completion or stream item",
                     "abortsPriorTask": true,
                     "rollback": false,
-                    "memory": "aborting drops work still owned by the task, but cannot undo prior effects or stop detached or blocking backend work"
+                    "memory": "one handle and generation are retained per declared lane and owner; aborting drops work still owned by the task, but cannot undo prior effects, stop detached or blocking backend work, or retract messages already queued by the runtime",
+                    "outerAbort": "an outer abort can suppress a Future replacement completion before update; its one fixed current handle then remains until replacement, invalidation, or owner drop",
+                    "streamTerminal": "a private terminal envelope clears the handle only after natural stream termination; stream items never clear it"
+                },
+                "invalidate": {
+                    "syntax": "invalidate lane=<qualified-identifier>",
+                    "target": "an existing latest Future or replace Future/stream lane in the same state owner; forward references are allowed and invalidation never declares a lane",
+                    "scope": "the app/daemon/preset owner or the current component instance",
+                    "position": "a direct handler statement, never a parallel, sequential, or abortable task member",
+                    "delivery": "advance the generation so every earlier Future completion or stream item is stale",
+                    "latest": "does not cancel the in-flight Future",
+                    "replace": "advances the generation, then aborts and releases the current replacement handle so already queued old messages are stale",
+                    "task": false
                 }
             },
             "componentProps": {
@@ -2657,7 +2739,7 @@ pub fn document() -> Value {
             },
             "componentLifecycle": {
                 "default": "retained",
-                "mounted": "state, latest generations, and replace handles are dropped when the scope leaves its rendered root",
+                "mounted": "state, delivery-lane generations, and replace handles are dropped when the scope leaves its rendered root",
                 "unmountEffects": false,
             },
             "derivedValues": {
@@ -2721,10 +2803,27 @@ pub fn document() -> Value {
                     ],
                     "componentStateInitializer": false,
                     "reason": "component rendering may initialize local state again",
-                    "asyncCompletionRouteExpression": {
+                    "runTaskCompletionRouteExpression": {
+                        "statements": ["run every/latest/replace Future", "task statement, including built-in tasks"],
+                        "explicitValues": ["state", "derived value", "handler parameter", "handler let local", "pure expression"],
+                        "evaluation": "each explicit success and failure expression becomes an owned snapshot when the statement launches",
+                        "valueType": "ordinary cloneable Ice data",
+                        "branches": "both success and failure snapshots materialize at launch even though only the delivered branch routes",
+                        "payloadPlaceholder": "_ is supplied by the delivered completion and is not snapshotted",
                         "syncExtern": false,
                         "externKinds": ["pure"],
-                        "reason": "the route expression is evaluated when the callback runs",
+                        "recomputationUnsafeBuiltin": false,
+                        "syncPattern": "evaluate sync once in a preceding handler let and route that local",
+                        "runtimeValuePattern": "evaluate a recomputation-unsafe builtin once in a preceding handler let and route that local",
+                        "unchangedFamilies": ["stream", "sip", "flow", "native query"],
+                        "memory": {
+                            "ownership": "one snapshot set per in-flight task",
+                            "release": "task completion, drop, or replace abort",
+                            "latest": "a stale latest Future retains its snapshot set until it finishes",
+                            "multiOutputTask": "retain one original snapshot set and clone values into each delivered message",
+                            "globalMap": false,
+                            "accumulatesPerCompletion": false,
+                        },
                     },
                 },
                 "errorType": false,
@@ -2751,10 +2850,11 @@ pub fn document() -> Value {
                         "derived",
                         "component prop default",
                         "component state initializer",
+                        "direct run/task completion route expression",
                     ],
                     "allowedContexts": [
                         "top-level app state initializer",
-                        "handler",
+                        "handler expressions other than direct run/task completion route expressions",
                         "view",
                     ],
                 },
@@ -2921,15 +3021,44 @@ mod tests {
     }
 
     #[test]
-    fn request_lane_schema_and_completions_are_canonical() {
+    fn delivery_lane_schema_and_completions_are_canonical() {
         let schema = document();
-        let lanes = &schema["core"]["requestLanes"];
+        let lanes = &schema["core"]["deliveryLanes"];
+        assert_eq!(
+            lanes["every"]["stream"],
+            "stream every delivers every item from every independently started stream"
+        );
+        assert_eq!(lanes["every"]["compilerOwnedHandle"], false);
+        assert_eq!(
+            lanes["every"]["safeStreamCompletionDefault"],
+            "stream replace lane=<qualified-function-name>"
+        );
+        assert!(lanes.get("ordinary").is_none());
         assert_eq!(
             lanes["owner"]["daemon"],
             "the daemon state shared across all of its windows"
         );
         assert_eq!(lanes["latest"]["cancelsStaleWork"], false);
+        assert_eq!(lanes["latest"]["effects"], json!(["Future"]));
         assert_eq!(lanes["replace"]["rollback"], false);
+        assert_eq!(lanes["replace"]["effects"], json!(["Future", "stream"]));
+        assert_eq!(
+            lanes["replace"]["outerAbort"],
+            "an outer abort can suppress a Future replacement completion before update; its one fixed current handle then remains until replacement, invalidation, or owner drop"
+        );
+        assert_eq!(lanes["invalidate"]["task"], false);
+        assert_eq!(
+            schema["core"]["componentLifecycle"]["mounted"],
+            "state, delivery-lane generations, and replace handles are dropped when the scope leaves its rendered root"
+        );
+        assert_eq!(
+            lanes["invalidate"]["scope"],
+            "the app/daemon/preset owner or the current component instance"
+        );
+        assert_eq!(
+            lanes["invalidate"]["target"],
+            "an existing latest Future or replace Future/stream lane in the same state owner; forward references are allowed and invalidation never declares a lane"
+        );
         let constructs = schema["core"]["constructs"].as_array().unwrap();
         let construct = |label| {
             constructs
@@ -2937,12 +3066,48 @@ mod tests {
                 .find(|construct| construct["label"] == label)
                 .unwrap_or_else(|| panic!("missing `{label}` construct"))
         };
-        assert_eq!(construct("run")["route"]["mode"], "ordinary");
-        assert_eq!(construct("run")["route"]["lane"]["forbidden"], true);
+        assert_eq!(construct("run every")["route"]["mode"], "every");
+        assert_eq!(construct("run every")["route"]["lane"]["forbidden"], true);
+        assert!(
+            constructs
+                .iter()
+                .all(|construct| construct["label"] != "run")
+        );
         assert_eq!(construct("run latest")["route"]["lane"]["required"], true);
         assert_eq!(
             construct("run latest")["route"]["lane"]["type"],
             "static qualified identifier"
+        );
+        assert_eq!(
+            construct("invalidate")["syntax"],
+            "invalidate lane=<qualified-identifier>"
+        );
+        assert_eq!(
+            construct("invalidate")["properties"],
+            json!([{
+                "name": "lane",
+                "type": "static qualified identifier",
+                "required": true
+            }])
+        );
+        assert_eq!(construct("stream every")["route"]["mode"], "every");
+        assert_eq!(
+            construct("stream every")["route"]["lane"]["forbidden"],
+            true
+        );
+        assert_eq!(
+            construct("stream replace")["route"]["lane"]["required"],
+            true
+        );
+        assert!(
+            constructs
+                .iter()
+                .all(|construct| construct["label"] != "stream")
+        );
+        assert!(
+            constructs
+                .iter()
+                .all(|construct| construct["label"] != "stream latest")
         );
 
         let completions = completion_items();
@@ -2953,8 +3118,13 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing `{label}` completion"))
         };
         assert_eq!(
-            completion("run")["insertText"],
-            "run ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
+            completion("run every")["insertText"],
+            "run every ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
+        );
+        assert!(
+            completions
+                .iter()
+                .all(|completion| completion["label"] != "run")
         );
         assert_eq!(
             completion("run latest")["insertText"],
@@ -2963,6 +3133,28 @@ mod tests {
         assert_eq!(
             completion("run replace")["insertText"],
             "run replace lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
+        );
+        assert_eq!(
+            completion("stream every")["insertText"],
+            "stream every ${1:source}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
+        );
+        assert_eq!(
+            completion("stream replace")["insertText"],
+            "stream replace lane=${1:stream} ${2:source}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
+        );
+        assert!(
+            completions
+                .iter()
+                .all(|completion| completion["label"] != "stream")
+        );
+        assert!(
+            completions
+                .iter()
+                .all(|completion| completion["label"] != "stream latest")
+        );
+        assert_eq!(
+            completion("invalidate")["insertText"],
+            "invalidate lane=${1:request}"
         );
     }
 
@@ -3105,9 +3297,12 @@ mod tests {
             "_",
             "#id",
             "extern",
-            "run",
+            "run every",
             "run latest",
             "run replace",
+            "stream every",
+            "stream replace",
+            "invalidate",
         ];
         let schema = document();
         let constructs = schema["core"]["constructs"].as_array().unwrap();
@@ -3165,11 +3360,11 @@ mod tests {
         );
         assert_eq!(find("button")["route"]["required"], true);
         assert_eq!(
-            find("run")["route"]["failure"]["requiredWhen"],
+            find("run every")["route"]["failure"]["requiredWhen"],
             "extern declaration has `! <error-type>`"
         );
         assert_eq!(
-            find("run")["route"]["failure"]["forbiddenWhen"],
+            find("run every")["route"]["failure"]["forbiddenWhen"],
             "extern declaration has no error type"
         );
         assert!(
@@ -3196,13 +3391,32 @@ mod tests {
             schema["core"]["externFunctions"]["sync"]["componentStateInitializer"],
             false
         );
+        let sync = &schema["core"]["externFunctions"]["sync"];
+        assert!(sync.get("asyncCompletionRouteExpression").is_none());
         assert_eq!(
-            schema["core"]["externFunctions"]["sync"]["asyncCompletionRouteExpression"]["externKinds"],
-            json!(["pure"])
-        );
-        assert_eq!(
-            schema["core"]["externFunctions"]["sync"]["asyncCompletionRouteExpression"]["syncExtern"],
-            false
+            sync["runTaskCompletionRouteExpression"],
+            json!({
+                "statements": ["run every/latest/replace Future", "task statement, including built-in tasks"],
+                "explicitValues": ["state", "derived value", "handler parameter", "handler let local", "pure expression"],
+                "evaluation": "each explicit success and failure expression becomes an owned snapshot when the statement launches",
+                "valueType": "ordinary cloneable Ice data",
+                "branches": "both success and failure snapshots materialize at launch even though only the delivered branch routes",
+                "payloadPlaceholder": "_ is supplied by the delivered completion and is not snapshotted",
+                "syncExtern": false,
+                "externKinds": ["pure"],
+                "recomputationUnsafeBuiltin": false,
+                "syncPattern": "evaluate sync once in a preceding handler let and route that local",
+                "runtimeValuePattern": "evaluate a recomputation-unsafe builtin once in a preceding handler let and route that local",
+                "unchangedFamilies": ["stream", "sip", "flow", "native query"],
+                "memory": {
+                    "ownership": "one snapshot set per in-flight task",
+                    "release": "task completion, drop, or replace abort",
+                    "latest": "a stale latest Future retains its snapshot set until it finishes",
+                    "multiOutputTask": "retain one original snapshot set and clone values into each delivered message",
+                    "globalMap": false,
+                    "accumulatesPerCompletion": false,
+                },
+            })
         );
         assert_eq!(
             schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["forbiddenContexts"],
@@ -3210,6 +3424,7 @@ mod tests {
                 "derived",
                 "component prop default",
                 "component state initializer",
+                "direct run/task completion route expression",
             ])
         );
         assert_eq!(
@@ -3218,7 +3433,11 @@ mod tests {
         );
         assert_eq!(
             schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["allowedContexts"],
-            json!(["top-level app state initializer", "handler", "view"])
+            json!([
+                "top-level app state initializer",
+                "handler expressions other than direct run/task completion route expressions",
+                "view"
+            ])
         );
         assert!(
             schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["names"]

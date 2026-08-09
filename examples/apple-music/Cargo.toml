@@ -12,5 +12,8 @@ ui-lang-runtime.workspace = true
 [build-dependencies]
 ui-lang-build.workspace = true
 
+[dev-dependencies]
+iced_runtime = "0.14.0"
+
 [lints]
 workspace = true

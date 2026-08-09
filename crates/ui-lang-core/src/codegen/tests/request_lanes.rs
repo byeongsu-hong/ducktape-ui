@@ -166,15 +166,15 @@ view
 }
 
 #[test]
-fn ordinary_run_emits_no_request_lane_state() {
+fn every_run_emits_no_request_lane_state() {
     let source = format!(
-        r#"app OrdinaryRun
+        r#"app EveryRun
 extern crate::backend
   fetch(value:i64) -> i64
 {THEME}state
   value = 0
 on search
-  run fetch(value) -> loaded _
+  run every fetch(value) -> loaded _
 on loaded(next)
   value = next
 view
@@ -182,7 +182,7 @@ view
 "#
     );
 
-    let generated = compile(&source, "ordinary_run.ice").unwrap();
+    let generated = compile(&source, "every_run.ice").unwrap();
 
     assert!(!generated.contains("__ice_run_lane_"));
     assert!(!generated.contains("__RequestLane"));
@@ -226,4 +226,214 @@ view
     assert!(generated.contains(
         "self.__ice_run_lane_0_handle = ::std::option::Option::None; return self.__update(*__message)"
     ));
+}
+
+#[test]
+fn replace_stream_lane_keeps_its_handle_until_one_matching_terminal() {
+    let source = format!(
+        r#"app ReplaceStreamLane
+extern crate::backend
+  stream feed(id:i64) -> str
+{THEME}state
+  value = "waiting"
+on start
+  stream replace lane=feed feed(1) -> received _
+on received(next)
+  value = next
+view
+  text value
+"#
+    );
+
+    let generated = compile(&source, "replace_stream_lane.ice").unwrap();
+    let state = item_body(&generated, "pub struct ReplaceStreamLane {");
+    let messages = item_body(&generated, "pub(crate) enum __ReplaceStreamLaneMessage {");
+    let terminal = "::iced::Task::done(__ReplaceStreamLaneMessage::__RequestLane0(__generation, ::std::option::Option::None))";
+
+    assert!(state.contains("pub(crate) __ice_run_lane_0_generation: u64,"));
+    assert!(state.contains("pub(crate) __ice_run_lane_0_handle:"));
+    assert!(messages.contains(
+        "__RequestLane0(u64, ::std::option::Option<::std::boxed::Box<__ReplaceStreamLaneMessage>>)"
+    ));
+    assert!(generated.contains(
+        "__RequestLane0(__generation, ::std::option::Option::Some(::std::boxed::Box::new(__message)))"
+    ));
+    assert_eq!(generated.matches(terminal).count(), 1);
+    assert!(
+        generated.find(terminal).unwrap()
+            < generated
+                .find("let (__task, __handle) = __task.abortable();")
+                .unwrap(),
+        "the item stream and its terminal must be one abortable task"
+    );
+    assert!(generated.contains(
+        "if let ::std::option::Option::Some(__message) = __message { return self.__update(*__message); } self.__ice_run_lane_0_handle = ::std::option::Option::None;"
+    ));
+}
+
+#[test]
+fn invalidates_shared_app_and_preset_lanes_in_place() {
+    let source = format!(
+        r#"app InvalidateAppLanes
+extern crate::backend
+  fetch(value:i64) -> i64
+{THEME}state
+  value = 0
+preset seeded
+  boot
+    run latest lane=request fetch(0) -> loaded _
+on start_latest
+  run latest lane=request fetch(value) -> loaded _
+on invalidate_latest
+  invalidate lane=request
+on start_replace
+  run replace lane=preview fetch(value) -> loaded _
+on invalidate_replace
+  invalidate lane=preview
+on loaded(next)
+  value = next
+view
+  text value
+"#
+    );
+
+    let generated = compile(&source, "invalidate_app_lanes.ice").unwrap();
+    let state = item_body(&generated, "pub struct InvalidateAppLanes {");
+    let messages = item_body(&generated, "pub(crate) enum __InvalidateAppLanesMessage {");
+
+    assert_eq!(
+        state
+            .matches("pub(crate) __ice_run_lane_0_generation: u64,")
+            .count(),
+        1
+    );
+    assert_eq!(
+        state
+            .matches("pub(crate) __ice_run_lane_1_generation: u64,")
+            .count(),
+        1
+    );
+    assert_eq!(state.matches("__ice_run_lane_1_handle:").count(), 1);
+    assert_eq!(messages.matches("__RequestLane0(").count(), 1);
+    assert_eq!(messages.matches("__RequestLane1(").count(), 1);
+    assert_eq!(
+        generated
+            .matches("self.__ice_run_lane_0_generation = self.__ice_run_lane_0_generation.wrapping_add(1);")
+            .count(),
+        3
+    );
+    assert_eq!(
+        generated
+            .matches("self.__ice_run_lane_1_generation = self.__ice_run_lane_1_generation.wrapping_add(1);")
+            .count(),
+        2
+    );
+    assert!(generated.contains(
+        "if let ::std::option::Option::Some(__previous) = self.__ice_run_lane_1_handle.take() { __previous.abort(); }"
+    ));
+}
+
+#[test]
+fn invalidates_component_lanes_in_the_current_instance() {
+    let source = format!(
+        r#"app InvalidateComponentLanes
+extern crate::backend
+  fetch(value:i64) -> i64
+{THEME}component Retained()
+  state
+    value = 0
+  on start
+    run replace lane=request fetch(value) -> loaded _
+  on invalidate_request
+    invalidate lane=request
+  on loaded(next)
+    value = next
+  button "Start retained" -> start
+component Mounted()
+  lifetime mounted
+  state
+    value = 0
+  on start
+    run latest lane=request fetch(value) -> loaded _
+  on invalidate_request
+    invalidate lane=request
+  on loaded(next)
+    value = next
+  button "Start mounted" -> start
+view
+  col
+    Retained #retained
+    Mounted #mounted
+"#
+    );
+
+    let generated = compile(&source, "invalidate_component_lanes.ice").unwrap();
+    let retained = item_body(&generated, "pub(crate) struct __IceRetainedState {");
+    let mounted = item_body(&generated, "pub(crate) struct __IceMountedState {");
+
+    assert_eq!(
+        retained
+            .matches("__ice_run_lane_0_generation: u64,")
+            .count(),
+        1
+    );
+    assert_eq!(retained.matches("__ice_run_lane_0_handle:").count(), 1);
+    assert_eq!(
+        mounted.matches("__ice_run_lane_1_generation: u64,").count(),
+        1
+    );
+    assert_eq!(
+        generated
+            .matches("__local.__ice_run_lane_0_generation = __local.__ice_run_lane_0_generation.wrapping_add(1);")
+            .count(),
+        2
+    );
+    assert!(generated.contains(
+        "if let ::std::option::Option::Some(__previous) = __local.__ice_run_lane_0_handle.take() { __previous.abort(); }"
+    ));
+    assert_eq!(
+        generated
+            .matches("__local.__ice_run_lane_1_generation = self.__ice_component_mounted.next_generation();")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_daemon_invalidates_one_shared_root_lane() {
+    let source = format!(
+        r#"daemon LaneDaemon
+  title "Lane daemon"
+  window dashboard
+    size 320 240
+extern crate::backend
+  fetch(value:i64) -> i64
+{THEME}state
+  value = 0
+on start
+  run latest lane=request fetch(value) -> loaded _
+on invalidate_request
+  invalidate lane=request
+on loaded(next)
+  value = next
+view
+  text value
+"#
+    );
+
+    let generated = compile(&source, "invalidate_daemon_lane.ice").unwrap();
+    let state = item_body(&generated, "pub struct LaneDaemon {");
+
+    assert_eq!(
+        state
+            .matches("pub(crate) __ice_run_lane_0_generation: u64,")
+            .count(),
+        1
+    );
+    assert_eq!(
+        generated
+            .matches("self.__ice_run_lane_0_generation = self.__ice_run_lane_0_generation.wrapping_add(1);")
+            .count(),
+        2
+    );
 }

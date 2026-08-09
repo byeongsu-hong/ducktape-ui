@@ -7,9 +7,22 @@ component Num(value:str, size:f64, width:f64)
       font=digits
       @text-fg
 
-component Delta(value:str, up:bool, size:f64, width:f64)
+// `hug` pulls the figure to the box's leading edge instead of its trailing
+// one, for the one seat where the number reads against a neighbour on its
+// left rather than a pane edge on its right. The box itself never moves
+// either way, so what a hug changes is only which side holds the slack.
+// Alignment is a keyword, not an expression, so each side is spelled out.
+component Delta(value:str, up:bool, size:f64, width:f64, hug:bool=false)
   col #root w=width
-    if up
+    if up && hug
+      text value
+        with
+          size=size
+          w=fill
+          align-x=left
+          font=digits
+          @text-up
+    if up && !hug
       text value
         with
           size=size
@@ -17,7 +30,15 @@ component Delta(value:str, up:bool, size:f64, width:f64)
           align-x=right
           font=digits
           @text-up
-    if !up
+    if !up && hug
+      text value
+        with
+          size=size
+          w=fill
+          align-x=left
+          font=digits
+          @text-down
+    if !up && !hug
       text value
         with
           size=size

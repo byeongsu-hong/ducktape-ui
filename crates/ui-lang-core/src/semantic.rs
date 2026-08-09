@@ -421,9 +421,26 @@ pub enum AnimationDuration {
     Milliseconds(u64),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum FutureMode {
-    #[default]
+/// The literal an animation starts from. A start value is a constant like every
+/// other animation setting, so it never needs the expression machinery.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AnimationStart {
+    Bool(bool),
+    Number(f64),
+}
+
+impl AnimationStart {
+    /// The checked type this start value can begin.
+    pub fn ty(self) -> Type {
+        match self {
+            Self::Bool(_) => Type::Bool,
+            Self::Number(_) => Type::F64,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeliveryMode {
     Every,
     Latest,
     Replace,

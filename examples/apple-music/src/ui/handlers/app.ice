@@ -1,6 +1,6 @@
 on mount
   loading = true
-  run load_home() -> home_loaded _ | failed _
+  run every load_home() -> home_loaded _ | failed _
 
 on home_loaded(feed)
   top_picks = feed.top_picks
@@ -14,7 +14,7 @@ on navigate(next_section)
 on sign_in
   return if loading
   loading = true
-  run authenticate() -> authenticated _ | failed _
+  run every authenticate() -> authenticated _ | failed _
 
 on authenticated(session)
   signed_in = true
@@ -31,13 +31,14 @@ on search
   loading = true
   section = MusicSection.search
   queue_open = false
-  run search_catalog(search_query) -> searched _ | failed _
+  run every search_catalog(search_query) -> searched _ | failed _
 
 on searched(results)
   search_results = results
   loading = false
 
 on play(title, artist, cover)
+  invalidate lane=playback_navigation
   current_title = title
   current_artist = artist
   current_cover = cover
@@ -48,6 +49,7 @@ on toggle_playback
   playing = !playing
 
 on restart_current
+  invalidate lane=playback_navigation
   position = 0.0
   playing = true
 
@@ -62,13 +64,13 @@ on toggle_mute
   volume = toggle_mute(volume, unmuted_volume)
 
 on previous
-  run adjacent_track(current_title, -1) -> track_loaded _ | failed _
+  run latest lane=playback_navigation adjacent_track(current_title, -1) -> track_loaded _ | failed _
 
 on next
-  run adjacent_track(current_title, 1) -> track_loaded _ | failed _
+  run latest lane=playback_navigation adjacent_track(current_title, 1) -> track_loaded _ | failed _
 
 on shuffle
-  run adjacent_track(current_title, 3) -> track_loaded _ | failed _
+  run latest lane=playback_navigation adjacent_track(current_title, 3) -> track_loaded _ | failed _
 
 on queue
   queue_open = !queue_open

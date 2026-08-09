@@ -133,7 +133,7 @@ state
 
 on mount
   loading = true
-  run list_tasks() -> loaded _ | failed _
+  run every list_tasks() -> loaded _ | failed _
 
 on loaded(next)
   tasks = next
@@ -298,8 +298,9 @@ frames. They reject `sync` externs and recomputation-unsafe built-ins:
 `rgba` image constructors, and animation queries whose instant is omitted. The
 category covers both runtime reads and calls that create a fresh retained
 identity. The checker still permits the set in top-level app state initializers,
-handlers, and views; capture the needed value or identity in state when it must
-remain stable across view passes.
+views, and handler expressions other than direct Future-mode/`task` completion
+route expressions. Evaluate one in a preceding handler `let` and route that
+local, or capture it in state when it must remain stable across view passes.
 
 The expression language is deliberately closed:
 
@@ -316,8 +317,12 @@ The expression language is deliberately closed:
 - declared `pure` extern calls in every expression context;
 - declared `sync` extern calls only in top-level app state initializers and
   immediately evaluated app/component/preset handler expressions, including
-  arguments inside nested task statements; async completion route expressions
-  are evaluated when the callback runs and are pure-only;
+  arguments inside nested task statements; explicit `run every`, `run latest`,
+  and `run replace` Future success and failure route expressions, and `task`
+  statement route expressions, are pure-only owned snapshots materialized when
+  the statement launches, while `_` is supplied by the delivered completion.
+  Use a preceding handler `let` to route a value produced by `sync`; stream,
+  sip, flow, and native query route timing is unchanged;
 - checked native constructor/query families documented by the specification.
 
 Examples:
@@ -354,7 +359,7 @@ on submit
   let title = trim(draft)
   return if loading || empty(title)
   loading = true
-  run create_task(title) -> created _ | failed _
+  run every create_task(title) -> created _ | failed _
 
 on created(next)
   tasks = next
@@ -374,8 +379,13 @@ Rules:
 - Use `return if <bool>` as an early guard.
 - Use `sync` externs only in expressions evaluated while the handler runs, such
   as `let` initializers, assignment right-hand sides, guards, and nested task
-  arguments. Completion route expressions run later in callbacks and may call
-  only `pure` externs.
+  arguments. Explicit `run every`, `run latest`, and `run replace` Future
+  success and failure route expressions, and `task` statement route
+  expressions, become owned snapshots when the statement launches, while `_`
+  is supplied by the delivered completion. Both branches materialize at
+  launch but remain pure-only so an unused branch cannot perform an effect;
+  evaluate `sync` in a preceding `let` and route that local. Stream, sip, flow,
+  and native query route timing is unchanged.
 - Put a task-producing statement last; it returns one Iced `Task`.
 - Route fallible externs to both success and failure handlers.
 - Route infallible externs only to success.
@@ -388,7 +398,7 @@ The punctuation is semantic:
 | `input "Title" <-> draft` | two-way binding to supported state |
 | `button "Save" -> submit` | send a unit interaction to `submit` |
 | `checkbox task.title ... -> toggle(task.id, _)` | pass an expression and emitted bool |
-| `run save() -> saved _` | forward async output |
+| `run every save() -> saved _` | deliver each launched Future completion |
 | `_` | current route's emitted payload |
 | `#row` / `#row(task.id)` | static/dynamic scoped identity |
 | `@bg-surface` | checked semantic utility |
@@ -398,9 +408,9 @@ offers a payload. A parameterless route may intentionally discard a payload.
 
 Available effect families include:
 
-- bare async extern + `run`;
+- bare async extern + explicit `run every`/`latest`/`replace` delivery mode;
 - `task` extern + `task`;
-- `stream` extern + `stream`;
+- `stream` extern + explicit handler `stream every`/`stream replace`;
 - `sip` extern + `sip`;
 - `flow` task composition;
 - `parallel` and `sequential` groups;
@@ -408,27 +418,52 @@ Available effect families include:
 - native clipboard, font, system, widget, window, pane, image, time, and debug
   operations.
 
-Ordinary `run` delivers every completion. Use a named request lane when later
-work supersedes earlier work: `run latest lane=search` filters stale success
-and failure messages without stopping the old Future, while `run replace
-lane=preview` also aborts the prior Iced task. Equal fully qualified lane names
-join calls across handlers for one state owner. A fragment imported `as
-catalog` may contribute an aliased component whose internal lane is likewise
-qualified, but that lane remains owned by each component instance. Unaliased
-app and preset fragments remain in the root namespace and may share root lanes.
-The app owns one
-scope, a daemon shares one scope across its windows, and each component instance
-is independent. Names are static qualified identifiers and therefore finite per
-owner; one owner cannot mix `latest` and `replace` for a name.
+Every handler Future and stream names its delivery mode. `run every` delivers
+every Future completion and `stream every` delivers every item until that
+stream ends. Use a named delivery lane when later work supersedes earlier work:
+`run latest lane=search` filters stale Future messages without stopping the old
+Future, while `run replace lane=preview` and `stream replace lane=feed` also
+abort the prior Iced task. Equal fully qualified lane names join calls across
+handlers for one state owner. A fragment imported `as catalog` may contribute
+an aliased component whose internal lane is likewise qualified, but that lane
+remains owned by each component instance. Unaliased app and preset fragments
+remain in the root namespace and may share root lanes. The app owns one scope,
+a daemon shares one scope across its windows, and each component instance is
+independent. Names are static qualified identifiers and therefore finite per
+owner; one lane cannot mix Future and stream effects or `latest` and `replace`
+modes.
+
+Bare handler `run` and `stream`, plus `stream latest`, are rejected.
+Subscription `run` is a long-lived stream source. Task-flow `from run call()`
+and `from stream call()`, plus corresponding `then` sources, are Task adapters;
+they do not route a completion/item directly and have no delivery mode.
+
+When a synchronous app, daemon, preset, or component handler supersedes pending
+work without starting another request, write `invalidate lane=search` directly
+in that handler before the state transition. It must resolve to an existing
+lane of the same owner, may refer forward to that lane's `run latest`,
+`run replace`, or `stream replace`, and never declares a lane or starts a task.
+It advances the generation first, so earlier Future completions and already
+queued stream items are stale. A `latest` Future keeps running; a `replace` task
+is aborted and its current handle released. A component affects only its
+runtime instance. `parallel`, `sequential`, and `abortable` task composition
+reject invalidation because it produces no task.
 
 `latest` leaves stale Futures and their captured values live until completion.
 `replace` drops work owned by the aborted task but cannot roll back effects
-already performed or stop detached or blocking Rust work. Choose a backend
-boundary with cancellation semantics that match the lane. Generated bookkeeping
-is fixed per declared lane for each state owner; component-owner count follows
-the retained/mounted lifetime contract. If an outer abort prevents the matching completion
-from reaching update, one current replacement handle can remain until the next
-replacement or owner drop; it does not accumulate.
+already performed, stop detached or blocking Rust work, or retract messages
+already queued by the runtime. A replacement stream keeps one handle across all
+current-generation items and releases it only after natural termination,
+replacement, invalidation, or owner drop. Generated bookkeeping is fixed per
+declared lane for each state owner; component-owner count follows the
+retained/mounted lifetime contract. Component handlers allow `stream replace`
+but reject `stream every`; all handler streams are rejected under `abortable`.
+If an outer `abortable` suppresses a Future replacement completion, that lane's
+one current handle remains until replacement, invalidation, or owner drop; it
+does not accumulate.
+At app/daemon/preset scope, repeatedly starting a nonterminating `stream every` keeps
+each independent producer and its captures alive; extern-aware completion
+defaults to a function-named `stream replace` lane for that reason.
 
 Read [rust-boundary.md](rust-boundary.md) before adding one.
 
@@ -657,7 +692,7 @@ ordinary Cargo discovers the same generated tests.
 | `<Button onClick={save}>` | `button "Save" -> save` |
 | `value={draft} onChange={setDraft}` | `input "Title" <-> draft` |
 | `useState(false)` | `state` block + assignment in `on` handler |
-| `useEffect(() => load(), [])` | `on mount` ending in `run`/`task` |
+| `useEffect(() => load(), [])` | `on mount` ending in an explicit Future `run` mode or `task` |
 | component closure over app state | explicit typed prop and route |
 | `children` prop | declared `slot` |
 | conditional JSX | indented `if` or `match` |

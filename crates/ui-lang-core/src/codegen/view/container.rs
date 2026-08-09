@@ -101,12 +101,14 @@ pub(in crate::codegen) fn render_container(
         )
         .unwrap();
     }
+    let mut setup = String::new();
     if let Some(mut surface) = resolved_container_surface_style_value(
         &style,
         &surface,
         container.custom_style.as_ref(),
         program,
         env,
+        &mut setup,
     )? {
         // A custom style can return its own solid border. Clear that final
         // value too, after every style lane has been composed, so the dash is
@@ -126,7 +128,7 @@ pub(in crate::codegen) fn render_container(
         code
     };
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __container_content: __IceElement<'_, {message}> = {content}; let __container = {code}; ::ui_lang_runtime::accessible(__container, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __container_content: __IceElement<'_, {message}> = {content}; let __container = {{ {setup} {code} }}; ::ui_lang_runtime::accessible(__container, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
     ))
 }
 
@@ -311,6 +313,7 @@ fn resolved_container_surface_style_value(
     custom: Option<&ResolvedContainerCustomStyle>,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
+    setup: &mut String,
 ) -> Result<Option<String>, Error> {
     let _derived_guard = enter_escaping_derived_reads();
     let has_typed = surface.background.is_some()
@@ -350,6 +353,22 @@ fn resolved_container_surface_style_value(
             code,
             " __style.background = ::std::option::Option::Some({});",
             resolved_container_background_code(background, program, env)?
+        )
+        .unwrap();
+    }
+    if let Some(alpha) = surface.background_alpha {
+        // The checker already pinned this to a single background color. The
+        // read stays inside the style closure so a frame that only redraws
+        // still paints the value the animation has now. Component state is
+        // reached through `setup`'s aliases: this closure is `move`, and
+        // naming the instance scope directly would take it from the component's
+        // other animated surfaces.
+        let (alpha_env, alpha_setup) = closure_capture_env(env);
+        setup.push_str(&alpha_setup);
+        write!(
+            code,
+            " if let ::std::option::Option::Some(::iced::Background::Color(__color)) = &mut __style.background {{ __color.a = (({}) as f32 / 100.0).clamp(0.0, 1.0); }}",
+            resolved_expr_use_code(program, alpha, &alpha_env, ValueMode::Owned)?
         )
         .unwrap();
     }

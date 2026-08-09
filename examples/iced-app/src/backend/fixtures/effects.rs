@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{LazyLock, Mutex};
@@ -73,6 +73,121 @@ pub fn complete_controlled_request(id: i64, value: &str) {
 
 pub fn controlled_request_was_cancelled(id: i64) -> bool {
     CONTROLLED_REQUESTS.lock().unwrap().cancelled.contains(&id)
+}
+
+#[derive(Default)]
+struct ControlledStreamState {
+    items: VecDeque<String>,
+    finished: bool,
+    waker: Option<Waker>,
+}
+
+#[derive(Default)]
+struct ControlledStreams {
+    active: HashMap<i64, ControlledStreamState>,
+    cancelled: HashSet<i64>,
+}
+
+static CONTROLLED_STREAMS: LazyLock<Mutex<ControlledStreams>> =
+    LazyLock::new(|| Mutex::new(ControlledStreams::default()));
+
+pub struct ControlledStream {
+    id: i64,
+    completed: bool,
+}
+
+impl iced::futures::Stream for ControlledStream {
+    type Item = String;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let result = {
+            let mut streams = CONTROLLED_STREAMS.lock().unwrap();
+            let result = {
+                let stream = streams.active.get_mut(&self.id).expect("controlled stream");
+                if let Some(item) = stream.items.pop_front() {
+                    Some(Some(item))
+                } else if stream.finished {
+                    Some(None)
+                } else {
+                    stream.waker = Some(context.waker().clone());
+                    None
+                }
+            };
+            if matches!(result, Some(None)) {
+                streams.active.remove(&self.id);
+            }
+            result
+        };
+        match result {
+            Some(Some(item)) => Poll::Ready(Some(item)),
+            Some(None) => {
+                self.completed = true;
+                Poll::Ready(None)
+            }
+            None => Poll::Pending,
+        }
+    }
+}
+
+impl Drop for ControlledStream {
+    fn drop(&mut self) {
+        if !self.completed {
+            let mut streams = CONTROLLED_STREAMS.lock().unwrap();
+            streams.active.remove(&self.id);
+            streams.cancelled.insert(self.id);
+        }
+    }
+}
+
+#[cfg(test)]
+pub fn controlled_stream(id: i64) -> ControlledStream {
+    let mut streams = CONTROLLED_STREAMS.lock().unwrap();
+    streams.cancelled.remove(&id);
+    assert!(
+        streams
+            .active
+            .insert(id, ControlledStreamState::default())
+            .is_none(),
+        "controlled stream {id} is already active"
+    );
+    ControlledStream {
+        id,
+        completed: false,
+    }
+}
+
+pub fn emit_controlled_stream(id: i64, value: &str) {
+    let waker = {
+        let mut streams = CONTROLLED_STREAMS.lock().unwrap();
+        let stream = streams
+            .active
+            .get_mut(&id)
+            .expect("active controlled stream");
+        stream.items.push_back(value.to_owned());
+        stream.waker.take()
+    };
+    if let Some(waker) = waker {
+        waker.wake();
+    }
+}
+
+pub fn finish_controlled_stream(id: i64) {
+    let waker = {
+        let mut streams = CONTROLLED_STREAMS.lock().unwrap();
+        let stream = streams
+            .active
+            .get_mut(&id)
+            .expect("active controlled stream");
+        stream.finished = true;
+        stream.waker.take()
+    };
+    if let Some(waker) = waker {
+        waker.wake();
+    }
+}
+
+pub fn controlled_stream_was_cancelled(id: i64) -> bool {
+    CONTROLLED_STREAMS.lock().unwrap().cancelled.contains(&id)
 }
 
 #[cfg(test)]

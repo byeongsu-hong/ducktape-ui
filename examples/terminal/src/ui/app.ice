@@ -45,7 +45,7 @@ on start
   return if !can_start
   busy = true
   error = ""
-  run start_session(kind, target, directory) -> started _ | failed _
+  run every start_session(kind, target, directory) -> started _ | failed _
 
 on started(result)
   session = result.session

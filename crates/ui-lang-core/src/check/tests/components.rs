@@ -1,5 +1,5 @@
 use super::*;
-use crate::{EffectKind, FutureMode, Statement};
+use crate::{DeliveryMode, EffectKind, Statement};
 
 #[test]
 fn checks_named_component_event_routes_and_payloads() {
@@ -316,7 +316,7 @@ palette app for AppTheme
   danger #ff0000
 component Search() -> str
   on search
-    run fetch() -> emit(_)
+    run every fetch() -> emit(_)
   button "Search" -> search
 on changed(value)
 view
@@ -1317,7 +1317,7 @@ view
 }
 
 #[test]
-fn checks_component_request_lanes() {
+fn checks_component_delivery_lanes() {
     let source = r#"app Search
 extern crate::backend
   AppError(message:str)
@@ -1356,7 +1356,7 @@ view
         document.source_document().components[0].handlers[0].statements[1],
         Statement::Run {
             kind: EffectKind::Future,
-            mode: FutureMode::Latest,
+            mode: DeliveryMode::Latest,
             lane: Some(ref lane),
             ..
         } if lane == "search"
@@ -1373,11 +1373,11 @@ view
     assert!(matches!(
         replaced.source_document().components[0].handlers[0].statements[1],
         Statement::Run {
-            mode: FutureMode::Replace,
+            mode: DeliveryMode::Replace,
             ..
         }
     ));
-    analyze(&source.replace("run latest lane=search", "run")).unwrap();
+    analyze(&source.replace("run latest lane=search", "run every")).unwrap();
 
     let global = r#"app GlobalLatest
 extern crate::backend
@@ -1402,7 +1402,104 @@ view
     analyze(&global.replace("run latest", "run replace")).unwrap();
 }
 
-const REQUEST_LANE_APP: &str = r#"app GlobalLanes
+#[test]
+fn checks_component_replace_stream_delivery_lane_and_forward_invalidation() {
+    let source = warning_app(
+        r#"extern crate::backend
+  stream watch() -> str
+component Feed()
+  on stop
+    invalidate lane=feed
+  on observe
+    stream replace lane=feed watch() -> observed _
+  on observed(value)
+  col
+    button "Observe" -> observe
+    button "Stop" -> stop
+view
+  Feed
+"#,
+    );
+    let checked = analyze(&source).unwrap();
+    assert_eq!(checked.declarations.run_lane_count(), 1);
+    let lane = checked
+        .declarations
+        .try_run_lane(crate::hir::RunLaneId(0))
+        .unwrap();
+    assert_eq!(
+        lane.owner,
+        crate::hir::HandlerOwner::Component(crate::hir::ComponentId(0))
+    );
+    assert_eq!(lane.name, "feed");
+    assert_eq!(lane.kind, EffectKind::Stream);
+    assert_eq!(lane.mode, DeliveryMode::Replace);
+    assert_eq!(lane.statements.len(), 1);
+
+    let stop = checked
+        .declarations
+        .handlers()
+        .iter()
+        .find(|handler| handler.name == "stop")
+        .unwrap();
+    assert_eq!(
+        checked
+            .declarations
+            .statement(stop.statement_roots[0])
+            .run_lane,
+        Some(lane.declaration.id)
+    );
+}
+
+#[test]
+fn rejects_component_stream_every() {
+    let source = warning_app(
+        r#"extern crate::backend
+  stream watch() -> str
+component Feed()
+  on observe
+    stream every watch() -> observed _
+  on observed(value)
+  button "Observe" -> observe
+view
+  Feed
+"#,
+    );
+    let error = analyze(&source).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert_eq!(
+        error.message,
+        "component handlers cannot use `stream every`"
+    );
+    assert_eq!(
+        error.hint.as_deref(),
+        Some("use `stream replace lane=name ...` so the component owns one replaceable stream")
+    );
+}
+
+#[test]
+fn checker_rejects_forged_stream_latest_mode() {
+    let source = warning_app(
+        r#"extern crate::backend
+  stream watch() -> str
+on observe
+  stream replace lane=feed watch() -> observed _
+on observed(value)
+view
+  text "Feed"
+"#,
+    );
+    let mut document = crate::parse(&source).unwrap();
+    let Statement::Run { mode, .. } = &mut document.handlers[0].statements[0] else {
+        panic!("expected stream run");
+    };
+    *mode = DeliveryMode::Latest;
+
+    let error = crate::check::analyze(document).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert_eq!(error.message, "`stream latest` is not supported");
+}
+
+const DELIVERY_LANE_APP: &str = r#"app GlobalLanes
 extern crate::backend
   fetch(query:str) -> str
 theme contract AppTheme
@@ -1426,8 +1523,8 @@ view
 "#;
 
 #[test]
-fn deduplicates_app_and_preset_request_lane_hir() {
-    let checked = analyze(REQUEST_LANE_APP).unwrap();
+fn deduplicates_app_and_preset_delivery_lane_hir() {
+    let checked = analyze(DELIVERY_LANE_APP).unwrap();
     assert_eq!(checked.declarations.run_lane_count(), 1);
     let lane = checked
         .declarations
@@ -1435,7 +1532,8 @@ fn deduplicates_app_and_preset_request_lane_hir() {
         .unwrap();
     assert_eq!(lane.owner, crate::hir::HandlerOwner::App);
     assert_eq!(lane.name, "search");
-    assert_eq!(lane.mode, FutureMode::Latest);
+    assert_eq!(lane.kind, EffectKind::Future);
+    assert_eq!(lane.mode, DeliveryMode::Latest);
     assert_eq!(lane.statements.len(), 2);
     assert!(lane.statements.iter().all(|statement| {
         checked.declarations.statement(*statement).run_lane == Some(lane.declaration.id)
@@ -1443,8 +1541,93 @@ fn deduplicates_app_and_preset_request_lane_hir() {
 }
 
 #[test]
-fn enforces_request_lane_modes_per_owner() {
-    let mismatch = analyze(&REQUEST_LANE_APP.replace(
+fn resolves_forward_lane_invalidation_without_declaring_a_start_site() {
+    let source = DELIVERY_LANE_APP.replace(
+        "on search\n",
+        "on cancel\n  invalidate lane=search\non search\n",
+    );
+    let checked = analyze(&source).unwrap();
+    assert_eq!(checked.declarations.run_lane_count(), 1);
+    let lane = checked
+        .declarations
+        .try_run_lane(crate::hir::RunLaneId(0))
+        .unwrap();
+    let cancel = checked
+        .declarations
+        .handlers()
+        .iter()
+        .find(|handler| handler.owner == crate::hir::HandlerOwner::App && handler.name == "cancel")
+        .unwrap();
+    let invalidation = checked.declarations.statement(cancel.statement_roots[0]);
+    assert_eq!(invalidation.run_lane, Some(lane.declaration.id));
+    assert_eq!(invalidation.task, None);
+    assert_eq!(lane.statements.len(), 2);
+    assert!(!lane.statements.contains(&invalidation.declaration.id));
+}
+
+#[test]
+fn checks_lane_invalidation_declarations_and_state_owners() {
+    let source = DELIVERY_LANE_APP.replace(
+        "view\n  text \"Search\"",
+        "component SearchBox()\n  on cancel\n    invalidate lane=search\n  on search\n    run latest lane=search fetch(\"component\") -> loaded _\n  on loaded(value)\n  col\n    button \"Search\" -> search\n    button \"Cancel\" -> cancel\nview\n  SearchBox",
+    );
+    let checked = analyze(&source).unwrap();
+    assert_eq!(checked.declarations.run_lane_count(), 2);
+
+    let unknown_source = DELIVERY_LANE_APP.replace(
+        "on search\n",
+        "on cancel\n  invalidate lane=missing\non search\n",
+    );
+    let error = analyze(&unknown_source).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert_eq!(
+        error.message,
+        "delivery lane `missing` is not declared for this state owner"
+    );
+    assert_eq!(
+        error.hint.as_deref(),
+        Some(
+            "declare it with a named `run latest`, `run replace`, or `stream replace` lane for the same state owner"
+        )
+    );
+
+    let wrong_owner = DELIVERY_LANE_APP.replace(
+        "view\n  text \"Search\"",
+        "component SearchBox()\n  on cancel\n    invalidate lane=search\n  text \"Search\"\nview\n  SearchBox",
+    );
+    let error = analyze(&wrong_owner).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert_eq!(
+        error.message,
+        "delivery lane `search` is not declared for this state owner"
+    );
+}
+
+#[test]
+fn rejects_lane_invalidation_inside_task_composition() {
+    for (composition, message) in [
+        (
+            "parallel\n    invalidate lane=missing",
+            "task groups only accept task-producing statements",
+        ),
+        (
+            "abortable request abort-on-drop\n    invalidate lane=missing",
+            "abortable requires a task-producing statement",
+        ),
+    ] {
+        let source = DELIVERY_LANE_APP.replace(
+            "on search\n",
+            &format!("on cancel\n  {composition}\non search\n"),
+        );
+        let error = analyze(&source).unwrap_err();
+        assert_eq!(error.code, "E143");
+        assert_eq!(error.message, message);
+    }
+}
+
+#[test]
+fn enforces_delivery_lane_contracts_per_owner() {
+    let mismatch = analyze(&DELIVERY_LANE_APP.replace(
         "run latest lane=search fetch(\"preset\")",
         "run replace lane=search fetch(\"preset\")",
     ))
@@ -1456,7 +1639,24 @@ fn enforces_request_lane_modes_per_owner() {
             .contains("uses both `run latest` and `run replace`")
     );
 
-    let components = REQUEST_LANE_APP.replace(
+    let mixed_kind = DELIVERY_LANE_APP
+        .replace(
+            "  fetch(query:str) -> str",
+            "  fetch(query:str) -> str\n  stream watch() -> str",
+        )
+        .replace(
+            "on loaded(value)\n",
+            "on watch\n  stream replace lane=search watch() -> loaded _\non loaded(value)\n",
+        );
+    let mixed_kind = analyze(&mixed_kind).unwrap_err();
+    assert_eq!(mixed_kind.code, "E140");
+    assert!(
+        mixed_kind
+            .message
+            .contains("uses both `run latest` and `stream replace`")
+    );
+
+    let components = DELIVERY_LANE_APP.replace(
         "preset seeded\n  boot\n    run latest lane=search fetch(\"preset\") -> loaded _\non search\n  run latest lane=search fetch(\"handler\") -> loaded _\non loaded(value)\n",
         "component LatestSearch()\n  on search\n    run latest lane=search fetch(\"latest\") -> loaded _\n  on loaded(value)\n  button \"Latest\" -> search\ncomponent ReplaceSearch()\n  lifetime mounted\n  on search\n    run replace lane=search fetch(\"replace\") -> loaded _\n  on loaded(value)\n  button \"Replace\" -> search\n",
     )
@@ -1482,8 +1682,8 @@ fn enforces_request_lane_modes_per_owner() {
 }
 
 #[test]
-fn rejects_duplicate_request_lane_in_recursive_handler_tasks() {
-    let duplicate = REQUEST_LANE_APP.replace(
+fn rejects_duplicate_delivery_lane_in_recursive_handler_tasks() {
+    let duplicate = DELIVERY_LANE_APP.replace(
         "run latest lane=search fetch(\"handler\") -> loaded _",
         "parallel\n    run latest lane=search fetch(\"first\") -> loaded _\n    run latest lane=search fetch(\"second\") -> loaded _",
     );
@@ -1497,7 +1697,7 @@ fn rejects_duplicate_request_lane_in_recursive_handler_tasks() {
 }
 
 #[test]
-fn rejects_abortable_component_request_lanes_without_handle_ownership() {
+fn rejects_abortable_component_delivery_lanes_without_handle_ownership() {
     let source = r#"app ComponentAbortable
 extern crate::backend
   fetch(query:str) -> str
@@ -1526,7 +1726,7 @@ view
 }
 
 #[test]
-fn nested_request_lanes_give_a_component_without_declared_state_identity() {
+fn nested_delivery_lanes_give_a_component_without_declared_state_identity() {
     let source = warning_app(
         r#"extern crate::backend
   fetch(query:str) -> str

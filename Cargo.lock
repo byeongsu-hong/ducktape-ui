@@ -3493,6 +3493,7 @@ name = "music-example"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "iced_runtime",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-runtime",
@@ -6072,6 +6073,7 @@ dependencies = [
 name = "trading-example"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "ducktape-ui",
  "ecgfp5",
  "getrandom 0.3.4",

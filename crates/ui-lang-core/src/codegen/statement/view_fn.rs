@@ -43,11 +43,7 @@ pub(in crate::codegen) fn view_derived_snapshots(
     }
     let empty = HashSet::new();
     let env = app_view_env(program, &empty);
-    let mounted = program
-        .components()
-        .iter()
-        .any(|component| component.storage == ComponentStorage::Mounted);
-    let root_scope = if mounted {
+    let root_scope = if retains_mounted_components(program) {
         "__ice_root_scope_ref".to_owned()
     } else {
         rust_string(program.app_name())
@@ -163,12 +159,7 @@ pub(in crate::codegen) fn generate_view(
     cached: &HashSet<crate::hir::DerivedId>,
 ) -> Result<(), Error> {
     let daemon = program.settings().kind == ProgramKind::Daemon;
-    let mounted = program
-        .components()
-        .iter()
-        .filter(|component| component.storage == ComponentStorage::Mounted)
-        .map(|component| component_state_field(&component.name))
-        .collect::<Vec<_>>();
+    let mounted = mounted_component_fields(program);
     let env = app_view_env(program, cached);
     let root_scope = if mounted.is_empty() {
         rust_string(program.app_name())
@@ -225,14 +216,7 @@ pub(in crate::codegen) fn generate_view(
         )
         .unwrap();
     } else {
-        let root_scope_code = if daemon {
-            format!(
-                "format!(\"{{}}/{{:?}}\", {}, window)",
-                rust_string(program.app_name())
-            )
-        } else {
-            format!("{}.to_owned()", rust_string(program.app_name()))
-        };
+        let root_scope_init = root_scope_code(program, "window");
         let begin = mounted
             .iter()
             .map(|field| format!("self.{field}.begin_render();"))
@@ -250,7 +234,7 @@ pub(in crate::codegen) fn generate_view(
         };
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {snapshot} {palette} let __ice_root_scope = {root_scope_code}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} let __ice_root: __IceElement<'_, {message}> = {result}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {snapshot} {palette} let __ice_root_scope = {root_scope_init}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} let __ice_root: __IceElement<'_, {message}> = {result}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     }

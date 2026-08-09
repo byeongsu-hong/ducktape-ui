@@ -87,6 +87,33 @@ pub(in crate::codegen) fn has_animations(program: &LoweredProgram) -> bool {
         .app_states()
         .iter()
         .any(|state| matches!(state.ty, Type::Animation(_)))
+        || !animated_components(program).is_empty()
+}
+
+/// Every component that owns animation state, with the names of those states.
+/// Their motion drives native frames exactly like app state's does, so the
+/// subscription has to look inside their per-instance storage.
+pub(in crate::codegen) fn animated_components(
+    program: &LoweredProgram,
+) -> Vec<(String, Vec<&str>)> {
+    program
+        .components()
+        .iter()
+        .filter_map(|component| {
+            let states = component
+                .states
+                .iter()
+                .filter(|state| matches!(state.ty, Type::Animation(_)))
+                .map(|state| state.name.as_str())
+                .collect::<Vec<_>>();
+            (!states.is_empty()).then(|| {
+                (
+                    crate::codegen::component_state_field(&component.name),
+                    states,
+                )
+            })
+        })
+        .collect()
 }
 
 pub(in crate::codegen) fn font_assets_code(

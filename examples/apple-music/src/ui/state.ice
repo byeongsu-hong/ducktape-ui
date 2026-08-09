@@ -34,4 +34,4 @@ derived
 
 preset test
   boot
-    run load_home() -> home_loaded _ | failed _
+    run every load_home() -> home_loaded _ | failed _

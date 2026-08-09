@@ -2623,6 +2623,30 @@ fn expr_animation_at_code(
     }
 }
 
+/// The animated value an animation initializer declares, without the
+/// `Animation::new` wrapper — the target an `Animation` built from a `from`
+/// start value travels to.
+pub(in crate::codegen) fn resolved_animation_target_code(
+    program: &LoweredProgram,
+    expression_use: ResolvedExpressionId,
+) -> Result<String, Error> {
+    let expressions = program.expressions();
+    let expression_use = expressions.expression_use(expression_use);
+    let context = ExprEmission::for_resolved(program);
+    let code = expr_node_code(
+        ExprNode::Resolved(expression_use.root),
+        &HashMap::new(),
+        &context,
+        ValueMode::Owned,
+    )?;
+    Ok(match &expression_use.coercion {
+        ResolvedInitializerCoercion::ValueToAnimation { value } if *value == Type::F64 => {
+            format!("({code}) as f32")
+        }
+        _ => code,
+    })
+}
+
 pub(in crate::codegen) fn resolved_expr_use_code(
     program: &LoweredProgram,
     expression_use: ResolvedExpressionId,

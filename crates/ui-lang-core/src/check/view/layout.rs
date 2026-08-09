@@ -256,7 +256,7 @@ pub(in crate::check) fn infer_layout_group(
                     extern_function(document, &style.function, ExternKind::ContainerStyle, span)?;
                 check_call_args(function, &style.args, env, document, span)?;
             }
-            check_container_style_options(&options.style, env, document, span, "E184")?;
+            check_container_style_options(&options.style, env, document, span, "E184", true)?;
             check_border_dash(options, env, document, span)?;
             check_styles(styles, document, span, StyleTarget::Container(options))?;
             retain_container_analyses(span, container_analysis_guard.finish())?;

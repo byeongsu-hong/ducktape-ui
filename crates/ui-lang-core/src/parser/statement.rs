@@ -68,6 +68,28 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
             span: Span::line(line.number),
         });
     }
+    if line.text == "invalidate" {
+        return Err(error(
+            "E050",
+            line,
+            "`invalidate` requires `lane=<qualified-identifier>`",
+        )
+        .hint("write `invalidate lane=request_name`"));
+    }
+    if let Some(source) = line.text.strip_prefix("invalidate ") {
+        let Some(lane) = source.strip_prefix("lane=") else {
+            return Err(error(
+                "E050",
+                line,
+                "`invalidate` requires `lane=<qualified-identifier>`",
+            )
+            .hint("write `invalidate lane=request_name`"));
+        };
+        return Ok(Statement::InvalidateLane {
+            lane: line.qualify(&qualified_identifier(lane, line)?),
+            span: Span::line(line.number),
+        });
+    }
     if let Some(source) = line.text.strip_prefix("let ") {
         let Some((name, value)) = split_top_once(source, '=') else {
             return Err(error(
@@ -185,40 +207,68 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
                 .map(|source| (EffectKind::Stream, source))
         });
     if let Some((kind, run)) = effect {
-        let (mode, run) = if kind == EffectKind::Future {
-            run.strip_prefix("latest ")
-                .map(|run| (FutureMode::Latest, run))
+        let (mode, run) = match kind {
+            EffectKind::Future => run
+                .strip_prefix("every ")
+                .map(|run| (DeliveryMode::Every, run))
+                .or_else(|| {
+                    run.strip_prefix("latest ")
+                        .map(|run| (DeliveryMode::Latest, run))
+                })
                 .or_else(|| {
                     run.strip_prefix("replace ")
-                        .map(|run| (FutureMode::Replace, run))
+                        .map(|run| (DeliveryMode::Replace, run))
                 })
-                .unwrap_or((FutureMode::Every, run))
-        } else {
-            (FutureMode::Every, run)
+                .ok_or_else(|| explicit_run_mode_error(line))?,
+            EffectKind::Stream => {
+                if run == "latest" || run.starts_with("latest ") {
+                    return Err(error(
+                        "E050",
+                        line,
+                        "`stream latest` is not supported",
+                    )
+                    .hint(
+                        "use `stream replace lane=name call(...) -> ...` to abort and suppress the prior stream",
+                    ));
+                }
+                run.strip_prefix("every ")
+                    .map(|run| (DeliveryMode::Every, run))
+                    .or_else(|| {
+                        run.strip_prefix("replace ")
+                            .map(|run| (DeliveryMode::Replace, run))
+                    })
+                    .ok_or_else(|| explicit_stream_mode_error(line))?
+            }
+            EffectKind::Task => (DeliveryMode::Every, run),
         };
-        let (lane, run) = if mode == FutureMode::Every {
+        let (lane, run) = if mode == DeliveryMode::Every {
             (None, run)
         } else {
             let Some(lane_and_call) = run.strip_prefix("lane=") else {
                 let mode = match mode {
-                    FutureMode::Latest => "latest",
-                    FutureMode::Replace => "replace",
-                    FutureMode::Every => unreachable!(),
+                    DeliveryMode::Latest => "latest",
+                    DeliveryMode::Replace => "replace",
+                    DeliveryMode::Every => unreachable!(),
+                };
+                let keyword = match kind {
+                    EffectKind::Future => "run",
+                    EffectKind::Stream => "stream",
+                    EffectKind::Task => unreachable!(),
                 };
                 return Err(error(
                     "E050",
                     line,
-                    format!("`run {mode}` requires a named request lane"),
+                    format!("`{keyword} {mode}` requires a named delivery lane"),
                 )
                 .hint(format!(
-                    "write `run {mode} lane=request_name call(...) -> ...`"
+                    "write `{keyword} {mode} lane=name call(...) -> ...`"
                 )));
             };
             let Some(separator) = lane_and_call.find(char::is_whitespace) else {
                 return Err(error(
                     "E050",
                     line,
-                    "a request lane must be followed by an extern call",
+                    "a delivery lane must be followed by an extern call",
                 ));
             };
             let lane = &lane_and_call[..separator];
@@ -273,6 +323,18 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
         line,
         format!("unknown statement `{}`", line.text),
     ))
+}
+
+fn explicit_run_mode_error(line: &Line) -> Error {
+    error("E050", line, "`run` requires an explicit delivery mode").hint(
+        "write `run every call(...) -> ...` to deliver every completion; use a named `run latest` or `run replace` lane when newer work supersedes older work",
+    )
+}
+
+fn explicit_stream_mode_error(line: &Line) -> Error {
+    error("E050", line, "`stream` requires an explicit delivery mode").hint(
+        "write `stream every call(...) -> ...` to deliver every item; use a named `stream replace` lane when a new stream supersedes the old one",
+    )
 }
 
 pub(in crate::parser) fn parse_task_flow(line: &Line) -> Result<Statement, Error> {

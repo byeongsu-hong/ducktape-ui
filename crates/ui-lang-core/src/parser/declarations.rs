@@ -552,6 +552,19 @@ pub(in crate::parser) fn parse_animation_options(
                 })?);
             }
             "auto-reverse" => options.auto_reverse = config_bool(value, line)?,
+            "from" => {
+                options.from = Some(match value {
+                    "true" => AnimationStart::Bool(true),
+                    "false" => AnimationStart::Bool(false),
+                    value => AnimationStart::Number(value.parse::<f64>().map_err(|_| {
+                        error(
+                            "E030",
+                            line,
+                            "animation `from` expects `true`, `false`, or a number",
+                        )
+                    })?),
+                });
+            }
             "easing" => {
                 return Err(error("E030", line, "animation easing expects one name"));
             }

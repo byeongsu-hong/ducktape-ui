@@ -1,24 +1,24 @@
 on mount
   loading = true
-  run list_tasks() -> loaded _ | failed _
+  run every list_tasks() -> loaded _ | failed _
 
 on submit
   let title = normalized_draft
   return if !can_submit
   loading = true
   error = ""
-  run create_task(title) -> created _ | failed _
+  run every create_task(title) -> created _ | failed _
 
 on toggle(id, checked)
   return if loading
   loading = true
   error = ""
-  run set_task_done(id, checked) -> updated _ | failed _
+  run every set_task_done(id, checked) -> updated _ | failed _
 
 on retry
   loading = true
   error = ""
-  run list_tasks() -> loaded _ | failed _
+  run every list_tasks() -> loaded _ | failed _
 
 on loaded(next)
   tasks = next

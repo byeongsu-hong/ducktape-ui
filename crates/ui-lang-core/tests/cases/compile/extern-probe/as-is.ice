@@ -17,7 +17,7 @@ state
   items:[Item] = []
 on mount
   return if false
-  run load(1) -> loaded _ | failed _
+  run every load(1) -> loaded _ | failed _
 on loaded(next)
   items = next
 on failed(error)

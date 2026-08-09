@@ -496,7 +496,8 @@ pub(crate) struct RunLaneDeclaration {
     pub(crate) declaration: Declaration<RunLaneId>,
     pub(crate) owner: HandlerOwner,
     pub(crate) name: String,
-    pub(crate) mode: FutureMode,
+    pub(crate) kind: EffectKind,
+    pub(crate) mode: DeliveryMode,
     pub(crate) statements: Vec<StatementId>,
 }
 
