@@ -379,11 +379,20 @@ cap `push_fills` imposes — was larger than the market list had ever been:
 re-measured against 200 distinct fills, 1858us of a 6029us frame, 9.3us a row
 against the market rows' 2.5us behind their boundary.
 
-One row of that table prices nothing, and knowing which saves re-deriving it:
-the probe seeds the **portfolio** page, where the market list is not drawn, so
-`market rows` ablates a list that is not on screen and comes back inside its own
-noise — negative as often as not. The market list is measured on its own page,
-by `markets_stay_memoized_performance_contract` and by the symbol sweep above.
+One row of that table used to price nothing, and it is worth knowing why it
+now does: the probe seeded the **portfolio** page, which was where the fills,
+the positions and the orders had gone, and the market list was drawn on a page
+of its own. `market rows` therefore ablated a list that was not on screen and
+came back inside its own noise — negative as often as not, which is exactly
+what ablating nothing looks like.
+
+The terminal is one page again and the probe seeds that page, so every list the
+table names is rendered while it is ablated. `market rows` against
+`full screen` is now a resolving row rather than a noise row. No figure is
+quoted for it here: it is a wall-clock reading off a shared machine, and the
+two rows are what a reader runs to see it. The market list also keeps its own
+count-based contract in `markets_stay_memoized_performance_contract`, which
+counts rows rebuilt rather than microseconds and is the one CI can hold.
 
 It took the same three things the market list took, and one more:
 
