@@ -9,9 +9,18 @@ the CLI's own login already wrote. There is no second login, and no token is
 stored, printed, or copied anywhere by this app.
 
 ```sh
-codex login          # once, if you have not already
 cargo run -p ai-chat-example
 ```
+
+It signs in on its own — the device flow `codex login --device-auth` runs, with
+the code shown in the window — and it also accepts a login `codex login` already
+made, so an already-signed-in machine needs nothing.
+
+Tokens go in this app's own file (`~/.config/ducktape-ai-chat/auth.json`, owner
+only) and never in the CLI's. A refresh rotates the token it is given, and
+rotating the CLI's would break `codex` for a login this window only borrowed —
+so a borrowed login is read but never refreshed, and says to run `codex login`
+when it expires.
 
 ![A settled turn: the prompt, a folded reasoning summary, two searches, the answer, and what it cost](screenshots/chat.png)
 
@@ -35,9 +44,13 @@ misreporting it.
 Clicking a link copies it; which browser you wanted is not this window's call.
 `Night`/`Day` switches palettes, and settled rows follow.
 
-| Mid-turn | Night | Signed out |
-| --- | --- | --- |
-| ![A reply being written, under the work still running](screenshots/streaming.png) | ![The same transcript on the night palette](screenshots/night.png) | ![The empty state, with a turn that could not start](screenshots/signed-out.png) |
+| Mid-turn | Night |
+| --- | --- |
+| ![A reply being written, under the work still running](screenshots/streaming.png) | ![The same transcript on the night palette](screenshots/night.png) |
+
+| Signing in | Waiting for the code |
+| --- | --- |
+| ![The sign-in screen](screenshots/sign-in.png) | ![A code to type, and the page to type it into](screenshots/sign-in-code.png) |
 
 Every one of these is generated, not staged: the first by the test that types
 into the composer and presses Send, the rest by `cargo ice inspect` against a
@@ -117,6 +130,11 @@ virtualising the transcript is the next thing that would flatten it.
 
 ## Limits
 
+- **The sign-in is not fully verified.** Minting a code and telling waiting from
+  refused are both checked against the live host; the half past approval — what
+  the host returns once a code is typed, and the token exchange — is read off
+  the CLI's own strings. `a_real_sign_in_completes` settles it and needs a
+  person to approve one code.
 - Codex's own shell and patch tools would need this window to execute them,
   which is a different program. The hosted `web_search` tool is served by the
   backend, so a real tool call still reaches the screen.
