@@ -585,6 +585,87 @@ as the book and the tape, because they are watching a price rather than a
 position. They outlive the market they were set from, so every row names its
 own — and dismisses by it, rather than by whatever is on screen.
 
+## One exchange, several books
+
+Hyperliquid is not one market list any more. HIP-3 lets anyone deploy a perp
+dex on the same exchange, and read live the day this was written `perpDexs`
+answered with the canonical universe plus nine builder deployments — `xyz`
+("XYZ") alone listing 94 live markets against USDC, `hyna` ("HyENA") 18 against
+USDe. Flattened into one rail those read as Hyperliquid's own markets, which
+they are not.
+
+So the rail is grouped: the exchange's own perps first, then each builder dex
+under the name it deployed with. A group that settles in something other than
+the exchange's own collateral says so beside its name, because that is the fact
+that separates two lists which otherwise look interchangeable. One group is not
+a categorization — a venue listing one flat universe is drawn with no headings
+at all, which is the whole of what Lighter's rail does.
+
+Grouping organizes one list; it does not create destinations. There is no dex
+page, no dex filter and no dex tab. The search box still reaches every category
+at once, and a group whose first row a search removes is re-headed by whatever
+is left of it — the heading is decided by the filter that orders the rows
+rather than stamped when the universe is read. A header is a heading, so each
+row also names its own group and collateral in its accessible name: a reader
+moving row by row does not carry a header down the list with them.
+
+### The name is the whole identity
+
+A builder market is named `dex:SYMBOL` on the wire, and that string is all that
+is needed to address it. Verified live: `l2Book` and `candleSnapshot` answer
+for the coin `xyz:NVDA` with no `dex` parameter at all, and answer `null` for a
+bare `NVDA`; the `l2Book`, `trades`, `candle` and `activeAssetCtx` websocket
+subscriptions take it the same way. So picking one from the rail charts, quotes
+and books it through exactly the paths every other market uses.
+
+The one thing that cannot take it apart is the tape's focus, which holds the
+market and interval as one colon-joined key. Split from the left, `xyz:NVDA:1m`
+reads as the coin `xyz` at the interval `NVDA:1m`, and every subscription the
+feed then holds is for a market that does not exist. It splits from the right.
+
+`allMids` is the exception on the read side: it answers for one dex at a time,
+so the feed holds one subscription per dex and merges what they carry. Assigned
+rather than merged, the last message of a beat would be the only prices the
+rail saw.
+
+### What the ticket will not quote
+
+A builder dex is a separate clearinghouse, not a section of the exchange's own.
+Read live, one address held $127,575 against canonical Hyperliquid and
+$5,235,542 against the `xyz` dex in the same second — four open positions on
+the second, none on the first.
+
+So every ticket figure measured against the account on screen is about an
+account the order would never touch. AGAINST THE ENGINE says *separate margin
+account* instead of quoting the wrong one, and the share buttons decline to
+size a position out of a balance that is not there. A wrong liquidation price
+is the worst lie this app could tell, and a confident wrong margin load is the
+same lie with a percent sign.
+
+What is not gated is the market's own arithmetic, because it is the market's.
+The maintenance rule holds across dexs — checked live, `xyz:SKHX` at 10x
+maintains at exactly 1/20th of its position value, the same half-of-max-leverage
+rule the app already prices canonical markets with — so ORDER VALUE, PRICED AT
+and the isolated LIQUIDATION are quoted for a builder market exactly as for any
+other. MARGIN REQUIRED is quoted in the token it is actually posted in: `hyna`
+margins in USDe, `flx`/`vntl`/`km` in USDH and `cash` in USDT0, and a dollar
+sign in front of any of those is the panel claiming a peg it never checked.
+
+Placing an order on a builder dex is not in scope here — the ticket sends
+nothing on any venue. What is in scope is that it never quotes a figure it
+cannot stand behind.
+
+### Lighter has no equivalent
+
+Checked rather than assumed. `/orderBookDetails`, the endpoint this app reads
+Lighter's universe from, answers with 222 markets whose `market_type` is `perp`
+and nothing else, and not one of its forty-four per-market fields names a
+deployer, a builder, a sub-exchange or a second collateral; `quote_asset_id` is
+0 on every one of them. There is no Lighter equivalent of a HIP-3 dex to
+reflect, so Lighter's rail is drawn as one flat list with no headings over it.
+Inventing a single group to sit under a header for symmetry with the other
+venue would be a categorization the venue does not have.
+
 ## The venue switch
 
 Two tabs in the header, stacked beside the page tabs, and they answer the outer
@@ -839,6 +920,22 @@ survives being typed and clears on Escape; the panels that need an account say
 so when there is none; and a failure outranks the progress line it shares a
 slot with, in the terminal's plain ink rather than in either money colour.
 None of those reach the network, so they run wherever the rest does.
+
+A categorized universe has fixtures and tests of its own. The rail heads the
+exchange's own perps and each builder dex; a search reaches every category and
+re-heads what it leaves; each row announces its group and collateral; picking a
+builder market opens every panel at its qualified name and the self-pick guard
+still reads it as one market rather than as a dex; and the ticket declines the
+account it is not held against while still quoting the market's own cliff. The
+colon-joined focus key has a test of its own at the Rust boundary, because a
+focus split from the left is not visible as a failure — it publishes a beat
+with no book, no prints and no context, and the panels sit empty over a market
+the rail says is selected.
+
+The live opt-in run asserts the shape rather than a named dex: builder
+deployments are third-party and come and go, so it checks that a second group
+exists at all, that its markets are named `dex:SYMBOL`, that each states what it
+settles in, and that the exchange answers a dex-qualified coin's book as itself.
 
 The venue switch has a file of its own. Switching names a panel at a time and
 asks for what was in it — the book, the tape, the levels, the market list, the

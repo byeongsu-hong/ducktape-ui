@@ -285,6 +285,24 @@ preset busy
     ticket_size = "3.00"
     quote = price_ticket("64,000.00", "3.00", "5", symbol_row(demo_symbols_many(), "BTC"), true, -30.0)
 
+// A universe with more than one dex in it, which is what Hyperliquid's is
+// since HIP-3: the exchange's own perps, and markets a third party deployed
+// under its own name, its own clearinghouse and sometimes its own collateral.
+// An account is held so that the figures the ticket must decline to quote for
+// a builder market have something to be wrong against.
+preset categorized
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols_categorized()
+    focus = symbol_row(demo_symbols_categorized(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
+    live = true
+
 preset penny
   state
     gate = false

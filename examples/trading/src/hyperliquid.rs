@@ -157,27 +157,37 @@ fn only_the_live_tests_are_running(mut args: impl Iterator<Item = String>) -> bo
 
 /// Everything the exchange can tell us goes through this one endpoint.
 pub(crate) async fn info(body: Value) -> Result<Value, HlError> {
+    smol::unblock(move || info_blocking(&body)).await
+}
+
+/// The same request without the executor around it, for the two callers that
+/// are already off the UI thread: the batch that reads the whole universe on
+/// one pool of threads, and the feed thread deciding what to subscribe to.
+pub(crate) fn info_blocking(body: &Value) -> Result<Value, HlError> {
     // A test drives the real program, subscriptions included, so the 5s account
     // poll fires inside any test the suite's own load stretches past five
     // seconds and this endpoint answers it from the live exchange. Whichever
     // test that lands in then asserts against whatever the exchange happened to
     // hold. The tests own their fixtures; the wire is not one of them.
+    //
+    // Held here rather than on the async wrapper because this is what every
+    // caller reaches the wire through. Guarding only the wrapper left the
+    // universe batch and the feed's dex read going out to the live exchange
+    // from inside the suite, and a test asserting on an empty market list then
+    // failed against whatever Hyperliquid happened to be listing.
     if !wire_is_open() {
         return Err(HlError::new(
             "Hyperliquid unreachable: no wire under test".to_owned(),
         ));
     }
-    smol::unblock(move || {
-        let mut response = agent()
-            .post(INFO_URL)
-            .send_json(&body)
-            .map_err(|error| HlError::new(format!("Hyperliquid unreachable: {error}")))?;
-        response
-            .body_mut()
-            .read_json::<Value>()
-            .map_err(|error| HlError::new(format!("Hyperliquid sent bad JSON: {error}")))
-    })
-    .await
+    let mut response = agent()
+        .post(INFO_URL)
+        .send_json(body)
+        .map_err(|error| HlError::new(format!("Hyperliquid unreachable: {error}")))?;
+    response
+        .body_mut()
+        .read_json::<Value>()
+        .map_err(|error| HlError::new(format!("Hyperliquid sent bad JSON: {error}")))
 }
 
 /// Prices, sizes, and PnL all arrive as strings. A missing or unparsable
@@ -246,9 +256,29 @@ impl HlError {
 /// view, so it needs an identity that changes exactly when the rendered row
 /// changes — hashing the bits is precisely that, once negative zero is folded
 /// onto zero so two rows that render identically also cache identically.
-#[derive(Clone, PartialEq)]
+///
+/// `Default` is derived so a fixture states the figures its assertion is about
+/// and nothing else. The parsers do not use it: a market read off the wire
+/// states every field, because a field silently left at zero there is a price
+/// or a margin requirement the screen would show as real.
+#[derive(Clone, Default, PartialEq)]
 pub struct SymbolRow {
     pub name: String,
+    /// Which list this market belongs to, as the rail heads it and a reader
+    /// hears it: the venue's own perps, or the name of the builder that
+    /// deployed the market. Empty when the venue lists one flat universe,
+    /// which is the whole of what says whether this list is grouped at all.
+    pub category: String,
+    /// The token this market's margin is posted and settled in. Canonical
+    /// Hyperliquid is USDC; a builder dex names its own, and several of the
+    /// live ones are not USDC. The ticket quotes a margin requirement, and a
+    /// requirement without its unit is a number pretending to be dollars.
+    pub collateral: String,
+    /// Whether this row opens its category in the list as filtered. Not a
+    /// property of the market — the same market is a heading or not depending
+    /// on what the search left above it — so it is written by the filter that
+    /// decides the order, and read by the one `if` that draws a header.
+    pub heading: bool,
     pub price: f64,
     pub change_pct: f64,
     pub volume: f64,
@@ -284,6 +314,9 @@ fn hash_f64(value: f64, state: &mut impl Hasher) {
 impl Hash for SymbolRow {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
+        self.category.hash(state);
+        self.collateral.hash(state);
+        self.heading.hash(state);
         self.selected.hash(state);
         self.size_decimals.hash(state);
         for value in [
@@ -447,9 +480,15 @@ fn focus_key(coin: &str, interval: &str) -> String {
 impl Tape {
     /// The market and interval the tape is currently holding, which is what
     /// the feed subscribes to. Empty until the app opens one.
+    /// Split from the right, because a market's name may itself carry a colon.
+    /// A builder-deployed market is named `dex:SYMBOL` on the wire — that is
+    /// the whole of its identity, and every book, tape and candle request
+    /// takes it verbatim — so `xyz:NVDA:1h` splitting from the left yields the
+    /// dex as the coin and `NVDA:1h` as the interval, and the feed then holds
+    /// a subscription to nothing.
     pub(crate) fn focus(&self) -> Option<(String, String)> {
         let focus = lock(&self.focus);
-        let (coin, interval) = focus.split_once(':')?;
+        let (coin, interval) = focus.rsplit_once(':')?;
         Some((coin.to_owned(), interval.to_owned()))
     }
 }
@@ -598,7 +637,7 @@ fn change_pct(price: f64, previous: f64) -> f64 {
     }
 }
 
-fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
+fn parse_symbols(value: &Value, category: &str, collateral: &str) -> Vec<SymbolRow> {
     let Some(pair) = value.as_array() else {
         return Vec::new();
     };
@@ -617,6 +656,8 @@ fn parse_symbols(value: &Value) -> Vec<SymbolRow> {
                 .unwrap_or(false)
         })
         .map(|(asset, context)| SymbolRow {
+            category: category.to_owned(),
+            collateral: collateral.to_owned(),
             leverage: max_leverage(asset),
             maintenance: maintenance_fraction(max_leverage(asset)),
             size_decimals: size_decimals(asset),
@@ -646,6 +687,13 @@ fn parse_context(name: String, context: &Value) -> SymbolRow {
         leverage: 0.0,
         maintenance: 0.0,
         size_decimals: 0,
+        // Nor which list the market is in, what it settles in, or where the
+        // filter put it. Those come from the universe request that named the
+        // dex and from the filter that ordered the rows, and the caller keeps
+        // both readings for the same reason it keeps the three above.
+        category: String::new(),
+        collateral: String::new(),
+        heading: false,
         open_interest: num(context, "openInterest"),
         prev: previous,
         selected: false,
@@ -670,10 +718,149 @@ fn size_decimals(asset: &Value) -> usize {
         .min(SIZE_DECIMALS)
 }
 
+/// What the canonical perp list is headed with. Hyperliquid's own universe is
+/// one list among several now, and a group of markets with no name over it
+/// reads as "the rest" rather than as the exchange's own book.
+const HL_CANONICAL: &str = "Hyperliquid";
+/// What canonical Hyperliquid margins in, which is also `collateralToken: 0`.
+const HL_COLLATERAL: &str = "USDC";
+
+/// The builder-deployed markets a HIP-3 dex lists, as the universe request
+/// needs to ask for them and the rail needs to head them.
+struct PerpDex {
+    /// The wire name, which is also the prefix every one of its markets
+    /// carries: `xyz` deploys `xyz:NVDA`.
+    name: String,
+    /// What the deployer calls it. Several dexs give no full name, and the
+    /// short one is then what the rail heads the group with.
+    label: String,
+}
+
+/// Every dex whose markets this exchange lists, canonical first.
+///
+/// `perpDexs` answers with `null` in the first slot for the exchange's own
+/// perps and one object per builder deployment after it. The `null` is the
+/// canonical list and is not asked for by name, so it is dropped here and the
+/// caller reads it with no `dex` at all.
+fn parse_perp_dexs(value: &Value) -> Vec<PerpDex> {
+    value
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|entry| !entry.is_null())
+        .filter_map(|entry| {
+            let name = text(entry, "name");
+            if name.is_empty() {
+                return None;
+            }
+            let label = match text(entry, "fullName") {
+                empty if empty.is_empty() => name.to_uppercase(),
+                full => full,
+            };
+            Some(PerpDex { name, label })
+        })
+        .collect()
+}
+
+/// The name of every spot token by index, which is how a dex names what it
+/// settles in. `collateralToken` is an index and nothing else, so without
+/// this the ticket can say how much margin a market wants and not in what.
+fn parse_token_names(value: &Value) -> HashMap<usize, String> {
+    list(value, "tokens")
+        .iter()
+        .filter_map(|token| {
+            let index = token.get("index").and_then(Value::as_u64)? as usize;
+            Some((index, text(token, "name")))
+        })
+        .collect()
+}
+
+/// The whole tradeable universe: the exchange's own perps and every
+/// builder-deployed dex listed beside them, each group named.
+///
+/// This is `1 + n` requests where it used to be one, so they go out together
+/// on a pool of blocking threads rather than in a queue — ten round trips end
+/// to end is a rail that arrives a second and a half late. A dex whose
+/// request fails contributes no rows and does not fail the universe: one
+/// builder being unreachable is not the exchange being unreachable.
 pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
-    Ok(parse_symbols(
-        &info(json!({ "type": "metaAndAssetCtxs" })).await?,
-    ))
+    // Only the canonical list is required. Without `perpDexs` there is one
+    // group, and one group is an uncategorized list — which is what the app
+    // drew before any of this, and it stays honest.
+    // Neither of these needs the other, and the universe cannot be asked for
+    // until the dex list is back, so they go out together.
+    let (dexs, tokens) = smol::future::zip(
+        info(json!({ "type": "perpDexs" })),
+        info(json!({ "type": "spotMeta" })),
+    )
+    .await;
+    let dexs = dexs.as_ref().map(parse_perp_dexs).unwrap_or_default();
+    let tokens = tokens.as_ref().map(parse_token_names).unwrap_or_default();
+    let requests: Vec<Value> = std::iter::once(json!({ "type": "metaAndAssetCtxs" }))
+        .chain(
+            dexs.iter()
+                .map(|dex| json!({ "type": "metaAndAssetCtxs", "dex": dex.name })),
+        )
+        .collect();
+    let mut answers = smol::unblock(move || batch(&requests)).await.into_iter();
+    // The exchange's own list is the one whose failure is the exchange's.
+    let canonical = answers.next().unwrap_or_else(|| Err(panicked_thread()))?;
+    let mut groups = vec![parse_symbols(&canonical, HL_CANONICAL, HL_COLLATERAL)];
+    for (dex, answer) in dexs.iter().zip(answers) {
+        let Ok(answer) = answer else {
+            continue;
+        };
+        let collateral = answer
+            .get(0)
+            .and_then(|meta| meta.get("collateralToken"))
+            .and_then(Value::as_u64)
+            .and_then(|index| tokens.get(&(index as usize)))
+            .map_or(HL_COLLATERAL, String::as_str);
+        let rows = parse_symbols(&answer, &dex.label, collateral);
+        // A dex with nothing live to trade is not a group. Most of the
+        // deployed ones are in that state at any moment, and a header over no
+        // rows is a list of headers.
+        if !rows.is_empty() {
+            groups.push(rows);
+        }
+    }
+    let categorized = groups.len() > 1;
+    Ok(groups
+        .into_iter()
+        .flatten()
+        .map(|row| SymbolRow {
+            // One group is not a categorization. Left named, every row of a
+            // flat list would be headed and read out as "Hyperliquid", which
+            // says nothing a reader did not already know from the window.
+            category: if categorized {
+                row.category
+            } else {
+                String::new()
+            },
+            ..row
+        })
+        .collect())
+}
+
+/// Several `info` requests at once, answered in the order they were asked.
+/// Already off the UI thread, so the requests block a pool of scoped threads
+/// rather than the executor.
+fn batch(requests: &[Value]) -> Vec<Result<Value, HlError>> {
+    std::thread::scope(|scope| {
+        let running: Vec<_> = requests
+            .iter()
+            .map(|body| scope.spawn(move || info_blocking(body)))
+            .collect();
+        running
+            .into_iter()
+            .map(|handle| handle.join().unwrap_or_else(|_| Err(panicked_thread())))
+            .collect()
+    })
+}
+
+fn panicked_thread() -> HlError {
+    HlError::new("Hyperliquid universe read failed".to_owned())
 }
 
 /// What a position opened right now would be worth to the margin engine, and
@@ -1425,9 +1612,30 @@ pub struct MarketTick {
 /// repaint beat without an app message per tick.
 pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
     let subscriptions = tape.clone();
+    // `allMids` answers for one dex at a time and the canonical request does
+    // not carry the builder ones, so the rail's prices for a hundred-odd
+    // builder-deployed markets would sit at whatever the universe read once
+    // and never move again. Read on the feed's own thread, once per
+    // connection: a frozen price column that looks live is the failure this
+    // list exists to avoid.
+    let mut dexs: Option<Vec<String>> = None;
     feed(
         move || {
+            let named = dexs.get_or_insert_with(|| {
+                info_blocking(&json!({ "type": "perpDexs" }))
+                    .as_ref()
+                    .map(parse_perp_dexs)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|dex| dex.name)
+                    .collect()
+            });
             let mut wanted = vec![json!({ "type": "allMids" })];
+            wanted.extend(
+                named
+                    .iter()
+                    .map(|dex| json!({ "type": "allMids", "dex": dex })),
+            );
             if let Some((coin, interval)) = subscriptions.focus() {
                 wanted.push(json!({ "type": "l2Book", "coin": coin }));
                 wanted.push(json!({ "type": "activeAssetCtx", "coin": coin }));
@@ -1455,12 +1663,18 @@ fn market_reader(tape: Tape) -> impl FnMut(Event<'_>) -> Option<MarketTick> + Se
     let mut held: Option<(String, String)> = None;
     move |event| match event {
         Event::Payload("allMids", data) => {
-            tick.mids = data
-                .get("mids")
-                .and_then(Value::as_object)?
-                .iter()
-                .filter_map(|(coin, price)| Some((coin.clone(), price.as_str()?.parse().ok()?)))
-                .collect();
+            // Merged rather than assigned: one of these arrives per dex, each
+            // carrying only its own markets. Assigned, the last message of a
+            // beat would be the only prices the rail saw, and every other
+            // group's column would go blank and back on alternate beats.
+            tick.mids.extend(
+                data.get("mids")
+                    .and_then(Value::as_object)?
+                    .iter()
+                    .filter_map(|(coin, price)| {
+                        Some((coin.clone(), price.as_str()?.parse().ok()?))
+                    }),
+            );
             changed = true;
             None
         }
@@ -1572,6 +1786,13 @@ pub fn apply_feed(rows: Vec<SymbolRow>, tick: MarketTick) -> Vec<SymbolRow> {
             leverage: row.leverage,
             maintenance: row.maintenance,
             size_decimals: row.size_decimals,
+            // Nor does it carry which list the market is in or what it
+            // settles in. A beat that dropped those would move a row out of
+            // its group and quote its margin in the wrong token, on nothing
+            // more than a price having ticked.
+            category: std::mem::take(&mut row.category),
+            collateral: std::mem::take(&mut row.collateral),
+            heading: row.heading,
             ..context
         };
     }
@@ -1701,6 +1922,52 @@ pub fn fmt_px(value: f64) -> String {
 
 pub fn fmt_usd(value: f64) -> String {
     format!("${}", format_price(value, 2))
+}
+
+/// Whether this market's margin is held somewhere other than the account the
+/// screen is reading.
+///
+/// A builder-deployed market is named `dex:SYMBOL` on the wire, and that
+/// prefix is the whole of the difference: `clearinghouseState` for the same
+/// address answers with a different equity, different positions and a
+/// different maintenance requirement depending on whether it carries that
+/// dex. Nothing else about the market says so — the book, the tape and the
+/// candles are read exactly as any other market's — so this one reading is
+/// what every account-relative figure on the ticket is gated on.
+fn own_clearinghouse(market: Option<&SymbolRow>) -> bool {
+    market.is_some_and(|row| row.name.contains(':'))
+}
+
+/// What a group's header says beside its name, which is the collateral when
+/// that is not the venue's own and nothing at all when it is.
+///
+/// Empty rather than "USDC" on the canonical list: the default is what every
+/// reader already assumes, and printed on every header it would be the one
+/// word that appears most often in the rail while carrying the least. Printed
+/// on a group that settles in USDe it is the difference between two lists that
+/// look interchangeable and two that are not.
+pub fn group_note(market: SymbolRow) -> String {
+    if market.collateral == HL_COLLATERAL {
+        return String::new();
+    }
+    market.collateral
+}
+
+/// A margin requirement in the token it is actually posted in.
+///
+/// Canonical Hyperliquid margins in USDC and the figure is dollars. A builder
+/// dex names its own collateral, and the live ones are not all USDC: read
+/// live, `flx`, `vntl` and `km` settle in USDH, `hyna` in USDe and `cash` in
+/// USDT0. The arithmetic is the same either way — price times size over
+/// leverage — but a dollar sign in front of a USDe figure is the panel
+/// claiming a peg it has not checked.
+pub fn fmt_margin(value: f64, market: Option<SymbolRow>) -> String {
+    match market {
+        Some(row) if !row.collateral.is_empty() && row.collateral != HL_COLLATERAL => {
+            format!("{} {}", format_price(value, 2), row.collateral)
+        }
+        _ => fmt_usd(value),
+    }
 }
 
 pub fn fmt_signed_usd(value: f64) -> String {
@@ -1846,13 +2113,31 @@ pub fn fmt_leverage_mode(value: f64, mode: String) -> String {
 /// Filters the universe down to what the list shows, and marks the row that is
 /// on screen. The mark rides along instead of being read from `coin` at render
 /// time so each row stays a self-contained dependency for the view's cache.
+///
+/// The search reaches every category, because the list it walks is every
+/// category: the universe arrives already ordered group by group, so filtering
+/// it flat leaves the groups intact and narrower. Typing `NVDA` therefore finds
+/// the builder-deployed market of that name even though no canonical row
+/// matches, and the group it belongs to still says which list it came out of.
+///
+/// Which rows head their group is decided here rather than at parse time for
+/// the same reason: a search that removes the first row of a group makes the
+/// next one the heading, and only the filter knows what is left.
 pub fn filter_symbols(rows: Vec<SymbolRow>, query: String, coin: String) -> Vec<SymbolRow> {
     let query = query.trim().to_uppercase();
+    let mut headed = String::new();
     rows.into_iter()
         .filter(|row| query.is_empty() || row.name.to_uppercase().contains(&query))
-        .map(|row| SymbolRow {
-            selected: row.name == coin,
-            ..row
+        .map(|row| {
+            let heading = !row.category.is_empty() && row.category != headed;
+            if heading {
+                headed = row.category.clone();
+            }
+            SymbolRow {
+                selected: row.name == coin,
+                heading,
+                ..row
+            }
         })
         .collect()
 }
@@ -2162,6 +2447,15 @@ pub fn ticket_afford(
     leverage: f64,
     share: f64,
 ) -> String {
+    // Sizing to a share of the balance needs the balance this market is
+    // actually margined against, and for a builder-deployed market that is
+    // not the account on screen. Read live, one address held $127,575 on the
+    // canonical clearinghouse and $5,235,542 on the `xyz` dex at the same
+    // moment: "50% of your account" priced off the wrong one of those is not
+    // a rounding error, so the buttons decline rather than answer.
+    if own_clearinghouse(market.as_ref()) {
+        return String::new();
+    }
     let free = account.map_or(0.0, |held| held.withdrawable);
     let price = amount(&price);
     if free <= 0.0 || price <= 0.0 || leverage <= 0.0 || share <= 0.0 {
@@ -2196,6 +2490,15 @@ pub fn order_load(
     buy: bool,
     market: Option<SymbolRow>,
 ) -> String {
+    // The whole reading is this account's maintenance requirement before and
+    // after, and a builder-deployed market is not held against this account
+    // at all — it has its own clearinghouse, its own equity and its own
+    // collateral token. Quoting the canonical account's load for an order
+    // that would never touch it is the most confident wrong number on the
+    // screen, so the row says which account it cannot see instead.
+    if own_clearinghouse(market.as_ref()) {
+        return "separate margin account".to_owned();
+    }
     let Some(account) = account else {
         return String::new();
     };
@@ -2385,14 +2688,23 @@ pub fn hit_volume(hit: CandleHit) -> f64 {
 /// `markets_stay_memoized_performance_contract` asserts the cold count is a
 /// whole multiple of the rows on screen, so a second caller appearing fails
 /// the contract rather than quietly skewing it.
+/// A market row read out. The group is named on every row of a grouped list,
+/// not only on the one under the header: a header is a heading, and a reader
+/// moving row by row does not carry it down the list with them. On a venue
+/// that lists one flat universe there is no group to name and the label says
+/// what it always said.
 pub fn market_label(market: SymbolRow) -> String {
     #[cfg(test)]
     count(&MARKET_ROWS);
+    let name = &market.name;
+    let price = fmt_px(market.price);
+    let change = fmt_pct(market.change_pct);
+    if market.category.is_empty() {
+        return format!("{name} at {price}, {change} today");
+    }
     format!(
-        "{} at {}, {} today",
-        market.name,
-        fmt_px(market.price),
-        fmt_pct(market.change_pct)
+        "{name} at {price}, {change} today, {} market settled in {}",
+        market.category, market.collateral
     )
 }
 
@@ -2523,6 +2835,7 @@ fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
             maintenance: 1.0 / 80.0,
             size_decimals: 5,
             selected: true,
+            ..Default::default()
         },
         SymbolRow {
             name: "ETH".to_owned(),
@@ -2536,6 +2849,7 @@ fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
             maintenance: 1.0 / 50.0,
             size_decimals: 4,
             selected: false,
+            ..Default::default()
         },
         SymbolRow {
             name: "SOL".to_owned(),
@@ -2549,6 +2863,7 @@ fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
             maintenance: 1.0 / 40.0,
             size_decimals: 2,
             selected: false,
+            ..Default::default()
         },
         // A market priced in fractions of a cent, which most of a perp venue
         // is. Every column here was sized and formatted around bitcoin.
@@ -2565,6 +2880,7 @@ fn demo_symbols_priced(btc: f64, btc_prev: f64) -> Vec<SymbolRow> {
             // A coin worth a fraction of a cent trades in whole units.
             size_decimals: 0,
             selected: false,
+            ..Default::default()
         },
     ]
 }
@@ -2723,9 +3039,55 @@ pub fn demo_symbols_many() -> Vec<SymbolRow> {
             maintenance: maintenance_fraction(leverage),
             size_decimals: 2,
             selected: false,
+            ..Default::default()
         });
     }
     rows
+}
+
+/// A universe with more than one dex in it, which is what Hyperliquid's now
+/// is: the exchange's own perps, and builder-deployed markets under the name
+/// of whoever deployed them.
+///
+/// The shape is the live one rather than an invented one. Read on the day this
+/// was written, `perpDexs` answered with `null` in the first slot and nine
+/// builder deployments after it, `xyz` ("XYZ") listing 94 live markets against
+/// USDC collateral and `hyna` ("HyENA") 18 against USDe. Those two are the two
+/// here, because the pair is what the rail has to get right: a second group at
+/// all, and a group that does not settle in dollars.
+///
+/// The tickers are the live ones too. A builder market is named `dex:SYMBOL`
+/// on the wire and that string is its whole identity — the book, the tape and
+/// the candle requests take it verbatim — so a fixture that shortened it to
+/// `NVDA` would be testing a market Hyperliquid does not list.
+pub fn demo_symbols_categorized() -> Vec<SymbolRow> {
+    let canonical = demo_symbols().into_iter().map(|row| SymbolRow {
+        category: HL_CANONICAL.to_owned(),
+        collateral: HL_COLLATERAL.to_owned(),
+        ..row
+    });
+    let builder = |name: &str, category: &str, collateral: &str, price: f64, prev: f64| SymbolRow {
+        name: name.to_owned(),
+        category: category.to_owned(),
+        collateral: collateral.to_owned(),
+        price,
+        change_pct: change_pct(price, prev),
+        prev,
+        volume: 26_000_000.0,
+        funding_pct: 0.00053,
+        leverage: 20.0,
+        open_interest: 6_252.0,
+        maintenance: maintenance_fraction(20.0),
+        size_decimals: 3,
+        ..Default::default()
+    };
+    canonical
+        .chain([
+            builder("xyz:NVDA", "XYZ", HL_COLLATERAL, 224.51, 223.86),
+            builder("xyz:SP500", "XYZ", HL_COLLATERAL, 6_970.51, 6_961.02),
+            builder("hyna:HYPE", "HyENA", "USDe", 38.42, 37.90),
+        ])
+        .collect()
 }
 
 /// A tape at the depth the feed keeps it, rather than three prints.
@@ -3342,6 +3704,154 @@ pub(crate) mod probe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A builder-deployed market's name carries a colon, and the tape holds
+    /// its market and interval in one colon-joined string. Split from the
+    /// left, `xyz:NVDA:1m` reads as the coin `xyz` at the interval `NVDA:1m`,
+    /// and every subscription the feed then holds is for a market that does
+    /// not exist.
+    ///
+    /// Verified against the live exchange: `l2Book` and `candleSnapshot`
+    /// answer for the coin `xyz:NVDA` with no `dex` parameter at all, and
+    /// answer `null` for a bare `NVDA` — the qualified string is the whole of
+    /// the identity, so nothing downstream may take it apart.
+    #[test]
+    fn a_dex_qualified_market_survives_the_tape_focus_round_trip() {
+        let tape = tape_focus(tape_new(), "xyz:NVDA".to_owned(), "1m".to_owned());
+        assert_eq!(
+            tape.focus(),
+            Some(("xyz:NVDA".to_owned(), "1m".to_owned())),
+            "the dex prefix belongs to the market, not to the interval"
+        );
+        let plain = tape_focus(tape_new(), "BTC".to_owned(), "15m".to_owned());
+        assert_eq!(plain.focus(), Some(("BTC".to_owned(), "15m".to_owned())));
+    }
+
+    /// The same claim where it is actually felt. The book, the tape and the
+    /// context are each turned away unless they name the market the tape is
+    /// pointed at, so a focus that lost the dex prefix does not fail loudly —
+    /// it publishes a beat with no book, no prints and no context, and the
+    /// panels sit empty over a market the rail says is selected.
+    #[test]
+    fn a_dex_qualified_market_is_fed_its_own_book_and_prints() {
+        let tape = tape_focus(tape_new(), "xyz:NVDA".to_owned(), "1m".to_owned());
+        let mut read = market_reader(tape);
+        let book = json!({
+            "coin": "xyz:NVDA",
+            "levels": [
+                [{ "px": "224.49", "sz": "21.9", "n": 4 }],
+                [{ "px": "224.51", "sz": "0.2", "n": 1 }],
+            ]
+        });
+        let tape_prints = json!([
+            { "coin": "xyz:NVDA", "px": "224.50", "sz": "1.0", "side": "B", "time": 1_786_265_690_665_i64, "tid": 1, "hash": "a" },
+            { "coin": "xyz:NVDA", "px": "224.51", "sz": "2.0", "side": "A", "time": 1_786_265_690_777_i64, "tid": 2, "hash": "b" },
+        ]);
+        let ctx = json!({
+            "coin": "xyz:NVDA",
+            "ctx": { "markPx": "224.51", "prevDayPx": "223.86", "dayNtlVlm": "26553442.8", "funding": "0.0000053" }
+        });
+        read(Event::Beat);
+        read(Event::Payload("l2Book", &book));
+        read(Event::Payload("activeAssetCtx", &ctx));
+        read(Event::Payload("trades", &tape_prints));
+        let tick = read(Event::Beat).expect("a beat that carried traffic publishes a tick");
+        assert!(
+            tick.book.is_some(),
+            "the book names the market it was asked for"
+        );
+        assert_eq!(tick.trades.len(), 2, "so do the prints");
+        assert_eq!(
+            tick.context.map(|row| row.name),
+            Some("xyz:NVDA".to_owned()),
+            "and so does the context that re-prices the row"
+        );
+    }
+
+    /// `allMids` answers for one dex at a time, so a rail listing several of
+    /// them is fed one message per dex per beat. Assigned rather than merged,
+    /// the last message would be the only prices the beat carried and every
+    /// other group's price column would blink between a price and nothing.
+    #[test]
+    fn mids_from_several_dexs_land_in_one_beat() {
+        let tape = tape_focus(tape_new(), "BTC".to_owned(), "1m".to_owned());
+        let mut read = market_reader(tape);
+        let canonical = json!({ "mids": { "BTC": "64000.0" } });
+        let builder = json!({ "mids": { "xyz:NVDA": "224.51" } });
+        read(Event::Beat);
+        read(Event::Payload("allMids", &canonical));
+        read(Event::Payload("allMids", &builder));
+        let tick = read(Event::Beat).expect("a beat that carried traffic publishes a tick");
+        assert_eq!(tick.mids.get("BTC"), Some(&64_000.0));
+        assert_eq!(
+            tick.mids.get("xyz:NVDA"),
+            Some(&224.51),
+            "a second dex's prices do not replace the first's"
+        );
+    }
+
+    /// `perpDexs` answers with `null` in the first slot for the exchange's own
+    /// perps and one object per builder deployment after it. The `null` is not
+    /// a dex to ask for by name — it is the list read with no `dex` at all —
+    /// and a dex that states no full name is headed with its short one rather
+    /// than with a blank.
+    #[test]
+    fn the_canonical_list_is_not_one_of_the_builder_dexs() {
+        let response = json!([
+            null,
+            { "name": "xyz", "fullName": "XYZ" },
+            { "name": "hyna", "fullName": "HyENA" },
+            { "name": "abcd" },
+        ]);
+        let dexs = parse_perp_dexs(&response);
+        let named: Vec<(&str, &str)> = dexs
+            .iter()
+            .map(|dex| (dex.name.as_str(), dex.label.as_str()))
+            .collect();
+        assert_eq!(
+            named,
+            vec![("xyz", "XYZ"), ("hyna", "HyENA"), ("abcd", "ABCD")],
+            "the canonical slot is not asked for by name"
+        );
+    }
+
+    /// A search that empties a group must not leave its header behind, and one
+    /// that removes a group's first row must move the header onto what is
+    /// left. Both are why the heading is written by the filter rather than
+    /// stamped when the universe is read.
+    #[test]
+    fn a_filtered_list_re_heads_the_groups_it_leaves() {
+        let rows = demo_symbols_categorized();
+        let all = filter_symbols(rows.clone(), String::new(), "BTC".to_owned());
+        let headed: Vec<&str> = all
+            .iter()
+            .filter(|row| row.heading)
+            .map(|row| row.category.as_str())
+            .collect();
+        assert_eq!(headed, vec![HL_CANONICAL, "XYZ", "HyENA"]);
+
+        // `xyz:SP500` is the second row of its group, so the header has to
+        // move onto it once the first is filtered out.
+        let narrowed = filter_symbols(rows, "SP500".to_owned(), "BTC".to_owned());
+        assert_eq!(narrowed.len(), 1);
+        assert!(
+            narrowed[0].heading,
+            "what is left of a group still heads it"
+        );
+        assert_eq!(narrowed[0].category, "XYZ");
+    }
+
+    /// One group is not a categorization. A venue that lists one flat universe
+    /// names no group at all, and the rail then draws the list it always drew.
+    #[test]
+    fn a_flat_universe_is_not_headed() {
+        let rows = filter_symbols(demo_symbols(), String::new(), "BTC".to_owned());
+        assert!(
+            rows.iter()
+                .all(|row| !row.heading && row.category.is_empty()),
+            "an uncategorized list has nothing to head"
+        );
+    }
     // The other venue's fixture universe, which lives with the parsers that
     // built it out of the payloads that venue answered.
     use crate::lighter::demo_symbols_lighter;
@@ -3528,6 +4038,7 @@ mod tests {
             maintenance: 1.0 / 80.0,
             size_decimals: 5,
             selected: false,
+            ..Default::default()
         };
         let market_moves: &[FieldMutation<SymbolRow>] = &[
             ("name", |row| row.name.push('X')),
@@ -3997,8 +4508,13 @@ mod tests {
             ]
         ]);
 
-        let rows = parse_symbols(&response);
+        let rows = parse_symbols(&response, HL_CANONICAL, HL_COLLATERAL);
         assert_eq!(rows.len(), 2, "delisted markets are not tradeable");
+        assert!(
+            rows.iter()
+                .all(|row| row.category == HL_CANONICAL && row.collateral == HL_COLLATERAL),
+            "every market carries the list it was read out of"
+        );
         assert_eq!(rows[0].name, "SOL", "highest volume leads");
         assert!((rows[0].change_pct - 25.0).abs() < 1e-9);
         assert!(rows[0].funding_pct < 0.0);
@@ -4787,6 +5303,7 @@ mod tests {
             maintenance: 1.0 / 80.0,
             size_decimals: 5,
             selected: false,
+            ..Default::default()
         };
         // `activeAssetCtx` restates the day's figures and not the asset's, so
         // it arrives with no maximum leverage and no maintenance rule. Taking
@@ -4830,6 +5347,7 @@ mod tests {
             open_interest: 0.0,
             prev: 100.0,
             selected: false,
+            ..Default::default()
         };
         let quoted = |price: &str, size: &str, leverage: &str, buy: bool| {
             price_ticket(
@@ -5189,6 +5707,7 @@ mod tests {
                     maintenance: 1.0 / 80.0,
                     size_decimals: 5,
                     selected: false,
+                    ..Default::default()
                 }),
                 buy,
                 held,
@@ -5324,6 +5843,7 @@ mod tests {
             open_interest: 0.0,
             prev: 0.0,
             selected: false,
+            ..Default::default()
         };
         assert_eq!(
             ticket_seed(Some(book.clone()), Some(row.clone())),
@@ -5482,6 +6002,7 @@ mod tests {
             maintenance: 1.0 / 80.0,
             size_decimals: 5,
             selected: false,
+            ..Default::default()
         };
         // The reader has moved to BTC and the socket serves one more context
         // for the market it just left.
@@ -5671,6 +6192,44 @@ mod tests {
             assert!(symbols.len() > 20, "got {} markets", symbols.len());
             let btc = symbols.iter().find(|row| row.name == "BTC").expect("BTC");
             assert!(btc.price > 0.0 && btc.volume > 0.0, "BTC context is empty");
+            assert_eq!(btc.category, HL_CANONICAL, "the exchange's own list");
+            assert_eq!(btc.collateral, HL_COLLATERAL);
+
+            // The universe is more than one dex since HIP-3, and every one of
+            // its markets carries the list it came out of. Asserted against
+            // whatever is deployed today rather than against a named dex: the
+            // deployments are third-party and come and go, so the claim is the
+            // shape — a second group exists, its markets are `dex:SYMBOL`, and
+            // each states what it settles in.
+            let builder: Vec<&SymbolRow> = symbols
+                .iter()
+                .filter(|row| row.category != HL_CANONICAL)
+                .collect();
+            assert!(
+                !builder.is_empty(),
+                "perpDexs lists builder deployments and none of them reached the rail"
+            );
+            for row in &builder {
+                assert!(
+                    row.name.contains(':'),
+                    "a builder market is named dex:SYMBOL, got {}",
+                    row.name
+                );
+                assert!(!row.category.is_empty() && !row.collateral.is_empty());
+            }
+
+            // And the qualified name is the whole identity: the book request
+            // takes it verbatim, with no `dex` parameter anywhere.
+            let listed = builder
+                .iter()
+                .find(|row| row.price > 0.0)
+                .expect("a builder market with a price");
+            let book = info(json!({ "type": "l2Book", "coin": listed.name })).await;
+            assert_eq!(
+                text(&book.expect("book for a builder market"), "coin"),
+                listed.name,
+                "the exchange answers a dex-qualified coin as itself"
+            );
 
             // A fresh tape adopts the first market loaded into it.
             let tape = tape_new();
@@ -5905,6 +6464,7 @@ mod tests {
                 open_interest: 0.0,
                 prev: 1.0,
                 selected: false,
+                ..Default::default()
             },
             SymbolRow {
                 name: "ETH".into(),
@@ -5918,6 +6478,7 @@ mod tests {
                 open_interest: 0.0,
                 prev: 1.0,
                 selected: false,
+                ..Default::default()
             },
         ];
         assert_eq!(
