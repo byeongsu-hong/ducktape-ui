@@ -264,7 +264,7 @@ view
                           w=fill
                           h=fill
                           p=6.0
-                        extern chart(tape, fills, positions, orders, coin) #chart -> chart_signalled _
+                        extern chart(venue, tape, fills, positions, orders, coin) #chart -> chart_signalled _
                     rule vertical thickness=1.0 color=edge
                     box #book
                       with
