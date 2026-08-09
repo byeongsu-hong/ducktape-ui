@@ -736,6 +736,8 @@ fn lowers_native_animation_without_a_custom_runtime() {
 #[test]
 fn projection_binding_overlays_match_checked_and_ast_emission() {
     let source = r#"app ProjectionOverlay
+extern crate::backend
+  sync now() -> instant
 theme contract AppTheme
   bg
   fg
@@ -751,12 +753,13 @@ state
   progress:animation[f64] = 0.0
   secondary:animation[f64] = 0.0
   captured:f64? = none
+  at:instant = now()
 derived
-  projected = animation.project(progress, sample, sample + 1.0)
-  nested = animation.project(progress, sample, animation.project(secondary, sample, sample) + sample)
-  optional = animation.project(progress, sample, some(sample))
+  projected = animation.project(progress, sample, sample + 1.0, at)
+  nested = animation.project(progress, sample, animation.project(secondary, sample, sample, at) + sample, at)
+  optional = animation.project(progress, sample, some(sample), at)
 on capture
-  captured = animation.project(progress, sample, some(sample))
+  captured = animation.project(progress, sample, some(sample), at)
 view
   col
     text projected
@@ -802,15 +805,18 @@ palette app for AppTheme
   fg #ffffff
   primary #333333
   danger #ff0000
+extern crate::backend
+  sync now() -> instant
 state
   progress:animation[f64] = 0.0
+  at:instant = now()
 derived
 "#,
         );
         for index in 0..derived {
             writeln!(
                 source,
-                "  value_{index} = animation.project(progress, sample, sample + 1.0)"
+                "  value_{index} = animation.project(progress, sample, sample + 1.0, at)"
             )
             .unwrap();
         }
@@ -1045,8 +1051,8 @@ fn lowers_windowless_daemon_and_exit() {
   window dashboard
     size 800 600
 extern crate::backend
-  sync label(id:window-id) -> str
-  sync scale(id:window-id) -> f64
+  pure label(id:window-id) -> str
+  pure scale(id:window-id) -> f64
 theme contract AppTheme
   bg
   fg
@@ -1583,7 +1589,7 @@ fn wires_tray_boot_subscription_and_popover_toggle() {
   window status
     size 320 240
 extern crate::backend
-  sync describe(value:i64) -> str
+  pure describe(value:i64) -> str
 theme contract AppTheme
   bg
   fg
@@ -1651,7 +1657,7 @@ fn wires_tray_without_popover_in_an_application() {
     icon-rgba "assets/tray.rgba" 2 2
     label describe(count)
 extern crate::backend
-  sync describe(value:i64) -> str
+  pure describe(value:i64) -> str
 theme contract AppTheme
   bg
   fg

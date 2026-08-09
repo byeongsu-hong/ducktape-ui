@@ -311,7 +311,7 @@ pub(in crate::codegen) fn checked_state_env(
         (
             derived.name.clone(),
             Binding {
-                code: format!("Self::{}({name})", derived_method(&derived.name)),
+                code: format!("{name}.{}()", derived_method(&derived.name)),
                 ty: derived.ty.clone(),
                 local: true,
                 state: None,

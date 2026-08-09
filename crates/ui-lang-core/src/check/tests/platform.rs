@@ -827,7 +827,7 @@ fn accepts_a_full_tray_declaration() {
   window status
     size 320 240
 extern crate::backend
-  sync describe(value:i64) -> str
+  pure describe(value:i64) -> str
 theme contract AppTheme
   bg
   fg

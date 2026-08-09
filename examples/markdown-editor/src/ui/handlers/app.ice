@@ -24,8 +24,9 @@ on request_new
   find_query = ""
   error = ""
   pending = PendingAction.new_document
-  return if is_dirty()
+  return if history.dirty
   document = reset_document("")
+  history = editor_status()
   path = ""
   name = "Untitled.md"
   pending = PendingAction.idle
@@ -38,7 +39,7 @@ on request_open
   find_query = ""
   error = ""
   pending = PendingAction.open_document
-  return if is_dirty()
+  return if history.dirty
   pending = PendingAction.idle
   busy = true
   run open_document() -> opened _ | failed _
@@ -49,7 +50,7 @@ on request_save
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved _ | failed _
+  run save_current(path, name, editor_text(document), history.revision) -> saved _ | failed _
 
 on request_save_as
   return if busy || confirming
@@ -57,7 +58,7 @@ on request_save_as
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_document_as(name, editor_text(document), revision()) -> saved _ | failed _
+  run save_document_as(name, editor_text(document), history.revision) -> saved _ | failed _
 
 on opened(file)
   busy = false
@@ -65,6 +66,7 @@ on opened(file)
   find_open = false
   find_query = ""
   document = reset_document(file.source)
+  history = editor_status()
   path = file.path
   name = file.name
   error = ""
@@ -72,6 +74,7 @@ on opened(file)
 on saved(file)
   busy = false
   return if empty(file.path)
+  history = mark_saved(file.saved_revision)
   path = file.path
   name = file.name
   error = ""
@@ -84,7 +87,7 @@ on request_close
   find_query = ""
   error = ""
   pending = PendingAction.close_window
-  return if is_dirty()
+  return if history.dirty
   pending = PendingAction.idle
   task window close
 
@@ -102,6 +105,7 @@ on discard_new
   find_open = false
   find_query = ""
   document = reset_document("")
+  history = editor_status()
   path = ""
   name = "Untitled.md"
   error = ""
@@ -128,16 +132,18 @@ on save_then_new
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved_then_new _ | failed_save_new _
+  run save_current(path, name, editor_text(document), history.revision) -> saved_then_new _ | failed_save_new _
 
 on saved_then_new(file)
   busy = false
   return if pending != PendingAction.new_document
   return if empty(file.path)
+  history = mark_saved(file.saved_revision)
   pending = PendingAction.idle
   find_open = false
   find_query = ""
   document = reset_document("")
+  history = editor_status()
   path = ""
   name = "Untitled.md"
   error = ""
@@ -148,12 +154,13 @@ on save_then_open
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved_then_open _ | failed_save_open _
+  run save_current(path, name, editor_text(document), history.revision) -> saved_then_open _ | failed_save_open _
 
 on saved_then_open(file)
   busy = false
   return if pending != PendingAction.open_document
   return if empty(file.path)
+  history = mark_saved(file.saved_revision)
   pending = PendingAction.idle
   find_open = false
   find_query = ""
@@ -167,36 +174,44 @@ on save_then_close
   document = clear_editor_selection(document)
   error = ""
   busy = true
-  run save_current(path, name, editor_text(document), revision()) -> saved_then_close _ | failed_save_close _
+  run save_current(path, name, editor_text(document), history.revision) -> saved_then_close _ | failed_save_close _
 
 on saved_then_close(file)
   busy = false
   return if pending != PendingAction.close_window
   return if empty(file.path)
+  history = mark_saved(file.saved_revision)
   pending = PendingAction.idle
   task window close
 
 on undo
   document = undo_document(document)
+  history = editor_status()
 
 on redo
   document = redo_document(document)
+  history = editor_status()
 
 on edit_document(action)
   editor_focused = true
   document = apply_rich_action(document, action)
+  history = editor_status()
 
 on bold
   document = format_document(document, "bold")
+  history = editor_status()
 
 on italic
   document = format_document(document, "italic")
+  history = editor_status()
 
 on inline_code
   document = format_document(document, "code")
+  history = editor_status()
 
 on link
   document = format_document(document, "link")
+  history = editor_status()
 
 on toggle_find
   return if busy || confirming

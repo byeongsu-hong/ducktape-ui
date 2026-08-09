@@ -804,7 +804,7 @@ mod tests {
         );
         fixture.write(
             "ui.ice",
-            "extern crate::helpers\n  Data(value:str)\n  sync data(value:str) -> Data\n  sync label(value:str) -> str\nenum Mode\n  idle\n  ready(str)\nrecipe panel for box\n  @p-4\nfont body family=\"Inter\"\ncomponent Badge(value:Data, mode:Mode)\n  box @panel\n    col\n      text label(trim(value.value)) font=body\n      match mode\n        Mode.idle\n          text \"Idle\"\n        Mode.ready(label)\n          text label\n",
+            "extern crate::helpers\n  Data(value:str)\n  pure data(value:str) -> Data\n  pure label(value:str) -> str\nenum Mode\n  idle\n  ready(str)\nrecipe panel for box\n  @p-4\nfont body family=\"Inter\"\ncomponent Badge(value:Data, mode:Mode)\n  box @panel\n    col\n      text label(trim(value.value)) font=body\n      match mode\n        Mode.idle\n          text \"Idle\"\n        Mode.ready(label)\n          text label\n",
         );
 
         let document = analyze_file(fixture.path("app.ice")).unwrap();

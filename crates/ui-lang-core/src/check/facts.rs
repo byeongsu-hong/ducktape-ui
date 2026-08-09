@@ -2587,10 +2587,13 @@ impl CheckedFacts {
         else {
             return Ok(false);
         };
-        let function = declarations
-            .try_extern_decl(reference.id)
-            .ok_or((root.origin, "editor sync extern ID is outside its arena"))?;
-        if function.name != reference.name || function.kind != ExternKind::Sync {
+        let function = declarations.try_extern_decl(reference.id).ok_or((
+            root.origin,
+            "editor expression extern ID is outside its arena",
+        ))?;
+        if function.name != reference.name
+            || !matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
+        {
             return Ok(false);
         }
 
@@ -11212,7 +11215,7 @@ impl<'a> FactsBuilder<'a> {
         }
         record_fact_metric!(self.facts.metrics.declaration_lookups += 1);
         if let Some(declaration) = self.declarations.extern_decl_by_name(name)
-            && declaration.kind == ExternKind::Sync
+            && matches!(declaration.kind, ExternKind::Pure | ExternKind::Sync)
         {
             return Ok(CheckedCallTarget::Extern(ExternRef {
                 id: declaration.declaration.id,
@@ -11709,7 +11712,7 @@ mod tests {
             r#"app Facts
 extern crate::backend
   User(name:str)
-  sync load_user(seed:i64) -> User
+  pure load_user(seed:i64) -> User
 enum Mode
   idle
   active(str)
@@ -11932,7 +11935,7 @@ extern crate::backend
   stream numbers(seed:i64) -> i64
   recipe ticks(seed:i64) -> i64
   event-filter raw_event() -> str
-  sync positive(value:i64) -> i64?
+  pure positive(value:i64) -> i64?
 {THEME}state
   enabled = true
   seed = 2
@@ -12162,7 +12165,7 @@ test dynamic_targets
     #[test]
     fn subscription_run_type_uses_normalized_struct_path_after_raw_mutation() {
         let source = format!(
-            "app FrozenRunType\nextern crate::backend\n  User(name:str)\n  sync load_user(seed:i64) -> User\n  stream users(seed:User) -> str\n{THEME}state\n  user:User = load_user(1)\non user_event(value)\nsubscribe\n  run users(user) -> user_event _\nview\n  text \"ready\"\n"
+            "app FrozenRunType\nextern crate::backend\n  User(name:str)\n  pure load_user(seed:i64) -> User\n  stream users(seed:User) -> str\n{THEME}state\n  user:User = load_user(1)\non user_event(value)\nsubscribe\n  run users(user) -> user_event _\nview\n  text \"ready\"\n"
         );
         let mut checked = analyze(&source).unwrap();
         checked.document.structs[0].rust_path = "crate::mutated::WrongUser".into();
@@ -12179,7 +12182,7 @@ test dynamic_targets
     #[test]
     fn invalid_subscription_source_and_filter_extern_ids_are_e196_invariants() {
         let source = format!(
-            "app InvalidSubscriptionExtern\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n  sync positive(value:i64) -> i64?\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) filter=positive -> number _\nview\n  text \"ready\"\n"
+            "app InvalidSubscriptionExtern\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n  pure positive(value:i64) -> i64?\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) filter=positive -> number _\nview\n  text \"ready\"\n"
         );
 
         let mut invalid_source = analyze(&source).unwrap();
@@ -12211,7 +12214,7 @@ test dynamic_targets
     #[test]
     fn same_arena_subscription_extern_ids_must_match_the_checked_contract() {
         let source = format!(
-            "app WrongSubscriptionExtern\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n  sync positive(value:i64) -> i64?\n  stream wrong_arity() -> i64\n  stream wrong_param(seed:str) -> i64\n  stream wrong_output(seed:i64) -> str\n  sync wrong_filter_param(value:str) -> i64?\n  sync wrong_filter_output(value:i64) -> i64\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) filter=positive -> number _\nview\n  text \"ready\"\n"
+            "app WrongSubscriptionExtern\nextern crate::backend\n  stream numbers(seed:i64) -> i64\n  pure positive(value:i64) -> i64?\n  stream wrong_arity() -> i64\n  stream wrong_param(seed:str) -> i64\n  stream wrong_output(seed:i64) -> str\n  pure wrong_filter_param(value:str) -> i64?\n  pure wrong_filter_output(value:i64) -> i64\n{THEME}state\n  seed = 2\non number(value)\nsubscribe\n  run numbers(seed) filter=positive -> number _\nview\n  text \"ready\"\n"
         );
 
         fn extern_ref(checked: &crate::CheckedDocument, name: &str) -> ExternRef {
@@ -12401,8 +12404,8 @@ test dynamic_targets
         let source = format!(
             r#"app SubscriptionNodeContracts
 extern crate::backend
-  sync normalize(value:i64) -> i64
-  sync normalize_alias(value:i64) -> i64
+  pure normalize(value:i64) -> i64
+  pure normalize_alias(value:i64) -> i64
   wrong_kind(value:i64) -> i64
   stream numbers(value:i64) -> i64
   stream lists(value:[i64]) -> i64
@@ -12682,7 +12685,7 @@ enum Mode
   loaded(str)
 extern crate::backend
   User(name:str)
-  sync load_user() -> User
+  pure load_user() -> User
   stream modes(value:Mode) -> i64
   stream labels(value:str) -> i64
   stream palettes(value:palette[AppTheme]) -> i64
@@ -14160,7 +14163,7 @@ view
         .unwrap();
         fs::write(
             &imported,
-            "enum Status\n  idle\n  loaded(str)\nextern crate::backend\n  User(name:str)\n  sync load_user() -> User\n",
+            "enum Status\n  idle\n  loaded(str)\nextern crate::backend\n  User(name:str)\n  pure load_user() -> User\n",
         )
         .unwrap();
 
@@ -14196,7 +14199,7 @@ view
             .extern_decl_by_name("model::load_user")
             .unwrap();
         assert_eq!(extern_decl.rust_path, "crate::backend::load_user");
-        assert_eq!(extern_decl.kind, ExternKind::Sync);
+        assert_eq!(extern_decl.kind, ExternKind::Pure);
         assert!(extern_decl.params.is_empty());
         assert_eq!(extern_decl.output, Type::Named("model::User".into()));
         let extern_origin = program.origin(extern_decl.declaration.origin);
@@ -14210,7 +14213,7 @@ view
     #[test]
     fn animation_projection_records_a_typed_scoped_local() {
         let source = format!(
-            "app Projection\n{THEME}state\n  progress:animation[f64] = 0.0\nderived\n  projected = animation.project(progress, sample, sample * 2.0)\nview\n  text projected\n"
+            "app Projection\nextern crate::backend\n  sync now() -> instant\n{THEME}state\n  progress:animation[f64] = 0.0\n  at:instant = now()\nderived\n  projected = animation.project(progress, sample, sample * 2.0, at)\nview\n  text projected\n"
         );
 
         let program = lower::lower(analyze(&source).unwrap()).unwrap();
@@ -14222,7 +14225,7 @@ view
         assert_eq!(
             local.owner,
             CheckedLocalOwner::ExpressionBinding {
-                expression: CheckedExprUseId(1),
+                expression: CheckedExprUseId(2),
                 body_argument: 2,
             }
         );
@@ -14241,6 +14244,7 @@ view
             [
                 CheckedCallArgument::Value(_),
                 CheckedCallArgument::Binding(CheckedLocalId(0)),
+                CheckedCallArgument::Value(_),
                 CheckedCallArgument::Value(_)
             ]
         ));
@@ -14258,8 +14262,8 @@ view
             }
         ));
         assert_eq!(facts.metrics().locals, 1);
-        assert_eq!(facts.metrics().type_analysis_nodes, 7);
-        assert_eq!(facts.metrics().expressions, 7);
+        assert_eq!(facts.metrics().type_analysis_nodes, 9);
+        assert_eq!(facts.metrics().expressions, 9);
     }
 
     #[test]
@@ -14301,7 +14305,7 @@ view
     #[test]
     fn fixed_builtin_signatures_contextualize_empty_list_and_none_arguments() {
         let source = format!(
-            "app BuiltinContexts\n{THEME}derived\n  gradient = linear.add_stops(linear(0.0), [])\n  debug_is_active = debug.active(none)\n  task_was_aborted = aborted(none)\nview\n  text \"contexts\"\n"
+            "app BuiltinContexts\n{THEME}state\n  task_was_aborted:bool = aborted(none)\nderived\n  gradient = linear.add_stops(linear(0.0), [])\n  debug_is_active = debug.active(none)\nview\n  text \"contexts\"\n"
         );
 
         let program = lower::lower(analyze(&source).unwrap()).unwrap();
@@ -14588,12 +14592,12 @@ view
     fn performance_contract_four_thousand_projections_use_borrowed_scope_layers() {
         fn measure(derived: usize) -> (CheckedFactMetrics, std::time::Duration) {
             let mut source = format!(
-                "app ProjectionFacts\n{THEME}state\n  progress:animation[f64] = 0.0\nderived\n"
+                "app ProjectionFacts\nextern crate::backend\n  sync now() -> instant\n{THEME}state\n  progress:animation[f64] = 0.0\n  at:instant = now()\nderived\n"
             );
             for index in 0..derived {
                 writeln!(
                     source,
-                    "  value_{index} = animation.project(progress, sample, sample + 1.0)"
+                    "  value_{index} = animation.project(progress, sample, sample + 1.0, at)"
                 )
                 .unwrap();
             }
@@ -14606,22 +14610,22 @@ view
 
         let (small, small_elapsed) = measure(500);
         let (large, large_elapsed) = measure(4_000);
-        assert_eq!(large.values, 4_001);
-        assert_eq!(large.expression_uses, 4_002);
-        assert_eq!(large.initializer_analysis_passes, 4_001);
+        assert_eq!(large.values, 4_002);
+        assert_eq!(large.expression_uses, 4_003);
+        assert_eq!(large.initializer_analysis_passes, 4_002);
         assert_eq!(large.scope_env_builds, 2);
-        assert_eq!(large.scope_env_entries, 8_002);
+        assert_eq!(large.scope_env_entries, 8_004);
         assert_eq!(large.locals, 4_000);
         assert_eq!(large.type_scope_env_full_clones, 0);
         assert_eq!(large.scope_env_full_clones, 0);
         assert_eq!(large.scope_env_overlays, 4_000);
         assert_eq!(large.type_scope_env_overlays, 8_000);
-        // Remove the fixed state initializer and normalized Text expression before
+        // Remove the fixed state initializers and normalized Text expression before
         // comparing the per-projection work.
-        assert_eq!(large.expressions - 2, (small.expressions - 2) * 8);
+        assert_eq!(large.expressions - 3, (small.expressions - 3) * 8);
         assert_eq!(
-            large.type_analysis_nodes - 2,
-            (small.type_analysis_nodes - 2) * 8
+            large.type_analysis_nodes - 3,
+            (small.type_analysis_nodes - 3) * 8
         );
         assert_eq!(large.scope_env_overlays, small.scope_env_overlays * 8);
         eprintln!("500 projections in {small_elapsed:?}; 4k projections in {large_elapsed:?}");
@@ -14641,7 +14645,7 @@ view
         fn measure(count: usize) -> (CheckedFactMetrics, usize, usize, usize, std::time::Duration) {
             let mut source = String::from("app SubscriptionFacts\nextern crate::backend\n");
             for index in 0..count {
-                writeln!(source, "  sync retain_{index}(value:instant) -> instant?").unwrap();
+                writeln!(source, "  pure retain_{index}(value:instant) -> instant?").unwrap();
             }
             write!(
                 source,

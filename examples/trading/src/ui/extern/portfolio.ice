@@ -4,22 +4,22 @@ extern crate::portfolio
   PortfolioFlow(trades:i64, volume:f64, realized:f64, wins:i64, losses:i64, closed:i64, win_pct:f64)
   PortfolioFunding(paid:f64, received:f64, net:f64)
   venue_portfolio(venue:Venue, address:str) -> PortfolioHistory ! HlError
-  sync range_label(range:str, shown:bool) -> str
-  sync portfolio_empty() -> PortfolioHistory
-  sync portfolio_unavailable(message:str) -> PortfolioHistory
-  sync demo_portfolio_history() -> PortfolioHistory
-  sync portfolio_assets(positions:[Position]) -> [PortfolioAsset]
-  sync portfolio_exposure(positions:[Position]) -> f64
-  sync portfolio_long_exposure(positions:[Position]) -> f64
-  sync portfolio_short_exposure(positions:[Position]) -> f64
-  sync portfolio_flow(fills:[Fill]) -> PortfolioFlow
-  sync portfolio_funding(positions:[Position]) -> PortfolioFunding
-  sync portfolio_margin_posted(positions:[Position]) -> f64
-  sync portfolio_leverage(account:Account?) -> f64
-  sync portfolio_history_note(history:PortfolioHistory) -> str
-  sync portfolio_history_ready(history:PortfolioHistory, range:str) -> bool
-  sync portfolio_history_start(history:PortfolioHistory, range:str) -> f64
-  sync portfolio_history_end(history:PortfolioHistory, range:str) -> f64
-  sync portfolio_history_change(history:PortfolioHistory, range:str) -> f64
-  sync portfolio_history_change_pct(history:PortfolioHistory, range:str) -> f64
+  pure range_label(range:str, shown:bool) -> str
+  pure portfolio_empty() -> PortfolioHistory
+  pure portfolio_unavailable(message:str) -> PortfolioHistory
+  pure demo_portfolio_history() -> PortfolioHistory
+  pure portfolio_assets(positions:[Position]) -> [PortfolioAsset]
+  pure portfolio_exposure(positions:[Position]) -> f64
+  pure portfolio_long_exposure(positions:[Position]) -> f64
+  pure portfolio_short_exposure(positions:[Position]) -> f64
+  pure portfolio_flow(fills:[Fill]) -> PortfolioFlow
+  pure portfolio_funding(positions:[Position]) -> PortfolioFunding
+  pure portfolio_margin_posted(positions:[Position]) -> f64
+  pure portfolio_leverage(account:Account?) -> f64
+  pure portfolio_history_note(history:PortfolioHistory) -> str
+  pure portfolio_history_ready(history:PortfolioHistory, range:str) -> bool
+  pure portfolio_history_start(history:PortfolioHistory, range:str) -> f64
+  pure portfolio_history_end(history:PortfolioHistory, range:str) -> f64
+  pure portfolio_history_change(history:PortfolioHistory, range:str) -> f64
+  pure portfolio_history_change_pct(history:PortfolioHistory, range:str) -> f64
   component portfolio_performance(history:&PortfolioHistory, range:str) -> unit

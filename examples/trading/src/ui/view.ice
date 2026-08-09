@@ -693,7 +693,7 @@ view
                                     wrap=word
                                     @text-faint
                             for order in orders
-                              OrderRow order=order
+                              OrderRow order=order now=clock
                                 events
                                   pick -> pick_symbol _
                     rule vertical thickness=1.0 color=edge

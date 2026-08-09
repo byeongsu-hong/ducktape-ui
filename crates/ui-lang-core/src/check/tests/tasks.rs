@@ -468,7 +468,7 @@ fn checks_task_error_mapping_and_native_sources() {
 extern crate::backend
   NetworkError(message:str)
   AppError(message:str)
-  sync normalize(error:NetworkError) -> AppError
+  pure normalize(error:NetworkError) -> AppError
   task request() -> i64 ! NetworkError
 theme contract AppTheme
   bg

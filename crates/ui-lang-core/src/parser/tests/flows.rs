@@ -334,3 +334,12 @@ view
         }
     ));
 }
+
+#[test]
+fn parses_pure_extern_functions() {
+    let document = parse(
+        "app Pure\nextern crate::backend\n  pure normalize(value:str) -> str\nview\n  text normalize(\"ok\")\n",
+    )
+    .unwrap();
+    assert_eq!(document.functions[0].kind, ExternKind::Pure);
+}

@@ -9,7 +9,8 @@ pub(in crate::check) fn check_handler(
     operation_ids: &[WidgetIdPath],
     pane_grids: &HashMap<String, PaneGridNames>,
 ) -> Result<(), Error> {
-    let mut env = ScopedTypeEnv::new(readables);
+    let sync_env = SyncTypeEnv::new(readables);
+    let mut env = ScopedTypeEnv::new(&sync_env);
     for param in &handler.params {
         env.insert(param.name.clone(), param.ty.clone());
     }
@@ -713,6 +714,7 @@ pub(in crate::check) fn extern_function<'a>(
                 ExternKind::Recipe => "recipe",
                 ExternKind::Selector => "selector",
                 ExternKind::EventFilter => "event filter",
+                ExternKind::Pure => "pure function",
                 ExternKind::Sync => "sync function",
                 ExternKind::Subscription => "subscription",
                 ExternKind::Theme => "theme factory",

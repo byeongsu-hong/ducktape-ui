@@ -286,8 +286,16 @@ derived
   can_submit = !loading && !empty(normalized_draft)
 ```
 
-Derived values may depend on app state and other derived values. They cannot be
-assigned or bound with `<->`; dependency cycles are errors.
+Derived values may depend on app state and other derived values and may call a
+declared `pure` extern. They cannot be assigned or bound with `<->`; dependency
+cycles are errors. They are recomputed when read, not cached. They reject
+`sync` externs and recomputation-unsafe built-ins: `window_id.unique`,
+`aborted`, `debug.time_with`, `image.upgrade`, the unqualified `encoded` and
+`rgba` image constructors, and animation queries whose instant is omitted. The
+category covers both runtime reads and calls that create a fresh retained
+identity. The checker still permits the set in top-level app state initializers,
+handlers, and views; capture the needed value or identity in state when it must
+remain stable across view passes.
 
 The expression language is deliberately closed:
 
@@ -301,7 +309,11 @@ The expression language is deliberately closed:
 - parentheses;
 - built-ins such as `len`, `empty`, `trim`, `some`, `encoded`, `rgba`, and
   `aborted`;
-- declared `sync` extern calls;
+- declared `pure` extern calls in every expression context;
+- declared `sync` extern calls only in top-level app state initializers and
+  immediately evaluated app/component/preset handler expressions, including
+  arguments inside nested task statements; async completion route expressions
+  are evaluated when the callback runs and are pure-only;
 - checked native constructor/query families documented by the specification.
 
 Examples:
@@ -315,7 +327,10 @@ selection = some(task.title)
 
 There are no arbitrary Rust expressions, closures, method calls, null,
 truthiness, object literals, tuple destructuring, or general allocation.
-Create a typed Rust `sync` function when a pure domain conversion is absent.
+Create a typed Rust `pure` function when a deterministic, side-effect-free
+domain conversion is absent. Reserve `sync` for an immediate effect,
+environment read, or retained identity; component state initializers cannot
+call it because rendering may initialize them again.
 
 Only handlers assign state:
 
@@ -353,6 +368,10 @@ Rules:
 - Use immutable `let name = expression` locals for repeated handler values;
   locals cannot shadow state, derived values, parameters, or earlier locals.
 - Use `return if <bool>` as an early guard.
+- Use `sync` externs only in expressions evaluated while the handler runs, such
+  as `let` initializers, assignment right-hand sides, guards, and nested task
+  arguments. Completion route expressions run later in callbacks and may call
+  only `pure` externs.
 - Put a task-producing statement last; it returns one Iced `Task`.
 - Route fallible externs to both success and failure handlers.
 - Route infallible externs only to success.
@@ -427,8 +446,10 @@ component Counter(label:str)
 
 Local component state is keyed by hierarchical instance scope. It persists for
 the app lifetime by default, so use stable explicit IDs for repeated retained
-instances. Choose mounted lifetime when disappearance should drop local state
-and abort replacement work:
+instances. Rendering may evaluate its initializer again, so it may call `pure`
+externs but not `sync` externs or recomputation-unsafe built-ins, including the
+unqualified `encoded` and `rgba` image constructors. Choose mounted lifetime
+when disappearance should drop local state and abort replacement work:
 
 ```ice
 component SearchDialog()
@@ -624,5 +645,5 @@ ordinary Cargo discovers the same generated tests.
 | CSS class string | checked `@` utility or typed style property |
 | DOM `id` | scoped `#id` |
 | fetch in component render | typed Rust extern called from handler |
-| arbitrary JS/Rust expression | closed expression or `sync` extern |
+| arbitrary JS/Rust expression | closed expression or typed `pure` extern; `sync` only at its effect boundary |
 | thrown async error | declared `! Error` and mandatory failure route |

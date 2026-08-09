@@ -2324,8 +2324,6 @@ pub(crate) fn count(counter: &'static std::thread::LocalKey<std::cell::Cell<usiz
 /// A fill names what it did and where. Its realized PnL is the point when it
 /// closed something, and its size when it opened.
 pub fn fill_label(fill: Fill) -> String {
-    #[cfg(test)]
-    count(&FILL_LABELS);
     let side = if fill.buy { "bought" } else { "sold" };
     let outcome = if fill.closed_pnl == 0.0 {
         fmt_size(fill.size)
@@ -2353,8 +2351,12 @@ pub fn tape_pressure(prints: Vec<Trade>) -> f64 {
 /// How long a resting order has been waiting, in the coarsest unit that still
 /// says something: an order placed four days ago and one placed four minutes
 /// ago are different orders, and the seconds between them are not the point.
-pub fn fmt_age(ts: i64) -> String {
-    let seconds = now_ms() / 1_000 - ts;
+pub fn now_seconds() -> i64 {
+    now_ms() / 1_000
+}
+
+pub fn fmt_age(ts: i64, now: i64) -> String {
+    let seconds = now - ts;
     if ts <= 0 || seconds < 0 {
         return "—".to_owned();
     }
@@ -3335,6 +3337,83 @@ mod tests {
         }
     }
 
+    #[test]
+    fn lazy_row_hashes_cover_every_rendered_field() {
+        type FieldMutation<T> = (&'static str, fn(&mut T));
+
+        fn fingerprint(value: &impl Hash) -> u64 {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            value.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        let market = SymbolRow {
+            name: "BTC".into(),
+            price: 64_000.0,
+            change_pct: 2.5,
+            volume: 1_000_000.0,
+            funding_pct: 0.001,
+            leverage: 40.0,
+            open_interest: 500_000.0,
+            prev: 62_000.0,
+            maintenance: 1.0 / 80.0,
+            size_decimals: 5,
+            selected: false,
+        };
+        let market_moves: &[FieldMutation<SymbolRow>] = &[
+            ("name", |row| row.name.push('X')),
+            ("price", |row| row.price += 0.5),
+            ("change_pct", |row| row.change_pct += 0.5),
+            ("volume", |row| row.volume += 0.5),
+            ("funding_pct", |row| row.funding_pct += 0.5),
+            ("leverage", |row| row.leverage += 0.5),
+            ("open_interest", |row| row.open_interest += 0.5),
+            ("prev", |row| row.prev += 0.5),
+            ("maintenance", |row| row.maintenance += 0.5),
+            ("size_decimals", |row| row.size_decimals += 1),
+            ("selected", |row| row.selected = !row.selected),
+        ];
+        for (field, move_it) in market_moves {
+            let mut changed = market.clone();
+            move_it(&mut changed);
+            assert_ne!(
+                fingerprint(&market),
+                fingerprint(&changed),
+                "changing SymbolRow.{field} must invalidate its lazy subtree"
+            );
+        }
+
+        let fill = Fill {
+            coin: "BTC".into(),
+            ts: 1,
+            price: 64_000.0,
+            size: 0.5,
+            buy: true,
+            closed_pnl: 10.0,
+            heat: 2,
+            tid: 3,
+        };
+        let fill_moves: &[FieldMutation<Fill>] = &[
+            ("coin", |fill| fill.coin.push('X')),
+            ("ts", |fill| fill.ts += 1),
+            ("price", |fill| fill.price += 0.5),
+            ("size", |fill| fill.size += 0.5),
+            ("buy", |fill| fill.buy = !fill.buy),
+            ("closed_pnl", |fill| fill.closed_pnl += 0.5),
+            ("heat", |fill| fill.heat += 1),
+            ("tid", |fill| fill.tid += 1),
+        ];
+        for (field, move_it) in fill_moves {
+            let mut changed = fill.clone();
+            move_it(&mut changed);
+            assert_ne!(
+                fingerprint(&fill),
+                fingerprint(&changed),
+                "changing Fill.{field} must invalidate its lazy subtree"
+            );
+        }
+    }
+
     /// A fixture is read as evidence, so it has to be a state the exchange
     /// could actually report. Five of this loop's bugs were impossible states
     /// drawn convincingly, and a wrong number in the right column is the one
@@ -4223,7 +4302,7 @@ mod tests {
     /// screen — a drift would be obvious at runtime and invisible until then.
     /// Everything the extern block declares, the view has to read. A field
     /// Rust needs and Ice does not belongs in the struct and not in the
-    /// declaration — `Fill.tid` is the pattern. A `sync` nothing calls is
+    /// declaration — `Fill.tid` is the pattern. An extern nothing calls is
     /// worse: it means an edit that was supposed to wire it up matched
     /// nothing, which has happened here four times, twice without a single
     /// test noticing, because a test can cover a function the screen never
@@ -4242,11 +4321,12 @@ mod tests {
             };
             if let Some(rest) = body
                 .strip_prefix("sync ")
+                .or(body.strip_prefix("pure "))
                 .or(body.strip_prefix("component "))
             {
                 let name = rest.split('(').next().unwrap_or(rest);
                 if !app.contains(&format!("{name}(")) {
-                    dead.push(format!("`sync {name}` is declared and never called"));
+                    dead.push(format!("extern `{name}` is declared and never called"));
                 }
                 continue;
             }
@@ -5329,18 +5409,18 @@ mod tests {
         assert_eq!(fmt_latency(-1), "—");
 
         // Order age reads in the coarsest unit that still says something.
-        let now = now_ms() / 1_000;
-        assert_eq!(fmt_age(now), "now");
-        assert_eq!(fmt_age(now - 59), "now");
-        assert_eq!(fmt_age(now - 60), "1m");
-        assert_eq!(fmt_age(now - 3_599), "59m");
-        assert_eq!(fmt_age(now - 3_600), "1h");
-        assert_eq!(fmt_age(now - 86_400 * 4), "4d");
+        let now = now_seconds();
+        assert_eq!(fmt_age(now, now), "now");
+        assert_eq!(fmt_age(now - 59, now), "now");
+        assert_eq!(fmt_age(now - 60, now), "1m");
+        assert_eq!(fmt_age(now - 3_599, now), "59m");
+        assert_eq!(fmt_age(now - 3_600, now), "1h");
+        assert_eq!(fmt_age(now - 86_400 * 4, now), "4d");
         // An order the exchange gave no timestamp, and one stamped in the
         // future by a clock that disagrees with ours, both read as unknown
         // rather than as "now" or as a negative age.
-        assert_eq!(fmt_age(0), "—");
-        assert_eq!(fmt_age(now + 600), "—");
+        assert_eq!(fmt_age(0, now), "—");
+        assert_eq!(fmt_age(now + 600, now), "—");
 
         // Hourly funding is a hundredth of a percent on most of the exchange,
         // so the two decimals every other figure here uses would render 166 of

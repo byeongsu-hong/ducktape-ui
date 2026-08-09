@@ -7,12 +7,12 @@
 //!
 //! What is left is the dense screen itself: a chart, a book, a tape, alerts,
 //! four tables and a ticket, rebuilt on every beat of the feed. These probes
-//! price it panel by panel, price the sync boundary the view calls across, and
+//! price it panel by panel, price the direct Rust calls the view makes, and
 //! price a beat of the feed against an idle frame. They print and assert
 //! nothing.
 //!
 //!     cargo test --release -p trading-example -- --ignored --nocapture frame_
-//!     cargo test --release -p trading-example -- --ignored --nocapture sync_
+//!     cargo test --release -p trading-example -- --ignored --nocapture direct_call_
 //!     cargo test --release -p trading-example -- --ignored --nocapture beat_
 #![cfg(not(debug_assertions))]
 
@@ -237,7 +237,6 @@ fn app(screen: Screen) -> Trading {
     state.live = true;
     state.latency = 42;
     state.symbols = symbol_rows(screen.symbols, &coin);
-    state.visible = hyperliquid::filter_symbols(state.symbols.clone(), String::new(), coin.clone());
     state.focus = hyperliquid::symbol_row(state.symbols.clone(), coin.clone());
     state.account = Some(account(held.clone()));
     state.positions = held;
@@ -266,7 +265,7 @@ fn app(screen: Screen) -> Trading {
 type Ablation = (&'static str, fn(&mut Trading));
 
 const ABLATIONS: &[Ablation] = &[
-    ("without market rows", |state| state.visible.clear()),
+    ("without market rows", |state| state.query = "\0".to_owned()),
     ("without position rows", |state| state.positions.clear()),
     ("without fill rows", |state| state.fills.clear()),
     ("without book rows", |state| state.book = None),
@@ -277,7 +276,7 @@ const ABLATIONS: &[Ablation] = &[
         state.tape = hyperliquid::tape_new()
     }),
     ("without any rows", |state| {
-        state.visible.clear();
+        state.query = "\0".to_owned();
         state.positions.clear();
         state.fills.clear();
         state.book = None;
@@ -637,12 +636,12 @@ fn beat_cost() {
     report("redraw after the beat", after);
 }
 
-/// What the view pays to call across the sync boundary, per call. Each is
+/// What the view pays for direct Rust calls, per call. Each is
 /// written the way the generated view writes it — the boundary takes owned
 /// values, so the collection the app holds is cloned at the call site.
 #[test]
 #[ignore = "frame-cost probe, run explicitly: prints per-call costs, asserts nothing"]
-fn sync_cost() {
+fn direct_call_cost() {
     let state = app(DENSE);
     let row = state
         .focus
@@ -773,7 +772,10 @@ fn sync_cost() {
     price!("fmt_pnl(f64)", hyperliquid::fmt_pnl(held.pnl));
     price!("fmt_volume(f64)", hyperliquid::fmt_volume(row.volume));
     price!("fmt_time(i64)", hyperliquid::fmt_time(print.ts));
-    price!("fmt_age(i64)", hyperliquid::fmt_age(order.ts));
+    price!(
+        "fmt_age(i64, i64)",
+        hyperliquid::fmt_age(order.ts, hyperliquid::now_seconds())
+    );
     price!("fmt_count(i64)", hyperliquid::fmt_count(20));
     price!("fmt_leverage(f64)", hyperliquid::fmt_leverage(row.leverage));
     price!("fmt_bps(f64)", hyperliquid::fmt_bps(0.3));
@@ -798,7 +800,7 @@ fn sync_cost() {
     );
 
     eprintln!(
-        "\nsync boundary as the view calls it, one call, at {} positions / {} prints / {} alerts / {} book levels",
+        "\ndirect Rust calls from the view, one call, at {} positions / {} prints / {} alerts / {} book levels",
         DENSE.positions,
         DENSE.prints,
         DENSE.alerts,
@@ -872,7 +874,7 @@ fn sync_cost() {
     );
 
     eprintln!(
-        "\nsync boundary as one beat calls it, {} markets",
+        "\ndirect Rust calls from one beat, {} markets",
         DENSE.symbols
     );
     fold.sort_by_key(|(_, cost)| std::cmp::Reverse(*cost));
@@ -1175,9 +1177,10 @@ impl ProbeClone for Trading {
         state.address = self.address.clone();
         state.live = self.live;
         state.latency = self.latency;
+        state.clock = self.clock;
         state.coin = self.coin.clone();
+        state.query = self.query.clone();
         state.symbols = self.symbols.clone();
-        state.visible = self.visible.clone();
         state.focus = self.focus.clone();
         state.account = self.account.clone();
         state.positions = self.positions.clone();

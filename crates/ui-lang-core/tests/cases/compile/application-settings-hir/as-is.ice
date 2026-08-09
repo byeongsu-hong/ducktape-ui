@@ -20,8 +20,8 @@ daemon SettingsHir
       skip-taskbar true
       corner round-small
 extern crate::backend
-  sync describe(id:window-id) -> str
-  sync scale_for(id:window-id) -> f64
+  pure describe(id:window-id) -> str
+  pure scale_for(id:window-id) -> f64
   theme native_theme(id:window-id, dark:bool)
 theme contract AppTheme
   bg

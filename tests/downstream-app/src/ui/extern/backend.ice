@@ -1,2 +1,2 @@
 extern crate::backend
-  sync greeting(name:str) -> str
+  pure greeting(name:str) -> str

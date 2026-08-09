@@ -217,7 +217,7 @@ component FillRow(fill:Fill)
                 font=digits
                 @text-faint
 
-component OrderRow(order:Order)
+component OrderRow(order:Order, now:i64)
   emits
     pick(str)
   button #root -> emit(pick, order.coin)
@@ -235,7 +235,7 @@ component OrderRow(order:Order)
         pr=14.0
         gap=8.0
         align=center
-      text fmt_age(order.ts)
+      text fmt_age(order.ts, now)
         with
           size=10.0
           w=44.0

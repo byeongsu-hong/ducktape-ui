@@ -50,10 +50,10 @@ view
           Toolbar #toolbar
             with
               name=name
-              dirty=is_dirty()
+              dirty=history.dirty
               blocked=interaction_blocked
-              undo_available=can_undo()
-              redo_available=can_redo()
+              undo_available=history.can_undo
+              redo_available=history.can_redo
               dark=dark
             events
               new_document -> request_new

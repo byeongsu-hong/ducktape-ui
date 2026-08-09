@@ -577,8 +577,8 @@ fn exposes_the_current_window_only_to_daemon_views_and_callbacks() {
   title label(window)
   scale scale(window)
 extern crate::backend
-  sync label(id:window-id) -> str
-  sync scale(id:window-id) -> f64
+  pure label(id:window-id) -> str
+  pure scale(id:window-id) -> f64
 theme contract AppTheme
   bg
   fg
@@ -670,20 +670,28 @@ fn checks_native_timer_subscription() {
     );
 
     let error = analyze(&source.replace(
-        "sync even_refresh(value:i64) -> i64?",
-        "sync even_refresh(value:i64, extra:i64) -> i64?",
+        "pure even_refresh(value:i64) -> i64?",
+        "pure even_refresh(value:i64, extra:i64) -> i64?",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E142");
     assert!(error.message.contains("expects 2 payloads, got 1"));
 
     let error = analyze(&source.replace(
-        "sync even_refresh(value:i64) -> i64?",
-        "sync even_refresh(value:i64) -> i64",
+        "pure even_refresh(value:i64) -> i64?",
+        "pure even_refresh(value:i64) -> i64",
     ))
     .unwrap_err();
     assert_eq!(error.code, "E142");
     assert!(error.message.contains("must return an optional value"));
+
+    let error = analyze(&source.replace(
+        "pure even_refresh(value:i64) -> i64?",
+        "sync even_refresh(value:i64) -> i64?",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E130");
+    assert!(error.message.contains("unknown extern pure function"));
 
     let error = analyze(&source.replace("with=7", "with=1.5")).unwrap_err();
     assert_eq!(error.code, "E129");

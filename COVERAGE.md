@@ -243,8 +243,15 @@ app-global contract. Definition and rename operate on the source spelling while
 retaining the namespace prefix at each call site.
 
 Top-level derived values are checked, cycle-free pure expressions over app
-state and other derived values; generated getters keep them read-only without a
-runtime reactive graph. Handler-local `let` values use the same closed typed
+state and other derived values, including declared typed `pure` extern calls;
+generated getters keep them read-only without a runtime reactive graph.
+Derived expressions reject immediate `sync` externs and recomputation-unsafe
+built-ins (`window_id.unique`, `aborted`, `debug.time_with`, `image.upgrade`, the
+unqualified `encoded`/`rgba` image constructors, and animation queries with an
+omitted instant). The category covers both runtime reads and calls that create a
+fresh retained identity. The same built-ins remain accepted in top-level app
+state initializers, handlers, and views.
+Handler-local `let` values use the same closed typed
 expression language, are immutable and non-shadowing, and remain available to
 later assignments, guards, and the final task. Parser, checker, codegen, schema,
 README, and reference-app tests are direct evidence for both constructs.
@@ -434,8 +441,11 @@ virtualized columns, range selection, frozen data columns, and new Core syntax.
 
 Component contracts in 2.0 support checked prop defaults. Missing named
 arguments use pure closed expressions that cannot capture app state, component
-state, parameters, or extern calls; bind and mutable component-only values
-cannot be defaulted.
+state, or parameters; declared `pure` extern calls are allowed, while `sync`
+calls, recomputation-unsafe built-ins, bind props, and mutable component-only
+values cannot be defaulted. Component state initializers apply the same
+`pure`/recomputation-unsafe boundary because rendering may evaluate them again;
+the forbidden set includes the unqualified `encoded`/`rgba` image constructors.
 Required props must precede defaulted props.
 Parser, checker, formatter, and codegen tests cover omission, override, type and
 capture errors, and mutable-value rejection.
@@ -648,7 +658,7 @@ and remain outside native export.
 
 ## Typed system reachability
 
-Ice 2.0 Preview has thirty-three checked Rust boundaries:
+Ice 2.0 Preview has thirty-four checked Rust boundaries:
 
 | Boundary | Rust ABI | Covers |
 | --- | --- | --- |
@@ -662,7 +672,8 @@ Ice 2.0 Preview has thirty-three checked Rust boundaries:
 | `sip name(args)` | `fn(...) -> impl Sipper<Output, Progress>` or `Straw<Output, Progress, Error>` | native repeated progress plus one final output through `Task::sip` |
 | `recipe name(args)` | `fn(...) -> impl Recipe<Output = Event>` | custom subscription identity, runtime-event input, streams, cancellation, and arbitrary recipe behavior through native `from_recipe` |
 | `event-filter name()` | `fn(subscription::Event) -> Option<Event>` | native raw runtime-event filtering with an explicit hashable identity, including interaction window IDs/status and system-theme changes |
-| `sync name(args)` | `fn(...) -> Output` | checked synchronous domain conversions usable in Ice expressions |
+| `pure name(args)` | `fn(...) -> Output` | trusted same-arguments/same-result, side-effect-free Rust computations usable in every checked expression context, including derived values, views/settings, component defaults and state initializers, subscription filters, easing, handlers, and tests |
+| `sync name(args)` | `fn(...) -> Output` | immediate effect/environment/retained-identity calls in top-level app state initializers and immediately evaluated app/component/preset handler expressions, including nested task arguments; component state initializers are excluded because rendering may recreate them, and async completion route expressions are pure-only because callbacks evaluate them later |
 | `subscription name(args)` | `fn(...) -> Subscription<Event>` | event, keyboard, mouse, window, system, channel, timer, stream, and custom subscription sources |
 | `theme name(args)` | `fn(...) -> iced::Theme` | native app and nested default-renderer themes, including `custom`, `custom_with_fn`, and complete palette/extended-palette logic |
 | `themer name(args) -> Event` | factory returning `Option<Theme>`, `Element<'static, Event, Theme>`, and optional Theme-dependent text/background callbacks | native alternate `Theme: Base` subtrees inside the default-Theme app, including `Themer::new`, default Theme fallback, event mapping, `text_color`, and `background` |
@@ -739,7 +750,7 @@ public behavior has direct documented Ice syntax and tests.
 
 | iced surface | Ice status | Current representation / missing work |
 | --- | --- | --- |
-| application settings | native | state-dependent title, all built-in/custom theme selection, base background/text style and guarded scale callbacks; application ID, custom typed executor and renderer, ordered checked font byte preloads, default text size/font, antialiasing, vsync, codec-free checked RGBA icons, complete initial/named window settings including structured Linux, Windows, macOS, and Wasm fields, structured state/task boot presets, run, and generated first-class Ice tests covering pinned theme/scale/locale/platform/motion environments, semantic input/window/accessibility interaction, computed layout, real task/sync flow, structured paint, and named in-memory RGBA capture |
+| application settings | native | state-dependent title, all built-in/custom theme selection, base background/text style and guarded scale callbacks; application ID, custom typed executor and renderer, ordered checked font byte preloads, default text size/font, antialiasing, vsync, codec-free checked RGBA icons, complete initial/named window settings including structured Linux, Windows, macOS, and Wasm fields, structured state/task boot presets, run, and generated first-class Ice tests covering pinned theme/scale/locale/platform/motion environments, semantic input/window/accessibility interaction, computed layout, real pure/sync/task flow, structured paint, and named in-memory RGBA capture |
 | `Daemon` | native | `daemon Name` lowers to `iced::daemon`, rejects an unnamed initial window, exposes the current typed window ID to each per-window view/title/theme/scale callback, preserves named window templates and all shared settings, and standalone `exit` lowers to the native lifecycle task |
 | `Animation<T>` | native | first-class checked `animation[bool]`, `animation[f64]`, and rustc-verified custom Float state map to native `Animation<T>`; every built-in or typed custom easing, preset/ms/s duration, delay, finite/forever repetition, auto-reverse, implicit/exact-instant transition, value/progress/remaining queries, f32/optional-f32 interpolation projection, and active-only native frame subscription are covered |
 | explicit image allocation | native | `task image allocate handle` lowers to native `image::allocate` with required exact success/error routes; `image-allocation` retains GPU memory and exposes handle plus exact `Size<u32>`, `image-error` preserves all five native variants with kind/message projections, and `image-memory` plus downgrade/upgrade covers weak retention; requires iced's `image` feature |
@@ -757,7 +768,7 @@ public behavior has direct documented Ice syntax and tests.
 | system tray | native | an Ice-owned surface beyond iced (backed by the `tray-icon` crate on macOS): the `tray` block's required codec-free RGBA icon with the same checked byte-length contract as window icons, macOS template flag, reactive `label`/`tooltip` `str` expressions re-evaluated per update and applied natively only on change, and a daemon-gated `popover` the left click toggles — opened hidden, anchored under the icon (physical-to-logical through the popover's scale factor, clamped only to a display the icon is actually on), then shown and focused. The popover owns its dismissal: losing focus closes it, but only once it has taken focus, because a window reports itself unfocused while it is still being created; the dismissal is stamped at focus loss so the press that caused it cannot reopen it. Without a popover the click restores and focuses the oldest window, and every non-macOS target compiles the same source against no-op stubs. The read-only `popover` view binding says whether the view is drawing that window, `task tray close` dismisses it from a handler because no window id in scope names it, and the `tray click` test step presses the item so a panel is exercised through the real open-and-anchor path. `ICE_TRAY_DEBUG` traces the native boundary. Evidence: `tray-basic` compile, five tray diagnostics and the `tray-block` format fixture, runtime anchor unit tests over single- and multi-display coordinates, the trading terminal's toggle, creation-time-unfocus and dismissing-press unit tests, and the `tray` example's clicked-open panel captures |
 | `window::Id` | native | native unique construction, decimal display, equality, ordering, hashable lazy identity, exact typed extern passage, and direct task/daemon/subscription payload reuse cover the complete public value behavior |
 | window value enums | native | all variants and defaults of `Direction`, `Level`, `Mode`, and `UserAttention`, compact kind projections, exact typed extern passage, equality only where the native type implements it, deliberate ordering/lazy rejection, and equivalent task keyword sugar cover the complete public behavior of these four enums |
-| `window::Position` | native | default, centered, and exact Point construction, kind/optional-point projection, typed extern passage, native `SpecificWith(fn(Size, Size) -> Point)` preservation and invocation through a checked sync adapter, equivalent initial-setting sugar, and deliberate comparison/lazy rejection cover the complete public value behavior |
+| `window::Position` | native | default, centered, and exact Point construction, kind/optional-point projection, typed extern passage, native `SpecificWith(fn(Size, Size) -> Point)` preservation and invocation through a checked pure adapter, equivalent initial-setting sugar, and deliberate comparison/lazy rejection cover the complete public value behavior |
 | `window::RedrawRequest` | native | all next-frame/at-instant/wait variants, kind/optional-instant projection, equality, ordering, exact typed extern passage, equivalent canvas/shader/raw-event behavior sugar, and deliberate lazy rejection matching the native enum cover the complete public behavior |
 | event routing | native | all five structured families plus first-class generic `event` values through native `listen`/`listen_with`/`listen_raw`, optional window IDs, status filters, transforms, handler routing, and typed extern passage; system-theme runtime events remain a separate native source because iced does not represent them as `iced::Event` |
 | `event::Status` | native | both ignored/captured variants, native captured-first merge semantics, compact kind projection, equality, exact typed extern passage, equivalent subscription filter sugar, and deliberate ordering/lazy rejection matching the native enum cover the complete public behavior |

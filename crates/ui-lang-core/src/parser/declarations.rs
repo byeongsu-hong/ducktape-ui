@@ -94,11 +94,11 @@ pub(in crate::parser) fn parse_extern_fn(
     let close = matching_paren(source, line)?;
     let source_name = identifier(source[..source.find('(').unwrap_or(0)].trim(), line)?;
     let name = line.qualify(&source_name);
-    if kind == ExternKind::Sync && source_name == "bytes" {
+    if matches!(kind, ExternKind::Pure | ExternKind::Sync) && source_name == "bytes" {
         return Err(error(
             "E021",
             line,
-            "sync function name `bytes` conflicts with byte literal syntax",
+            "`pure` or `sync` function name `bytes` conflicts with byte literal syntax",
         ));
     }
     let params_source = &source[source.find('(').unwrap_or(0) + 1..close];
@@ -166,6 +166,7 @@ pub(in crate::parser) fn parse_extern_fn(
                 | ExternKind::Recipe
                 | ExternKind::Selector
                 | ExternKind::EventFilter
+                | ExternKind::Pure
                 | ExternKind::Sync
                 | ExternKind::Subscription
                 | ExternKind::Themer
@@ -194,7 +195,7 @@ pub(in crate::parser) fn parse_extern_fn(
         return Err(error(
             "E023",
             line,
-            "extern components, shaders, recipes, event filters, sync functions, subscriptions, themers, window callbacks, markdown viewers, editor bindings/highlighters, and widget styles cannot declare an error type",
+            "extern components, shaders, recipes, event filters, pure/sync functions, subscriptions, themers, window callbacks, markdown viewers, editor bindings/highlighters, and widget styles cannot declare an error type",
         ));
     }
     Ok(ExternFn {

@@ -4,7 +4,7 @@ extern crate::terminal
   Notice(running:bool, title:str)
   Started(session:Session, title:str)
   TerminalError(message:str)
-  sync idle_session() -> Session
+  pure idle_session() -> Session
   sync detect_environment() -> Environment
   start_session(kind:str, target:str, directory:str) -> Started ! TerminalError
   task focus_terminal(session:Session) -> unit

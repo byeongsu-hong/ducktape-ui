@@ -363,7 +363,7 @@ pub(in crate::check) fn infer_subscriptions(
             let function = subscription_extern_function(
                 declarations,
                 filter,
-                ExternKind::Sync,
+                ExternKind::Pure,
                 &subscription.span,
             )?;
             if function.params.len() != payloads.len() {
@@ -484,6 +484,7 @@ fn subscription_extern_function<'a>(
         ExternKind::Stream => "stream",
         ExternKind::Recipe => "recipe",
         ExternKind::EventFilter => "event filter",
+        ExternKind::Pure => "pure function",
         ExternKind::Sync => "sync function",
         ExternKind::Subscription => "subscription",
         _ => "extern",
@@ -571,12 +572,13 @@ pub(in crate::check) fn infer_runs(
         .params
         .iter()
         .map(|param| (param.name.as_str(), Type::Unknown));
+    let sync_value_env = SyncTypeEnv::new(value_env);
     infer_run_statements(
         &handler.statements,
         params,
         document,
         signatures,
-        value_env,
+        &sync_value_env,
         route_env,
     )
 }

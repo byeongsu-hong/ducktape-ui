@@ -80,6 +80,15 @@ view
         button "Add" disabled=!can_submit p=12.0 @bg-primary text-white -> submit
 ```
 
+`derived` names a read-only computation over state. It may use deterministic
+Ice built-ins or a declared `pure` extern and is recomputed when read; it is not
+cached state that handlers must keep synchronized. `pure` is a trusted Rust
+contract: the same arguments must produce the same value without observable
+effects. Immediate `sync` externs may observe the environment, perform an
+effect, or create retained identity, so Ice confines them to top-level app state
+initializers and immediately evaluated handler expressions. Async completion
+route expressions are evaluated later and may call only `pure` externs.
+
 The punctuation has one job each:
 
 - indentation is the tree;
@@ -130,6 +139,7 @@ this Core contract.
 cargo run -p iced-app          # the reference task app + native-surface fixtures
 cargo run -p music-example     # macOS-Music-style flows, liquid-glass player
 cargo run -p browser-example   # native CEF child inside an Ice shell (see examples/cef-browser)
+cargo ice dev examples/hotreload/src/ui/app.ice -- -p hotreload-example # side-by-side hot reload preview and Ice editor
 cargo run -p markdown-example  # native Markdown editor (see examples/markdown-editor/DESIGN.md)
 cargo run -p terminal-example  # native PTY terminal component (see examples/terminal)
 cargo run -p showcase          # the ducktape-ui component catalog (crates/ui)
