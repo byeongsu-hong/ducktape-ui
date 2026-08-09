@@ -13,7 +13,7 @@ daemon Trading
   text-size 13
   window main
     size 1760 940
-    min-size 1180 720
+    min-size 1660 820
     position centered
     platform macos
       title-hidden true
@@ -28,12 +28,14 @@ daemon Trading
 use "theme.ice"
 use "extern/hyperliquid.ice"
 use "extern/lighter.ice"
+use "extern/portfolio.ice"
 use "state.ice"
 use "extern/venue.ice"
 use "components/cells.ice"
 use "components/controls.ice"
 use "components/market_rows.ice"
 use "components/account_rows.ice"
+use "components/portfolio.ice"
 use "components/status.ice"
 use "handlers.ice"
 use "view.ice"

@@ -24,6 +24,7 @@ on connect
     run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
     run venue_account(venue, trim(draft)) -> account_loaded _ | failed _
     run venue_orders(venue, trim(draft)) -> orders_loaded _ | failed _
+    run venue_portfolio(venue, trim(draft)) -> portfolio_loaded _ | portfolio_failed _
     abortable feeds abort-on-drop
       parallel
         stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
@@ -34,6 +35,7 @@ on browse
   gate = false
   status = "Loading"
   tape = tape_focus(tape, coin, interval)
+  portfolio_history = portfolio_empty()
   parallel
     run venue_symbols(venue) -> symbols_loaded _ | failed _
     run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
@@ -97,6 +99,7 @@ on reopen
   orders = []
   positions = []
   account = none
+  portfolio_history = portfolio_empty()
   flashing = false
   // The feed the gate opens over is about to be aborted, so its last reading
   // describes nothing: left alone, the terminal behind the gate goes on
@@ -115,7 +118,7 @@ on pick_symbol(name)
   // Every row that names a market is a way to it, and the market is drawn on
   // one page. Picking one from the list, a position, an order or a fill and
   // being left on the page you picked it from is a request the app ignored.
-  page = Page.trade
+  page = Page.terminal
   // The book on screen belongs to the market being left. Clearing it first is
   // what stops the new ticket opening at the old market's price.
   book = none
@@ -204,6 +207,7 @@ on switch_venue(next)
     run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
     run venue_account(venue, address) -> account_loaded _ | failed _
     run venue_orders(venue, address) -> orders_loaded _ | failed _
+    run venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
     abortable feeds abort-on-drop
       parallel
         stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
@@ -228,6 +232,12 @@ on tick_account
   parallel
     run venue_account(venue, address) -> account_loaded _ | failed _
     run venue_orders(venue, address) -> orders_loaded _ | failed _
+
+on tick_portfolio
+  run venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
+
+on pick_portfolio_range(next)
+  portfolio_range = next
 
 on cool_flash
   fills = cool_fills(fills)
@@ -287,6 +297,12 @@ on orders_loaded(rows)
   error = ""
   orders = rows
 
+on portfolio_loaded(history)
+  portfolio_history = history
+
+on portfolio_failed(reason)
+  portfolio_history = portfolio_unavailable(reason.message)
+
 on market_ticked(tick)
   book = tick.book
   latency = tick.latency
@@ -330,7 +346,8 @@ subscribe
   // Escape clears the search box, and the search box is on the markets page.
   // App-scoped, it cleared a filter the reader could not see from anywhere
   // else, so the list came back narrowed to a word nothing on screen showed.
-  keyboard press when page == Page.markets && !gate && !empty(query) -> search_key _
+  keyboard press when page == Page.terminal && !gate && !empty(query) -> search_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
+  every 60s when !gate && !empty(address) -> tick_portfolio
   every 700ms when flashing -> cool_flash

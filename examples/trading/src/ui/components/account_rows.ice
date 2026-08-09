@@ -75,11 +75,11 @@ component PositionRow(held:Position)
               h=3.0
               bg=edge
             space w=fill h=fill
-      Num
-        with
-          value=fmt_compact_usd(held.margin)
-          size=12.0
-          width=88.0
+      // No margin column. It was added when positions had a page to
+      // themselves and 88 more pixels to spend; back in the rail beside the
+      // chart it pushed the funding and the PnL into each other. What the
+      // account has posted is on the dashboard, totalled, where there is room
+      // to say it.
       Delta
         with
           value=fmt_funding_flow(held.funding)

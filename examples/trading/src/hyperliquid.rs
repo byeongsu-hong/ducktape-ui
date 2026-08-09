@@ -156,7 +156,7 @@ fn only_the_live_tests_are_running(mut args: impl Iterator<Item = String>) -> bo
 }
 
 /// Everything the exchange can tell us goes through this one endpoint.
-async fn info(body: Value) -> Result<Value, HlError> {
+pub(crate) async fn info(body: Value) -> Result<Value, HlError> {
     // A test drives the real program, subscriptions included, so the 5s account
     // poll fires inside any test the suite's own load stretches past five
     // seconds and this endpoint answers it from the live exchange. Whichever
@@ -1723,13 +1723,6 @@ pub fn fmt_time(ts: i64) -> String {
 /// fixed width, and a fraction typed out to fifteen places renders as a string
 /// as long as it was typed.
 pub fn fmt_leverage(value: f64) -> String {
-    // MAX LEVERAGE is the last column of a market row, and on the markets page
-    // nothing else draws it — which makes this the market list's row counter.
-    // `markets_stay_memoized_performance_contract` asserts the cold count is a
-    // whole multiple of the rows on screen, so a second caller appearing on
-    // that page fails the contract rather than quietly skewing it.
-    #[cfg(test)]
-    count(&MARKET_ROWS);
     let value = format!("{value:.2}");
     format!("{}x", value.trim_end_matches('0').trim_end_matches('.'))
 }
@@ -2273,6 +2266,26 @@ pub fn hit_volume(hit: CandleHit) -> f64 {
 }
 
 /// A resting order names its side, its size and the price it waits at.
+/// A market row names its ticker and what the day has done to it. The rail
+/// draws both beside the name, and a reader who cannot see those two columns
+/// was being asked to choose a market from its ticker alone.
+///
+/// Called once per `MarketRow` and nowhere else, which is what makes it the
+/// market list's row counter — the arrangement `fill_label` already has.
+/// `markets_stay_memoized_performance_contract` asserts the cold count is a
+/// whole multiple of the rows on screen, so a second caller appearing fails
+/// the contract rather than quietly skewing it.
+pub fn market_label(market: SymbolRow) -> String {
+    #[cfg(test)]
+    count(&MARKET_ROWS);
+    format!(
+        "{} at {}, {} today",
+        market.name,
+        fmt_px(market.price),
+        fmt_pct(market.change_pct)
+    )
+}
+
 pub fn order_label(order: Order) -> String {
     let side = if order.buy { "buy" } else { "sell" };
     format!(
@@ -2297,8 +2310,8 @@ thread_local! {
     /// Fill rows built: `fill_label` is called once per `FillRow` and nowhere
     /// else.
     pub(crate) static FILL_LABELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Market rows built: on the markets page `fmt_leverage` is MarketRow's
-    /// alone.
+    /// Market rows built: `market_label` is called once per `MarketRow` and
+    /// nowhere else.
     pub(crate) static MARKET_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -2790,6 +2803,17 @@ pub fn demo_fills_many(count: i64) -> Vec<Fill> {
                 tid: 4_000_000 + step,
             }
         })
+        .collect()
+}
+
+/// Fills that opened a position and closed nothing — the ordinary state of an
+/// account that has not round-tripped yet, and the one a win rate cannot be
+/// computed for. Derived from the fixture above rather than typed again, so
+/// the two cannot drift into disagreeing about what an opening fill is.
+pub fn demo_fills_opening() -> Vec<Fill> {
+    demo_fills()
+        .into_iter()
+        .filter(|fill| fill.closed_pnl == 0.0)
         .collect()
 }
 

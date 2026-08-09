@@ -1,13 +1,13 @@
-// The market list has a page of its own now, so a row carries what the header
-// used to shout in four abbreviations at whoever happened to have that market
-// selected: the whole universe, six columns wide, sorted the way the venue
-// sends it.
+// The universe sits in a rail beside the chart, so a row carries the three
+// figures a rail has room for and the market list stops competing with the
+// chart for width. The six-column version this replaced belonged to a page of
+// its own; there is no page of its own any more.
 component MarketRow(market:SymbolRow)
   emits
     pick(str)
   button #row -> emit(pick, market.name)
     with
-      label=market.name
+      label=market_label(market)
       w=fill
       p=0.0
     active bg=panel text=fg r=0.0
@@ -27,52 +27,32 @@ component MarketRow(market:SymbolRow)
         with
           w=fill
           pl=10.0
-          pr=20.0
-          gap=10.0
+          pr=14.0
+          gap=8.0
           align=center
         if market.selected
           text market.name
             with
-              size=12.0
+              size=11.0
               w=fill
               @text-fg
         if !market.selected
           text market.name
             with
-              size=12.0
+              size=11.0
               w=fill
               @text-muted
         Num
           with
             value=fmt_px(market.price)
-            size=11.0
-            width=100.0
+            size=10.0
+            width=74.0
         Delta
           with
             value=fmt_pct(market.change_pct)
             up=(market.change_pct >= 0.0)
-            size=11.0
-            width=70.0
-        Num
-          with
-            value=fmt_volume(market.volume)
-            size=11.0
-            width=100.0
-        Num
-          with
-            value=fmt_volume(market.open_interest)
-            size=11.0
-            width=110.0
-        Num
-          with
-            value=fmt_funding(market.funding_pct)
-            size=11.0
-            width=80.0
-        Num
-          with
-            value=fmt_leverage(market.leverage)
-            size=11.0
-            width=100.0
+            size=10.0
+            width=54.0
 
 component BookRow(level:Level, buy:bool)
   emits

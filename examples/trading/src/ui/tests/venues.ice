@@ -41,7 +41,6 @@ test trading_switching_venue_leaves_the_old_venues_market_behind
 test trading_switching_venue_leaves_the_old_venues_account_behind
   preset held
   viewport 1660 820
-  dispatch navigate(Page.portfolio)
   expect text "POSITIONS"
   expect text "3,526.53"
   expect text "15:10:00"
@@ -170,19 +169,21 @@ test trading_a_market_that_leaves_the_universe_stops_being_the_one_on_screen
 test trading_a_word_typed_against_one_venue_does_not_filter_the_other
   preset held
   viewport 1660 820
-  dispatch navigate(Page.markets)
+  target app = #app
+  target terminal = app/trade
+  target markets = terminal/markets
   dispatch search("PEPE")
   expect query == "PEPE"
-  expect text "kPEPE"
-  expect no text "ETH"
+  expect text "kPEPE" within markets
+  expect no text "ETH" within markets
   dispatch switch_venue(Venue.lighter)
   expect empty(query)
   dispatch symbols_loaded(demo_symbols_lighter())
   // The whole of the venue's universe, including the two markets a surviving
   // "PEPE" would have hidden.
   expect empty(query)
-  expect text "ETH"
-  expect text "AAPL"
+  expect text "ETH" within markets
+  expect text "AAPL" within markets
 
 // A button that is only highlighted says which venue is being read to whoever
 // can see two inks. Both are reachable and the name each one carries is the
@@ -217,20 +218,22 @@ test trading_a_venue_that_will_not_answer_says_so_where_the_rows_would_be
   preset lighter
   viewport 1660 820
   target app = #app
-  target portfolio = app/portfolio
-  target lower = portfolio/lower
-  target resting = lower/orders
+  target terminal = app/trade
+  target lower = terminal/lower
   target printed = lower/fills
-  dispatch navigate(Page.portfolio)
-  capture lighter_portfolio
-  expect text "OPEN ORDERS" within resting
+  target book_panel = terminal/book
+  expect text "OPEN ORDERS" within book_panel
   expect text "RECENT FILLS" within printed
-  expect text "Lighter serves resting orders and this account's fills only to an API-key-signed token, which an address alone cannot get and this app does not hold." within resting
   expect text "Lighter serves resting orders and this account's fills only to an API-key-signed token, which an address alone cannot get and this app does not hold." within printed
+  expect text "Lighter serves resting orders and this account's fills only to an API-key-signed token, which an address alone cannot get and this app does not hold." within book_panel
   expect no text "No resting orders."
   expect no text "No fills on this account yet."
   expect no text "Orders need an address."
   expect no text "Fills need an address."
+  dispatch navigate(Page.portfolio)
+  expect text "EXPOSURE ALLOCATION"
+  expect text "Historical performance on Lighter needs a read-only API token; this address-only session still shows current exposure."
+  capture lighter_portfolio
 
 // One address is typed once and read at whichever venue is on screen, so
 // having a book at one exchange and none at the other is ordinary rather than
@@ -270,11 +273,21 @@ test trading_no_address_is_a_different_absence_from_no_account
   expect text "No account is being read. Settings takes an address."
   expect no text "No Hyperliquid account for this address."
 
-// The trade page on the other venue, drawn from that venue's own responses.
-// The chart is the reason this test exists: it opens on a window of history
-// here exactly as it does on the other exchange, so nothing above it has a gap
-// to explain and the crosshair has bars to read out.
-test trading_the_trade_page_on_the_other_venue
+// The terminal on the other venue, drawn from that venue's own responses, and
+// nothing above the chart explaining a gap that no longer exists.
+//
+// This asserted a figure on the chart's price axis, which is painted by the
+// chart widget rather than published as text. It resolved while the chart had
+// the page to itself; under the single-page terminal no chart-painted label
+// resolves at any viewport or page density, so the oracle went with the
+// layout rather than with the behaviour. The behaviour it was protecting —
+// that a chart opened here fills with history instead of one forming bar — is
+// owned by `lighter.rs`, where `candles_arrive_as_floats_and_land_on_the_tape_in_seconds`
+// and `a_bar_read_from_history_is_the_bar_the_feed_forms` run in CI and
+// `a_chart_opened_on_this_venue_fills_with_history` runs against the wire.
+// This test is the integration smoke around them: the venue's own book, tape
+// and account on one screen, with no gap sentence over the chart.
+test trading_the_terminal_on_the_other_venue
   preset lighter
   viewport 1660 820
   target app = #app
@@ -282,50 +295,37 @@ test trading_the_trade_page_on_the_other_venue
   target bar = trade/chart-bar
   target tabs = bar/intervals
   target showing = tabs/interval-1m/root/tab-on
-  target frame = trade/chart-frame
   expect a11y showing name "Show 1m candles, already showing"
   expect text "ORDER BOOK"
   expect text "SPREAD"
-  // The frame and the tabs are drawn whether or not there are bars in them, so
-  // neither says the chart has any. The price axis does: it is scaled off the
-  // tape, so a figure on it is a bar the chart is holding, and a tape holding
-  // nothing — or the one forming bar a chart with no history opens on — draws
-  // no axis at all.
-  expect text "64,500" within frame
+  // Lighter's own book, to the tick it quotes — a screen drawn from the other
+  // exchange's fixtures passes everything above this and fails here.
+  expect text "64,973.50"
   expect no text "market not loaded"
+  expect no text "Lighter publishes no candle history"
   capture page_trade_lighter
 
-// The markets page is the venue's universe, and the switch beside the page
-// tabs is what it was read through. Every figure here is one Lighter published:
-// its own tickers, its own price scales — a share priced in hundreds beside a
-// coin priced in thousandths of a cent — and its own caps, which are the ones
-// the ticket prices a cliff against.
-test trading_the_markets_page_on_the_other_venue
+// The terminal rail is the venue's universe, and stays beside its chart.
+test trading_the_market_rail_on_the_other_venue
   preset lighter
   viewport 1660 820
   target app = #app
   target header = app/header
   target switch = header/venues
   target reading = switch/venue-lighter/root/tab-on
-  dispatch navigate(Page.markets)
   // Every figure below is a row this preset was seeded with, and a seeded row
   // does not know which venue is on screen — so without this the page would
   // draw the same on either. The switch beside the page tabs is the one thing
   // here that is read from `venue`, and only the venue being read has a
   // `tab-on` to carry the label.
   expect a11y reading name "Read Lighter, already reading"
-  expect text "OPEN INTEREST"
-  expect text "MAX LEVERAGE"
   expect text "75.460"
   // Two markets the other exchange does not list at all, and one it lists
   // under a different spelling.
   expect text "AAPL"
   expect text "1000PEPE"
   expect no text "kPEPE"
-  // Bitcoin's cap here is 50x. Hyperliquid's fixture says 40x, so a screen
-  // drawn from that one passes everything above and fails this.
-  expect text "50x"
-  expect no text "ORDER BOOK"
+  expect text "ORDER BOOK"
   capture page_markets_lighter
 
 // The settings page holds the app's own facts, and what an exchange will not

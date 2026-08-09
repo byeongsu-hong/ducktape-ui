@@ -226,11 +226,13 @@ fn app(screen: Screen) -> Trading {
     let held = positions(screen.positions, &coin);
 
     state.gate = false;
-    // The fills, the positions and the orders live on the portfolio page since
-    // the terminal was split into pages, and the app opens on the trade page.
-    // A probe that measured the default page would measure a screen with no
-    // rows on it at all and report the memo as free.
-    state.page = crate::Page::Portfolio;
+    // The market list, the chart, the book, the tape, the positions, the
+    // orders and the fills are one screen again, so the probe measures the
+    // page the app opens on and every list it prices is drawn there. It was
+    // seeding the portfolio page while the market list lived on `Page.markets`
+    // — an ablation of market rows was pricing a list that was not rendered,
+    // and returned the small number near zero that says so.
+    state.page = crate::Page::Terminal;
     state.address = ADDRESS.to_owned();
     state.live = true;
     state.latency = 42;
@@ -1024,9 +1026,9 @@ fn fills_stay_memoized_performance_contract() {
 
 /// The same contract for the market list, which has been behind a `lazy`
 /// boundary far longer than the fills have and whose `SymbolRow` carries eleven
-/// fields into a hand-written `Hash`. Counted through `fmt_leverage`, which
-/// draws the MARKET LEVERAGE column and, on the markets page, nothing else —
-/// the cold assertion below is what holds that true.
+/// fields into a hand-written `Hash`. Counted through `market_label`, the row's
+/// own accessibility name, which nothing else calls — the cold assertion below
+/// is what holds that true.
 #[test]
 #[ignore = "performance contract, run explicitly: counts market rows rebuilt per redraw"]
 fn markets_stay_memoized_performance_contract() {
@@ -1039,7 +1041,6 @@ fn markets_stay_memoized_performance_contract() {
         Config::new("markets_stay_memoized").viewport(VIEWPORT.0, VIEWPORT.1),
     );
     *driver.state_mut() = app(DENSE);
-    driver.state_mut().page = crate::Page::Markets;
 
     MARKET_ROWS.with(Cell::take);
     driver.redraw(here());

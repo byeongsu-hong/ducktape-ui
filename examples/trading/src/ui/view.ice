@@ -99,17 +99,10 @@ view
                       events
                         pick -> switch_venue _
                   row #pages gap=4.0 align=center
-                    NavTab #page-trade
+                    NavTab #page-terminal
                       with
-                        name="TRADE"
-                        target=Page.trade
-                        current=page
-                      events
-                        pick -> navigate _
-                    NavTab #page-markets
-                      with
-                        name="MARKETS"
-                        target=Page.markets
+                        name="TERMINAL"
+                        target=Page.terminal
                         current=page
                       events
                         pick -> navigate _
@@ -180,9 +173,9 @@ view
               rule horizontal thickness=1.0 color=edge
               // What broke belongs to the app, not to the page that happened to be
               // drawn when it broke. The account poll and the universe poll run on
-              // all four pages and the feed runs always, so a failure raised while
-              // the reader is on markets, portfolio or settings has to be legible
-              // there rather than waiting for a trip back to the chart.
+              // all three pages and the feed runs always, so a failure raised while
+              // the reader is on portfolio or settings has to be legible there
+              // rather than waiting for a trip back to the terminal.
               if !empty(error) || !empty(feed_error) || !empty(status)
                 col w=fill
                   box #app-status
@@ -206,8 +199,78 @@ view
                       space w=fill
                   rule horizontal thickness=1.0 color=edge
               match page
-                Page.trade
+                Page.terminal
                   row #trade w=fill h=fill
+                    box #markets
+                      with
+                        w=232.0
+                        h=fill
+                        bg=panel
+                      col w=fill h=fill
+                        box w=fill p=10.0
+                          input "" #search <-> query
+                            with
+                              label="Search markets"
+                              hint="Search markets"
+                              change=search
+                              text-size=12.0
+                            active bg=raised border=edge r=4.0 placeholder=faint value=fg
+                            hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
+                            focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                        row
+                          with
+                            w=fill
+                            pl=13.0
+                            pr=14.0
+                            pb=8.0
+                            gap=8.0
+                          Label value="MARKET"
+                          space w=fill
+                          Head
+                            with
+                              name="LAST"
+                              width=74.0
+                              right=true
+                          Head
+                            with
+                              name="24H"
+                              width=54.0
+                              right=true
+                        rule horizontal thickness=1.0 color=edge
+                        scroll #market-list
+                          with
+                            h=fill
+                            bar-w=6.0
+                            bar-m=2.0
+                            scroller-w=6.0
+                          active
+                            y-rail bg=panel
+                            y-scroller bg=edge r=3.0
+                          hovered
+                            y-rail bg=panel
+                            y-scroller bg=faint r=3.0
+                          col w=fill
+                            if empty(visible) && !empty(symbols)
+                              box
+                                with
+                                  w=fill
+                                  h=100.0
+                                  p=16.0
+                                  align-x=center
+                                  align-y=center
+                                text "No market matches that."
+                                  with
+                                    size=12.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            for row in visible
+                              lazy row as market
+                                MarketRow market=market #market(market.name)
+                                  events
+                                    pick -> pick_symbol _
+                    rule vertical thickness=1.0 color=edge
                     col w=fill h=fill
                       box #chart-bar
                         with
@@ -265,6 +328,191 @@ view
                           h=fill
                           p=6.0
                         extern chart(venue, tape, fills, positions, orders, coin) #chart -> chart_signalled _
+                      resize-handle #split drag=lower_resized cursor=resize-vertical
+                        box
+                          with
+                            w=fill
+                            h=5.0
+                            bg=edge
+                          space w=fill h=fill
+                      box #lower
+                        with
+                          w=fill
+                          h=lower_height
+                          bg=panel
+                        row w=fill h=fill
+                          col #positions w=fill h=fill
+                            row
+                              with
+                                w=fill
+                                h=34.0
+                                pl=14.0
+                                pr=16.0
+                                gap=10.0
+                                align=center
+                              Label value="POSITIONS"
+                              Label value=fmt_count(len(positions))
+                              space w=fill
+                            row
+                              with
+                                w=fill
+                                pl=14.0
+                                pr=16.0
+                                pb=8.0
+                                gap=7.0
+                              Head
+                                with
+                                  name="COIN"
+                                  width=44.0
+                                  right=false
+                              Head
+                                with
+                                  name="SIDE"
+                                  width=44.0
+                                  right=false
+                              Head
+                                with
+                                  name="SIZE"
+                                  width=64.0
+                                  right=true
+                              Head
+                                with
+                                  name="ENTRY"
+                                  width=76.0
+                                  right=true
+                              Head
+                                with
+                                  name="LIQ"
+                                  width=76.0
+                                  right=true
+                              Head
+                                with
+                                  name="FUNDING"
+                                  width=72.0
+                                  right=true
+                              space w=fill
+                              Head
+                                with
+                                  name="UNREALIZED"
+                                  width=92.0
+                                  right=true
+                            rule horizontal thickness=1.0 color=edge
+                            scroll #position-list
+                              with
+                                h=fill
+                                bar-w=6.0
+                                bar-m=2.0
+                                scroller-w=6.0
+                              active
+                                y-rail bg=panel
+                                y-scroller bg=edge r=3.0
+                              hovered
+                                y-rail bg=panel
+                                y-scroller bg=faint r=3.0
+                              col w=fill
+                                if empty(positions) && watching && account_read(account)
+                                  box
+                                    with
+                                      w=fill
+                                      h=96.0
+                                      align-x=center
+                                      align-y=center
+                                    text "No open positions on this account." size=11.0 @text-faint
+                                if !watching
+                                  box
+                                    with
+                                      w=fill
+                                      h=96.0
+                                      align-x=center
+                                      align-y=center
+                                    button #reconnect p=9.0 label="Connect an address" -> reopen
+                                      active bg=raised text=fg r=4.0
+                                      hovered bg=edge text=fg r=4.0
+                                      text "Connect an address" size=11.0 @text-fg
+                                for held in positions
+                                  PositionRow held=held #position(held.coin)
+                                    events
+                                      pick -> pick_symbol _
+                          rule vertical thickness=1.0 color=edge
+                          col #fills w=310.0 h=fill
+                            row
+                              with
+                                w=fill
+                                h=34.0
+                                pl=12.0
+                                pr=14.0
+                                gap=8.0
+                                align=center
+                              Label value="RECENT FILLS"
+                              space w=fill
+                              Label value=fmt_count(len(fills))
+                            row
+                              with
+                                w=fill
+                                pl=12.0
+                                pr=14.0
+                                pb=8.0
+                                gap=5.0
+                              Head
+                                with
+                                  name="TIME"
+                                  width=44.0
+                                  right=false
+                              Head
+                                with
+                                  name="COIN"
+                                  width=38.0
+                                  right=false
+                              Head
+                                with
+                                  name="SIDE"
+                                  width=30.0
+                                  right=false
+                              Head
+                                with
+                                  name="PRICE"
+                                  width=72.0
+                                  right=true
+                              space w=fill
+                              Head
+                                with
+                                  name="PNL / SIZE"
+                                  width=64.0
+                                  right=true
+                            rule horizontal thickness=1.0 color=edge
+                            scroll #fill-list
+                              with
+                                h=fill
+                                bar-w=6.0
+                                bar-m=2.0
+                                scroller-w=6.0
+                              active
+                                y-rail bg=panel
+                                y-scroller bg=edge r=3.0
+                              hovered
+                                y-rail bg=panel
+                                y-scroller bg=faint r=3.0
+                              col w=fill
+                                if empty(fills)
+                                  box
+                                    with
+                                      w=fill
+                                      h=72.0
+                                      p=10.0
+                                      align-x=center
+                                      align-y=center
+                                    text venue_fills_note(venue, watching)
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        align-x=center
+                                        wrap=word
+                                        @text-faint
+                                for fill in fills
+                                  lazy fill as printed
+                                    FillRow fill=printed #fill(printed.tid)
+                                      events
+                                        pick -> pick_symbol _
                     rule vertical thickness=1.0 color=edge
                     box #book
                       with
@@ -380,7 +628,7 @@ view
                         rule horizontal thickness=1.0 color=edge
                         scroll #alert-list
                           with
-                            h=132.0
+                            h=88.0
                             bar-w=6.0
                             bar-m=2.0
                             scroller-w=6.0
@@ -403,6 +651,51 @@ view
                               AlertRow alert=alert #alert(fmt_px(alert.price))
                                 events
                                   drop -> drop_alert_at _ _
+                        rule horizontal thickness=1.0 color=edge
+                        row
+                          with
+                            w=fill
+                            h=32.0
+                            pl=12.0
+                            pr=14.0
+                            gap=8.0
+                            align=center
+                          Label value="OPEN ORDERS"
+                          space w=fill
+                          Label value=fmt_count(len(orders))
+                        rule horizontal thickness=1.0 color=edge
+                        scroll #order-list
+                          with
+                            h=120.0
+                            bar-w=6.0
+                            bar-m=2.0
+                            scroller-w=6.0
+                          active
+                            y-rail bg=panel
+                            y-scroller bg=edge r=3.0
+                          hovered
+                            y-rail bg=panel
+                            y-scroller bg=faint r=3.0
+                          col w=fill
+                            if empty(orders)
+                              box
+                                with
+                                  w=fill
+                                  h=72.0
+                                  p=10.0
+                                  align-x=center
+                                  align-y=center
+                                text venue_orders_note(venue, watching)
+                                  with
+                                    size=10.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            for order in orders
+                              OrderRow order=order
+                                events
+                                  pick -> pick_symbol _
                     rule vertical thickness=1.0 color=edge
                     box #ticket-panel
                       with
@@ -691,419 +984,692 @@ view
                               w=fill
                               wrap=word
                               @text-faint
-                Page.markets
-                  box #markets
+                Page.portfolio
+                  scroll #portfolio
                     with
                       w=fill
                       h=fill
-                      bg=panel
-                    col w=fill h=fill
-                      row
-                        with
-                          w=fill
-                          p=10.0
-                          gap=12.0
-                          align=center
-                        input "" #search <-> query
-                          with
-                            label="Search markets"
-                            hint="Search markets"
-                            change=search
-                            text-size=12.0
-                            w=280.0
-                          active bg=raised border=edge r=4.0 placeholder=faint value=fg
-                          hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
-                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                        Label value=fmt_count(len(visible))
-                        space w=fill
-                        text "Pick a market to trade it." size=11.0 @text-faint
-                      row
-                        with
-                          w=fill
-                          pl=13.0
-                          pr=20.0
-                          pb=8.0
-                          gap=10.0
-                        Label value="MARKET"
-                        space w=fill
-                        Head
-                          with
-                            name="LAST"
-                            width=100.0
-                            right=true
-                        Head
-                          with
-                            name="24H"
-                            width=70.0
-                            right=true
-                        Head
-                          with
-                            name="VOLUME"
-                            width=100.0
-                            right=true
-                        Head
-                          with
-                            name="OPEN INTEREST"
-                            width=110.0
-                            right=true
-                        Head
-                          with
-                            name="FUNDING"
-                            width=80.0
-                            right=true
-                        Head
-                          with
-                            name="MAX LEVERAGE"
-                            width=100.0
-                            right=true
-                      rule horizontal thickness=1.0 color=edge
-                      scroll #market-list
-                        with
-                          h=fill
-                          bar-w=6.0
-                          bar-m=2.0
-                          scroller-w=6.0
-                        active
-                          y-rail bg=panel
-                          y-scroller bg=edge r=3.0
-                        hovered
-                          y-rail bg=panel
-                          y-scroller bg=faint r=3.0
-                        col w=fill
-                          if empty(visible) && !empty(symbols)
-                            box
-                              with
-                                w=fill
-                                h=100.0
-                                p=16.0
-                                align-x=center
-                                align-y=center
-                              text "No market matches that."
-                                with
-                                  size=12.0
-                                  w=fill
-                                  align-x=center
-                                  wrap=word
-                                  @text-faint
-                          for row in visible
-                            lazy row as market
-                              MarketRow market=market #market(market.name)
-                                events
-                                  pick -> pick_symbol _
-                Page.portfolio
-                  col #portfolio w=fill h=fill
-                    box #account-summary
+                      bar-w=6.0
+                      bar-m=2.0
+                      scroller-w=6.0
+                    active
+                      y-rail bg=bg
+                      y-scroller bg=edge r=3.0
+                    hovered
+                      y-rail bg=bg
+                      y-scroller bg=faint r=3.0
+                    col
                       with
                         w=fill
-                        h=52.0
-                        bg=panel
-                      row
-                        with
-                          w=fill
-                          h=fill
-                          px=16.0
-                          gap=22.0
-                          align=center
-                        match account
-                          some(held)
-                            row gap=22.0 align=center
-                              Stat name="ACCOUNT VALUE" value=fmt_usd(held.value)
-                              row gap=6.0 align=center
-                                Label value="UNREALIZED"
-                                Delta
+                        p=24.0
+                        gap=16.0
+                      row w=fill align=center
+                        col gap=4.0
+                          text "Portfolio"
+                            with
+                              size=22.0
+                              @text-fg
+                              @font-bold
+                          text "Current derivatives exposure and account-value history."
+                            with
+                              size=11.0
+                              @text-muted
+                        space w=fill
+                        row #portfolio-ranges gap=4.0 align=center
+                          PortfolioRange
+                            with
+                              name="1D"
+                              value="day"
+                              current=portfolio_range
+                            events
+                              pick -> pick_portfolio_range _
+                          PortfolioRange
+                            with
+                              name="1W"
+                              value="week"
+                              current=portfolio_range
+                            events
+                              pick -> pick_portfolio_range _
+                          PortfolioRange
+                            with
+                              name="1M"
+                              value="month"
+                              current=portfolio_range
+                            events
+                              pick -> pick_portfolio_range _
+                          PortfolioRange
+                            with
+                              name="ALL"
+                              value="all"
+                              current=portfolio_range
+                            events
+                              pick -> pick_portfolio_range _
+                      if !account_read(account)
+                        text venue_account_note(venue, watching) #portfolio-account-note
+                          with
+                            size=11.0
+                            w=fill
+                            wrap=word
+                            @text-muted
+                      row #portfolio-equity w=fill gap=10.0
+                        box
+                          with
+                            w=fill
+                            h=76.0
+                            p=14.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col gap=7.0
+                            text "ACCOUNT VALUE"
+                              with
+                                size=9.0
+                                tracking=1.0
+                                @text-faint
+                            match account
+                              some(held)
+                                text fmt_usd(held.value)
                                   with
-                                    value=fmt_pnl(held.pnl)
-                                    up=(held.pnl >= 0.0)
-                                    size=12.0
-                                    width=104.0
-                              Stat name="WITHDRAWABLE" value=fmt_compact_usd(held.withdrawable)
-                              Stat name="POSITION VALUE" value=fmt_usd(held.notional)
-                              Stat name="MAINTENANCE" value=fmt_share(held.margin_pct)
-                          none
-                            text venue_account_note(venue, watching) size=12.0 @text-faint
-                        space w=fill
-                    rule horizontal thickness=1.0 color=edge
-                    col #positions w=fill h=fill
+                                    size=18.0
+                                    font=digits
+                                    @text-fg
+                              none
+                                text "—"
+                                  with
+                                    size=18.0
+                                    font=digits
+                                    @text-faint
+                        box #tile-unrealized
+                          with
+                            w=fill
+                            h=76.0
+                            p=14.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col gap=7.0
+                            text "UNREALIZED PNL"
+                              with
+                                size=9.0
+                                tracking=1.0
+                                @text-faint
+                            match account
+                              some(held)
+                                if held.pnl >= 0.0
+                                  text fmt_pnl(held.pnl)
+                                    with
+                                      size=18.0
+                                      font=digits
+                                      @text-up
+                                if held.pnl < 0.0
+                                  text fmt_pnl(held.pnl)
+                                    with
+                                      size=18.0
+                                      font=digits
+                                      @text-down
+                              none
+                                text "—"
+                                  with
+                                    size=18.0
+                                    font=digits
+                                    @text-faint
+                        // Realized PnL is a fold over fills, so it exists only
+                        // where the venue serves them. Drawn as `$0.00` on a
+                        // venue that serves none it would read as a flat book
+                        // rather than as an unread one — the same pixels, the
+                        // opposite fact — so the tile goes to a dash and the
+                        // FILL HISTORY panel below carries the reason.
+                        box #tile-realized
+                          with
+                            w=fill
+                            h=76.0
+                            p=14.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col gap=7.0
+                            text "REALIZED PNL"
+                              with
+                                size=9.0
+                                tracking=1.0
+                                @text-faint
+                            if !empty(venue_account_gap(venue))
+                              text "Not served here" #realized-unread size=13.0 @text-faint
+                            if empty(venue_account_gap(venue))
+                              PortfolioRealized #realized flow=portfolio_flow(fills)
+                        box
+                          with
+                            w=fill
+                            h=76.0
+                            p=14.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col gap=7.0
+                            text "WITHDRAWABLE"
+                              with
+                                size=9.0
+                                tracking=1.0
+                                @text-faint
+                            match account
+                              some(held)
+                                text fmt_usd(held.withdrawable)
+                                  with
+                                    size=18.0
+                                    font=digits
+                                    @text-fg
+                              none
+                                text "—"
+                                  with
+                                    size=18.0
+                                    font=digits
+                                    @text-faint
+                      row #portfolio-exposure w=fill gap=10.0
+                        box
+                          with
+                            w=fill
+                            h=76.0
+                            p=14.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col gap=7.0
+                            text "GROSS EXPOSURE"
+                              with
+                                size=9.0
+                                tracking=1.0
+                                @text-faint
+                            text fmt_usd(portfolio_exposure(positions))
+                              with
+                                size=18.0
+                                font=digits
+                                @text-fg
+                        box
+                          with
+                            w=fill
+                            h=76.0
+                            p=14.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col gap=7.0
+                            text "LONG / SHORT"
+                              with
+                                size=9.0
+                                tracking=1.0
+                                @text-faint
+                            row gap=8.0 align=center
+                              text fmt_usd(portfolio_long_exposure(positions))
+                                with
+                                  size=14.0
+                                  font=digits
+                                  @text-up
+                              text "/" size=12.0 @text-faint
+                              text fmt_usd(portfolio_short_exposure(positions))
+                                with
+                                  size=14.0
+                                  font=digits
+                                  @text-down
+                        box #tile-leverage
+                          with
+                            w=fill
+                            h=76.0
+                            p=14.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col gap=7.0
+                            text "EFFECTIVE LEVERAGE"
+                              with
+                                size=9.0
+                                tracking=1.0
+                                @text-faint
+                            match account
+                              some(held)
+                                text fmt_leverage(portfolio_leverage(account))
+                                  with
+                                    size=18.0
+                                    font=digits
+                                    @text-fg
+                              none
+                                text "—"
+                                  with
+                                    size=18.0
+                                    font=digits
+                                    @text-faint
+                        box #tile-margin
+                          with
+                            w=fill
+                            h=76.0
+                            p=14.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col gap=7.0
+                            text "POSITION MARGIN"
+                              with
+                                size=9.0
+                                tracking=1.0
+                                @text-faint
+                            text fmt_usd(portfolio_margin_posted(positions))
+                              with
+                                size=18.0
+                                font=digits
+                                @text-fg
                       row
                         with
                           w=fill
-                          h=34.0
-                          pl=14.0
-                          pr=20.0
+                          h=250.0
                           gap=12.0
-                          align=center
-                        Label value="POSITIONS"
-                        Label value=fmt_count(len(positions))
-                        space w=fill
+                        box #performance
+                          with
+                            w=fill
+                            h=fill
+                            p=16.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col
+                            with
+                              w=fill
+                              h=fill
+                              gap=12.0
+                            row w=fill align=center
+                              col gap=3.0
+                                text "ACCOUNT VALUE"
+                                  with
+                                    size=10.0
+                                    tracking=1.0
+                                    @text-faint
+                                if portfolio_history_ready(portfolio_history, portfolio_range)
+                                  text fmt_usd(portfolio_history_end(portfolio_history, portfolio_range))
+                                    with
+                                      size=18.0
+                                      font=digits
+                                      @text-fg
+                                if !portfolio_history_ready(portfolio_history, portfolio_range)
+                                  text "Historical performance" size=18.0 @text-fg
+                              space w=fill
+                              if portfolio_history_change(portfolio_history, portfolio_range) >= 0.0 && portfolio_history_ready(portfolio_history, portfolio_range)
+                                col gap=2.0
+                                  text fmt_pnl(portfolio_history_change(portfolio_history, portfolio_range))
+                                    with
+                                      size=12.0
+                                      w=104.0
+                                      align-x=right
+                                      font=digits
+                                      @text-up
+                                  text fmt_pct(portfolio_history_change_pct(portfolio_history, portfolio_range))
+                                    with
+                                      size=10.0
+                                      w=104.0
+                                      align-x=right
+                                      font=digits
+                                      @text-up
+                              if portfolio_history_change(portfolio_history, portfolio_range) < 0.0 && portfolio_history_ready(portfolio_history, portfolio_range)
+                                col gap=2.0
+                                  text fmt_pnl(portfolio_history_change(portfolio_history, portfolio_range))
+                                    with
+                                      size=12.0
+                                      w=104.0
+                                      align-x=right
+                                      font=digits
+                                      @text-down
+                                  text fmt_pct(portfolio_history_change_pct(portfolio_history, portfolio_range))
+                                    with
+                                      size=10.0
+                                      w=104.0
+                                      align-x=right
+                                      font=digits
+                                      @text-down
+                            if portfolio_history_ready(portfolio_history, portfolio_range)
+                              // The canvas takes its size from the box around
+                              // it, the way the terminal's chart does. Left as
+                              // a bare `h=fill` child of this column it drew
+                              // into nothing and the panel read as empty.
+                              box #performance-frame w=fill h=fill
+                                extern portfolio_performance(portfolio_history, portfolio_range) #performance-chart
+                            if !portfolio_history_ready(portfolio_history, portfolio_range)
+                              box
+                                with
+                                  w=fill
+                                  h=fill
+                                  p=20.0
+                                  bg=raised
+                                  r=3.0
+                                  align-x=center
+                                  align-y=center
+                                text portfolio_history_note(portfolio_history) #portfolio-history-note
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-muted
+                        box #allocation
+                          with
+                            w=300.0
+                            h=fill
+                            p=16.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col
+                            with
+                              w=fill
+                              h=fill
+                              gap=14.0
+                            col gap=4.0
+                              text "EXPOSURE ALLOCATION"
+                                with
+                                  size=10.0
+                                  tracking=1.0
+                                  @text-faint
+                              text "Share of gross marked value" size=11.0 @text-muted
+                            rule horizontal thickness=1.0 color=edge
+                            scroll #allocation-chart
+                              with
+                                h=fill
+                                bar-w=6.0
+                                bar-m=2.0
+                                scroller-w=6.0
+                              active
+                                y-rail bg=panel
+                                y-scroller bg=edge r=3.0
+                              hovered
+                                y-rail bg=panel
+                                y-scroller bg=faint r=3.0
+                              // Room for the scroller. An account with more
+                              // markets than fit scrolls, and the bar then sits
+                              // over the share figure at the end of every row —
+                              // read live against 130 open positions, where
+                              // every "46%" was drawn as "46".
+                              col
+                                with
+                                  w=fill
+                                  pr=12.0
+                                  gap=16.0
+                                if empty(positions)
+                                  box
+                                    with
+                                      w=fill
+                                      h=120.0
+                                      align-x=center
+                                      align-y=center
+                                    text "No open exposure." size=11.0 @text-faint
+                                for asset in portfolio_assets(positions)
+                                  PortfolioAllocation asset=asset
                       row
                         with
                           w=fill
-                          pl=14.0
-                          pr=20.0
-                          pb=8.0
-                          gap=10.0
-                        Head
+                          h=200.0
+                          gap=12.0
+                        box #margin-health
                           with
-                            name="COIN"
-                            width=52.0
-                            right=false
-                        Head
-                          with
-                            name="SIDE"
-                            width=56.0
-                            right=false
-                        Head
-                          with
-                            name="SIZE"
-                            width=72.0
-                            right=true
-                        Head
-                          with
-                            name="ENTRY"
-                            width=80.0
-                            right=true
-                        Head
-                          with
-                            name="LIQ"
-                            width=80.0
-                            right=true
-                        Head
-                          with
-                            name="MARGIN"
-                            width=88.0
-                            right=true
-                        Head
-                          with
-                            name="FUNDING"
-                            width=72.0
-                            right=true
-                        space w=fill
-                        Head
-                          with
-                            name="UNREALIZED"
-                            width=104.0
-                            right=true
-                      rule horizontal thickness=1.0 color=edge
-                      scroll #position-list
-                        with
-                          h=fill
-                          bar-w=6.0
-                          bar-m=2.0
-                          scroller-w=6.0
-                        active
-                          y-rail bg=panel
-                          y-scroller bg=edge r=3.0
-                        hovered
-                          y-rail bg=panel
-                          y-scroller bg=faint r=3.0
-                        col w=fill
-                          // Only when there is an account to hold nothing.
-                          // With none, the strip above has already said so and
-                          // this would name an account that does not exist.
-                          if empty(positions) && watching && account_read(account)
-                            box
-                              with
-                                w=fill
-                                h=120.0
-                                align-x=center
-                                align-y=center
-                              text "No open positions on this account." size=12.0 @text-faint
-                          if !watching
-                            box
-                              with
-                                w=fill
-                                h=120.0
-                                align-x=center
-                                align-y=center
-                              button #reconnect p=10.0 label="Connect an address" -> reopen
-                                active bg=raised text=fg r=4.0
-                                hovered bg=edge text=fg r=4.0
-                                text "Connect an address" size=12.0 @text-fg
-                          for held in positions
-                            PositionRow held=held #position(held.coin)
-                              events
-                                pick -> pick_symbol _
-                    resize-handle #split drag=lower_resized cursor=resize-vertical
-                      box
-                        with
-                          w=fill
-                          h=5.0
-                          bg=edge
-                        space w=fill h=fill
-                    box #lower
-                      with
-                        w=fill
-                        h=lower_height
-                        bg=panel
-                      row w=fill h=fill
-                        col #orders w=fill h=fill
-                          row
+                            w=fill
+                            h=fill
+                            p=16.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col
                             with
                               w=fill
-                              h=34.0
-                              pl=14.0
-                              pr=18.0
-                              gap=10.0
-                              align=center
-                            Label value="OPEN ORDERS"
-                            space w=fill
-                            Label value=fmt_count(len(orders))
-                          row
-                            with
-                              w=fill
-                              pl=14.0
-                              pr=18.0
-                              pb=8.0
-                              gap=8.0
-                            Head
-                              with
-                                name="AGE"
-                                width=44.0
-                                right=false
-                            Head
-                              with
-                                name="COIN"
-                                width=52.0
-                                right=false
-                            Head
-                              with
-                                name="SIDE"
-                                width=52.0
-                                right=false
-                            space w=fill
-                            Head
-                              with
-                                name="PRICE"
-                                width=88.0
-                                right=true
-                            Head
-                              with
-                                name="SIZE"
-                                width=72.0
-                                right=true
-                          rule horizontal thickness=1.0 color=edge
-                          scroll #order-list
-                            with
                               h=fill
-                              bar-w=6.0
-                              bar-m=2.0
-                              scroller-w=6.0
-                            active
-                              y-rail bg=panel
-                              y-scroller bg=edge r=3.0
-                            hovered
-                              y-rail bg=panel
-                              y-scroller bg=faint r=3.0
-                            col w=fill
-                              // An empty list reads as "nothing has happened",
-                              // which on a venue that will not answer for this
-                              // account is a lie: nothing can happen. The
-                              // sentence the venue owes lands here, where the
-                              // reader is already looking for the rows.
-                              if empty(orders)
+                              gap=12.0
+                            col gap=4.0
+                              text "MARGIN HEALTH"
+                                with
+                                  size=10.0
+                                  tracking=1.0
+                                  @text-faint
+                              text "What the engine holds against the cross book"
+                                with
+                                  size=11.0
+                                  @text-muted
+                            rule horizontal thickness=1.0 color=edge
+                            match account
+                              some(held)
+                                col w=fill gap=11.0
+                                  row w=fill align=center
+                                    text "MAINTENANCE REQUIRED" size=10.0 @text-muted
+                                    space w=fill
+                                    text fmt_usd(held.maintenance) #maintenance-required
+                                      with
+                                        size=12.0
+                                        font=digits
+                                        @text-fg
+                                  row w=fill align=center
+                                    text "CROSS EQUITY" size=10.0 @text-muted
+                                    space w=fill
+                                    text fmt_usd(held.cross_value) #cross-equity
+                                      with
+                                        size=12.0
+                                        font=digits
+                                        @text-fg
+                                  row w=fill align=center
+                                    text "MARGIN USED" size=10.0 @text-muted
+                                    space w=fill
+                                    row gap=8.0 align=center
+                                      row w=80.0 h=4.0
+                                        box
+                                          with
+                                            w=held.health
+                                            h=4.0
+                                            bg=down
+                                          space w=fill h=fill
+                                        box
+                                          with
+                                            w=(80.0 - held.health)
+                                            h=4.0
+                                            bg=edge
+                                          space w=fill h=fill
+                                      text fmt_share(held.margin_pct) #margin-used
+                                        with
+                                          size=12.0
+                                          w=64.0
+                                          align-x=right
+                                          font=digits
+                                          @text-fg
+                              none
                                 box
                                   with
                                     w=fill
-                                    h=72.0
-                                    p=12.0
+                                    h=fill
                                     align-x=center
                                     align-y=center
-                                  text venue_orders_note(venue, watching)
+                                  text venue_account_note(venue, watching)
                                     with
                                       size=11.0
                                       w=fill
                                       align-x=center
                                       wrap=word
                                       @text-faint
-                              for order in orders
-                                OrderRow order=order
-                                  events
-                                    pick -> pick_symbol _
-                        rule vertical thickness=1.0 color=edge
-                        col #fills w=fill h=fill
+                        // Funding is `Position.funding` on both venues, so this
+                        // panel is drawn wherever there are positions — unlike
+                        // the fills beside it.
+                        box #funding
+                          with
+                            w=fill
+                            h=fill
+                            p=16.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col
+                            with
+                              w=fill
+                              h=fill
+                              gap=12.0
+                            col gap=4.0
+                              text "FUNDING"
+                                with
+                                  size=10.0
+                                  tracking=1.0
+                                  @text-faint
+                              text "Charged against open positions since each opened"
+                                with
+                                  size=11.0
+                                  @text-muted
+                            rule horizontal thickness=1.0 color=edge
+                            if empty(positions)
+                              box
+                                with
+                                  w=fill
+                                  h=fill
+                                  align-x=center
+                                  align-y=center
+                                text "No open positions to have been funded." size=11.0 @text-faint
+                            if !empty(positions)
+                              PortfolioFundingRows #funding-rows
+                                with
+                                  funding=portfolio_funding(positions)
+                        box #fill-history
+                          with
+                            w=300.0
+                            h=fill
+                            p=16.0
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col
+                            with
+                              w=fill
+                              h=fill
+                              gap=12.0
+                            col gap=4.0
+                              text "FILL HISTORY"
+                                with
+                                  size=10.0
+                                  tracking=1.0
+                                  @text-faint
+                              text "What this account has actually traded" size=11.0 @text-muted
+                            rule horizontal thickness=1.0 color=edge
+                            // Three different empty states, and only the first
+                            // is about this app: the venue will not serve fills
+                            // at all, the venue serves them and there are none,
+                            // or no address has been given to ask about. Each
+                            // says which, because a shared blank would let the
+                            // unreadable one pass as the quiet one.
+                            if !empty(venue_account_gap(venue))
+                              box
+                                with
+                                  w=fill
+                                  h=fill
+                                  align-x=center
+                                  align-y=center
+                                text venue_account_gap(venue) #fill-history-gap
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            if empty(venue_account_gap(venue)) && empty(fills)
+                              box
+                                with
+                                  w=fill
+                                  h=fill
+                                  align-x=center
+                                  align-y=center
+                                text venue_fills_note(venue, watching)
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            if empty(venue_account_gap(venue)) && !empty(fills)
+                              PortfolioFillRows #fill-rows flow=portfolio_flow(fills)
+                      box #portfolio-assets
+                        with
+                          w=fill
+                          h=fill
+                          bg=panel
+                          r=4.0
+                          border-w=1.0
+                          border=edge
+                        col w=fill h=fill
                           row
                             with
                               w=fill
-                              h=34.0
-                              pl=14.0
-                              pr=18.0
+                              h=42.0
+                              px=14.0
                               gap=10.0
                               align=center
-                            Label value="RECENT FILLS"
+                            text "ASSETS"
+                              with
+                                size=10.0
+                                tracking=1.0
+                                @text-faint
+                            text fmt_count(len(portfolio_assets(positions))) size=10.0 @text-faint
                             space w=fill
-                            Label value=fmt_count(len(fills))
                           row
                             with
                               w=fill
-                              pl=14.0
-                              pr=18.0
+                              px=14.0
                               pb=8.0
-                              gap=8.0
-                            Head
+                              gap=10.0
+                            text "MARKET / SIDE"
                               with
-                                name="TIME"
-                                width=52.0
-                                right=false
-                            Head
+                                size=9.0
+                                w=120.0
+                                @text-faint
+                            text "SIZE"
                               with
-                                name="COIN"
-                                width=52.0
-                                right=false
-                            Head
+                                size=9.0
+                                w=90.0
+                                align-x=right
+                                @text-faint
+                            text "MARK"
                               with
-                                name="SIDE"
-                                width=52.0
-                                right=false
+                                size=9.0
+                                w=100.0
+                                align-x=right
+                                @text-faint
                             space w=fill
-                            Head
+                            text "VALUE"
                               with
-                                name="PRICE"
-                                width=88.0
-                                right=true
-                            Head
+                                size=9.0
+                                w=112.0
+                                align-x=right
+                                @text-faint
+                            text "WEIGHT"
                               with
-                                name="SIZE"
-                                width=72.0
-                                right=true
-                            Head
+                                size=9.0
+                                w=76.0
+                                align-x=right
+                                @text-faint
+                            text "UNREALIZED"
                               with
-                                name="CLOSED PNL"
-                                width=88.0
-                                right=true
+                                size=9.0
+                                w=104.0
+                                align-x=right
+                                @text-faint
                           rule horizontal thickness=1.0 color=edge
-                          scroll #fill-list
-                            with
-                              h=fill
-                              bar-w=6.0
-                              bar-m=2.0
-                              scroller-w=6.0
-                            active
-                              y-rail bg=panel
-                              y-scroller bg=edge r=3.0
-                            hovered
-                              y-rail bg=panel
-                              y-scroller bg=faint r=3.0
-                            col w=fill
-                              if empty(fills)
-                                box
-                                  with
-                                    w=fill
-                                    h=100.0
-                                    p=12.0
-                                    align-x=center
-                                    align-y=center
-                                  text venue_fills_note(venue, watching)
-                                    with
-                                      size=12.0
-                                      w=fill
-                                      align-x=center
-                                      wrap=word
-                                      @text-faint
-                              for fill in fills
-                                lazy fill as printed
-                                  FillRow fill=printed #fill(printed.tid)
-                                    events
-                                      pick -> pick_symbol _
+                          if empty(positions)
+                            box
+                              with
+                                w=fill
+                                h=100.0
+                                align-x=center
+                                align-y=center
+                              text "No open positions to list." size=11.0 @text-faint
+                          for asset in portfolio_assets(positions)
+                            PortfolioAssetRow asset=asset
                 Page.settings
                   scroll #settings
                     with

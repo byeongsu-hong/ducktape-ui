@@ -3,7 +3,7 @@ extern crate::hyperliquid
   HlError(message:str)
   SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, selected:bool)
   Position(coin:str, size:f64, entry:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
-  Account(value:f64, pnl:f64, withdrawable:f64, notional:f64, health:f64, margin_pct:f64)
+  Account(value:f64, cross_value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, margin_pct:f64)
   Trade(ts:i64, price:f64, size:f64, buy:bool, sweep:i64)
   Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, heat:i64, tid:i64)
   Order(coin:str, buy:bool, price:f64, size:f64, ts:i64)
@@ -46,6 +46,7 @@ extern crate::hyperliquid
   sync demo_symbols_at_risk() -> [SymbolRow]
   sync demo_fills() -> [Fill]
   sync demo_fills_many(count:i64) -> [Fill]
+  sync demo_fills_opening() -> [Fill]
   sync demo_orders() -> [Order]
   sync demo_alerts() -> [Alert]
   sync demo_book() -> Book
@@ -73,6 +74,7 @@ extern crate::hyperliquid
   sync ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   sync order_load(account:Account?, coin:str, size:str, buy:bool, market:SymbolRow?) -> str
   sync funding_day(market:SymbolRow?, price:str, size:str, buy:bool) -> str
+  sync market_label(market:SymbolRow) -> str
   sync order_label(order:Order) -> str
   sync fill_label(fill:Fill) -> str
   sync book_label(price:f64, buy:bool) -> str
