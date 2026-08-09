@@ -2,7 +2,7 @@ test trading_terminal_keeps_markets_chart_positions_and_execution_together
   preset held
   viewport 1660 820
   target app = #app
-  target terminal = app/trade
+  target terminal = app/terminal-fit/trade
   target lower = terminal/lower
   target printed = lower/fills
   expect page == Page.terminal
@@ -16,6 +16,110 @@ test trading_terminal_keeps_markets_chart_positions_and_execution_together
   expect text "IF YOU CROSS"
   expect no text "EXPOSURE ALLOCATION"
   capture page_terminal
+
+// The terminal at the size it was drawn for. Every pane is on it and nothing is
+// folded, so there is no control to unfold anything — the toggles do not exist
+// at this width rather than sitting there greyed out.
+test trading_the_wide_terminal_draws_every_pane_unfolded
+  preset held
+  viewport 1660 820
+  target app = #app
+  target terminal = app/terminal-fit/trade
+  target rail = terminal/markets
+  target lower = terminal/lower
+  target open_positions = lower/positions
+  target printed = lower/fills
+  target rail_toggle = terminal/chart-bar/toggle-markets/root
+  target fills_toggle = terminal/chart-bar/toggle-fills/root
+  expect exists rail
+  expect exists printed
+  expect text "MARKET" within rail
+  expect text "BTC" within rail
+  expect text "RECENT FILLS" within printed
+  // The rightmost positions columns, which are the first thing a squeezed
+  // table drops off its own right edge.
+  expect text "FUNDING" within open_positions
+  expect text "UNREALIZED" within open_positions
+  expect text "ORDER BOOK"
+  expect text "TAPE"
+  expect text "ALERTS"
+  expect text "OPEN ORDERS"
+  expect text "IF YOU CROSS"
+  expect missing rail_toggle
+  expect missing fills_toggle
+  capture terminal_wide
+
+// The same one screen at 1180x720, the window's own minimum — a 1366 or 1440
+// laptop, or a 14" MacBook Pro. The panes that may not collapse are all still
+// drawn, positions still holds its whole table, and the two that folded are one
+// button away on this screen rather than on another one.
+test trading_the_narrow_terminal_folds_two_panes_within_reach
+  preset held
+  viewport 1180 720
+  target app = #app
+  target terminal = app/terminal-fit/trade
+  target rail = terminal/markets
+  target lower = terminal/lower
+  target open_positions = lower/positions
+  target printed = lower/fills
+  target chart = terminal/chart-frame
+  target rail_toggle = terminal/chart-bar/toggle-markets/root/toggle-off
+  target fills_toggle = terminal/chart-bar/toggle-fills/root/toggle-off
+  // Chart, order book, ticket, positions and open orders: the five that may
+  // not collapse, at the narrowest width the window opens to.
+  expect exists chart
+  expect text "ORDER BOOK"
+  expect text "OPEN ORDERS"
+  expect text "IF YOU CROSS"
+  expect text "POSITIONS" within open_positions
+  // The two that folded, and the buttons that say so, named by what pressing
+  // them does rather than by the state they are in.
+  expect missing rail
+  expect missing printed
+  expect a11y rail_toggle name "Show the markets pane"
+  expect a11y fills_toggle name "Show the fills pane"
+  // And what the folding bought: positions keeps every column. It needs 540px
+  // for its seven; drawn beside all four fixed panes here it would have 150.
+  expect text "FUNDING" within open_positions
+  expect text "UNREALIZED" within open_positions
+  capture terminal_narrow
+
+// The other half of the same rule, driven rather than drawn, and on its own
+// because it has to be quick: the account poll fires every five seconds while
+// an address is set, and `held` sets one. A rasterised capture in front of
+// these clicks is long enough under a loaded suite for the failed poll to raise
+// its banner mid-test and move the button out from under the press.
+test trading_an_unfolded_pane_comes_back_beside_the_others
+  preset held
+  viewport 1180 720
+  target app = #app
+  target terminal = app/terminal-fit/trade
+  target rail = terminal/markets
+  target lower = terminal/lower
+  target open_positions = lower/positions
+  target listed = rail/market-list
+  target ether = listed/market("ETH")/row
+  target rail_toggle = terminal/chart-bar/toggle-markets/root/toggle-off
+  // Pressing the toggle brings its pane back onto this same screen. Nothing
+  // navigates and nothing already drawn leaves to make room, which is the whole
+  // difference between a fold and a page.
+  expect missing rail
+  click rail_toggle
+  expect page == Page.terminal
+  expect exists rail
+  expect text "BTC" within rail
+  expect text "ORDER BOOK"
+  expect text "OPEN ORDERS"
+  expect text "IF YOU CROSS"
+  expect text "POSITIONS" within open_positions
+  // An unfolded rail is 232px the positions table is not getting, and at 1180
+  // that is the last column off its right edge. It is a picker, so the pick
+  // ends it: choosing a market folds the rail back and the table is whole.
+  expect no text "UNREALIZED" within open_positions
+  click ether
+  expect coin == "ETH"
+  expect missing rail
+  expect text "UNREALIZED" within open_positions
 
 test trading_picking_a_market_stays_in_the_terminal
   preset held

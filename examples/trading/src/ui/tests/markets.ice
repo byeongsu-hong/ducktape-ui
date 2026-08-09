@@ -2,7 +2,7 @@ test trading_terminal_search_keeps_what_was_typed
   preset terminal
   viewport 1660 820
   target app = #app
-  target terminal = app/trade
+  target terminal = app/terminal-fit/trade
   target markets = terminal/markets
   target search = markets/search
   focus search
@@ -13,7 +13,7 @@ test trading_terminal_search_filters_and_escape_restores_the_rail
   preset busy
   viewport 1660 820
   target app = #app
-  target terminal = app/trade
+  target terminal = app/terminal-fit/trade
   target markets = terminal/markets
   target search = markets/search
   focus search
@@ -33,7 +33,7 @@ test trading_terminal_search_keeps_the_selected_market
   preset held
   viewport 1660 820
   target app = #app
-  target terminal = app/trade
+  target terminal = app/terminal-fit/trade
   target markets = terminal/markets
   target search = markets/search
   focus search
@@ -51,7 +51,7 @@ test trading_escape_away_from_the_terminal_leaves_the_search_alone
   preset terminal
   viewport 1660 820
   target app = #app
-  target markets = app/trade/markets
+  target markets = app/terminal-fit/trade/markets
   target search = markets/search
   focus search
   type "ZZZ"
@@ -70,7 +70,7 @@ test trading_interval_tabs_name_the_selected_width
   preset browsing
   viewport 1660 820
   target app = #app
-  target terminal = app/trade
+  target terminal = app/terminal-fit/trade
   target bar = terminal/chart-bar
   target tabs = bar/intervals
   target showing = tabs/interval-1m/root/tab-on
@@ -94,7 +94,7 @@ test trading_a_market_row_announces_the_figures_beside_its_name
   preset held
   viewport 1660 820
   target app = #app
-  target markets = app/trade/markets
+  target markets = app/terminal-fit/trade/markets
   target listed = markets/market-list
   target bitcoin = listed/market("BTC")/row
   target ether = listed/market("ETH")/row

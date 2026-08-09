@@ -67,7 +67,7 @@ test trading_a_beat_moves_the_price_the_position_and_the_levels
   preset held
   viewport 1660 820
   target app = #app
-  target lower = app/trade/lower
+  target lower = app/terminal-fit/trade/lower
   target held = lower/positions
   expect text "64,000.00"
   expect text "64,400.00"

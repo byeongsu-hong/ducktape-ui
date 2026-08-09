@@ -101,12 +101,33 @@ REALIZED PNL reads *Not served here* and FILL HISTORY carries the reason; a
 A win rate with no round trip closed reads `—`, not `0%`. Funding is drawn on
 both venues, because both publish it per position.
 
-The window's minimum is **1660×820**. That is what one screen costs, and it is
-what four pages were buying: the lower pane's columns and the fills beside the
-market rail, the book and the ticket. The position row gave back the margin
-column the split had added — 88 pixels the rail beside the chart does not
-have — and what the account has posted is on the dashboard, totalled, where
-there is room to say it.
+### What the window costs, and what it does when it cannot have it
+
+The window's minimum is **1180×720**, which is a 1366 or 1440 laptop, or a 14"
+MacBook Pro at 1512. Drawn whole, one screen wants 1660×820 — but a minimum is a
+promise about the smallest window, not about the roomiest layout, so below two
+widths the terminal folds panes by priority instead of demanding the pixels.
+
+The arithmetic is the positions table's. Its seven columns are 540px of fixed
+widths, gaps and padding, and the panes beside it are fixed too: 232 markets,
+232 book, 252 ticket, three rules — 719 — plus 311 for the recent-fills column.
+So 540 + 719 + 311 = 1570 is the width below which recent fills has to fold, and
+540 + 719 = 1259 is where the market rail follows it. The rule is written at
+1580 and 1280, and it is a `responsive` node reading its own width rather than
+anything the app stores.
+
+Nothing that trades folds: the chart, the order book, the ticket, positions and
+open orders are on the screen at every width. The tape is not folded either — it
+lives inside the book column, which never collapses, so folding it would free no
+width at all and cost the flow. Alerts stay for their own reason: 88 pixels is
+the cheapest pane here and it is the one that says a level was hit.
+
+What folds gets a toggle on the chart bar, beside the interval tabs, and never
+beside the page tabs — a control up there would read as a fourth page, which is
+the shape this screen was put back together to be rid of. Unfolding one brings
+its pane back onto this same screen next to everything already on it. The rail
+is a picker, so a pick folds it again and hands the 232 pixels back to the
+table it borrowed them from.
 
 ## Design
 
@@ -830,10 +851,18 @@ would never settle and no test could dispatch a switch at all.
 
 There is one test per surface, and each asks for something only that surface
 draws — a test that asserted the header would pass on all three, which is the
-failure a navigation test exists to catch. They run at 1660×820, the window's
-own minimum, because that is the size the app promises to be usable at and
-nothing else here checks it. Each captures its page, and the portfolio is
+failure a navigation test exists to catch. They run at 1660×820, the size one
+screen wants when it can have it. Each captures its page, and the portfolio is
 captured twice because it is taller than the window it opens in.
+
+Two more run at the two ends of the responsive rule, because a fold nobody
+asserts is a fold nobody notices breaking. The wide one holds every pane on the
+screen and both toggles off it. The narrow one runs at 1180×720, the window's own
+minimum, and asks for the five panes that may not fold, then that the two that
+did are gone, then that positions still has all seven of its columns — which is
+what the folding was for. It presses the markets toggle, gets the rail back
+without leaving the page, picks a market from it, and finds the table whole
+again.
 One test reads the palette out of `theme.ice` and holds the chart to it, because
 the chart is drawn in Rust and would otherwise drift in silence.
 

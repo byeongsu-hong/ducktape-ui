@@ -2231,6 +2231,15 @@ pub fn interval_label(interval: String, shown: bool) -> String {
     format!("Show {interval} candles{state}")
 }
 
+/// A folded-away pane's toggle, by the same rule as the interval tabs: the name
+/// a reader hears is the act the button performs. It says "hide" while the pane
+/// is open because that is what pressing it does — a control that announced the
+/// pane's current state would leave a reader guessing at the verb.
+pub fn pane_label(pane: String, open: bool) -> String {
+    let act = if open { "Hide" } else { "Show" };
+    format!("{act} the {} pane", pane.to_lowercase())
+}
+
 /// A page tab by the same rule. The tab draws its page's name in capitals
 /// because it is a heading for the surface it opens; the name a reader hears
 /// is the act, in the sentence the tab would be if it had room for one.

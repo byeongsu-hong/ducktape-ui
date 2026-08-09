@@ -43,7 +43,7 @@ test trading_the_crosshair_reads_out_the_candle_under_it
   preset hovering
   viewport 1660 820
   target app = #app
-  target trade = app/trade
+  target trade = app/terminal-fit/trade
   target bar = trade/chart-bar
   target readout = bar/readout
   target opened = readout/cell-open/root
@@ -70,19 +70,24 @@ test trading_lists_longer_than_their_panels_render
   expect no text "market not loaded"
   capture busy
 
-// The longest list of all is the universe, and it is drawn on its own page
-// now. This is a separate test rather than a second capture on the one above
-// because the account poll fires every five seconds while an address is set,
-// and two rasterised captures of two hundred rows take longer than that under
-// a loaded suite: the poll went out to a live exchange. Loading the universe
-// into the addressless `terminal` preset gives the same crowded list with the
-// poll's own guard, `!empty(address)`, holding it off however slow this gets.
+// The longest list of all is the universe, in the smallest window that opens.
+// This is a separate test rather than a second capture on the one above because
+// the account poll fires every five seconds while an address is set, and two
+// rasterised captures of two hundred rows take longer than that under a loaded
+// suite: the poll went out to a live exchange. Loading the universe into the
+// addressless `terminal` preset gives the same crowded list with the poll's own
+// guard, `!empty(address)`, holding it off however slow this gets.
+//
+// At 1180 the rail is folded, so this unfolds it first — which is also the
+// worst case the rail has: 200 rows in a 232px column with the chart, the book
+// and the ticket still beside it.
 test trading_the_market_list_outruns_its_panel
   preset terminal
   viewport 1180 720
   dispatch symbols_loaded(demo_symbols_many())
   dispatch market_ticked(demo_tick())
   dispatch navigate(Page.terminal)
+  dispatch toggle_rail
   expect text "AVAX"
   capture busy_markets
 
@@ -131,7 +136,7 @@ test trading_a_position_row_quotes_its_own_pnl_to_the_cent
   preset held
   viewport 1660 820
   target app = #app
-  target lower = app/trade/lower
+  target lower = app/terminal-fit/trade/lower
   target held = lower/positions
   expect page == Page.terminal
   expect text "-$2,400.00" within held

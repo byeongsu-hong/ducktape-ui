@@ -13,6 +13,15 @@ on quit
 on navigate(next)
   page = next
 
+// The two panes the narrow terminal folds away. Both flags stay set once a
+// reader opens the pane, and the wide layout ignores them entirely, so a window
+// dragged wide and narrow again does not keep re-hiding what was asked for.
+on toggle_rail
+  rail_open = !rail_open
+
+on toggle_fills
+  fills_open = !fills_open
+
 on connect
   return if !valid_address(draft)
   address = trim(draft)
@@ -118,6 +127,11 @@ on pick_symbol(name)
   // one page. Picking one from the list, a position, an order or a fill and
   // being left on the page you picked it from is a request the app ignored.
   page = Page.terminal
+  // A rail unfolded on a narrow window is open to pick from, and this is the
+  // pick, so it folds itself back and gives the width to the positions table it
+  // borrowed it from. At a width that draws the rail anyway the flag is not
+  // read at all, so clearing it there costs nothing and is not felt.
+  rail_open = false
   // The book on screen belongs to the market being left. Clearing it first is
   // what stops the new ticket opening at the old market's price.
   book = none

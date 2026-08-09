@@ -170,7 +170,7 @@ test trading_a_word_typed_against_one_venue_does_not_filter_the_other
   preset held
   viewport 1660 820
   target app = #app
-  target terminal = app/trade
+  target terminal = app/terminal-fit/trade
   target markets = terminal/markets
   dispatch search("PEPE")
   expect query == "PEPE"
@@ -218,7 +218,7 @@ test trading_a_venue_that_will_not_answer_says_so_where_the_rows_would_be
   preset lighter
   viewport 1660 820
   target app = #app
-  target terminal = app/trade
+  target terminal = app/terminal-fit/trade
   target lower = terminal/lower
   target printed = lower/fills
   target book_panel = terminal/book
@@ -291,7 +291,7 @@ test trading_the_terminal_on_the_other_venue
   preset lighter
   viewport 1660 820
   target app = #app
-  target trade = app/trade
+  target trade = app/terminal-fit/trade
   target bar = trade/chart-bar
   target tabs = bar/intervals
   target showing = tabs/interval-1m/root/tab-on

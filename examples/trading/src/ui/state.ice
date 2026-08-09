@@ -51,6 +51,8 @@ state
   flashing = false
   loading_history = false
   lower_height = 232.0
+  rail_open = false
+  fills_open = false
   portfolio_history:PortfolioHistory = portfolio_empty()
   portfolio_range = "month"
 

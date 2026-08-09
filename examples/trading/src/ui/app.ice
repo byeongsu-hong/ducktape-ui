@@ -13,7 +13,7 @@ daemon Trading
   text-size 13
   window main
     size 1760 940
-    min-size 1660 820
+    min-size 1180 720
     position centered
     platform macos
       title-hidden true
