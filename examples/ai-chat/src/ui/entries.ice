@@ -42,7 +42,7 @@ component Reasoning(row_id:i64, title:str, body:str, open:bool) -> i64
             w=fill
             gap=8.0
             align=center
-          text "·" size=11.0 @text-muted
+          text "·" size=15.0 @text-muted
           text title @field_label
       if !empty(body)
         button #toggle -> emit(row_id)
@@ -56,9 +56,9 @@ component Reasoning(row_id:i64, title:str, body:str, open:bool) -> i64
               gap=8.0
               align=center
             if open
-              text "▾" size=11.0 @text-muted
+              text "▾" size=15.0 @text-muted
             if !open
-              text "▸" size=11.0 @text-muted
+              text "▸" size=15.0 @text-muted
             text title @field_label
         if open
           box w=fill pb=6.0
@@ -80,9 +80,9 @@ component Work(row_id:i64, title:str, open:bool) -> i64
         @ghost_action
       row gap=8.0 align=center
         if open
-          text "▾" size=11.0 @text-muted
+          text "▾" size=15.0 @text-muted
         if !open
-          text "▸" size=11.0 @text-muted
+          text "▸" size=15.0 @text-muted
         text title @meta
 
 // A tool call: what it was, and what it was given once asked. The mark on the
@@ -103,16 +103,16 @@ component ToolCall(row_id:i64, title:str, detail:str, status:str, open:bool) -> 
             gap=8.0
             align=center
           if status == "running"
-            text "◌" size=11.0 @text-warning
+            text "◌" size=12.5 @text-warning
           if status == "done"
-            text "✓" size=11.0 @text-success
+            text "✓" size=12.5 @text-success
           if status == "failed"
-            text "✕" size=11.0 @text-danger
+            text "✕" size=12.5 @text-danger
           text title @field_label
           if !empty(detail) && open
-            text "▾" size=10.0 @text-muted
+            text "▾" size=14.0 @text-muted
           if !empty(detail) && !open
-            text "▸" size=10.0 @text-muted
+            text "▸" size=14.0 @text-muted
       if open && !empty(detail)
         box w=fill pb=4.0
           text detail wrap=word @machine
@@ -151,5 +151,5 @@ component Chip(options:[str], selected:str?) -> str
     opened-hovered text=fg handle=fg bg=accent border=border r=7.0
     menu text=fg selected-text=fg selected-bg=accent bg=surface border=border border-w=1.0 r=10.0 shadow=shadow_popover shadow-y=6.0 shadow-blur=18.0
     handle dynamic
-      closed code="⌄" size=10.0
-      open code="⌃" size=10.0
+      closed code="⌄" size=15.0
+      open code="⌃" size=15.0

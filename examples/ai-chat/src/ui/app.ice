@@ -302,7 +302,7 @@ view
                       r=10.0
                     col w=fill gap=7.0
                       row gap=8.0 align=center
-                        text "◌" size=12.0 @text-warning
+                        text "◌" size=12.5 @text-warning
                         text status @field_label
                       markdown live_thinking #live-thinking gap=6.0 text-size=12.5 -> copy_link _
                         style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
