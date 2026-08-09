@@ -140,6 +140,7 @@ fn classifies_every_statement_variant_by_immediate_task_semantics() {
             Statement::Run {
                 kind: EffectKind::Future,
                 mode: FutureMode::Every,
+                lane: None,
                 function: "load".into(),
                 args: Vec::new(),
                 success: route(line),
@@ -153,6 +154,7 @@ fn classifies_every_statement_variant_by_immediate_task_semantics() {
             Statement::Run {
                 kind: EffectKind::Task,
                 mode: FutureMode::Every,
+                lane: None,
                 function: "load".into(),
                 args: Vec::new(),
                 success: route(line),
@@ -166,6 +168,7 @@ fn classifies_every_statement_variant_by_immediate_task_semantics() {
             Statement::Run {
                 kind: EffectKind::Stream,
                 mode: FutureMode::Every,
+                lane: None,
                 function: "load".into(),
                 args: Vec::new(),
                 success: route(line),

@@ -93,6 +93,24 @@ top-level app state initializers and immediately evaluated handler expressions.
 Async completion route expressions are evaluated later and may call only
 `pure` externs.
 
+Ordinary `run` delivers every Future completion. For superseding requests,
+`run latest lane=<name>` routes only the newest completion without canceling
+older work, while `run replace lane=<name>` also aborts the prior Iced task.
+A lane is a static, finite qualified name owned by the app, the daemon shared
+across its windows, or one component instance, so the same fully qualified name
+deliberately joins calls from different handlers of that owner. Unaliased app
+and preset fragments remain in the root namespace and can share root lanes.
+Aliased imports cannot contribute app or preset handlers; lanes inside an
+aliased component remain owned by each component instance. `latest` can retain
+stale Futures and their captures until they finish. `replace` releases work
+owned by the aborted task but cannot roll back effects already performed or
+stop work the Rust backend detached. Per-owner lane bookkeeping is fixed by
+source-declared names;
+component-owner count follows the existing retained/mounted lifetime contract.
+If an outer abort prevents a matching completion from reaching update, one
+current replacement handle can remain until the next replacement or owner
+drop, but handles do not accumulate per owner.
+
 The punctuation has one job each:
 
 - indentation is the tree;

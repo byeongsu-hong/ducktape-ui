@@ -224,15 +224,22 @@ impl Session<'_> {
 
 fn component_has_identity_state(component: &Component) -> bool {
     !component.states.is_empty()
-        || component.handlers.iter().any(|handler| {
-            handler.statements.iter().any(|statement| {
-                matches!(
-                    statement,
-                    Statement::Run {
-                        mode: FutureMode::Latest | FutureMode::Replace,
-                        ..
-                    }
-                )
-            })
-        })
+        || component
+            .handlers
+            .iter()
+            .any(|handler| handler.statements.iter().any(statement_has_request_lane))
+}
+
+fn statement_has_request_lane(statement: &Statement) -> bool {
+    match statement {
+        Statement::Run {
+            mode: FutureMode::Latest | FutureMode::Replace,
+            ..
+        } => true,
+        Statement::TaskGroup { statements, .. } => {
+            statements.iter().any(statement_has_request_lane)
+        }
+        Statement::Abortable { task, .. } => statement_has_request_lane(task),
+        _ => false,
+    }
 }

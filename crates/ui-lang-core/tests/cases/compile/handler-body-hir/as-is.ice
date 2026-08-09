@@ -20,7 +20,7 @@ component Search()
   state
     query = 2
   on search
-    run latest fetch(query) -> loaded _
+    run latest lane=search fetch(query) -> loaded _
   on loaded(next)
     query = next
   button "Search" -> search

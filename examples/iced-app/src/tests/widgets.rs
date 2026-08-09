@@ -141,9 +141,12 @@ mod component_state {
         let _ = app.__update(__ComponentStateMessage::__LoaderHandleLoad("loader".into()));
         let _ = app.__update(__ComponentStateMessage::__LoaderHandleLoad("loader".into()));
         assert!(app.__ice_component_loader["loader"].loading);
-        assert_eq!(app.__ice_component_loader["loader"].__ice_latest_0, 2);
+        assert_eq!(
+            app.__ice_component_loader["loader"].__ice_run_lane_0_generation,
+            2
+        );
 
-        let stale = __ComponentStateMessage::__LoaderLatest0(
+        let stale = __ComponentStateMessage::__RequestLane0(
             "loader".into(),
             1,
             Box::new(__ComponentStateMessage::__LoaderHandleLoaded(
@@ -154,7 +157,7 @@ mod component_state {
         let _ = app.__update(stale);
         assert!(app.__ice_component_loader["loader"].loading);
 
-        let current = __ComponentStateMessage::__LoaderLatest0(
+        let current = __ComponentStateMessage::__RequestLane0(
             "loader".into(),
             2,
             Box::new(__ComponentStateMessage::__LoaderHandleLoaded(
@@ -180,7 +183,7 @@ mod component_lifecycle {
         ));
         assert!(app.__ice_component_search.values().contains_key(scope));
         let previous = app.__ice_component_search.values()[scope]
-            .__ice_replace_0
+            .__ice_run_lane_0_handle
             .as_ref()
             .unwrap()
             .clone();
@@ -189,13 +192,54 @@ mod component_lifecycle {
             scope.into(),
         ));
         assert!(previous.is_aborted());
-        assert_eq!(app.__ice_component_search.values()[scope].__ice_latest_0, 2);
+        assert_eq!(
+            app.__ice_component_search.values()[scope].__ice_run_lane_0_generation,
+            2
+        );
 
         let _ = app.__view();
         assert!(app.__ice_component_search.values().contains_key(scope));
         app.show = false;
         let _ = app.__view();
         assert!(app.__ice_component_search.values().is_empty());
+    }
+
+    #[test]
+    fn remount_does_not_reuse_a_request_generation_from_the_removed_instance() {
+        let (mut app, _) = ComponentLifecycle::__boot();
+        let scope = "ComponentLifecycle/search";
+        let _ = app.__update(__ComponentLifecycleMessage::__SearchHandleLoad(
+            scope.into(),
+        ));
+        let old_generation = app.__ice_component_search.values()[scope].__ice_run_lane_0_generation;
+        let old_completion = __ComponentLifecycleMessage::__RequestLane0(
+            scope.into(),
+            old_generation,
+            Box::new(__ComponentLifecycleMessage::__SearchHandleLoaded(
+                scope.into(),
+                Vec::new(),
+            )),
+        );
+
+        let _ = app.__view();
+        app.show = false;
+        let _ = app.__view();
+        assert!(app.__ice_component_search.values().is_empty());
+
+        app.show = true;
+        let _ = app.__view();
+        let _ = app.__update(__ComponentLifecycleMessage::__SearchHandleLoad(
+            scope.into(),
+        ));
+        {
+            let values = app.__ice_component_search.values();
+            let remounted = &values[scope];
+            assert!(remounted.__ice_run_lane_0_generation > old_generation);
+            assert!(remounted.loading);
+        }
+
+        let _ = app.__update(old_completion);
+        assert!(app.__ice_component_search.values()[scope].loading);
     }
 }
 

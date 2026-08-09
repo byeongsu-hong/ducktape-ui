@@ -396,7 +396,17 @@ const COMPLETIONS: &[Completion] = &[
     Completion::new(
         "run",
         "effect",
-        "run ${1|,latest ,replace |}${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _",
+        "run ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _",
+    ),
+    Completion::new(
+        "run latest",
+        "effect",
+        "run latest lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _",
+    ),
+    Completion::new(
+        "run replace",
+        "effect",
+        "run replace lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _",
     ),
     Completion::new("<->", "operator", "<-> ${1:state}"),
     Completion::new("->", "operator", "-> ${1:handler}"),
@@ -1712,26 +1722,50 @@ fn construct_schema(item: &Completion) -> Value {
                 ("h", "length", false),
             ]),
         ),
-        "run" => details(
-            &["handler-statement"],
-            "run [latest|replace] <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
-            leaf(),
-            no_binding(),
-            json!({
-                "required": true,
-                "operator": "->",
-                "success": { "required": true, "payload": "extern output" },
-                "failure": {
-                    "payload": "extern error",
-                    "requiredWhen": "extern declaration has `! <error-type>`",
-                    "forbiddenWhen": "extern declaration has no error type"
-                },
-                "latest": "component scope and call-site generation filters stale completions without aborting work",
-                "replace": "component scope and call-site handle aborts prior work before replacement",
-                "scopedModes": "latest and replace are component-handler only"
-            }),
-            Vec::new(),
-        ),
+        "run" | "run latest" | "run replace" => {
+            let (mode, syntax, lane_required) = match item.label {
+                "run" => (
+                    "ordinary",
+                    "run <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
+                    false,
+                ),
+                "run latest" => (
+                    "latest",
+                    "run latest lane=<qualified-identifier> <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
+                    true,
+                ),
+                "run replace" => (
+                    "replace",
+                    "run replace lane=<qualified-identifier> <extern-future>(<args>) -> <success-handler> _ [| <failure-handler> _]",
+                    true,
+                ),
+                _ => unreachable!(),
+            };
+            details(
+                &["handler-statement"],
+                syntax,
+                leaf(),
+                no_binding(),
+                json!({
+                    "required": true,
+                    "operator": "->",
+                    "mode": mode,
+                    "lane": {
+                        "required": lane_required,
+                        "forbidden": !lane_required,
+                        "type": "static qualified identifier",
+                        "sharedBy": "all members with the same fully qualified lane name and mode in one state owner"
+                    },
+                    "success": { "required": true, "payload": "extern output" },
+                    "failure": {
+                        "payload": "extern error",
+                        "requiredWhen": "extern declaration has `! <error-type>`",
+                        "forbiddenWhen": "extern declaration has no error type"
+                    }
+                }),
+                Vec::new(),
+            )
+        }
         "<->" => details(
             &["binding-position"],
             "<-> <state-identifier>",
@@ -2576,6 +2610,29 @@ pub fn document() -> Value {
             "candidateRevision": LANGUAGE_REVISION,
             "frozen": false,
             "generative": true,
+            "requestLanes": {
+                "ordinary": "run delivers every completion and owns no request lane",
+                "name": "a static qualified identifier; each checked state owner has a finite set of named lanes",
+                "qualification": "unaliased app and preset fragments remain in the root namespace and may share root lanes; an aliased component qualifies its internal lane names, but those lanes remain owned by each component instance",
+                "sharing": "the same fully qualified lane name joins members across handlers; one owner cannot mix latest and replace for a lane",
+                "storage": "fixed per state owner by the source-declared lanes; component-owner count follows retained/mounted lifetime; a replace lane retains only its current abort handle and releases it when its matching completion is accepted, the next replacement starts, or the owner drops",
+                "owner": {
+                    "app": "the top-level application state",
+                    "daemon": "the daemon state shared across all of its windows",
+                    "component": "one component instance; equal fully qualified lane names in different instances are independent"
+                },
+                "latest": {
+                    "delivery": "only the current generation may route success or failure",
+                    "cancelsStaleWork": false,
+                    "memory": "stale futures and their captures remain live until they finish or their backend drops them"
+                },
+                "replace": {
+                    "delivery": "only the current generation may route success or failure",
+                    "abortsPriorTask": true,
+                    "rollback": false,
+                    "memory": "aborting drops work still owned by the task, but cannot undo prior effects or stop detached or blocking backend work"
+                }
+            },
             "componentProps": {
                 "read": {
                     "declaration": "<name>:<type>",
@@ -2864,6 +2921,52 @@ mod tests {
     }
 
     #[test]
+    fn request_lane_schema_and_completions_are_canonical() {
+        let schema = document();
+        let lanes = &schema["core"]["requestLanes"];
+        assert_eq!(
+            lanes["owner"]["daemon"],
+            "the daemon state shared across all of its windows"
+        );
+        assert_eq!(lanes["latest"]["cancelsStaleWork"], false);
+        assert_eq!(lanes["replace"]["rollback"], false);
+        let constructs = schema["core"]["constructs"].as_array().unwrap();
+        let construct = |label| {
+            constructs
+                .iter()
+                .find(|construct| construct["label"] == label)
+                .unwrap_or_else(|| panic!("missing `{label}` construct"))
+        };
+        assert_eq!(construct("run")["route"]["mode"], "ordinary");
+        assert_eq!(construct("run")["route"]["lane"]["forbidden"], true);
+        assert_eq!(construct("run latest")["route"]["lane"]["required"], true);
+        assert_eq!(
+            construct("run latest")["route"]["lane"]["type"],
+            "static qualified identifier"
+        );
+
+        let completions = completion_items();
+        let completion = |label| {
+            completions
+                .iter()
+                .find(|completion| completion["label"] == label)
+                .unwrap_or_else(|| panic!("missing `{label}` completion"))
+        };
+        assert_eq!(
+            completion("run")["insertText"],
+            "run ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
+        );
+        assert_eq!(
+            completion("run latest")["insertText"],
+            "run latest lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
+        );
+        assert_eq!(
+            completion("run replace")["insertText"],
+            "run replace lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
+        );
+    }
+
+    #[test]
     fn generative_core_matches_the_contract_boundary() {
         const CORE_CONTRACT: &[&str] = &[
             "app",
@@ -3003,6 +3106,8 @@ mod tests {
             "#id",
             "extern",
             "run",
+            "run latest",
+            "run replace",
         ];
         let schema = document();
         let constructs = schema["core"]["constructs"].as_array().unwrap();

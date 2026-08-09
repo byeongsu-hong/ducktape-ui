@@ -1,4 +1,4 @@
 let next = (self.value + 1)
-__ice_latest_0: u64
+__ice_run_lane_0_generation: u64
 crate::backend::fetch(__local.query)
-__HandlerBodyHirMessage::__SearchLatest0
+__HandlerBodyHirMessage::__RequestLane0

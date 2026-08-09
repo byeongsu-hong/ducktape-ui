@@ -59,7 +59,7 @@ arena_id!(HandlerId);
 arena_id!(StatementId);
 arena_id!(TaskId);
 arena_id!(RouteId);
-arena_id!(RunSiteId);
+arena_id!(RunLaneId);
 arena_id!(NamedWindowId);
 arena_id!(SubscriptionId);
 arena_id!(ExpressionNodeId);
@@ -445,7 +445,7 @@ pub(crate) struct DeclarationIndex {
     statements: Vec<StatementDeclaration>,
     tasks: Vec<TaskDeclaration>,
     routes: Vec<RouteDeclaration>,
-    run_sites: Vec<RunSiteDeclaration>,
+    run_lanes: Vec<RunLaneDeclaration>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -472,7 +472,7 @@ pub(crate) struct StatementDeclaration {
     pub(crate) task: Option<TaskId>,
     pub(crate) source_tasks: Vec<TaskId>,
     pub(crate) routes: Vec<RouteId>,
-    pub(crate) run_site: Option<RunSiteId>,
+    pub(crate) run_lane: Option<RunLaneId>,
     pub(crate) children: Vec<StatementId>,
     pub(crate) is_final: bool,
 }
@@ -492,10 +492,12 @@ pub(crate) struct RouteDeclaration {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct RunSiteDeclaration {
-    pub(crate) declaration: Declaration<RunSiteId>,
-    pub(crate) statement: StatementId,
+pub(crate) struct RunLaneDeclaration {
+    pub(crate) declaration: Declaration<RunLaneId>,
+    pub(crate) owner: HandlerOwner,
+    pub(crate) name: String,
     pub(crate) mode: FutureMode,
+    pub(crate) statements: Vec<StatementId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -914,8 +916,8 @@ impl DeclarationIndex {
         self.routes.get(id.0 as usize)
     }
 
-    pub(crate) fn try_run_site(&self, id: RunSiteId) -> Option<&RunSiteDeclaration> {
-        self.run_sites.get(id.0 as usize)
+    pub(crate) fn try_run_lane(&self, id: RunLaneId) -> Option<&RunLaneDeclaration> {
+        self.run_lanes.get(id.0 as usize)
     }
 
     pub(crate) fn statement_count(&self) -> usize {
@@ -930,8 +932,8 @@ impl DeclarationIndex {
         self.routes.len()
     }
 
-    pub(crate) fn run_site_count(&self) -> usize {
-        self.run_sites.len()
+    pub(crate) fn run_lane_count(&self) -> usize {
+        self.run_lanes.len()
     }
 
     pub(crate) fn checked_extern_decl(

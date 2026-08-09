@@ -165,6 +165,182 @@ fn resolved_pane_find_code(
     }
 }
 
+fn resolved_run_task_code(
+    run: &ResolvedRun,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let ResolvedRun {
+        kind,
+        target,
+        args,
+        success,
+        error,
+        ..
+    } = run;
+    let mapper = if env.component_context().is_some() {
+        "move "
+    } else {
+        ""
+    };
+    if let ResolvedEffectTarget::Builtin(function) = target {
+        if function == "__ice_font_load" {
+            let bytes = resolved_expr_use_code(program, args[0], env, ValueMode::Owned)?;
+            let success_message = route_result_code(
+                success,
+                "value",
+                resolved_route_code(success, &["value"], env, program, message)?,
+            );
+            return Ok(format!(
+                "::iced::font::load({bytes}).map(move |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => match error {{}} }})"
+            ));
+        }
+        if function == "__ice_image_allocate" {
+            let handle = resolved_expr_use_code(program, args[0], env, ValueMode::Owned)?;
+            let success_message = route_result_code(
+                success,
+                "value",
+                resolved_route_code(success, &["value"], env, program, message)?,
+            );
+            let error_route = error.as_ref().expect("checker requires image error route");
+            let error_message = route_result_code(
+                error_route,
+                "error",
+                resolved_route_code(error_route, &["error"], env, program, message)?,
+            );
+            return Ok(format!(
+                "::iced::widget::image::allocate({handle}).map(move |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})"
+            ));
+        }
+        let task = match function.as_str() {
+            "__ice_system_info" => "::iced::system::information().map(__ice_system_info)",
+            "__ice_system_theme" => "::iced::system::theme().map(__ice_system_theme)",
+            "__ice_time_now" => "::iced::time::now()",
+            "__ice_clipboard_read" => "::iced::clipboard::read()",
+            "__ice_clipboard_read_primary" => "::iced::clipboard::read_primary()",
+            _ => unreachable!(),
+        };
+        let success_message = route_result_code(
+            success,
+            "value",
+            resolved_route_code(success, &["value"], env, program, message)?,
+        );
+        return Ok(format!("{task}.map(move |value| {success_message})"));
+    }
+    let ResolvedEffectTarget::Extern(action) = target else {
+        unreachable!("built-in effects return above")
+    };
+    let action = program.extern_function(*action);
+    let args = args
+        .iter()
+        .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    let success_message = route_result_code(
+        success,
+        "value",
+        resolved_route_code(success, &["value"], env, program, message)?,
+    );
+    Ok(
+        if let (Some(error_route), Some(_)) = (error, &action.error) {
+            let error_message = route_result_code(
+                error_route,
+                "error",
+                resolved_route_code(error_route, &["error"], env, program, message)?,
+            );
+            match kind {
+                EffectKind::Future => format!(
+                    "::iced::Task::perform({}({args}), {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
+                    action.rust_path
+                ),
+                EffectKind::Task => format!(
+                    "{}({args}).map(|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
+                    action.rust_path
+                ),
+                EffectKind::Stream => format!(
+                    "::iced::Task::run({}({args}), |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
+                    action.rust_path
+                ),
+            }
+        } else {
+            match kind {
+                EffectKind::Future => format!(
+                    "::iced::Task::perform({}({args}), {mapper}|value| {success_message})",
+                    action.rust_path
+                ),
+                EffectKind::Task => format!(
+                    "{}({args}).map(|value| {success_message})",
+                    action.rust_path
+                ),
+                EffectKind::Stream => format!(
+                    "::iced::Task::run({}({args}), |value| {success_message})",
+                    action.rust_path
+                ),
+            }
+        },
+    )
+}
+
+fn run_lane_task_code(
+    task: String,
+    run: &ResolvedRun,
+    statement: &ResolvedStatement,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    state: &str,
+) -> Result<String, Error> {
+    let lane = run.lane.ok_or_else(|| {
+        program.invariant_at_origin(statement.origin, "request-lane wrapper has no lane ID")
+    })?;
+    let generation = run_lane_generation_field(lane.0 as usize);
+    let variant = run_lane_variant(lane.0 as usize);
+    let replace = (run.mode == FutureMode::Replace).then(|| {
+        let handle = run_lane_handle_field(lane.0 as usize);
+        format!(
+            "let (__task, __handle) = __task.abortable(); if let ::std::option::Option::Some(__previous) = {state}.{handle}.replace(__handle.abort_on_drop()) {{ __previous.abort(); }} "
+        )
+    });
+    let Some((component, scope)) = env.component_context() else {
+        return Ok(format!(
+            "{{ let __task = {task}; {state}.{generation} = {state}.{generation}.wrapping_add(1); let __generation = {state}.{generation}; {}__task.map(move |__message| {message}::{variant}(__generation, ::std::boxed::Box::new(__message))) }}",
+            replace.unwrap_or_default()
+        ));
+    };
+    let contract = program
+        .components()
+        .iter()
+        .find(|candidate| candidate.name == component)
+        .ok_or_else(|| {
+            program.invariant_at_origin(
+                statement.origin,
+                "run lane has no active component contract",
+            )
+        })?;
+    let generation_code = match contract.storage {
+        ComponentStorage::Retained => format!(
+            "{state}.{generation} = {state}.{generation}.wrapping_add(1); let __generation = {state}.{generation};"
+        ),
+        ComponentStorage::Mounted => format!(
+            "let __generation = self.{}.next_generation(); {state}.{generation} = __generation;",
+            component_state_field(component)
+        ),
+        ComponentStorage::Stateless => {
+            return Err(program.invariant_at_origin(
+                statement.origin,
+                "run lane belongs to a stateless component",
+            ));
+        }
+    };
+    let lane_scope = format!("__ice_lane_scope_{}", statement.id.0);
+    Ok(format!(
+        "{{ let {lane_scope} = ({}).clone(); let __task = {task}; {generation_code} {}__task.map(move |__message| {message}::{variant}({lane_scope}.clone(), __generation, ::std::boxed::Box::new(__message))) }}",
+        borrowed_scope(&scope.code),
+        replace.unwrap_or_default()
+    ))
+}
+
 pub(in crate::codegen) fn generate_statements(
     out: &mut String,
     statements: &[ResolvedStatement],
@@ -263,137 +439,38 @@ pub(in crate::codegen) fn generate_statements(
                 .unwrap();
             }
             ResolvedStatementKind::Run(run) => {
-                let ResolvedRun {
-                    kind,
-                    target,
-                    args,
-                    success,
-                    error,
-                    ..
-                } = run;
-                let mapper = if env.component_context().is_some() {
-                    "move "
-                } else {
-                    ""
-                };
-                if let ResolvedEffectTarget::Builtin(function) = target {
-                    if function == "__ice_font_load" {
-                        let bytes =
-                            resolved_expr_use_code(program, args[0], env, ValueMode::Owned)?;
-                        let success_message = route_result_code(
-                            success,
-                            "value",
-                            resolved_route_code(success, &["value"], env, program, message)?,
-                        );
-                        writeln!(
-                            out,
-                            "{}::iced::font::load({bytes}).map(move |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => match error {{}} }}){}",
-                            task_prefix, task_suffix
-                        )
-                        .unwrap();
-                        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
-                        continue;
-                    }
-                    if function == "__ice_image_allocate" {
-                        let handle =
-                            resolved_expr_use_code(program, args[0], env, ValueMode::Owned)?;
-                        let success_message = route_result_code(
-                            success,
-                            "value",
-                            resolved_route_code(success, &["value"], env, program, message)?,
-                        );
-                        let error_message = resolved_route_code(
-                            error.as_ref().expect("checker requires image error route"),
-                            &["error"],
-                            env,
-                            program,
-                            message,
-                        )?;
-                        let error_message = route_result_code(
-                            error.as_ref().expect("checker requires image error route"),
-                            "error",
-                            error_message,
-                        );
-                        writeln!(
-                            out,
-                            "{}::iced::widget::image::allocate({handle}).map(move |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){}",
-                            task_prefix, task_suffix
-                        )
-                        .unwrap();
-                        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
-                        continue;
-                    }
-                    let task_code = match function.as_str() {
-                        "__ice_system_info" => {
-                            "::iced::system::information().map(__ice_system_info)"
-                        }
-                        "__ice_system_theme" => "::iced::system::theme().map(__ice_system_theme)",
-                        "__ice_time_now" => "::iced::time::now()",
-                        "__ice_clipboard_read" => "::iced::clipboard::read()",
-                        "__ice_clipboard_read_primary" => "::iced::clipboard::read_primary()",
-                        _ => unreachable!(),
-                    };
-                    let success_message = route_result_code(
-                        success,
-                        "value",
-                        resolved_route_code(success, &["value"], env, program, message)?,
+                let mut route_env = ScopedBindingEnv::new(env);
+                let route_scope = env.component_context().map(|(component, scope)| {
+                    let name = format!("__ice_run_scope_{}", statement.id.0);
+                    insert_scoped_component_context(
+                        &mut route_env,
+                        component,
+                        Binding {
+                            code: name.clone(),
+                            ty: Type::Unit,
+                            local: true,
+                            state: None,
+                            owner: None,
+                        },
                     );
-                    writeln!(
-                        out,
-                        "{}{task_code}.map(move |value| {success_message}){}",
-                        task_prefix, task_suffix
-                    )
-                    .unwrap();
-                    writeln!(out, "{SOURCE_MARKER_END}").unwrap();
-                    continue;
-                }
-                let ResolvedEffectTarget::Extern(action) = target else {
-                    unreachable!("built-in effects return above")
-                };
-                let action = program.extern_function(*action);
-                let args = args
-                    .iter()
-                    .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join(", ");
-                let success_message = route_result_code(
-                    success,
-                    "value",
-                    resolved_route_code(success, &["value"], env, program, message)?,
-                );
-                if let (Some(error_route), Some(_)) = (error, &action.error) {
-                    let error_message = route_result_code(
-                        error_route,
-                        "error",
-                        resolved_route_code(error_route, &["error"], env, program, message)?,
-                    );
-                    match kind {
-                        EffectKind::Future => writeln!(out, "{task_prefix}::iced::Task::perform({}({args}), {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}", action.rust_path).unwrap(),
-                        EffectKind::Task => writeln!(out, "{task_prefix}{}({args}).map(|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}", action.rust_path).unwrap(),
-                        EffectKind::Stream => writeln!(out, "{task_prefix}::iced::Task::run({}({args}), |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}", action.rust_path).unwrap(),
-                    }
+                    (name, scope.code.clone())
+                });
+                let run_env: &dyn BindingEnvironment = if route_scope.is_some() {
+                    &route_env
                 } else {
-                    match kind {
-                        EffectKind::Future => writeln!(
-                            out,
-                            "{task_prefix}::iced::Task::perform({}({args}), {mapper}|value| {success_message}){task_suffix}",
-                            action.rust_path
-                        )
-                        .unwrap(),
-                        EffectKind::Task => writeln!(
-                            out,
-                            "{task_prefix}{}({args}).map(|value| {success_message}){task_suffix}",
-                            action.rust_path
-                        )
-                        .unwrap(),
-                        EffectKind::Stream => writeln!(
-                            out,
-                            "{task_prefix}::iced::Task::run({}({args}), |value| {success_message}){task_suffix}",
-                            action.rust_path
-                        )
-                        .unwrap(),
-                    }
+                    env
+                };
+                let mut task = resolved_run_task_code(run, program, message, run_env)?;
+                if let Some((name, scope)) = route_scope {
+                    task = format!(
+                        "{{ let {name} = ({}).clone(); {task} }}",
+                        borrowed_scope(&scope)
+                    );
                 }
+                if run.lane.is_some() {
+                    task = run_lane_task_code(task, run, statement, program, message, env, state)?;
+                }
+                writeln!(out, "{task_prefix}{task}{task_suffix}").unwrap();
             }
             ResolvedStatementKind::Sip(sip) => {
                 let ResolvedSip {

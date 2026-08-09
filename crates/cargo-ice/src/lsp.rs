@@ -1242,7 +1242,7 @@ fn completion_items_at(
     let items = match context {
         CursorContext::TopLevel => schema::completion_items_for(&["declaration"]),
         CursorContext::HandlerBody => {
-            let mut items = schema::completion_items_for(&["statement"]);
+            let mut items = schema::completion_items_for(&["statement", "effect"]);
             if let Some(document) = document {
                 items.extend(effect_completions(document));
             }
@@ -2696,13 +2696,32 @@ fn fallible_route_action(
         return;
     }
     let trimmed = current.trim();
-    let Some(call) = ["run ", "task ", "stream "]
-        .iter()
-        .find_map(|prefix| trimmed.strip_prefix(prefix))
-    else {
+    let call = if let Some(call) = trimmed.strip_prefix("run ") {
+        let named = call
+            .strip_prefix("latest ")
+            .or_else(|| call.strip_prefix("replace "));
+        if let Some(lane_and_call) = named {
+            let Some(lane_and_call) = lane_and_call.strip_prefix("lane=") else {
+                return;
+            };
+            let Some(separator) = lane_and_call.find(char::is_whitespace) else {
+                return;
+            };
+            if separator == 0 {
+                return;
+            }
+            lane_and_call[separator..].trim_start()
+        } else {
+            call
+        }
+    } else if let Some(call) = trimmed
+        .strip_prefix("task ")
+        .or_else(|| trimmed.strip_prefix("stream "))
+    {
+        call
+    } else {
         return;
     };
-    let call = call.strip_prefix("latest ").unwrap_or(call);
     let Some((function_name, _)) = call.split_once('(') else {
         return;
     };
@@ -5079,6 +5098,24 @@ mod tests {
         };
 
         let handler = complete(18);
+        let effect = |label| {
+            handler
+                .iter()
+                .find(|item| item["label"] == label)
+                .unwrap_or_else(|| panic!("missing {label} completion"))
+        };
+        assert_eq!(
+            effect("run")["insertText"],
+            "run ${1:action}(${2}) -> ${3:succeeded} _ | ${4:failed} _"
+        );
+        assert_eq!(
+            effect("run latest")["insertText"],
+            "run latest lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
+        );
+        assert_eq!(
+            effect("run replace")["insertText"],
+            "run replace lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
+        );
         assert!(handler.iter().any(|item| {
             item["label"] == "load"
                 && item["insertText"]
@@ -5753,6 +5790,44 @@ mod tests {
             .find(|action| action["title"] == "Add an accessible label to child-content button")
             .unwrap();
         assert_eq!(label["edit"]["changes"][uri][0]["newText"], " label=\"Go\"");
+    }
+
+    #[test]
+    fn fallible_route_action_recognizes_ordinary_and_named_runs() {
+        let uri = "file:///tmp/request-lane-actions.ice";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non ordinary\n  run load(\"ordinary\") -> loaded _\non newest\n  run latest lane=search load(\"latest\") -> loaded _\non replacing\n  run replace lane=refresh load(\"replace\") -> loaded _\non loaded(_value)\nview\n  text \"Ready\"\n";
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+
+        for statement in [
+            "  run load(\"ordinary\") -> loaded _",
+            "  run latest lane=search load(\"latest\") -> loaded _",
+            "  run replace lane=refresh load(\"replace\") -> loaded _",
+        ] {
+            let line = source
+                .lines()
+                .position(|candidate| candidate == statement)
+                .unwrap();
+            let actions = code_actions_at(
+                &documents,
+                &json!({
+                    "textDocument": { "uri": uri },
+                    "range": {
+                        "start": { "line": line, "character": 2 },
+                        "end": { "line": line, "character": 2 },
+                    },
+                    "context": { "diagnostics": [] },
+                }),
+            )
+            .unwrap();
+            let action = actions
+                .iter()
+                .find(|action| action["title"] == "Add error route for `load`")
+                .unwrap_or_else(|| panic!("missing error-route action for `{statement}`"));
+            assert_eq!(
+                action["edit"]["changes"][uri][0]["newText"],
+                " | load_failed _"
+            );
+        }
     }
 
     #[test]

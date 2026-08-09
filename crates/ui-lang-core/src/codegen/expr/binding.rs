@@ -277,23 +277,16 @@ pub(in crate::codegen) fn component_binding_variant(component: &str, state: &str
     }
 }
 
-pub(in crate::codegen) fn component_latest_field(line: usize) -> String {
-    format!("__ice_latest_{line}")
+pub(in crate::codegen) fn run_lane_generation_field(lane: usize) -> String {
+    format!("__ice_run_lane_{lane}_generation")
 }
 
-pub(in crate::codegen) fn component_replace_field(line: usize) -> String {
-    format!("__ice_replace_{line}")
+pub(in crate::codegen) fn run_lane_handle_field(lane: usize) -> String {
+    format!("__ice_run_lane_{lane}_handle")
 }
 
-pub(in crate::codegen) fn component_latest_variant(component: &str, line: usize) -> String {
-    if simple_component(component)
-        && !component.starts_with("Bind")
-        && !component.starts_with("Edit")
-    {
-        format!("__{component}Latest{line}")
-    } else {
-        format!("__0C{}L{line}", rust_identifier_hex(component))
-    }
+pub(in crate::codegen) fn run_lane_variant(lane: usize) -> String {
+    format!("__RequestLane{lane}")
 }
 
 pub(in crate::codegen) fn derived_method(name: &str) -> String {
