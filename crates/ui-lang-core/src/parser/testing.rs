@@ -537,8 +537,8 @@ fn parse_test_step(
         TestStepKind::Capture(name)
     } else if let Some(value) = line.text.strip_prefix("a11y ") {
         parse_accessibility_action(value, line, scope, targets)?
-    } else if line.text == "tray click" {
-        TestStepKind::TrayClick
+    } else if let Some(value) = line.text.strip_prefix("tray choose ") {
+        TestStepKind::TrayChoose(parse_test_expr(value.trim(), line, scope, targets)?)
     } else if let Some(call) = line.text.strip_prefix("dispatch ") {
         let call = call.trim();
         let (handler, args) = if call.contains('(') {
@@ -1014,6 +1014,12 @@ fn parse_test_expectation(
             target, line, scope, targets,
         )?));
     }
+    if let Some(value) = source.strip_prefix("no tray ") {
+        return parse_tray_expectation(value, true, line, scope, targets);
+    }
+    if let Some(value) = source.strip_prefix("tray ") {
+        return parse_tray_expectation(value, false, line, scope, targets);
+    }
     if let Some(value) = source.strip_prefix("no text ") {
         return parse_text_expectation(value, true, line, scope, targets);
     }
@@ -1104,6 +1110,37 @@ fn validate_accessibility_action_name(source: &str, line: &Line) -> Result<(), E
             format!("unsupported accessibility action `{source}`; tests support click and focus"),
         ))
     }
+}
+
+fn parse_tray_expectation(
+    source: &str,
+    negated: bool,
+    line: &Line,
+    scope: &str,
+    targets: &[TestTargetDecl],
+) -> Result<TestExpectation, Error> {
+    let Some((field, value)) = source.split_once(char::is_whitespace) else {
+        return Err(error(TEST_ERROR, line, "tray expectations take a value"));
+    };
+    let field = match field {
+        "label" => TrayField::Label,
+        "icon" => TrayField::Icon,
+        "item" => TrayField::Item,
+        "command" => TrayField::Command,
+        _ => {
+            return Err(error(
+                TEST_ERROR,
+                line,
+                format!("unknown tray expectation `{field}`"),
+            )
+            .hint("tray expectations are `label`, `icon`, `item`, and `command`"));
+        }
+    };
+    Ok(TestExpectation::Tray {
+        field,
+        value: parse_test_expr(value.trim(), line, scope, targets)?,
+        negated,
+    })
 }
 
 fn parse_text_expectation(

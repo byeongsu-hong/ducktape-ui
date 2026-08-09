@@ -508,21 +508,6 @@ fn parse_document(
                 )
                 .hint("declare a named `window name` and open it with `task window open name -> handler _`"));
             }
-            if !is_daemon
-                && settings
-                    .tray
-                    .as_ref()
-                    .is_some_and(|tray| tray.popover.is_some())
-            {
-                let tray = line
-                    .children
-                    .iter()
-                    .find(|item| item.text == "tray")
-                    .unwrap_or(line);
-                return Err(error("E014", tray, "tray popover requires a daemon").hint(
-                    "iced renders one view per application window; declare `daemon Name` so the popover window can render its own branch of the view",
-                ));
-            }
             daemon = is_daemon;
         } else if let Some(source) = line.text.strip_prefix("recipe ") {
             recipes.push(parse_style_recipe(source, line)?);

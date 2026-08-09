@@ -96,6 +96,7 @@ pub(in crate::codegen) fn render_canvas(
         message,
         use_cache,
     )?;
+    let _interaction_derived_guard = enter_escaping_derived_reads();
     let interaction = if let Some(value) = &options.interaction_expr {
         let interaction = resolved_expr_use_code(
             program,
@@ -127,6 +128,7 @@ pub(in crate::codegen) fn render_canvas(
         })
         .transpose()?
         .unwrap_or_else(|| "false".into());
+    drop(_interaction_derived_guard);
     let interaction_guard = match interaction_outside.as_str() {
         "true" => "true".into(),
         "false" => "__cursor.is_over(__bounds)".into(),

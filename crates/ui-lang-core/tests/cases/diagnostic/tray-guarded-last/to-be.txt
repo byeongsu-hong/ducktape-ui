@@ -1,0 +1,2 @@
+E015
+tray icon-rgba `assets/tray.rgba` is guarded but is the last one

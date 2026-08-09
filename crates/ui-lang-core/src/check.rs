@@ -341,14 +341,6 @@ fn check(
     if document.daemon {
         view_states.insert("window".into(), Type::WindowId);
     }
-    if document
-        .settings
-        .tray
-        .as_ref()
-        .is_some_and(|tray| tray.popover.is_some())
-    {
-        view_states.insert("popover".into(), Type::Bool);
-    }
     infer_view(
         &document.view,
         &view_states,

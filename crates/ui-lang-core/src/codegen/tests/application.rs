@@ -1577,18 +1577,9 @@ view
     assert!(generated.contains("self.cursor = times;"));
 }
 
-#[test]
-fn wires_tray_boot_subscription_and_popover_toggle() {
-    let source = r#"daemon Tray
-  tray
-    icon-rgba "assets/tray.rgba" 2 2
-    icon-template true
-    label describe(count)
-    tooltip "Tray demo"
-    popover status
-  window status
-    size 320 240
-extern crate::backend
+/// The theme boilerplate every tray fixture needs, so the assertions below
+/// are only about the tray.
+const TRAY_TAIL: &str = r#"extern crate::backend
   pure describe(value:i64) -> str
 theme contract AppTheme
   bg
@@ -1602,88 +1593,169 @@ palette app for AppTheme
   danger #ff0000
 state
   count = 1
-on bump
-  count = count + 1
-view
-  button "Bump" -> bump
-"#;
-    let generated = compile(source, "tray.ice").unwrap();
-
-    assert!(generated.contains("__TrayEvent(::ui_lang_runtime::tray::TrayEvent),"));
-    assert!(generated.contains("__TrayPopoverClosed(::iced::window::Id),"));
-    assert!(generated.contains("__TrayPopoverFocused(::iced::window::Id),"));
-    assert!(generated.contains("__TrayPopoverUnfocused(::iced::window::Id),"));
-    assert!(generated.contains("pub(crate) __ice_tray_popover_shown: bool,"));
-    assert!(generated.contains("&& self.__ice_tray_popover_shown"));
-    assert!(
-        generated
-            .contains("pub(crate) __ice_tray_popover: ::std::option::Option<::iced::window::Id>,")
-    );
-    assert!(generated.contains("__ice_tray_popover: ::std::option::Option::None,"));
-    assert!(
-        generated.contains("::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig")
-    );
-    assert!(generated.contains("include_bytes!(\"assets/tray.rgba\")"));
-    assert!(generated.contains("icon_width: 2u32, icon_height: 2u32, icon_template: true,"));
-    assert!(
-        generated.contains("::ui_lang_runtime::tray::events().map(__TrayMessage::__TrayEvent),")
-    );
-    assert!(
-        generated
-            .contains("::iced::window::close_events().map(__TrayMessage::__TrayPopoverClosed),")
-    );
-    assert!(generated.contains("fn __tray_sync(&self)"));
-    assert!(generated.contains("::ui_lang_runtime::tray::set_label"));
-    assert!(generated.contains("::ui_lang_runtime::tray::set_tooltip"));
-    assert!(generated.contains("::ui_lang_runtime::tray::anchor_position"));
-    assert!(generated.contains("Self::__window_0()"));
-    assert!(generated.contains("::iced::window::set_mode(__id, ::iced::window::Mode::Windowed)"));
-    assert!(generated.contains("self.__tray_sync();"));
-    assert!(generated.contains(
-        "pub(crate) __ice_tray_dismissed: ::std::option::Option<::iced::time::Instant>,"
-    ));
-    assert!(generated.contains(
-        "self.__ice_tray_dismissed.take().is_some_and(|__at| __at.elapsed() < ::iced::time::Duration::from_millis(200))"
-    ));
-    assert!(generated.contains(
-        "self.__ice_tray_dismissed = ::std::option::Option::Some(::iced::time::Instant::now());"
-    ));
-}
-
-#[test]
-fn wires_tray_without_popover_in_an_application() {
-    let source = r#"app Status
-  tray
-    icon-rgba "assets/tray.rgba" 2 2
-    label describe(count)
-extern crate::backend
-  pure describe(value:i64) -> str
-theme contract AppTheme
-  bg
-  fg
-  primary
-  danger
-palette app for AppTheme
-  bg #000000
-  fg #ffffff
-  primary #333333
-  danger #ff0000
-state
-  count = 1
+on quit
+  exit
 view
   text count
 "#;
-    let generated = compile(source, "status.ice").unwrap();
 
-    assert!(generated.contains("__TrayEvent(::ui_lang_runtime::tray::TrayEvent),"));
-    assert!(!generated.contains("__TrayPopoverClosed"));
-    assert!(!generated.contains("__ice_tray_popover"));
-    assert!(
-        generated.contains("::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig")
+/// "A tray installs no event source a program did not declare" — made
+/// falsifiable. A status item is declared, and without a `menu` there is
+/// nothing to press, so the program subscribes to nothing.
+#[test]
+fn a_tray_without_menu_installs_no_subscription() {
+    let source = format!(
+        r#"app Status
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    label describe(count)
+{TRAY_TAIL}"#
     );
-    assert!(generated.contains("fn __tray_sync(&self)"));
-    assert!(!generated.contains("::ui_lang_runtime::tray::set_tooltip"));
-    assert!(!generated.contains("close_events"));
-    assert!(generated.contains("::iced::window::minimize(__id, false)"));
-    assert!(generated.contains("::iced::window::gain_focus(__id)"));
+    let generated = compile(&source, "status.ice").unwrap();
+
+    assert!(generated.contains("::ui_lang_runtime::tray::init("));
+    assert!(!generated.contains("::ui_lang_runtime::tray::events()"));
+}
+
+/// And with a routed row it subscribes to exactly one thing: the rows.
+#[test]
+fn a_menu_tray_subscribes_to_its_rows() {
+    let source = format!(
+        r#"app Status
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    menu
+      "Quit" -> quit
+{TRAY_TAIL}"#
+    );
+    let generated = compile(&source, "status.ice").unwrap();
+
+    assert!(generated.contains("::ui_lang_runtime::tray::events().filter_map("));
+}
+
+/// The literal hoist: a tray of nothing but constants is applied once at
+/// startup and never syncs. A constant cannot become stale.
+#[test]
+fn a_tray_with_only_literals_emits_no_tray_sync() {
+    let source = format!(
+        r#"app Status
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    label "Status"
+    tooltip "Ducktape"
+    menu
+      "Quit" -> quit
+{TRAY_TAIL}"#
+    );
+    let generated = compile(&source, "status.ice").unwrap();
+
+    assert!(!generated.contains("fn __tray_sync(&self)"));
+    assert_eq!(
+        generated
+            .matches("::ui_lang_runtime::tray::set_tooltip")
+            .count(),
+        1
+    );
+    assert!(generated.contains(r#"::ui_lang_runtime::tray::set_tooltip("Ducktape");"#));
+    assert!(generated.contains(r#"::ui_lang_runtime::tray::set_item(0usize, "Quit");"#));
+}
+
+/// The status item shows the program's first answer, not an empty label until
+/// the first message. Syncing only at the end of `update` was the bug.
+///
+/// Placement, not just presence: a sync beside `init` reads `__state()`, which
+/// for a preset is never what the preset says, so the first sync has to come
+/// after the initial task that applies it.
+#[test]
+fn a_reactive_tray_syncs_after_the_state_each_entry_point_starts_from() {
+    let source = format!(
+        r#"app Status
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    label describe(count)
+preset loaded
+  state
+    count = 7
+{TRAY_TAIL}"#
+    );
+    let generated = compile(&source, "status.ice").unwrap();
+
+    for (name, applies_the_state) in [
+        ("fn __boot()", "state.__boot_task();"),
+        ("fn __preset_0()", "state.__preset_task_0();"),
+    ] {
+        let start = generated
+            .find(name)
+            .unwrap_or_else(|| panic!("generated source has no `{name}`"));
+        let body = &generated[start + name.len()..];
+        let body = &body[..body.find("\nfn ").unwrap_or(body.len())];
+        let applied = body.find(applies_the_state).unwrap_or_else(|| {
+            panic!("`{name}` never runs `{applies_the_state}`");
+        });
+        let synced = body.find("state.__tray_sync();").unwrap_or_else(|| {
+            panic!(
+                "`{name}` never syncs the tray, so the item shows nothing until the first message"
+            );
+        });
+        assert!(
+            synced > applied,
+            "`{name}` syncs the tray before `{applies_the_state}`, so the item shows the declared defaults instead of what this entry point starts from"
+        );
+    }
+
+    let start = generated
+        .find("fn __update(")
+        .expect("generated `__update`");
+    let body = &generated[start..];
+    assert!(
+        body[..body.find("\nfn ").unwrap_or(body.len())].contains("self.__tray_sync();"),
+        "`__update` never syncs the tray, so nothing a handler changes reaches the status item"
+    );
+}
+
+/// Row indices are declaration indices, so a separator simply has no line and
+/// no later row shifts under the runtime's row vector.
+#[test]
+fn menu_row_indices_include_separators() {
+    let source = format!(
+        r#"app Status
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    menu
+      describe(count)
+      separator
+      describe(count)
+{TRAY_TAIL}"#
+    );
+    let generated = compile(&source, "status.ice").unwrap();
+
+    assert!(generated.contains("::ui_lang_runtime::tray::set_item(0usize,"));
+    assert!(generated.contains("::ui_lang_runtime::tray::set_item(2usize,"));
+    assert!(!generated.contains("::ui_lang_runtime::tray::set_item(1usize,"));
+    assert!(generated.contains("::ui_lang_runtime::tray::TrayRow::Separator,"));
+}
+
+/// The tray contributes no state at all. Every field the popover needed is
+/// gone with the window it tracked.
+#[test]
+fn a_tray_contributes_no_private_state() {
+    let source = format!(
+        r#"app Status
+  tray
+    icon-rgba "assets/alarm.rgba" 2 2 when count > 3
+    icon-rgba "assets/tray.rgba" 2 2
+    label describe(count)
+    menu
+      describe(count)
+      "Quit" -> quit
+{TRAY_TAIL}"#
+    );
+    let generated = compile(&source, "status.ice").unwrap();
+
+    assert!(!generated.contains("__ice_tray"));
+    // One guard per guarded icon; the runtime owns first-match-wins and the
+    // fall back to the unguarded last icon.
+    assert!(generated.contains("::ui_lang_runtime::tray::select_icon(&[(self.count > 3)]);"));
+    assert!(generated.contains("::ui_lang_runtime::tray::events().filter_map("));
+    assert!(generated.contains("1usize => ::std::option::Option::Some(__StatusMessage::Quit),"));
 }

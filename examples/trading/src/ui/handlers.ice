@@ -1,10 +1,9 @@
 on mount
   task window open main -> main_opened _
 
-// Opening a window is a query, so its id has to land somewhere. Nothing reads
-// it: the tray popover is bound by `popover status` in the daemon block, and
-// the view is handed the window it is drawing. The route is what the task
-// needs; the id it carries is dropped.
+// Opening a window is a query, so its id has to land somewhere. This daemon
+// opens one window and nothing reads its id, so the route exists to satisfy
+// the task and the handler is deliberately empty.
 on main_opened(_id)
 
 on quit

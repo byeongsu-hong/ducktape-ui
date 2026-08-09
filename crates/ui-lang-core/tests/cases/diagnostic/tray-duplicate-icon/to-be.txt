@@ -1,0 +1,2 @@
+E014
+duplicate tray icon `assets/tray.rgba`

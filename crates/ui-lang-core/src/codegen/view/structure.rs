@@ -70,6 +70,7 @@ pub(in crate::codegen) fn render_structure(
                         reconciliation_scope_binding("__ice_responsive_recon.clone()".into()),
                     );
                     let responsive_recon = reconciliation_scope(&child_scope, env).to_owned();
+                    let _derived_guard = enter_escaping_derived_reads();
                     let narrow = render_node(
                         *narrow,
                         document,
@@ -86,6 +87,7 @@ pub(in crate::codegen) fn render_structure(
                         "__ice_responsive_scope.clone()",
                         slot,
                     )?;
+                    drop(_derived_guard);
                     format!(
                         "{{ let __ice_responsive_scope = ({child_scope}).to_owned(); let __ice_responsive_recon = ({responsive_recon}).to_owned(); let _ = (&__ice_responsive_scope, &__ice_responsive_recon); move |__size| {{ let __responsive: __IceElement<'_, {message}> = if __size.width < {breakpoint} {{ {narrow} }} else {{ {wide} }}; __responsive }} }}"
                     )
@@ -144,6 +146,7 @@ pub(in crate::codegen) fn render_structure(
                 reconciliation_scope_binding("__ice_responsive_recon.clone()".into()),
             );
             let responsive_recon = reconciliation_scope(&child_scope, env).to_owned();
+            let _derived_guard = enter_escaping_derived_reads();
             let content = render_node(
                 *content,
                 document,
@@ -152,6 +155,7 @@ pub(in crate::codegen) fn render_structure(
                 "__ice_responsive_scope.clone()",
                 slot,
             )?;
+            drop(_derived_guard);
             let builder = format!(
                 "{{ let __ice_responsive_scope = ({child_scope}).to_owned(); let __ice_responsive_recon = ({responsive_recon}).to_owned(); let _ = (&__ice_responsive_scope, &__ice_responsive_recon); move |__size| {{ let __responsive: __IceElement<'_, {message}> = {content}; __responsive }} }}"
             );
@@ -388,11 +392,17 @@ pub(in crate::codegen) fn render_resolved_float(
             ),
         );
     }
-    let x = resolved_expr_use_code(program, float.x, &translate_env, ValueMode::Owned)?;
-    let y = resolved_expr_use_code(program, float.y, &translate_env, ValueMode::Owned)?;
+    let (x, y) = {
+        let _derived_guard = enter_escaping_derived_reads();
+        (
+            resolved_expr_use_code(program, float.x, &translate_env, ValueMode::Owned)?,
+            resolved_expr_use_code(program, float.y, &translate_env, ValueMode::Owned)?,
+        )
+    };
     let mut code = format!(
         "{{ let __float_content: __IceElement<'_, {message}> = {content}; let __float = ::iced::widget::float(__float_content).scale({scale}).translate(move |__original, __viewport| ::iced::Vector::new({x} as f32, {y} as f32))"
     );
+    let _style_derived_guard = enter_escaping_derived_reads();
     let radius = resolved_float_radius_code(&float.radius, program, env)?;
     if float.shadow_color.is_some()
         || float.shadow_x.is_some()
@@ -425,6 +435,7 @@ pub(in crate::codegen) fn render_resolved_float(
         }
         code.push_str(" __style })");
     }
+    drop(_style_derived_guard);
     Ok(format!("{code}; __float.into() }}"))
 }
 

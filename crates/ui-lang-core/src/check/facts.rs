@@ -123,7 +123,6 @@ pub(crate) enum CheckedLocalOwner {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CheckedViewLocalRole {
     DaemonWindow,
-    TrayPopover,
     ForItem,
     MatchPayload(u32),
     KeyedItem,
@@ -2052,21 +2051,6 @@ impl CheckedFacts {
             .map(|index| CheckedLocalId(index as u32))
     }
 
-    pub(crate) fn tray_popover_local(&self) -> Option<CheckedLocalId> {
-        self.locals
-            .iter()
-            .position(|local| {
-                matches!(
-                    local.owner,
-                    CheckedLocalOwner::View {
-                        role: CheckedViewLocalRole::TrayPopover,
-                        ..
-                    }
-                )
-            })
-            .map(|index| CheckedLocalId(index as u32))
-    }
-
     pub(crate) fn local_by_owner(&self, owner: CheckedLocalOwner) -> Option<CheckedLocalId> {
         self.locals_by_owner.get(&owner).copied()
     }
@@ -3588,7 +3572,7 @@ impl<'a> FactsBuilder<'a> {
                 .settings
                 .tray
                 .as_ref()
-                .is_none_or(|tray| !tray.has_text())
+                .is_none_or(|tray| !tray.reactive())
         {
             return Ok(());
         }
@@ -3663,7 +3647,10 @@ impl<'a> FactsBuilder<'a> {
                 (AppSettingExprId::TrayLabel, &tray.label),
                 (AppSettingExprId::TrayTooltip, &tray.tooltip),
             ] {
-                if let Some(setting) = setting {
+                if let Some(setting) = setting
+                    .as_ref()
+                    .filter(|setting| tray_text_is_reactive(setting))
+                {
                     lower(
                         self,
                         id,
@@ -3671,6 +3658,32 @@ impl<'a> FactsBuilder<'a> {
                         &Type::Str,
                         &app_env,
                         &setting.span,
+                    )?;
+                }
+            }
+            for (index, icon) in tray.icons.iter().enumerate() {
+                if let Some(guard) = &icon.when {
+                    lower(
+                        self,
+                        AppSettingExprId::TrayIconGuard(index as u32),
+                        &guard.value,
+                        &Type::Bool,
+                        &app_env,
+                        &guard.span,
+                    )?;
+                }
+            }
+            for (index, row) in tray.menu.iter().enumerate() {
+                if let TrayRow::Item { text, .. } = row
+                    && tray_text_is_reactive(text)
+                {
+                    lower(
+                        self,
+                        AppSettingExprId::TrayMenuRow(index as u32),
+                        &text.value,
+                        &Type::Str,
+                        &app_env,
+                        &text.span,
                     )?;
                 }
             }
@@ -3808,22 +3821,6 @@ impl<'a> FactsBuilder<'a> {
                 CheckedPathRoot::Local(local),
                 Type::WindowId,
             );
-        }
-        if self.tray_popover_declared() {
-            let view = self
-                .declarations
-                .view_id(self.document.view.span())
-                .ok_or_else(|| {
-                    self.invariant(self.document.view.span(), "tray root has no view ID")
-                })?;
-            let local = self.push_view_local(
-                "popover",
-                Type::Bool,
-                view,
-                CheckedViewLocalRole::TrayPopover,
-                self.document.view.span(),
-            );
-            app_env.insert("popover".into(), CheckedPathRoot::Local(local), Type::Bool);
         }
         self.lower_view_expression_tree(&self.document.view, &app_env)?;
 
@@ -8880,7 +8877,6 @@ impl<'a> FactsBuilder<'a> {
             WindowOperation::Open(_)
             | WindowOperation::Oldest
             | WindowOperation::Latest
-            | WindowOperation::TrayClose
             | WindowOperation::Close
             | WindowOperation::Drag
             | WindowOperation::DragResize(_)
@@ -9500,16 +9496,6 @@ impl<'a> FactsBuilder<'a> {
         });
         self.facts.locals_by_owner.insert(owner, id);
         id
-    }
-
-    /// Whether the root declares a tray popover, which is what makes the
-    /// read-only `popover` view binding exist.
-    fn tray_popover_declared(&self) -> bool {
-        self.document
-            .settings
-            .tray
-            .as_ref()
-            .is_some_and(|tray| tray.popover.is_some())
     }
 
     fn push_view_local(

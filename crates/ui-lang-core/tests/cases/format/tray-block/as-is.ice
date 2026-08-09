@@ -4,9 +4,6 @@ daemon Demo
         icon-template true
         label describe(count)
         tooltip "Demo"
-        popover status
-    window status
-        size 320 240
 extern crate::backend
     pure describe(value:i64) -> str
 theme contract AppTheme

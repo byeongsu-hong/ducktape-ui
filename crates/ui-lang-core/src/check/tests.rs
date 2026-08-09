@@ -1008,6 +1008,50 @@ view
     );
 }
 
+/// A tray menu row is an entry point like a subscription source: the platform
+/// calls it, and nothing in the view mentions it. Without the tray in the
+/// reachable-handler roots, `chosen` reads as dead code — and a warning that
+/// says a live handler is dead is how a real one gets deleted.
+#[test]
+fn treats_tray_menu_rows_as_handler_roots() {
+    let document = analyze(
+        r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    menu
+      "Chosen" -> chosen
+      "Stat"
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 0
+on chosen
+  count = count + 1
+on never
+  count = 0
+view
+  text count
+"#,
+    )
+    .unwrap();
+    let warnings = document
+        .warnings()
+        .iter()
+        .filter(|warning| warning.code == "W005")
+        .map(|warning| warning.message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("handler `never`"), "{warnings:?}");
+}
+
 #[test]
 fn ignores_state_accesses_in_unreachable_handlers() {
     let document = analyze(&warning_app(

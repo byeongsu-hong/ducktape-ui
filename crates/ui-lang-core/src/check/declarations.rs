@@ -342,19 +342,6 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
     }
     let mut fields = HashSet::new();
     for state in &document.states {
-        if state.name == "popover"
-            && document
-                .settings
-                .tray
-                .as_ref()
-                .is_some_and(|tray| tray.popover.is_some())
-        {
-            return Err(
-                Error::new("E100", &state.span, "state cannot be named `popover`").hint(
-                    "`popover` says whether the view is drawing the window the status item opened",
-                ),
-            );
-        }
         if document.daemon && state.name == "window" {
             return Err(
                 Error::new("E100", &state.span, "daemon state cannot be named `window`")

@@ -7,7 +7,7 @@ cargo ice dev examples/hotreload/src/ui/app.ice -- -p hotreload-example
 ```
 
 The left pane is the rendered Ice view. The right pane edits
-`src/ui/screen.ice`; **Save & hot reload** writes it back to disk. Changes to
-static structure, literals, colors, and spacing reload in the same process, so
-the preview counter keeps its value. Edits that need new compiled values use
-the normal staged rebuild and restart path.
+`src/ui/screen.ice`; press **Ctrl/Cmd+S** or use **Save & hot reload** to write
+it back to disk. Changes to static structure, literals, colors, and spacing
+reload in the same process, so the preview counter keeps its value. Edits that
+need new compiled values use the normal staged rebuild and restart path.

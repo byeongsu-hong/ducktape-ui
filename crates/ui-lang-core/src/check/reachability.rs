@@ -43,6 +43,18 @@ pub(in crate::check) fn reachable_handlers(
     for subscription in &document.subscriptions {
         queue.push_back(subscription.route.handler.as_str());
     }
+    // A tray menu row is an entry point exactly like a subscription source:
+    // the platform, not the view, is what calls it.
+    if let Some(tray) = &document.settings.tray {
+        for row in &tray.menu {
+            if let TrayRow::Item {
+                route: Some(route), ..
+            } = row
+            {
+                queue.push_back(route.as_str());
+            }
+        }
+    }
     for preset in &document.presets {
         collect_statement_routes(&preset.statements, &mut queue);
     }
@@ -115,7 +127,7 @@ pub(in crate::check) fn unreachable_handler_warnings(
                 "W005",
                 &handler.span,
                 format!(
-                    "handler `{}` is unreachable from mount, the app view, subscriptions, presets, and tests",
+                    "handler `{}` is unreachable from mount, the app view, subscriptions, the tray menu, presets, and tests",
                     handler.name
                 ),
             )

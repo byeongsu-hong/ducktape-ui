@@ -142,13 +142,3 @@ test trading_a_position_row_quotes_its_own_pnl_to_the_cent
   expect text "-$2,400.00" within held
   expect no text "-$2.4K"
   expect text "-$33.36" within held
-
-test trading_menu_bar_panel_shows_the_focused_market
-  preset held
-  viewport 300 236
-  tray click
-  expect text "PERP"
-  expect text "64,000.00"
-  expect text "FUNDING"
-  expect no text "ORDER BOOK"
-  capture menubar_panel

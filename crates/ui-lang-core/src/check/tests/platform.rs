@@ -819,13 +819,15 @@ view
 fn accepts_a_full_tray_declaration() {
     let source = r#"daemon Demo
   tray
+    icon-rgba "assets/alarm.rgba" 2 2 when count > 0
     icon-rgba "assets/tray.rgba" 2 2
     icon-template true
     label describe(count)
     tooltip "Demo"
-    popover status
-  window status
-    size 320 240
+    menu
+      describe(count)
+      separator
+      "Quit" -> quit
 extern crate::backend
   pure describe(value:i64) -> str
 theme contract AppTheme
@@ -840,6 +842,8 @@ palette app for AppTheme
   danger #ff0000
 state
   count = 1
+on quit
+  exit
 view
   text count
 "#;
@@ -899,11 +903,12 @@ view
 }
 
 #[test]
-fn rejects_a_tray_popover_without_a_matching_window() {
+fn rejects_a_tray_menu_row_routed_to_an_unknown_handler() {
     let source = r#"daemon Demo
   tray
     icon-rgba "assets/tray.rgba" 2 2
-    popover missing
+    menu
+      "Quit" -> missing
 theme contract AppTheme
   bg
   fg
@@ -919,5 +924,145 @@ view
 "#;
     let error = analyze(source).unwrap_err();
     assert_eq!(error.code, "E173");
-    assert!(error.message.contains("unknown app window `missing`"));
+    assert!(error.message.contains("unknown handler `missing`"));
+}
+
+/// A row that takes a payload has nothing to take it from: the platform
+/// reports which row was chosen and nothing else.
+#[test]
+fn rejects_a_tray_menu_row_routed_to_a_handler_with_parameters() {
+    let source = r#"daemon Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    menu
+      "Quit" -> pick
+on pick(value)
+  count = value
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 0
+view
+  text count
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E173");
+    assert!(error.message.contains("unknown handler `pick`"));
+}
+
+#[test]
+fn rejects_a_non_bool_tray_icon_guard() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/alarm.rgba" 2 2 when count
+    icon-rgba "assets/tray.rgba" 2 2
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+view
+  text count
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E101");
+    assert!(error.message.contains("expected `bool`"));
+}
+
+/// The last `icon-rgba` is what applies when no guard matches, so it cannot
+/// carry one; without that rule the selection has no final arm.
+#[test]
+fn rejects_a_guard_on_the_last_tray_icon() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2 when count > 0
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+view
+  text count
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E015");
+    assert!(error.message.contains("is guarded but is the last one"));
+}
+
+#[test]
+fn rejects_an_unguarded_tray_icon_before_the_last() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/alarm.rgba" 2 2
+    icon-rgba "assets/tray.rgba" 2 2
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  text "hi"
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E015");
+    assert!(error.message.contains("before the last one needs `when`"));
+}
+
+/// The path names the icon in `expect tray icon`, so two lines sharing one is
+/// an assertion that cannot say which it meant.
+#[test]
+fn rejects_a_duplicate_tray_icon_path() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2 when count > 0
+    icon-rgba "assets/tray.rgba" 2 2
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+view
+  text count
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E014");
+    assert!(
+        error
+            .message
+            .contains("duplicate tray icon `assets/tray.rgba`")
+    );
 }

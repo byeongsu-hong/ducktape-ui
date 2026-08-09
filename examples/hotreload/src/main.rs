@@ -8,6 +8,21 @@ mod backend {
         pub message: String,
     }
 
+    #[derive(Clone, Debug)]
+    pub struct SaveCommand;
+
+    pub fn source_keys(
+        event: iced::widget::text_editor::KeyPress,
+    ) -> Option<iced::widget::text_editor::Binding<SaveCommand>> {
+        if event.key.to_latin(event.physical_key) == Some('s')
+            && (event.modifiers.control() || event.modifiers.logo())
+        {
+            Some(iced::widget::text_editor::Binding::Custom(SaveCommand))
+        } else {
+            iced::widget::text_editor::Binding::from_key_press(event)
+        }
+    }
+
     pub async fn load_source() -> Result<String, SourceError> {
         std::fs::read_to_string(SOURCE_PATH).map_err(source_error)
     }

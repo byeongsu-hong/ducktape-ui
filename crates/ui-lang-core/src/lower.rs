@@ -274,11 +274,23 @@ pub(crate) enum ResolvedTestExpectation {
         target: ResolvedTestTargetRef,
         property: ResolvedTestAccessibilityProperty,
     },
+    Tray {
+        field: ResolvedTrayField,
+        value: ResolvedExpressionId,
+        negated: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedTrayField {
+    Label,
+    Icon,
+    Item,
+    Command,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedTestStepKind {
-    TrayClick,
     Click {
         target: ResolvedTestTargetRef,
         button: ResolvedTestMouseButton,
@@ -382,6 +394,7 @@ pub(crate) enum ResolvedTestStepKind {
         handler_name: String,
         args: Vec<ResolvedExpressionId>,
     },
+    TrayChoose(ResolvedExpressionId),
     Expect(ResolvedTestExpectation),
 }
 
@@ -1185,8 +1198,6 @@ pub(crate) enum ResolvedPaneOperation {
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedWindowOperation {
     Open(Option<u32>),
-    /// Closes the tray popover, which no window id in scope can name.
-    TrayClose,
     Oldest,
     Latest,
     Close,
@@ -1277,19 +1288,58 @@ pub(crate) struct ResolvedNamedWindow {
 }
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedTraySettings {
-    pub(crate) icon: ResolvedWindowIcon,
+    pub(crate) icons: Vec<ResolvedTrayIcon>,
     pub(crate) icon_template: bool,
-    pub(crate) label: Option<ResolvedAppExpression>,
-    pub(crate) tooltip: Option<ResolvedAppExpression>,
-    pub(crate) popover: Option<NamedWindowId>,
+    pub(crate) label: Option<ResolvedTrayText>,
+    pub(crate) tooltip: Option<ResolvedTrayText>,
+    pub(crate) menu: Vec<ResolvedTrayRow>,
     pub(crate) origin: OriginId,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedTrayIcon {
+    pub(crate) icon: ResolvedWindowIcon,
+    pub(crate) when: Option<ResolvedAppExpression>,
+}
+
+/// A tray string, split by whether it can ever change. A literal is applied
+/// once at startup; only the rest reaches `__tray_sync`.
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTrayText {
+    Literal(String),
+    Expression(ResolvedAppExpression),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedTrayRow {
+    Item {
+        text: ResolvedTrayText,
+        /// The handler a chosen row calls, by name — the same thing a
+        /// `subscribe` route carries, so codegen reaches the handler through
+        /// the one path payload-free routes already use.
+        route: Option<String>,
+    },
+    Separator,
+}
+
 impl ResolvedTraySettings {
-    /// Whether the tray carries an expression that has to be re-evaluated
-    /// after every update, which is what `__tray_sync` exists for.
-    pub(crate) fn has_text(&self) -> bool {
-        self.label.is_some() || self.tooltip.is_some()
+    /// Whether any tray expression can change after startup, which is what
+    /// `__tray_sync` exists for.
+    pub(crate) fn reactive(&self) -> bool {
+        let dynamic =
+            |text: &Option<ResolvedTrayText>| matches!(text, Some(ResolvedTrayText::Expression(_)));
+        dynamic(&self.label)
+            || dynamic(&self.tooltip)
+            || self.icons.iter().any(|icon| icon.when.is_some())
+            || self.menu.iter().any(|row| {
+                matches!(
+                    row,
+                    ResolvedTrayRow::Item {
+                        text: ResolvedTrayText::Expression(_),
+                        ..
+                    }
+                )
+            })
     }
 }
 #[derive(Clone, Debug)]
@@ -1947,7 +1997,6 @@ fn resolved_handler_operation_contract(
                 ),
                 ResolvedWindowOperation::Oldest => CheckedWindowOperation::Oldest,
                 ResolvedWindowOperation::Latest => CheckedWindowOperation::Latest,
-                ResolvedWindowOperation::TrayClose => CheckedWindowOperation::TrayClose,
                 ResolvedWindowOperation::Close => CheckedWindowOperation::Close,
                 ResolvedWindowOperation::Drag => CheckedWindowOperation::Drag,
                 ResolvedWindowOperation::DragResize(direction) => {
@@ -2451,7 +2500,6 @@ impl LoweredProgram {
                         ResolvedWindowOperation::Open(_)
                         | ResolvedWindowOperation::Oldest
                         | ResolvedWindowOperation::Latest
-                        | ResolvedWindowOperation::TrayClose
                         | ResolvedWindowOperation::Close
                         | ResolvedWindowOperation::Drag
                         | ResolvedWindowOperation::DragResize(_)
@@ -3882,14 +3930,6 @@ impl CheckedExpressionOwnerPolicy for ViewWidgetExpressionPolicy<'_> {
                 {
                     return Ok(checked.ty.clone());
                 }
-                if view == self.view
-                    && role == CheckedViewLocalRole::TrayPopover
-                    && self.lowerer.facts.tray_popover_local() == Some(local)
-                    && checked.name == "popover"
-                    && checked.ty == Type::Bool
-                {
-                    return Ok(checked.ty.clone());
-                }
                 let mut current = Some(self.view);
                 let mut found = false;
                 while let Some(id) = current {
@@ -4262,12 +4302,6 @@ impl CheckedExpressionOwnerPolicy for TestExpressionPolicy<'_> {
                 && self.lowerer.facts.daemon_window_local() == Some(id)
                 && local.name == "window"
                 && local.ty == Type::WindowId => {}
-            CheckedLocalOwner::View {
-                role: crate::check::CheckedViewLocalRole::TrayPopover,
-                ..
-            } if self.lowerer.facts.tray_popover_local() == Some(id)
-                && local.name == "popover"
-                && local.ty == Type::Bool => {}
             CheckedLocalOwner::ExpressionBinding { expression, .. }
                 if expression == self.use_id => {}
             CheckedLocalOwner::ExpressionBinding { .. } => {
@@ -4798,58 +4832,91 @@ impl Lowerer {
             .as_ref()
             .map(|tray| -> Result<ResolvedTraySettings, Error> {
                 let origin = self.push_origin(&tray.span, Some(declaration.origin));
-                let icon = tray.icon.as_ref().ok_or_else(|| {
-                    self.invariant(&tray.span, "checked tray settings lost their icon")
-                })?;
+                let text = |id, setting: &AppExpression| -> Result<ResolvedTrayText, Error> {
+                    if let Some(literal) = crate::ast::tray_text_literal(setting) {
+                        return Ok(ResolvedTrayText::Literal(literal.to_owned()));
+                    }
+                    Ok(ResolvedTrayText::Expression(
+                        self.checked_app_setting_expression(id, &setting.span)?,
+                    ))
+                };
                 let label = tray
                     .label
                     .as_ref()
-                    .map(|setting| {
-                        self.checked_app_setting_expression(
-                            AppSettingExprId::TrayLabel,
-                            &setting.span,
-                        )
-                    })
+                    .map(|setting| text(AppSettingExprId::TrayLabel, setting))
                     .transpose()?;
                 let tooltip = tray
                     .tooltip
                     .as_ref()
-                    .map(|setting| {
-                        self.checked_app_setting_expression(
-                            AppSettingExprId::TrayTooltip,
-                            &setting.span,
-                        )
-                    })
+                    .map(|setting| text(AppSettingExprId::TrayTooltip, setting))
                     .transpose()?;
-                let popover = tray
-                    .popover
-                    .as_ref()
-                    .map(|name| {
-                        source
-                            .windows
-                            .iter()
-                            .position(|window| window.name == *name)
-                            .map(|index| NamedWindowId(index as u32))
-                            .ok_or_else(|| {
-                                self.invariant(
-                                    &tray.span,
-                                    "checked tray popover references an unknown window",
-                                )
-                            })
+                let menu = tray
+                    .menu
+                    .iter()
+                    .enumerate()
+                    .map(|(index, row)| match row {
+                        TrayRow::Separator { .. } => Ok(ResolvedTrayRow::Separator),
+                        TrayRow::Item {
+                            text: source_text,
+                            route,
+                            span,
+                        } => Ok(ResolvedTrayRow::Item {
+                            text: text(AppSettingExprId::TrayMenuRow(index as u32), source_text)?,
+                            route: route
+                                .as_ref()
+                                .map(|route| -> Result<String, Error> {
+                                    // The name reaches codegen as a message
+                                    // variant, so a route that lost its
+                                    // handler would fail in generated Rust
+                                    // rather than here.
+                                    if !self.declarations.handlers().iter().any(|handler| {
+                                        handler.name == *route
+                                            && handler.owner == HandlerOwner::App
+                                            && handler.payloads.is_empty()
+                                    }) {
+                                        return Err(self.invariant(
+                                            span,
+                                            "checked tray menu row references an unknown handler",
+                                        ));
+                                    }
+                                    Ok(route.clone())
+                                })
+                                .transpose()?,
+                        }),
                     })
-                    .transpose()?;
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let icons = tray
+                    .icons
+                    .iter()
+                    .enumerate()
+                    .map(|(index, icon)| -> Result<ResolvedTrayIcon, Error> {
+                        Ok(ResolvedTrayIcon {
+                            icon: ResolvedWindowIcon {
+                                path: icon.icon.path.clone(),
+                                width: icon.icon.width,
+                                height: icon.icon.height,
+                                byte_len: icon.icon.byte_len,
+                                origin: self.push_origin(&icon.icon.span, Some(origin)),
+                            },
+                            when: icon
+                                .when
+                                .as_ref()
+                                .map(|guard| {
+                                    self.checked_app_setting_expression(
+                                        AppSettingExprId::TrayIconGuard(index as u32),
+                                        &guard.span,
+                                    )
+                                })
+                                .transpose()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
                 Ok(ResolvedTraySettings {
-                    icon: ResolvedWindowIcon {
-                        path: icon.path.clone(),
-                        width: icon.width,
-                        height: icon.height,
-                        byte_len: icon.byte_len,
-                        origin: self.push_origin(&icon.span, Some(origin)),
-                    },
+                    icons,
                     icon_template: tray.icon_template.unwrap_or(false),
                     label,
                     tooltip,
-                    popover,
+                    menu,
                     origin,
                 })
             })
@@ -4972,27 +5039,32 @@ impl Lowerer {
             self.validate_checked_window_settings(window, &window.span)?;
         }
         if let Some(tray) = &settings.tray {
-            let Some(icon) = &tray.icon else {
+            if tray.icons.is_empty() {
                 return Err(self.invariant(&tray.span, "checked tray settings lost their icon"));
-            };
-            let expected = (icon.width as usize)
-                .checked_mul(icon.height as usize)
-                .and_then(|pixels| pixels.checked_mul(4));
-            if icon.width == 0 || icon.height == 0 || expected != Some(icon.byte_len) {
-                return Err(self.invariant(
-                    &icon.span,
-                    "checked tray icon dimensions do not match its byte length",
-                ));
             }
-            if let Some(popover) = &tray.popover
-                && !settings
-                    .windows
+            for icon in &tray.icons {
+                let icon = &icon.icon;
+                let expected = (icon.width as usize)
+                    .checked_mul(icon.height as usize)
+                    .and_then(|pixels| pixels.checked_mul(4));
+                if icon.width == 0 || icon.height == 0 || expected != Some(icon.byte_len) {
+                    return Err(self.invariant(
+                        &icon.span,
+                        "checked tray icon dimensions do not match its byte length",
+                    ));
+                }
+            }
+            // The last icon carries no guard, so the selection codegen emits
+            // always ends somewhere. A drift here would produce a fold with no
+            // final arm.
+            if tray.icons.last().is_some_and(|icon| icon.when.is_some())
+                || tray.icons[..tray.icons.len() - 1]
                     .iter()
-                    .any(|window| window.name == *popover)
+                    .any(|icon| icon.when.is_none())
             {
                 return Err(self.invariant(
                     &tray.span,
-                    "checked tray popover references an unknown window",
+                    "checked tray icon guards are not in first-match order",
                 ));
             }
         }
@@ -5071,8 +5143,20 @@ impl Lowerer {
                 (AppSettingExprId::TrayLabel, &tray.label),
                 (AppSettingExprId::TrayTooltip, &tray.tooltip),
             ] {
-                if setting.is_some() {
+                if setting.as_ref().is_some_and(tray_text_is_reactive) {
                     expected.insert(id);
+                }
+            }
+            for (index, icon) in tray.icons.iter().enumerate() {
+                if icon.when.is_some() {
+                    expected.insert(AppSettingExprId::TrayIconGuard(index as u32));
+                }
+            }
+            for (index, row) in tray.menu.iter().enumerate() {
+                if let TrayRow::Item { text, .. } = row
+                    && tray_text_is_reactive(text)
+                {
+                    expected.insert(AppSettingExprId::TrayMenuRow(index as u32));
                 }
             }
         }
@@ -5218,6 +5302,19 @@ impl Lowerer {
             AppSettingExprId::TrayTooltip => {
                 source.tray.as_ref().and_then(|tray| tray.tooltip.as_ref())
             }
+            AppSettingExprId::TrayIconGuard(index) => source
+                .tray
+                .as_ref()
+                .and_then(|tray| tray.icons.get(index as usize))
+                .and_then(|icon| icon.when.as_ref()),
+            AppSettingExprId::TrayMenuRow(index) => source
+                .tray
+                .as_ref()
+                .and_then(|tray| tray.menu.get(index as usize))
+                .and_then(|row| match row {
+                    TrayRow::Item { text, .. } => Some(text),
+                    TrayRow::Separator { .. } => None,
+                }),
         };
         setting.map(|setting| &setting.span).ok_or_else(|| {
             self.invariant(
@@ -5239,7 +5336,9 @@ impl Lowerer {
             | AppSettingExprId::Background
             | AppSettingExprId::TextColor
             | AppSettingExprId::TrayLabel
-            | AppSettingExprId::TrayTooltip => Type::Str,
+            | AppSettingExprId::TrayTooltip
+            | AppSettingExprId::TrayMenuRow(_) => Type::Str,
+            AppSettingExprId::TrayIconGuard(_) => Type::Bool,
             AppSettingExprId::ScaleFactor => Type::F64,
             AppSettingExprId::Palette => match &expression.destination {
                 Type::Palette(contract) => Type::Palette(contract.clone()),
@@ -8540,7 +8639,6 @@ impl Lowerer {
             ),
             WindowOperation::Oldest => ResolvedWindowOperation::Oldest,
             WindowOperation::Latest => ResolvedWindowOperation::Latest,
-            WindowOperation::TrayClose => ResolvedWindowOperation::TrayClose,
             WindowOperation::Close => ResolvedWindowOperation::Close,
             WindowOperation::Drag => ResolvedWindowOperation::Drag,
             WindowOperation::DragResize(direction) => {
@@ -9819,12 +9917,18 @@ fn changed_tray_span<'a>(
         return current.or(expected).map(|tray| &tray.span);
     };
     for (name, changed) in [
-        ("icon-rgba", current.icon != expected.icon),
+        (
+            "icon-rgba",
+            tray_icon_shape(current) != tray_icon_shape(expected),
+        ),
         (
             "icon-template",
             current.icon_template != expected.icon_template,
         ),
-        ("popover", current.popover != expected.popover),
+        (
+            "menu",
+            tray_menu_shape(current) != tray_menu_shape(expected),
+        ),
     ] {
         if changed {
             return current
@@ -9837,6 +9941,28 @@ fn changed_tray_span<'a>(
     Some(&current.span)
 }
 
+/// The icon facts generated code bakes in: which files are embedded, at what
+/// size, and which lines carry a guard. The guard expressions themselves are
+/// compared through the checked-expression machinery like every other one.
+fn tray_icon_shape(tray: &TraySettings) -> Vec<(&WindowIcon, bool)> {
+    tray.icons
+        .iter()
+        .map(|icon| (&icon.icon, icon.when.is_some()))
+        .collect()
+}
+
+/// The menu facts generated code bakes in: how many rows there are, which are
+/// separators, and where each row's chosen event goes.
+fn tray_menu_shape(tray: &TraySettings) -> Vec<(bool, Option<&String>)> {
+    tray.menu
+        .iter()
+        .map(|row| match row {
+            TrayRow::Item { route, .. } => (true, route.as_ref()),
+            TrayRow::Separator { .. } => (false, None),
+        })
+        .collect()
+}
+
 fn tray_static_fields_match(
     current: Option<&TraySettings>,
     checked: Option<&TraySettings>,
@@ -9844,9 +9970,9 @@ fn tray_static_fields_match(
     match (current, checked) {
         (None, None) => true,
         (Some(current), Some(checked)) => {
-            current.icon == checked.icon
+            tray_icon_shape(current) == tray_icon_shape(checked)
                 && current.icon_template == checked.icon_template
-                && current.popover == checked.popover
+                && tray_menu_shape(current) == tray_menu_shape(checked)
         }
         _ => false,
     }
@@ -19480,31 +19606,72 @@ view
         );
     }
 
+    /// The literal `tooltip` is hoisted to startup and the call in `label`
+    /// is not, which is the whole of the reactivity contract in one program.
     #[test]
-    fn lowers_tray_settings_with_popover_reference() {
+    fn lowers_tray_settings_with_guarded_icons_and_a_menu() {
         let source = format!(
-            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    label describe(count)\n    tooltip \"Demo\"\n    popover status\n  window status\n    size 320 240\nextern crate::backend\n  pure describe(value:i64) -> str\nstate\n  count = 1\n{THEME}view\n  text count\n"
+            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/alarm.rgba\" 2 2 when count > 0\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    label describe(count)\n    tooltip \"Demo\"\n    menu\n      describe(count)\n      separator\n      \"Quit\" -> quit\nextern crate::backend\n  pure describe(value:i64) -> str\nstate\n  count = 1\non quit\n  count = 0\n{THEME}view\n  text count\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
         let settings = program.settings();
         let tray = settings.tray.as_ref().unwrap();
-        assert_eq!(tray.icon.path, "assets/tray.rgba");
-        assert_eq!((tray.icon.width, tray.icon.height), (2, 2));
-        assert_eq!(tray.icon.byte_len, 16);
+        assert_eq!(
+            tray.icons
+                .iter()
+                .map(|icon| (icon.icon.path.as_str(), icon.when.is_some()))
+                .collect::<Vec<_>>(),
+            [("assets/alarm.rgba", true), ("assets/tray.rgba", false)]
+        );
+        assert_eq!(tray.icons[1].icon.byte_len, 16);
         assert!(tray.icon_template);
-        assert!(tray.label.is_some());
-        assert!(tray.tooltip.is_some());
-        assert_eq!(tray.popover, Some(NamedWindowId(0)));
+        assert!(matches!(tray.label, Some(ResolvedTrayText::Expression(_))));
+        assert!(matches!(
+            tray.tooltip,
+            Some(ResolvedTrayText::Literal(ref value)) if value == "Demo"
+        ));
+        assert!(matches!(
+            tray.menu.as_slice(),
+            [
+                ResolvedTrayRow::Item {
+                    text: ResolvedTrayText::Expression(_),
+                    route: None,
+                },
+                ResolvedTrayRow::Separator,
+                ResolvedTrayRow::Item {
+                    text: ResolvedTrayText::Literal(_),
+                    route: Some(route),
+                },
+            ] if route == "quit"
+        ));
+        assert!(tray.reactive());
     }
 
     #[test]
     fn rejects_tray_topology_mutations_with_e196() {
         let source = format!(
-            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    popover status\n  window status\n    size 320 240\n{THEME}view\n  text \"ready\"\n"
+            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    menu\n      \"Quit\" -> quit\non quit\n  exit\n{THEME}view\n  text \"ready\"\n"
         );
 
+        // A route that lost its handler would reach codegen as a message
+        // variant nobody declared.
         let mut checked = analyze(&source).unwrap();
-        checked.document.settings.tray.as_mut().unwrap().popover = Some("missing".into());
+        let TrayRow::Item { route, .. } =
+            &mut checked.document.settings.tray.as_mut().unwrap().menu[0]
+        else {
+            panic!("the first menu row is an item");
+        };
+        *route = Some("missing".into());
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+
+        // The last icon carries no guard, which is what makes the selection
+        // codegen emits total.
+        let mut checked = analyze(&source).unwrap();
+        checked.document.settings.tray.as_mut().unwrap().icons[0].when = Some(AppExpression {
+            value: Expr::Bool(true),
+            span: Span::line(3),
+        });
         let error = lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
 
@@ -19520,11 +19687,20 @@ view
     #[test]
     fn reports_a_tray_mutation_at_the_tray_setting_that_changed() {
         let source = format!(
-            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    popover status\n  window status\n    size 320 240\nfont brand family=serif default=true\n{THEME}view\n  text \"ready\"\n"
+            "daemon TrayDemo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    icon-template true\n    menu\n      \"Quit\" -> quit\non quit\n  exit\nfont brand family=serif default=true\n{THEME}view\n  text \"ready\"\n"
         );
 
         let mut checked = analyze(&source).unwrap();
-        checked.document.settings.tray.as_mut().unwrap().popover = Some("missing".into());
+        checked
+            .document
+            .settings
+            .tray
+            .as_mut()
+            .unwrap()
+            .menu
+            .push(TrayRow::Separator {
+                span: Span::line(6),
+            });
         let error = lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert_eq!(error.line, 5);

@@ -529,7 +529,6 @@ impl Lowerer {
             TestStepKind::FileLeave => ResolvedTestStepKind::FileLeave,
             TestStepKind::Wait(duration) => ResolvedTestStepKind::Wait(*duration),
             TestStepKind::Advance(duration) => ResolvedTestStepKind::Advance(*duration),
-            TestStepKind::TrayClick => ResolvedTestStepKind::TrayClick,
             TestStepKind::Idle => ResolvedTestStepKind::Idle,
             TestStepKind::Capture(name) => ResolvedTestStepKind::Capture(name.clone()),
             TestStepKind::Accessibility {
@@ -571,6 +570,9 @@ impl Lowerer {
                     handler_name: declaration.name.clone(),
                     args,
                 }
+            }
+            TestStepKind::TrayChoose(_) => {
+                ResolvedTestStepKind::TrayChoose(values.take_type(&Type::Str, "tray choose")?)
             }
             TestStepKind::Expect(expectation) => ResolvedTestStepKind::Expect(
                 self.lower_test_expectation(expectation, aliases, values)?,
@@ -629,6 +631,16 @@ impl Lowerer {
                     .as_ref()
                     .map(|source| target(source, values))
                     .transpose()?,
+                negated: *negated,
+            },
+            TestExpectation::Tray { field, negated, .. } => ResolvedTestExpectation::Tray {
+                field: match field {
+                    TrayField::Label => ResolvedTrayField::Label,
+                    TrayField::Icon => ResolvedTrayField::Icon,
+                    TrayField::Item => ResolvedTrayField::Item,
+                    TrayField::Command => ResolvedTrayField::Command,
+                },
+                value: values.take_type(&Type::Str, "tray expectation")?,
                 negated: *negated,
             },
             TestExpectation::Accessibility {

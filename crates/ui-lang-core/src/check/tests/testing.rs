@@ -634,3 +634,74 @@ test window_context
     )
     .unwrap();
 }
+
+/// `tray choose` names a row an author wrote. Without a menu there is no row
+/// to name and never will be, so it is a mistake at check time rather than a
+/// panic when the test runs.
+#[test]
+fn rejects_tray_choose_without_a_menu() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  text "ready"
+test picks
+  tray choose "Quit"
+"#;
+    let error = analyze(source).unwrap_err();
+    assert!(
+        error.message.contains("`tray choose` needs a `tray` block"),
+        "{}",
+        error.message
+    );
+
+    analyze(&source.replace(
+        "    icon-rgba \"assets/tray.rgba\" 2 2\n",
+        "    icon-rgba \"assets/tray.rgba\" 2 2\n    menu\n      \"Quit\" -> quit\non quit\n  exit\n",
+    ))
+    .unwrap();
+}
+
+/// A tray expectation is about text, on every field.
+#[test]
+fn rejects_a_non_string_tray_expectation() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    menu
+      "Quit" -> quit
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+on quit
+  exit
+view
+  text "ready"
+test reads
+  expect tray command 3
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E101");
+    assert!(
+        error.message.contains("expected `str`"),
+        "{}",
+        error.message
+    );
+}

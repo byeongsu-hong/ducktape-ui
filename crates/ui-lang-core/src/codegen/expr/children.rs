@@ -32,8 +32,12 @@ pub(in crate::codegen) fn render_children(
                 let program = document;
                 let iteration = program.resolved_iteration(*child)?;
                 let item_name = &iteration.item.name;
-                let items =
-                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
+                let items = resolved_expr_use_code(
+                    program,
+                    iteration.items,
+                    env,
+                    ValueMode::TransientBorrowed,
+                )?;
                 let reconciliation_scope = borrowed_scope(reconciliation_scope(scope, env));
                 write!(
                     out,

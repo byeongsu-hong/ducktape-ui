@@ -53,19 +53,22 @@ pub(in crate::codegen) fn generate_subscription(
         )
         .unwrap();
     }
-    if let Some(tray) = &settings.tray {
+    // A tray installs no event source the author did not declare: a `menu`
+    // subscribes only when a row is routed — an unrouted menu is a readout —
+    // and a routed row reaches its handler through the message a payload-free
+    // `subscribe` route already produces, so there is no tray-specific update
+    // path at all.
+    if let Some(tray) = &settings.tray
+        && tray
+            .menu
+            .iter()
+            .any(|row| matches!(row, ResolvedTrayRow::Item { route: Some(_), .. }))
+    {
         writeln!(
             out,
-            "::ui_lang_runtime::tray::events().map({message}::__TrayEvent),"
+            "::ui_lang_runtime::tray::events().filter_map(Self::__tray_row),"
         )
         .unwrap();
-        if tray.popover.is_some() {
-            writeln!(
-                out,
-                "::iced::window::close_events().map({message}::__TrayPopoverClosed),\n::iced::event::listen_with(|__event, _, __id| match __event {{ ::iced::Event::Window(::iced::window::Event::Focused) => ::std::option::Option::Some(true), ::iced::Event::Window(::iced::window::Event::Unfocused) => ::std::option::Option::Some(false), _ => ::std::option::Option::None }}.map(|__focused| (__id, __focused))).map(|(__id, __focused)| if __focused {{ {message}::__TrayPopoverFocused(__id) }} else {{ {message}::__TrayPopoverUnfocused(__id) }}),"
-            )
-            .unwrap();
-        }
     }
     for subscription in program.subscriptions() {
         writeln!(

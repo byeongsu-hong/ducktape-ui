@@ -1,7 +1,10 @@
 extern crate::hyperliquid
   Tape()
   HlError(message:str)
-  SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, funding_pct:f64, leverage:f64, open_interest:f64, selected:bool)
+  // `funding_pct` and `open_interest` live on the Rust struct but not here:
+  // the menu-bar popover that drew them is gone, and what still needs them is
+  // Rust — the hand-written `Hash` and the ticket's rent-per-day figure.
+  SymbolRow(name:str, price:f64, change_pct:f64, volume:f64, leverage:f64, selected:bool)
   Position(coin:str, size:f64, entry:f64, liq:f64, pnl:f64, roe_pct:f64, margin:f64, risk:f64, leverage:f64, margin_mode:str, funding:f64)
   Account(value:f64, cross_value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, margin_pct:f64)
   Trade(ts:i64, price:f64, size:f64, buy:bool, sweep:i64)

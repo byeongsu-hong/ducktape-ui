@@ -121,7 +121,6 @@ pub(crate) struct ResolvedExpressionProgram {
     uses: Vec<ResolvedExpressionUse>,
     nodes: Vec<ResolvedExpressionNode>,
     daemon_window_local: Option<ResolvedLocalId>,
-    tray_popover_local: Option<ResolvedLocalId>,
 }
 
 impl ResolvedExpressionProgram {
@@ -286,7 +285,6 @@ impl ResolvedExpressionProgram {
             uses,
             nodes,
             daemon_window_local: facts.daemon_window_local(),
-            tray_popover_local: facts.tray_popover_local(),
         }
     }
 
@@ -315,9 +313,5 @@ impl ResolvedExpressionProgram {
 
     pub(crate) fn daemon_window_local(&self) -> Option<ResolvedLocalId> {
         self.daemon_window_local
-    }
-
-    pub(crate) fn tray_popover_local(&self) -> Option<ResolvedLocalId> {
-        self.tray_popover_local
     }
 }
