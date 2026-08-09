@@ -356,3 +356,43 @@ test trading_a_fill_row_announces_both_the_size_and_what_it_realized
   target opening = printed/fill(2)/root
   expect a11y closing name "BTC sold 0.25 at 64,010.00, realized +$1,240.00"
   expect a11y opening name "BTC bought 0.5 at 63,940.00"
+
+// The positions header and `PositionRow` are one table drawn in two places,
+// and nothing but matching numbers holds a column over the figures it names.
+// Kept by hand at 44 against 52 and a gap of 7 against 8, every right-aligned
+// header had walked left of its own column — FUNDING by 41 pixels — and the
+// slack parked before UNREALIZED opened a hole between the funding a trader
+// reads and the PnL it is read against. The hole grew with the pane, so the
+// claim is checked at both ends of the fold.
+test trading_the_positions_table_keeps_its_headers_over_its_figures
+  preset held
+  viewport 1660 820
+  target app = #app
+  target table = app/terminal-fit/trade/lower/positions
+  target head_funding = table/head-funding/root
+  target head_unrealized = table/head-unrealized/root
+  target row = table/position-list/position("BTC")/root
+  target funding = row/funding/root
+  target unrealized = row/unrealized
+  expect head_funding.right ~= funding.right
+  expect head_unrealized.right ~= unrealized.right
+  // One gap, not a hole: the figures read as one right-anchored block.
+  expect unrealized.left ~= funding.right + 8.0
+
+// The window's own minimum, where the fills panel folds away and positions
+// takes the width it leaves. This is where the hole was widest — 106 pixels —
+// and where a seven-column table has the least room to be wrong about.
+test trading_the_narrow_positions_table_reads_as_one_block_too
+  preset held
+  viewport 1180 720
+  target app = #app
+  target table = app/terminal-fit/trade/lower/positions
+  target head_funding = table/head-funding/root
+  target row = table/position-list/position("BTC")/root
+  target funding = row/funding/root
+  target unrealized = row/unrealized
+  expect head_funding.right ~= funding.right
+  expect unrealized.left ~= funding.right + 8.0
+  // Still inside the pane rather than clipped out of its right edge, which is
+  // what a seven-column table does when it is given less width than it needs.
+  expect unrealized.right <= table.right
