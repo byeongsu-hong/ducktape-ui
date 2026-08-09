@@ -530,6 +530,7 @@ impl Lowerer {
             )?,
         };
         Ok(ResolvedContainerSurface {
+            background_alpha: None,
             background,
             text_color: surface
                 .text_color

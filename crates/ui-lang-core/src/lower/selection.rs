@@ -811,6 +811,7 @@ impl Lowerer {
                 .as_ref()
                 .map(|background| self.resolve_selection_background(values, background, span))
                 .transpose()?,
+            background_alpha: None,
             text_color: surface
                 .text_color
                 .as_deref()

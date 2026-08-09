@@ -696,6 +696,7 @@ impl Lowerer {
             .transpose()?;
         Ok(ResolvedContainerSurface {
             background,
+            background_alpha: None,
             text_color: style
                 .text_color
                 .as_deref()
