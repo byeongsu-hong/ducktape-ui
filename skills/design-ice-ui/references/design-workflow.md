@@ -197,9 +197,13 @@ For every effectful screen, cover:
 - success feedback when the result is not otherwise obvious.
 
 Use `return if` as a UI guard and `disabled=` for feedback, while retaining
-authoritative validation in Rust. Prevent stale local search or preview results
-with component `run latest` when completion filtering is enough, or `run
-replace` when the prior request must actually be aborted.
+authoritative validation in Rust. Prevent stale search or preview results from
+every handler that starts the same logical work with one fully qualified
+`run latest` lane when completion filtering is enough, or a named `run replace`
+lane when the prior Iced task should be aborted. App and preset handlers split
+across files share a root lane only through unaliased imports; aliased component
+lanes remain instance-owned. Confirm that the Rust boundary
+does not rely on abort to roll back an effect or stop detached work.
 
 Do not hide errors only in logs. Do not use color as the only state signal.
 

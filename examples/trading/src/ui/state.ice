@@ -52,6 +52,21 @@ state
   hover:CandleHit? = none
   status = ""
   error = ""
+  // `error` is one line for whatever broke last, and every read that lands
+  // clears it — so a universe poll landing sixty seconds later takes an
+  // account failure off the screen while the account is still unread. A panel
+  // drawn empty by a read of its own keeps that read's own outcome here, and
+  // only that read clears it. Three fields rather than one, because "orders
+  // could not be read" said over an account that read fine is the same lie
+  // pointed the other way.
+  //
+  // `account_missing` is the venue's own answer — this address has no account
+  // here — rather than the absence of one. An account read that has not landed
+  // leaves it false, which is what separates a slow venue from an empty one.
+  account_missing = false
+  account_error = ""
+  orders_error = ""
+  fills_error = ""
   feeds:task-handle? = none
   latency = 0
   clock:i64 = now_seconds()
@@ -147,10 +162,33 @@ preset unbanked
     gate = false
     venue = Venue.lighter
     address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    // The venue answered, and what it answered was "account not found". Left
+    // false this fixture would be a read still in flight, which is the state
+    // the panels below now say instead — and the difference is the whole
+    // point of the fixture.
+    account_missing = true
     symbols = demo_symbols_lighter()
     focus = symbol_row(demo_symbols_lighter(), "BTC")
     book = some(demo_book_lighter())
     tape_prints = demo_tape_lighter()
+    live = true
+
+// The second an address spends being read, which on a slow venue is a good
+// deal more than a second. Every other fixture here is a screen the reads have
+// settled; this is the one they have not, and it is a preset rather than a
+// dispatch because the test driver runs a read to its answer before the next
+// statement — an account read caught in flight is a state no `dispatch` can
+// hold still.
+preset reading
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    interval = "1m"
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
     live = true
 
 // An account that has traded and closed nothing. The dashboard's win rate is

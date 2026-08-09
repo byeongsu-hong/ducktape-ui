@@ -535,7 +535,20 @@ component_event = name ("(" type_list? ")")?
 component_handler = "on" name ("(" name_list? ")")?
                     INDENT component_statement*
 component_statement = "let" name "=" expr | name "=" expr | "return if" expr
-                    | "run" ("latest" | "replace")? call "->" route ("|" route)?
+                    | run_statement | component_task_group | component_widget_task
+component_task_group = ("parallel" | "sequential") INDENT component_task_member+
+component_task_member = component_task_group | run_statement | component_widget_task
+component_widget_task = "task widget" component_widget_operation ("->" route)?
+component_widget_operation = ("focus" | "focused" | "cursor-front" | "cursor-end"
+                             | "select-all" | "snap-end") widget_target
+                           | "cursor" widget_target expr
+                           | "select" widget_target expr expr
+                           | ("snap" | "scroll-to" | "scroll-by") widget_target expr expr
+                           | "find" "id" widget_target
+
+run_statement = "run" (("latest" | "replace") "lane=" qualified_name)?
+                call "->" route ("|" route)?
+qualified_name = name ("::" name)*
 
 handler_decl   = "on" name ("(" name_list? ")")?
                  INDENT statement*
@@ -550,7 +563,7 @@ statement      = "let" name "=" expr
                | "abort" name
                | "debug start" expr "->" name
                | "debug finish" name
-               | "run" call "->" route ("|" route)?
+               | run_statement
                | "task" call "->" route ("|" route)?
                | "stream" call "->" route ("|" route)?
                | sip_task
@@ -588,7 +601,7 @@ flow_item      = "map" name "->" expr
                | ("done" | "error" | "units") "->" route
 task_member    = task_group | abortable_task
                | "exit"
-               | "run" call "->" route ("|" route)?
+               | run_statement
                | "task" call "->" route ("|" route)?
                | "stream" call "->" route ("|" route)?
                | sip_task
@@ -2872,6 +2885,59 @@ Rust function that already returns an iced `Task`, which exposes clipboard,
 window, focus, scroll, font, system, cancellation, batching, and other runtime
 operations without duplicating their implementation in Ice.
 
+Ordinary `run` delivers every completion. Request/response work that can be
+superseded uses a statically named request lane:
+
+```ice
+on search
+  run latest lane=catalog search_catalog(query) -> searched _ | failed _
+
+on retry_search
+  run latest lane=catalog search_catalog(query) -> searched _ | failed _
+
+on refresh_preview
+  run replace lane=preview render_preview(document) -> previewed _ | failed _
+```
+
+The lane belongs to the state owner, not to a handler or source location. The
+top-level app is one owner; a daemon is one owner shared by all of its windows;
+each component instance is an independent owner. Thus equal fully qualified
+lane names join starts across handlers and source locations for one owner,
+while two component instances do not interfere. An unqualified name in a
+component imported `as catalog` belongs to that alias namespace, but it remains
+owned by each component instance and cannot join the app owner. Unaliased app
+and preset fragments remain in the root namespace and may share root lanes.
+Lane names are qualified identifiers written in source, so each checked owner
+has a finite set. One owner must use either `latest` or
+`replace` consistently for a name, and one handler execution cannot start the
+same lane twice.
+
+In a component handler, a named `run` may be direct or a leaf of nested
+`parallel` and `sequential` task structure. Its lane still belongs to that
+component instance.
+
+`latest` advances the lane generation and routes only the current generation's
+success or failure. It does not cancel stale Futures: they and their captured
+values remain live until they finish or their backend drops them. Work that is
+started repeatedly and never finishes can therefore retain memory or external
+resources even though its completions are filtered.
+
+`replace` also filters stale completions and aborts the prior Iced task for the
+lane when a replacement is installed. Aborting drops work still owned by that
+task, but it is not transaction rollback: effects already performed remain,
+and detached or blocking backend work may continue. Use cancellation-safe or
+idempotent Rust boundaries when those effects matter. Per-owner lane
+bookkeeping is fixed by the source-declared names; it does not allocate entries
+from runtime request keys. The number of component owners follows the existing
+retained/mounted component lifetime contract. A replacement lane retains only
+its current abort handle and releases it when its matching completion is
+accepted, the next replacement starts, or its owner is dropped. If an outer
+`abortable` group prevents that completion from reaching update, the fixed-size
+handle may remain
+until one of the latter two events; it does not accumulate.
+Future values, generations, and abort handles are backend details rather than
+Ice values.
+
 Multiple tasks can be composed as one structured final statement:
 
 ```ice
@@ -3532,8 +3598,8 @@ component Counter(label:str)
 They have one root, typed inputs, and no implicit capture of app state. A local
 `state` block accepts self-contained ordinary cloneable values. Local `on`
 handlers may assign that state, stop with `return if`, or end with a Future
-extern call using `run`. They may also end with a widget operation targeting
-their own rendered subtree. Other native tasks, streams, task composition,
+extern call using `run`. Future runs and scoped widget operations may compose
+with `parallel` and `sequential`; `abortable`, other native tasks, streams,
 lifecycle hooks, and implicit prop capture stay at app level. Pass a prop or
 event value explicitly through the route when a local handler needs it.
 
@@ -3560,37 +3626,6 @@ Mutable component-only values such as `editor`,
 `markdown`, `combo`, `animation`, task handles, and debug spans cannot have
 defaults. A supplied argument always overrides the default.
 
-`run latest` gives local request/response interactions latest-wins delivery:
-
-```ice
-component Search()
-  state
-    query = ""
-    loading = false
-    result:str? = none
-  on search
-    loading = true
-    run latest fetch(query) -> loaded _ | failed _
-  on loaded(value)
-    result = some(value)
-    loading = false
-  on failed(error)
-    loading = false
-  col
-    input "Query" <-> query
-    button "Search" disabled=loading -> search
-```
-
-Each start advances an internal generation for that component scope and source
-call site. A completion is routed only while its generation remains current;
-the older Future itself keeps running. `run replace` instead wraps the Future
-in Iced's native abortable task and aborts the previous handle for the same
-component scope and source call site before storing the replacement. It is not
-valid in an app-global handler because there is no component instance scope.
-Ordinary `run` performs no filtering and delivers every completion. Future
-values, request IDs, generations, and abort handles are not part of the
-language surface.
-
 Local state is keyed by the component's hierarchical instance scope, so two
 explicit component IDs own independent values. The declared initializer is
 used until the first local event materializes that instance. The default
@@ -3602,8 +3637,8 @@ recomputation-unsafe built-ins forbidden in component prop defaults, including
 the unqualified `encoded` and `rgba` image constructors.
 
 `lifetime mounted` marks the scopes present in each rendered root and removes
-entries that disappear from that root. Removing an entry drops its local state,
-latest-generation bookkeeping, and any `run replace` abort-on-drop handles.
+entries that disappear from that root. Removing an entry drops its local state
+and request-lane bookkeeping, including any `run replace` abort-on-drop handles.
 Daemon roots include their window ID, so rendering one window never prunes
 another window's scopes. There is no `on unmount` hook or other arbitrary
 lifecycle effect; handlers remain the only place that starts work. Components
@@ -5642,11 +5677,12 @@ verification. Access-only events and events below excluded build, vendor,
 fixture, or VCS directories do not trigger verification. The idle runner does
 not content-hash the graph on its 100-millisecond process-liveness cadence. If
 the native watcher cannot be created or cannot install a required root, the
-runner emits `ice dev: native notifications unavailable; using polling safety
-mode` and switches to a 750-millisecond metadata-inventory poll. The same
-fallback is installed if the native notification channel disconnects. A
-fallback metadata change, watcher error, or rescan request triggers the existing
-complete content-snapshot verification. The runner also performs a complete
+runner emits the WARN tracing event `native notifications unavailable; using
+polling safety mode` and switches to a 750-millisecond metadata-inventory poll.
+The same fallback is installed if the native notification channel
+disconnects. A fallback metadata change, watcher error, or rescan request
+triggers the existing complete content-snapshot verification. The runner also
+performs a complete
 content rescan every 30 seconds, so missed or metadata-invisible changes remain
 recoverable. For native notifications naming known files, the
 runner reuses the accepted inventory and unchanged content stamps, and hashes

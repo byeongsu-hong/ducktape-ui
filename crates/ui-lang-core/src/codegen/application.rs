@@ -307,6 +307,17 @@ pub(in crate::codegen) fn generate_boot(
         )
         .unwrap();
     }
+    for (lane, mode) in app_run_lanes(program) {
+        writeln!(out, "{}: 0,", run_lane_generation_field(lane.0 as usize)).unwrap();
+        if mode == FutureMode::Replace {
+            writeln!(
+                out,
+                "{}: ::std::option::Option::None,",
+                run_lane_handle_field(lane.0 as usize)
+            )
+            .unwrap();
+        }
+    }
     for state in program.app_states() {
         writeln!(out, "{}", source_marker(&state.span)).unwrap();
         writeln!(
@@ -608,6 +619,23 @@ pub(in crate::codegen) fn generate_update(
         "{message}::__AccessibilityFocusNext => {{ return ::ui_lang_runtime::focus_next::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__AccessibilityFocusPrevious => {{ return ::ui_lang_runtime::focus_previous::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__TemplateChanged => {{ return ::iced::Task::none(); }},"
     )
     .unwrap();
+    for (lane, mode) in app_run_lanes(program) {
+        let variant = run_lane_variant(lane.0 as usize);
+        let generation = run_lane_generation_field(lane.0 as usize);
+        let clear = if mode == FutureMode::Replace {
+            format!(
+                "self.{} = ::std::option::Option::None; ",
+                run_lane_handle_field(lane.0 as usize)
+            )
+        } else {
+            String::new()
+        };
+        writeln!(
+            out,
+            "{message}::{variant}(__generation, __message) => {{ if self.{generation} == __generation {{ {clear}return self.__update(*__message); }} return ::iced::Task::none(); }},"
+        )
+        .unwrap();
+    }
     let app_handler_env = checked_state_env(program, "self");
     for handler in program.app_handlers() {
         if handler.name == "mount" {
@@ -657,11 +685,6 @@ pub(in crate::codegen) fn generate_update(
         .filter(|component| component.storage != ComponentStorage::Stateless)
     {
         let field = component_state_field(&component.name);
-        let values = match component.storage {
-            ComponentStorage::Retained => format!("self.{field}"),
-            ComponentStorage::Mounted => format!("self.{field}.values()"),
-            ComponentStorage::Stateless => unreachable!(),
-        };
         let entry = |scope: &str| match component.storage {
             ComponentStorage::Retained => {
                 format!("let __local = self.{field}.entry({scope}).or_default();")
@@ -671,12 +694,29 @@ pub(in crate::codegen) fn generate_update(
             ),
             ComponentStorage::Stateless => unreachable!(),
         };
-        for (site, _) in component_run_sites(program, &component.handlers) {
-            let generation = component_latest_field(site.0 as usize);
-            let variant = component_latest_variant(&component.name, site.0 as usize);
+        for (lane, mode) in component_run_lanes(program, &component.handlers) {
+            let generation = run_lane_generation_field(lane.0 as usize);
+            let variant = run_lane_variant(lane.0 as usize);
+            let clear = if mode == FutureMode::Replace {
+                format!(
+                    "__local.{} = ::std::option::Option::None; ",
+                    run_lane_handle_field(lane.0 as usize)
+                )
+            } else {
+                String::new()
+            };
+            let current = match component.storage {
+                ComponentStorage::Retained => format!(
+                    "self.{field}.get_mut(&__scope).is_some_and(|__local| {{ if __local.{generation} == __generation {{ {clear}true }} else {{ false }} }})"
+                ),
+                ComponentStorage::Mounted => format!(
+                    "{{ let mut __values = self.{field}.values_mut(); __values.get_mut(&__scope).is_some_and(|__local| {{ if __local.{generation} == __generation {{ {clear}true }} else {{ false }} }}) }}"
+                ),
+                ComponentStorage::Stateless => unreachable!(),
+            };
             writeln!(
                 out,
-                "{message}::{variant}(__scope, __generation, __message) => {{ if {values}.get(&__scope).is_some_and(|__local| __local.{generation} == __generation) {{ return self.__update(*__message); }} return ::iced::Task::none(); }},"
+                "{message}::{variant}(__scope, __generation, __message) => {{ let __current = {current}; if __current {{ return self.__update(*__message); }} return ::iced::Task::none(); }},"
             )
             .unwrap();
         }
@@ -711,17 +751,7 @@ pub(in crate::codegen) fn generate_update(
             for param in &handler.params {
                 writeln!(out, "let _ = &{};", param.name).unwrap();
             }
-            let future = handler_future(handler);
-            if future.is_some() {
-                writeln!(
-                    out,
-                    "let __route_scope = __scope.clone(); let __task = {{ {}",
-                    entry("__scope.clone()")
-                )
-                .unwrap();
-            } else {
-                writeln!(out, "{}", entry("__scope.clone()")).unwrap();
-            }
+            writeln!(out, "{}", entry("__scope.clone()")).unwrap();
             let mut env = ScopedBindingEnv::new(&component_handler_env);
             for param in &handler.params {
                 env.insert(param.name.clone(), handler_param_binding(param));
@@ -730,11 +760,7 @@ pub(in crate::codegen) fn generate_update(
                 &mut env,
                 &component.name,
                 Binding {
-                    code: if future.is_some() {
-                        "__route_scope".into()
-                    } else {
-                        "__scope".into()
-                    },
+                    code: "__scope".into(),
                     ty: Type::Unit,
                     local: true,
                     state: None,
@@ -748,31 +774,9 @@ pub(in crate::codegen) fn generate_update(
                 message,
                 &env,
                 "__local",
-                future.is_none(),
+                true,
             )?;
-            if let Some((mode, site)) = future {
-                debug_assert!(has_task);
-                writeln!(out, "}};").unwrap();
-                match mode {
-                    FutureMode::Every => writeln!(out, "__task").unwrap(),
-                    FutureMode::Latest | FutureMode::Replace => {
-                        let site = site.expect("latest and replace have stable run-site IDs");
-                        let generation = component_latest_field(site.0 as usize);
-                        let future_variant =
-                            component_latest_variant(&component.name, site.0 as usize);
-                        match component.storage {
-                            ComponentStorage::Retained => writeln!(out, "let __generation = {{ {} __local.{generation} = __local.{generation}.wrapping_add(1); __local.{generation} }};", entry("__scope.clone()")).unwrap(),
-                            ComponentStorage::Mounted => writeln!(out, "let __generation = self.{field}.next_generation(); {{ {} __local.{generation} = __generation; }}", entry("__scope.clone()")).unwrap(),
-                            ComponentStorage::Stateless => unreachable!(),
-                        }
-                        if mode == FutureMode::Replace {
-                            let replace = component_replace_field(site.0 as usize);
-                            writeln!(out, "let (__task, __handle) = __task.abortable(); {{ {} if let ::std::option::Option::Some(__previous) = __local.{replace}.replace(__handle.abort_on_drop()) {{ __previous.abort(); }} }}", entry("__scope.clone()")).unwrap();
-                        }
-                        writeln!(out, "__task.map(move |__message| {message}::{future_variant}(__scope.clone(), __generation, ::std::boxed::Box::new(__message)))").unwrap();
-                    }
-                }
-            } else if !has_task {
+            if !has_task {
                 writeln!(out, "::iced::Task::none()").unwrap();
             }
             writeln!(out, "}})(),").unwrap();

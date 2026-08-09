@@ -265,20 +265,31 @@ pub fn venue_account_gap(venue: Venue) -> String {
 
 /// What the account strip says when there is no account to draw.
 ///
-/// Two facts share that empty state and only one of them is about this app:
-/// with no address there is nothing to read, and with an address there is
+/// Four facts share that empty state and only one of them is about this app:
+/// with no address there is nothing to read; with an address the read can
+/// still be in flight, can have failed, or can have come back saying there is
 /// nothing at this venue to find. "Settings takes an address" is the first,
-/// and said over the second it sends a reader to re-enter the address that is
-/// already there. One address is typed once and read at whichever venue is on
-/// screen, so holding a book at one exchange and none at the other is ordinary
-/// — and it is the venue rather than the address that makes it so, which is
-/// why the sentence names the venue.
-pub fn venue_account_note(venue: Venue, watching: bool) -> String {
-    if watching {
-        format!("No {} account for this address.", venue_name(venue))
-    } else {
-        "No account is being read. Settings takes an address.".to_owned()
+/// and said over any of the others it sends a reader to re-enter the address
+/// that is already there. One address is typed once and read at whichever
+/// venue is on screen, so holding a book at one exchange and none at the other
+/// is ordinary — and it is the venue rather than the address that makes it so,
+/// which is why the sentence names the venue.
+///
+/// `missing` is the venue's own answer rather than the absence of one: an
+/// account read that has not landed yet leaves it false, and drawing "no
+/// account here" over it reports a slow venue as an empty one. A failure wins
+/// over both, because a read that broke says nothing about what is there.
+pub fn venue_account_note(venue: Venue, watching: bool, missing: bool, failure: String) -> String {
+    if !watching {
+        return "No account is being read. Settings takes an address.".to_owned();
     }
+    if !failure.is_empty() {
+        return format!("This account could not be read: {failure}");
+    }
+    if missing {
+        return format!("No {} account for this address.", venue_name(venue));
+    }
+    format!("Reading this account on {}.", venue_name(venue))
 }
 
 /// What the resting-orders panel says when it has no rows to draw.
@@ -287,9 +298,17 @@ pub fn venue_account_note(venue: Venue, watching: bool) -> String {
 /// not answer is a lie: nothing can happen. The sentence is the panel's empty
 /// state rather than a banner so that it lands where the reader is already
 /// looking for the rows.
-pub fn venue_orders_note(venue: Venue, watching: bool) -> String {
+///
+/// A read that failed empties the panel the same way and means the third
+/// thing: the venue serves this, and the app does not know what it holds.
+/// `failure` is the message of the read that broke, and it outranks the empty
+/// list because the list is not evidence of anything once the read behind it
+/// is gone. It cannot outrank the gap: a venue that does not carry the channel
+/// is never asked, so it never fails.
+pub fn venue_orders_note(venue: Venue, watching: bool, failure: String) -> String {
     match venue_account_gap(venue) {
         gap if !gap.is_empty() => gap,
+        _ if !failure.is_empty() => format!("Resting orders could not be read: {failure}"),
         _ if watching => "No resting orders.".to_owned(),
         _ => "Orders need an address.".to_owned(),
     }
@@ -298,9 +317,10 @@ pub fn venue_orders_note(venue: Venue, watching: bool) -> String {
 /// The same for fills. An address is what separates the two things a venue
 /// that does answer can say; a venue that does not answer says so either way,
 /// because connecting an address would not change it.
-pub fn venue_fills_note(venue: Venue, watching: bool) -> String {
+pub fn venue_fills_note(venue: Venue, watching: bool, failure: String) -> String {
     match venue_account_gap(venue) {
         gap if !gap.is_empty() => gap,
+        _ if !failure.is_empty() => format!("Fills could not be read: {failure}"),
         _ if watching => "No fills on this account yet.".to_owned(),
         _ => "Fills need an address.".to_owned(),
     }
@@ -490,28 +510,66 @@ mod tests {
         let gap = venue_account_gap(Venue::Lighter);
         assert!(gap.contains("Lighter") && gap.contains("API-key"), "{gap}");
         for watching in [false, true] {
-            assert_eq!(venue_orders_note(Venue::Lighter, watching), gap);
-            assert_eq!(venue_fills_note(Venue::Lighter, watching), gap);
+            assert_eq!(venue_orders_note(Venue::Lighter, watching, none()), gap);
+            assert_eq!(venue_fills_note(Venue::Lighter, watching, none()), gap);
         }
         assert!(venue_account_gap(Venue::Hyperliquid).is_empty());
         // Hyperliquid answers both, so its panels say only what the account
         // holds — and an address is what separates the two things it can say.
         assert_eq!(
-            venue_orders_note(Venue::Hyperliquid, true),
+            venue_orders_note(Venue::Hyperliquid, true, none()),
             "No resting orders."
         );
         assert_eq!(
-            venue_orders_note(Venue::Hyperliquid, false),
+            venue_orders_note(Venue::Hyperliquid, false, none()),
             "Orders need an address."
         );
         assert_eq!(
-            venue_fills_note(Venue::Hyperliquid, true),
+            venue_fills_note(Venue::Hyperliquid, true, none()),
             "No fills on this account yet."
         );
         assert_eq!(
-            venue_fills_note(Venue::Hyperliquid, false),
+            venue_fills_note(Venue::Hyperliquid, false, none()),
             "Fills need an address."
         );
+    }
+
+    /// The third thing an empty panel can mean, and the one an empty list
+    /// cannot say on its own: the venue serves this and the read for it broke.
+    /// Drawn as "no resting orders" it is the app reporting an unread book as
+    /// a flat one.
+    #[test]
+    fn a_read_that_failed_does_not_read_as_a_venue_with_nothing_to_say() {
+        let broke = "Hyperliquid unreachable".to_owned();
+        for watching in [false, true] {
+            let orders = venue_orders_note(Venue::Hyperliquid, watching, broke.clone());
+            let fills = venue_fills_note(Venue::Hyperliquid, watching, broke.clone());
+            assert!(orders.contains(&broke), "{orders}");
+            assert!(fills.contains(&broke), "{fills}");
+            assert_ne!(
+                orders,
+                venue_orders_note(Venue::Hyperliquid, watching, none())
+            );
+            assert_ne!(
+                fills,
+                venue_fills_note(Venue::Hyperliquid, watching, none())
+            );
+        }
+        // A venue that never carries the channel is never asked for it, so the
+        // gap is what it says either way rather than a failure it cannot have.
+        assert_eq!(
+            venue_orders_note(Venue::Lighter, true, broke.clone()),
+            venue_account_gap(Venue::Lighter)
+        );
+        assert_eq!(
+            venue_fills_note(Venue::Lighter, true, broke),
+            venue_account_gap(Venue::Lighter)
+        );
+    }
+
+    /// No failure, spelled the way the app spells one.
+    fn none() -> String {
+        String::new()
     }
 
     /// The chart's read on the other venue is a read, not a zero.
@@ -559,7 +617,7 @@ mod tests {
     #[test]
     fn no_account_says_whether_there_is_an_address_or_only_no_account_here() {
         for venue in BOTH {
-            let missing = venue_account_note(venue, true);
+            let missing = venue_account_note(venue, true, true, none());
             assert!(
                 missing.contains(&venue_name(venue)),
                 "the absence is this venue's, so it has to name it: {missing}"
@@ -569,7 +627,7 @@ mod tests {
                 "the address is already connected: {missing}"
             );
             assert_eq!(
-                venue_account_note(venue, false),
+                venue_account_note(venue, false, true, none()),
                 "No account is being read. Settings takes an address.",
                 "with no address it is the app that has nothing, not the venue"
             );
@@ -577,9 +635,37 @@ mod tests {
         // And the two venues do not sound alike, because which one answered
         // nothing is the useful half.
         assert_ne!(
-            venue_account_note(Venue::Hyperliquid, true),
-            venue_account_note(Venue::Lighter, true)
+            venue_account_note(Venue::Hyperliquid, true, true, none()),
+            venue_account_note(Venue::Lighter, true, true, none())
         );
+    }
+
+    /// The other two things an unread account can be, and neither of them is
+    /// the venue answering "not here". A read still in flight drawn as an
+    /// absence reports a slow venue as an empty one; a read that failed drawn
+    /// as an absence reports a broken one as an empty one. Both look exactly
+    /// like the settled answer, which is why each has to say which it is.
+    #[test]
+    fn an_unread_account_is_not_an_account_the_venue_says_is_not_there() {
+        for venue in BOTH {
+            let absent = venue_account_note(venue, true, true, none());
+            let reading = venue_account_note(venue, true, false, none());
+            let broke = venue_account_note(venue, true, false, "no wire".to_owned());
+            assert_ne!(reading, absent, "a read in flight is not an answer");
+            assert_ne!(broke, absent, "a read that failed is not an answer");
+            assert_ne!(broke, reading);
+            assert!(broke.contains("no wire"), "{broke}");
+            assert!(
+                reading.contains(&venue_name(venue)),
+                "the read is of this venue: {reading}"
+            );
+            // A failure outranks the venue's last answer, because a read that
+            // broke says nothing about what is there now.
+            assert_eq!(
+                venue_account_note(venue, true, true, "no wire".to_owned()),
+                broke
+            );
+        }
     }
 
     /// A gap is not a failure. Both are drawn, and they are drawn in different

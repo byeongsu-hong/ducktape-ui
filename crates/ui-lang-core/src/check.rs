@@ -98,6 +98,7 @@ fn check(
         .iter()
         .map(preset_handler)
         .collect::<Vec<_>>();
+    check_run_lanes(document)?;
     let empty_initializer_env = HashMap::new();
     let initializer_env = SyncTypeEnv::new(&empty_initializer_env);
     for (index, state) in document.states.iter().enumerate() {
@@ -266,56 +267,20 @@ fn check(
     }
     check_app_settings(document, &app_values, &mut initializer_analyses)?;
     for handler in document.handlers.iter().chain(&preset_handlers) {
-        if let Some((mode, span)) = scoped_run(&handler.statements) {
-            let keyword = match mode {
-                FutureMode::Latest => "latest",
-                FutureMode::Replace => "replace",
-                FutureMode::Every => unreachable!(),
-            };
-            return Err(Error::new(
-                "E140",
-                span,
-                format!("`run {keyword}` is only valid in component handlers"),
-            ));
-        }
         check_structured_tasks(handler)?;
     }
     for component in &document.components {
         for handler in &component.handlers {
-            if handler.statements.iter().any(|statement| {
-                !matches!(
-                    statement,
-                    Statement::Let { .. }
-                        | Statement::Assign { .. }
-                        | Statement::ReturnIf { .. }
-                        | Statement::WidgetOperation {
-                            operation: WidgetOperation::Focus { .. }
-                                | WidgetOperation::Focused { .. }
-                                | WidgetOperation::CursorFront { .. }
-                                | WidgetOperation::CursorEnd { .. }
-                                | WidgetOperation::Cursor { .. }
-                                | WidgetOperation::SelectAll { .. }
-                                | WidgetOperation::Select { .. }
-                                | WidgetOperation::Snap { .. }
-                                | WidgetOperation::SnapEnd { .. }
-                                | WidgetOperation::ScrollTo { .. }
-                                | WidgetOperation::ScrollBy { .. }
-                                | WidgetOperation::Find {
-                                    selector: WidgetSelector::Id(_),
-                                    ..
-                                },
-                            ..
-                        }
-                        | Statement::Run {
-                            kind: EffectKind::Future,
-                            ..
-                        }
-                )
-            }) {
+            check_structured_tasks(handler)?;
+            if handler
+                .statements
+                .iter()
+                .any(|statement| !component_handler_statement_supported(statement))
+            {
                 return Err(Error::new(
                     "E140",
                     &handler.span,
-                    "component handlers support state assignments, scoped widget operations, and `run` futures only",
+                    "component handlers support state assignments, scoped widget operations, `run` futures, and task groups composed from those task-producing statements only",
                 ));
             }
         }
@@ -933,13 +898,132 @@ fn preset_handler(preset: &Preset) -> Handler {
     }
 }
 
-fn scoped_run(statements: &[Statement]) -> Option<(FutureMode, &Span)> {
-    statements.iter().find_map(|statement| match statement {
-        Statement::Run { mode, span, .. } if *mode != FutureMode::Every => Some((*mode, span)),
-        Statement::TaskGroup { statements, .. } => scoped_run(statements),
-        Statement::Abortable { task, .. } => scoped_run(::std::slice::from_ref(task.as_ref())),
-        _ => None,
-    })
+fn component_handler_statement_supported(statement: &Statement) -> bool {
+    match statement {
+        Statement::Let { .. }
+        | Statement::Assign { .. }
+        | Statement::ReturnIf { .. }
+        | Statement::WidgetOperation {
+            operation:
+                WidgetOperation::Focus { .. }
+                | WidgetOperation::Focused { .. }
+                | WidgetOperation::CursorFront { .. }
+                | WidgetOperation::CursorEnd { .. }
+                | WidgetOperation::Cursor { .. }
+                | WidgetOperation::SelectAll { .. }
+                | WidgetOperation::Select { .. }
+                | WidgetOperation::Snap { .. }
+                | WidgetOperation::SnapEnd { .. }
+                | WidgetOperation::ScrollTo { .. }
+                | WidgetOperation::ScrollBy { .. }
+                | WidgetOperation::Find {
+                    selector: WidgetSelector::Id(_),
+                    ..
+                },
+            ..
+        }
+        | Statement::Run {
+            kind: EffectKind::Future,
+            ..
+        } => true,
+        Statement::TaskGroup { statements, .. } => {
+            statements.iter().all(component_handler_statement_supported)
+        }
+        _ => false,
+    }
+}
+
+fn check_run_lanes(document: &Document) -> Result<(), Error> {
+    let mut modes = HashMap::new();
+    for handler in &document.handlers {
+        check_handler_run_lanes(&handler.statements, None, &mut modes)?;
+    }
+    for preset in &document.presets {
+        check_handler_run_lanes(&preset.statements, None, &mut modes)?;
+    }
+    for component in &document.components {
+        for handler in &component.handlers {
+            check_handler_run_lanes(
+                &handler.statements,
+                Some(component.name.as_str()),
+                &mut modes,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn check_handler_run_lanes<'a>(
+    statements: &'a [Statement],
+    owner: Option<&'a str>,
+    modes: &mut HashMap<(Option<&'a str>, &'a str), (FutureMode, &'a Span)>,
+) -> Result<(), Error> {
+    fn visit<'a>(
+        statements: &'a [Statement],
+        owner: Option<&'a str>,
+        modes: &mut HashMap<(Option<&'a str>, &'a str), (FutureMode, &'a Span)>,
+        seen: &mut HashSet<&'a str>,
+    ) -> Result<(), Error> {
+        for statement in statements {
+            match statement {
+                Statement::Run {
+                    mode,
+                    lane: Some(lane),
+                    span,
+                    ..
+                } => {
+                    if !seen.insert(lane) {
+                        return Err(Error::new(
+                            "E140",
+                            span,
+                            format!(
+                                "request lane `{lane}` cannot be started more than once in the same handler"
+                            ),
+                        ));
+                    }
+                    let key = (owner, lane.as_str());
+                    if let Some((expected, first)) = modes.get(&key) {
+                        if expected != mode {
+                            return Err(Error::new(
+                                "E140",
+                                span,
+                                format!(
+                                    "request lane `{lane}` uses both `run {}` and `run {}` for the same owner",
+                                    future_mode_name(*expected),
+                                    future_mode_name(*mode),
+                                ),
+                            )
+                            .hint(format!(
+                                "use `run {}` for this lane; it was first declared on line {}",
+                                future_mode_name(*expected),
+                                first.line,
+                            )));
+                        }
+                    } else {
+                        modes.insert(key, (*mode, span));
+                    }
+                }
+                Statement::TaskGroup { statements, .. } => {
+                    visit(statements, owner, modes, seen)?;
+                }
+                Statement::Abortable { task, .. } => {
+                    visit(::std::slice::from_ref(task.as_ref()), owner, modes, seen)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    visit(statements, owner, modes, &mut HashSet::new())
+}
+
+fn future_mode_name(mode: FutureMode) -> &'static str {
+    match mode {
+        FutureMode::Every => "every",
+        FutureMode::Latest => "latest",
+        FutureMode::Replace => "replace",
+    }
 }
 
 mod application;

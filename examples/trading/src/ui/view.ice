@@ -34,25 +34,37 @@ view
                       @text-fg
                       @font-bold
                   Label value="PERP"
-                match focus
-                  some(row)
-                    row gap=14.0 align=center
+                // Three slots in a fixed order: the price, its move, and
+                // whether either is still a reading. Nothing here is drawn
+                // from `venue`, but everything here is drawn from a read the
+                // venue switch throws away — so a market not read yet empties
+                // the slots rather than collapsing them. The header is the
+                // glance surface: a strip that reshapes as reads land and
+                // fail makes a reader re-find every figure on it, twice per
+                // switch. The widths are fixed for the same reason; a dash
+                // holds the space its figure will come back to.
+                row #price gap=14.0 align=center
+                  match focus
+                    some(row)
                       if live && row.change_pct >= 0.0
                         text fmt_px(row.price)
                           with
                             size=20.0
+                            w=118.0
                             font=digits
                             @text-up
                       if live && row.change_pct < 0.0
                         text fmt_px(row.price)
                           with
                             size=20.0
+                            w=118.0
                             font=digits
                             @text-down
                       if !live
                         text fmt_px(row.price)
                           with
                             size=20.0
+                            w=118.0
                             font=digits
                             @text-faint
                       Delta
@@ -61,20 +73,39 @@ view
                           up=(row.change_pct >= 0.0)
                           size=12.0
                           width=64.0
-                      if !live
-                        box #stale
+                    none
+                      text "—"
+                        with
+                          size=20.0
+                          w=118.0
+                          font=digits
+                          @text-faint
+                      // A move with no price to have moved has no direction,
+                      // so this is the dash rather than a `Delta`, which
+                      // would have to paint it one of the two money colours.
+                      text "—"
+                        with
+                          size=12.0
+                          w=64.0
+                          align-x=right
+                          font=digits
+                          @text-faint
+                  // The badge keeps its slot whether or not it is showing.
+                  // A feed dies on the way to every venue switch, so a badge
+                  // that took its width with it moved the strip on each one.
+                  row #liveness w=72.0 align=center
+                    if !live
+                      box #stale
+                        with
+                          px=8.0
+                          py=3.0
+                          bg=down
+                          r=2.0
+                        text "NOT LIVE"
                           with
-                            px=8.0
-                            py=3.0
-                            bg=down
-                            r=2.0
-                          text "NOT LIVE"
-                            with
-                              size=9.0
-                              tracking=1.1
-                              @text-fg
-                  none
-                    text "Loading markets" size=11.0 @text-faint
+                            size=9.0
+                            tracking=1.1
+                            @text-fg
                 space w=fill
                 // Stacked rather than side by side: the header is at its
                 // tightest at the window's own minimum, and two names of this
@@ -115,15 +146,23 @@ view
                 // engine answers it once every five seconds and it is a
                 // column on the portfolio page — so it is the one this strip
                 // gave up when the venue switch arrived beside the tabs.
-                match account
-                  some(held)
-                    row gap=14.0 align=center
+                // The same three boxes with or without an account, because an
+                // account is the other thing the venue switch throws away.
+                // With none, each figure is a dash in the slot it will come
+                // back to — the same dash the dashboard's tiles use — rather
+                // than a badge of a different width standing where all three
+                // were. Why there is no equity is a sentence, and it is on
+                // the portfolio page beside the account it is about.
+                row #equity gap=14.0 align=center
+                  match account
+                    some(held)
                       col gap=4.0
                         row gap=6.0 align=center
                           Label value="EQUITY"
                           text fmt_usd(held.value)
                             with
                               size=13.0
+                              w=112.0
                               font=digits
                               @text-fg
                         row gap=6.0 align=center
@@ -149,15 +188,36 @@ view
                             up=(held.pnl >= 0.0)
                             size=13.0
                             width=104.0
-                  none
-                    // The same badge whether or not an address is connected,
-                    // because this one says what the app does rather than
-                    // what the venue answered. Why there is no equity is a
-                    // sentence, and it is on the portfolio page beside the
-                    // account it is about.
-                    Label value="READ ONLY"
+                    none
+                      col gap=4.0
+                        row gap=6.0 align=center
+                          Label value="EQUITY"
+                          text "—"
+                            with
+                              size=13.0
+                              w=112.0
+                              font=digits
+                              @text-faint
+                        row gap=6.0 align=center
+                          row w=80.0 h=3.0
+                            box
+                              with
+                                w=80.0
+                                h=3.0
+                                bg=edge
+                              space w=fill h=fill
+                          text "—" size=9.0 @text-faint
+                      row gap=6.0 align=center
+                        Label value="PNL"
+                        text "—"
+                          with
+                            size=13.0
+                            w=104.0
+                            align-x=right
+                            font=digits
+                            @text-faint
                 rule vertical thickness=1.0 color=edge
-                Stat name="FEED" value=fmt_latency(latency)
+                Stat #feed name="FEED" value=fmt_latency(latency)
             rule horizontal thickness=1.0 color=edge
             // What broke belongs to the app, not to the page that happened to be
             // drawn when it broke. The account poll and the universe poll run on
@@ -462,6 +522,28 @@ view
                                       align-x=center
                                       align-y=center
                                     text "No open positions on this account." size=11.0 @text-faint
+                                // The other half of an address with no rows,
+                                // and it used to be nothing at all: an account
+                                // still being read, one this venue does not
+                                // have, and one the read for broke all drew an
+                                // empty panel under a heading. "No open
+                                // positions" is the account's own answer and
+                                // none of these three has one.
+                                if empty(positions) && watching && !account_read(account)
+                                  box
+                                    with
+                                      w=fill
+                                      h=96.0
+                                      p=10.0
+                                      align-x=center
+                                      align-y=center
+                                    text venue_account_note(venue, watching, account_missing, account_error)
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        align-x=center
+                                        wrap=word
+                                        @text-faint
                                 if !watching
                                   box
                                     with
@@ -547,7 +629,7 @@ view
                                         p=10.0
                                         align-x=center
                                         align-y=center
-                                      text venue_fills_note(venue, watching)
+                                      text venue_fills_note(venue, watching, fills_error)
                                         with
                                           size=11.0
                                           w=fill
@@ -762,7 +844,7 @@ view
                                   p=10.0
                                   align-x=center
                                   align-y=center
-                                text venue_orders_note(venue, watching)
+                                text venue_orders_note(venue, watching, orders_error)
                                   with
                                     size=10.0
                                     w=fill
@@ -1140,7 +1222,7 @@ view
                           events
                             pick -> pick_portfolio_range _
                     if !account_read(account)
-                      text venue_account_note(venue, watching) #portfolio-account-note
+                      text venue_account_note(venue, watching, account_missing, account_error) #portfolio-account-note
                         with
                           size=11.0
                           w=fill
@@ -1584,7 +1666,7 @@ view
                                   h=fill
                                   align-x=center
                                   align-y=center
-                                text venue_account_note(venue, watching)
+                                text venue_account_note(venue, watching, account_missing, account_error)
                                   with
                                     size=11.0
                                     w=fill
@@ -1678,7 +1760,7 @@ view
                                 h=fill
                                 align-x=center
                                 align-y=center
-                              text venue_fills_note(venue, watching)
+                              text venue_fills_note(venue, watching, fills_error)
                                 with
                                   size=11.0
                                   w=fill
@@ -1777,105 +1859,120 @@ view
                   hovered
                     y-rail bg=bg
                     y-scroller bg=faint r=3.0
-                  row
+                  // Two fixed columns in a window that is not fixed. 480 + 48 +
+                  // 480 is 1008 of content and 28 of padding on each side, so
+                  // this page has wanted exactly 1064 since it was written —
+                  // under the window's own 1180 minimum, and under every width
+                  // above it. What was missing was the other half of that
+                  // arithmetic: the leftover was all being spent on the right,
+                  // so at 1660 the columns sat against the left edge with 596px
+                  // of nothing beside them. Centred rather than widened,
+                  // because these are paragraphs: 480 is the measure they were
+                  // written to, and a line run the width of a 1660 window is
+                  // one the eye loses on the way back to the next.
+                  box
                     with
                       w=fill
                       p=28.0
-                      gap=48.0
-                    col gap=26.0 w=480.0
-                      col gap=10.0 w=fill
-                        Label value="ADDRESS"
-                        if empty(address)
-                          text "No account is being read. Everything this app knows about an account — its positions, its resting orders, its fills on the chart — belongs to one address, and there is none."
+                      align-x=center
+                    row #settings-content gap=48.0
+                      col gap=26.0 w=480.0
+                        col gap=10.0 w=fill
+                          Label value="ADDRESS"
+                          if empty(address)
+                            text "No account is being read. Everything this app knows about an account — its positions, its resting orders, its fills on the chart — belongs to one address, and there is none."
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                          if !empty(address)
+                            text address
+                              with
+                                size=13.0
+                                w=fill
+                                wrap=word
+                                font=digits
+                                @text-fg
+                          button #change-address -> reopen
+                            with
+                              label="Connect a different address"
+                              p=10.0
+                            active bg=raised text=muted r=4.0
+                            hovered bg=edge text=fg r=4.0
+                            text "Connect a different address" size=12.0
+                        rule horizontal thickness=1.0 color=edge
+                        // What this exchange will and will not answer, stated
+                        // where the app's own facts are stated. A gap named
+                        // only in the panel it empties is a gap the reader
+                        // finds by going looking for rows that are not coming.
+                        col gap=10.0 w=fill
+                          Label value="VENUE"
+                          text venue_name(venue) #settings-venue
+                            with
+                              size=16.0
+                              w=fill
+                              wrap=word
+                              @text-fg
+                              @font-bold
+                          text "The switch beside the page tabs points every panel at the other exchange and throws away what this one filled them with."
                             with
                               size=12.0
                               w=fill
                               wrap=word
                               @text-muted
-                        if !empty(address)
-                          text address
-                            with
-                              size=13.0
-                              w=fill
-                              wrap=word
-                              font=digits
-                              @text-fg
-                        button #change-address label="Connect a different address" p=10.0 -> reopen
-                          active bg=raised text=muted r=4.0
-                          hovered bg=edge text=fg r=4.0
-                          text "Connect a different address" size=12.0
-                      rule horizontal thickness=1.0 color=edge
-                      // What this exchange will and will not answer, stated
-                      // where the app's own facts are stated. A gap named
-                      // only in the panel it empties is a gap the reader
-                      // finds by going looking for rows that are not coming.
-                      col gap=10.0 w=fill
-                        Label value="VENUE"
-                        text venue_name(venue) #settings-venue
+                          if !empty(venue_account_gap(venue))
+                            text venue_account_gap(venue)
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                        rule horizontal thickness=1.0 color=edge
+                        col gap=10.0 w=fill
+                          Label value="FEED"
+                          Stat name="ROUND TRIP" value=fmt_latency(latency)
+                          if live
+                            text "One socket carries the mark, the book, the tape and the chart, and the round trip above is its own ping rather than a clock compared with the exchange's."
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                          if !live
+                            text "Nothing is arriving. Every price on screen is the last one that did."
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                      col gap=12.0 w=480.0
+                        Label value="DEMO ONLY"
+                        text "It signs nothing and sends nothing."
                           with
                             size=16.0
                             w=fill
                             wrap=word
                             @text-fg
                             @font-bold
-                        text "The switch beside the page tabs points every panel at the other exchange and throws away what this one filled them with."
+                        text "This app reads the venue named beside this and prices orders against that margin engine's own arithmetic, which is the whole of what it does."
                           with
                             size=12.0
                             w=fill
                             wrap=word
                             @text-muted
-                        if !empty(venue_account_gap(venue))
-                          text venue_account_gap(venue)
-                            with
-                              size=12.0
-                              w=fill
-                              wrap=word
-                              @text-muted
-                      rule horizontal thickness=1.0 color=edge
-                      col gap=10.0 w=fill
-                        Label value="FEED"
-                        Stat name="ROUND TRIP" value=fmt_latency(latency)
-                        if live
-                          text "One socket carries the mark, the book, the tape and the chart, and the round trip above is its own ping rather than a clock compared with the exchange's."
-                            with
-                              size=12.0
-                              w=fill
-                              wrap=word
-                              @text-muted
-                        if !live
-                          text "Nothing is arriving. Every price on screen is the last one that did."
-                            with
-                              size=12.0
-                              w=fill
-                              wrap=word
-                              @text-muted
-                    col gap=12.0 w=480.0
-                      Label value="DEMO ONLY"
-                      text "It signs nothing and sends nothing."
-                        with
-                          size=16.0
-                          w=fill
-                          wrap=word
-                          @text-fg
-                          @font-bold
-                      text "This app reads the venue named beside this and prices orders against that margin engine's own arithmetic, which is the whole of what it does."
-                        with
-                          size=12.0
-                          w=fill
-                          wrap=word
-                          @text-muted
-                      text "It reads: the tradeable universe, candles, the book, the public tape, and — for the address beside this — that account's equity, positions, resting orders and fills. What a venue will not answer is said above and in the panel it empties."
-                        with
-                          size=12.0
-                          w=fill
-                          wrap=word
-                          @text-muted
-                      text "It will not place, amend or cancel an order, move margin, or ask for a key. Sending would mean this app holding the key that signs an EIP-712 order, which is not a thing an example should ask for. Everything up to that signature is arithmetic worth having, and the signature is where a real client starts."
-                        with
-                          size=12.0
-                          w=fill
-                          wrap=word
-                          @text-muted
+                        text "It reads: the tradeable universe, candles, the book, the public tape, and — for the address beside this — that account's equity, positions, resting orders and fills. What a venue will not answer is said above and in the panel it empties."
+                          with
+                            size=12.0
+                            w=fill
+                            wrap=word
+                            @text-muted
+                        text "It will not place, amend or cancel an order, move margin, or ask for a key. Sending would mean this app holding the key that signs an EIP-712 order, which is not a thing an example should ask for. Everything up to that signature is arithmetic worth having, and the signature is where a real client starts."
+                          with
+                            size=12.0
+                            w=fill
+                            wrap=word
+                            @text-muted
       layer
         box #gate
           with

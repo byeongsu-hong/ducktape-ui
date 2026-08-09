@@ -201,6 +201,32 @@ test trading_settings_stays_separate
   expect no text "EXPOSURE ALLOCATION"
   capture page_settings
 
+// The settings page is prose in two fixed 480px columns: 1008 of content, 1064
+// with its padding, inside a window that opens no narrower than 1180 and is
+// usually much wider. Nothing after the columns claims the leftover, so the
+// only question is which side of them it lands on — and it was all landing on
+// the right, leaving 596px of nothing beside a page pressed against the left
+// edge at 1660. Split evenly instead, at both ends of the window's range.
+test trading_settings_centres_its_columns_at_every_width
+  preset held
+  viewport 1660 820
+  target app = #app
+  target settings = app/settings
+  target content = settings/settings-content
+  dispatch navigate(Page.settings)
+  // Bounded, then centred: the columns are the width they were written to be
+  // rather than the window's, and what is left over is the same on either side.
+  expect content.width ~= 1008.0
+  expect content.x - app.x ~= app.right - content.right
+  capture page_settings_wide
+  // At the window's own minimum 1064 of 1180 leaves 58 a side, so the same two
+  // measurements hold there and the columns are whole rather than squeezed.
+  resize 1180 720
+  expect content.width ~= 1008.0
+  expect content.x - app.x ~= app.right - content.right
+  expect text "It signs nothing and sends nothing."
+  capture page_settings_narrow
+
 test trading_header_offers_exactly_the_three_surfaces
   preset held
   viewport 1660 820

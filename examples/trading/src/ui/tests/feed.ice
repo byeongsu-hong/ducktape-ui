@@ -66,6 +66,33 @@ test trading_a_dead_feed_stops_the_price_looking_live
   expect no text "market not loaded"
   capture stalled
 
+// The header greys the price and stamps NOT LIVE beside it, and the menu bar
+// is the surface that is read without the header there to say so: a glance at
+// a status item is the whole reading. Left alone it went on printing the last
+// price in the same words it prints a live one, which is a stale figure with
+// nothing on it to say it is stale.
+test trading_the_tray_stops_printing_the_last_price_as_the_price
+  preset held
+  viewport 1660 820
+  expect live
+  expect tray label "64,000.00"
+  expect no tray label "NOT LIVE"
+  expect no text "NOT LIVE"
+  dispatch feed_failed(demo_feed_error())
+  expect !live
+  // The window says it, and the label and the menu row say the same thing —
+  // both are composed by the same reading of the same state the header uses.
+  expect text "NOT LIVE"
+  expect tray label "NOT LIVE"
+  expect tray item "NOT LIVE"
+  expect tray label tray_status(coin, focus, live)
+  // The figure is still the last thing the exchange said, so it stays; what
+  // changed is that it is no longer offered as the price.
+  expect tray label "64,000.00"
+  dispatch market_ticked(demo_tick())
+  expect live
+  expect no tray label "NOT LIVE"
+
 test trading_a_beat_moves_the_price_the_position_and_the_levels
   preset held
   viewport 1660 820

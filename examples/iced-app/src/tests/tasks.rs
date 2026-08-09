@@ -6,6 +6,11 @@ mod font_events {
 #[cfg(test)]
 mod task_groups {
     ui_lang::include_app!("src/ui/task_groups.ice");
+
+    #[test]
+    fn compiles_nested_request_lanes_for_a_component_without_declared_state() {
+        let _ = TaskGroups::__boot();
+    }
 }
 
 #[cfg(test)]
@@ -21,6 +26,61 @@ mod task_cancel {
         let _ = app.__update(__TaskCancelMessage::Cancel);
         assert!(app.request.as_ref().unwrap().is_aborted());
         drop(task);
+    }
+}
+
+#[cfg(test)]
+mod request_lane_lifecycle {
+    ui_lang::include_app!("src/ui/request_lane_lifecycle.ice");
+
+    fn output(
+        task: iced::Task<__RequestLaneLifecycleMessage>,
+    ) -> Option<__RequestLaneLifecycleMessage> {
+        use iced::futures::StreamExt;
+
+        let mut stream = iced_runtime::task::into_stream(task).expect("request task stream");
+        iced::futures::executor::block_on(async move {
+            while let Some(action) = stream.next().await {
+                if let iced_runtime::Action::Output(message) = action {
+                    return Some(message);
+                }
+            }
+            None
+        })
+    }
+
+    #[test]
+    fn latest_lane_filters_a_stale_completion_across_handlers_without_cancelling_it() {
+        let (mut app, _) = RequestLaneLifecycle::__boot();
+        let first = app.__update(__RequestLaneLifecycleMessage::LatestFirst);
+        let second = app.__update(__RequestLaneLifecycleMessage::LatestSecond);
+        assert!(!crate::backend::controlled_request_was_cancelled(101));
+
+        crate::backend::complete_controlled_request(102, "current");
+        let _ = app.__update(output(second).expect("current latest completion"));
+        assert_eq!(app.latest_result, "current");
+
+        crate::backend::complete_controlled_request(101, "stale");
+        let _ = app.__update(output(first).expect("stale latest completion"));
+        assert_eq!(app.latest_result, "current");
+        assert!(!crate::backend::controlled_request_was_cancelled(101));
+    }
+
+    #[test]
+    fn replace_lane_aborts_prior_work_across_handlers_and_routes_the_replacement() {
+        let (mut app, _) = RequestLaneLifecycle::__boot();
+        let first = app.__update(__RequestLaneLifecycleMessage::ReplaceFirst);
+        let second = app.__update(__RequestLaneLifecycleMessage::ReplaceSecond);
+        assert!(app.__ice_run_lane_1_handle.is_some());
+
+        crate::backend::complete_controlled_request(201, "stale");
+        assert!(output(first).is_none(), "aborted work must not emit");
+        assert!(crate::backend::controlled_request_was_cancelled(201));
+
+        crate::backend::complete_controlled_request(202, "current");
+        let _ = app.__update(output(second).expect("replacement completion"));
+        assert_eq!(app.replace_result, "current");
+        assert!(app.__ice_run_lane_1_handle.is_none());
     }
 }
 

@@ -232,8 +232,8 @@ must be last. Its arguments are evaluated immediately and may call a declared
 is evaluated later when the callback runs, so declared extern calls there are
 pure-only and `sync` is rejected.
 
-Inside a stateful component, `run latest` filters stale completion from the
-same component instance and call site:
+Use a named request lane when starts from one or more handlers supersede the
+same logical work:
 
 ```ice
 component Search()
@@ -241,7 +241,7 @@ component Search()
     query = ""
     result:str? = none
   on search
-    run latest fetch(query) -> loaded _ | failed _
+    run latest lane=search fetch(query) -> loaded _ | failed _
   on loaded(value)
     result = some(value)
   on failed(error)
@@ -251,10 +251,17 @@ component Search()
     button "Search" -> search
 ```
 
-Ordinary `run` delivers every completion. `run latest` is component-local and
-does not stop the stale Future; do not invent request IDs in Ice when filtering
-is sufficient. Use `run replace` at the same position when the stale Future
-must be aborted. App-global handlers instead use an explicit `abortable` handle.
+Ordinary `run` delivers every completion. Equal fully qualified lane names
+share one lifecycle across handlers for an app, across all windows of a daemon,
+or within one component instance; component instances remain independent. A
+component imported under an alias qualifies its internal lane into that
+namespace, but the lane remains component-instance-owned. Unaliased app and
+preset fragments remain in the root namespace and may share root lanes. `run latest` does not
+stop stale Futures, so their captures remain live until completion. Use
+`run replace lane=<name>` when the prior Iced task should be aborted, while
+remembering that abort cannot undo an effect already performed or stop work
+detached by the Rust backend. Lane names are static and finite per owner.
+Component-owner count follows the retained/mounted lifetime contract.
 
 ## Native task adapters
 

@@ -57,7 +57,7 @@ if ! wait "$check_pid"; then
 fi
 check_pid=
 
-while ! grep -Fq "ice dev: watching" "$dev_log"; do
+while ! grep -Fq "cargo_ice::dev: watching" "$dev_log"; do
   if ! kill -0 "$dev_pid" 2>/dev/null; then
     echo "cargo ice dev exited before publishing its watcher state" >&2
     cat "$dev_log" >&2
@@ -134,5 +134,5 @@ if kill -0 -- "-$dev_group" 2>/dev/null; then
 fi
 dev_group=
 
-grep -Fq "ice dev: stopping" "$dev_log"
+grep -Fq "cargo_ice::dev: stopping" "$dev_log"
 echo "separate cargo ice dev and cargo check processes published valid generated caches"

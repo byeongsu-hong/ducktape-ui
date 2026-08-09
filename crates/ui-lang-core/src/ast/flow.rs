@@ -101,6 +101,7 @@ pub enum Statement {
     Run {
         kind: EffectKind,
         mode: FutureMode,
+        lane: Option<String>,
         function: String,
         args: Vec<Expr>,
         success: Route,

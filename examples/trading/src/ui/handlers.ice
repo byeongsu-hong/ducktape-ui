@@ -30,13 +30,13 @@ on connect
   parallel
     run venue_symbols(venue) -> symbols_loaded _ | failed _
     run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
-    run venue_account(venue, trim(draft)) -> account_loaded _ | failed _
-    run venue_orders(venue, trim(draft)) -> orders_loaded _ | failed _
+    run venue_account(venue, trim(draft)) -> account_loaded _ | account_failed _
+    run venue_orders(venue, trim(draft)) -> orders_loaded _ | orders_failed _
     run venue_portfolio(venue, trim(draft)) -> portfolio_loaded _ | portfolio_failed _
     abortable feeds abort-on-drop
       parallel
         stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
-        stream venue_fill_feed(venue, trim(draft)) -> fills_streamed _ | failed _
+        stream venue_fill_feed(venue, trim(draft)) -> fills_streamed _ | fills_failed _
 
 on browse
   address = ""
@@ -114,6 +114,13 @@ on reopen
   orders = []
   positions = []
   account = none
+  // What each of those reads last answered was answered about the address
+  // being left. Kept, the next address is drawn as an account this venue does
+  // not have, or as three panels that failed before they were asked.
+  account_missing = false
+  account_error = ""
+  orders_error = ""
+  fills_error = ""
   portfolio_history = portfolio_empty()
   flashing = false
   // The feed the gate opens over is about to be aborted, so its last reading
@@ -199,6 +206,13 @@ on switch_venue(next)
   positions = []
   orders = []
   fills = []
+  // And what those reads answered was the other exchange answering. "No
+  // account for this address" is a venue's own answer, so it does not travel
+  // to the venue being opened any more than the positions do.
+  account_missing = false
+  account_error = ""
+  orders_error = ""
+  fills_error = ""
   flashing = false
   // The ticket was priced off the book of the venue being left, at a market
   // the next one may not even list.
@@ -236,13 +250,13 @@ on switch_venue(next)
   parallel
     run venue_symbols(venue) -> symbols_loaded _ | failed _
     run venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
-    run venue_account(venue, address) -> account_loaded _ | failed _
-    run venue_orders(venue, address) -> orders_loaded _ | failed _
+    run venue_account(venue, address) -> account_loaded _ | account_failed _
+    run venue_orders(venue, address) -> orders_loaded _ | orders_failed _
     run venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
     abortable feeds abort-on-drop
       parallel
         stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
-        stream venue_fill_feed(venue, address) -> fills_streamed _ | failed _
+        stream venue_fill_feed(venue, address) -> fills_streamed _ | fills_failed _
 
 on pick_interval(next)
   // The width already on the chart is not a change of width. Ungated, pressing
@@ -271,8 +285,8 @@ on tick_universe
 
 on tick_account
   parallel
-    run venue_account(venue, address) -> account_loaded _ | failed _
-    run venue_orders(venue, address) -> orders_loaded _ | failed _
+    run venue_account(venue, address) -> account_loaded _ | account_failed _
+    run venue_orders(venue, address) -> orders_loaded _ | orders_failed _
 
 on tick_portfolio
   run venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
@@ -346,18 +360,26 @@ on candles_loaded(count)
 
 // An account read with no address to make it for answers nothing rather than
 // failing, so this is also how the app comes back to holding no account at all.
+//
+// Nothing back is an answer here and it is the venue's: this address has no
+// account at this exchange. The panels say that rather than "still reading",
+// and they can only tell the two apart because this fires.
 on account_loaded(next)
   error = ""
+  account_error = ""
+  account_missing = !account_read(next)
   account = next
   positions = held_positions(next)
   quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on fills_streamed(rows)
+  fills_error = ""
   fills = push_fills(fills, rows, 200)
   flashing = any_hot(fills)
 
 on orders_loaded(rows)
   error = ""
+  orders_error = ""
   orders = rows
 
 on portfolio_loaded(history)
@@ -382,6 +404,23 @@ on market_ticked(tick)
 on failed(reason)
   error = reason.message
   loading_history = false
+
+// The three reads that fill a panel of their own. Each raises the app's alarm
+// line like any other failure, and each also keeps its own message where the
+// rows would have been — because the alarm line is cleared by whatever lands
+// next, and a panel drawn empty by a read that broke goes on reading as a
+// venue with nothing to say long after the line has gone.
+on account_failed(reason)
+  error = reason.message
+  account_error = reason.message
+
+on orders_failed(reason)
+  error = reason.message
+  orders_error = reason.message
+
+on fills_failed(reason)
+  error = reason.message
+  fills_error = reason.message
 
 on feed_failed(reason)
   feed_error = reason.message

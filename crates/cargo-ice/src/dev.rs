@@ -136,7 +136,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             &cargo_inputs,
         );
         if !build_observation_reuses_snapshot(&initial_stamps, &observed) {
-            eprintln!("ice dev: inputs changed during initial build; rebuilding the new snapshot");
+            tracing::info!("inputs changed during initial build; rebuilding the new snapshot");
             continue;
         }
         break (
@@ -163,20 +163,20 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
     let template_arg = live_template.is_some().then_some(template_path.as_path());
     let mut app =
         ChildGuard::spawn_owned(root, executable, runtime_args(cargo_args), template_arg)?;
-    println!(
-        "ice dev: watching {} Ice source input(s); {}",
-        observed_stamps.0.len(),
-        if live_template.is_some() {
-            "view edits reload in place, everything else rebuilds and restarts"
+    tracing::info!(
+        ice_source_inputs = observed_stamps.0.len(),
+        reload_mode = if live_template.is_some() {
+            "in-place view reload"
         } else {
-            "rebuild-and-restart mode"
-        }
+            "rebuild and restart"
+        },
+        "watching"
     );
     let mut changes = DevWatcher::new(&watched_dependencies, &watched_assets, &cargo_inputs);
 
     loop {
         if stop_requested() {
-            println!("ice dev: stopping");
+            tracing::info!("stopping");
             return Ok(());
         }
         if let Some(status) = app.try_wait()? {
@@ -214,9 +214,9 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             continue;
         };
         if let Some(path) = first_unreadable_input(&next_stamps) {
-            eprintln!(
-                "ice dev: watched input {} is unreadable; keeping the current app open until it can be read again",
-                path.display()
+            tracing::warn!(
+                input = %path.display(),
+                "watched input is unreadable; keeping the current app open until it can be read again"
             );
             observed_stamps = next_stamps;
             continue;
@@ -232,8 +232,9 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
                 }
                 Ok(_) => {}
                 Err(error) => {
-                    eprintln!(
-                        "ice dev: cannot refresh local Cargo inputs: {error}; keeping the current app open"
+                    tracing::warn!(
+                        %error,
+                        "cannot refresh local Cargo inputs; keeping the current app open"
                     );
                     observed_stamps = next_stamps;
                     continue;
@@ -297,8 +298,9 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
                 }
                 Ok(_) => {}
                 Err(error) => {
-                    eprintln!(
-                        "ice dev: cannot confirm local Cargo inputs: {error}; keeping the current app open"
+                    tracing::warn!(
+                        %error,
+                        "cannot confirm local Cargo inputs; keeping the current app open"
                     );
                     observed_stamps = candidate_stamps;
                     continue;
@@ -317,22 +319,23 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
                 {
                     match fs::write(&template_path, &candidate.json) {
                         Ok(()) => {
-                            println!("ice dev: view reloaded in place");
+                            tracing::info!("view reloaded in place");
                             live_template = Some(candidate);
                             watched_dependencies = next.dependencies;
                             watched_assets = next.asset_dependencies;
                             observed_stamps = candidate_stamps;
                             continue;
                         }
-                        Err(error) => eprintln!(
-                            "ice dev: cannot publish the reloaded view: {error}; rebuilding instead"
+                        Err(error) => tracing::warn!(
+                            %error,
+                            "cannot publish the reloaded view; rebuilding instead"
                         ),
                     }
                 }
                 // An unchanged view means the edit was elsewhere.
                 Ok(Some(candidate)) if candidate.slot_fingerprint == current.slot_fingerprint => {}
-                Ok(Some(_)) => eprintln!(
-                    "ice dev: the edit needs values the running app does not compute; rebuilding"
+                Ok(Some(_)) => tracing::info!(
+                    "the edit needs values the running app does not compute; rebuilding"
                 ),
                 Ok(None) => {}
                 Err(error) => {
@@ -342,7 +345,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
                 }
             }
         }
-        eprintln!("ice dev: inputs changed; rebuilding with the current app open");
+        tracing::info!("inputs changed; rebuilding with the current app open");
         let build = match cargo_build(
             root,
             cargo_args,
@@ -352,7 +355,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         ) {
             Ok(Some(build)) => build,
             Ok(None) => {
-                eprintln!("ice dev: build failed; keeping the current app open");
+                tracing::warn!("build failed; keeping the current app open");
                 watched_dependencies = next.dependencies;
                 watched_assets = next.asset_dependencies;
                 observed_stamps = candidate_stamps;
@@ -360,8 +363,9 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             }
             Err(_) if stop_requested() => return Ok(()),
             Err(error) => {
-                eprintln!(
-                    "ice dev: cannot complete candidate build; keeping the current app open: {error}"
+                tracing::warn!(
+                    %error,
+                    "cannot complete candidate build; keeping the current app open"
                 );
                 watched_dependencies = next.dependencies;
                 watched_assets = next.asset_dependencies;
@@ -378,7 +382,7 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             &next_cargo_inputs,
         );
         if !build_observation_reuses_snapshot(&candidate_stamps, &built_stamps) {
-            eprintln!("ice dev: inputs changed during build; rebuilding the new snapshot");
+            tracing::info!("inputs changed during build; rebuilding the new snapshot");
             watched_dependencies = next.dependencies;
             watched_assets = next.asset_dependencies;
             cargo_inputs = next_cargo_inputs;
@@ -387,8 +391,9 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         let executable = match stage_executable(&build.executable, revision) {
             Ok(executable) => executable,
             Err(error) => {
-                eprintln!(
-                    "ice dev: cannot stage restart candidate; keeping the current app open: {error}"
+                tracing::warn!(
+                    %error,
+                    "cannot stage restart candidate; keeping the current app open"
                 );
                 watched_dependencies = next.dependencies;
                 watched_assets = next.asset_dependencies;
@@ -409,14 +414,14 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             revision,
             live_template.is_some().then_some(template_path.as_path()),
         ) {
-            eprintln!("ice dev: restart candidate failed; keeping the current app open: {error}");
+            tracing::warn!(%error, "restart candidate failed; keeping the current app open");
             watched_dependencies = next.dependencies;
             watched_assets = next.asset_dependencies;
             cargo_inputs = next_cargo_inputs;
             observed_stamps = built_stamps;
             continue;
         }
-        println!("ice dev: restarted on revision {revision}");
+        tracing::info!(revision, "restarted");
         watched_dependencies = next.dependencies;
         watched_assets = next.asset_dependencies;
         cargo_inputs = next_cargo_inputs;

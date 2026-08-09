@@ -26,7 +26,19 @@ on tasks_read(_tasks)
 
 on create_failed(_error)
 
+component GroupedRequests()
+  on start(title)
+    parallel
+      run latest lane=primary create_task(title) -> loaded _ | failed _
+      sequential
+        run replace lane=secondary create_task(title) -> loaded _ | failed _
+        run latest lane=tertiary create_task(title) -> loaded _ | failed _
+  on loaded(_tasks)
+  on failed(_error)
+  button "Run nested component requests" -> start("copy")
+
 view
   col
     button "Run grouped tasks" -> start
     button "Clone captured input" -> create_twice("copy")
+    GroupedRequests #nested

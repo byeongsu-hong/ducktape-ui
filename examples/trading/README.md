@@ -42,6 +42,11 @@ last price, the feed's latency, and **Quit**. The platform owns that menu — it
 opens, places itself and dismisses itself — so the terminal declares no window
 for it and subscribes to nothing but the row a reader chose.
 
+A dead feed marks the label and the row `NOT LIVE`, the same words the header
+stamps beside the price it greys. The menu bar is read without the header
+there to qualify it, so a last price printed there in the words a live one
+uses is the one stale figure nothing on screen would correct.
+
 The terminal stays a `daemon` rather than an `app` so that closing the window
 leaves it in the menu bar rather than exiting; **Quit** in the menu ends it. On
 other platforms the same source builds and runs with the tray as a no-op.

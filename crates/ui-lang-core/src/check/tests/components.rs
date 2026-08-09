@@ -1317,7 +1317,7 @@ view
 }
 
 #[test]
-fn checks_component_scoped_futures_and_latest() {
+fn checks_component_request_lanes() {
     let source = r#"app Search
 extern crate::backend
   AppError(message:str)
@@ -1339,7 +1339,7 @@ component SearchBox()
     result:str? = none
   on search
     loading = true
-    run latest fetch(query) -> loaded _ | failed _
+    run latest lane=search fetch(query) -> loaded _ | failed _
   on loaded(value)
     result = some(value)
     loading = false
@@ -1357,8 +1357,9 @@ view
         Statement::Run {
             kind: EffectKind::Future,
             mode: FutureMode::Latest,
+            lane: Some(ref lane),
             ..
-        }
+        } if lane == "search"
     ));
     assert_eq!(
         document.source_document().components[0].handlers[1].params[0].ty,
@@ -1376,7 +1377,7 @@ view
             ..
         }
     ));
-    analyze(&source.replace("run latest", "run")).unwrap();
+    analyze(&source.replace("run latest lane=search", "run")).unwrap();
 
     let global = r#"app GlobalLatest
 extern crate::backend
@@ -1392,18 +1393,165 @@ palette app for AppTheme
   primary #333333
   danger #ff0000
 on search
-  run latest fetch("") -> loaded _
+  run latest lane=search fetch("") -> loaded _
 on loaded(value)
 view
   text "Search"
 "#;
-    let error = analyze(global).unwrap_err();
-    assert_eq!(error.code, "E140");
-    assert!(error.message.contains("only valid in component handlers"));
+    analyze(global).unwrap();
+    analyze(&global.replace("run latest", "run replace")).unwrap();
+}
 
-    let error = analyze(&global.replace("run latest", "run replace")).unwrap_err();
+const REQUEST_LANE_APP: &str = r#"app GlobalLanes
+extern crate::backend
+  fetch(query:str) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+preset seeded
+  boot
+    run latest lane=search fetch("preset") -> loaded _
+on search
+  run latest lane=search fetch("handler") -> loaded _
+on loaded(value)
+view
+  text "Search"
+"#;
+
+#[test]
+fn deduplicates_app_and_preset_request_lane_hir() {
+    let checked = analyze(REQUEST_LANE_APP).unwrap();
+    assert_eq!(checked.declarations.run_lane_count(), 1);
+    let lane = checked
+        .declarations
+        .try_run_lane(crate::hir::RunLaneId(0))
+        .unwrap();
+    assert_eq!(lane.owner, crate::hir::HandlerOwner::App);
+    assert_eq!(lane.name, "search");
+    assert_eq!(lane.mode, FutureMode::Latest);
+    assert_eq!(lane.statements.len(), 2);
+    assert!(lane.statements.iter().all(|statement| {
+        checked.declarations.statement(*statement).run_lane == Some(lane.declaration.id)
+    }));
+}
+
+#[test]
+fn enforces_request_lane_modes_per_owner() {
+    let mismatch = analyze(&REQUEST_LANE_APP.replace(
+        "run latest lane=search fetch(\"preset\")",
+        "run replace lane=search fetch(\"preset\")",
+    ))
+    .unwrap_err();
+    assert_eq!(mismatch.code, "E140");
+    assert!(
+        mismatch
+            .message
+            .contains("uses both `run latest` and `run replace`")
+    );
+
+    let components = REQUEST_LANE_APP.replace(
+        "preset seeded\n  boot\n    run latest lane=search fetch(\"preset\") -> loaded _\non search\n  run latest lane=search fetch(\"handler\") -> loaded _\non loaded(value)\n",
+        "component LatestSearch()\n  on search\n    run latest lane=search fetch(\"latest\") -> loaded _\n  on loaded(value)\n  button \"Latest\" -> search\ncomponent ReplaceSearch()\n  lifetime mounted\n  on search\n    run replace lane=search fetch(\"replace\") -> loaded _\n  on loaded(value)\n  button \"Replace\" -> search\n",
+    )
+    .replace("  text \"Search\"", "  col\n    LatestSearch\n    ReplaceSearch");
+    let components = analyze(&components).unwrap();
+    assert_eq!(components.declarations.run_lane_count(), 2);
+    assert_eq!(
+        components
+            .declarations
+            .try_run_lane(crate::hir::RunLaneId(0))
+            .unwrap()
+            .owner,
+        crate::hir::HandlerOwner::Component(crate::hir::ComponentId(0))
+    );
+    assert_eq!(
+        components
+            .declarations
+            .try_run_lane(crate::hir::RunLaneId(1))
+            .unwrap()
+            .owner,
+        crate::hir::HandlerOwner::Component(crate::hir::ComponentId(1))
+    );
+}
+
+#[test]
+fn rejects_duplicate_request_lane_in_recursive_handler_tasks() {
+    let duplicate = REQUEST_LANE_APP.replace(
+        "run latest lane=search fetch(\"handler\") -> loaded _",
+        "parallel\n    run latest lane=search fetch(\"first\") -> loaded _\n    run latest lane=search fetch(\"second\") -> loaded _",
+    );
+    let duplicate = analyze(&duplicate).unwrap_err();
+    assert_eq!(duplicate.code, "E140");
+    assert!(
+        duplicate
+            .message
+            .contains("cannot be started more than once")
+    );
+}
+
+#[test]
+fn rejects_abortable_component_request_lanes_without_handle_ownership() {
+    let source = r#"app ComponentAbortable
+extern crate::backend
+  fetch(query:str) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component SearchBox()
+  on search
+    abortable request abort-on-drop
+      run latest lane=search fetch("query") -> loaded _
+  on loaded(value)
+  button "Search" -> search
+view
+  SearchBox
+"#;
+    let error = analyze(source).unwrap_err();
     assert_eq!(error.code, "E140");
-    assert!(error.message.contains("`run replace`"));
+    assert!(error.message.contains("task groups"));
+}
+
+#[test]
+fn nested_request_lanes_give_a_component_without_declared_state_identity() {
+    let source = warning_app(
+        r#"extern crate::backend
+  fetch(query:str) -> str
+state
+  items = [1]
+component SearchBox()
+  on search
+    parallel
+      run latest lane=primary fetch("first") -> loaded _
+      run latest lane=secondary fetch("second") -> loaded _
+  on loaded(value)
+  button "Search" -> search
+view
+  for item in items
+    SearchBox
+"#,
+    );
+    let checked = analyze(&source).unwrap();
+    assert!(checked.source_document().components[0].states.is_empty());
+    assert!(
+        checked
+            .warnings()
+            .iter()
+            .any(|warning| warning.code == "W008")
+    );
 }
 
 #[test]

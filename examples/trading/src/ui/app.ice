@@ -4,10 +4,10 @@ daemon Trading
   tray
     icon-rgba "../../assets/tray-icon.rgba" 22 22
     icon-template true
-    label tray_status(coin, focus)
+    label tray_status(coin, focus, live)
     tooltip "Ducktape Trading"
     menu
-      tray_status(coin, focus)
+      tray_status(coin, focus, live)
       fmt_latency(latency)
       separator
       "Quit" -> quit
@@ -44,6 +44,7 @@ use "tests/alerts.ice"
 use "tests/ticket.ice"
 use "tests/feed.ice"
 use "tests/history.ice"
+use "tests/reads.ice"
 use "tests/venues.ice"
 use "tests/render.ice"
 

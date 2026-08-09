@@ -15,6 +15,8 @@
 test trading_switching_venue_leaves_the_old_venues_market_behind
   preset held
   viewport 1660 820
+  target app = #app
+  target priced = app/header/price
   expect text "ORDER BOOK"
   expect text "64,001.00"
   expect text "0.3 bps"
@@ -33,7 +35,7 @@ test trading_switching_venue_leaves_the_old_venues_market_behind
   // and the maintenance requirement are the venue's, not the market's.
   expect empty(symbols)
   expect empty(visible)
-  expect text "Loading markets"
+  expect text "—" within priced
   expect text "market not loaded"
 
 // The account panels are the other half, and they are the half that is quiet
@@ -41,6 +43,8 @@ test trading_switching_venue_leaves_the_old_venues_market_behind
 test trading_switching_venue_leaves_the_old_venues_account_behind
   preset held
   viewport 1660 820
+  target app = #app
+  target equity = app/header/equity
   expect text "POSITIONS"
   expect text "3,526.53"
   expect text "15:10:00"
@@ -50,7 +54,8 @@ test trading_switching_venue_leaves_the_old_venues_account_behind
   expect empty(fills)
   // The equity strip in the header, the position rows, a resting order's price
   // and a fill's time — one assertion each, because they are four panels.
-  expect text "READ ONLY"
+  expect text "—" within equity
+  expect no text "$3,761,182.51"
   expect no text "3,526.53"
   expect no text "15:10:00"
   expect no text "63,500.00"
@@ -340,7 +345,7 @@ test trading_settings_states_what_this_venue_can_and_cannot_serve
   // The name in the VENUE section rather than anywhere on screen: the header
   // draws both names on every page, so an unscoped one would pass with this
   // section empty and with the venue switched under it.
-  target named = settings/settings-venue
+  target named = settings/settings-content/settings-venue
   dispatch navigate(Page.settings)
   expect text "VENUE"
   expect text "Lighter" within named
@@ -362,3 +367,39 @@ test trading_the_gate_keeps_the_venue_the_terminal_was_reading
   expect gate
   expect venue == Venue.lighter
   capture lighter_gate
+
+// The header is the glance surface, and a glance is only worth taking if the
+// figure is where it was last time. Nothing on this strip is drawn from
+// `venue` — but everything on it is drawn from a read the switch throws away,
+// so switching exchange took the price block and the account block off it and
+// put them back a moment later, moving every box between them twice. What may
+// change across a switch is the figures and the sentences in the boxes; the
+// boxes and their widths may not.
+test trading_the_header_keeps_its_shape_across_a_venue_switch
+  preset held
+  viewport 1660 820
+  target app = #app
+  target header = app/header
+  target named = header/coin-name
+  target priced = header/price
+  target equity = header/equity
+  target feed = header/feed/root
+  expect text "64,000.00" within priced
+  expect text "$3,761,182.51" within equity
+  expect priced.width ~= 282.0
+  expect equity.width ~= 303.18
+  expect named.x ~= 16.0
+  expect feed.x ~= 1604.9319
+  dispatch switch_venue(Venue.lighter)
+  // Every figure the switch threw away is a dash in the box it was in, and
+  // every box is the width it was.
+  expect exists priced
+  expect exists equity
+  expect text "—" within priced
+  expect text "—" within equity
+  expect no text "64,000.00"
+  expect no text "$3,761,182.51"
+  expect priced.width ~= 282.0
+  expect equity.width ~= 303.18
+  expect named.x ~= 16.0
+  expect feed.x ~= 1604.9319
