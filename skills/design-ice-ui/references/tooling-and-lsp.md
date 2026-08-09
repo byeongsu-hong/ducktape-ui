@@ -23,7 +23,7 @@ In this repository, `.cargo/config.toml` declares:
 
 ```toml
 [alias]
-ice = "run -q -p cargo-ice --"
+ice = "run -p cargo-ice --"
 ```
 
 Run `cargo ice ...` from the workspace root. The alias builds and executes the
