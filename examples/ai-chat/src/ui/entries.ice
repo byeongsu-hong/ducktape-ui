@@ -169,7 +169,7 @@ component Chip(options:[str], selected:str?) -> str
       open code="▴" size=17.0
 
 // One chat that already happened, as a row to open it by.
-component PastChat(chat:Chat) -> str
+component PastChat(chat:Chat, open:bool) -> str
   button #root -> emit(chat.path)
     with
       label=chat.title
@@ -179,14 +179,19 @@ component PastChat(chat:Chat) -> str
     box
       with
         w=fill
-        px=13.0
-        py=10.0
-        r=9.0
-      col w=fill gap=3.0
-        text chat.title wrap=word @field_label
-        row gap=8.0 align=center
-          text chat.when @meta
-          text chat.cwd @machine
+        px=10.0
+        py=9.0
+        r=8.0
+      row w=fill gap=8.0
+        // The chat being read is marked rather than filled in, so the list
+        // stays one column of text with one thing standing out of it.
+        if open
+          rule vertical thickness=2.0 color=primary
+        col w=fill gap=2.0
+          text chat.title wrap=word @field_label
+          row gap=7.0 align=center
+            text chat.when @meta
+            text chat.cwd @machine
 
 // A row saying what was left out, so a truncated transcript says so rather
 // than quietly beginning in the middle.

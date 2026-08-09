@@ -183,8 +183,10 @@ Further tuning is not warranted, and none was kept.
 
 ## Chats already had
 
-`History` lists the rollouts the Codex CLI wrote under `~/.codex/sessions`, and
-opening one draws it as a transcript. The session becomes that chat — its own
+The sidebar lists the rollouts the Codex CLI wrote under `~/.codex/sessions`,
+newest first, and opening one draws it as a transcript. The list is fetched
+once the window is up rather than before it — it touches a thousand files and
+none of them are needed to start typing. The session becomes that chat — its own
 `input` is loaded too — so carrying on from it continues that conversation
 rather than starting beside it.
 

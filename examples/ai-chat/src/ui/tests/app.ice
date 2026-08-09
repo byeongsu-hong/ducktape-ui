@@ -8,8 +8,8 @@
 test folding_a_finished_turn_reveals_what_it_did
   preset conversation
   viewport 920 800
-  target work = #app/transcript/rows/key(-2)/work(-2)/root/toggle
-  target thoughts = #app/transcript/rows/key(-3)/reasoning(-3)/root
+  target work = #shell/app/transcript/rows/key(-2)/work(-2)/root/toggle
+  target thoughts = #shell/app/transcript/rows/key(-3)/reasoning(-3)/root
   target thoughts_toggle = thoughts/toggle
 
   expect text "Worked for 12s · 4 steps"
@@ -33,8 +33,8 @@ test folding_a_finished_turn_reveals_what_it_did
 test a_tool_call_keeps_its_arguments_behind_its_own_fold
   preset conversation
   viewport 920 800
-  target work = #app/transcript/rows/key(-2)/work(-2)/root/toggle
-  target search = #app/transcript/rows/key(-4)/tool(-4)/root/toggle
+  target work = #shell/app/transcript/rows/key(-2)/work(-2)/root/toggle
+  target search = #shell/app/transcript/rows/key(-4)/tool(-4)/root/toggle
   click work
 
   expect text "Searched the web"
@@ -48,8 +48,8 @@ test a_tool_call_keeps_its_arguments_behind_its_own_fold
 test the_composer_will_not_send_a_blank_draft
   preset conversation
   viewport 920 800
-  target composer = #app/composer/field/draft
-  target send = #app/composer/field/send
+  target composer = #shell/app/composer/field/draft
+  target send = #shell/app/composer/field/send
   expect a11y send disabled true
 
   click composer
@@ -66,8 +66,8 @@ test the_composer_will_not_send_a_blank_draft
 test the_composer_shows_what_will_answer_and_how_hard
   preset conversation
   viewport 920 800
-  target model_chip = #app/composer/model/root
-  target effort_chip = #app/composer/effort/root
+  target model_chip = #shell/app/composer/model/root
+  target effort_chip = #shell/app/composer/effort/root
   expect text "gpt-5.6-sol" within model_chip
   expect text "xhigh" within effort_chip
 
@@ -79,7 +79,7 @@ test the_composer_shows_what_will_answer_and_how_hard
 test clicking_a_chip_raises_it_and_captures_its_menu
   preset conversation
   viewport 920 800
-  target model_chip = #app/composer/model/root
+  target model_chip = #shell/app/composer/model/root
   expect model_chip.background == background.color(color.rgb8(255, 255, 255))
 
   click model_chip
@@ -94,8 +94,8 @@ test clicking_a_chip_raises_it_and_captures_its_menu
 test sending_a_message_runs_a_whole_turn
   preset signed_in
   viewport 920 800
-  target composer = #app/composer/field/draft
-  target send = #app/composer/field/send
+  target composer = #shell/app/composer/field/draft
+  target send = #shell/app/composer/field/send
   expect text "What are we working on?"
 
   click composer
@@ -119,27 +119,27 @@ test sending_a_message_runs_a_whole_turn
 test a_running_turn_offers_stop_steer_and_send_after
   preset steering
   viewport 920 560
-  target stop = #app/composer/field/stop
+  target stop = #shell/app/composer/field/stop
   expect a11y stop name "Stop"
-  expect missing #app/composer/field/send
-  expect exists #app/composer/steer
-  expect exists #app/composer/queue
+  expect missing #shell/app/composer/field/send
+  expect exists #shell/app/composer/steer
+  expect exists #shell/app/composer/queue
 
 // Nothing typed, nothing to steer with: stopping is all that is on offer.
 test a_running_turn_with_nothing_typed_offers_only_stop
   preset streaming
   viewport 920 560
-  expect exists #app/composer/field/stop
-  expect missing #app/composer/steer
-  expect missing #app/composer/queue
+  expect exists #shell/app/composer/field/stop
+  expect missing #shell/app/composer/steer
+  expect missing #shell/app/composer/queue
 
 // And with no turn running there is nothing to stop.
 test an_idle_composer_offers_only_send
   preset conversation
   viewport 920 560
-  expect exists #app/composer/field/send
-  expect missing #app/composer/field/stop
-  expect missing #app/composer/steer
+  expect exists #shell/app/composer/field/send
+  expect missing #shell/app/composer/field/stop
+  expect missing #shell/app/composer/steer
 
 // iced draws non-editable text without selection, so there is no dragging
 // over an answer to copy it. The button is how the text leaves the window,
@@ -147,8 +147,8 @@ test an_idle_composer_offers_only_send
 test copying_a_message_puts_its_own_text_on_the_clipboard
   preset conversation
   viewport 920 800
-  target ask = #app/transcript/rows/key(-1)/prompt(-1)/root/copy
-  target reply = #app/transcript/rows/key(-6)/answer(-6)/root/copy
+  target ask = #shell/app/transcript/rows/key(-1)/prompt(-1)/root/copy
+  target reply = #shell/app/transcript/rows/key(-6)/answer(-6)/root/copy
   expect a11y ask name "Copy"
   expect a11y reply name "Copy"
 
@@ -162,23 +162,18 @@ test copying_a_message_puts_its_own_text_on_the_clipboard
   click reply
   expect copied != "Which version of iced is current, and how do I stream a reply into a Markdown view?"
 
-// Chats already had are offered by name and date, and picking one opens it.
-// The list is fetched when the panel is asked for rather than at startup,
-// because it touches every rollout on the machine.
-// An overlay's contents are outside the tree the harness scans — the same
-// limit the picker menu has — so what is asserted is that the panel is there
-// with a row per chat, and the capture is what its appearance is reviewed from.
-test the_history_panel_offers_chats_by_name
+// Chats already had are a place on screen, not something that appears over
+// one: the list is beside the transcript, the chat being read is marked in it,
+// and picking one opens it.
+test the_sidebar_lists_chats_already_had
   preset history
-  viewport 920 700
-  expect exists #history-panel
-  expect exists #history-panel/chat-list
+  viewport 1180 700
+  target list = #shell/sidebar/chat-list
+  target first = #shell/sidebar/chat-list/chat("/sessions/2026-08-10-ducktape-ui.jsonl")/root
+  expect exists list
+  expect text "Recent"
+  expect text "Which version of iced is current?"
+  expect text "Write a test for the SSE reader"
+  expect text "2026-08-08"
+  expect a11y first name "Which version of iced is current?"
   capture history
-
-// And it is not in the way until it is wanted.
-test the_history_panel_is_shut_until_it_is_asked_for
-  preset conversation
-  viewport 920 700
-  target history = #app/header/history
-  expect a11y history name "History"
-  expect missing #history-panel

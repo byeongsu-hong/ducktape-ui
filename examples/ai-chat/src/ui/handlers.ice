@@ -30,14 +30,14 @@ on streamed(part)
   status = part.status
   markdown live append part.answer
   live_thinking = markdown(part.thinking)
-  task widget snap-end #app/transcript
+  task widget snap-end #shell/app/transcript
 
 // A block settled, or a tool started or finished. The live surfaces are left
 // alone: they are cleared once, when the turn ends, so a late chunk can never
 // land in a surface that has already been reset.
 on rows(next)
   entries = next
-  task widget snap-end #app/transcript
+  task widget snap-end #shell/app/transcript
 
 // A turn ends, and a message typed while it ran goes out on its own.
 on settled(complete)
@@ -63,6 +63,7 @@ on failed(cause)
   error = cause.message
 
 on reset
+  open_path = ""
   session = new_chat(session)
   entries = []
   live = markdown("")
@@ -71,7 +72,7 @@ on reset
   busy = false
   error = ""
   draft = editor("")
-  task widget focus #app/composer/field/draft
+  task widget focus #shell/app/composer/field/draft
 
 on toggle_row(id)
   entries = toggle_row(session, id)
@@ -102,7 +103,7 @@ on queue
 
 on suggest(text)
   draft = editor(text)
-  task widget focus #app/composer/field/draft
+  task widget focus #shell/app/composer/field/draft
 
 on use_night
   dark = true
@@ -141,7 +142,7 @@ on signed_in_as(email)
   signing_in = false
   code = ""
   code_url = ""
-  task widget focus #app/composer/field/draft
+  task widget focus #shell/app/composer/field/draft
 
 on sign_in_failed(cause)
   signing_in = false
@@ -164,21 +165,17 @@ on forget
   entries = []
   error = ""
 
-// Chats the CLI has already had. The list is fetched when it is asked for
-// rather than at startup, because it touches a thousand files.
-on show_history
-  history_open = true
-  error = ""
+// Chats the CLI has already had. The list is fetched once the window is up
+// rather than before it, because it touches a thousand files and none of them
+// are needed to start typing.
+on mount
   run recent_chats() -> chats_listed _
 
 on chats_listed(found)
   chats = found
 
-on close_history
-  history_open = false
-
 on pick_chat(path)
-  history_open = false
+  open_path = path
   loading_chat = true
   error = ""
   run open_recent(session, path) -> chat_opened _ | chat_failed _
@@ -191,7 +188,7 @@ on chat_opened(rows)
   live = markdown("")
   live_thinking = markdown("")
   copied = ""
-  task widget snap-end #app/transcript
+  task widget snap-end #shell/app/transcript
 
 on chat_failed(cause)
   loading_chat = false
