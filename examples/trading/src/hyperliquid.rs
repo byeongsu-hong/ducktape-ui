@@ -3020,7 +3020,7 @@ pub fn chart(
 /// the app folds one rather than building one — so the way to a real beat is
 /// to drive the real reader over real-shaped JSON, which is also the only way
 /// to price the reader itself.
-#[cfg(test)]
+#[cfg(all(test, not(debug_assertions)))]
 pub(crate) mod probe {
     use super::*;
 

@@ -2375,7 +2375,7 @@ mod tests {
         let details = wide_details(MARKETS);
         let rates = wide_rates(MARKETS);
         let book = wide_book(ORDER_FETCH);
-        let held = account();
+        let held = captured_account();
         let details_text = details.to_string();
         let rates_text = rates.to_string();
         let book_text = book.to_string();
