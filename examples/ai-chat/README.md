@@ -63,6 +63,9 @@ survive `New chat`, and `~/.codex/config.toml` is only ever read.
 
 The message box is a real editor. Enter sends; Enter held with shift, command
 or both writes a line, so a paragraph can be typed without fighting the box.
+Backspace erases a word with alt and back to the start of the line with
+command — iced maps every Backspace to one character whatever is held with it,
+so both of those had to be said explicitly or they did nothing.
 
 A turn already running can be answered in three ways rather than only waited
 out. **Stop** ends it and keeps what was already said — a stopped answer is
