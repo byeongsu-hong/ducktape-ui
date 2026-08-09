@@ -191,3 +191,25 @@ test trading_the_price_reads_against_the_move_it_belongs_to
   dispatch pick_symbol("kPEPE")
   expect text "0.008421" within last
   expect (last.text_x + last.text_width) ~= change.x - 14.0
+
+// The 14px above is box-to-box. The percentage must also HUG its box's leading
+// edge, or the slack inside the change slot reopens the very gap the box
+// arithmetic closed: a right-aligned "+1.25%" sat 26px into a 64px slot, and
+// the reader saw 40px of nothing between the price and its move.
+test trading_the_move_sits_beside_the_price_not_across_the_slot
+  preset held
+  viewport 1660 820
+  target app = #app
+  target header = app/header
+  target priced = header/price
+  target last = priced/last
+  target change = priced/change/root
+  // The percentage's first glyph starts where its box starts, so the whole
+  // visual gap is the 14px the layout declares — nothing hides inside the slot.
+  expect change.text_x ~= change.x
+  expect change.text_x ~= (last.text_x + last.text_width) + 14.0
+  // The slack moved to the slot's trailing side, where the liveness slot
+  // absorbs it. A longer percentage grows rightward without moving its start.
+  dispatch pick_symbol("kPEPE")
+  expect text "+6.15%" within change
+  expect change.text_x ~= change.x
