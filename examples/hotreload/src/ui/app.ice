@@ -107,3 +107,15 @@ test save_source_with_shortcut
   expect editor.value == "view!"
   chord control "s"
   expect status_text.value == "Saved 5 bytes — cargo ice dev will apply compatible edits."
+
+test save_source_with_command_shortcut
+  preset ready
+  viewport 1280 800
+  target app = #app
+  target editor = app/workspace/editor-panel/editor-content/source
+  target status_text = app/workspace/editor-panel/editor-content/status/status-text
+  click editor
+  type "!"
+  expect editor.value == "view!"
+  chord logo "s"
+  expect status_text.value == "Saved 5 bytes — cargo ice dev will apply compatible edits."
