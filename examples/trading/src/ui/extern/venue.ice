@@ -6,7 +6,19 @@
 extern crate::venue
   pure venue_name(venue:Venue) -> str
   pure venue_label(venue:Venue, shown:bool) -> str
+  // Every network the app can point at, so the picker is a loop over the
+  // registry rather than a line per entry. A network added in Rust appears in
+  // the header without this file or the view being touched.
+  pure venue_list() -> [Venue]
+  // Whether being wrong on this network costs anything. Read by the label
+  // beside the picker, never inferred from the name.
+  pure venue_testnet(venue:Venue) -> bool
+  pure venue_kind(venue:Venue) -> str
   pure venue_account_gap(venue:Venue) -> str
+  // What a reader has to know about this network beyond its name. Drawn on
+  // settings and never where rows would be: a sentence under an empty panel
+  // reads as the reason the panel is empty.
+  pure venue_note(venue:Venue) -> str
   pure venue_account_note(venue:Venue, watching:bool, missing:bool, failure:str) -> str
   pure venue_orders_note(venue:Venue, watching:bool, failure:str) -> str
   pure venue_fills_note(venue:Venue, watching:bool, failure:str) -> str

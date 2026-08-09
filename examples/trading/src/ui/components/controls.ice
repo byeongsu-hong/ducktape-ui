@@ -54,14 +54,18 @@ component NavTab(name:str, target:Page, current:Page)
             tracking=1.1
             @text-faint
 
-// One tab per exchange, named by the act of reading it. By the same rule the
-// page tabs follow: the venue already being read is still a button, and a
+// One row per network, named by the act of reading it. By the same rule the
+// page tabs follow: the network already being read is still a button, and a
 // button carries no state a reader can hear, so it says which it is by
 // appending it to its own name rather than by being the highlighted one.
 //
-// It sits with the page tabs because it belongs to the same question — what am
-// I looking at — and it is the outer half of it: the page picks a surface, this
-// picks the exchange every one of those surfaces was read from.
+// Every row states its kind beside its name, on the drawn row and the undrawn
+// ones alike. A picker is where the mistake this app must never allow is
+// actually made — a trader choosing the wrong deployment and finding out from
+// a fill — so the row a finger is travelling towards has to answer "real money
+// or not" before it is pressed, not after. `venue_kind` is read off the
+// registry rather than from the name, because a name is a label somebody typed
+// and the flag is what the endpoints were chosen by.
 component VenueTab(target:Venue, current:Venue)
   emits
     pick(Venue)
@@ -71,28 +75,71 @@ component VenueTab(target:Venue, current:Venue)
         with
           label=venue_label(target, true)
           w=fill
-          p=5.0
+          p=7.0
         active bg=raised text=fg r=3.0
         hovered bg=raised text=fg r=3.0
-        text venue_name(target)
+        row
           with
-            size=9.0
             w=fill
-            tracking=1.0
-            @text-fg
+            gap=8.0
+            align=center
+          text venue_name(target)
+            with
+              size=10.0
+              tracking=1.0
+              @text-fg
+          space w=fill
+          NetworkKind target=target
     if target != current
       button #tab-off -> emit(pick, target)
         with
           label=venue_label(target, false)
           w=fill
-          p=5.0
+          p=7.0
         active bg=panel text=muted r=3.0
         hovered bg=raised text=fg r=3.0
-        text venue_name(target)
+        row
           with
-            size=9.0
             w=fill
-            tracking=1.0
+            gap=8.0
+            align=center
+          text venue_name(target)
+            with
+              size=10.0
+              tracking=1.0
+              @text-faint
+          space w=fill
+          NetworkKind target=target
+
+// The two words a network is chosen by, in the one shape they are ever drawn
+// in. Both kinds are a box so a row is the same height whichever it is, and
+// only the colour moves: a testnet is loud because mistaking it for the other
+// one is free, and mistaking the other one for it is not.
+component NetworkKind(target:Venue)
+  col #root
+    if venue_testnet(target)
+      box #kind-test
+        with
+          px=5.0
+          py=2.0
+          bg=down
+          r=2.0
+        text venue_kind(target)
+          with
+            size=8.0
+            tracking=1.1
+            @text-fg
+    if !venue_testnet(target)
+      box #kind-real
+        with
+          px=5.0
+          py=2.0
+          bg=edge
+          r=2.0
+        text venue_kind(target)
+          with
+            size=8.0
+            tracking=1.1
             @text-faint
 
 component IntervalTab(name:str, current:str)

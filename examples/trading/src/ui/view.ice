@@ -107,16 +107,25 @@ view
                             tracking=1.1
                             @text-fg
                 space w=fill
-                // Stacked rather than side by side: the header is at its
-                // tightest at the window's own minimum, and two names of this
-                // length in a row took the width the account strip needs.
-                col #venues w=84.0 gap=2.0
-                  VenueTab #venue-hyperliquid target=Venue.hyperliquid current=venue
-                    events
-                      pick -> switch_venue _
-                  VenueTab #venue-lighter target=Venue.lighter current=venue
-                    events
-                      pick -> switch_venue _
+                // Which network every panel on this screen was read from, and
+                // what being wrong on it costs. Not a picker: a list that grows
+                // with the registry cannot live in 58 pixels, and switching
+                // network throws the whole screen away, which is a deliberate
+                // act rather than a header toggle. The picker is on settings,
+                // beside the address, and this says what it chose.
+                //
+                // Both lines are drawn on every network, so the header is the
+                // same shape whichever one is on screen and a reader learns
+                // where to look once. The kind is a box either way and only its
+                // colour moves, because a badge that appears is a badge nobody
+                // notices is missing.
+                col #venues w=138.0 gap=3.0
+                  text venue_name(venue) #venue-name
+                    with
+                      size=10.0
+                      tracking=1.0
+                      @text-fg
+                  NetworkKind #venue-kind target=venue
                 row #pages gap=4.0 align=center
                   NavTab #page-terminal
                     with
@@ -1930,7 +1939,7 @@ view
                         // only in the panel it empties is a gap the reader
                         // finds by going looking for rows that are not coming.
                         col gap=10.0 w=fill
-                          Label value="VENUE"
+                          Label value="NETWORK"
                           text venue_name(venue) #settings-venue
                             with
                               size=16.0
@@ -1938,12 +1947,30 @@ view
                               wrap=word
                               @text-fg
                               @font-bold
-                          text "The switch beside the page tabs points every panel at the other exchange and throws away what this one filled them with."
+                          text "Picking one points every panel at that network and throws away what this one filled them with. A network is an exchange and one of its deployments: they list different markets, hold a position to different margin, and know nothing of each other's orders."
                             with
                               size=12.0
                               w=fill
                               wrap=word
                               @text-muted
+                          // One row per entry in the registry, so a network
+                          // added in Rust appears here without this file being
+                          // touched. This is the picker rather than the header
+                          // because a list that grows needs a column that can
+                          // hold it, and because choosing a network is
+                          // deliberate.
+                          col #network-picker gap=4.0 w=fill
+                            for network in venue_list()
+                              VenueTab #network(venue_name(network)) target=network current=venue
+                                events
+                                  pick -> switch_venue _
+                          if !empty(venue_note(venue))
+                            text venue_note(venue) #settings-network-note
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
                           if !empty(venue_account_gap(venue))
                             text venue_account_gap(venue)
                               with
