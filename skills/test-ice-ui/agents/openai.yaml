@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Ice UI"
+  short_description: "Write Ice UI tests that prove real behavior"
+  default_prompt: "Use $test-ice-ui to add a focused Ice UI regression test and prove its Red/Green behavior."
