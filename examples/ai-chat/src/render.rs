@@ -17,7 +17,7 @@ use iced::widget::{column, container, rich_text, scrollable};
 use iced::{Color, Element, Font, Length, Padding, border};
 
 /// Mirrors the `code` font declared in `src/ui/app.ice`.
-const MONO: &str = "Geist Mono";
+const MONO: &str = "Monoplex KR";
 
 /// Link and inline-code colours, following `src/ui/theme.ice`. They are here
 /// rather than passed per row because a colour is a property of the palette,

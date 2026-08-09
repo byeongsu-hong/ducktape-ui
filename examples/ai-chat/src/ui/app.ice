@@ -2,11 +2,11 @@ app AiChat
   title "Codex"
   palette active_palette
   id "dev.ducktape.ice.ai-chat"
-  font "../../../../assets/fonts/Geist-Regular.ttf"
-  font "../../../../assets/fonts/Geist-Bold.ttf"
-  font "../../../../assets/fonts/Geist-Italic.ttf"
-  font "../../../../assets/fonts/GeistMono-Regular.ttf"
-  font "../../../../assets/fonts/GeistMono-Bold.ttf"
+  font "../../../../assets/fonts/IBMPlexSansKR-Regular.ttf"
+  font "../../../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
+  font "../../../../assets/fonts/IBMPlexSansKR-Bold.ttf"
+  font "../../../../assets/fonts/IBMPlexSans-Italic.ttf"
+  font "../../../../assets/fonts/MonoplexKR-Regular.ttf"
   text-size 14
   window
     size 920 800
@@ -20,8 +20,8 @@ use "entries.ice"
 use "handlers.ice"
 use "tests/app.ice"
 
-font geist family="Geist" default=true
-font code family="Geist Mono"
+font body family="IBM Plex Sans KR" default=true
+font code family="Monoplex KR"
 
 state
   session:Session = codex_session()
