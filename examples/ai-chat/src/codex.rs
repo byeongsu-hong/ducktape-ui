@@ -1132,8 +1132,9 @@ fn sample_rows(dark: bool) -> Vec<Entry> {
             -6,
             false,
             Entry::new("answer", "").body(
-                "**iced 0.14** is current.\n\nFor the Markdown view, append to the parsed \
-                 document instead of rebuilding it:\n\n\
+                "**iced 0.14** is current.\n\n\
+                 ## Streaming into a Markdown view\n\n\
+                 Append to the parsed document with `push_str` instead of rebuilding it:\n\n\
                  ```rust\n\
                  content.push_str(&delta);\n\
                  ```\n\n\

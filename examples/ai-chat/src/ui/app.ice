@@ -150,7 +150,7 @@ view
       with
         w=fill
         px=22.0
-        py=12.0
+        py=9.0
         bg=surface
       row
         with
@@ -158,11 +158,7 @@ view
           gap=12.0
           align=center
         Avatar.Agent initials="C"
-        col gap=1.0
-          text "Codex" @pane_header
-          row gap=6.0 align=center
-            Chip #model options=models selected=model -> choose_model _
-            Chip #effort options=efforts selected=effort -> choose_effort _
+        text "Codex" @pane_header
         space w=fill
         if !empty(account)
           Typography.Machine content=account
@@ -290,11 +286,13 @@ view
                         text "◌" size=12.0 @text-warning
                         text status @field_label
                       markdown live_thinking #live-thinking gap=6.0 text-size=12.5 -> copy_link _
+                        style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
                   markdown live #live-body -> copy_link _
                     with
                       gap=10.0
                       text-size=13.5
                       code-size=12.5
+                    style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
       Separator
       box #composer
         with
@@ -339,13 +337,19 @@ view
                     active bg=primary text=primary_fg r=15.0
                     hovered bg=primary_hover text=primary_fg r=15.0
                     disabled bg=disabled text=disabled_fg r=15.0
+              // What will answer sits with the message about to be sent, not
+              // up in the chrome: it is a property of this turn, not the app.
               row
                 with
                   w=fill
-                  gap=7.0
+                  gap=6.0
                   align=center
-                Kbd label="Enter"
-                text "send" @meta_compact
+                Chip #model options=models selected=model -> choose_model _
+                Chip #effort options=efforts selected=effort -> choose_effort _
                 space w=fill
                 if busy
                   text status @meta_compact
+                if !busy
+                  Kbd label="Enter"
+                if !busy
+                  text "send" @meta_compact

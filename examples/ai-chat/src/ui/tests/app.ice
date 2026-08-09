@@ -60,14 +60,14 @@ test the_composer_will_not_send_a_blank_draft
   type "hello"
   expect a11y send disabled false
 
-// What will answer, and how hard it will think, are both on screen. A picker
-// showing something other than what the next turn asks for is worse than no
-// picker at all.
-test the_header_shows_what_will_answer_and_how_hard
+// What will answer, and how hard it will think, sit with the message about to
+// be sent. A picker showing something other than what the next turn asks for is
+// worse than no picker at all.
+test the_composer_shows_what_will_answer_and_how_hard
   preset conversation
   viewport 920 800
-  target model_chip = #app/header/model/root
-  target effort_chip = #app/header/effort/root
+  target model_chip = #app/composer/model/root
+  target effort_chip = #app/composer/effort/root
   expect text "gpt-5.6-sol" within model_chip
   expect text "xhigh" within effort_chip
 
@@ -79,7 +79,7 @@ test the_header_shows_what_will_answer_and_how_hard
 test clicking_a_chip_raises_it_and_captures_its_menu
   preset conversation
   viewport 920 800
-  target model_chip = #app/header/model/root
+  target model_chip = #app/composer/model/root
   expect model_chip.background == background.color(color.rgb8(255, 255, 255))
 
   click model_chip

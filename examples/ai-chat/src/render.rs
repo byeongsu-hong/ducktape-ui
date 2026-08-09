@@ -19,15 +19,17 @@ use iced::{Color, Element, Font, Length, Padding, border};
 /// Mirrors the `code` font declared in `src/ui/app.ice`.
 const MONO: &str = "Monoplex KR";
 
-/// Link and inline-code colours, following `src/ui/theme.ice`. They are here
-/// rather than passed per row because a colour is a property of the palette,
-/// not of an answer, and the adapter is told only which palette is on.
-const LINK_LIGHT: Color = Color::from_rgb(0.42, 0.29, 0.19);
-const LINK_DARK: Color = Color::from_rgb(0.87, 0.67, 0.47);
-const CODE_BG_LIGHT: Color = Color::from_rgb(0.94, 0.93, 0.91);
-const CODE_BG_DARK: Color = Color::from_rgb(0.17, 0.16, 0.15);
-const CODE_FG_LIGHT: Color = Color::from_rgb(0.34, 0.22, 0.14);
-const CODE_FG_DARK: Color = Color::from_rgb(0.91, 0.78, 0.64);
+/// The palette's `brand` and `accent`/`accent_fg`, following `src/ui/theme.ice`
+/// and matching the `style` block the live answer is drawn with in
+/// `src/ui/app.ice`. They are duplicated here because this adapter builds its
+/// own settings and cannot read a palette — a settled answer and the one still
+/// being written must not disagree about what inline code looks like.
+const LINK_LIGHT: Color = Color::from_rgb(0.627, 0.353, 0.235);
+const LINK_DARK: Color = Color::from_rgb(0.871, 0.667, 0.502);
+const CODE_BG_LIGHT: Color = Color::from_rgb(0.953, 0.949, 0.937);
+const CODE_BG_DARK: Color = Color::from_rgb(0.149, 0.145, 0.137);
+const CODE_FG_LIGHT: Color = Color::from_rgb(0.247, 0.243, 0.224);
+const CODE_FG_DARK: Color = Color::from_rgb(0.847, 0.835, 0.804);
 /// A code block's own ground, dark under either palette — it is the one part
 /// of an answer that should be findable without reading.
 /// On paper the block is ink, and needs no edge. On ink it is a deeper well
@@ -66,7 +68,10 @@ fn style(dark: bool) -> markdown::Style {
     let mono = Font::with_name(MONO);
     markdown::Style {
         font: Font::default(),
-        inline_code_padding: Padding::from([1.0, 4.0]),
+        // The highlight is painted around the span but the line is laid out
+        // from the glyphs alone, so horizontal padding here is drawn over
+        // whatever sits beside it. Keep it to the hair iced itself uses.
+        inline_code_padding: Padding::from([0.0, 3.0]),
         inline_code_highlight: markdown::Highlight {
             background: if dark { CODE_BG_DARK } else { CODE_BG_LIGHT }.into(),
             border: border::rounded(4),
@@ -135,15 +140,16 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
 pub fn markdown_body(id: i64, source: String, size: f64, dark: bool) -> Element<'static, String> {
     let size = size as f32;
     let mut settings = markdown::Settings::with_text_size(size, style(dark));
-    // The heading scale `with_text_size` derives is built for a document.
-    // Inside a chat row a level-one heading twice the body size reads as a
-    // banner, so the ladder is tightened and the code block left alone.
-    settings.h1_size = (size * 1.45).into();
-    settings.h2_size = (size * 1.3).into();
-    settings.h3_size = (size * 1.15).into();
-    settings.h4_size = size.into();
+    // The ladder `with_text_size` derives is built for a document: a level-one
+    // heading at twice the body size reads as a banner inside a chat row. This
+    // one is tightened, but every step still differs from the one below it —
+    // three levels that all render at body size are not a hierarchy.
+    settings.h1_size = (size * 1.34).into();
+    settings.h2_size = (size * 1.22).into();
+    settings.h3_size = (size * 1.12).into();
+    settings.h4_size = (size * 1.05).into();
     settings.h5_size = size.into();
-    settings.h6_size = size.into();
+    settings.h6_size = (size * 0.94).into();
     settings.code_size = (size * 0.9).into();
     settings.spacing = (size * 0.8).into();
 

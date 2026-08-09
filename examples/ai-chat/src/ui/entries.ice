@@ -128,7 +128,17 @@ component Answer(row_id:i64, body:str, dark:bool) -> str
 component Usage(detail:str)
   row #root w=fill
     space w=fill h=1.0
-    Typography.Machine content=detail
+    box
+      with
+        px=10.0
+        py=5.0
+        bg=accent
+        r=7.0
+      text detail
+        with
+          size=11.5
+          font=code
+          @text-muted
 
 // A quiet dropdown for the header: it reads as a subtitle until it is used.
 // The default pick styling puts a filled highlight behind the selection, which

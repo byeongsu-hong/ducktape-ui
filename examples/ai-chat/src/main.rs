@@ -98,6 +98,61 @@ mod perf {
         mode(24).saturating_sub(mode(1))
     }
 
+    /// The same, split: what the state change costs, and what redrawing costs.
+    fn split_at_answer_length(prefix: u32) -> (Duration, Duration) {
+        let token = || {
+            __AiChatMessage::Streamed(Chunk {
+                answer: "another handful of words ".to_owned(),
+                thinking: String::new(),
+                status: "Responding".to_owned(),
+            })
+        };
+        let mut app = booted(1);
+        for _ in 0..prefix {
+            let _ = app.__update(token());
+        }
+        let _ = app.__view();
+        let update_only = measure(|| {
+            let _ = app.__update(token());
+        });
+
+        let mut app = booted(1);
+        for _ in 0..prefix {
+            let _ = app.__update(token());
+        }
+        let _ = app.__view();
+        let both = measure(|| {
+            let _ = app.__update(token());
+            let _ = app.__view();
+        });
+        (update_only, both.saturating_sub(update_only))
+    }
+
+    /// What a token costs once the reply is already `tokens` long.
+    ///
+    /// This is the hot path, and the one that can go quadratic: every token
+    /// lands in a Markdown document that is already on screen. If appending
+    /// reparses from the top, the cost of a token tracks the length of the
+    /// answer so far — and a long reply gets slower as it is written.
+    fn cost_at_answer_length(prefix: u32) -> Duration {
+        let mut app = booted(1);
+        let token = || {
+            __AiChatMessage::Streamed(Chunk {
+                answer: "another handful of words ".to_owned(),
+                thinking: String::new(),
+                status: "Responding".to_owned(),
+            })
+        };
+        for _ in 0..prefix {
+            let _ = app.__update(token());
+        }
+        let _ = app.__view();
+        measure(move || {
+            let _ = app.__update(token());
+            let _ = app.__view();
+        })
+    }
+
     #[test]
     #[ignore = "timing evidence; run explicitly in release mode"]
     fn a_streamed_token_does_not_pay_for_the_settled_transcript() {
@@ -127,6 +182,31 @@ mod perf {
         assert!(
             long < short * 5,
             "per-token cost tracked the transcript: {short:?} -> {long:?}"
+        );
+    }
+
+    /// The claim the streaming path rests on: appending to a parsed document
+    /// costs the same whether the answer is short or long.
+    #[test]
+    #[ignore = "timing evidence; run explicitly in release mode"]
+    fn a_token_costs_the_same_however_long_the_answer_already_is() {
+        if cfg!(debug_assertions) {
+            eprintln!("skipped: run with --release");
+            return;
+        }
+        let mut seen = Vec::new();
+        for prefix in [0, 250, 1000, 3000] {
+            let cost = cost_at_answer_length(prefix);
+            let (update, view) = split_at_answer_length(prefix);
+            eprintln!(
+                "{prefix:>5} written  {cost:>10?} per token   (append {update:>9?}, redraw {view:>9?})"
+            );
+            seen.push(cost);
+        }
+        let (first, last) = (seen[0], seen[seen.len() - 1]);
+        assert!(
+            last < first * 4,
+            "the cost of a token tracked the length of the answer: {first:?} -> {last:?}"
         );
     }
 }
