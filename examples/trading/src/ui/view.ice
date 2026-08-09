@@ -87,6 +87,7 @@ view
                           up=(row.change_pct >= 0.0)
                           size=12.0
                           width=64.0
+                          hug=true
                     none
                       text "—"
                         with
