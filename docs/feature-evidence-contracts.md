@@ -8,10 +8,11 @@ its owner and integrations and updates `SPEC.md`, `README.md`, and
 stacked pull requests; each pull request states which rows it supplies, and the
 epic cannot be declared complete while a required row is missing.
 
-## Ice Core
+## Ice language surface
 
 | Evidence | Required result |
 | --- | --- |
+| Iced coverage | every affected public application-facing ledger row is native through canonical syntax or a typed boundary |
 | Syntax | one canonical form |
 | Parser | accepted and malformed fixtures |
 | Formatter | idempotent canonical output |

@@ -1,13 +1,17 @@
 # iced coverage ledger
 
-This ledger defines what “Ice covers iced” means. The baseline is the versions
-resolved by this workspace: `iced 0.14.0` and `iced_widget 0.14.2`.
+This ledger is the versioned completeness contract for what “Ice covers iced”
+means. The baseline is the versions resolved by this workspace: `iced 0.14.0`
+and `iced_widget 0.14.2`.
 
-This is an implementation inventory, not a roadmap. A partial or missing row does
-not imply planned Ice syntax; uncommon behavior should use an existing typed
-Rust boundary unless it satisfies the Core criteria in [`SPEC.md`](SPEC.md).
-The implemented 2.0 Preview candidate and the workspace's pre-1.0 package version `0.1.0`
-are intentionally separate version schemes.
+This is both an implementation inventory and the compatibility gate for a
+pinned iced baseline. A partial or missing application-facing row is a coverage
+gap and blocks a complete-coverage claim. Closing a gap does not necessarily
+mean adding dedicated Ice syntax: common declarative concepts belong in Core,
+while higher-order or custom native behavior may use an existing or extended
+typed Rust boundary under the criteria in [`SPEC.md`](SPEC.md). The implemented
+2.0 Preview candidate and the workspace's pre-1.0 package version `0.1.0` are
+intentionally separate version schemes.
 
 - **native**: accepted Ice syntax is parsed, type-checked, lowered, and compiled
   by the reference application or a focused test.
