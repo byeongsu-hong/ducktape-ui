@@ -340,7 +340,7 @@ test trading_settings_states_what_this_venue_can_and_cannot_serve
   // The name in the VENUE section rather than anywhere on screen: the header
   // draws both names on every page, so an unscoped one would pass with this
   // section empty and with the venue switched under it.
-  target named = settings/settings-venue
+  target named = settings/settings-content/settings-venue
   dispatch navigate(Page.settings)
   expect text "VENUE"
   expect text "Lighter" within named
