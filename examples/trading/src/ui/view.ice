@@ -46,28 +46,42 @@ view
                 row #price gap=14.0 align=center
                   match focus
                     some(row)
-                      if live && row.change_pct >= 0.0
-                        text fmt_px(row.price)
-                          with
-                            size=20.0
-                            w=118.0
-                            font=digits
-                            @text-up
-                      if live && row.change_pct < 0.0
-                        text fmt_px(row.price)
-                          with
-                            size=20.0
-                            w=118.0
-                            font=digits
-                            @text-down
-                      if !live
-                        text fmt_px(row.price)
-                          with
-                            size=20.0
-                            w=118.0
-                            font=digits
-                            @text-faint
-                      Delta
+                      // The digits sit at the right of their slot, against
+                      // the move they belong to. The slot is as wide as the
+                      // widest price so the strip does not move when one
+                      // market is read after another — left-aligned, every
+                      // pixel a shorter price did not use opened up between
+                      // the figure and its own percentage, which are one
+                      // reading. Right-aligned the slack falls on the left,
+                      // where the symbol block's own spacing absorbs it, and
+                      // a tick that crosses a magnitude grows the number
+                      // leftward instead of pushing the percentage about.
+                      row #last w=118.0 align=center
+                        if live && row.change_pct >= 0.0
+                          text fmt_px(row.price)
+                            with
+                              size=20.0
+                              w=fill
+                              align-x=right
+                              font=digits
+                              @text-up
+                        if live && row.change_pct < 0.0
+                          text fmt_px(row.price)
+                            with
+                              size=20.0
+                              w=fill
+                              align-x=right
+                              font=digits
+                              @text-down
+                        if !live
+                          text fmt_px(row.price)
+                            with
+                              size=20.0
+                              w=fill
+                              align-x=right
+                              font=digits
+                              @text-faint
+                      Delta #change
                         with
                           value=fmt_pct(row.change_pct)
                           up=(row.change_pct >= 0.0)
@@ -78,6 +92,7 @@ view
                         with
                           size=20.0
                           w=118.0
+                          align-x=right
                           font=digits
                           @text-faint
                       // A move with no price to have moved has no direction,

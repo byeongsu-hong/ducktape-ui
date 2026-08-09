@@ -153,3 +153,41 @@ test trading_a_position_row_quotes_its_own_pnl_to_the_cent
   expect text "-$2,400.00" within held
   expect no text "-$2.4K"
   expect text "-$33.36" within held
+
+// The price and the percentage beside it are one reading, and the slot the
+// price sits in is as wide as the widest market's so the strip does not move
+// when one market is read after another. Left-aligned, every pixel a shorter
+// price did not use opened up between the figure and its own move — 58px of it
+// on a market quoted in three digits, against the 14px the row actually asks
+// for. Right-aligned the slack falls on the left, where the symbol block's own
+// spacing absorbs it.
+//
+// The oracle is the gap itself rather than a position, because a position
+// would pass just as well with the hole moved somewhere else: the last glyph
+// of the price ends one row gap before the percentage starts, at every
+// magnitude the fixtures quote.
+test trading_the_price_reads_against_the_move_it_belongs_to
+  preset held
+  viewport 1660 820
+  target app = #app
+  target header = app/header
+  target priced = header/price
+  target last = priced/last
+  target change = priced/change/root
+  expect text "64,000.00" within last
+  expect (last.text_x + last.text_width) ~= change.x - 14.0
+  // A beat that crosses a magnitude grows the number leftward. The percentage
+  // is what a reader is watching beside it, and it does not move.
+  expect change.x ~= 242.2144
+  dispatch market_ticked(demo_tick_at(6400.0))
+  expect text "6,400.00" within last
+  expect (last.text_x + last.text_width) ~= change.x - 14.0
+  expect change.x ~= 242.2144
+  // Seven digits, and then a market worth a fraction of a cent. Each one is a
+  // different width of number in the same slot.
+  dispatch pick_symbol("SOL")
+  expect text "148.620" within last
+  expect (last.text_x + last.text_width) ~= change.x - 14.0
+  dispatch pick_symbol("kPEPE")
+  expect text "0.008421" within last
+  expect (last.text_x + last.text_width) ~= change.x - 14.0
