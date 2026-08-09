@@ -1777,105 +1777,120 @@ view
                   hovered
                     y-rail bg=bg
                     y-scroller bg=faint r=3.0
-                  row
+                  // Two fixed columns in a window that is not fixed. 480 + 48 +
+                  // 480 is 1008 of content and 28 of padding on each side, so
+                  // this page has wanted exactly 1064 since it was written —
+                  // under the window's own 1180 minimum, and under every width
+                  // above it. What was missing was the other half of that
+                  // arithmetic: the leftover was all being spent on the right,
+                  // so at 1660 the columns sat against the left edge with 596px
+                  // of nothing beside them. Centred rather than widened,
+                  // because these are paragraphs: 480 is the measure they were
+                  // written to, and a line run the width of a 1660 window is
+                  // one the eye loses on the way back to the next.
+                  box
                     with
                       w=fill
                       p=28.0
-                      gap=48.0
-                    col gap=26.0 w=480.0
-                      col gap=10.0 w=fill
-                        Label value="ADDRESS"
-                        if empty(address)
-                          text "No account is being read. Everything this app knows about an account — its positions, its resting orders, its fills on the chart — belongs to one address, and there is none."
+                      align-x=center
+                    row #settings-content gap=48.0
+                      col gap=26.0 w=480.0
+                        col gap=10.0 w=fill
+                          Label value="ADDRESS"
+                          if empty(address)
+                            text "No account is being read. Everything this app knows about an account — its positions, its resting orders, its fills on the chart — belongs to one address, and there is none."
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                          if !empty(address)
+                            text address
+                              with
+                                size=13.0
+                                w=fill
+                                wrap=word
+                                font=digits
+                                @text-fg
+                          button #change-address -> reopen
+                            with
+                              label="Connect a different address"
+                              p=10.0
+                            active bg=raised text=muted r=4.0
+                            hovered bg=edge text=fg r=4.0
+                            text "Connect a different address" size=12.0
+                        rule horizontal thickness=1.0 color=edge
+                        // What this exchange will and will not answer, stated
+                        // where the app's own facts are stated. A gap named
+                        // only in the panel it empties is a gap the reader
+                        // finds by going looking for rows that are not coming.
+                        col gap=10.0 w=fill
+                          Label value="VENUE"
+                          text venue_name(venue) #settings-venue
+                            with
+                              size=16.0
+                              w=fill
+                              wrap=word
+                              @text-fg
+                              @font-bold
+                          text "The switch beside the page tabs points every panel at the other exchange and throws away what this one filled them with."
                             with
                               size=12.0
                               w=fill
                               wrap=word
                               @text-muted
-                        if !empty(address)
-                          text address
-                            with
-                              size=13.0
-                              w=fill
-                              wrap=word
-                              font=digits
-                              @text-fg
-                        button #change-address label="Connect a different address" p=10.0 -> reopen
-                          active bg=raised text=muted r=4.0
-                          hovered bg=edge text=fg r=4.0
-                          text "Connect a different address" size=12.0
-                      rule horizontal thickness=1.0 color=edge
-                      // What this exchange will and will not answer, stated
-                      // where the app's own facts are stated. A gap named
-                      // only in the panel it empties is a gap the reader
-                      // finds by going looking for rows that are not coming.
-                      col gap=10.0 w=fill
-                        Label value="VENUE"
-                        text venue_name(venue) #settings-venue
+                          if !empty(venue_account_gap(venue))
+                            text venue_account_gap(venue)
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                        rule horizontal thickness=1.0 color=edge
+                        col gap=10.0 w=fill
+                          Label value="FEED"
+                          Stat name="ROUND TRIP" value=fmt_latency(latency)
+                          if live
+                            text "One socket carries the mark, the book, the tape and the chart, and the round trip above is its own ping rather than a clock compared with the exchange's."
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                          if !live
+                            text "Nothing is arriving. Every price on screen is the last one that did."
+                              with
+                                size=12.0
+                                w=fill
+                                wrap=word
+                                @text-muted
+                      col gap=12.0 w=480.0
+                        Label value="DEMO ONLY"
+                        text "It signs nothing and sends nothing."
                           with
                             size=16.0
                             w=fill
                             wrap=word
                             @text-fg
                             @font-bold
-                        text "The switch beside the page tabs points every panel at the other exchange and throws away what this one filled them with."
+                        text "This app reads the venue named beside this and prices orders against that margin engine's own arithmetic, which is the whole of what it does."
                           with
                             size=12.0
                             w=fill
                             wrap=word
                             @text-muted
-                        if !empty(venue_account_gap(venue))
-                          text venue_account_gap(venue)
-                            with
-                              size=12.0
-                              w=fill
-                              wrap=word
-                              @text-muted
-                      rule horizontal thickness=1.0 color=edge
-                      col gap=10.0 w=fill
-                        Label value="FEED"
-                        Stat name="ROUND TRIP" value=fmt_latency(latency)
-                        if live
-                          text "One socket carries the mark, the book, the tape and the chart, and the round trip above is its own ping rather than a clock compared with the exchange's."
-                            with
-                              size=12.0
-                              w=fill
-                              wrap=word
-                              @text-muted
-                        if !live
-                          text "Nothing is arriving. Every price on screen is the last one that did."
-                            with
-                              size=12.0
-                              w=fill
-                              wrap=word
-                              @text-muted
-                    col gap=12.0 w=480.0
-                      Label value="DEMO ONLY"
-                      text "It signs nothing and sends nothing."
-                        with
-                          size=16.0
-                          w=fill
-                          wrap=word
-                          @text-fg
-                          @font-bold
-                      text "This app reads the venue named beside this and prices orders against that margin engine's own arithmetic, which is the whole of what it does."
-                        with
-                          size=12.0
-                          w=fill
-                          wrap=word
-                          @text-muted
-                      text "It reads: the tradeable universe, candles, the book, the public tape, and — for the address beside this — that account's equity, positions, resting orders and fills. What a venue will not answer is said above and in the panel it empties."
-                        with
-                          size=12.0
-                          w=fill
-                          wrap=word
-                          @text-muted
-                      text "It will not place, amend or cancel an order, move margin, or ask for a key. Sending would mean this app holding the key that signs an EIP-712 order, which is not a thing an example should ask for. Everything up to that signature is arithmetic worth having, and the signature is where a real client starts."
-                        with
-                          size=12.0
-                          w=fill
-                          wrap=word
-                          @text-muted
+                        text "It reads: the tradeable universe, candles, the book, the public tape, and — for the address beside this — that account's equity, positions, resting orders and fills. What a venue will not answer is said above and in the panel it empties."
+                          with
+                            size=12.0
+                            w=fill
+                            wrap=word
+                            @text-muted
+                        text "It will not place, amend or cancel an order, move margin, or ask for a key. Sending would mean this app holding the key that signs an EIP-712 order, which is not a thing an example should ask for. Everything up to that signature is arithmetic worth having, and the signature is where a real client starts."
+                          with
+                            size=12.0
+                            w=fill
+                            wrap=word
+                            @text-muted
       layer
         box #gate
           with
