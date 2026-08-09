@@ -108,6 +108,122 @@ test window_context
     assert!(generated.contains("__test.check_text"));
 }
 
+/// The scope a view gives its ids and the scope a test target addresses are
+/// one derivation, not two spellings that can drift apart. A daemon holding
+/// mounted component state renders under a window-qualified root, and the
+/// Ice test surface has no way to write that `Id(..)` segment by hand, so a
+/// target that started at the bare app name could never be found.
+#[test]
+fn a_daemon_test_target_starts_at_the_window_qualified_root_its_view_renders() {
+    let generated = compile(
+        r#"daemon Fade
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Panel()
+  lifetime mounted
+  state
+    open = false
+  col #body
+    if open
+      text "open"
+view
+  col #root
+    Panel #panel
+test the_panel_is_addressable
+  target panel = #root/panel/body
+  expect exists panel
+"#,
+        "fade.ice",
+    )
+    .unwrap();
+
+    assert!(
+        generated.contains("let __ice_root_scope = format!(\"{}/{:?}\", \"Fade\", window);"),
+        "the view should scope its ids under the window it renders"
+    );
+    assert!(
+        generated
+            .contains("format!(\"{}/{:?}\", \"Fade\", __test.window()) + \"/root/panel/body\""),
+        "the target should address the same root the view rendered"
+    );
+}
+
+/// The other side of the same distinction: qualification follows the view, so
+/// a root the view leaves bare keeps its targets bare.
+#[test]
+fn an_unqualified_root_keeps_its_test_targets_unqualified() {
+    let mounted_app = compile(
+        r#"app Fade
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Panel()
+  lifetime mounted
+  state
+    open = false
+  col #body
+    if open
+      text "open"
+view
+  col #root
+    Panel #panel
+test the_panel_is_addressable
+  target panel = #root/panel/body
+  expect exists panel
+"#,
+        "fade.ice",
+    )
+    .unwrap();
+
+    // An `app` renders one window, so its root never names one.
+    assert!(mounted_app.contains("let __ice_root_scope = \"Fade\".to_owned();"));
+    assert!(mounted_app.contains("\"Fade\".to_owned() + \"/root/panel/body\""));
+    assert!(!mounted_app.contains("__test.window()"));
+
+    let plain_daemon = compile(
+        r#"daemon Fade
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  col #root
+    text "panel" #panel
+test the_panel_is_addressable
+  target panel = #root/panel
+  expect exists panel
+"#,
+        "fade.ice",
+    )
+    .unwrap();
+
+    // No mounted state means no per-window storage to key, so a daemon's root
+    // stays the app name and its targets stay with it.
+    assert!(plain_daemon.contains("\"Fade\".to_owned() + \"/root/panel\""));
+    assert!(!plain_daemon.contains("__ice_root_scope"));
+}
+
 #[test]
 fn lowers_expanded_semantic_test_actions_to_the_runtime_driver() {
     let source = r#"app Semantic
