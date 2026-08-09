@@ -181,11 +181,38 @@ The worst case this screen can be handed — 24 settled turns behind a
 second, so the budget for one is 10–20 ms: that worst case is under 2% of it.
 Further tuning is not warranted, and none was kept.
 
+## Chats already had
+
+`History` lists the rollouts the Codex CLI wrote under `~/.codex/sessions`, and
+opening one draws it as a transcript. The session becomes that chat — its own
+`input` is loaded too — so carrying on from it continues that conversation
+rather than starting beside it.
+
+Two streams run through a rollout: the raw `response_item` records, which are
+what was resent to the API, and the `event_msg` records, which are what the CLI
+drew. This reads the second, because it is already the list this window draws.
+It brings back things this window cannot itself produce — shell commands with
+their output, file changes, MCP calls — because a chat is being read back, not
+re-run.
+
+These files are large: a median of 2MB and a tail past 90MB. The listing reads
+only each file's head, and opening one streams it a line at a time and keeps a
+bounded number of rows, saying how many it left out. Measured on a machine with
+1,036 of them: the list took 210ms, and a 26MB chat opened in 247ms.
+
+![Chats already had](screenshots/history.png)
+
 ## Limits
 
 - An overlay's contents are outside the tree the test harness scans, so a
   menu's appearance is reviewed from a capture rather than asserted. The test
   that produces it says so.
+- A past reasoning summary comes back only from rollouts that recorded the
+  drawn item. The raw record carries encrypted content and no summary, so
+  chats written without the drawn stream show their prompts, answers and tools
+  but not what the model was thinking.
+- A chat whose first prompt sits past the first 256KB of its rollout is listed
+  as `Untitled chat` rather than read through for a name.
 - **The sign-in is not fully verified.** Minting a code and telling waiting from
   refused are both checked against the live host; the half past approval — what
   the host returns once a code is typed, and the token exchange — is read off

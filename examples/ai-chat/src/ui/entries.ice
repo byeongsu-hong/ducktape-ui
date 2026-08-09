@@ -167,3 +167,30 @@ component Chip(options:[str], selected:str?) -> str
     handle dynamic
       closed code="▾" size=13.0
       open code="▴" size=13.0
+
+// One chat that already happened, as a row to open it by.
+component PastChat(chat:Chat) -> str
+  button #root -> emit(chat.path)
+    with
+      label=chat.title
+      w=fill
+      p=0.0
+      @ghost_action
+    box
+      with
+        w=fill
+        px=13.0
+        py=10.0
+        r=9.0
+      col w=fill gap=3.0
+        text chat.title wrap=word @field_label
+        row gap=8.0 align=center
+          text chat.when @meta
+          text chat.cwd @machine
+
+// A row saying what was left out, so a truncated transcript says so rather
+// than quietly beginning in the middle.
+component Note(title:str)
+  row #root w=fill gap=11.0
+    rule vertical thickness=2.0 color=border
+    text title @meta

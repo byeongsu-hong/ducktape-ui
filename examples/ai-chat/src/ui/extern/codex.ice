@@ -62,3 +62,11 @@ extern crate::auth
 extern crate::composer
   Send()
   editor-binding composer_keys() -> Send
+
+// Chats the CLI has already had. The listing reads only each rollout's head;
+// opening one streams it, because these files run to tens of megabytes.
+extern crate::history
+  Chat(path:str, title:str, when:str, cwd:str)
+  pure sample_chats() -> [Chat]
+  recent_chats() -> [Chat]
+  open_recent(session:Session, path:str) -> [Entry] ! CodexError

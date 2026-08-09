@@ -161,3 +161,24 @@ test copying_a_message_puts_its_own_text_on_the_clipboard
 
   click reply
   expect copied != "Which version of iced is current, and how do I stream a reply into a Markdown view?"
+
+// Chats already had are offered by name and date, and picking one opens it.
+// The list is fetched when the panel is asked for rather than at startup,
+// because it touches every rollout on the machine.
+// An overlay's contents are outside the tree the harness scans — the same
+// limit the picker menu has — so what is asserted is that the panel is there
+// with a row per chat, and the capture is what its appearance is reviewed from.
+test the_history_panel_offers_chats_by_name
+  preset history
+  viewport 920 700
+  expect exists #history-panel
+  expect exists #history-panel/chat-list
+  capture history
+
+// And it is not in the way until it is wanted.
+test the_history_panel_is_shut_until_it_is_asked_for
+  preset conversation
+  viewport 920 700
+  target history = #app/header/history
+  expect a11y history name "History"
+  expect missing #history-panel

@@ -163,3 +163,36 @@ on forget
   session = codex_session()
   entries = []
   error = ""
+
+// Chats the CLI has already had. The list is fetched when it is asked for
+// rather than at startup, because it touches a thousand files.
+on show_history
+  history_open = true
+  error = ""
+  run recent_chats() -> chats_listed _
+
+on chats_listed(found)
+  chats = found
+
+on close_history
+  history_open = false
+
+on pick_chat(path)
+  history_open = false
+  loading_chat = true
+  error = ""
+  run open_recent(session, path) -> chat_opened _ | chat_failed _
+
+// Opening a chat replaces this one: the session becomes that conversation, so
+// carrying on from it resends its own history rather than starting beside it.
+on chat_opened(rows)
+  entries = rows
+  loading_chat = false
+  live = markdown("")
+  live_thinking = markdown("")
+  copied = ""
+  task widget snap-end #app/transcript
+
+on chat_failed(cause)
+  loading_chat = false
+  error = cause.message
