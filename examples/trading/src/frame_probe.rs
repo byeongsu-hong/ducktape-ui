@@ -868,8 +868,8 @@ fn direct_call_cost() {
         )
     );
     price_fold!(
-        "tray_status(coin, focus)",
-        hyperliquid::tray_status(state.coin.clone(), state.focus.clone())
+        "tray_status(coin, focus, live)",
+        hyperliquid::tray_status(state.coin.clone(), state.focus.clone(), state.live)
     );
 
     eprintln!(
