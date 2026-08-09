@@ -59,6 +59,7 @@ extern crate::hyperliquid
   pure demo_tape_ticked(mid:f64, tick:f64) -> [Trade]
   sync demo_candles_for(coin:str, last:f64) -> Tape
   pure demo_hover() -> CandleHit
+  pure demo_chart_older() -> ChartSignal
   pure demo_tick() -> MarketTick
   pure demo_tick_at(btc:f64) -> MarketTick
   pure demo_feed_error() -> HlError

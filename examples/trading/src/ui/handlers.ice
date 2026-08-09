@@ -164,6 +164,7 @@ on pick_symbol(name)
   status = "Loading candles"
   tape = tape_focus(tape, name, interval)
   loading_history = false
+  history_exhausted = false
   run venue_candles(venue, tape, name, interval) -> candles_loaded _ | failed _
 
 // A venue owns every panel on the screen, so this throws away at least what
@@ -216,6 +217,7 @@ on switch_venue(next)
   quote = price_ticket("", "", ticket_leverage, none, ticket_buy, 0.0)
   hover = none
   loading_history = false
+  history_exhausted = false
   // A fresh tape rather than a re-pointed one. `tape_focus` drops what is in
   // flight by comparing the market it was asked for, and both venues would ask
   // for the same market at the same width — so the feed being aborted, which
@@ -252,6 +254,7 @@ on pick_interval(next)
   status = "Loading candles"
   tape = tape_focus(tape, coin, next)
   loading_history = false
+  history_exhausted = false
   run venue_candles(venue, tape, coin, next) -> candles_loaded _ | failed _
 
 on search(typed)
@@ -307,11 +310,19 @@ on symbols_loaded(rows)
   status = "Loading candles"
   tape = tape_focus(tape, landed, interval)
   loading_history = false
+  history_exhausted = false
   run venue_candles(venue, tape, landed, interval) -> candles_loaded _ | failed _
 
+// A window of candles is a new left edge for the chart to be panned back from,
+// so whatever was known about the old one is not about this tape. It also
+// catches the empty tape: a chart with no bars is trivially at its oldest one
+// and signals for history, the read has no window to ask about and answers
+// nothing older, and the backfill already in flight is what says the market
+// was never the exhausted one.
 on candles_loaded(_count)
   error = ""
   status = ""
+  history_exhausted = false
 
 // An account read with no address to make it for answers nothing rather than
 // failing, so this is also how the app comes back to holding no account at all.
@@ -357,18 +368,27 @@ on feed_failed(reason)
   latency = 0
   live = false
 
+// The chart reaching its oldest bar asks for the window before it. Nothing is
+// said while that window is read: the bars arriving is the whole of the
+// feedback, and a line under the header that comes and goes on every pan
+// reflows the terminal the reader is working in.
 on chart_signalled(signal)
   hover = signal.hover
   return if !signal.older
-  return if loading_history
+  return if loading_history || history_exhausted
   loading_history = true
-  status = "Loading history"
   run venue_history(venue, tape, coin, interval) -> history_loaded _ | failed _
 
-on history_loaded(_count)
+// How many bars older than the tape's first one the read added, and zero is
+// the venue saying there are none. The window asked for is derived from that
+// same first bar, so an unrecorded zero asks for it again the moment the chart
+// is still sitting at its left edge — which it is, because nothing moved. A
+// market with less history than the window is wide reads "loading" forever
+// that way.
+on history_loaded(older)
   error = ""
   loading_history = false
-  status = ""
+  history_exhausted = older == 0
 
 on lower_resized(_dx, dy)
   lower_height = pane_height(lower_height - dy)

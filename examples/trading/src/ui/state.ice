@@ -51,6 +51,7 @@ state
   feed_error = ""
   flashing = false
   loading_history = false
+  history_exhausted = false
   lower_height = 232.0
   rail_open = false
   fills_open = false

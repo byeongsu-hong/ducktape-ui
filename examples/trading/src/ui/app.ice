@@ -43,6 +43,7 @@ use "tests/markets.ice"
 use "tests/alerts.ice"
 use "tests/ticket.ice"
 use "tests/feed.ice"
+use "tests/history.ice"
 use "tests/venues.ice"
 use "tests/render.ice"
 

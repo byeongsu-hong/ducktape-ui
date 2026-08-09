@@ -538,15 +538,32 @@ pub async fn hl_candles(tape: Tape, coin: String, interval: String) -> Result<i6
     Ok(candles.len() as i64)
 }
 
+/// How many of the tape's bars are older than the bar it began at, which is
+/// the whole of what a history read achieved. Counted against a timestamp
+/// rather than against a length, because the live feed appends at the other
+/// end of the same tape: a length that grew by one says nothing about whether
+/// the exchange had anything older to give.
+pub(crate) fn older_than(candles: &[Candle], oldest: i64) -> i64 {
+    candles.partition_point(|candle| candle.ts < oldest) as i64
+}
+
 /// Loads the window of candles that ends where the tape currently begins, so
-/// a chart panned back to its oldest bar can keep going. Returns the tape
-/// length, which is unchanged when the exchange has nothing older to give.
+/// a chart panned back to its oldest bar can keep going.
+///
+/// Answers how many older bars it added. Zero means the venue had nothing
+/// before the bar the tape starts at, and the caller must stop asking: the
+/// window is derived from that same first bar, so an identical request would
+/// come back identically for as long as the chart sits at its left edge. A
+/// read that lands after the reader has moved on adds nothing either, and
+/// answers zero for the same reason a read of an empty tape does — it moved
+/// no left edge.
 pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
     let key = focus_key(&coin, &interval);
-    let end = { lock(&tape.candles).first().map(|candle| candle.ts * 1_000) };
-    let Some(end) = end else {
+    let oldest = { lock(&tape.candles).first().map(|candle| candle.ts) };
+    let Some(oldest) = oldest else {
         return Ok(0);
     };
+    let end = oldest * 1_000;
     let start = end - BACKFILL_BARS * interval_secs(&interval) * 1_000;
     let response = info(json!({
         "type": "candleSnapshot",
@@ -557,10 +574,10 @@ pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i6
     let mut candles = lock(&tape.candles);
     if *lock(&tape.focus) != key {
         // The user moved on while this was in flight.
-        return Ok(candles.len() as i64);
+        return Ok(0);
     }
     merge(&mut candles, parse_candles(&response));
-    Ok(candles.len() as i64)
+    Ok(older_than(&candles, oldest))
 }
 
 /// A market's move against yesterday's close, as a percentage.
@@ -2718,6 +2735,16 @@ pub fn demo_tick_at(btc: f64) -> MarketTick {
     }
 }
 
+/// The chart reporting that the view has been taken back to the oldest bar it
+/// holds, which is the one signal that asks for history. For driving the
+/// handler that answers it.
+pub fn demo_chart_older() -> ChartSignal {
+    ChartSignal {
+        hover: None,
+        older: true,
+    }
+}
+
 pub fn demo_hover() -> CandleHit {
     let tape = demo_candles();
     let candles = lock(&tape.candles);
@@ -4027,6 +4054,37 @@ mod tests {
         let switched = tape_focus(held.clone(), "ETH".into(), "5m".into());
         assert_eq!(*lock(&switched.focus), "ETH:5m");
         assert!(lock(&switched.candles).is_empty());
+    }
+
+    /// What a history read answers, and it is the figure the chart stops on: a
+    /// page that carried nothing before the bar the tape began at is the venue
+    /// saying there is no more, and asking again would send the same request.
+    ///
+    /// Counted against that first timestamp rather than against a length,
+    /// because the live feed is merging into the same tape from the other end.
+    /// A length comparison reads a new live bar as a page of history and asks
+    /// again, which is the loop this figure exists to end.
+    #[test]
+    fn a_history_page_is_measured_by_what_it_added_before_the_first_bar() {
+        let bar = |ts: i64| Candle {
+            ts,
+            open: 1.0,
+            high: 2.0,
+            low: 0.5,
+            close: 1.5,
+            volume: 1.0,
+        };
+        let mut tape = vec![bar(120), bar(180)];
+        let oldest = tape[0].ts;
+
+        // The venue answers the same window it already gave, and the live bar
+        // lands while it does.
+        merge(&mut tape, vec![bar(120), bar(180), bar(240)]);
+        assert_eq!(tape.len(), 3, "the feed's bar is on the tape");
+        assert_eq!(older_than(&tape, oldest), 0, "nothing older arrived");
+
+        merge(&mut tape, vec![bar(0), bar(60)]);
+        assert_eq!(older_than(&tape, oldest), 2, "two bars before the first");
     }
 
     #[test]
