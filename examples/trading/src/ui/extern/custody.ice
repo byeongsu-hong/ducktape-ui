@@ -30,9 +30,25 @@ extern crate::custody
   pure session_account(session:Session) -> str
   pure session_window(session:Session, now:i64) -> str
   pure session_unlockable(session:Session) -> bool
-  pure session_refusal(venue:Venue, session:Session) -> str
+  pure session_refusal(session:Session) -> str
   unlock_agent(venue:Venue, address:str) -> Entry ! CustodyFault
   enrol_agent(venue:Venue, address:str) -> Entry ! CustodyFault
+  // Why the send is dead, or nothing when it is live. One sentence over both
+  // halves of the question — whether this session may sign at all, and whether
+  // the order as typed is one a venue would take — because the button has one
+  // disabled state and a condition left out of an `&&` in the view is a live
+  // button over an order that should never have been offered.
+  pure order_gate(venue:Venue, session:Session, now:i64, draft:Draft) -> str
+  // The session half on its own, for the controls that ask nothing of the
+  // ticket: a half-typed size must not be a reason a resting order cannot be
+  // pulled.
+  pure trade_refusal(venue:Venue, session:Session, now:i64) -> str
+  // The two acts that spend money. Both re-ask the gate on the far side of the
+  // press: a press and a send are two moments, and a window that closed between
+  // them is exactly what a screen-level check cannot see. Both answer the
+  // sentence the status line prints, in the venue's own words when it refused.
+  submit_order(venue:Venue, session:Session, now:i64, draft:Draft?) -> str ! HlError
+  cancel_resting(venue:Venue, session:Session, now:i64, coin:str, oid:i64) -> str ! HlError
   // Sessions a preset can be drawn in. Each is built by driving the real state
   // machine rather than by naming a variant, so a fixture cannot be a state the
   // machine would never reach.

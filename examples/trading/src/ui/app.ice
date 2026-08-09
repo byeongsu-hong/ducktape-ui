@@ -48,6 +48,7 @@ use "tests/history.ice"
 use "tests/reads.ice"
 use "tests/venues.ice"
 use "tests/custody.ice"
+use "tests/submit.ice"
 use "tests/render.ice"
 
 font plex family="IBM Plex Sans KR" default=true

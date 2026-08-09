@@ -24,6 +24,24 @@ extern crate::venue
   pure tif_name(venue:Venue, tif:Tif) -> str
   pure tif_act(venue:Venue, tif:Tif) -> str
   pure venue_tif_note(venue:Venue, tif:Tif) -> str
+  // The order the ticket is describing, projected once and frozen on the
+  // press. The panel's readouts and the bytes that reach an exchange are the
+  // same handful of numbers, so a confirmation cannot agree with a screen the
+  // wire never saw.
+  Draft(coin:str, buy:bool, size:f64, price:f64, walked:bool, reduce_only:bool, cross:bool, leverage:f64, notional:f64, margin:f64, liquidation:f64, tp:f64, sl:f64, refusal:str)
+  pure order_draft(venue:Venue, coin:str, market:SymbolRow?, buy:bool, size:str, price:f64, walked:bool, reduce_only:bool, cross:bool, tif:Tif, quote:Ticket, tp:str, sl:str, reduce_refusal:str, tp_refusal:str, sl_refusal:str) -> Draft
+  // What pressing send would do, in one line, for the button's accessible name.
+  pure order_act(draft:Draft) -> str
+  // Whether a confirmation is standing over an order, which is what raises the
+  // panel over the terminal.
+  pure order_pending(draft:Draft?) -> bool
+  pure confirm_price(draft:Draft?) -> f64
+  pure confirm_size(draft:Draft?) -> f64
+  pure confirm_notional(draft:Draft?) -> f64
+  pure confirm_liquidation(draft:Draft?) -> f64
+  pure confirm_walked(draft:Draft?) -> bool
+  pure review_label(buy:bool) -> str
+  pure margin_mode(cross:bool) -> str
   pure venue_attaches_levels(venue:Venue) -> bool
   pure venue_levels_note(venue:Venue) -> str
   pure venue_fills_note(venue:Venue, watching:bool, failure:str) -> str

@@ -215,6 +215,7 @@ test trading_a_target_on_the_wrong_side_of_the_entry_is_refused_with_the_reason
   // Folded away, and folded away is not attached: there is no field to type
   // a level into and no level on the order.
   expect missing take
+  scroll-to ticket 0.0 400.0
   click attach
   expect ticket_levels
   expect ticket_buy
@@ -264,6 +265,7 @@ test trading_a_stop_past_the_cliff_says_the_engine_gets_there_first
   target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
   target attach = ticket/ticket-attach
   target stop = ticket/ticket-levels/ticket-sl
+  scroll-to ticket 0.0 400.0
   click attach
   // A sell adds to the short the fixture holds, so the order opens a position
   // and has a cliff to be past. A buy would close one and have none.
@@ -312,6 +314,7 @@ test trading_a_venue_that_attaches_no_levels_says_so_instead_of_offering_them
   // gap rather than a feature nobody built.
   dispatch switch_venue(Venue.hyperliquid)
   dispatch symbols_loaded(demo_symbols())
+  scroll-to ticket 0.0 400.0
   expect exists attach
   expect text "Attach a take-profit and a stop-loss"
   expect no text "Lighter attaches no levels to an entry"
@@ -331,6 +334,7 @@ test trading_reduce_only_refuses_to_add_to_what_is_held
   // one the order keeps.
   expect position_held(positions, coin) < 0.0
   expect ticket_buy
+  scroll-to ticket 0.0 400.0
   click reduce
   expect ticket_reduce
   expect empty(reduce_refusal)
@@ -341,6 +345,7 @@ test trading_reduce_only_refuses_to_add_to_what_is_held
   expect reduce_refusal == "This order adds to the short you hold. Reduce-only sends nothing rather than a smaller order."
   expect text reduce_refusal
   // Unticked, the same order is ordinary and says nothing.
+  scroll-to ticket 0.0 400.0
   click reduce
   expect !ticket_reduce
   expect no text "Reduce-only sends nothing"
@@ -391,6 +396,7 @@ test trading_a_cross_order_dies_against_the_account_and_an_isolated_one_does_not
   // the leverage the ticket priced at and the requirement this market holds.
   expect quote.liquidation ~= 75851.851851
   expect text "Isolated margin: this order stands on the requirement above and on nothing else, at the maintenance this market holds. The rest of the account is untouched by it."
+  scroll-to ticket 0.0 400.0
   click cross
   expect ticket_cross
   // Cross: the account is $3.7m against a $24k requirement, so the same order
@@ -403,6 +409,7 @@ test trading_a_cross_order_dies_against_the_account_and_an_isolated_one_does_not
   // stands and what kills it that differ, which is why the mode is said out
   // loud rather than left to the number.
   expect quote.margin ~= 12800.0
+  scroll-to ticket 0.0 400.0
   click isolated
   expect !ticket_cross
   expect quote.liquidation ~= 75851.851851
@@ -422,6 +429,7 @@ test trading_a_cross_cliff_needs_the_account_it_is_measured_against
   expect !account_read(account)
   expect quote.known
   expect quote.liquidation > 0.0
+  scroll-to ticket 0.0 400.0
   click cross
   expect !quote.known
   expect quote.liquidation ~= 0.0

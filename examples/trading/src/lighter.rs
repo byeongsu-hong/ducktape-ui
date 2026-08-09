@@ -25,7 +25,7 @@ use crate::hyperliquid::{
     Account, Book, Candle, Event, HlError, Level, MarketTick, Order, Position, SymbolRow, Tape,
     Trade, merge, older_than, wire_is_open,
 };
-use crate::lighter_sign::{self, PrivateKey, Transaction};
+use crate::lighter_sign::{self, PrivateKey, Resting, Transaction};
 use crate::venue::lighter_buy;
 
 /// Which Lighter deployment a read is addressed to.
@@ -917,6 +917,7 @@ fn stepped(what: &str, value: f64, decimals: u32) -> Result<i64, HlError> {
 /// A person pressing a button cannot, and the sequencer's nonce is what stops a
 /// transaction being replayed regardless — so the counter this would need waits
 /// until something places orders in a loop.
+#[allow(clippy::too_many_arguments)]
 pub async fn lighter_place(
     zone: Zone,
     key: &PrivateKey,
@@ -925,6 +926,7 @@ pub async fn lighter_place(
     coin: &str,
     order: Order,
     reduce_only: bool,
+    resting: Resting,
 ) -> Result<i64, HlError> {
     let market = market_of(zone, coin).await?;
     let now = now_ms();
@@ -951,7 +953,15 @@ pub async fn lighter_place(
             )?,
             ask: !order.buy,
             reduce_only,
-            expiry_ms: now + ORDER_LIFETIME_MS,
+            resting,
+            // The venue validates the pairing rather than ignoring it: an
+            // order that does not rest must carry no expiry, and one that
+            // rests must carry one.
+            expiry_ms: if resting.expires() {
+                now + ORDER_LIFETIME_MS
+            } else {
+                0
+            },
             deadline_ms: now + TX_LIFETIME_MS,
             nonce: lighter_nonce(zone, account, api_key).await?,
         },
@@ -989,6 +999,46 @@ pub async fn lighter_cancel(
     )
     .map_err(|error| fail(error.to_string()))?;
     send_tx(zone, &built, key).await.map(|_| ())
+}
+
+/// The account index an L1 address trades under here, or nothing when the
+/// address has no account on this deployment.
+///
+/// Every write is keyed by this rather than by the address — a transaction
+/// carries an `AccountIndex` and never an `0x…` — so custody has to resolve it
+/// once at unlock and hold it beside the key. It is the venue's answer rather
+/// than a derivation: an address opens its account by being funded, and the
+/// index it is given is the sequencer's to assign.
+pub async fn lighter_account_index(zone: Zone, address: String) -> Result<Option<i64>, HlError> {
+    let path = format!("account?by=l1_address&value={address}");
+    match read(zone, path.clone()).await? {
+        (OK, body) => Ok(list(&body, "accounts")
+            .iter()
+            .find(|account| value_i64(account, "account_type") == MAIN_ACCOUNT)
+            .map(|account| value_i64(account, "account_index"))),
+        (NO_ACCOUNT, _) => Ok(None),
+        (code, body) => Err(refused(&path, code, &body)),
+    }
+}
+
+/// Every API key this account has registered, as the index it sits under and
+/// the public key registered there.
+///
+/// This is Lighter's `extraAgents`: the venue's own word on which keys may
+/// sign for an account, and the only thing that can turn a key this app
+/// generated into one the app may trade with. The index comes back *from* the
+/// listing rather than being asked of the reader — the owner registers a public
+/// key at whichever slot they like, and the venue then says which.
+pub async fn lighter_api_keys(zone: Zone, account: i64) -> Result<Vec<(u8, String)>, HlError> {
+    let body = get(zone, format!("apikeys?account_index={account}")).await?;
+    Ok(list(&body, "api_keys")
+        .iter()
+        .filter_map(|key| {
+            let index = u8::try_from(value_i64(key, "api_key_index")).ok()?;
+            let public = text(key, "public_key");
+            (!public.is_empty()).then_some((index, public))
+        })
+        .collect())
 }
 
 /// The most bars one `/candles` call will serve, which is also the window a
@@ -2525,6 +2575,7 @@ mod tests {
                     ts: 0,
                 },
                 false,
+                Resting::Deadline,
             )
             .await
             .expect_err("an unenrolled key cannot place an order");
@@ -2616,6 +2667,7 @@ mod tests {
                     ts: 0,
                 },
                 false,
+                Resting::Deadline,
             )
             .await
             .expect("the venue takes the order");

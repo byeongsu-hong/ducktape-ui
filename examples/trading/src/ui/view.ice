@@ -1,8 +1,13 @@
 view
   col w=fill h=fill
+    // One modal surface, and two things that can stand on it. The gate is the
+    // app's front door; the confirmation is the last thing between a reader and
+    // an order. Neither may be reachable past the other, which is what one
+    // backdrop guarantees and two stacked ones would not.
     overlay
       with
-        when=gate
+        when=modal
+        dismiss=confirm_dismissed
         backdrop=black/80
         p=24.0
         align-x=center
@@ -922,9 +927,14 @@ view
                                     wrap=word
                                     @text-faint
                             for order in orders
-                              OrderRow order=order now=clock
+                              OrderRow #order(fmt_px(order.price))
+                                with
+                                  order=order
+                                  now=clock
+                                  refusal=cancel_refusal
                                 events
                                   pick -> pick_symbol _
+                                  cancel -> cancel_order _ _
                     rule vertical thickness=1.0 color=edge
                     box #ticket-panel
                       with
@@ -1472,6 +1482,39 @@ view
                               w=fill
                               wrap=word
                               @text-faint
+                          rule horizontal thickness=1.0 color=edge
+                          // The press that opens the confirmation, and the only
+                          // way to an order. Named for what it does — it
+                          // reviews, it does not send — because a button
+                          // labelled SEND that in fact opens a panel teaches a
+                          // reader to press the next one without reading it.
+                          col gap=8.0 w=fill
+                            button #ticket-review -> ticket_review
+                              with
+                                label=order_act(ticket_draft)
+                                w=fill
+                                p=11.0
+                                disabled=!empty(send_refusal)
+                              active bg=fg text=fg_invert r=4.0
+                              hovered bg=fg text=fg_invert r=4.0
+                              disabled bg=raised text=faint r=4.0
+                              text review_label(ticket_buy)
+                                with
+                                  size=11.0
+                                  w=fill
+                                  align-x=center
+                                  tracking=1.1
+                            // Dead and saying which refusal it is, in the shape
+                            // WATCH THIS LEVEL and the gate already follow. One
+                            // sentence over both halves of the question,
+                            // because a button has one disabled state.
+                            if !empty(send_refusal)
+                              text send_refusal #send-refusal
+                                with
+                                  size=10.0
+                                  w=fill
+                                  wrap=word
+                                  @text-faint
               Page.portfolio
                 scroll #portfolio
                   with
@@ -2334,7 +2377,7 @@ view
                               with
                                 label="Unlock with Touch ID"
                                 p=9.0
-                                disabled=!empty(session_refusal(venue, session))
+                                disabled=!empty(session_refusal(session))
                               active bg=fg text=fg_invert r=4.0
                               hovered bg=fg text=fg_invert r=4.0
                               disabled bg=raised text=faint r=4.0
@@ -2343,7 +2386,7 @@ view
                               with
                                 label="Make a new agent key"
                                 p=9.0
-                                disabled=!empty(session_refusal(venue, session))
+                                disabled=!empty(session_refusal(session))
                               active bg=raised text=muted r=4.0
                               hovered bg=edge text=fg r=4.0
                               disabled bg=raised text=faint r=4.0
@@ -2353,8 +2396,8 @@ view
                               active bg=panel text=muted r=4.0
                               hovered bg=raised text=fg r=4.0
                               text "LOCK" size=11.0 tracking=1.1
-                          if !empty(session_refusal(venue, session))
-                            text session_refusal(venue, session) #unlock-refusal
+                          if !empty(session_refusal(session))
+                            text session_refusal(session) #unlock-refusal
                               with
                                 size=11.0
                                 w=fill
@@ -2373,62 +2416,249 @@ view
                             wrap=word
                             @text-muted
       layer
-        box #gate
-          with
-            w=460.0
-            p=28.0
-            r=8.0
-            border-w=1.0
-            bg=panel
-            border=edge
-          col gap=20.0 w=fill
-            col gap=8.0 w=fill
-              // The venue survives a trip back to the gate, so the exchange
-              // this address is about to be read on is the one the terminal
-              // is holding rather than the one it booted on.
-              Label value=venue_name(venue)
-              text "Read an account"
-                with
-                  size=22.0
-                  @text-fg
-                  @font-bold
-              text "Enter an address to see its open positions, resting orders, and every fill marked on the chart. Skip to browse markets only."
-                with
-                  size=12.0
-                  w=fill
-                  wrap=word
-                  @text-muted
-            input "Address" #address-input <-> draft
+        col
+          if order_pending(confirm)
+            // Everything below is a restatement. Not one figure here is
+            // computed: each is the value the ticket already showed, frozen on
+            // the press, formatted by the same helper that formatted it
+            // upstairs. A confirmation that did its own arithmetic would be a
+            // second opinion about the order, and a reader would have no way to
+            // know which of the two the wire got.
+            box #confirm
               with
-                hint="0x0000000000000000000000000000000000000000"
-                submit=connect
-                text-size=12.0
-                font=digits
-              active bg=raised border=edge r=4.0 placeholder=faint value=fg
-              hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
-              focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-            if !empty(trim(draft)) && !valid_address(draft)
-              text "An address is 0x and forty hexadecimal digits."
-                with
-                  size=11.0
-                  w=fill
-                  wrap=word
-                  @text-faint
-            row
+                w=460.0
+                p=24.0
+                r=8.0
+                border-w=1.0
+                bg=panel
+                border=edge
+              col gap=18.0 w=fill
+                col gap=8.0 w=fill
+                  row
+                    with
+                      w=fill
+                      gap=8.0
+                      align=center
+                    Label value=venue_name(venue)
+                    space w=fill
+                    // The one label a trader may never have to work out for
+                    // themselves, in the same shape the header states it — so
+                    // it is read here by somebody who already knows where to
+                    // look for it.
+                    box #confirm-kind
+                      with
+                        p=4.0
+                        r=3.0
+                        border-w=1.0
+                        border=edge
+                      text venue_kind(venue)
+                        with
+                          size=9.0
+                          tracking=1.0
+                          @text-fg
+                  match confirm
+                    some(draft)
+                      text order_act(draft) #confirm-act
+                        with
+                          size=17.0
+                          w=fill
+                          wrap=word
+                          @text-fg
+                    none
+                      space h=0.0
+                rule horizontal thickness=1.0 color=edge
+                match confirm
+                  some(draft)
+                    col #confirm-figures gap=9.0 w=fill
+                      row w=fill align=center
+                        // A walk of the book is an estimate and a typed limit
+                        // is a promise, so the row is named for whichever one
+                        // this order carries rather than for "price".
+                        if draft.walked
+                          Label value="FILLS AT, ABOUT"
+                        if !draft.walked
+                          Label value="RESTS AT"
+                        space w=fill
+                        text fmt_px(draft.price)
+                          with
+                            size=13.0
+                            font=digits
+                            @text-fg
+                      row w=fill align=center
+                        Label value="SIZE"
+                        space w=fill
+                        text fmt_size(draft.size)
+                          with
+                            size=13.0
+                            font=digits
+                            @text-fg
+                      row w=fill align=center
+                        Label value="ORDER VALUE"
+                        space w=fill
+                        text fmt_usd(draft.notional)
+                          with
+                            size=13.0
+                            font=digits
+                            @text-muted
+                      row w=fill align=center
+                        Label value="MARGIN REQUIRED"
+                        space w=fill
+                        text fmt_margin(draft.margin, focus)
+                          with
+                            size=13.0
+                            font=digits
+                            @text-muted
+                      row w=fill align=center
+                        Label value="LIQUIDATION"
+                        space w=fill
+                        if draft.liquidation > 0.0
+                          text fmt_px(draft.liquidation)
+                            with
+                              size=13.0
+                              font=digits
+                              @text-down
+                        if draft.liquidation <= 0.0
+                          text "not quoted"
+                            with
+                              size=13.0
+                              font=digits
+                              @text-faint
+                      row w=fill align=center
+                        Label value="MARGIN MODE"
+                        space w=fill
+                        text fmt_leverage_mode(draft.leverage, margin_mode(draft.cross))
+                          with
+                            size=13.0
+                            font=digits
+                            @text-muted
+                      row w=fill align=center
+                        Label value="RESTS"
+                        space w=fill
+                        text tif_act(venue, ticket_tif) size=13.0 @text-muted
+                      // The three promises an order can carry beyond its price
+                      // and its size, drawn only when they are made: a row
+                      // reading "none" three times is three rows a reader has
+                      // to check to learn nothing.
+                      if draft.reduce_only
+                        row w=fill align=center
+                          Label value="REDUCE ONLY"
+                          space w=fill
+                          text "closes only" size=13.0 @text-muted
+                      if draft.tp > 0.0
+                        row w=fill align=center
+                          Label value="TAKE PROFIT"
+                          space w=fill
+                          text fmt_px(draft.tp)
+                            with
+                              size=13.0
+                              font=digits
+                              @text-up
+                      if draft.sl > 0.0
+                        row w=fill align=center
+                          Label value="STOP LOSS"
+                          space w=fill
+                          text fmt_px(draft.sl)
+                            with
+                              size=13.0
+                              font=digits
+                              @text-down
+                  none
+                    space h=0.0
+                // The venue's own sentence when it refused, where the reader
+                // is already looking. The panel stays up: a refused order is
+                // one they may want to change and send again.
+                if !empty(error)
+                  text error #confirm-error
+                    with
+                      size=11.0
+                      w=fill
+                      wrap=word
+                      @text-down
+                row
+                  with
+                    gap=8.0
+                    w=fill
+                    align=center
+                  button #confirm-back -> confirm_dismissed
+                    with
+                      label="Go back without sending"
+                      p=11.0
+                      disabled=sending
+                    active bg=raised text=muted r=4.0
+                    hovered bg=edge text=fg r=4.0
+                    disabled bg=raised text=faint r=4.0
+                    text "GO BACK" size=11.0 tracking=1.1
+                  space w=fill
+                  match confirm
+                    some(draft)
+                      button #confirm-send -> confirm_sent
+                        with
+                          label=order_act(draft)
+                          p=11.0
+                          disabled=sending
+                        active bg=fg text=fg_invert r=4.0
+                        hovered bg=fg text=fg_invert r=4.0
+                        disabled bg=raised text=faint r=4.0
+                        text "SEND IT" size=11.0 tracking=1.1
+                    none
+                      space w=0.0
+          if gate
+            box #gate
               with
-                gap=10.0
-                w=fill
-                align=center
-              button #connect -> connect
-                with
-                  p=11.0
-                  label="Connect"
-                  disabled=!valid_address(draft)
-                active bg=fg text=fg_invert r=4.0
-                hovered bg=fg text=fg_invert r=4.0
-                disabled bg=raised text=faint r=4.0
-                text "Connect" size=12.0
-              button #browse p=11.0 label="Browse markets" -> browse
-                active bg=panel text=muted r=4.0
-                hovered bg=raised text=fg r=4.0
-                text "Browse markets" size=12.0
+                w=460.0
+                p=28.0
+                r=8.0
+                border-w=1.0
+                bg=panel
+                border=edge
+              col gap=20.0 w=fill
+                col gap=8.0 w=fill
+                  // The venue survives a trip back to the gate, so the exchange
+                  // this address is about to be read on is the one the terminal
+                  // is holding rather than the one it booted on.
+                  Label value=venue_name(venue)
+                  text "Read an account"
+                    with
+                      size=22.0
+                      @text-fg
+                      @font-bold
+                  text "Enter an address to see its open positions, resting orders, and every fill marked on the chart. Skip to browse markets only."
+                    with
+                      size=12.0
+                      w=fill
+                      wrap=word
+                      @text-muted
+                input "Address" #address-input <-> draft
+                  with
+                    hint="0x0000000000000000000000000000000000000000"
+                    submit=connect
+                    text-size=12.0
+                    font=digits
+                  active bg=raised border=edge r=4.0 placeholder=faint value=fg
+                  hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
+                  focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                if !empty(trim(draft)) && !valid_address(draft)
+                  text "An address is 0x and forty hexadecimal digits."
+                    with
+                      size=11.0
+                      w=fill
+                      wrap=word
+                      @text-faint
+                row
+                  with
+                    gap=10.0
+                    w=fill
+                    align=center
+                  button #connect -> connect
+                    with
+                      p=11.0
+                      label="Connect"
+                      disabled=!valid_address(draft)
+                    active bg=fg text=fg_invert r=4.0
+                    hovered bg=fg text=fg_invert r=4.0
+                    disabled bg=raised text=faint r=4.0
+                    text "Connect" size=12.0
+                  button #browse p=11.0 label="Browse markets" -> browse
+                    active bg=panel text=muted r=4.0
+                    hovered bg=raised text=fg r=4.0
+                    text "Browse markets" size=12.0

@@ -698,17 +698,50 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 const TX_CREATE_ORDER: u8 = 14;
 const TX_CANCEL_ORDER: u8 = 15;
 
-/// The one order shape this app places, as the venue's own tables number it: a
-/// limit order that rests until its own expiry, with no trigger.
+/// The one order *type* this app places, as the venue's own tables number it: a
+/// limit order, priced by the ticket and never by a trigger.
 ///
-/// Written out rather than parameterised because every other shape is a
-/// different validation table at the venue — a market order must be
-/// immediate-or-cancel and carry no expiry, a stop must carry a trigger and is
-/// refused on spot — and none of them has a caller here. A `Tif` enum with one
-/// inhabitant reached would be a choice nobody makes.
+/// The type is fixed where the resting rule is not. A stop or a take-profit is
+/// a different type with its own validation table and its own trigger price,
+/// and this app attaches neither on this venue — `venue_attaches_levels` says
+/// so on the ticket. How long the order rests, though, is a control the reader
+/// has, so that one is carried.
 const ORDER_LIMIT: i64 = 0;
-const ORDER_GOOD_TILL_TIME: i64 = 1;
 const NO_TRIGGER: i64 = 0;
+
+/// How long a Lighter order rests, in the venue's own numbering.
+///
+/// The same three the ticket offers, and the mapping is not quite the naming:
+/// this venue has no rest-until-cancelled, so its longest-lived order carries
+/// the deadline it was signed with — which is what `venue_tif_note` tells the
+/// reader and why `Resting::Deadline` is not called `Gtc` here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resting {
+    /// Take what is on the book now and cancel the rest. Carries no expiry,
+    /// and the venue refuses one that does.
+    Immediate,
+    /// Rest until the expiry the order carries. Requires that expiry.
+    Deadline,
+    /// Never cross: a maker order or nothing.
+    PostOnly,
+}
+
+impl Resting {
+    fn code(self) -> i64 {
+        match self {
+            Resting::Immediate => 0,
+            Resting::Deadline => 1,
+            Resting::PostOnly => 2,
+        }
+    }
+
+    /// Whether an order resting this way carries an expiry at all. The venue
+    /// validates the pairing rather than ignoring it: an immediate order with
+    /// an expiry is refused, and a resting one without is refused too.
+    pub fn expires(self) -> bool {
+        !matches!(self, Resting::Immediate)
+    }
+}
 
 /// One limit order, as the transaction carries it.
 ///
@@ -732,7 +765,9 @@ pub struct NewOrder {
     pub price: u32,
     pub ask: bool,
     pub reduce_only: bool,
-    /// When the resting order stops resting.
+    pub resting: Resting,
+    /// When the resting order stops resting, and zero for one that never rests.
+    /// `Resting::expires` is which of those this must be.
     pub expiry_ms: i64,
     /// When the *transaction* stops being submittable, which is a different
     /// deadline and a far shorter one: it bounds how long a signed transaction
@@ -811,7 +846,7 @@ pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignErr
         ("price", i64::from(order.price)),
         ("side", ask),
         ("order type", ORDER_LIMIT),
-        ("time in force", ORDER_GOOD_TILL_TIME),
+        ("time in force", order.resting.code()),
         ("reduce-only flag", reduce_only),
         ("trigger price", NO_TRIGGER),
         ("order expiry", order.expiry_ms),
@@ -822,7 +857,7 @@ pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignErr
         fields: format!(
             "\"AccountIndex\":{},\"ApiKeyIndex\":{},\"MarketIndex\":{},\
              \"ClientOrderIndex\":{},\"BaseAmount\":{},\"Price\":{},\"IsAsk\":{ask},\
-             \"Type\":{ORDER_LIMIT},\"TimeInForce\":{ORDER_GOOD_TILL_TIME},\
+             \"Type\":{ORDER_LIMIT},\"TimeInForce\":{},\
              \"ReduceOnly\":{reduce_only},\"TriggerPrice\":{NO_TRIGGER},\
              \"OrderExpiry\":{},\"ExpiredAt\":{},\"Nonce\":{}",
             order.account,
@@ -831,6 +866,7 @@ pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignErr
             order.client_index,
             order.base_amount,
             order.price,
+            order.resting.code(),
             order.expiry_ms,
             order.deadline_ms,
             order.nonce,
@@ -1302,6 +1338,7 @@ mod tests {
         price: 6_500_000,
         ask: false,
         reduce_only: false,
+        resting: Resting::Deadline,
         expiry_ms: 1_786_300_000_000,
         deadline_ms: 1_786_279_157_060,
         nonce: 7,
@@ -1348,6 +1385,7 @@ mod tests {
         price: u32::MAX,
         ask: true,
         reduce_only: true,
+        resting: Resting::Deadline,
         expiry_ms: 4_102_444_800_000,
         deadline_ms: 1_786_279_157_061,
         nonce: 281_474_976_710_655,

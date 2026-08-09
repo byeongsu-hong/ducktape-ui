@@ -523,6 +523,50 @@ on lower_resized(_dx, dy)
 // Every act clears the note first. A sentence left over from the last attempt
 // beside the result of this one is the panel reporting a refusal that has
 // already been answered.
+// The press that opens the confirmation, which is the only way to an order.
+// It freezes the draft rather than setting a flag: what the confirmation
+// restates and what the send spends are then the same value, and no keystroke
+// or book beat between the two can move one without the other.
+on ticket_review
+  return if !empty(send_refusal)
+  confirm = some(ticket_draft)
+
+// Backing out. The order is dropped rather than remembered, because a
+// confirmation the reader declined is not a draft to offer again — the ticket
+// still holds every field they typed.
+on confirm_dismissed
+  return if sending
+  confirm = none
+
+// The one press in this app that spends money.
+on confirm_sent
+  return if sending
+  sending = true
+  error = ""
+  status = "Sending"
+  run submit_order(venue, session, clock, confirm) -> order_sent _ | order_refused _
+
+on order_sent(said)
+  sending = false
+  confirm = none
+  error = ""
+  status = said
+
+// The venue's own sentence, in the app's alarm line beside every other failed
+// read. The confirmation stays up: an order that was refused is one the reader
+// may want to change and send again, and closing the panel would make them
+// describe it a second time.
+on order_refused(reason)
+  sending = false
+  status = ""
+  error = reason.message
+
+// Pulling a resting order, by whichever name its venue gave it.
+on cancel_order(coin_of, oid)
+  error = ""
+  status = "Cancelling"
+  run cancel_resting(venue, session, clock, coin_of, oid) -> order_sent _ | order_refused _
+
 on unlock
   return if !session_unlockable(session)
   unlock_note = ""

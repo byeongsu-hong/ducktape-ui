@@ -80,14 +80,35 @@ test trading_a_build_with_no_keychain_says_so_instead_of_offering_a_prompt
   expect text "no platform keychain on this build" within custody
   expect !session_can_trade(session, clock)
 
-// The other half of that distinction, and the half that must not be blurred: a
-// network whose key this panel does not hold is refused before any sheet, and
-// the refusal names the network and the reason rather than looking like a
-// broken keychain. Lighter's orders are signed by an API key the account
-// registers, so there is nothing here to make and nothing here to unlock — and
-// that is about enrolment, not about whether the app can sign at all.
-test trading_a_network_this_panel_does_not_hold_a_key_for_refuses_by_name
+// The refusal that went away, asserted as the absence it became. This panel
+// used to mint Ethereum agent keys only, so Lighter was refused before any
+// sheet; it now mints whichever key the network's scheme signs with. Both
+// halves are held, because "no refusal anywhere" is also what a broken
+// `session_refusal` looks like: Lighter's button is live, and a build with no
+// keychain still refuses on both.
+test trading_every_network_offers_its_own_key
   preset lighter
+  viewport 1660 900
+  target app = #app
+  target settings = app/settings
+  target custody = settings/settings-content/custody
+  target unlock = custody/unlock
+  target enrol = custody/enrol
+  dispatch navigate(Page.settings)
+  expect a11y unlock disabled false
+  expect a11y enrol disabled false
+  expect no text "not one this panel can make"
+  // The network that was never refused is unchanged beside it.
+  dispatch switch_venue(Venue.hyperliquid)
+  expect a11y unlock disabled false
+  expect a11y enrol disabled false
+
+// And the refusal that is still real, which is the platform's rather than any
+// venue's. It is asserted without a venue switch on purpose: switching network
+// forgets the key and resets the session, so a switch would be testing that
+// rather than this.
+test trading_a_build_with_no_keychain_still_refuses_the_unlock
+  preset no_keystore
   viewport 1660 900
   target app = #app
   target settings = app/settings
@@ -95,13 +116,7 @@ test trading_a_network_this_panel_does_not_hold_a_key_for_refuses_by_name
   target unlock = custody/unlock
   dispatch navigate(Page.settings)
   expect a11y unlock disabled true
-  expect text "Lighter signs with an API key the account registers, not one this panel can make." within custody
-  // And the network whose keys it does hold leaves the same button live, so the
-  // refusal is about this network rather than about the button always being
-  // dead.
-  dispatch switch_venue(Venue.hyperliquid)
-  expect a11y unlock disabled false
-  expect no text "Lighter signs with an API key the account registers, not one this panel can make." within custody
+  expect text "no platform keychain on this build" within custody
 
 // A key is approved for one account on one deployment. Carried across either
 // change, it is a session claiming the app may trade somewhere the key is

@@ -173,7 +173,7 @@ fn orders(count: usize, coin: &str) -> Vec<Order> {
             // Distinct per row, and deliberately not defaulted: an order id is
             // what a cancel names, so a fixture where every row shares one
             // would draw a list no cancel could tell apart.
-            oid: 70_000_000_000 + index as u64,
+            oid: 70_000_000_000 + index as i64,
             coin: if index % 3 == 0 {
                 coin.to_owned()
             } else {

@@ -222,60 +222,82 @@ component FillRow(fill:Fill)
               font=digits
               @text-faint
 
-component OrderRow(order:Order, now:i64)
+component OrderRow(order:Order, now:i64, refusal:str)
   emits
     pick(str)
-  button #root -> emit(pick, order.coin)
+    cancel(str, i64)
+  // Two controls rather than one, because the row does two things and a reader
+  // has to be able to reach the second without triggering the first. The wide
+  // one moves the terminal to this market; the narrow one pulls the order, and
+  // it is the only place in this app that names a resting order to an exchange.
+  row #root
     with
-      label=order_label(order)
       w=fill
-      p=0.0
-    active bg=panel r=0.0
-    hovered bg=raised r=0.0
-    row
+      h=26.0
+      align=center
+    button #row -> emit(pick, order.coin)
       with
+        label=order_label(order)
         w=fill
-        h=26.0
-        pl=14.0
-        pr=14.0
-        gap=8.0
-        align=center
-      text fmt_age(order.ts, now)
+        p=0.0
+      active bg=panel r=0.0
+      hovered bg=raised r=0.0
+      row
         with
-          size=10.0
-          w=44.0
-          font=digits
-          @text-faint
-      text order.coin
-        with
-          size=11.0
-          w=52.0
-          @text-muted
-      if order.buy
-        text "BUY"
+          w=fill
+          h=26.0
+          pl=14.0
+          pr=4.0
+          gap=8.0
+          align=center
+        text fmt_age(order.ts, now)
           with
             size=10.0
-            w=52.0
-            tracking=0.8
-            @text-muted
-      if !order.buy
-        text "SELL"
+            w=44.0
+            font=digits
+            @text-faint
+        text order.coin
           with
-            size=10.0
+            size=11.0
             w=52.0
-            tracking=0.8
             @text-muted
-      space w=fill
-      Delta
-        with
-          value=fmt_px(order.price)
-          up=order.buy
-          size=11.0
-          width=88.0
-      text fmt_size(order.size)
-        with
-          size=11.0
-          w=72.0
-          align-x=right
-          font=digits
-          @text-faint
+        if order.buy
+          text "BUY"
+            with
+              size=10.0
+              w=52.0
+              tracking=0.8
+              @text-muted
+        if !order.buy
+          text "SELL"
+            with
+              size=10.0
+              w=52.0
+              tracking=0.8
+              @text-muted
+        space w=fill
+        Delta
+          with
+            value=fmt_px(order.price)
+            up=order.buy
+            size=11.0
+            width=88.0
+        text fmt_size(order.size)
+          with
+            size=11.0
+            w=72.0
+            align-x=right
+            font=digits
+            @text-faint
+    // Dead rather than absent when the session cannot sign: a control that
+    // disappears is one the reader has to work out the absence of, and this one
+    // has a reason worth reading beside it.
+    button #cancel -> emit(cancel, order.coin, order.oid)
+      with
+        label=order_cancel_label(order)
+        p=6.0
+        disabled=!empty(refusal)
+      active bg=panel text=faint r=3.0
+      hovered bg=edge text=down r=3.0
+      disabled bg=panel text=edge r=3.0
+      text "CANCEL" size=9.0 tracking=0.9

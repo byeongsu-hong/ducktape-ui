@@ -27,14 +27,16 @@
 // the module split that moves the shapes out of `hyperliquid.rs`.
 #![allow(dead_code)]
 
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
 use smol::channel::Receiver;
 
 use crate::hyperliquid::{
-    Account, Fill, HL_CANONICAL, HlError, MarketTick, Order, SymbolRow, Tape, hl_account,
-    hl_candles, hl_fill_feed, hl_history, hl_market_feed, hl_orders, hl_symbols,
+    Account, Fill, HL_CANONICAL, HlError, MarketTick, Order, SymbolRow, Tape, Ticket, amount,
+    fmt_size, hl_account, hl_candles, hl_fill_feed, hl_history, hl_market_feed, hl_orders,
+    hl_symbols,
 };
 use crate::lighter::{
     Zone, lighter_account, lighter_candles, lighter_history, lighter_market_feed, lighter_symbols,
@@ -722,6 +724,258 @@ pub fn venue_levels_note(venue: Venue) -> String {
     )
 }
 
+/// The order the ticket is describing, frozen.
+///
+/// This is the payload seam and the confirmation's script at once, which is the
+/// point: the panel's readouts and the bytes that reach an exchange are the
+/// same handful of numbers, projected once. A confirmation built from a second
+/// walk of the state would be a screen agreeing with itself about an order the
+/// wire never saw.
+///
+/// It carries figures rather than sentences. Every one of these is already on
+/// screen above the button, formatted by the same `fmt_*` the confirmation
+/// formats it with, so the confirmation restates the order in the words the
+/// reader has been reading — it makes no claim of its own and computes nothing.
+///
+/// **Frozen** matters as much as projected. The book moves; a confirmation that
+/// re-derived itself between the press and the send would show one price and
+/// send another, and the reader would have agreed to neither. So the handler
+/// snapshots this on the press and the send spends the snapshot.
+#[derive(Clone, PartialEq)]
+pub struct Draft {
+    pub venue: Venue,
+    pub coin: String,
+    /// The market row this order was priced against, which is also what names
+    /// the market on the wire: Hyperliquid carries an index out of its own
+    /// universe and never a ticker. Carried in the snapshot rather than looked
+    /// up at send time so the order reaches the market the ticket was quoting.
+    pub market: Option<SymbolRow>,
+    pub buy: bool,
+    /// The size in the instrument, as `order_size` normalised it — the unit
+    /// toggle converted and reduce-only already capped.
+    pub size: f64,
+    /// What the order transacts at, as `order_price` resolved it.
+    pub price: f64,
+    /// Whether that price came from walking the book rather than from the
+    /// field. The confirmation says which, because a walk is an estimate and a
+    /// typed limit is a promise.
+    pub walked: bool,
+    pub reduce_only: bool,
+    pub cross: bool,
+    pub tif: Tif,
+    pub leverage: f64,
+    pub notional: f64,
+    pub margin: f64,
+    /// Zero when the ticket could not price one, which the confirmation draws
+    /// as the same "not known" the panel above it draws.
+    pub liquidation: f64,
+    pub tp: f64,
+    pub sl: f64,
+    /// Why this order cannot be sent as typed, or nothing when it can.
+    ///
+    /// Folded here rather than left to the view because sendability is one
+    /// decision: the view disables one button and prints one sentence, and a
+    /// condition the view forgot to `&&` is a live button over an order the
+    /// venue will refuse. The per-control refusals are still drawn beside their
+    /// own controls — this is what the *send* reads.
+    pub refusal: String,
+}
+
+/// Prints the order and never the market row behind it. `SymbolRow` carries
+/// forty fields of live market data that say nothing about what is being sent,
+/// and a `Debug` that dumped them would bury the eight figures that matter in a
+/// test failure.
+impl fmt::Debug for Draft {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Draft")
+            .field("coin", &self.coin)
+            .field("buy", &self.buy)
+            .field("size", &self.size)
+            .field("price", &self.price)
+            .field("walked", &self.walked)
+            .field("reduce_only", &self.reduce_only)
+            .field("cross", &self.cross)
+            .field("listed", &self.market.is_some())
+            .field("refusal", &self.refusal)
+            .finish()
+    }
+}
+
+/// Project the order the ticket is describing.
+///
+/// Every argument is a value the panel is already showing. Nothing is
+/// recomputed: `size` and `price` arrive as `order_size` and `order_price`
+/// resolved them, the risk figures as `price_ticket` priced them, and the three
+/// refusals as their own controls already worked them out.
+#[allow(clippy::too_many_arguments)]
+pub fn order_draft(
+    venue: Venue,
+    coin: String,
+    market: Option<SymbolRow>,
+    buy: bool,
+    size: String,
+    price: f64,
+    walked: bool,
+    reduce_only: bool,
+    cross: bool,
+    tif: Tif,
+    quote: Ticket,
+    tp: String,
+    sl: String,
+    reduce_refusal: String,
+    tp_refusal: String,
+    sl_refusal: String,
+) -> Draft {
+    let size = amount(&size).abs();
+    Draft {
+        venue,
+        coin: coin.clone(),
+        market: market.clone(),
+        buy,
+        size,
+        price,
+        walked,
+        reduce_only,
+        cross,
+        tif,
+        leverage: quote.leverage,
+        notional: quote.notional,
+        margin: quote.margin,
+        liquidation: quote.liquidation,
+        tp: amount(&tp),
+        sl: amount(&sl),
+        refusal: draft_refusal(
+            &coin,
+            market.as_ref(),
+            size,
+            price,
+            [
+                // Only when the promise is actually being made. The refusal is
+                // computed whether or not the box is ticked — the ticket draws
+                // it under `if ticket_reduce` for the same reason — and folding
+                // it unconditionally would refuse every order in a market this
+                // account holds no position in.
+                if reduce_only {
+                    reduce_refusal
+                } else {
+                    String::new()
+                },
+                tp_refusal,
+                sl_refusal,
+            ],
+        ),
+    }
+}
+
+/// Why an order as typed is not sendable, in the order a reader fixes them.
+///
+/// A market with no name is the ticket before a market is chosen; the two
+/// figures are what an order is made of, and either at zero is not an order
+/// that has been described yet rather than one worth refusing loudly. A
+/// per-control refusal outranks both, because a control that is already saying
+/// what is wrong with it should not be contradicted by a button saying
+/// something vaguer.
+fn draft_refusal(
+    coin: &str,
+    market: Option<&SymbolRow>,
+    size: f64,
+    price: f64,
+    refusals: [String; 3],
+) -> String {
+    if let Some(said) = refusals.into_iter().find(|said| !said.is_empty()) {
+        return said;
+    }
+    if coin.trim().is_empty() {
+        return "Choose a market first.".to_owned();
+    }
+    // A market deployed by somebody else is margined against a clearinghouse
+    // this app cannot read, so it can quote neither the requirement nor the
+    // cliff for one — and an order is the one place being wrong about which
+    // account backs it costs money. `hl_place` refuses these again on the wire
+    // rather than trusting this.
+    if coin.contains(':') {
+        return format!(
+            "{coin} is margined against a clearinghouse this app cannot read, so it will not \
+             send an order there."
+        );
+    }
+    if market.is_none() {
+        return "This market is not loaded here.".to_owned();
+    }
+    // `<=` rather than `!(_ > _)`: a size that is NaN is not a size either,
+    // and both spellings refuse it — this one just says so readably.
+    if size.is_nan() || size <= 0.0 {
+        return "This order has no size yet.".to_owned();
+    }
+    if price.is_nan() || price <= 0.0 {
+        return "This order has no price yet.".to_owned();
+    }
+    String::new()
+}
+
+/// What pressing send would do, said in one line.
+///
+/// The button's accessible name, so somebody who cannot see the ticket hears
+/// the order rather than the word "send" — and hears which network it is going
+/// to, because that is the fact this whole screen exists to keep in front of
+/// the reader.
+pub fn order_act(draft: Draft) -> String {
+    let side = if draft.buy { "buy" } else { "sell" };
+    let network = venue_name(draft.venue);
+    let kind = venue_kind(draft.venue);
+    format!(
+        "Send this {side} of {} {} on {network}, {kind}",
+        fmt_size(draft.size),
+        draft.coin,
+    )
+}
+
+/// Which margin engine holds this position: the word the ticket's own toggle
+/// uses, so the confirmation names the mode in the reader's vocabulary rather
+/// than in a second one.
+pub fn margin_mode(cross: bool) -> String {
+    if cross { "cross" } else { "isolated" }.to_owned()
+}
+
+/// What the review button says, which is the side it would review.
+///
+/// The side is in the word rather than only in the button's colour, for the
+/// reason every other control on this screen states its own state in its name:
+/// a reader who cannot see two inks still has to know which way this order runs
+/// before they open the panel that spends money.
+pub fn review_label(buy: bool) -> String {
+    if buy { "REVIEW BUY" } else { "REVIEW SELL" }.to_owned()
+}
+
+/// The frozen order's own figures, for the tests that hold it against the
+/// ticket it was projected from. Ice sees `Draft` through the fields its extern
+/// declares; these are the ones an assertion needs and the view does not.
+pub fn confirm_price(draft: Option<Draft>) -> f64 {
+    draft.map_or(0.0, |draft| draft.price)
+}
+
+pub fn confirm_size(draft: Option<Draft>) -> f64 {
+    draft.map_or(0.0, |draft| draft.size)
+}
+
+pub fn confirm_notional(draft: Option<Draft>) -> f64 {
+    draft.map_or(0.0, |draft| draft.notional)
+}
+
+pub fn confirm_liquidation(draft: Option<Draft>) -> f64 {
+    draft.map_or(0.0, |draft| draft.liquidation)
+}
+
+pub fn confirm_walked(draft: Option<Draft>) -> bool {
+    draft.is_some_and(|draft| draft.walked)
+}
+
+/// Whether a confirmation is standing over an order.
+pub fn order_pending(draft: Option<Draft>) -> bool {
+    draft.is_some()
+}
+
 /// What a market's margin engine holds a position to.
 ///
 /// The one figure in the ticket's arithmetic that is a venue's rule rather
@@ -1251,6 +1505,216 @@ mod tests {
                     "an addressless fill feed must not open a socket"
                 );
             }
+        }
+    }
+
+    /// The projection, held against the values it was given.
+    ///
+    /// Every figure on a `Draft` is one the ticket already computed, so what
+    /// this pins is that each arrives *unchanged* and in the right field — the
+    /// failure it guards is a transposition, which is invisible on screen when
+    /// two figures happen to look alike and is an order for the wrong size when
+    /// they do not.
+    #[test]
+    fn the_draft_carries_the_ticket_s_own_figures() {
+        let quote = Ticket {
+            notional: 192_000.0,
+            margin: 4_800.0,
+            liquidation: 62_812.5,
+            leverage: 40.0,
+            ready: true,
+            known: true,
+        };
+        let draft = order_draft(
+            Venue::HyperliquidTestnet,
+            "BTC".to_owned(),
+            Some(market("BTC")),
+            true,
+            "3.00".to_owned(),
+            64_000.0,
+            false,
+            false,
+            true,
+            Tif::Ioc,
+            quote.clone(),
+            "70,000".to_owned(),
+            "60,000".to_owned(),
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+        assert_eq!(
+            draft.size, 3.0,
+            "the size arrives normalised, not re-parsed"
+        );
+        assert_eq!(draft.price, 64_000.0);
+        assert_eq!(draft.notional, quote.notional);
+        assert_eq!(draft.margin, quote.margin);
+        assert_eq!(draft.liquidation, quote.liquidation);
+        assert_eq!(draft.leverage, quote.leverage);
+        assert_eq!(draft.tp, 70_000.0);
+        assert_eq!(draft.sl, 60_000.0);
+        assert!(draft.buy && draft.cross && !draft.walked && !draft.reduce_only);
+        assert_eq!(draft.tif, Tif::Ioc);
+        assert!(draft.refusal.is_empty(), "{}", draft.refusal);
+
+        // And the one line a reader hears before they press: the side, the
+        // size, the network, and what it costs to be wrong on it.
+        assert_eq!(
+            order_act(draft),
+            "Send this buy of 3 BTC on Hyperliquid Testnet, TESTNET",
+        );
+    }
+
+    /// Why an order cannot be sent, in the order a reader fixes them.
+    ///
+    /// One sentence, because the button has one disabled state. A control that
+    /// is already saying what is wrong with it outranks the button saying
+    /// something vaguer, and the two figures an order is made of outrank
+    /// nothing at all.
+    #[test]
+    fn the_draft_refuses_in_the_order_a_reader_fixes_things() {
+        let sendable = |size: &str, price: f64| {
+            order_draft(
+                Venue::Hyperliquid,
+                "BTC".to_owned(),
+                Some(market("BTC")),
+                true,
+                size.to_owned(),
+                price,
+                false,
+                false,
+                false,
+                Tif::Gtc,
+                unpriced(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+            .refusal
+        };
+        assert!(sendable("3", 64_000.0).is_empty());
+        assert!(sendable("", 64_000.0).contains("no size"));
+        assert!(sendable("0", 64_000.0).contains("no size"));
+        assert!(sendable("3", 0.0).contains("no price"));
+        // A size is asked for before a price, because a ticket with neither is
+        // one nobody has started typing into.
+        assert!(sendable("", 0.0).contains("no size"));
+
+        // A control that already said what is wrong outranks all of it. Only
+        // when the promise is actually being made, though: the refusal is
+        // computed whether or not the box is ticked.
+        let with_reduce = |reduce: bool| {
+            order_draft(
+                Venue::Hyperliquid,
+                "BTC".to_owned(),
+                Some(market("BTC")),
+                true,
+                "3".to_owned(),
+                64_000.0,
+                false,
+                reduce,
+                false,
+                Tif::Gtc,
+                unpriced(),
+                String::new(),
+                String::new(),
+                "nothing to reduce".to_owned(),
+                String::new(),
+                String::new(),
+            )
+            .refusal
+        };
+        assert_eq!(with_reduce(true), "nothing to reduce");
+        assert!(
+            with_reduce(false).is_empty(),
+            "a promise nobody is making cannot refuse an order"
+        );
+    }
+
+    /// A market margined against a clearinghouse this app cannot read is
+    /// refused here as well as on the wire, and the sentence names it.
+    #[test]
+    fn a_builder_market_is_refused_before_anything_is_signed() {
+        let refusal = |coin: &str| {
+            order_draft(
+                Venue::Hyperliquid,
+                coin.to_owned(),
+                Some(market(coin)),
+                true,
+                "3".to_owned(),
+                224.0,
+                false,
+                false,
+                false,
+                Tif::Gtc,
+                unpriced(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+            .refusal
+        };
+        let refused = refusal("xyz:NVDA");
+        assert!(refused.contains("xyz:NVDA"), "{refused}");
+        assert!(refused.contains("clearinghouse"), "{refused}");
+        assert!(
+            refusal("BTC").is_empty(),
+            "and the venue's own markets are not"
+        );
+    }
+
+    /// A market the app has not read cannot be ordered against: the wire names
+    /// a Hyperliquid market by its index out of a universe this has not
+    /// arrived, and an order priced against nothing is not an order.
+    #[test]
+    fn an_unlisted_market_is_refused() {
+        let refusal = order_draft(
+            Venue::Hyperliquid,
+            "BTC".to_owned(),
+            None,
+            true,
+            "3".to_owned(),
+            64_000.0,
+            false,
+            false,
+            false,
+            Tif::Gtc,
+            unpriced(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
+        .refusal;
+        assert!(refusal.contains("not loaded"), "{refusal}");
+    }
+
+    /// A ticket with nothing priced in it, which is what the panel holds until
+    /// a size and a price are both typed.
+    fn unpriced() -> Ticket {
+        Ticket {
+            notional: 0.0,
+            margin: 0.0,
+            liquidation: 0.0,
+            leverage: 0.0,
+            ready: false,
+            known: false,
+        }
+    }
+
+    /// One market row, named.
+    fn market(name: &str) -> SymbolRow {
+        SymbolRow {
+            name: name.to_owned(),
+            leverage: 40.0,
+            maintenance: 0.0125,
+            ..SymbolRow::default()
         }
     }
 
