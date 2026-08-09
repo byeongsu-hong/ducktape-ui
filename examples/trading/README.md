@@ -10,8 +10,9 @@ Hyperliquid Testnet, Lighter — because one exchange can have more than one, an
 holding "which exchange" and "which deployment" as two values is how a mainnet
 book comes to price a testnet order with both halves of the screen looking
 right. Which one is being read is named in the header beside a badge saying
-whether being wrong on it costs anything; the picker is on settings. It is not
-a filter over one exchange's data: networks disagree about which markets exist,
+whether being wrong on it costs anything, and that name is also the way to a
+different one: pressing it drops the list of networks over the terminal. It is
+not a filter over one exchange's data: networks disagree about which markets exist,
 what they are called, and what the engine holds against a position in them, so
 switching throws every panel away and reads the new one from nothing. What the
 network being opened cannot answer is said in the panel that would otherwise be
@@ -1040,7 +1041,8 @@ listed beside them. Read live, testnet answers `perpDexs` with around a hundred
 of them — `test dex`, `unit dex` — where mainnet answers five.
 
 Nothing else enumerates them. The picker is a loop over `venue_list()`, so a
-network added in Rust is drawn on settings without the view being touched, and
+network added in Rust is drawn in the header's panel without the view being
+touched, and
 a Rust test holds `venue_list()` to the registry's own length and `Network::of`
 to round-tripping every entry — that arm is the one a copy-paste gets wrong,
 and `Venue::HyperliquidTestnet => Network::HYPERLIQUID` compiles, draws the
@@ -1063,7 +1065,10 @@ that can lose money says so in the same place and the same shape, and the
 reader learns where to look on the day it is free to get wrong rather than on
 the day it is not. Every row of the picker says its own kind for the same
 reason: a picker is where this mistake is actually made, so the row a finger is
-travelling towards has to answer it before it is pressed.
+travelling towards has to answer it before it is pressed — in ink, and in the
+name a screen reader speaks. A labelled button's name replaces its contents, so
+the badge inside the row is painted and never spoken, and the row that only
+paints it is a row one reader chooses blind.
 
 Hyperliquid's test deployment answers every read the live one does, over the
 same protocol and the same parser, so its panels fill exactly like mainnet's.
@@ -1078,8 +1083,8 @@ against a book its own exchange has never seen.
 
 The network already being read is still a button, and a button carries no state
 a reader can hear — so it says which it is in its own accessible name (*Read
-Lighter* against *Read Lighter, already reading*) rather than in its highlight
-colour.
+Lighter, real money* against *Read Lighter, real money, already reading*)
+rather than in its highlight colour.
 
 Pressing it is not a filter and not an undo. Everything on screen belongs to
 the exchange it was read from, and a row kept across the switch would be drawn
@@ -1098,11 +1103,28 @@ Rust test holds the switch to handing over a tape the old feed cannot reach.
 Switching to the venue already on screen is not a switch, and returns early
 rather than re-reading a loaded terminal.
 
-The picker is on settings rather than in the header because a list that grows
-with the registry cannot live in 58 pixels, and because switching network
-throws the whole screen away and can change which network your money is on —
-which is a deliberate act rather than a header toggle. The header carries the
-answer, not the choice, and is the same shape on every network.
+The picker opens from the header, where the network is already named. It lived
+on settings while the registry grew to four entries, and a reader who had just
+read **REAL MONEY** in the header had to leave the terminal to act on what the
+header had told them — the app holding the answer and withholding the choice. A
+list that grows cannot live in 58 pixels and does not try to: pressing the name
+drops a panel over the terminal, and the block itself draws exactly what it
+drew before it was pressable, to the pixel. Deliberateness is carried by what
+each row says — its name, its kind, and one sentence about what the switch
+throws away — rather than by the distance to it. There is no confirmation: the
+switch is reversible and the panels refill.
+
+Ice has no anchored popover. `overlay` aligns its layer to the window's edges
+and centre and `stack` lays its upper layers out inside the first one's size,
+so a panel hung under 138 pixels of header would be a magic left offset
+chasing a row that reflows with the window. It is a top-aligned overlay clear
+of the header instead — which is also what gives it the backdrop that dismisses
+it and the keyboard confinement that keeps Tab inside it, neither of which it
+implements itself. Escape closes it too. Settings keeps the network's facts and
+no second copy of the list.
+
+The header is the same shape on every network, and the same shape whether the
+panel is open or shut.
 
 The header was already exactly full at the window's minimum, so naming the
 network had to be paid for: the account strip gave up its **FREE** figure. It is the one thing there that
@@ -1434,8 +1456,9 @@ would never settle and no test could dispatch a switch at all.
 Two of those tests are about the label rather than the data, because the label
 is the whole of what separates two screens drawn from the same fixtures. One
 asserts both kinds in the header — **REAL MONEY** present and **TESTNET**
-absent on the live network, and the reverse after a switch — and one asserts
-that every registry entry reaches the picker with its kind beside it. Each was
+absent on the live network, and the reverse after a switch — and one opens the
+picker from the header and asserts that every registry entry reaches it, and
+that each row speaks its kind. Each was
 run against a mutation before it was kept: a `venue_kind` that always answers
 **REAL MONEY** fails three of them on the missing word, a `venue_list` that
 filters test deployments out fails the picker on the missing row, and an arm
