@@ -28,7 +28,7 @@ extern crate::hyperliquid
   pure symbol_row(rows:[SymbolRow], coin:str) -> SymbolRow?
   pure listed_coin(rows:[SymbolRow], coin:str) -> str
   pure ticket_seed(book:Book?, focus:SymbolRow?) -> str
-  pure tray_status(coin:str, focus:SymbolRow?) -> str
+  pure tray_status(coin:str, focus:SymbolRow?, live:bool) -> str
   pure impact_price(book:Book?, size:str, buy:bool) -> str
   pure impact_slippage(book:Book?, size:str, buy:bool) -> str
   pure impact_short(book:Book?, size:str, buy:bool) -> bool

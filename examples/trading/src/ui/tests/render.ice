@@ -1,11 +1,17 @@
 test trading_browsing_without_an_address_renders
   preset browsing
   viewport 1660 820
-  expect text "READ ONLY"
+  target app = #app
+  target equity = app/header/equity
+  // The account strip keeps its three boxes with no account to fill them, and
+  // a dash in each is what says there is nothing — the strip going missing
+  // said it by moving everything beside it instead.
+  expect text "EQUITY" within equity
+  expect text "PNL" within equity
+  expect text "—" within equity
   expect text "No levels watched."
   expect text "Fills need an address."
   expect text "Orders need an address."
-  expect no text "EQUITY"
   expect no text "market not loaded"
   capture browsing
   dispatch navigate(Page.portfolio)
@@ -94,9 +100,14 @@ test trading_the_market_list_outruns_its_panel
 test trading_the_whole_terminal_renders_from_fixtures
   preset held
   viewport 1660 820
+  target app = #app
+  target equity = app/header/equity
   expect text "64,001.00"
   expect text "0.3 bps"
-  expect no text "READ ONLY"
+  // The same three boxes with an account behind them: figures, and no dash
+  // left over from the state that has none.
+  expect text "$3,761,182.51" within equity
+  expect no text "—" within equity
   expect no text "No data"
   expect text "1%"
   expect text "34%"

@@ -756,9 +756,18 @@ pub fn ticket_seed(book: Option<Book>, focus: Option<SymbolRow>) -> String {
 
 /// The menu bar mini status: the focused market's coin and last price, or
 /// just the coin while the market list is still loading.
-pub fn tray_status(coin: String, focus: Option<SymbolRow>) -> String {
+///
+/// A dead feed does not make the last price wrong — it is still the last thing
+/// the exchange said — but it stops it being the price, and the menu bar is
+/// the one surface read without the header beside it to say so. The header
+/// greys the figure and stamps NOT LIVE next to it; a status item is one
+/// string with no ink to spend, so it says the same thing in the same words.
+/// With no row to price there is no figure to qualify, and the coin alone
+/// claims nothing.
+pub fn tray_status(coin: String, focus: Option<SymbolRow>, live: bool) -> String {
     match focus.filter(|row| row.price > 0.0) {
-        Some(row) => format!("{coin} {}", fmt_px(row.price)),
+        Some(row) if live => format!("{coin} {}", fmt_px(row.price)),
+        Some(row) => format!("{coin} {} NOT LIVE", fmt_px(row.price)),
         None => coin,
     }
 }

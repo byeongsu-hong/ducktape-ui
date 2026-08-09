@@ -7,9 +7,9 @@ extern crate::venue
   pure venue_name(venue:Venue) -> str
   pure venue_label(venue:Venue, shown:bool) -> str
   pure venue_account_gap(venue:Venue) -> str
-  pure venue_account_note(venue:Venue, watching:bool) -> str
-  pure venue_orders_note(venue:Venue, watching:bool) -> str
-  pure venue_fills_note(venue:Venue, watching:bool) -> str
+  pure venue_account_note(venue:Venue, watching:bool, missing:bool, failure:str) -> str
+  pure venue_orders_note(venue:Venue, watching:bool, failure:str) -> str
+  pure venue_fills_note(venue:Venue, watching:bool, failure:str) -> str
   venue_symbols(venue:Venue) -> [SymbolRow] ! HlError
   venue_candles(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError
   venue_history(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError
