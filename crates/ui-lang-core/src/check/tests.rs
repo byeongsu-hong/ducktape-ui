@@ -406,10 +406,13 @@ view
     );
     let error = analyze(&effectful_route).unwrap_err();
     assert_eq!(error.code, "E152");
-    assert!(
-        error
-            .message
-            .contains("only valid in app state initializers and handlers")
+    assert_eq!(
+        error.message,
+        "completion route expression must be pure; sync extern `read_environment` is not allowed"
+    );
+    assert_eq!(
+        error.hint.as_deref(),
+        Some("evaluate `read_environment(...)` in an earlier handler `let` and route that local")
     );
 }
 

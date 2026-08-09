@@ -90,8 +90,17 @@ a trusted Rust contract: the same arguments must produce the same value without
 observable effects. Immediate `sync` externs may observe the environment,
 perform an effect, or create retained identity, so Ice confines them to
 top-level app state initializers and immediately evaluated handler expressions.
-Async completion route expressions are evaluated later and may call only
-`pure` externs.
+Explicit expressions producing ordinary cloneable Ice data in `run` Future and
+`task` statement completion routes become owned snapshots when the statement
+launches; both success and failure snapshots are materialized then, while `_`
+is supplied only by the delivered completion.
+They remain pure-only so an unused branch cannot perform an effect. Run a
+`sync` extern in a preceding handler `let` and route that local when an
+immediate value is needed. Stream, sip, flow, and native query route timing is
+unchanged.
+For example, `run fetch(query) -> loaded(query, _)` captures `query` at launch,
+not completion; that explicit value may come from state, a derived value, a
+handler parameter, or a `let` local.
 
 Ordinary `run` delivers every Future completion. For superseding requests,
 `run latest lane=<name>` routes only the newest completion without canceling

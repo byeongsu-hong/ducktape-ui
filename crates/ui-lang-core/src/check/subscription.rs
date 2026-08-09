@@ -1,5 +1,35 @@
 use super::*;
 
+struct CompletionRouteTypeEnv<'a> {
+    route: &'a dyn ExprTypeEnv,
+    snapshot: &'a dyn ExprTypeEnv,
+}
+
+impl<'a> CompletionRouteTypeEnv<'a> {
+    fn new(route: &'a dyn ExprTypeEnv, snapshot: &'a dyn ExprTypeEnv) -> Self {
+        Self { route, snapshot }
+    }
+}
+
+impl ExprTypeEnv for CompletionRouteTypeEnv<'_> {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.route
+            .get_type(name)
+            .or_else(|| self.snapshot.get_type(name))
+    }
+
+    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+        self.snapshot.visit_types(visitor);
+        self.route.visit_types(visitor);
+    }
+
+    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+        self.route
+            .type_with_prefix(prefix)
+            .or_else(|| self.snapshot.type_with_prefix(prefix))
+    }
+}
+
 fn require_single_payload_routes<'a>(
     routes: impl IntoIterator<Item = &'a Route>,
     span: &Span,
@@ -568,10 +598,23 @@ pub(in crate::check) fn infer_runs(
     value_env: &dyn ExprTypeEnv,
     route_env: &dyn ExprTypeEnv,
 ) -> Result<(), Error> {
+    let signature_key = component_context(route_env)
+        .map(|component| component_handler_key(component, &handler.name))
+        .unwrap_or_else(|| handler.name.clone());
+    let parameter_types = signatures
+        .get(&signature_key)
+        .cloned()
+        .unwrap_or_else(|| vec![None; handler.params.len()]);
     let params = handler
         .params
         .iter()
-        .map(|param| (param.name.as_str(), Type::Unknown));
+        .zip(parameter_types)
+        .map(|(param, inferred)| {
+            (
+                param.name.as_str(),
+                inferred.unwrap_or_else(|| param.ty.clone()),
+            )
+        });
     let sync_value_env = SyncTypeEnv::new(value_env);
     infer_run_statements(
         &handler.statements,
@@ -771,12 +814,32 @@ fn infer_run_statements<'a>(
                     "stream routes accept at most one `_`; read other state in the handler",
                 )?;
             }
-            if let Some((output, builtin_error)) = builtin_task_type(*kind, function, args, span)? {
-                infer_route(success, Some(output), &unknown_env, document, signatures)?;
-                match (builtin_error, error) {
-                    (Some(error_ty), Some(route)) => {
-                        infer_route(route, Some(error_ty), &unknown_env, document, signatures)?
+            let completion_env = CompletionRouteTypeEnv::new(&unknown_env, &local_env);
+            let (completion_env, expression_policy): (&dyn ExprTypeEnv, RouteExpressionPolicy) =
+                match kind {
+                    EffectKind::Future | EffectKind::Task => {
+                        (&completion_env, RouteExpressionPolicy::LaunchSnapshot)
                     }
+                    EffectKind::Stream => (&unknown_env, RouteExpressionPolicy::Ordinary),
+                };
+            if let Some((output, builtin_error)) = builtin_task_type(*kind, function, args, span)? {
+                infer_route_with_policy(
+                    success,
+                    Some(output),
+                    completion_env,
+                    document,
+                    signatures,
+                    expression_policy,
+                )?;
+                match (builtin_error, error) {
+                    (Some(error_ty), Some(route)) => infer_route_with_policy(
+                        route,
+                        Some(error_ty),
+                        completion_env,
+                        document,
+                        signatures,
+                        expression_policy,
+                    )?,
                     (Some(_), None) => {
                         return Err(Error::new(
                             "E131",
@@ -796,20 +859,22 @@ fn infer_run_statements<'a>(
                 continue;
             }
             let action = extern_function(document, function, (*kind).into(), span)?;
-            infer_route(
+            infer_route_with_policy(
                 success,
                 Some(action.output.clone()),
-                &unknown_env,
+                completion_env,
                 document,
                 signatures,
+                expression_policy,
             )?;
             match (&action.error, error) {
-                (Some(error_ty), Some(route)) => infer_route(
+                (Some(error_ty), Some(route)) => infer_route_with_policy(
                     route,
                     Some(error_ty.clone()),
-                    &unknown_env,
+                    completion_env,
                     document,
                     signatures,
+                    expression_policy,
                 )?,
                 (Some(_), None) => {
                     return Err(Error::new(
@@ -954,12 +1019,31 @@ pub(in crate::check) fn infer_route(
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
 ) -> Result<(), Error> {
+    infer_route_with_policy(
+        route,
+        payload,
+        env,
+        document,
+        signatures,
+        RouteExpressionPolicy::Ordinary,
+    )
+}
+
+fn infer_route_with_policy(
+    route: &Route,
+    payload: Option<Type>,
+    env: &dyn ExprTypeEnv,
+    document: &Document,
+    signatures: &mut HashMap<String, Vec<Option<Type>>>,
+    expression_policy: RouteExpressionPolicy,
+) -> Result<(), Error> {
     infer_route_with_payloads(
         route,
         RoutePayloads::Single(payload.as_ref()),
         env,
         document,
         signatures,
+        expression_policy,
     )
 }
 
@@ -976,7 +1060,14 @@ pub(in crate::check) fn infer_component_event_route(
         env,
         document,
         signatures,
+        RouteExpressionPolicy::Ordinary,
     )
+}
+
+#[derive(Clone, Copy)]
+enum RouteExpressionPolicy {
+    Ordinary,
+    LaunchSnapshot,
 }
 
 #[derive(Clone, Copy)]
@@ -1007,12 +1098,63 @@ fn component_handler_signature_key(
         .filter(|key| signatures.contains_key(key))
 }
 
+fn infer_route_expression(
+    expression: &Expr,
+    env: &dyn ExprTypeEnv,
+    document: &Document,
+    span: &Span,
+    policy: RouteExpressionPolicy,
+) -> Result<Type, Error> {
+    if matches!(policy, RouteExpressionPolicy::LaunchSnapshot)
+        && let Some(function) = sync_extern_call(expression, document)
+    {
+        return Err(Error::new(
+            "E152",
+            span,
+            format!(
+                "completion route expression must be pure; sync extern `{function}` is not allowed"
+            ),
+        )
+        .hint(format!(
+            "evaluate `{function}(...)` in an earlier handler `let` and route that local"
+        )));
+    }
+    if matches!(policy, RouteExpressionPolicy::LaunchSnapshot)
+        && let Some(function) = super::recomputation_unsafe_builtin_call(expression, document)
+    {
+        return Err(Error::new(
+            "E152",
+            span,
+            format!(
+                "completion route expression cannot call recomputation-unsafe builtin `{function}`"
+            ),
+        )
+        .hint(format!(
+            "evaluate `{function}(...)` in an earlier handler `let` and route that local"
+        )));
+    }
+    let ty = expr_type(expression, env, document, span)?;
+    if matches!(policy, RouteExpressionPolicy::LaunchSnapshot) && !component_value_is_cloneable(&ty)
+    {
+        return Err(Error::new(
+            "E152",
+            span,
+            format!(
+                "completion route expression must produce ordinary cloneable Ice data, got `{}`",
+                ty.display()
+            ),
+        ));
+    }
+    Ok(ty)
+}
+
 fn infer_route_with_payloads(
     route: &Route,
     payloads: RoutePayloads<'_>,
     env: &dyn ExprTypeEnv,
     document: &Document,
     signatures: &mut HashMap<String, Vec<Option<Type>>>,
+    expression_policy: RouteExpressionPolicy,
 ) -> Result<(), Error> {
     let (captured_payloads, captured_ordered) = match payloads {
         RoutePayloads::Single(payload) => (payload.cloned().into_iter().collect(), false),
@@ -1069,7 +1211,9 @@ fn infer_route_with_payloads(
                         payload_index += 1;
                         actual
                     }
-                    RouteArg::Expr(expr) => expr_type(expr, env, document, &route.span)?,
+                    RouteArg::Expr(expr) => {
+                        infer_route_expression(expr, env, document, &route.span, expression_policy)?
+                    }
                 };
                 require_type(&actual, expected, &route.span)?;
             }
@@ -1098,7 +1242,9 @@ fn infer_route_with_payloads(
         };
         let actual = match arg {
             RouteArg::Payload => payloads.get(0, &route.span)?,
-            RouteArg::Expr(expr) => expr_type(expr, env, document, &route.span)?,
+            RouteArg::Expr(expr) => {
+                infer_route_expression(expr, env, document, &route.span, expression_policy)?
+            }
         };
         return require_type(&actual, output, &route.span);
     }
@@ -1157,7 +1303,9 @@ fn infer_route_with_payloads(
                 payload_index += 1;
                 ty
             }
-            RouteArg::Expr(expr) => expr_type(expr, env, document, &route.span)?,
+            RouteArg::Expr(expr) => {
+                infer_route_expression(expr, env, document, &route.span, expression_policy)?
+            }
         };
         if contains_debug_span(&ty) {
             return Err(Error::new(

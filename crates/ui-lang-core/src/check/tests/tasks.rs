@@ -533,3 +533,236 @@ view
     let error = analyze(&source.replace("from none i64", "from none Missing")).unwrap_err();
     assert_eq!(error.code, "E103");
 }
+
+#[test]
+fn allows_future_and_task_completion_route_snapshots() {
+    let source = r#"app Snapshots
+extern crate::backend
+  AppError(message:str)
+  pure decorate(value:str) -> str
+  request(id:i64) -> str ! AppError
+  task cached(id:i64) -> str ! AppError
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  token = "initial"
+derived
+  decorated = decorate(token)
+preset seeded
+  state
+    token = "preset"
+  boot
+    run request(1) -> future_loaded(_, token, decorated, 1, "preset") | future_failed(_, token, 1, "preset")
+on start(id)
+  let local = decorate(token)
+  parallel
+    run request(id) -> future_loaded(_, token, decorated, id, local) | future_failed(_, token, id, local)
+    task cached(id) -> task_loaded(_, token, decorated, id, local) | task_failed(_, token, id, local)
+on future_loaded(value, state_value, derived_value, param_value, local_value)
+on future_failed(error, state_value, param_value, local_value)
+on task_loaded(value, state_value, derived_value, param_value, local_value)
+on task_failed(error, state_value, param_value, local_value)
+view
+  button "Start" -> start(1)
+"#;
+
+    let error = analyze(source).err();
+    assert!(
+        error.is_none(),
+        "Future and Task completion routes should snapshot launch-time values: {error:?}"
+    );
+}
+
+#[test]
+fn infers_completion_snapshot_parameters_independent_of_handler_order() {
+    let reversed = r#"app SnapshotOrder
+extern crate::backend
+  request() -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+on middle(context)
+  run request() -> finished(context, _)
+on start(context)
+  run request() -> middle(context)
+on finished(context, value)
+view
+  button "Start" -> start("launch")
+"#;
+    let forward = reversed.replace(
+        "on middle(context)\n  run request() -> finished(context, _)\non start(context)\n  run request() -> middle(context)",
+        "on start(context)\n  run request() -> middle(context)\non middle(context)\n  run request() -> finished(context, _)",
+    );
+
+    assert!(
+        analyze(&forward).is_ok(),
+        "control order should infer the forwarded snapshot parameter"
+    );
+    let error = analyze(reversed).err();
+    assert!(
+        error.is_none(),
+        "handler declaration order must not affect snapshot parameter inference: {error:?}"
+    );
+}
+
+#[test]
+#[ignore = "explicit reverse handler signature propagation linearity contract"]
+fn performance_contract_four_thousand_reverse_handler_routes_use_a_worklist() {
+    use std::fmt::Write as _;
+
+    const HANDLERS: usize = 4_000;
+    let mut source = String::from(
+        r#"app SnapshotOrderPerf
+extern crate::backend
+  request() -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+"#,
+    );
+    for index in (0..HANDLERS).rev() {
+        let target = if index + 1 == HANDLERS {
+            "finished".to_owned()
+        } else {
+            format!("step_{}", index + 1)
+        };
+        writeln!(
+            source,
+            "on step_{index}(context)\n  run request() -> {target}(context)"
+        )
+        .unwrap();
+    }
+    source.push_str("on finished(context)\nview\n  button \"Start\" -> step_0(\"launch\")\n");
+
+    crate::check::reset_handler_signature_worklist_visits();
+    analyze(&source).unwrap();
+    assert_eq!(
+        crate::check::handler_signature_worklist_visits(),
+        HANDLERS * 2 + 1,
+        "reverse chains must revisit only the handler whose signature gained evidence"
+    );
+}
+
+#[test]
+fn completion_route_snapshots_include_component_state_but_not_props() {
+    let source = r#"app ComponentSnapshots
+extern crate::backend
+  request(id:i64) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Snapshot(label:str)
+  state
+    token = "initial"
+  on start(id)
+    let local = token
+    run request(id) -> loaded(_, token, id, local)
+  on loaded(value, state_value, param_value, local_value)
+  button "Start" -> start(1)
+view
+  Snapshot label="Snapshot"
+"#;
+
+    let error = analyze(source).err();
+    assert!(
+        error.is_none(),
+        "component completion routes should snapshot component state and handler locals: {error:?}"
+    );
+
+    let error =
+        analyze(&source.replace("loaded(_, token, id, local)", "loaded(_, label, id, local)"))
+            .unwrap_err();
+    assert_eq!(error.code, "E150");
+    assert_eq!(error.message, "unknown value `label`");
+}
+
+#[test]
+fn checks_completion_route_snapshot_purity_and_cloneability() {
+    let source = r#"app SnapshotValues
+extern crate::backend
+  Token(value:i64)
+  sync runtime_token() -> str
+  pure opaque_token() -> Token
+  request() -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  handle:task-handle? = none
+on start
+  let captured = runtime_token()
+  let window = window_id.unique()
+  parallel
+    run request() -> accepted_sync(captured)
+    run request() -> accepted_opaque(opaque_token())
+    run request() -> accepted_handle(captured)
+    run request() -> accepted_window(window)
+on accepted_sync(value)
+on accepted_opaque(value)
+on accepted_handle(value)
+on accepted_window(value)
+view
+  button "Start" -> start
+"#;
+
+    analyze(source).unwrap();
+
+    let error = analyze(&source.replace(
+        "accepted_window(window)",
+        "accepted_window(window_id.unique())",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E152");
+    assert_eq!(
+        error.message,
+        "completion route expression cannot call recomputation-unsafe builtin `window_id.unique`"
+    );
+    assert_eq!(
+        error.hint.as_deref(),
+        Some("evaluate `window_id.unique(...)` in an earlier handler `let` and route that local")
+    );
+
+    let error = analyze(&source.replace("accepted_handle(captured)", "accepted_handle(handle)"))
+        .unwrap_err();
+    assert_eq!(error.code, "E152");
+    assert_eq!(
+        error.message,
+        "completion route expression must produce ordinary cloneable Ice data, got `task-handle?`"
+    );
+}
