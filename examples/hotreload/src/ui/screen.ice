@@ -49,11 +49,7 @@ view
               gap=18.0
             row w=fill align=center
               col w=fill gap=4.0
-                text "LIVE PREVIEW"
-                  with
-                    size=11.0
-                    @text-primary
-                    @font-bold
+                text "LIVE PREVIEW" size=11.0 @text-primary
                 text "The left pane is ordinary Ice" size=22.0 @text-fg
               box
                 with
@@ -139,9 +135,10 @@ view
                     size=14.0
                     @text-fg
                     @font-mono
-              text "Ctrl/Cmd+S is not intercepted; use Save above." size=11.0 @text-muted
-            editor #source <-> source
+              text "Press Ctrl/Cmd+S or use Save above." size=11.0 @text-muted
+            editor #source <-> source -> save_source_shortcut _
               with
+                key-binding=source_keys()
                 hint="Ice source"
                 w=560.0
                 h=fill

@@ -12,8 +12,10 @@ use "screen.ice"
 
 extern crate::backend
   SourceError(message:str)
+  SaveCommand()
   load_source() -> str ! SourceError
   save_source(source:str) -> str ! SourceError
+  editor-binding source_keys() -> SaveCommand
 
 state
   source:editor = ""
@@ -45,9 +47,15 @@ on source_loaded(next)
   source = editor(next)
   source_ready = true
   busy = false
-  status = "Ready — edit the preview markup, then save."
+  status = "Ready — edit the preview markup, then press Ctrl/Cmd+S."
 
 on save_source_file
+  busy = true
+  error = ""
+  status = "Saving…"
+  run save_source(editor_text(source)) -> source_saved _ | source_failed _
+
+on save_source_shortcut(_command)
   busy = true
   error = ""
   status = "Saving…"
@@ -87,3 +95,15 @@ test edit_and_save_source
   expect status_text.value == "Saved 5 bytes — cargo ice dev will apply compatible edits."
   expect preview_count == 1
   capture saved
+
+test save_source_with_shortcut
+  preset ready
+  viewport 1280 800
+  target app = #app
+  target editor = app/workspace/editor-panel/editor-content/source
+  target status_text = app/workspace/editor-panel/editor-content/status/status-text
+  click editor
+  type "!"
+  expect editor.value == "view!"
+  chord control "s"
+  expect status_text.value == "Saved 5 bytes — cargo ice dev will apply compatible edits."
