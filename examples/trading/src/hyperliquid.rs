@@ -2912,6 +2912,45 @@ pub fn demo_book_ticked(mid: f64, tick: f64) -> Book {
     }
 }
 
+/// The book at the depth a socket actually delivers. Three levels a side is
+/// enough to price a crossing order, and every other fixture here carries
+/// three — which is why nothing in this app had ever drawn a book that reached
+/// the bottom of its own column. Both venues publish ten a side, and ten a
+/// side is 390px of rows the panel has to hold without spending the height the
+/// tape, the alerts and the resting orders below it need.
+pub fn demo_book_deep() -> Book {
+    let mid = 64_000.0;
+    // The deepest level's running total, which is what the widest bar is drawn
+    // against: ten sizes of 0.4 + 0.4n sum to 26.
+    let deepest = 26.0;
+    let side = |away: f64| {
+        let mut total = 0.0;
+        (1..=10)
+            .map(|step| {
+                let size = 0.4 + f64::from(step) * 0.4;
+                total += size;
+                Level {
+                    price: mid + away * f64::from(step),
+                    size,
+                    total,
+                    bar: total / deepest * BOOK_BAR_WIDTH,
+                }
+            })
+            .collect::<Vec<Level>>()
+    };
+    let mut asks = side(1.0);
+    // Reversed, as the feed leaves them: the best ask sits last, against the
+    // spread, so the panel walks both lists top to bottom.
+    asks.reverse();
+    Book {
+        bids: side(-1.0),
+        asks,
+        spread: 2.0,
+        spread_pct: 2.0 / mid * 100.0,
+        mid,
+    }
+}
+
 pub fn demo_tape() -> Vec<Trade> {
     demo_tape_at(64_000.0)
 }

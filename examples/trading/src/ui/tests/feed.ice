@@ -25,10 +25,10 @@ test trading_says_what_broke_without_spending_a_money_colour
   expect text "Hyperliquid unreachable"
   expect dropped.text_color == plain.text_color
 
-// Nothing that can fail here waits for the trade page to be showing: the
-// universe poll and the account poll run on all four pages and the feed runs
-// always. A failure raised while the reader is on markets or portfolio used to
-// set a line no page drew, and it stayed unsaid until they went back.
+// Nothing that can fail here waits for the terminal to be showing: the universe
+// poll and the account poll run on all three pages and the feed runs always. A
+// failure raised while the reader is on portfolio or settings used to set a line
+// no page drew, and it stayed unsaid until they went back.
 test trading_a_failure_is_drawn_on_whatever_page_is_showing
   preset stalled
   viewport 1180 720

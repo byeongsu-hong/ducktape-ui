@@ -55,6 +55,7 @@ extern crate::hyperliquid
   pure demo_book() -> Book
   pure demo_book_at(mid:f64) -> Book
   pure demo_book_ticked(mid:f64, tick:f64) -> Book
+  pure demo_book_deep() -> Book
   pure demo_tape_ticked(mid:f64, tick:f64) -> [Trade]
   sync demo_candles_for(coin:str, last:f64) -> Tape
   pure demo_hover() -> CandleHit

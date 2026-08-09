@@ -227,11 +227,10 @@ fn app(screen: Screen) -> Trading {
 
     state.gate = false;
     // The market list, the chart, the book, the tape, the positions, the
-    // orders and the fills are one screen again, so the probe measures the
-    // page the app opens on and every list it prices is drawn there. It was
-    // seeding the portfolio page while the market list lived on `Page.markets`
-    // — an ablation of market rows was pricing a list that was not rendered,
-    // and returned the small number near zero that says so.
+    // orders and the fills are one screen, so the probe measures the page the
+    // app opens on and every list it prices is drawn there. An ablation that
+    // seeds a list the seeded page does not render prices nothing, and returns
+    // the small number near zero that says so.
     state.page = crate::Page::Terminal;
     state.address = ADDRESS.to_owned();
     state.live = true;

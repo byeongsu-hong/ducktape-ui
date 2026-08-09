@@ -13,7 +13,7 @@ test trading_browsing_without_an_address_renders
   expect text "Connect an address to load portfolio performance."
 
 // An account most of the way to its engine, and the rail that says so is per
-// position: it lives on the portfolio page now. Capturing the trade page here
+// position: it lives on the portfolio page now. Capturing the terminal here
 // kept the arithmetic — the ticket's load and the account's share — and left
 // the picture's subject on another page.
 test trading_an_account_against_its_engine_renders_as_such

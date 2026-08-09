@@ -84,6 +84,31 @@ test trading_the_narrow_terminal_folds_two_panes_within_reach
   expect text "UNREALIZED" within open_positions
   capture terminal_narrow
 
+// The same minimum, measured down the column rather than across it: this is the
+// one pane whose height the venue sets rather than the layout. Ten levels a side
+// at 18px with the spread row between them is 390px of book in a column that has
+// 316px for the book and the tape together, so a book drawn whole took the
+// height of every list under it. `deep_book` is the only fixture at that depth —
+// the rest are three levels a side, which is why no test had ever drawn a book
+// that reached the bottom of its own column.
+test trading_a_full_book_leaves_the_panes_under_it_their_height
+  preset deep_book
+  viewport 1180 720
+  target app = #app
+  target terminal = app/terminal-fit/trade
+  target rail = terminal/book
+  target printed = rail/tape-list
+  target watched = rail/alert-list
+  target resting = rail/order-list
+  // The tape is the pane the book overran first, and a list with no height is
+  // a heading over nothing.
+  expect printed.height > 0.0
+  // The two fixed lists below it keep the heights they ask for rather than the
+  // remainder of a column already spent.
+  expect watched.height ~= 88.0
+  expect resting.height ~= 120.0
+  expect resting.bottom <= rail.bottom
+
 // The other half of the same rule, driven rather than drawn, and on its own
 // because it has to be quick: the account poll fires every five seconds while
 // an address is set, and `held` sets one. A rasterised capture in front of

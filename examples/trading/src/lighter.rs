@@ -3405,7 +3405,7 @@ mod tests {
 
     #[test]
     fn a_beat_with_no_market_still_carries_the_prices() {
-        // The markets page before anything is charted: no book, no candles,
+        // The market list before anything is charted: no book, no candles,
         // and a list that still has to tick.
         let tape = tape_new();
         let (mut read, _) = reader(&tape);
