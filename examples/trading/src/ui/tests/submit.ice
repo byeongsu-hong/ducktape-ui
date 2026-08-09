@@ -170,6 +170,36 @@ test trading_a_confirmed_order_still_cannot_send_without_a_key
   expect exists failed
   expect text "Unlock on Settings before sending an order."
 
+// ORDER VALUE is a figure in the market's own collateral, not in dollars.
+//
+// The row beside it, MARGIN REQUIRED, has always been collateral-aware; this
+// one was not, so on a market that settles in something else the two sat
+// together with one of them wearing the wrong currency. A dollar sign in front
+// of a USDe figure is the panel asserting a rate it has not been told.
+test trading_an_order_is_valued_in_the_collateral_its_market_settles_in
+  preset ready_to_send
+  viewport 1660 820
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel
+  // The categorised universe is the one that carries a builder-deployed market,
+  // and a builder market is the only kind that settles in anything but the
+  // venue's own collateral.
+  dispatch symbols_loaded(demo_symbols_categorized())
+  dispatch pick_symbol("hyna:HYPE")
+  dispatch ticket_sized("100")
+  dispatch ticket_priced("38.42")
+  // 100 at 38.42 is 3,842 of whatever this market settles in, which is not
+  // dollars — and the panel says which.
+  expect text "3,842.00 USDe" within ticket
+  expect no text "$3,842.00" within ticket
+  // And a market that does settle in the venue's own collateral still reads in
+  // dollars, so this is the collateral rather than a formatter that stopped
+  // printing currency at all.
+  dispatch pick_symbol("BTC")
+  dispatch ticket_sized("3.00")
+  dispatch ticket_priced("64,000.00")
+  expect text "$192,000.00" within ticket
+
 // A market this app cannot read the margin of is refused before the review,
 // not at the exchange. The order path refuses it again on the wire; this is the
 // half a reader can see.

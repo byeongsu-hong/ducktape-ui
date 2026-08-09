@@ -87,7 +87,9 @@
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use crate::hyperliquid::{HlError, Order, SymbolRow, fmt_size, hl_agents, hl_cancel, hl_place};
+use crate::hyperliquid::{
+    HlError, Order, SymbolRow, fmt_px, fmt_size, hl_agents, hl_cancel, hl_place,
+};
 use crate::lighter::{lighter_account_index, lighter_api_keys, lighter_cancel, lighter_place};
 use crate::lighter_sign::{PrivateKey, Resting};
 /// Ice names one namespace per Rust module, and custody is the one it talks
@@ -881,36 +883,14 @@ pub async fn submit_order(
     }
     let key = signing_key(venue, &session, now_s)
         .ok_or_else(|| HlError::new(locked_out(venue, session.clone())))?;
-    let order = Order {
-        oid: 0,
-        coin: draft.coin.clone(),
-        buy: draft.buy,
-        price: draft.price,
-        size: draft.size,
-        ts: 0,
-    };
     match (Network::of(venue).signing, &*key) {
         (Signing::Eip712(chain), HeldKey::Agent(wallet)) => {
             let market = draft
                 .market
                 .clone()
                 .ok_or_else(|| HlError::new("This market is not loaded here.".to_owned()))?;
-            let resting = hl_place(
-                chain,
-                wallet,
-                &market,
-                order,
-                draft.reduce_only,
-                hl_tif(draft.tif),
-            )
-            .await?;
-            // The venue answers a resting order with the id it rests under, and
-            // an order that filled on arrival with no id at all — so this says
-            // which happened rather than one word for both.
-            Ok(match resting.first() {
-                Some(oid) => format!("{} is resting as order {oid}.", acted(&draft)),
-                None => format!("{} filled on arrival.", acted(&draft)),
-            })
+            let done = hl_place(chain, wallet, &market, wire_order(&draft, market.asset)).await?;
+            Ok(receipt(&draft, done))
         }
         (
             Signing::ApiKey(zone),
@@ -920,6 +900,14 @@ pub async fn submit_order(
                 index,
             },
         ) => {
+            let order = Order {
+                oid: 0,
+                coin: draft.coin.clone(),
+                buy: draft.buy,
+                price: draft.price,
+                size: draft.size,
+                ts: 0,
+            };
             let placed = lighter_place(
                 zone,
                 key,
@@ -991,6 +979,57 @@ pub async fn cancel_resting(
         _ => Err(HlError::new(
             "The key this session holds is not for this network.".to_owned(),
         )),
+    }
+}
+
+/// The order the wire carries, from the order that was confirmed.
+///
+/// The whole of the mapping, in one place, so a test can hold what the exchange
+/// receives against what the panel said — and so that adding a field to `Draft`
+/// without deciding whether it reaches the wire is a thing somebody has to do
+/// on purpose rather than by omission.
+fn wire_order(draft: &Draft, asset: u32) -> signing::Order {
+    signing::Order {
+        asset,
+        buy: draft.buy,
+        price: draft.price,
+        size: draft.size,
+        reduce_only: draft.reduce_only,
+        tif: hl_tif(draft.tif),
+    }
+}
+
+/// What the venue did, in the venue's own numbers.
+///
+/// Three outcomes and they are not one word: an order can rest whole, fill
+/// whole, or fill part and rest — or, immediate-or-cancel, fill part and have
+/// the rest cancelled. The amount filled comes from the venue's answer; the
+/// only thing taken from the draft is the size that was asked for, and it is
+/// there to say what did *not* happen.
+fn receipt(draft: &Draft, done: crate::hyperliquid::Placed) -> String {
+    let what = acted(draft);
+    let short = done.filled + 1e-12 < draft.size;
+    match (done.filled > 0.0, done.resting, short) {
+        (true, 0, true) => format!(
+            "{what}: {} of {} filled at {}, and the rest was cancelled.",
+            fmt_size(done.filled),
+            fmt_size(draft.size),
+            fmt_px(done.at),
+        ),
+        (true, 0, false) => format!("{what} filled at {}.", fmt_px(done.at)),
+        (true, oid, _) => format!(
+            "{what}: {} of {} filled at {}, and {} rests as order {oid}.",
+            fmt_size(done.filled),
+            fmt_size(draft.size),
+            fmt_px(done.at),
+            fmt_size(draft.size - done.filled),
+        ),
+        (false, 0, _) => {
+            format!(
+                "{what} was accepted, and the venue reported neither a fill nor a resting order."
+            )
+        }
+        (false, oid, _) => format!("{what} is resting as order {oid}."),
     }
 }
 
@@ -1713,6 +1752,200 @@ mod tests {
         for venue in [Venue::Hyperliquid, Venue::LighterTestnet] {
             assert!(signing_key(venue, &ready, now).is_none());
         }
+    }
+
+    /// The receipt says what the venue did, in the venue's numbers.
+    ///
+    /// The failure it guards is the quiet one: an immediate-or-cancel order for
+    /// ten that crossed two, reported as ten. A trader reads that and believes
+    /// they hold five times what they hold, and every screen afterwards agrees
+    /// with the venue rather than with the receipt — so nothing ever tells them.
+    #[test]
+    fn the_receipt_says_what_the_venue_filled() {
+        let draft = sendable(10.0);
+        let done = |resting: i64, filled: f64, at: f64| crate::hyperliquid::Placed {
+            resting,
+            filled,
+            at,
+        };
+
+        // The whole of it crossed.
+        let whole = receipt(&draft, done(0, 10.0, 64_000.0));
+        assert_eq!(whole, "Buy 10 BTC filled at 64,000.00.");
+
+        // Two of ten crossed and the rest was cancelled, which is what an
+        // immediate-or-cancel order does with what it cannot fill.
+        let part = receipt(&draft, done(0, 2.0, 63_999.5));
+        assert!(part.contains("2 of 10 filled"), "{part}");
+        assert!(part.contains("the rest was cancelled"), "{part}");
+        assert!(
+            !part.contains("Buy 10 BTC filled at"),
+            "a partial fill must not read as a whole one: {part}"
+        );
+
+        // Two of ten crossed and eight rest, which is what a good-till-cancelled
+        // order does — and the remainder is named so it can be cancelled.
+        let both = receipt(&draft, done(77, 2.0, 63_999.5));
+        assert!(both.contains("2 of 10 filled"), "{both}");
+        assert!(both.contains("8 rests as order 77"), "{both}");
+
+        // Nothing crossed at all.
+        assert_eq!(
+            receipt(&draft, done(77, 0.0, 0.0)),
+            "Buy 10 BTC is resting as order 77."
+        );
+
+        // And the answer that says neither, which is not a placement to report
+        // as one.
+        let silent = receipt(&draft, done(0, 0.0, 0.0));
+        assert!(
+            silent.contains("neither a fill nor a resting order"),
+            "{silent}"
+        );
+    }
+
+    /// One sendable draft of a given size, for the receipts above.
+    fn sendable(size: f64) -> Draft {
+        crate::venue::order_draft(
+            Venue::Hyperliquid,
+            "BTC".to_owned(),
+            Some(SymbolRow {
+                name: "BTC".to_owned(),
+                ..SymbolRow::default()
+            }),
+            true,
+            size.to_string(),
+            64_000.0,
+            false,
+            false,
+            false,
+            Tif::Gtc,
+            quote(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
+    }
+
+    /// **What the exchange receives is what the confirmation said.**
+    ///
+    /// The freeze design's whole claim, tested as one thing rather than
+    /// inferred from the pieces. Three defects of exactly this class had to be
+    /// found by review before it existed: a target and a stop the panel drew
+    /// and the wire never carried, a margin mode it stated and never sent, and
+    /// a fill it reported at the size that was typed instead of the size that
+    /// crossed.
+    ///
+    /// The `let Draft { .. }` below is the part that kills the class rather
+    /// than the three instances. It names every field, so a field added to the
+    /// confirmation and not to the wire **does not compile** — whoever adds one
+    /// has to say here which of the two it is, in front of a reviewer.
+    #[test]
+    fn the_wire_carries_what_the_confirmation_said() {
+        let draft = Draft {
+            venue: Venue::HyperliquidTestnet,
+            coin: "BTC".to_owned(),
+            market: Some(SymbolRow {
+                name: "BTC".to_owned(),
+                asset: 7,
+                ..SymbolRow::default()
+            }),
+            buy: false,
+            size: 2.5,
+            price: 64_000.5,
+            walked: false,
+            reduce_only: true,
+            cross: true,
+            tif: Tif::Ioc,
+            leverage: 20.0,
+            notional: 160_001.25,
+            margin: 8_000.0,
+            liquidation: 61_000.0,
+            tp: 0.0,
+            sl: 0.0,
+            refusal: String::new(),
+        };
+        let wire = wire_order(&draft, 7);
+
+        // Every figure the panel showed, on the wire unchanged.
+        assert_eq!(wire.asset, 7);
+        assert_eq!(wire.buy, draft.buy);
+        assert_eq!(wire.price, draft.price);
+        assert_eq!(wire.size, draft.size);
+        assert_eq!(wire.reduce_only, draft.reduce_only);
+        assert_eq!(wire.tif, signing::Tif::Ioc);
+
+        // And the accounting, field by field. Anything not on the wire is
+        // named here with the reason it is not, so "the panel says it" and
+        // "the order carries it" cannot drift apart unnoticed again.
+        let Draft {
+            // On the wire, asserted above.
+            buy: _,
+            size: _,
+            price: _,
+            reduce_only: _,
+            tif: _,
+            // Names the market, which reaches the wire as its index.
+            market,
+            // Not on the wire, and each for a stated reason.
+            //
+            // `venue` and `coin` choose *where* it goes rather than riding in
+            // it; `walked`, `notional`, `margin`, `liquidation` and `refusal`
+            // are readings of the order rather than parts of it.
+            venue: _,
+            coin: _,
+            walked: _,
+            notional: _,
+            margin: _,
+            liquidation: _,
+            refusal: _,
+            // Not on the wire and *said so on screen*: both exchanges keep
+            // these per market on the account, so the confirmation prints
+            // `margin_estimate_note` under the figures it worked out from them.
+            cross: _,
+            leverage: _,
+            // Not on the wire and refused before it can be: no venue attaches
+            // levels here, and a draft carrying one cannot be sent at all.
+            tp,
+            sl,
+        } = draft.clone();
+        assert_eq!(market.map(|row| row.asset), Some(wire.asset));
+        assert_eq!((tp, sl), (0.0, 0.0));
+
+        // The two the note covers are covered by a sentence that names them.
+        let note = crate::venue::margin_estimate_note();
+        assert!(note.contains("Neither is sent"), "{note}");
+        assert!(note.contains("per market on your account"), "{note}");
+
+        // And the two the refusal covers: a draft carrying either is refused
+        // before a key is ever asked for.
+        let with_levels = crate::venue::order_draft(
+            Venue::HyperliquidTestnet,
+            "BTC".to_owned(),
+            draft.market.clone(),
+            true,
+            "1".to_owned(),
+            64_000.0,
+            false,
+            false,
+            false,
+            Tif::Gtc,
+            quote(),
+            "70000".to_owned(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+        assert!(
+            with_levels
+                .refusal
+                .contains("does not attach a target or a stop"),
+            "{}",
+            with_levels.refusal,
+        );
     }
 
     /// The send refuses before it reaches a venue, and says which half of the

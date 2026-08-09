@@ -355,7 +355,7 @@ impl Network {
         venue: Venue::Hyperliquid,
         name: "Hyperliquid",
         rests_forever: true,
-        attaches_levels: true,
+        attaches_levels: false,
         testnet: false,
         signing: Signing::Eip712(Chain::Mainnet),
         gap: "",
@@ -395,7 +395,7 @@ impl Network {
     pub const HYPERLIQUID_TESTNET: Network = Network {
         venue: Venue::HyperliquidTestnet,
         rests_forever: true,
-        attaches_levels: true,
+        attaches_levels: false,
         name: "Hyperliquid Testnet",
         testnet: true,
         signing: Signing::Eip712(Chain::Testnet),
@@ -745,11 +745,23 @@ pub fn venue_levels_note(venue: Venue) -> String {
     if venue_attaches_levels(venue) {
         return String::new();
     }
-    format!(
-        "{} attaches no levels to an entry. Its API takes them as separate orders once the \
-         position exists, which this app does not place.",
-        venue_name(venue)
-    )
+    // Two different reasons, and a reader deserves the one true of the exchange
+    // in front of them: one venue has nothing to attach, the other has it and
+    // this app has not built it.
+    match Network::of(venue).signing {
+        Signing::ApiKey(_) => format!(
+            "{} attaches no levels to an entry. Its API takes them as separate orders once the \
+             position exists, which this app does not place.",
+            venue_name(venue)
+        ),
+        Signing::Eip712(_) => format!(
+            "{} does take a target and a stop on the entry, and this app does not send them \
+             yet. They are offered nowhere rather than offered here: a field promising a \
+             position is protected, over an order that carries no protection, is the one \
+             mistake this panel must never make.",
+            venue_name(venue)
+        ),
+    }
 }
 
 /// The order the ticket is describing, frozen.
@@ -856,6 +868,7 @@ pub fn order_draft(
     sl_refusal: String,
 ) -> Draft {
     let size = amount(&size).abs();
+    let (tp, sl) = (amount(&tp), amount(&sl));
     Draft {
         venue,
         coin: coin.clone(),
@@ -871,13 +884,15 @@ pub fn order_draft(
         notional: quote.notional,
         margin: quote.margin,
         liquidation: quote.liquidation,
-        tp: amount(&tp),
-        sl: amount(&sl),
+        tp,
+        sl,
         refusal: draft_refusal(
             &coin,
             market.as_ref(),
             size,
             price,
+            tp,
+            sl,
             [
                 // Only when the promise is actually being made. The refusal is
                 // computed whether or not the box is ticked — the ticket draws
@@ -904,11 +919,14 @@ pub fn order_draft(
 /// per-control refusal outranks both, because a control that is already saying
 /// what is wrong with it should not be contradicted by a button saying
 /// something vaguer.
+#[allow(clippy::too_many_arguments)]
 fn draft_refusal(
     coin: &str,
     market: Option<&SymbolRow>,
     size: f64,
     price: f64,
+    tp: f64,
+    sl: f64,
     refusals: [String; 3],
 ) -> String {
     if let Some(said) = refusals.into_iter().find(|said| !said.is_empty()) {
@@ -930,6 +948,15 @@ fn draft_refusal(
     }
     if market.is_none() {
         return "This market is not loaded here.".to_owned();
+    }
+    // Belt beside the venue fact. `attaches_levels` is what stops the two
+    // fields being offered; this is what stops an order carrying them if they
+    // are ever set by some other path, because the wire has nowhere to put
+    // them and the confirmation would be promising protection that never left.
+    if tp > 0.0 || sl > 0.0 {
+        return "This app does not attach a target or a stop to an order yet, so it will not \
+                send one that has them."
+            .to_owned();
     }
     // `<=` rather than `!(_ > _)`: a size that is NaN is not a size either,
     // and both spellings refuse it — this one just says so readably.
@@ -997,6 +1024,30 @@ pub fn confirm_liquidation(draft: Option<Draft>) -> f64 {
 
 pub fn confirm_walked(draft: Option<Draft>) -> bool {
     draft.is_some_and(|draft| draft.walked)
+}
+
+/// What the margin figures on a confirmation are, and are not.
+///
+/// They are arithmetic done here, for the mode and the leverage the ticket is
+/// holding. **Neither is sent.** Both exchanges keep a margin mode and a
+/// leverage per market on the account itself, and a position opens at whatever
+/// that setting says — so a confirmation that stated "isolated, 5x" as though
+/// it had arranged anything would be describing an order the venue never
+/// receives.
+///
+/// Not implemented rather than not noticed. Hyperliquid has an `updateLeverage`
+/// action, and sending it before the order would make the figures true — but it
+/// sets the leverage for the *market*, not for the order, so it would silently
+/// re-lever any position already open there, and a pair where the first half
+/// lands and the second does not leaves an account changed with nothing bought.
+/// That is a second promise the panel would be making and not keeping, so the
+/// honest thing is the sentence rather than the action, until the pair can be
+/// sent and seen to take.
+pub fn margin_estimate_note() -> String {
+    "These margin figures are worked out here, for the mode and leverage above. Neither is sent \
+     with the order: both are settings the exchange keeps per market on your account, and the \
+     position opens at whatever they say."
+        .to_owned()
 }
 
 /// Whether a confirmation is standing over an order.
@@ -1603,8 +1654,8 @@ mod tests {
             true,
             Tif::Ioc,
             quote.clone(),
-            "70,000".to_owned(),
-            "60,000".to_owned(),
+            String::new(),
+            String::new(),
             String::new(),
             String::new(),
             String::new(),
@@ -1618,11 +1669,40 @@ mod tests {
         assert_eq!(draft.margin, quote.margin);
         assert_eq!(draft.liquidation, quote.liquidation);
         assert_eq!(draft.leverage, quote.leverage);
-        assert_eq!(draft.tp, 70_000.0);
-        assert_eq!(draft.sl, 60_000.0);
+        // No venue attaches levels, so a sendable draft carries none — and one
+        // that did would be refused rather than sent without them. The pair
+        // below is that refusal.
+        assert_eq!((draft.tp, draft.sl), (0.0, 0.0));
         assert!(draft.buy && draft.cross && !draft.walked && !draft.reduce_only);
         assert_eq!(draft.tif, Tif::Ioc);
         assert!(draft.refusal.is_empty(), "{}", draft.refusal);
+
+        let with_levels = order_draft(
+            Venue::HyperliquidTestnet,
+            "BTC".to_owned(),
+            Some(market("BTC")),
+            true,
+            "3.00".to_owned(),
+            64_000.0,
+            false,
+            false,
+            true,
+            Tif::Ioc,
+            quote,
+            "70,000".to_owned(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+        assert_eq!(with_levels.tp, 70_000.0, "the figure is still read");
+        assert!(
+            with_levels
+                .refusal
+                .contains("does not attach a target or a stop"),
+            "and refused rather than dropped: {}",
+            with_levels.refusal,
+        );
 
         // And the one line a reader hears before they press: the side, the
         // size, the network, and what it costs to be wrong on it.

@@ -284,10 +284,40 @@ It is asked **again** inside `submit_order`, on the far side of the press: a
 press and a send are two moments, and a window that closed between them is
 exactly what a screen-level check cannot see.
 
+### What the confirmation does not promise
+
+Two things it states are not things the order carries, and it says so rather
+than letting the figures imply otherwise.
+
+**Margin mode and leverage.** Both exchanges keep these per market on the
+account; an order carries neither, and a position opens at whatever the account
+says. So the margin and liquidation on the confirmation are arithmetic done
+here, for the mode and leverage shown, and a line under them says exactly that.
+Hyperliquid has an `updateLeverage` action that would make them true, and it is
+deliberately not wired into the send: it sets the leverage for the *market*, so
+it would silently re-lever any position already open there, and a pair where the
+first half lands and the second does not leaves an account changed with nothing
+bought. That is a second promise the panel would be making and not keeping.
+
+**A target and a stop**, above — offered nowhere, so the confirmation has none
+to restate.
+
+The rule both follow: what the panel shows is what the wire carries, or the
+panel says which it is. `the_wire_carries_what_the_confirmation_said` holds that
+field by field, and it names every field of `Draft` in a destructuring pattern —
+so a figure added to the confirmation and not to the wire does not compile until
+somebody says which of the two it is.
+
 ### What an acknowledgement means
 
-Hyperliquid answers a resting order with the id it rests under and a filled one
-with no id at all, so the status line says which happened. Lighter answers a
+Hyperliquid answers a resting order with the id it rests under, and a crossed
+one with how much crossed and at what — `filled.totalSz` and `avgPx`, read
+rather than assumed. Three outcomes, three sentences: rested whole, filled
+whole, or filled part and either rested or cancelled the remainder. An
+immediate-or-cancel order for ten that crosses two is reported as two of ten,
+because reporting it at the size that was *typed* tells a trader they hold five
+times what they hold and every screen afterwards agrees with the venue rather
+than with the receipt. Lighter answers a
 transaction hash and a predicted execution time — a receipt that the sequencer
 took the transaction, which is **not** the book having taken the order. The
 sentence there says "submitted", and only the orders read can upgrade it to
@@ -452,18 +482,29 @@ screen at all, so the cross cliff declines there for the same reason
 **AGAINST THE ENGINE** does. The market's own isolated arithmetic is not gated
 by any of that.
 
-**A take-profit and a stop-loss**, folded until they are wanted, with the PnL
-each level would realize drawn beside it and carried in the field's accessible
-name. A level on the wrong side of the entry is the other kind of order and the
-venue sends it as one — the trigger is already true when the order fills — so
-it is refused with the reason. A stop past the liquidation is worse than wrong:
-it reads as protection and is not there, because the engine closes the position
-before the trigger is reached. Hyperliquid takes these attached to the entry as
-a `trigger` order grouped with it. Lighter's public API has no such grouping —
-its SDK exposes take-profit and stop-loss only as whole independent orders,
-with nothing anywhere naming a parent — so on Lighter the fields are not
-offered and a sentence says why. Two fields the app would have to drop are
-worse than no fields: the entry would go and the protection would not.
+**A take-profit and a stop-loss** — offered on no venue, and each says why in
+its own words. Lighter has nothing to attach: its SDK exposes the two only as
+whole independent orders, with nothing anywhere naming a parent. Hyperliquid
+*does* take them, as a `trigger` order carrying `triggerPx` and `tpsl` grouped
+with the entry under `grouping: "normalTpsl"` where this app's wire hardcodes
+`"na"` — and this app does not send them yet.
+
+They were offered on Hyperliquid until the order path landed, over an order
+that carried neither. That is the one mistake this panel must never make: a
+field promising a position is protected, above a wire with no protection in it.
+Two fields the app would have to drop are worse than no fields.
+
+What is left to do is small and the standard is set: the venue's own SDK
+carries a signing vector for a trigger order
+(`test_l1_action_signing_tpsl_order_matches`, on the same key `signing.rs`
+already pins its other vectors against), so the encoding is pinnable offline.
+What is not pinnable without a funded test account is that the grouping
+*attaches* — and for a stop-loss, "the bytes are right" is not the claim that
+matters. So it waits for an order carrying one to be seen resting.
+
+The arithmetic behind the two fields is unchanged and still tested: a level on
+the wrong side of the entry, and a stop past the liquidation, are both refused
+with their reason.
 
 Nothing here is signed and nothing is sent. The ticket's state block is the
 payload a signing client would project, and `order_size` is the one function
@@ -1262,8 +1303,8 @@ still carries is on screen at the minimum size, and the page tests run there.
 | Liquidation prints on the tape | yes | **no** — see below |
 | Resting rules the ticket offers | `Gtc`, `Ioc`, `Alo` | `GOOD_TILL_TIME`, `IMMEDIATE_OR_CANCEL`, `POST_ONLY` — no rest-until-cancelled |
 | Reduce-only on the order | yes (`r`) | yes (`reduce_only`) |
-| Take-profit and stop-loss attached to the entry | yes, a grouped `trigger` order | **no** — separate orders only |
-| Cross and isolated margin | yes, per asset | yes, per market |
+| Take-profit and stop-loss attached to the entry | the venue takes a grouped `trigger` order; **this app does not send one yet** | **no** — separate orders only |
+| Cross and isolated margin | per asset, on the account — **not carried by the order** | per market, on the account — same |
 
 The gaps are stated on screen rather than left as empty panels, because an
 empty list reads as *nothing has happened* and on Lighter nothing *can* happen:

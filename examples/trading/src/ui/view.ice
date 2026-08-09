@@ -1427,7 +1427,7 @@ view
                               row w=fill align=center
                                 Label value="ORDER VALUE"
                                 space w=fill
-                                text fmt_usd(quote.notional)
+                                text fmt_margin(quote.notional, focus)
                                   with
                                     size=12.0
                                     font=digits
@@ -2568,7 +2568,7 @@ view
                       row w=fill align=center
                         Label value="ORDER VALUE"
                         space w=fill
-                        text fmt_usd(draft.notional)
+                        text fmt_margin(draft.notional, focus)
                           with
                             size=13.0
                             font=digits
@@ -2637,6 +2637,15 @@ view
                               @text-down
                   none
                     space h=0.0
+                // What those two figures are and are not. The panel states the
+                // mode it priced against; this is what stops that reading as a
+                // claim that the order arranges it.
+                text margin_estimate_note() #confirm-margin-note
+                  with
+                    size=10.0
+                    w=fill
+                    wrap=word
+                    @text-faint
                 // The venue's own sentence when it refused, where the reader
                 // is already looking. The panel stays up: a refused order is
                 // one they may want to change and send again.

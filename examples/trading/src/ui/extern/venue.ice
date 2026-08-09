@@ -37,6 +37,9 @@ extern crate::venue
   pure order_act(draft:Draft) -> str
   // Whether a confirmation is standing over an order, which is what raises the
   // panel over the terminal.
+  // What the confirmation's margin figures are, and are not: arithmetic done
+  // here, for a mode and a leverage the order does not carry.
+  pure margin_estimate_note() -> str
   pure order_pending(draft:Draft?) -> bool
   pure confirm_price(draft:Draft?) -> f64
   pure confirm_size(draft:Draft?) -> f64
