@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use smol::channel::{Receiver, Sender};
@@ -640,14 +640,123 @@ pub async fn lighter_account(address: String) -> Result<Option<Account>, HlError
     }
 }
 
-// There is no `lighter_candles`, and no REST route to write one down. `GET
-// /candlesticks` answers 403 from CloudFront for every parameter set tried,
-// with and without browser `Origin`, `Referer` and `User-Agent` headers, so
-// the refusal is at the edge rather than in the API. Nothing else on the REST
-// surface carries OHLC: `orderBookDetails` has a `daily_chart` key, but it is
-// `{}` on all 222 markets, and the only other history endpoints are trades and
-// funding. The websocket's `candle` channel is the only route, and what it
-// hands back is one bar — see `lighter_market_feed`.
+/// The most bars one `/candles` call will serve, which is also the window a
+/// chart opens on. Enforced by the venue rather than chosen here:
+/// `count_back=1000` over a 1000-bar window answers with 500.
+const CANDLE_PAGE: i64 = 500;
+
+/// What a loaded tape asks for on a refresh — the bar still forming and enough
+/// either side of it that a beat missed while the app was busy is not a hole.
+const CANDLE_REFRESH: i64 = 3;
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+/// The venue omits a zero field rather than sending it, which the tolerant
+/// readers already do the right thing with: a bar that traded nothing arrives
+/// without its `v` and reads zero volume.
+fn parse_candle(value: &Value) -> Candle {
+    Candle {
+        // Milliseconds on the wire, seconds on the chart — the same conversion
+        // `hyperliquid::parse_candle` makes.
+        ts: value_i64(value, "t") / 1_000,
+        open: num(value, "o"),
+        high: num(value, "h"),
+        low: num(value, "l"),
+        close: num(value, "c"),
+        // The base leg. `V` sits beside it and is the quote leg — 451.955 of
+        // bitcoin against 29,366,566 of quote on one live hourly bar — and
+        // `hyperliquid`'s `v` is the base one, so the two venues put the same
+        // quantity on the same axis.
+        volume: num(value, "v"),
+    }
+}
+
+/// The request for `bars` candles of one market ending at `end_ms`.
+///
+/// The window and `count_back` are both required and the answer is the wider
+/// of the two, capped at `CANDLE_PAGE` — so asking for the same count on both
+/// sides is the one request whose length is the length that was asked for.
+/// Live, that returns exactly 3 and exactly 500 bars at 1m, 15m, 1h, 4h and
+/// 1d, whereas `count_back` alone under a wide window answers the window.
+fn candles_path(id: i64, width: &str, secs: i64, end_ms: i64, bars: i64) -> String {
+    let start = end_ms - bars * secs * 1_000;
+    format!(
+        "candles?market_id={id}&resolution={width}&start_timestamp={start}\
+         &end_timestamp={end_ms}&count_back={bars}"
+    )
+}
+
+/// Reads a window and folds it into the tape, answering the tape's length.
+///
+/// The focus is re-read after the await rather than before, because that is
+/// the whole of what the guard is for: the reader can switch market or width
+/// while an exchange is answering, and a window folded in after that would be
+/// the previous coin's bars drawn as this one's.
+async fn fill(
+    tape: &Tape,
+    coin: &str,
+    interval: &str,
+    end_ms: i64,
+    bars: i64,
+) -> Result<i64, HlError> {
+    let (width, secs) = resolution(interval).ok_or_else(|| {
+        fail(format!(
+            "Lighter quotes no {interval} candle: it has {}",
+            widths()
+        ))
+    })?;
+    let id = market_id(coin).await?;
+    let body = get(candles_path(id, width, secs, end_ms, bars)).await?;
+    let fresh: Vec<Candle> = list(&body, "c").iter().map(parse_candle).collect();
+
+    let mut candles = lock(&tape.candles);
+    if tape
+        .focus()
+        .is_none_or(|(held, held_width)| held != coin || held_width != interval)
+    {
+        // The reader moved on while this was in flight.
+        return Ok(candles.len() as i64);
+    }
+    merge(&mut candles, fresh);
+    Ok(candles.len() as i64)
+}
+
+/// Brings the chart's tape up to date, backfilling a full window into an empty
+/// one and refreshing only what can still have changed in a loaded one.
+///
+/// The route is `GET /api/v1/candles`, which is the name in Lighter's own
+/// OpenAPI document. It serves real history: bitcoin's hourly bars reach back
+/// past 2025-07-13 and its daily ones past 2025-03-27.
+///
+/// `/candlesticks` is the trap, and it is worth naming because it looks like
+/// an answer. It is not a route on this venue, and the 403 it draws says
+/// nothing about candles: every path the edge does not recognise answers the
+/// same way — `/info`, `/openapi.json` and `/nonsense` all 403 while
+/// `/candles` and `/orderBookDetails` beside them answer 200. A 403 there is
+/// the edge failing to route, not the venue withholding history.
+pub async fn lighter_candles(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
+    let bars = if lock(&tape.candles).is_empty() {
+        CANDLE_PAGE
+    } else {
+        CANDLE_REFRESH
+    };
+    fill(&tape, &coin, &interval, now_ms(), bars).await
+}
+
+/// The window ending where the tape currently begins, so a chart panned back
+/// to its oldest bar can keep going. Answers the tape's length, unchanged when
+/// the venue has nothing older to give.
+pub async fn lighter_history(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
+    let Some(end) = lock(&tape.candles).first().map(|candle| candle.ts * 1_000) else {
+        return Ok(0);
+    };
+    fill(&tape, &coin, &interval, end, CANDLE_PAGE).await
+}
 
 // ---------------------------------------------------------------------------
 // The live feed.
@@ -676,22 +785,44 @@ const RETRY: Duration = Duration::from_secs(2);
 const ALL_STATS: &str = "market_stats/all";
 const ALL_STATS_ECHO: &str = "market_stats:all";
 
-/// The candle widths the venue quotes, which are not the app's tabs.
+/// The candle widths the venue quotes, and how wide each one is in seconds.
 ///
 /// Checked by subscribing to all thirteen a chart might plausibly offer: the
 /// eight here answered with a candle and `2h`, `6h`, `8h`, `3d` and `1w` each
 /// answered `{"error":{"code":30005,"message":"Invalid Channel:  (invalid
 /// resolution)"}}`. The refusal does not name the channel it refused, which is
 /// why an unsupported interval is turned away here rather than on the wire.
-const RESOLUTIONS: [&str; 8] = ["1m", "5m", "15m", "30m", "1h", "4h", "12h", "1d"];
+/// `/candles` takes the same set and answers anything else `20001 "invalid
+/// param "`, so one table serves the socket and the history read both — the
+/// seconds are the REST side's, which has to state a window as well as a
+/// width.
+const RESOLUTIONS: [(&str, i64); 8] = [
+    ("1m", 60),
+    ("5m", 300),
+    ("15m", 900),
+    ("30m", 1_800),
+    ("1h", 3_600),
+    ("4h", 14_400),
+    ("12h", 43_200),
+    ("1d", 86_400),
+];
 
-/// The venue's spelling of an interval the app asked for, or nothing if it
-/// does not quote one that width. The two vocabularies happen to agree on
-/// every tab this app offers, so the map is a lookup rather than a table of
-/// pairs — but it is a lookup against the venue's list, so a tab the venue
-/// dropped becomes a refusal instead of a chart drawn at the wrong width.
-fn resolution(interval: &str) -> Option<&'static str> {
-    RESOLUTIONS.iter().copied().find(|known| *known == interval)
+/// The venue's spelling of an interval the app asked for and its width, or
+/// nothing if it does not quote one that wide. The two vocabularies happen to
+/// agree on every tab this app offers, but this is a lookup against the
+/// venue's list, so a tab the venue dropped becomes a refusal instead of a
+/// chart drawn at the wrong width.
+fn resolution(interval: &str) -> Option<(&'static str, i64)> {
+    RESOLUTIONS
+        .iter()
+        .copied()
+        .find(|(known, _)| *known == interval)
+}
+
+/// The widths the venue quotes, for a refusal that tells the reader what it
+/// could have asked for instead.
+fn widths() -> String {
+    RESOLUTIONS.map(|(width, _)| width).join(", ")
 }
 
 /// The channels the feed wants open for the market the tape is pointed at.
@@ -706,10 +837,10 @@ fn channels(tape: &Tape) -> Result<Vec<String>, HlError> {
     let Some((coin, interval)) = tape.focus() else {
         return Ok(wanted);
     };
-    let width = resolution(&interval).ok_or_else(|| {
+    let (width, _) = resolution(&interval).ok_or_else(|| {
         fail(format!(
             "Lighter quotes no {interval} candle: it has {}",
-            RESOLUTIONS.join(", ")
+            widths()
         ))
     })?;
     let Some(id) = lock(ids()).get(&coin).copied() else {
@@ -740,7 +871,8 @@ fn focused(tape: &Tape) -> Focused {
     let Some((coin, interval)) = tape.focus() else {
         return Focused::default();
     };
-    let (Some(id), Some(width)) = (lock(ids()).get(&coin).copied(), resolution(&interval)) else {
+    let (Some(id), Some((width, _))) = (lock(ids()).get(&coin).copied(), resolution(&interval))
+    else {
         // The market list has not landed yet, or the app is asking for a width
         // this venue does not quote. Either way there is nothing per-market to
         // fold, but the coin is still the one the context belongs to.
@@ -1151,20 +1283,11 @@ fn market_reader(
 /// nothing to read because every field on this venue already goes through a
 /// reader that takes either.
 fn parse_candles(message: &Value) -> Vec<Candle> {
-    list(message, "candles")
-        .iter()
-        .map(|candle| Candle {
-            // Milliseconds on the wire; the chart wants seconds.
-            ts: value_i64(candle, "t") / 1_000,
-            open: num(candle, "o"),
-            high: num(candle, "h"),
-            low: num(candle, "l"),
-            close: num(candle, "c"),
-            // The base leg. `V` beside it is the same volume in dollars, and
-            // the chart's volume pane is the other venue's base leg.
-            volume: num(candle, "v"),
-        })
-        .collect()
+    // The same bar the history read parses, under the socket's own key for the
+    // array: the feed spells it `candles` and `/candles` spells it `c`, and
+    // everything inside is identical. One reader, so a bar cannot mean one
+    // thing forming and another once it is history.
+    list(message, "candles").iter().map(parse_candle).collect()
 }
 
 /// One websocket connection, plus the channels it is currently holding open.
@@ -2282,6 +2405,68 @@ mod tests {
         });
     }
 
+    /// Candle history, on the wire, against the venue this file once recorded
+    /// as serving none. The length is the whole point: the reported bug is a
+    /// chart holding one bar, so a page that is not a page is the failure.
+    #[test]
+    #[ignore = "hits the live venue, run explicitly: candle history is served, at /candles"]
+    fn a_chart_opened_on_this_venue_fills_with_history() {
+        crate::hyperliquid::open_the_wire();
+        smol::block_on(async {
+            let now = now_ms() / 1_000;
+            let tape = tape_focus(tape_new(), "BTC".to_owned(), "1h".to_owned());
+            let filled = lighter_candles(tape.clone(), "BTC".to_owned(), "1h".to_owned())
+                .await
+                .expect("candles");
+            assert_eq!(filled, CANDLE_PAGE, "a chart opens on a full page");
+
+            let bars = lock(&tape.candles).clone();
+            assert_eq!(bars.len() as i64, CANDLE_PAGE);
+            for pair in bars.windows(2) {
+                assert_eq!(
+                    pair[1].ts - pair[0].ts,
+                    3_600,
+                    "oldest first, an hour apart"
+                );
+            }
+            for bar in &bars {
+                assert!(bar.low > 0.0 && bar.low <= bar.high);
+                assert!(bar.low <= bar.open && bar.open <= bar.high);
+                assert!(bar.low <= bar.close && bar.close <= bar.high);
+            }
+            assert!(
+                now - bars.last().expect("a bar").ts < 7_200,
+                "the newest bar is the live one"
+            );
+            // 500 hours is three weeks, so this is history rather than a
+            // window folded out of the public tape.
+            assert!(now - bars[0].ts > 495 * 3_600);
+
+            // A loaded tape refreshes rather than paging itself in again, and
+            // the length it answers is the length it still holds.
+            let oldest = bars[0].ts;
+            let again = lighter_candles(tape.clone(), "BTC".to_owned(), "1h".to_owned())
+                .await
+                .expect("refresh");
+            assert_eq!(again, CANDLE_PAGE, "a refresh adds at most the live bar");
+            assert_eq!(lock(&tape.candles)[0].ts, oldest, "nothing was dropped");
+
+            // And panning past the oldest bar pages further back.
+            let longer = lighter_history(tape.clone(), "BTC".to_owned(), "1h".to_owned())
+                .await
+                .expect("history");
+            assert!(longer > CANDLE_PAGE, "{longer} bars is no more than before");
+            assert!(lock(&tape.candles)[0].ts < oldest);
+
+            // A width the venue does not quote never reaches it.
+            let Err(refused) = lighter_candles(tape, "BTC".to_owned(), "3h".to_owned()).await
+            else {
+                panic!("3h is not one of the venue's resolutions");
+            };
+            assert!(refused.message.contains("3h"), "{}", refused.message);
+        });
+    }
+
     /// The venue answers some failures with a body rather than a status, and
     /// an unread `code` would turn one into an empty market list.
     #[test]
@@ -2739,7 +2924,7 @@ mod tests {
 
     #[test]
     fn an_interval_the_venue_does_not_quote_is_refused_rather_than_charted() {
-        assert_eq!(resolution("4h"), Some("4h"));
+        assert_eq!(resolution("4h"), Some(("4h", 14_400)));
         // The venue answers `candle/1/2h` with `Invalid Channel: (invalid
         // resolution)` and does not say which channel it refused, so the
         // chart would simply stay empty with nothing said about why.
@@ -2761,13 +2946,115 @@ mod tests {
         assert!(channels(&unlisted).is_err());
     }
 
+    /// Every tab the chart draws has to be a width the venue quotes — and the
+    /// width in seconds has to be that width, because the history read states
+    /// its window in seconds and a wrong one asks for the wrong span of time.
     #[test]
     fn every_interval_the_app_offers_is_one_the_venue_quotes() {
         // The chart's own tabs, which is the vocabulary this map exists to
-        // hold the venue against.
-        for interval in ["1m", "5m", "15m", "1h", "4h", "1d"] {
-            assert_eq!(resolution(interval), Some(interval), "{interval}");
+        // hold the venue against, each beside the seconds it is worth.
+        for (interval, secs) in [
+            ("1m", 60),
+            ("5m", 300),
+            ("15m", 900),
+            ("1h", 3_600),
+            ("4h", 14_400),
+            ("1d", 86_400),
+        ] {
+            assert_eq!(resolution(interval), Some((interval, secs)), "{interval}");
         }
+    }
+
+    /// A chart opened on this venue asks for a window, and the request is the
+    /// whole of why: the window and `count_back` are both required and the
+    /// answer is the wider of the two, so a request that named only one of
+    /// them would come back a length nobody chose.
+    ///
+    /// The reported bug is the answer being one bar, and the two ways to get
+    /// there are both visible here — a `count_back` of 1, and a window that
+    /// spans one width or none at all — so this is the arithmetic that decides
+    /// it rather than a round trip.
+    #[test]
+    fn a_chart_opens_by_asking_for_a_full_page_of_bars() {
+        // Bitcoin's hourly bars, ending on a round timestamp so the window is
+        // readable: 500 hours before 1786242000 is 1784442000.
+        let end_ms = 1_786_242_000_000;
+        let path = candles_path(1, "1h", 3_600, end_ms, CANDLE_PAGE);
+        assert_eq!(
+            path,
+            "candles?market_id=1&resolution=1h&start_timestamp=1784442000000\
+             &end_timestamp=1786242000000&count_back=500"
+        );
+        // Both halves say 500, which is what makes the answer 500 rather than
+        // whichever of the two happened to be wider.
+        assert!(path.contains("count_back=500"));
+        assert_eq!((end_ms - 1_784_442_000_000) / 1_000 / 3_600, CANDLE_PAGE);
+
+        // A refresh is the same request over a shorter span, so the live bar
+        // is re-read without paging the history in again.
+        let refresh = candles_path(1, "1h", 3_600, end_ms, CANDLE_REFRESH);
+        assert!(refresh.contains("count_back=3"));
+        assert!(refresh.contains("start_timestamp=1786231200000"));
+
+        // The width is the span's unit as well as the venue's parameter: a
+        // day of bars covers a day per bar.
+        let daily = candles_path(1, "1d", 86_400, end_ms, CANDLE_PAGE);
+        assert!(daily.contains("resolution=1d"));
+        assert!(
+            daily.contains("start_timestamp=1743042000000"),
+            "500 days back, not 500 hours: {daily}"
+        );
+    }
+
+    /// The history read and the feed hand the chart the same bar. The venue
+    /// sends milliseconds and two volume legs, and the chart holds seconds and
+    /// the base one — so a bar read either way has to arrive converted and on
+    /// the leg the other venue's chart is drawn in.
+    #[test]
+    fn a_bar_read_from_history_is_the_bar_the_feed_forms() {
+        // Trimmed from a live `GET /candles?market_id=1&resolution=1h`, with
+        // the keys exactly as the venue sends them — one letter each, and `V`
+        // beside `v` for the leg that is not the chart's.
+        let page = json!({
+            "code": 200,
+            "r": "1h",
+            "c": [
+                { "t": 1786190400000_i64, "o": 65086.5, "h": 65127.7, "l": 65040.2,
+                  "c": 65098.4, "v": 141.03674, "V": 9180008.926911 },
+                { "t": 1786194000000_i64, "o": 65098.4, "h": 65160.1, "l": 65071.9,
+                  "c": 65133.0, "v": 98.41255, "V": 6408184.271336 },
+                { "t": 1786197600000_i64, "o": 65133.0, "h": 65141.2, "l": 65098.5,
+                  "c": 65125.8, "V": 0.0 }
+            ]
+        });
+        let bars: Vec<Candle> = list(&page, "c").iter().map(parse_candle).collect();
+        assert_eq!(bars.len(), 3, "a page is bars, not a bar");
+        assert_eq!(bars[0].ts, 1_786_190_400, "seconds, like the chart");
+        // An hour apart, which is the resolution that was asked for.
+        assert_eq!(bars[1].ts - bars[0].ts, 3_600);
+        assert_eq!(bars[0].open, 65_086.5);
+        assert_eq!(bars[0].close, 65_098.4);
+        assert!(bars[0].low <= bars[0].open && bars[0].open <= bars[0].high);
+        // The base leg, not the quote leg beside it — which is four orders of
+        // magnitude away, so reading the wrong key is not a rounding error.
+        assert_eq!(bars[0].volume, 141.03674);
+        assert!(
+            bars[0].volume < bars[0].close,
+            "the quote leg is not volume"
+        );
+        // A bar that traded nothing arrives without its `v` at all.
+        assert_eq!(bars[2].volume, 0.0);
+        // A close carries into the next bar's open, which is what makes a tape
+        // out of a list.
+        assert_eq!(bars[0].close, bars[1].open);
+
+        // And the feed's spelling of the same bar reads back identically, so
+        // history and the forming bar cannot disagree about a bar's units.
+        let formed = parse_candles(&json!({
+            "channel": "candle:1:1h",
+            "candles": list(&page, "c"),
+        }));
+        assert_eq!(formed, bars);
     }
 
     #[test]
