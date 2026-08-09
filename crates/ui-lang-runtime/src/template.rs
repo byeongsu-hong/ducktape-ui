@@ -442,6 +442,16 @@ where
             let key = a11y.key(parent_key);
             let scope = a11y.scope(parent_key, &key);
             let base = render_node(content, slots, palette, scope, paths);
+            let BoolSlot(visible) = visible;
+            let visible = slots.bools.get(*visible).copied().unwrap_or(false);
+            // The backdrop swallows every press, so nothing behind an open
+            // panel is reachable by pointer. Keyboard focus has to be told:
+            // `Stack` operates on every layer, open panel or not.
+            let base = if visible {
+                crate::focus_barrier(base).into()
+            } else {
+                base
+            };
             let stack = widget::Stack::new()
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -458,8 +468,7 @@ where
                     element
                 }
             };
-            let BoolSlot(visible) = visible;
-            if !slots.bools.get(*visible).copied().unwrap_or(false) {
+            if !visible {
                 return identified(stack.into());
             }
             let MessageSlot(noop) = noop;
@@ -737,6 +746,229 @@ pub fn changes() -> iced::Subscription<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::advanced::renderer::Headless;
+    use iced::advanced::widget::operation::{self, Outcome};
+    use iced::advanced::widget::{Id, Operation};
+    use iced_test::runtime::{UserInterface, user_interface};
+
+    type TabRenderer = iced_test::renderer::Renderer;
+    type TabUi<'a> = UserInterface<'a, String, iced::Theme, TabRenderer>;
+
+    /// The shape every Ice overlay lowers to: one base tree, one panel tree,
+    /// and a `visible` the frame answers. Both trees are subtree holes, which
+    /// is what the compiler emits for anything the template vocabulary does
+    /// not model — including the panel of a real overlay.
+    fn overlay_template() -> Template {
+        Template {
+            root: Node::Overlay {
+                a11y: A11y {
+                    segment: "overlay".into(),
+                    named: false,
+                    source: None,
+                },
+                visible: BoolSlot(0),
+                backdrop: ColorRef {
+                    base: ColorBase::Black,
+                    alpha: Some(0.6),
+                },
+                padding: 24.0,
+                align_x: AlignX::Center,
+                align_y: AlignY::Center,
+                dismiss: MessageSlot(0),
+                noop: MessageSlot(0),
+                content: Box::new(Node::Subtree {
+                    slot: SubtreeSlot(0),
+                }),
+                panel: SubtreeSlot(1),
+            },
+            slots: SlotCounts {
+                messages: 1,
+                subtrees: 2,
+                bools: 1,
+                ..SlotCounts::default()
+            },
+        }
+    }
+
+    fn tab(ui: &mut TabUi<'_>, renderer: &TabRenderer) {
+        let mut operation: Box<dyn Operation> = Box::new(operation::focusable::focus_next::<()>());
+        loop {
+            ui.operate(renderer, operation.as_mut());
+            match operation.finish() {
+                Outcome::Chain(next) => operation = next,
+                Outcome::None | Outcome::Some(()) => break,
+            }
+        }
+    }
+
+    fn focused(ui: &mut TabUi<'_>, renderer: &TabRenderer) -> Option<Id> {
+        let mut operation = operation::focusable::find_focused();
+        ui.operate(renderer, &mut operation::black_box(&mut operation));
+        match operation.finish() {
+            Outcome::Some(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    fn renderer() -> TabRenderer {
+        iced_test::futures::futures::executor::block_on(<TabRenderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            None,
+        ))
+        .expect("headless renderer")
+    }
+
+    fn overlay_slots(visible: bool, behind: &Id, inside: &Id) -> Slots<'static, String> {
+        Slots::<String> {
+            messages: vec![String::new()],
+            subtrees: vec![
+                std::cell::RefCell::new(Some(
+                    widget::text_input("", "")
+                        .id(behind.clone())
+                        .on_input(|value| value)
+                        .into(),
+                )),
+                std::cell::RefCell::new(Some(
+                    widget::text_input("", "")
+                        .id(inside.clone())
+                        .on_input(|value| value)
+                        .into(),
+                )),
+            ],
+            bools: vec![visible],
+            ..Slots::default()
+        }
+    }
+
+    fn build(
+        slots: &Slots<'static, String>,
+        template: &Template,
+        cache: user_interface::Cache,
+        renderer: &mut TabRenderer,
+    ) -> TabUi<'static> {
+        UserInterface::build(
+            render(template, slots, &[Color::BLACK], "app", &[]),
+            iced::Size::new(640.0, 480.0),
+            cache,
+            renderer,
+        )
+    }
+
+    /// Walks Tab around the whole view and reports every input it stopped on.
+    fn tab_order(visible: bool, behind: &Id, inside: &Id) -> Vec<Option<Id>> {
+        let template = overlay_template();
+        let slots = overlay_slots(visible, behind, inside);
+        let mut renderer = renderer();
+        let mut ui = build(
+            &slots,
+            &template,
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+
+        // Four presses is more than the view has stops, so a traversal that
+        // can reach an input reaches it whatever order iced visits layers in.
+        (0..4)
+            .map(|_| {
+                tab(&mut ui, &renderer);
+                focused(&mut ui, &renderer)
+            })
+            .collect()
+    }
+
+    /// Focuses the base input while the overlay is shut, reopens the view with
+    /// `visible`, then types one character and reports what the view published.
+    fn typing_after_focus(visible: bool, behind: &Id, inside: &Id) -> Vec<String> {
+        let template = overlay_template();
+        let mut renderer = renderer();
+
+        let shut = overlay_slots(false, behind, inside);
+        let mut ui = build(
+            &shut,
+            &template,
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        tab(&mut ui, &renderer);
+        assert_eq!(
+            focused(&mut ui, &renderer),
+            Some(behind.clone()),
+            "the base input has to hold focus before the overlay opens"
+        );
+        let cache = ui.into_cache();
+
+        let reopened = overlay_slots(visible, behind, inside);
+        let mut ui = build(&reopened, &template, cache, &mut renderer);
+        let mut published = Vec::new();
+        let _ = ui.update(
+            &[iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Character("x".into()),
+                modified_key: iced::keyboard::Key::Character("x".into()),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: Some("x".into()),
+                repeat: false,
+            })],
+            iced::advanced::mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced_test::runtime::core::clipboard::Null,
+            &mut published,
+        );
+        published
+    }
+
+    /// Focus survives the frame that opens an overlay — the base input was
+    /// focused before the panel existed, and no operation has run since. The
+    /// barrier has to withhold the keystroke as well as the focus, or the
+    /// letter lands in an input the backdrop is covering.
+    #[test]
+    fn an_open_overlay_keeps_typing_out_of_the_base() {
+        let behind = Id::new("behind");
+        let inside = Id::new("inside");
+
+        assert_eq!(
+            typing_after_focus(false, &behind, &inside),
+            vec!["x".to_owned()],
+            "a shut overlay must let the focused base input take the key"
+        );
+        assert!(
+            typing_after_focus(true, &behind, &inside).is_empty(),
+            "a keystroke reached an input behind the backdrop"
+        );
+    }
+
+    /// An open overlay draws over the base and its backdrop swallows every
+    /// press, so nothing behind it is reachable by pointer. Tab must obey the
+    /// same boundary: `Stack` operates on every layer it holds, so without a
+    /// barrier the traversal walks into inputs the user cannot see and the
+    /// next keystroke lands there with nothing on screen to say where it went.
+    #[test]
+    fn an_open_overlay_keeps_tab_out_of_the_base() {
+        let behind = Id::new("behind");
+        let inside = Id::new("inside");
+
+        // Shut, the same base input is the one thing Tab can reach — so the
+        // open case below is denying a stop that otherwise exists.
+        let shut = tab_order(false, &behind, &inside);
+        assert!(
+            shut.contains(&Some(behind.clone())),
+            "a shut overlay must leave the base reachable; saw {shut:?}"
+        );
+
+        let open = tab_order(true, &behind, &inside);
+        assert!(
+            open.contains(&Some(inside.clone())),
+            "Tab never reached the panel input; saw {open:?}"
+        );
+        assert!(
+            !open.contains(&Some(behind.clone())),
+            "Tab reached an input behind the backdrop; saw {open:?}"
+        );
+    }
 
     #[test]
     fn literals_and_slots_resolve() {
