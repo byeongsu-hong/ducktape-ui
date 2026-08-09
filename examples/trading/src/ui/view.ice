@@ -382,48 +382,63 @@ view
                               Label value="POSITIONS"
                               Label value=fmt_count(len(positions))
                               space w=fill
+                            // The header carries the same widths, gap and right
+                            // padding as `PositionRow`, because the two are one
+                            // table drawn in two places and there is nothing
+                            // else holding a column over the figures it names.
+                            // They drifted 41 pixels apart while they were kept
+                            // by hand at 44/52 and 7/8.
+                            //
+                            // The slack sits after SIDE, so the seven figures
+                            // read as one right-anchored block the way the
+                            // fills, orders and market rows already do. Parked
+                            // before UNREALIZED it left a hole that grew with
+                            // the pane — 106 pixels at the window's own minimum,
+                            // where the fills panel folds away and positions
+                            // takes the width — between the funding a trader
+                            // reads and the PnL it is read against.
                             row
                               with
                                 w=fill
                                 pl=14.0
-                                pr=16.0
+                                pr=18.0
                                 pb=8.0
-                                gap=7.0
+                                gap=8.0
                               Head
                                 with
                                   name="COIN"
-                                  width=44.0
+                                  width=52.0
                                   right=false
                               Head
                                 with
                                   name="SIDE"
-                                  width=44.0
+                                  width=56.0
                                   right=false
+                              space w=fill
                               Head
                                 with
                                   name="SIZE"
-                                  width=64.0
+                                  width=72.0
                                   right=true
                               Head
                                 with
                                   name="ENTRY"
-                                  width=76.0
+                                  width=80.0
                                   right=true
                               Head
                                 with
                                   name="LIQ"
-                                  width=76.0
+                                  width=80.0
                                   right=true
-                              Head
+                              Head #head-funding
                                 with
                                   name="FUNDING"
                                   width=72.0
                                   right=true
-                              space w=fill
-                              Head
+                              Head #head-unrealized
                                 with
                                   name="UNREALIZED"
-                                  width=92.0
+                                  width=104.0
                                   right=true
                             rule horizontal thickness=1.0 color=edge
                             scroll #position-list
@@ -807,12 +822,18 @@ view
                                     size=18.0
                                     @text-muted
                                     @font-bold
+                            // Which side the ticket is on was the fill colour
+                            // and nothing else. accesskit carries a toggled
+                            // state for a checkbox and a switch, not for a
+                            // button, so the chosen side says so in its name by
+                            // the rule the tabs follow — and getting this wrong
+                            // costs a reader the opposite trade.
                             row gap=8.0 w=fill
                               col #side-buy w=fill
                                 if ticket_buy
                                   button #buy-on -> ticket_side(true)
                                     with
-                                      label="Buy"
+                                      label="Buy, already selected"
                                       w=fill
                                       p=9.0
                                     active bg=up text=fg_invert r=4.0
@@ -840,7 +861,7 @@ view
                                 if !ticket_buy
                                   button #sell-on -> ticket_side(false)
                                     with
-                                      label="Sell"
+                                      label="Sell, already selected"
                                       w=fill
                                       p=9.0
                                     active bg=down text=fg_invert r=4.0

@@ -834,6 +834,50 @@ The free `iced_runtime::task` constructors such as `oneshot`, `channel`,
 this public iced baseline. A typed `task` extern can still adapt runtime-specific
 work when an application intentionally depends on `iced_runtime`.
 
+### Gap: an animation cannot reach a row in a list or a surface's colour
+
+The `Animation<T>` row above is a claim about iced's `Animation` API, and it
+holds: every easing, duration, repetition and query is expressible. It is not a
+claim that a given thing on screen can be animated. Three separate limits stand
+between an `animation[f64]` and the two most ordinary uses of one — fading a row
+that has just arrived, and fading anything at all.
+
+**An animation cannot belong to a row.** `animation[T]` is app state.
+Component-local `state` rejects it: `state lit:animation[f64] = 0.0` inside a
+component fails with `E103 component state supports ordinary cloneable values
+only`. Local state is otherwise keyed by hierarchical instance scope, so a
+`for` body rendered as `Row #row(item.id)` already owns per-instance values —
+animation is the one kind it may not own.
+
+**Nothing could start it if it could.** Handlers are the only place work
+starts, lifecycle hooks stay at app level, and there is no per-instance
+appearance hook. An instance materialized by a `for` over freshly arrived data
+raises no event, so no assignment runs for it, and an animation only begins on
+assignment. An app-level animation restarted when the data arrives is therefore
+one phase shared by every row, which is wrong as soon as two arrive at
+different times.
+
+**An animated number cannot reach a colour.** `background_value` is
+`color_ref | linear(...)`, and `color_ref = name ("/" u8)?` — a theme token with
+a *literal* opacity. `bg=up_flash/fill.heat` fails with `E184 unknown surface
+color`. The rich native `color` value type, `color.scale_alpha` included, is not
+accepted by `bg=` at all. No computed number reaches a surface's colour or its
+alpha, from an animation or from anywhere else.
+
+The consequence is that a fade must be written as a discrete ladder of `if`
+arms over literal opacities, stepped by a timer. The trading example's fills
+list is exactly that — `every 700ms when flashing -> cool_flash` counting a
+`heat:i64` down through two `bg=up_flash` arms — and it reads as two hard jumps
+rather than a decay. That shape is not an implementation shortcut there; it is
+the only shape the language offers.
+
+Closing this needs the three together: `animation[T]` accepted in
+component-local state, a per-instance appearance hook (or an assignment form
+that names an instance scope from an app handler), and a `bg=` that accepts a
+computed colour so the animated number has somewhere to land. Any one alone
+leaves motion unreachable. The trading example is where the gap was found, not
+where it lives.
+
 ## Evidence rule
 
 A row moves to **native** only when every public application-facing behavior in

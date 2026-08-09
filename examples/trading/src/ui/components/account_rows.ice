@@ -35,6 +35,11 @@ component PositionRow(held:Position)
               tracking=0.8
               @text-down
         text fmt_leverage_mode(held.leverage, held.margin_mode) size=9.0 @text-faint
+      // The ticker and the side name the row; everything after this is a
+      // figure, and the seven of them are read against each other. The slack
+      // goes here so they stay one right-anchored block, which is how the
+      // fills, the orders and the market rail already read.
+      space w=fill
       Num
         with
           value=fmt_size(held.size)
@@ -80,14 +85,13 @@ component PositionRow(held:Position)
       // chart it pushed the funding and the PnL into each other. What the
       // account has posted is on the dashboard, totalled, where there is room
       // to say it.
-      Delta
+      Delta #funding
         with
           value=fmt_funding_flow(held.funding)
           up=funding_received(held.funding)
           size=11.0
           width=72.0
-      space w=fill
-      col gap=1.0 w=104.0
+      col #unrealized gap=1.0 w=104.0
         Delta
           with
             value=fmt_pnl(held.pnl)
