@@ -147,12 +147,13 @@ fn test_paint_span(test: &TestDecl) -> Option<&Span> {
                 TestStepKind::Dispatch { args, .. } => {
                     args.iter().any(|value| expr_uses_test_paint(value, test))
                 }
+                TestStepKind::TrayChoose(value) => expr_uses_test_paint(value, test),
                 TestStepKind::Expect(expectation) => match expectation {
                     TestExpectation::Expr(value) => expr_uses_test_paint(value, test),
                     TestExpectation::Approx { left, right } => {
                         expr_uses_test_paint(left, test) || expr_uses_test_paint(right, test)
                     }
-                    TestExpectation::Text { .. } => true,
+                    TestExpectation::Text { .. } | TestExpectation::Tray { .. } => true,
                     TestExpectation::Exists(target) | TestExpectation::Missing(target) => {
                         target_ref_uses_test_paint(target, test)
                     }
@@ -201,7 +202,6 @@ fn test_paint_span(test: &TestDecl) -> Option<&Span> {
                 | TestStepKind::FileLeave
                 | TestStepKind::Wait(_)
                 | TestStepKind::Advance(_)
-                | TestStepKind::TrayClick
                 | TestStepKind::Idle
                 | TestStepKind::Capture(_) => false,
             };
@@ -402,7 +402,6 @@ fn check_test_step(
         | TestStepKind::FileLeave
         | TestStepKind::Wait(_)
         | TestStepKind::Advance(_)
-        | TestStepKind::TrayClick
         | TestStepKind::Idle
         | TestStepKind::Capture(_) => {}
         TestStepKind::Type(value)
@@ -465,6 +464,27 @@ fn check_test_step(
                 "window scale factor",
                 true,
             )?;
+        }
+        TestStepKind::TrayChoose(value) => {
+            require_type(
+                &expr_type(value, env, document, &step.span)?,
+                &Type::Str,
+                &step.span,
+            )?;
+            // Nothing to choose without a menu, and the row a test names is a
+            // row the author wrote: a program with no tray menu can never
+            // satisfy this step, so it is a mistake at check time.
+            if !document.settings.tray.as_ref().is_some_and(|tray| {
+                tray.menu
+                    .iter()
+                    .any(|row| matches!(row, TrayRow::Item { .. }))
+            }) {
+                return Err(Error::new(
+                    TEST_ERROR,
+                    &step.span,
+                    "`tray choose` needs a `tray` block with a `menu`",
+                ));
+            }
         }
         TestStepKind::Dispatch { handler, args } => {
             if handler == "mount" {
@@ -529,6 +549,13 @@ fn check_test_step(
                 if let Some(target) = within {
                     check_test_target_ref(target, env, test, document, ids, &step.span)?;
                 }
+            }
+            TestExpectation::Tray { value, .. } => {
+                require_type(
+                    &expr_type(value, env, document, &step.span)?,
+                    &Type::Str,
+                    &step.span,
+                )?;
             }
             TestExpectation::Accessibility { target, property } => {
                 check_test_target_ref(target, env, test, document, ids, &step.span)?;

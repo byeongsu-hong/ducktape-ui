@@ -1,0 +1,2 @@
+E015
+tray icon-rgba `assets/alarm.rgba` before the last one needs `when`

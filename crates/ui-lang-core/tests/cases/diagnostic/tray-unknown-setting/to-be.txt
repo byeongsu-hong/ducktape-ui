@@ -1,0 +1,2 @@
+E015
+unknown tray setting `icon`

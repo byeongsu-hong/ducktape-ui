@@ -289,6 +289,16 @@ pub(in crate::parser) fn parse_tray_settings(line: &Line) -> Result<TraySettings
         ..TraySettings::default()
     };
     for item in &line.children {
+        if item.text == "menu" {
+            settings
+                .setting_spans
+                .insert("menu".to_owned(), Span::line(item.number));
+            if !settings.menu.is_empty() {
+                return Err(error("E014", item, "duplicate tray setting `menu`"));
+            }
+            settings.menu = parse_tray_menu(item)?;
+            continue;
+        }
         ensure_leaf(item)?;
         let Some((name, value)) = item.text.split_once(char::is_whitespace) else {
             return Err(error("E015", item, "tray setting requires a value"));
@@ -303,24 +313,66 @@ pub(in crate::parser) fn parse_tray_settings(line: &Line) -> Result<TraySettings
             }};
         }
         match name {
-            "icon-rgba" => set!(icon, config_window_icon("tray", value, item)?),
+            "icon-rgba" => {
+                settings.icons.push(parse_tray_icon(value, item)?);
+                settings
+                    .setting_spans
+                    .insert(name.to_owned(), Span::line(item.number));
+            }
             "icon-template" => set!(icon_template, config_bool(value, item)?),
             "label" => set!(label, app_expression(value, item)?),
             "tooltip" => set!(tooltip, app_expression(value, item)?),
-            "popover" => set!(popover, identifier(value, item)?),
             _ => {
-                return Err(error(
-                    "E015",
-                    item,
-                    format!("unknown tray setting `{name}`"),
-                ));
+                return Err(error("E015", item, format!("unknown tray setting `{name}`"))
+                    .hint(
+                        "valid tray settings: `icon-rgba`, `icon-template`, `label`, `tooltip`, `menu`",
+                    ));
             }
         }
     }
-    if settings.icon.is_none() {
+    if settings.icons.is_empty() {
         return Err(error("E015", line, "tray requires `icon-rgba`"));
     }
     Ok(settings)
+}
+
+/// `"path" width height ["when" <bool>]`. The guard is what makes the icon a
+/// state channel rather than a logo, and it is the only tray signal that
+/// exists on every platform.
+fn parse_tray_icon(value: &str, item: &Line) -> Result<TrayIcon, Error> {
+    let (icon, when) = match split_top_marker(value, " when ") {
+        Some((icon, guard)) => (icon, Some(app_expression(guard.trim(), item)?)),
+        None => (value, None),
+    };
+    Ok(TrayIcon {
+        icon: config_window_icon("tray", icon.trim(), item)?,
+        when,
+    })
+}
+
+fn parse_tray_menu(line: &Line) -> Result<Vec<TrayRow>, Error> {
+    let mut rows = Vec::new();
+    for item in &line.children {
+        ensure_leaf(item)?;
+        let span = Span::line(item.number);
+        if item.text == "separator" {
+            rows.push(TrayRow::Separator { span });
+            continue;
+        }
+        let (text, route) = match split_top_marker(&item.text, "->") {
+            Some((text, route)) => (text, Some(identifier(route.trim(), item)?)),
+            None => (item.text.as_str(), None),
+        };
+        rows.push(TrayRow::Item {
+            text: app_expression(text.trim(), item)?,
+            route,
+            span,
+        });
+    }
+    if rows.is_empty() {
+        return Err(error("E015", line, "menu requires at least one row"));
+    }
+    Ok(rows)
 }
 
 pub(in crate::parser) fn parse_linux_window_settings(
@@ -506,7 +558,8 @@ pub(in crate::parser) fn parse_wasm_window_settings(
 }
 
 /// Parses `icon-rgba "path" width height`. `kind` names the declaration the
-/// icon was written in, so a tray icon is not reported as a window icon.
+/// icon was written in, so a mistyped tray icon reports as a tray icon instead
+/// of sending the author to a window block.
 pub(in crate::parser) fn config_window_icon(
     kind: &str,
     source: &str,

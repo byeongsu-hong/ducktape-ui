@@ -1,0 +1,4 @@
+::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig
+fn __tray_sync(&self)
+fn __tray_row(__row: usize) -> ::std::option::Option<__TrayUnderAppMessage> { match __row { 1usize => ::std::option::Option::Some(__TrayUnderAppMessage::Quit), _ => ::std::option::Option::None } }
+::ui_lang_runtime::tray::events().filter_map(Self::__tray_row),

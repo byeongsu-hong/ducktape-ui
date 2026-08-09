@@ -334,10 +334,12 @@ app_setting    = "title" expr | "theme" expr | "palette" expr
                | window_decl
                | tray_decl
 tray_decl      = "tray" INDENT tray_setting*
-tray_setting   = "icon-rgba" string u32 u32
+tray_setting   = "icon-rgba" string u32 u32 ("when" expr)?
                | "icon-template" bool
                | ("label" | "tooltip") expr
-               | "popover" name
+               | tray_menu
+tray_menu      = "menu" INDENT tray_row+
+tray_row       = "separator" | expr ("->" name)?
 window_decl    = "window" name? INDENT window_setting*
 window_setting = ("size" | "min-size" | "max-size") number number
                | "icon-rgba" string u32 u32
@@ -622,7 +624,6 @@ pane_operation = "maximize" name | "restore" | "maximized"
                | "split" name name ("horizontal" | "vertical")
                  ("ratio=" expr)?
 pane_edge      = "top" | "left" | "right" | "bottom"
-tray_task      = "task tray close"
 window_task    = "task window" window_operation ("target=" expr)? ("->" route)?
 window_operation = "open" name? | "oldest" | "latest"
                  | "close" | "drag" | "toggle-maximize" | "toggle-decorations"
@@ -709,7 +710,6 @@ test_step      = "click" test_target test_pointer_button?
                | "focus-next"
                | "focus-previous"
                | "blur"
-               | "tray click"
                | "window" ("focus" | "blur" | "close-request"
                             | "opened" | "closed" | "redraw")
                | "window" "move" expr expr
@@ -744,10 +744,13 @@ test_step      = "click" test_target test_pointer_button?
                | "capture" name
                | "a11y" ("activate" | "focus") test_target
                | "dispatch" name ("(" expr_list? ")")?
+               | "tray" "choose" expr
                | "expect" expr
                | "expect" expr "~=" expr
                | "expect" ("exists" | "missing") test_target
                | "expect" "no"? "text" expr ("within" test_target)?
+               | "expect" "no"? "tray"
+                 ("label" | "icon" | "item" | "command") expr
                | "expect" "a11y" test_target
                  ("role" | "name" | "value") expr
                | "expect" "a11y" test_target
@@ -1442,64 +1445,93 @@ Sizes, text size, and scale factor must be positive; minimum size cannot exceed
 maximum size. `icon-rgba` embeds a relative raw RGBA file without an image
 codec; width and height are positive integers whose product fits the native
 `u32` pixel count, and generated Rust rejects a byte length other than
-`width × height × 4`. `cargo ice check` reports a
-mismatch at the icon declaration, and generated Rust repeats the check at
-compile time. Encoded icon formats remain outside 2.0.
+`width × height × 4`. `cargo ice check` reports a missing file or a mismatched
+length at the icon declaration — for tray icons as well as window icons, which
+are embedded by the same line under the same rule — and generated Rust repeats
+the length check at compile time. Encoded icon formats remain outside 2.0.
 
 The `tray` block declares a system status item — on macOS, an `NSStatusItem`
 in the menu bar. `icon-rgba` is required and follows the window icon
 convention exactly: a relative raw RGBA file embedded without an image codec,
-byte length checked as `width × height × 4` at both check and compile time.
-`icon-template true` marks the icon as a macOS template image (black plus
-alpha, recolored by the system for light and dark menu bars; ignored
-elsewhere). `label` and `tooltip` are `str` expressions with app-`title`
-semantics: re-evaluated after every update, applied natively only when the
-value changed. `label` renders live text beside the icon.
+byte length checked as `width × height × 4` at both check and compile time. It
+is repeatable with a trailing `when` guard; guards are tried in declaration
+order and the first match wins, so the last line must carry no guard and is
+what the item shows when nothing else applies. Every path in one block must be
+distinct, because the path is the icon's identity in `expect tray icon`. The
+icon is the only part of a status item visible without a click and the only
+part that exists on every platform, so it is the channel a program uses to say
+something is wrong. `icon-template true` marks every icon as a macOS template
+image (black plus alpha, recolored by the system for light and dark menu bars;
+ignored elsewhere).
 
-`popover name` names a window template declared on the same root and requires
-`daemon`, because iced renders one view per application window while daemon
-views branch per window. A left click on the status item toggles that window:
-opened hidden, positioned under the icon's screen rectangle (physical
-coordinates converted through the popover's scale factor, clamped to that
-display when the icon is on it), then shown and focused; a second click — or
-any `task window close` — closes it, tracked through the window's close event.
+`label`, `tooltip`, every `menu` row and every `when` guard are expressions
+with app-`title` semantics: re-evaluated after every update, applied natively
+only when the value changed. There is a second rule beside that one: an
+expression that is a string literal is applied once at startup and never
+re-evaluated, because a constant cannot become stale — and a `tray` whose
+strings are all literals and whose icons are all unguarded generates no
+re-evaluation at all.
 
-The popover owns its own dismissal: once it has taken focus, losing focus
-closes it, so clicking anywhere outside puts it away without the application
-subscribing to anything. That gate is not decoration. A window reports itself
-unfocused while it is still being created, before it has ever been on screen,
-so a dismissal that trusted the first report would close the panel before it
-was drawn and a click on the item would look like nothing at all. Only a
-popover that actually took focus can be dismissed by losing it.
+`menu` declares the item's native menu and needs at least one row. Each row is
+a `str` expression; `separator` draws a divider. A row with `-> route` is a
+command that calls a zero-parameter handler when chosen, through the same path
+a `subscribe` source uses. A row without one is created disabled, which is how
+the platform draws a figure you read rather than press. The menu is the
+platform's own surface: it opens, positions itself on the right display and
+dismisses itself.
 
-`task tray close` puts the popover away from a handler. No window id in scope
-names it — an untargeted `task window close` acts on the oldest window, which
-in an application that also opens its own windows is the wrong one — so this
-is the only way a handler can dismiss the panel, and it is rejected unless the
-tray declares a popover.
+The menu is the only surface a status item raises. A tray declares no window
+for it, so `tray` works identically under `app` and `daemon`, and a program
+with a tray carries no tray state and no tray message variants of its own. A
+tray also installs no event source a program did not declare: with no routed
+row there is no subscription at all. Only the left click is wired; right and
+middle clicks are ignored.
 
-A declared `popover` also adds the read-only `popover` binding: a `bool`,
-true only while the view is drawing the window the status item opened. One
-view answers for the panel and for the application's own windows without the
-application tracking window IDs to tell them apart, and state may not be named
-`popover` while it exists. `tray click` presses the status item from a `test`,
-so a panel is exercised through the same open-and-anchor path a press takes.
+What that is worth is narrower than "simpler", and the honest measure is that
+one number. Everything else grew — the grammar, the checker, the generator and
+the runtime are all larger than the popover window they replaced. The trade is
+more compiler for less program.
 
-Pressing the item unfocuses the popover first, so the dismissal runs before
-the click is delivered; a press within 200ms of the popover closing therefore
-counts as that dismissal rather than a request to reopen. Without `popover`, a
-left click restores and focuses the program's oldest window, which suits an
-`app` whose tray is a live status readout. Only the left click is wired;
-right and middle clicks are ignored.
+`expect tray label`, `expect tray icon`, `expect tray item` and
+`expect no tray item` assert what the program last decided the item should
+show. They read the runtime's record, which every platform keeps whether or
+not it has a status item, so the same assertion runs and means the same thing
+where the tray is native and where it is a no-op. `label` and `item` match by
+substring, unlike `expect text`, which matches a drawn run exactly: a row is
+one composed string rather than a tree of runs, so the assertion names the
+fragment that carries the meaning. `expect tray item` matching by text rather
+than by index is what makes reordering rows harmless and deleting one fatal.
+`icon` matches the declared path exactly.
+
+`expect tray command` and `expect no tray command` assert the distinction the
+menu is built on: the row carrying that text is a command the reader chooses,
+or a stat the platform draws disabled. Both fail when no row carries the text
+at all, because a `no tray command` that passed on a misspelling would record
+nothing.
+
+`tray choose` picks the command row carrying that text and runs it, the way
+the platform reports one: by row, through the generated row-to-handler table
+the live subscription maps a chosen row through. It fails on a row that is not
+there and on a stat, which is exactly what macOS refuses to let anyone press.
+It is the only step that covers a menu row end to end, so a row index that
+drifts in code generation fails a test instead of going quietly dead in the
+menu bar.
 
 Platform mapping: macOS is fully implemented. On every other target the same
 program compiles and runs with the tray as a runtime no-op; the native tray on
-Windows has no label text, so `label` is a macOS surface by nature. Setting
-`ICE_TRAY_DEBUG` traces the native boundary — status item creation, each
-platform event, whether the click reached the subscription, and the anchor it
-resolved to — because a status item that does nothing looks the same whether
-the platform never delivered the click, the bridge dropped it, or the panel
-landed off-screen.
+Windows has no label text, so `label` is a macOS surface by nature. Every icon
+the runtime installs carries the template flag, not only the first: a swap that
+dropped it would leave a menu bar that recolored correctly until the first
+guard fired and wrong from then on. What a Mac must still show, and what no
+other machine can check: that a left click raises the menu, that a stat row
+reads as a legible disabled figure rather than something broken, and that the
+template icons read on both a light and a dark menu bar — before and after a
+guard has swapped one.
+
+Setting `ICE_TRAY_DEBUG` traces the native boundary — status item creation,
+each platform event, and whether the chosen row reached the subscription —
+because a status item that does nothing looks the same whether the platform
+never delivered the event or the bridge dropped it.
 
 Use `daemon Name` instead of `app Name` for an iced daemon that starts without
 an initial window and remains alive after all windows close. A daemon rejects
@@ -5148,6 +5180,12 @@ expect text string_expression
 expect no text string_expression
 expect text string_expression within target
 expect no text string_expression within target
+expect tray label string_expression
+expect tray icon string_expression
+expect tray item string_expression
+expect no tray item string_expression
+expect tray command string_expression
+expect no tray command string_expression
 expect a11y target role "button"
 expect a11y target name "Save"
 expect a11y target value "Draft"
@@ -5164,6 +5202,27 @@ numeric operands to `f64` and uses absolute tolerance `0.001`; non-finite values
 fail. Text matching is exact over visible rendered text. `within` restricts the
 search to the selected target bounds. `exists` and `missing` are useful for IDs
 whose nodes are conditional at runtime.
+
+`expect tray` reads the runtime's record of what the program last decided the
+status item should show, not the screen, so it runs on every platform and
+means the same thing on each. `label` and `item` match by substring — a tray
+row is one composed string rather than a tree of runs, so the assertion names
+the fragment that carries the meaning, and matching a row by text rather than
+by index makes reordering rows harmless and deleting one fatal. `icon` matches
+the declared `icon-rgba` path exactly. `command` asks whether the row carrying
+the text is one the reader can choose rather than a stat drawn disabled, and
+fails either way when no row carries the text.
+
+`tray choose` runs a menu row the way the platform does — by row index,
+through the generated row-to-handler table the subscription uses — so it
+covers the chosen-row-to-handler path end to end:
+
+```ice
+tray choose "Open terminal"
+```
+
+It fails on a row that is not there and on a stat, which the platform draws
+disabled and refuses to let anyone press.
 
 Accessibility actions and expectations use the same semantic tree exported to
 AccessKit:

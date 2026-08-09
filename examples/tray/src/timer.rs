@@ -8,17 +8,7 @@ pub fn clock(seconds: i64) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
-/// The run already spent, as a width across `width` points.
-pub fn elapsed_width(remaining: i64, width: f64) -> f64 {
-    let spent = (SESSION - remaining.clamp(0, SESSION)) as f64;
-    width * spent / SESSION as f64
-}
-
-/// The rest of the rail, so the two halves always sum to `width`.
-pub fn remaining_width(remaining: i64, width: f64) -> f64 {
-    width - elapsed_width(remaining, width)
-}
-
+/// The run's state as the menu reads it back, in one word.
 pub fn phase(running: bool, remaining: i64) -> String {
     if remaining <= 0 {
         "DONE".to_owned()
@@ -31,7 +21,7 @@ pub fn phase(running: bool, remaining: i64) -> String {
     }
 }
 
-/// A session length as it reads on a button.
-pub fn minute_label(minutes: i64) -> String {
-    format!("{minutes}m")
+/// What pressing the toggle row will do, which is also what the row says.
+pub fn start_label(running: bool) -> String {
+    if running { "Pause" } else { "Start" }.to_owned()
 }

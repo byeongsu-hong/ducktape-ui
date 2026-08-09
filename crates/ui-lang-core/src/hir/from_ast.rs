@@ -472,8 +472,23 @@ impl DeclarationIndex {
                 (AppSettingExprId::TrayLabel, &tray.label),
                 (AppSettingExprId::TrayTooltip, &tray.tooltip),
             ] {
-                if let Some(expression) = expression {
+                if let Some(expression) = expression
+                    .as_ref()
+                    .filter(|setting| crate::ast::tray_text_is_reactive(setting))
+                {
                     push_app_expression(id, expression);
+                }
+            }
+            for (index, icon) in tray.icons.iter().enumerate() {
+                if let Some(guard) = &icon.when {
+                    push_app_expression(AppSettingExprId::TrayIconGuard(index as u32), guard);
+                }
+            }
+            for (index, row) in tray.menu.iter().enumerate() {
+                if let crate::ast::TrayRow::Item { text, .. } = row
+                    && crate::ast::tray_text_is_reactive(text)
+                {
+                    push_app_expression(AppSettingExprId::TrayMenuRow(index as u32), text);
                 }
             }
         }
@@ -1260,7 +1275,6 @@ pub(crate) fn handler_operation_contract(
                 WindowOperation::Open(name) => CheckedWindowOperation::Open(name.clone()),
                 WindowOperation::Oldest => CheckedWindowOperation::Oldest,
                 WindowOperation::Latest => CheckedWindowOperation::Latest,
-                WindowOperation::TrayClose => CheckedWindowOperation::TrayClose,
                 WindowOperation::Close => CheckedWindowOperation::Close,
                 WindowOperation::Drag => CheckedWindowOperation::Drag,
                 WindowOperation::DragResize(direction) => {

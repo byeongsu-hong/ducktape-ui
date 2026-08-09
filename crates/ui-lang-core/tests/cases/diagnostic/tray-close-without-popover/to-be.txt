@@ -1,2 +1,0 @@
-E173
-`task tray close` needs a tray that declares a popover

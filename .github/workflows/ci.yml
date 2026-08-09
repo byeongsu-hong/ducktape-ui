@@ -311,6 +311,12 @@ jobs:
         run: |
           cargo test --locked -p ui-lang-runtime rich_text_editor --lib
           cargo test --locked -p markdown-example ${{ matrix.runner == 'macos-latest' && '-- --test-threads=1' || '' }}
+      # The tray's platform module is compiled only on macOS, so the assertion
+      # that a guard-driven icon swap still asks for template rendering exists
+      # nowhere else. The Linux job never builds that code at all.
+      - name: Test the macOS status item
+        if: matrix.runner == 'macos-latest'
+        run: cargo test --locked -p ui-lang-runtime tray --lib
       - name: Run baseline-free selected review smoke
         shell: bash
         run: |

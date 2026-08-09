@@ -1,49 +1,92 @@
-//! System tray support: a status item in the macOS menu bar with a reactive
-//! label and click events bridged into iced subscriptions.
+//! System tray support: a status item — on macOS an `NSStatusItem` in the
+//! menu bar — with a state-driven icon, reactive text, and a native menu whose
+//! chosen row is bridged into an iced subscription.
+//!
+//! The platform owns the menu: it opens on a press, positions itself on the
+//! right display and dismisses itself. A program declares no window for it and
+//! hears nothing but the row a reader chose.
 //!
 //! The native handle is `!Send` and main-thread-only, so it lives in a
 //! thread-local owned by this module; generated code only calls the free
-//! functions below. On platforms without an implementation every function is
-//! a no-op so the same generated program compiles everywhere.
+//! functions below. On platforms without an implementation every platform
+//! function is a no-op so the same generated program compiles everywhere.
+//!
+//! Everything above [`platform`] is portable, including the diffing and the
+//! record of what the program last decided to show. That is deliberate: it is
+//! the half of the feature a test can reach on any machine, and it means the
+//! platform module holds nothing but the calls that genuinely differ.
 
-/// Compile-time embedded tray icon plus its initial appearance.
+use std::cell::RefCell;
+use std::sync::Mutex;
+
+/// One compile-time embedded status-item icon and the path that names it.
+///
+/// The path is the icon's identity in `expect tray icon`, which is why it is
+/// carried into the runtime rather than dropped after the bytes are embedded.
+#[derive(Clone, Copy, Debug)]
+pub struct TrayIcon {
+    pub path: &'static str,
+    /// Raw RGBA bytes, exactly `width × height × 4` of them.
+    pub rgba: &'static [u8],
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A row of the status item's native menu, in declaration order.
+#[derive(Clone, Copy, Debug)]
+pub enum TrayRow {
+    /// A row carrying text. `command` is the whole of the redesign's central
+    /// concept: a routed row is a command the reader chooses, and an unrouted
+    /// one is a stat the reader only reads — which the platform draws by
+    /// disabling it, so `command` is also the row's enabled flag.
+    Item {
+        command: bool,
+    },
+    Separator,
+}
+
+/// The status item's compile-time shape: everything about it that cannot
+/// change while the program runs.
 #[derive(Clone, Copy, Debug)]
 pub struct TrayConfig {
-    /// Raw RGBA bytes, exactly `icon_width × icon_height × 4` of them.
-    pub icon_rgba: &'static [u8],
-    pub icon_width: u32,
-    pub icon_height: u32,
+    pub icons: &'static [TrayIcon],
+    pub rows: &'static [TrayRow],
     /// macOS template rendering: black + alpha, recolored by the system.
     pub icon_template: bool,
 }
 
-/// The status item's bounds in physical screen pixels, as reported by the
-/// platform at click time.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TrayRect {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
+/// What the program last decided the status item should show, recorded on
+/// every platform including the ones with no status item.
+///
+/// The test steps read this, so `expect tray label` asserts the program's
+/// decision rather than the pixels macOS drew — which is the only claim a
+/// machine without a menu bar is entitled to make, and the same claim on both.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TraySnapshot {
+    /// The declared path of the selected icon, `None` before `init`.
+    pub icon: Option<&'static str>,
+    pub label: String,
+    pub tooltip: String,
+    /// One entry per declared row, separators included, so an index from
+    /// generated code names the row the author wrote.
+    pub items: Vec<String>,
 }
 
-/// Events delivered to the generated `__TrayEvent` message.
-#[derive(Clone, Debug)]
-pub enum TrayEvent {
-    /// Primary-button press on the status item.
-    LeftClick {
-        /// Icon bounds in physical pixels.
-        icon: TrayRect,
-    },
+#[derive(Default)]
+struct Recorded {
+    config: Option<TrayConfig>,
+    snapshot: TraySnapshot,
+    native_calls: usize,
 }
 
-/// Gap between the menu bar and an anchored popover, in logical points.
-const ANCHOR_MARGIN: f32 = 4.0;
+thread_local! {
+    static RECORD: RefCell<Recorded> = RefCell::new(Recorded::default());
+}
 
 /// Whether `ICE_TRAY_DEBUG` asked for a trace of the tray's native boundary.
 /// A status item that does nothing looks identical whether the platform never
-/// delivered the click, the bridge dropped it, or the popover landed off the
-/// screen, and none of the three is visible from inside the application.
+/// created it, never delivered the menu event, or the bridge dropped it, and
+/// none of the three is visible from inside the application.
 fn tracing() -> bool {
     static TRACING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *TRACING.get_or_init(|| std::env::var_os("ICE_TRAY_DEBUG").is_some())
@@ -57,306 +100,599 @@ macro_rules! trace {
     };
 }
 
-/// Top-left logical position for a popover of `window_size` anchored under
-/// the status item. `icon` is in physical pixels; `scale_factor` converts it
-/// to the logical space used by iced window positioning.
+/// Creates the status item and records its starting appearance.
 ///
-/// `monitor` is a display's logical size — iced reports no origin for it, so
-/// it only describes a coordinate span when the icon sits on that same
-/// display. Screen coordinates are global: a display arranged right of the
-/// primary starts beyond its width, and one arranged left of it runs
-/// negative. Clamping against a display the icon is not on would teleport the
-/// popover onto another screen, so the edge clamp applies only when the
-/// icon's own centre falls inside the reported span.
-#[must_use]
-pub fn anchor_position(
-    icon: &TrayRect,
-    scale_factor: f64,
-    window_size: iced::Size,
-    monitor: Option<iced::Size>,
-) -> iced::Point {
-    let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
-        scale_factor
-    } else {
-        1.0
-    };
-    let center = (icon.x + icon.width / 2.0) / scale;
-    let bottom = (icon.y + icon.height) / scale;
-    let mut x = center as f32 - window_size.width / 2.0;
-    if let Some(monitor) =
-        monitor.filter(|monitor| (0.0..=f64::from(monitor.width)).contains(&center))
-    {
-        x = x.min(monitor.width - window_size.width).max(0.0);
-    }
-    let anchor = iced::Point::new(x, bottom as f32 + ANCHOR_MARGIN);
-    trace!(
-        "anchor: icon {icon:?} scale {scale} window {window_size:?} monitor {monitor:?} -> {anchor:?}"
-    );
-    anchor
+/// The icon shown before anything is synced is the last declared one: guards
+/// are tried in declaration order and the last line carries none, so it is by
+/// construction the icon that applies when nothing else does.
+/// The bookkeeping half of [`init`]: what the program has decided to show,
+/// before anything native exists.
+///
+/// Split out because the tests below stop here. Creating a status item needs
+/// the main thread and a live `NSApplication`, and `muda` panics rather than
+/// failing when it has neither — so a test that called [`init`] would take the
+/// whole harness down on macOS while proving nothing about the record.
+fn record(config: TrayConfig) {
+    RECORD.with_borrow_mut(|record| {
+        *record = Recorded {
+            snapshot: TraySnapshot {
+                icon: config.icons.last().map(|icon| icon.path),
+                items: vec![String::new(); config.rows.len()],
+                ..TraySnapshot::default()
+            },
+            config: Some(config),
+            native_calls: 0,
+        };
+    });
 }
 
-pub use platform::{events, init, set_label, set_tooltip};
+pub fn init(config: TrayConfig) {
+    record(config);
+    trace!(
+        "init: {} icon(s), {} row(s), template {}",
+        config.icons.len(),
+        config.rows.len(),
+        config.icon_template
+    );
+    platform::init(config);
+}
+
+/// Records `value` through `update` and reports whether it differs from what
+/// the status item already shows.
+///
+/// Every setter goes through here, so the diff that makes a sync after every
+/// message affordable sits above the platform seam — one implementation, and
+/// one test, for every platform.
+fn changed(update: impl FnOnce(&mut TraySnapshot) -> bool) -> bool {
+    RECORD.with_borrow_mut(|record| {
+        let changed = update(&mut record.snapshot);
+        if changed {
+            record.native_calls += 1;
+        }
+        changed
+    })
+}
+
+fn replace_text(slot: &mut String, value: &str) -> bool {
+    if slot == value {
+        return false;
+    }
+    value.clone_into(slot);
+    true
+}
+
+/// Shows the first icon whose guard is true, and the last declared icon when
+/// none of them is.
+///
+/// `guards` holds one entry per guarded icon, in declaration order, so the
+/// first-match-wins rule is a `position` here rather than an `if`/`else` chain
+/// in every generated program: one implementation, above the platform seam,
+/// that a test can reach on any machine. The last icon carries no guard — the
+/// checker rejects a block whose last line does — so `guards.len()` is exactly
+/// its index and "nothing matched" always lands on it.
+pub fn select_icon(guards: &[bool]) {
+    set_icon(
+        guards
+            .iter()
+            .position(|guard| *guard)
+            .unwrap_or(guards.len()),
+    );
+}
+
+/// Shows the icon declared at `index`. Out of range is a no-op: an index only
+/// ever comes from a declaration, so there is nothing a shipped program could
+/// do about one that does not exist except keep running.
+fn set_icon(index: usize) {
+    let Some((icon, template)) = RECORD.with_borrow(|record| {
+        record
+            .config
+            .and_then(|config| Some((*config.icons.get(index)?, config.icon_template)))
+    }) else {
+        return;
+    };
+    if changed(|snapshot| snapshot.icon.replace(icon.path) != Some(icon.path)) {
+        trace!("set icon {index} ({}) template {template}", icon.path);
+        // The flag crosses the seam with the icon rather than being read back
+        // off the native handle: a swap has to carry it every time, and the
+        // one place that could drop it is now visible from a test.
+        platform::set_icon(icon, template);
+    }
+}
+
+/// Shows `value` beside the icon. macOS is the only platform that draws it.
+pub fn set_label(value: &str) {
+    if changed(|snapshot| replace_text(&mut snapshot.label, value)) {
+        trace!("set label {value:?}");
+        platform::set_label(value);
+    }
+}
+
+/// Updates the hover tooltip.
+pub fn set_tooltip(value: &str) {
+    if changed(|snapshot| replace_text(&mut snapshot.tooltip, value)) {
+        trace!("set tooltip {value:?}");
+        platform::set_tooltip(value);
+    }
+}
+
+/// Sets the text of the menu row declared at `index`. A separator carries no
+/// text, so writing to one is a no-op that leaves every other row where it is.
+pub fn set_item(index: usize, value: &str) {
+    let text_row = RECORD.with_borrow(|record| {
+        record
+            .config
+            .and_then(|config| config.rows.get(index))
+            .is_some_and(|row| matches!(row, TrayRow::Item { .. }))
+    });
+    if !text_row {
+        return;
+    }
+    if changed(|snapshot| {
+        snapshot
+            .items
+            .get_mut(index)
+            .is_some_and(|slot| replace_text(slot, value))
+    }) {
+        trace!("set item {index} {value:?}");
+        platform::set_item(index, value);
+    }
+}
+
+/// What the program last decided the status item should show.
+#[must_use]
+pub fn rendered() -> TraySnapshot {
+    RECORD.with_borrow(|record| record.snapshot.clone())
+}
+
+/// Whether the row declared at `index` is a command — a routed row the reader
+/// chooses — rather than a stat the platform draws disabled. A separator is
+/// neither, and is not a command.
+#[must_use]
+pub fn is_command(index: usize) -> bool {
+    RECORD.with_borrow(|record| {
+        record
+            .config
+            .and_then(|config| config.rows.get(index).copied())
+            .is_some_and(|row| matches!(row, TrayRow::Item { command: true }))
+    })
+}
+
+/// How many times the tray has crossed into the platform module through a
+/// setter. Everything above the seam is a memory compare; this counts what is
+/// left, and is what makes "unchanged values cost nothing" a checkable claim.
+#[must_use]
+pub fn native_calls() -> usize {
+    RECORD.with_borrow(|record| record.native_calls)
+}
+
+/// The sender half of the live menu-event channel.
+///
+/// The *sender* is what the static holds and [`tray_stream`] is what creates
+/// the channel, so a subscription that restarts reconnects instead of finding
+/// a receiver someone already took and going silently dead.
+static EVENTS: Mutex<Option<iced::futures::channel::mpsc::UnboundedSender<usize>>> =
+    Mutex::new(None);
+
+/// Forwards a chosen menu row, by declaration index, to the subscription.
+/// The platform bridge is the only caller in a shipped program.
+pub fn emit(row: usize) {
+    let delivered = EVENTS
+        .lock()
+        .expect("tray event sender lock")
+        .as_ref()
+        .map(|sender| sender.unbounded_send(row));
+    trace!("emit row {row}: {delivered:?}");
+}
+
+/// Recipe identity for the tray event stream. `Subscription::run_with`
+/// identifies a recipe by this type plus its hash, so the unit struct is the
+/// whole identity: one tray stream per program.
+#[derive(Hash)]
+struct TraySubscription;
+
+fn tray_stream(
+    _subscription: &TraySubscription,
+) -> iced::futures::channel::mpsc::UnboundedReceiver<usize> {
+    let (sender, receiver) = iced::futures::channel::mpsc::unbounded();
+    *EVENTS.lock().expect("tray event sender lock") = Some(sender);
+    trace!("subscription connected");
+    receiver
+}
+
+/// Stream of chosen menu rows for the generated subscription batch.
+pub fn events() -> iced::Subscription<usize> {
+    iced::Subscription::run_with(TraySubscription, tray_stream)
+}
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use std::cell::RefCell;
-    use std::sync::Mutex;
+    use std::cell::{Cell, RefCell};
 
-    use super::{TrayConfig, TrayEvent, TrayRect};
+    use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+
+    use super::{TrayConfig, TrayIcon, TrayRow};
 
     struct TrayState {
         icon: tray_icon::TrayIcon,
-        label: String,
-        tooltip: String,
+        /// Declaration order, `None` where the row is a separator, so a row
+        /// index from generated code lands on the row the author wrote.
+        items: Vec<Option<MenuItem>>,
     }
 
     thread_local! {
         static TRAY: RefCell<Option<TrayState>> = const { RefCell::new(None) };
     }
 
-    static EVENTS: Mutex<Option<iced::futures::channel::mpsc::UnboundedReceiver<TrayEvent>>> =
-        Mutex::new(None);
-
     /// Creates the status item. Must run on the main thread with the iced
     /// event loop initialized — generated boot satisfies both. A platform
     /// failure is reported to stderr and leaves every later call a no-op;
     /// the application itself keeps running.
+    ///
+    /// NOT PROVABLE OFF macOS: that the menu raises on a left click, that a
+    /// disabled row draws as a legible grey stat rather than something that
+    /// looks broken, and that the template icons read on a light bar — before
+    /// and, because [`set_icon`] is the only thing that keeps it, after a
+    /// guard has swapped the icon at least once.
     pub fn init(config: TrayConfig) {
-        let (sender, receiver) = iced::futures::channel::mpsc::unbounded();
-        *EVENTS.lock().expect("tray event receiver lock") = Some(receiver);
-        tray_icon::TrayIconEvent::set_event_handler(Some(
-            move |event: tray_icon::TrayIconEvent| {
-                trace!("native event: {event:?}");
-                if let tray_icon::TrayIconEvent::Click {
-                    rect,
-                    button: tray_icon::MouseButton::Left,
-                    button_state: tray_icon::MouseButtonState::Down,
-                    ..
-                } = event
-                {
-                    let delivered = sender.unbounded_send(TrayEvent::LeftClick {
-                        icon: TrayRect {
-                            x: rect.position.x,
-                            y: rect.position.y,
-                            width: f64::from(rect.size.width),
-                            height: f64::from(rect.size.height),
-                        },
-                    });
-                    trace!("forwarded left click: {delivered:?}");
-                }
-            },
-        ));
-        let icon = match tray_icon::Icon::from_rgba(
-            config.icon_rgba.to_vec(),
-            config.icon_width,
-            config.icon_height,
-        ) {
-            Ok(icon) => icon,
-            Err(error) => {
-                eprintln!("ice tray: invalid icon RGBA: {error}");
-                return;
+        let menu = Menu::new();
+        let mut items = Vec::with_capacity(config.rows.len());
+        for row in config.rows {
+            let item = match row {
+                // The bool is the row's enabled flag: a stat is a row the
+                // platform draws but will not let the reader choose.
+                TrayRow::Item { command } => Some(MenuItem::new("", *command, None)),
+                TrayRow::Separator => None,
+            };
+            let appended = match &item {
+                Some(item) => menu.append(item),
+                None => menu.append(&PredefinedMenuItem::separator()),
+            };
+            if let Err(error) = appended {
+                eprintln!("ice tray: menu row rejected: {error}");
             }
-        };
-        match tray_icon::TrayIconBuilder::new()
-            .with_icon(icon)
-            .with_icon_as_template(config.icon_template)
-            .build()
-        {
-            Ok(icon) => TRAY.with(|slot| {
+            items.push(item);
+        }
+        // The handler must be `Send + Sync`, which a `MenuItem` is not, so it
+        // carries the ids instead. Six rows is a scan, not a map.
+        let ids: Vec<Option<MenuId>> = items
+            .iter()
+            .map(|item| item.as_ref().map(|item| item.id().clone()))
+            .collect();
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            let row = ids.iter().position(|id| id.as_ref() == Some(&event.id));
+            trace!("native menu event {:?} -> row {row:?}", event.id);
+            if let Some(row) = row {
+                super::emit(row);
+            }
+        }));
+        let mut builder = tray_icon::TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_icon_as_template(config.icon_template);
+        if let Some(icon) = config.icons.last() {
+            match tray_icon::Icon::from_rgba(icon.rgba.to_vec(), icon.width, icon.height) {
+                Ok(image) => builder = builder.with_icon(image),
+                Err(error) => eprintln!("ice tray: invalid icon RGBA `{}`: {error}", icon.path),
+            }
+        }
+        match builder.build() {
+            Ok(icon) => TRAY.with_borrow_mut(|slot| {
                 trace!("status item created");
-                *slot.borrow_mut() = Some(TrayState {
-                    icon,
-                    label: String::new(),
-                    tooltip: String::new(),
-                });
+                *slot = Some(TrayState { icon, items });
             }),
             Err(error) => eprintln!("ice tray: status item creation failed: {error}"),
         }
     }
 
-    /// Shows `value` next to the icon; diffs against the last value so
-    /// unchanged updates skip the native call.
-    pub fn set_label(value: &str) {
-        TRAY.with(|slot| {
-            if let Some(state) = slot.borrow_mut().as_mut()
-                && state.label != value
-            {
-                state.icon.set_title(Some(value));
-                value.clone_into(&mut state.label);
-            }
-        });
+    // What this module last asked the menu bar to show, recorded before the
+    // native handle is consulted. A CI runner has no window server, so no
+    // status item exists and the native call below never executes there;
+    // recording the intent first is what lets the tests check the template
+    // flag on a real macOS runner instead of only on a developer's desk.
+    thread_local! {
+        static INSTALLED: Cell<Option<(&'static str, bool)>> = const { Cell::new(None) };
     }
 
-    /// Updates the hover tooltip with the same diffing as [`set_label`]. A
-    /// failed update is not recorded, so the next sync retries it instead of
-    /// leaving the tooltip stale until the value happens to change again.
-    pub fn set_tooltip(value: &str) {
-        TRAY.with(|slot| {
-            if let Some(state) = slot.borrow_mut().as_mut()
-                && state.tooltip != value
-            {
-                match state.icon.set_tooltip(Some(value)) {
-                    Ok(()) => value.clone_into(&mut state.tooltip),
-                    Err(error) => eprintln!("ice tray: tooltip update failed: {error}"),
+    /// The icon path and template flag of the last swap this module performed.
+    pub(super) fn last_install() -> Option<(&'static str, bool)> {
+        INSTALLED.with(Cell::get)
+    }
+
+    /// Swaps in `icon`, carrying the template flag.
+    ///
+    /// Which is why this calls `TrayIcon::set_icon_with_as_template` rather
+    /// than `TrayIcon::set_icon`: the latter applies `setTemplate(false)` to
+    /// every image it installs, so a menu bar that recolored for light and
+    /// dark would stop doing so the first time a guard swapped the icon, and
+    /// stay wrong until the program restarted. WHICH of the two is called is
+    /// not observable without a status item, so it is held by this comment and
+    /// by `template` having no other use; the flag's VALUE is what the test
+    /// pins.
+    pub fn set_icon(icon: TrayIcon, template: bool) {
+        INSTALLED.with(|slot| slot.set(Some((icon.path, template))));
+        TRAY.with_borrow(|slot| {
+            let Some(state) = slot.as_ref() else {
+                return;
+            };
+            match tray_icon::Icon::from_rgba(icon.rgba.to_vec(), icon.width, icon.height) {
+                Ok(image) => {
+                    if let Err(error) = state.icon.set_icon_with_as_template(Some(image), template)
+                    {
+                        eprintln!("ice tray: icon update failed: {error}");
+                    }
                 }
+                Err(error) => eprintln!("ice tray: invalid icon RGBA `{}`: {error}", icon.path),
             }
         });
     }
 
-    /// Recipe identity for the tray event stream. `Subscription::run_with`
-    /// identifies a recipe by this type plus its hash, so the unit struct is
-    /// the whole identity: one tray stream per program.
-    #[derive(Hash)]
-    struct TraySubscription;
-
-    fn tray_stream(
-        _subscription: &TraySubscription,
-    ) -> iced::futures::channel::mpsc::UnboundedReceiver<TrayEvent> {
-        EVENTS
-            .lock()
-            .expect("tray event receiver lock")
-            .take()
-            .inspect(|_| trace!("subscription took the live event receiver"))
-            .unwrap_or_else(|| {
-                trace!("subscription found no receiver — clicks cannot arrive");
-                let (_sender, receiver) = iced::futures::channel::mpsc::unbounded();
-                receiver
-            })
+    /// The one genuinely macOS-only call: no other platform draws text beside
+    /// a status item.
+    pub fn set_label(value: &str) {
+        TRAY.with_borrow(|slot| {
+            if let Some(state) = slot.as_ref() {
+                state.icon.set_title(Some(value));
+            }
+        });
     }
 
-    /// Stream of tray events for the generated subscription batch.
-    pub fn events() -> iced::Subscription<TrayEvent> {
-        iced::Subscription::run_with(TraySubscription, tray_stream)
+    pub fn set_tooltip(value: &str) {
+        TRAY.with_borrow(|slot| {
+            if let Some(state) = slot.as_ref()
+                && let Err(error) = state.icon.set_tooltip(Some(value))
+            {
+                eprintln!("ice tray: tooltip update failed: {error}");
+            }
+        });
+    }
+
+    pub fn set_item(index: usize, value: &str) {
+        TRAY.with_borrow(|slot| {
+            if let Some(Some(item)) = slot
+                .as_ref()
+                .map(|state| &state.items)
+                .map(|items| items.get(index).and_then(std::option::Option::as_ref))
+            {
+                item.set_text(value);
+            }
+        });
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod platform {
-    use super::{TrayConfig, TrayEvent};
+    use super::{TrayConfig, TrayIcon};
 
-    /// No tray backend on this platform; the declaration is a no-op.
+    /// No status item on this platform; the declaration records itself and
+    /// draws nothing.
     pub fn init(_config: TrayConfig) {}
 
-    /// No tray backend on this platform; the label is dropped.
+    pub fn set_icon(_icon: TrayIcon, _template: bool) {}
+
     pub fn set_label(_value: &str) {}
 
-    /// No tray backend on this platform; the tooltip is dropped.
     pub fn set_tooltip(_value: &str) {}
 
-    /// Never yields events on this platform.
-    pub fn events() -> iced::Subscription<TrayEvent> {
-        iced::Subscription::none()
-    }
+    pub fn set_item(_index: usize, _value: &str) {}
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn rect() -> TrayRect {
-        // A status item on a 2x display: 60 physical ≙ 30 logical from the
-        // left, 44 wide, menu bar 48 tall.
-        TrayRect {
-            x: 3000.0,
-            y: 0.0,
-            width: 44.0,
-            height: 48.0,
+    static ICONS: &[TrayIcon] = &[
+        TrayIcon {
+            path: "alarm.rgba",
+            rgba: &[0; 4],
+            width: 1,
+            height: 1,
+        },
+        TrayIcon {
+            path: "idle.rgba",
+            rgba: &[0; 4],
+            width: 1,
+            height: 1,
+        },
+    ];
+
+    static ROWS: &[TrayRow] = &[
+        TrayRow::Item { command: false },
+        TrayRow::Separator,
+        TrayRow::Item { command: true },
+    ];
+
+    fn config() -> TrayConfig {
+        TrayConfig {
+            icons: ICONS,
+            rows: ROWS,
+            icon_template: true,
         }
     }
 
     #[test]
-    fn anchors_centered_under_the_icon() {
-        let position = anchor_position(&rect(), 2.0, iced::Size::new(320.0, 240.0), None);
-        // Icon center: (3000 + 22) / 2 = 1511 logical; window left edge
-        // 1511 - 160 = 1351. Below the bar: 48 / 2 = 24, plus the margin.
-        assert_eq!(position, iced::Point::new(1351.0, 24.0 + ANCHOR_MARGIN));
-    }
-
-    #[test]
-    fn clamps_to_the_left_edge_of_the_icons_monitor() {
-        let icon = TrayRect {
-            x: 10.0,
-            y: 0.0,
-            width: 44.0,
-            height: 48.0,
-        };
-        let position = anchor_position(
-            &icon,
-            2.0,
-            iced::Size::new(320.0, 240.0),
-            Some(iced::Size::new(3008.0, 1692.0)),
+    fn records_what_it_was_told() {
+        record(config());
+        set_icon(0);
+        set_label("PnL +12");
+        set_tooltip("Trading");
+        set_item(0, "PnL  +1,240.50");
+        set_item(2, "Quit");
+        assert_eq!(
+            rendered(),
+            TraySnapshot {
+                icon: Some("alarm.rgba"),
+                label: "PnL +12".into(),
+                tooltip: "Trading".into(),
+                items: vec!["PnL  +1,240.50".into(), String::new(), "Quit".into()],
+            }
         );
-        assert_eq!(position.x, 0.0);
     }
 
+    /// The last icon is the one with no guard, so it is what the item shows
+    /// before anything has been synced.
     #[test]
-    fn clamps_inside_the_monitor_right_edge() {
-        let icon = TrayRect {
-            x: 5900.0,
-            y: 0.0,
-            width: 44.0,
-            height: 48.0,
-        };
-        let position = anchor_position(
-            &icon,
-            2.0,
-            iced::Size::new(320.0, 240.0),
-            Some(iced::Size::new(3008.0, 1692.0)),
+    fn starts_on_the_unguarded_icon() {
+        record(config());
+        assert_eq!(rendered().icon, Some("idle.rgba"));
+    }
+
+    /// Guards are tried in declaration order and the first match wins, so two
+    /// true guards show the earlier icon and no true guard shows the last —
+    /// the one the author left unguarded.
+    #[test]
+    fn the_first_matching_guard_wins() {
+        static ORDERED: &[TrayIcon] = &[
+            TrayIcon {
+                path: "alarm.rgba",
+                rgba: &[0; 4],
+                width: 1,
+                height: 1,
+            },
+            TrayIcon {
+                path: "stale.rgba",
+                rgba: &[0; 4],
+                width: 1,
+                height: 1,
+            },
+            TrayIcon {
+                path: "idle.rgba",
+                rgba: &[0; 4],
+                width: 1,
+                height: 1,
+            },
+        ];
+        record(TrayConfig {
+            icons: ORDERED,
+            rows: ROWS,
+            icon_template: true,
+        });
+
+        select_icon(&[true, true]);
+        assert_eq!(
+            rendered().icon,
+            Some("alarm.rgba"),
+            "the earlier guard must win"
         );
-        assert_eq!(position.x, 3008.0 - 320.0);
-    }
-
-    /// A status item on a display arranged right of the primary reports
-    /// global coordinates past that display's width. The reported size
-    /// belongs to whichever display the popover was created on, so clamping
-    /// with it would drag the popover onto the wrong screen.
-    #[test]
-    fn ignores_a_monitor_the_icon_is_not_on() {
-        let icon = TrayRect {
-            x: 8000.0,
-            y: 0.0,
-            width: 44.0,
-            height: 48.0,
-        };
-        let position = anchor_position(
-            &icon,
-            2.0,
-            iced::Size::new(320.0, 240.0),
-            Some(iced::Size::new(3008.0, 1692.0)),
+        select_icon(&[false, true]);
+        assert_eq!(rendered().icon, Some("stale.rgba"));
+        select_icon(&[false, false]);
+        assert_eq!(
+            rendered().icon,
+            Some("idle.rgba"),
+            "no guard matching must land on the unguarded last icon"
         );
-        // Centre 4011 logical, so the popover stays under the icon at 3851
-        // instead of being pulled back to the primary display's edge.
-        assert_eq!(position.x, 3851.0);
     }
 
-    /// A display arranged left of the primary runs negative, which the
-    /// left-edge floor would otherwise pull onto the primary display.
+    /// macOS recolors a template image for the light and the dark menu bar,
+    /// and the flag saying so has to survive every guard-driven swap — not
+    /// just the first install. It did not: the swap path used to re-read the
+    /// flag off the native handle, and `TrayIcon::set_icon` re-installs each
+    /// image with `setTemplate(false)`, so a bar that recolored stopped doing
+    /// so the moment a guard changed the icon, and stayed wrong until restart.
+    ///
+    /// PINS THE ARGUMENT, NOT THE PIXELS. This drives the real swap path —
+    /// guard resolution, the unchanged-value diff, and the crossing into the
+    /// macOS module — and asserts what that module was handed. A CI runner has
+    /// no window server, so no status item exists and the native call itself
+    /// never runs. That the recoloring LOOKS right, and that
+    /// `set_icon_with_as_template` rather than `set_icon` is the method
+    /// reached, still need a human on a Mac; COVERAGE.md says so.
+    #[cfg(target_os = "macos")]
     #[test]
-    fn keeps_negative_coordinates_off_the_primary_monitor() {
-        let icon = TrayRect {
-            x: -1800.0,
-            y: 0.0,
-            width: 44.0,
-            height: 48.0,
-        };
-        let position = anchor_position(
-            &icon,
-            2.0,
-            iced::Size::new(320.0, 240.0),
-            Some(iced::Size::new(3008.0, 1692.0)),
+    fn a_guard_driven_swap_still_asks_for_template_rendering() {
+        static ORDERED: &[TrayIcon] = &[
+            TrayIcon {
+                path: "alarm.rgba",
+                rgba: &[0; 4],
+                width: 1,
+                height: 1,
+            },
+            TrayIcon {
+                path: "idle.rgba",
+                rgba: &[0; 4],
+                width: 1,
+                height: 1,
+            },
+        ];
+        record(TrayConfig {
+            icons: ORDERED,
+            rows: ROWS,
+            icon_template: true,
+        });
+
+        // The unguarded icon is what boot shows, so the guard has to actually
+        // move it; without this the assertion could pass on the first install.
+        select_icon(&[false]);
+        assert_eq!(rendered().icon, Some("idle.rgba"));
+
+        select_icon(&[true]);
+        assert_eq!(
+            platform::last_install(),
+            Some(("alarm.rgba", true)),
+            "a guard-driven swap must carry the template flag, not drop it"
         );
-        assert_eq!(position.x, -1049.0);
     }
 
     #[test]
-    fn treats_non_positive_scale_as_identity() {
-        let icon = TrayRect {
-            x: 600.0,
-            y: 0.0,
-            width: 22.0,
-            height: 24.0,
-        };
-        let position = anchor_position(&icon, 0.0, iced::Size::new(100.0, 50.0), None);
-        assert_eq!(position, iced::Point::new(561.0, 24.0 + ANCHOR_MARGIN));
+    fn skips_the_native_call_when_unchanged() {
+        record(config());
+        set_label("Flat");
+        set_label("Flat");
+        set_icon(1);
+        assert_eq!(
+            native_calls(),
+            1,
+            "unchanged values must not reach the platform"
+        );
+        set_label("ETH short 2.0");
+        assert_eq!(native_calls(), 2);
+    }
+
+    #[test]
+    fn a_separator_slot_ignores_set_item() {
+        record(config());
+        set_item(0, "PnL");
+        set_item(1, "should not land");
+        set_item(2, "Quit");
+        assert_eq!(
+            rendered().items,
+            vec!["PnL".to_owned(), String::new(), "Quit".to_owned()]
+        );
+    }
+
+    #[test]
+    fn out_of_range_set_item_is_a_no_op() {
+        record(config());
+        set_item(9, "nowhere");
+        set_icon(9);
+        assert_eq!(rendered().items.len(), 3);
+        assert_eq!(rendered().icon, Some("idle.rgba"));
+    }
+
+    /// A subscription that restarts has to reconnect. Holding the receiver in
+    /// the static and taking it made the second stream permanently silent.
+    #[test]
+    fn tray_stream_reconnects() {
+        let mut first = tray_stream(&TraySubscription);
+        emit(2);
+        assert_eq!(first.try_recv().unwrap(), 2);
+        let mut second = tray_stream(&TraySubscription);
+        emit(0);
+        assert_eq!(second.try_recv().unwrap(), 0);
+    }
+
+    #[test]
+    fn rendered_is_empty_before_init() {
+        assert_eq!(rendered(), TraySnapshot::default());
+    }
+
+    /// The redesign's central concept, read back: a routed row is a command,
+    /// an unrouted row is a stat, and a separator is neither.
+    #[test]
+    fn only_a_routed_row_is_a_command() {
+        record(config());
+        assert!(!is_command(0), "an unrouted row is a stat, not a command");
+        assert!(!is_command(1), "a separator is not a command");
+        assert!(is_command(2), "a routed row is a command");
+        assert!(!is_command(9), "there is no row 9");
     }
 }

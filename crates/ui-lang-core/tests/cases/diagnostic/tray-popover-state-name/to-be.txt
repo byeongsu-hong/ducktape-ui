@@ -1,2 +1,0 @@
-E100
-state cannot be named `popover`

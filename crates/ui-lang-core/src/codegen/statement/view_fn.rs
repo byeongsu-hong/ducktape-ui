@@ -30,26 +30,6 @@ fn app_view_env(
             },
         );
     }
-    if program
-        .settings()
-        .tray
-        .as_ref()
-        .is_some_and(|tray| tray.popover.is_some())
-    {
-        env.insert(
-            "popover".into(),
-            Binding {
-                code: "(self.__ice_tray_popover == ::std::option::Option::Some(window))".into(),
-                ty: Type::Bool,
-                local: true,
-                state: None,
-                owner: program
-                    .expressions()
-                    .tray_popover_local()
-                    .map(BindingOwner::Local),
-            },
-        );
-    }
     env
 }
 

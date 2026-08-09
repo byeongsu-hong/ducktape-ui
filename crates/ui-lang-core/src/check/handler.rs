@@ -457,20 +457,6 @@ fn check_handler_statements(
                         format!("unknown app window `{name}`"),
                     ));
                 }
-                if matches!(operation, WindowOperation::TrayClose)
-                    && document
-                        .settings
-                        .tray
-                        .as_ref()
-                        .is_none_or(|tray| tray.popover.is_none())
-                {
-                    return Err(Error::new(
-                        "E173",
-                        span,
-                        "`task tray close` needs a tray that declares a popover",
-                    )
-                    .hint("add `popover <window>` to the tray block"));
-                }
                 if let Some(target) = target {
                     if matches!(
                         operation,

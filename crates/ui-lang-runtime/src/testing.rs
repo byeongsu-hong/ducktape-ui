@@ -505,6 +505,25 @@ pub enum AccessibilityAction {
     Focus,
 }
 
+/// The part of the status item a `expect tray` step asserts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrayField {
+    Label,
+    Icon,
+    Item,
+    /// Whether the row carrying the text is a command the reader can choose
+    /// rather than a stat the platform draws disabled.
+    Command,
+}
+
+/// The declaration index of the first row whose text carries `value`.
+/// Separators hold no text, so they never match.
+fn tray_row_containing(tray: &crate::tray::TraySnapshot, value: &str) -> Option<usize> {
+    tray.items
+        .iter()
+        .position(|item| !item.is_empty() && item.contains(value))
+}
+
 /// A semantic accessibility property used by generated expectations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessibilityProperty {
@@ -2266,6 +2285,76 @@ where
                 if actual { "present" } else { "missing" },
             );
         }
+    }
+
+    /// Asserts what the program last decided the status item should show.
+    ///
+    /// Does not redraw: the tray is not in the widget tree and nothing about
+    /// it is on screen. `label` and `item` match by SUBSTRING, unlike
+    /// [`Self::check_text`], which matches a drawn run exactly — a tray row is
+    /// one composed string rather than a tree of runs, so the author asserts
+    /// the fragment that carries the meaning. `item` matching by text and not
+    /// by index is what makes reordering rows harmless and deleting one fatal.
+    /// `icon` matches the declared path exactly. `command` asks whether the
+    /// row carrying the text is one the reader can choose, and fails either
+    /// way when no row carries it — a `no tray command` that passed because
+    /// the text was misspelled would record nothing.
+    #[track_caller]
+    pub fn check_tray(&mut self, field: TrayField, value: &str, negated: bool, source: Location) {
+        let tray = crate::tray::rendered();
+        let actual = match field {
+            TrayField::Label => tray.label.contains(value),
+            TrayField::Icon => tray.icon == Some(value),
+            TrayField::Item => tray.items.iter().any(|item| item.contains(value)),
+            TrayField::Command => match tray_row_containing(&tray, value) {
+                Some(row) => crate::tray::is_command(row),
+                None => self.tray_row_missing(value, source),
+            },
+        };
+        if actual == negated {
+            let (selector, shown) = match field {
+                TrayField::Label => ("tray label containing", format!("{:?}", tray.label)),
+                TrayField::Icon => ("tray icon", format!("{:?}", tray.icon)),
+                TrayField::Item | TrayField::Command => {
+                    ("a tray row containing", format!("{:?}", tray.items))
+                }
+            };
+            panic!(
+                "{source}: test `{}` tray expectation failed\nstatement: {}\nselector: {selector} {value:?}\nexpected: {}\nactual: {shown}",
+                self.test_name,
+                source.statement,
+                if negated { "missing" } else { "present" },
+            );
+        }
+    }
+
+    /// The declaration index of the command row carrying `value`, for the
+    /// `tray choose` step. Choosing is the platform's own act, so this fails
+    /// on exactly what the platform would refuse: a row that is not there, and
+    /// a stat, which macOS draws disabled and will not let anyone press.
+    #[track_caller]
+    pub fn tray_command_row(&mut self, value: &str, source: Location) -> usize {
+        let tray = crate::tray::rendered();
+        let Some(row) = tray_row_containing(&tray, value) else {
+            self.tray_row_missing(value, source)
+        };
+        if !crate::tray::is_command(row) {
+            panic!(
+                "{source}: test `{}` cannot choose a tray row that is not a command\nstatement: {}\nselector: a tray row containing {value:?}\nexpected: a row routed with `-> handler`\nactual: row {row} is a stat, which the platform draws disabled",
+                self.test_name, source.statement,
+            );
+        }
+        row
+    }
+
+    #[track_caller]
+    fn tray_row_missing(&self, value: &str, source: Location) -> ! {
+        panic!(
+            "{source}: test `{}` found no tray row containing {value:?}\nstatement: {}\nactual: {:?}",
+            self.test_name,
+            source.statement,
+            crate::tray::rendered().items,
+        )
     }
 
     pub fn check_accessibility_str(

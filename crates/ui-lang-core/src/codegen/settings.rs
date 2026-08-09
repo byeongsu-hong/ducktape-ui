@@ -153,6 +153,17 @@ pub(in crate::codegen) fn app_settings_code(
     }
 }
 
+/// The status item's compile-time shape, plus every setting whose value is a
+/// literal.
+///
+/// A literal is applied here, once, and left out of `__tray_sync` entirely: a
+/// constant cannot become stale, and a tray of nothing but constants needs no
+/// sync at all. The sync itself is appended when anything can still change, so
+/// the item shows the program's first answer instead of an empty label until
+/// the first message arrives.
+///
+/// Not gated on `cfg(not(test))`: `init` is portable and, off macOS, only
+/// sizes the record that `expect tray label` reads.
 pub(in crate::codegen) fn tray_init_code(
     program: &LoweredProgram,
     settings: &ResolvedAppSettings,
@@ -161,22 +172,80 @@ pub(in crate::codegen) fn tray_init_code(
     let Some(tray) = &settings.tray else {
         return String::new();
     };
-    let sync = if tray.has_text() {
-        "\nstate.__tray_sync();"
-    } else {
-        ""
-    };
+    let icons = tray
+        .icons
+        .iter()
+        .enumerate()
+        .map(|(index, icon)| {
+            format!(
+                "::ui_lang_runtime::tray::TrayIcon {{ path: {}, rgba: {}, width: {}u32, height: {}u32 }},",
+                rust_string(&icon.icon.path),
+                rgba_embed_code(
+                    "tray",
+                    &icon.icon,
+                    source_path,
+                    &format!("__ICE_TRAY_RGBA_{index}")
+                ),
+                icon.icon.width,
+                icon.icon.height,
+            )
+        })
+        .collect::<String>();
+    let rows = tray
+        .menu
+        .iter()
+        .map(|row| match row {
+            // A routed row is a command; an unrouted one is a figure to read,
+            // and the platform draws one of those by disabling it.
+            ResolvedTrayRow::Item { route, .. } => format!(
+                "::ui_lang_runtime::tray::TrayRow::Item {{ command: {} }},",
+                route.is_some()
+            ),
+            ResolvedTrayRow::Separator => "::ui_lang_runtime::tray::TrayRow::Separator,".to_owned(),
+        })
+        .collect::<String>();
+    let mut literals = String::new();
+    for (text, apply) in [(&tray.label, "set_label"), (&tray.tooltip, "set_tooltip")] {
+        if let Some(ResolvedTrayText::Literal(value)) = text {
+            literals.push_str(&format!(
+                "::ui_lang_runtime::tray::{apply}({});\n",
+                rust_string(value)
+            ));
+        }
+    }
+    for (index, row) in tray.menu.iter().enumerate() {
+        if let ResolvedTrayRow::Item {
+            text: ResolvedTrayText::Literal(value),
+            ..
+        } = row
+        {
+            literals.push_str(&format!(
+                "::ui_lang_runtime::tray::set_item({index}usize, {});\n",
+                rust_string(value)
+            ));
+        }
+    }
     marked_setting(
         program,
         tray.origin,
         format!(
-            "#[cfg(not(test))]\n{{\n::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig {{ icon_rgba: {}, icon_width: {}u32, icon_height: {}u32, icon_template: {}, }});{sync}\n}}",
-            rgba_embed_code("tray", &tray.icon, source_path, "__ICE_TRAY_RGBA"),
-            tray.icon.width,
-            tray.icon.height,
+            "{{\nconst __ICE_TRAY_ICONS: &[::ui_lang_runtime::tray::TrayIcon] = &[{icons}];\nconst __ICE_TRAY_ROWS: &[::ui_lang_runtime::tray::TrayRow] = &[{rows}];\n::ui_lang_runtime::tray::init(::ui_lang_runtime::tray::TrayConfig {{ icons: __ICE_TRAY_ICONS, rows: __ICE_TRAY_ROWS, icon_template: {}, }});\n{literals}}}",
             tray.icon_template,
         ),
     )
+}
+
+/// The first sync, for `__boot` and every `__preset_N`.
+///
+/// It has to run after the boot task and after a preset's state overrides,
+/// not beside `init`: syncing against `__state()` shows the tray whatever the
+/// declared defaults were, which for a preset is never what the preset says.
+/// Without it the item stays blank until the first message arrives.
+pub(in crate::codegen) fn tray_boot_sync_code(settings: &ResolvedAppSettings) -> &'static str {
+    match &settings.tray {
+        Some(tray) if tray.reactive() => "state.__tray_sync();\n",
+        _ => "",
+    }
 }
 
 pub(in crate::codegen) fn window_settings_code(

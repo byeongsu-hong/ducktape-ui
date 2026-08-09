@@ -1,7 +1,7 @@
-daemon Demo
+app Demo
   tray
+    icon-rgba "assets/tray.rgba" 2 2 when count > 0
     icon-rgba "assets/tray.rgba" 2 2
-    popover missing
 theme contract AppTheme
   bg
   fg
@@ -12,5 +12,7 @@ palette app for AppTheme
   fg #ffffff
   primary #333333
   danger #ff0000
+state
+  count = 1
 view
-  text "Demo"
+  text count

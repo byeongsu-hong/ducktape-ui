@@ -6,7 +6,11 @@ daemon Trading
     icon-template true
     label tray_status(coin, focus)
     tooltip "Ducktape Trading"
-    popover status
+    menu
+      tray_status(coin, focus)
+      fmt_latency(latency)
+      separator
+      "Quit" -> quit
   font "../../../../assets/fonts/IBMPlexSansKR-Regular.ttf"
   font "../../../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
   font "../../../../assets/fonts/MonoplexKR-Regular.ttf"
@@ -19,11 +23,6 @@ daemon Trading
       title-hidden true
       titlebar-transparent true
       fullsize-content-view true
-  window status
-    size 300 236
-    decorations false
-    resizable false
-    level always-on-top
 
 use "theme.ice"
 use "extern/hyperliquid.ice"
@@ -34,7 +33,6 @@ use "components/cells.ice"
 use "components/controls.ice"
 use "components/market_rows.ice"
 use "components/account_rows.ice"
-use "components/status.ice"
 use "handlers.ice"
 use "view.ice"
 use "tests/gate.ice"

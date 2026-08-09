@@ -1,5 +1,6 @@
 app Demo
   tray
+    icon-rgba "assets/alarm.rgba" 2 2 when count
     icon-rgba "assets/tray.rgba" 2 2
 theme contract AppTheme
   bg
@@ -11,7 +12,7 @@ palette app for AppTheme
   fg #ffffff
   primary #333333
   danger #ff0000
-on dismiss
-  task tray close
+state
+  count = 1
 view
-  button "Dismiss" -> dismiss
+  text count

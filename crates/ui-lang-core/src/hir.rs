@@ -175,6 +175,11 @@ pub(crate) enum AppSettingExprId {
     ScaleFactor,
     TrayLabel,
     TrayTooltip,
+    /// The `when` guard on the `icon-rgba` line at this declaration index.
+    TrayIconGuard(u32),
+    /// The text of the `menu` row at this declaration index. Separators are
+    /// counted, so the index is the row the author wrote.
+    TrayMenuRow(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1051,7 +1056,6 @@ pub(crate) enum CheckedPaneOperation {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CheckedWindowOperation {
-    TrayClose,
     Open(Option<String>),
     Oldest,
     Latest,

@@ -175,9 +175,9 @@ pub(crate) fn asset_dependencies(
         .iter()
         .map(|font| parent.join(&font.path))
         .chain(
-            window_icons(source)
+            icons(source)
                 .into_iter()
-                .map(|icon| parent.join(&icon.path)),
+                .map(|(_, icon)| parent.join(&icon.path)),
         )
         .chain(
             document
@@ -205,7 +205,11 @@ fn asset_base(loaded: &LoadedSource) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-fn window_icons(document: &Document) -> Vec<&crate::WindowIcon> {
+/// Every embedded RGBA icon a program declares, paired with the block that
+/// declared it. Tray icons are in here too: they are embedded by the same
+/// `icon-rgba` line with the same byte-length rule, so leaving them out made
+/// a missing tray icon a link error instead of a diagnostic.
+fn icons(document: &Document) -> Vec<(&'static str, &crate::WindowIcon)> {
     document
         .settings
         .window
@@ -218,6 +222,14 @@ fn window_icons(document: &Document) -> Vec<&crate::WindowIcon> {
                 .map(|window| &window.settings),
         )
         .filter_map(|window| window.icon.as_ref())
+        .map(|icon| ("window", icon))
+        .chain(
+            document
+                .settings
+                .tray
+                .iter()
+                .flat_map(|tray| tray.icons.iter().map(|icon| ("tray", &icon.icon))),
+        )
         .collect()
 }
 
@@ -256,13 +268,13 @@ pub(crate) fn check_assets(document: &CheckedDocument, loaded: &LoadedSource) ->
             ));
         }
     }
-    for icon in window_icons(source) {
+    for (owner, icon) in icons(source) {
         let path = parent.join(&icon.path);
         if !path.is_file() {
             return Err(Error::new(
                 "E192",
                 &icon.span,
-                format!("cannot read window icon file `{}`", path.display()),
+                format!("cannot read {owner} icon file `{}`", path.display()),
             ));
         }
         let actual = fs::metadata(&path)
@@ -271,7 +283,7 @@ pub(crate) fn check_assets(document: &CheckedDocument, loaded: &LoadedSource) ->
                     "E192",
                     &icon.span,
                     format!(
-                        "cannot inspect window icon file `{}`: {error}",
+                        "cannot inspect {owner} icon file `{}`: {error}",
                         path.display()
                     ),
                 )
@@ -282,7 +294,7 @@ pub(crate) fn check_assets(document: &CheckedDocument, loaded: &LoadedSource) ->
                 "E193",
                 &icon.span,
                 format!(
-                    "window icon `{}` has {actual} RGBA bytes; expected {} for {} × {}",
+                    "{owner} icon `{}` has {actual} RGBA bytes; expected {} for {} × {}",
                     path.display(),
                     icon.byte_len,
                     icon.width,
@@ -693,6 +705,53 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    /// `cargo ice check` claims it reports a missing or wrongly sized icon at
+    /// the line that declared it. The tray's icons were not in the walk, so
+    /// for them the claim was false and the failure was an `include_bytes!`
+    /// error in generated Rust instead.
+    #[test]
+    fn checks_tray_icon_files_like_window_icon_files() {
+        let source = concat!(
+            "app Demo\n",
+            "  tray\n",
+            "    icon-rgba \"assets/tray.rgba\" 2 2\n",
+            "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\n",
+            "palette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n",
+            "view\n",
+            "  text \"Demo\"\n",
+        );
+
+        let fixture = Fixture::new();
+        fixture.write("app.ice", source);
+        let error = analyze_file(fixture.path("app.ice")).unwrap_err();
+        assert_eq!(error.code, "E192");
+        assert!(
+            error.message.contains("cannot read tray icon file"),
+            "{}",
+            error.message
+        );
+        assert_eq!(error.line, 3);
+
+        let fixture = Fixture::new();
+        fixture.write("app.ice", source);
+        // 2 × 2 × 4 is sixteen bytes; ship fifteen.
+        fs::create_dir_all(fixture.path("assets")).unwrap();
+        fs::write(fixture.path("assets/tray.rgba"), [0u8; 15]).unwrap();
+        let error = analyze_file(fixture.path("app.ice")).unwrap_err();
+        assert_eq!(error.code, "E193");
+        assert!(
+            error.message.contains("tray icon") && error.message.contains("15 RGBA bytes"),
+            "{}",
+            error.message
+        );
+
+        let fixture = Fixture::new();
+        fixture.write("app.ice", source);
+        fs::create_dir_all(fixture.path("assets")).unwrap();
+        fs::write(fixture.path("assets/tray.rgba"), [0u8; 16]).unwrap();
+        analyze_file(fixture.path("app.ice")).unwrap();
     }
 
     #[test]
