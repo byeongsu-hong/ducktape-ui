@@ -1,2 +1,2 @@
 [alias]
-ice = "run -q -p cargo-ice --"
+ice = "run -p cargo-ice --"
