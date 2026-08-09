@@ -1,9 +1,9 @@
-// Four surfaces rather than one screen. Which one is drawn is the whole of the
+// Three surfaces. The terminal keeps market discovery and account activity on
+// one screen; only the account dashboard and settings leave it.
 // navigation, so it is an enum and a match: there is no history to walk, no
 // path to parse, and no state a page keeps that the app does not already hold.
 enum Page
-  trade
-  markets
+  terminal
   portfolio
   settings
 
@@ -17,7 +17,7 @@ enum Venue
   lighter
 
 state
-  page:Page = Page.trade
+  page:Page = Page.terminal
   venue:Venue = Venue.hyperliquid
   gate = true
   address = ""
@@ -51,6 +51,10 @@ state
   flashing = false
   loading_history = false
   lower_height = 232.0
+  rail_open = false
+  fills_open = false
+  portfolio_history:PortfolioHistory = portfolio_empty()
+  portfolio_range = "month"
 
 derived
   visible = filter_symbols(symbols, query, coin)
@@ -80,6 +84,7 @@ preset held
     ticket_price = "64,000.00"
     ticket_size = "3.00"
     quote = price_ticket("64,000.00", "3.00", "5", symbol_row(demo_symbols(), "BTC"), true, -30.0)
+    portfolio_history = demo_portfolio_history()
 
 // The terminal as the other venue actually leaves it, which is the whole point
 // of having the fixture: markets, candles, a book, a tape and an account, and
@@ -109,6 +114,7 @@ preset lighter
     ticket_price = "64,970.00"
     ticket_size = "3.00"
     quote = price_ticket("64,970.00", "3.00", "5", symbol_row(demo_symbols_lighter(), "BTC"), true, position_held(demo_positions_lighter(), "BTC"))
+    portfolio_history = portfolio_unavailable("Historical performance on Lighter needs a read-only API token; this address-only session still shows current exposure.")
 
 // The same terminal, read for an address that has no account on this venue —
 // which is the ordinary shape of one address read at two exchanges rather than
@@ -127,6 +133,21 @@ preset unbanked
     book = some(demo_book_lighter())
     tape_prints = demo_tape_lighter()
     live = true
+
+// An account that has traded and closed nothing. The dashboard's win rate is
+// the figure this exists for: with no round trip finished there is no rate,
+// and drawing one at 0% would report every open position as a loss.
+preset opening
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    fills = demo_fills_opening()
+    live = true
+    page = Page.portfolio
 
 preset browsing
   state

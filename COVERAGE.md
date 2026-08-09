@@ -645,6 +645,31 @@ targets do not yet export to native screen readers.
 | `image` | a labeled image is an `Image`; an unlabeled image is decorative and omitted, and `description=` requires `label=` |
 | focus | source/view-tree read and Tab/Shift+Tab order, disabled-target skip, button Enter/Space, checkbox/toggler Space, and a visible wrapper focus outline; no numeric focus order |
 
+### Gap: an extern's published accessibility node cannot be targeted
+
+An `extern` component may publish its own AccessKit node from inside the Rust
+adapter. Ice test targets resolve against the view tree the generator emits, and
+that tree stops at the extern's wrapping node: in the trading example
+`.../chart-frame/chart` is the deepest id any target can name, while the node the
+adapter actually publishes — `StableId::new("trading-chart")`, an `Image` with a
+summary label — is created below that boundary and is not a view-tree id at all.
+No path syntax reaches it.
+
+The consequence is one fact seen from two sides. From Ice, nothing an extern
+draws is assertable: the trading chart's candles, axes, price lines and
+crosshair are reachable only by `capture`, which is not an assertion, and by
+Rust tests on the adapter beneath. This repository therefore has **no rendered
+assertion that touches chart-drawn content**. From assistive technology, the
+same subtree is one labelled `Image`: the summary sentence is exported, and
+nothing the chart draws inside it is. A chart that silently stopped drawing its
+content would break neither.
+
+Closing this needs a way to address an extern's published accessibility node
+from Ice — a target form that resolves into the adapter's own subtree, or a
+declared contract by which an extern re-publishes named nodes into the tree the
+target resolver walks. Nothing in the trading example closes it; that example is
+where the gap was found, not where it lives.
+
 AccessKit tree construction and action dispatch are deterministic on every
 target. Native export is single-window on Linux and Windows. Daemon and
 multi-window adapters, native export on other targets, and exact desktop

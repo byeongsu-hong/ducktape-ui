@@ -379,12 +379,42 @@ cap `push_fills` imposes — was larger than the market list had ever been:
 re-measured against 200 distinct fills, 1858us of a 6029us frame, 9.3us a row
 against the market rows' 2.5us behind their boundary.
 
-One row of that table prices nothing, and knowing which saves re-deriving it:
-the probe seeds the **portfolio** page, where the market list is not drawn, so
-`market rows` ablates a list that is not on screen and comes back inside its own
-noise — negative as often as not. The market list is measured on its own page
-by the symbol sweep above; cache correctness is covered separately from timing,
-at the runtime and dependency-hash ownership boundaries described below.
+One row of that table used to price nothing, and it is worth knowing why it
+now does: the probe seeded the **portfolio** page, which was where the fills,
+the positions and the orders had gone, and the market list was drawn on a page
+of its own. `market rows` therefore ablated a list that was not on screen and
+came back inside its own noise — negative as often as not, which is exactly
+what ablating nothing looks like.
+
+The terminal is one page again and the probe seeds that page, so every list the
+table names is rendered while it is ablated. `market rows` against
+`full screen` is now a resolving row rather than a noise row. No figure is
+quoted for it here: it is a wall-clock reading off a shared machine, and the
+two rows are what a reader runs to see it. The market list also keeps its own
+count-based contract in `markets_stay_memoized_performance_contract`, which
+counts rows rebuilt rather than microseconds and is the one CI can hold.
+
+**The trap either contract sets, and it is quiet.** Both count through a row's
+accessibility label — `market_label`, `fill_label` — with a `#[cfg(test)]
+count(&…)` as the function's first line, while the probes that read the counters
+are `#![cfg(not(debug_assertions))]`. So a debug `cargo test --workspace` never
+compiles the reader, and a `fill_label` that loses its counting line is green
+everywhere except the release job. Seen for real: a merge took the upstream side
+of that function and dropped the line, and the whole workspace stayed green
+until `cargo test --release -p trading-example` reported **0 rows built cold for
+200 rows**. Read a zero there as a missing counter first and a broken memo
+second. Before trusting either contract after touching those functions or the
+panes that draw them:
+
+```sh
+cargo test --release -p trading-example memoized_performance_contract -- --ignored --nocapture
+```
+
+`selected` is the one `SymbolRow` field that contract cannot move directly:
+`visible` is derived by `filter_symbols(symbols, query, coin)`, which sets
+`selected` from `coin`. The way to move it is to move the selection, and that
+rebuilds two rows — the one losing the highlight and the one taking it. Two is
+the assertion; a `Hash` blind to `selected` would rebuild neither.
 
 It took the same three things the market list took, and one more:
 

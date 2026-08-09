@@ -156,7 +156,7 @@ fn only_the_live_tests_are_running(mut args: impl Iterator<Item = String>) -> bo
 }
 
 /// Everything the exchange can tell us goes through this one endpoint.
-async fn info(body: Value) -> Result<Value, HlError> {
+pub(crate) async fn info(body: Value) -> Result<Value, HlError> {
     // A test drives the real program, subscriptions included, so the 5s account
     // poll fires inside any test the suite's own load stretches past five
     // seconds and this endpoint answers it from the live exchange. Whichever
@@ -2231,6 +2231,15 @@ pub fn interval_label(interval: String, shown: bool) -> String {
     format!("Show {interval} candles{state}")
 }
 
+/// A folded-away pane's toggle, by the same rule as the interval tabs: the name
+/// a reader hears is the act the button performs. It says "hide" while the pane
+/// is open because that is what pressing it does — a control that announced the
+/// pane's current state would leave a reader guessing at the verb.
+pub fn pane_label(pane: String, open: bool) -> String {
+    let act = if open { "Hide" } else { "Show" };
+    format!("{act} the {} pane", pane.to_lowercase())
+}
+
 /// A page tab by the same rule. The tab draws its page's name in capitals
 /// because it is a heading for the surface it opens; the name a reader hears
 /// is the act, in the sentence the tab would be if it had room for one.
@@ -2266,6 +2275,26 @@ pub fn hit_volume(hit: CandleHit) -> f64 {
 }
 
 /// A resting order names its side, its size and the price it waits at.
+/// A market row names its ticker and what the day has done to it. The rail
+/// draws both beside the name, and a reader who cannot see those two columns
+/// was being asked to choose a market from its ticker alone.
+///
+/// Called once per `MarketRow` and nowhere else, which is what makes it the
+/// market list's row counter — the arrangement `fill_label` already has.
+/// `markets_stay_memoized_performance_contract` asserts the cold count is a
+/// whole multiple of the rows on screen, so a second caller appearing fails
+/// the contract rather than quietly skewing it.
+pub fn market_label(market: SymbolRow) -> String {
+    #[cfg(test)]
+    count(&MARKET_ROWS);
+    format!(
+        "{} at {}, {} today",
+        market.name,
+        fmt_px(market.price),
+        fmt_pct(market.change_pct)
+    )
+}
+
 pub fn order_label(order: Order) -> String {
     let side = if order.buy { "buy" } else { "sell" };
     format!(
@@ -2276,9 +2305,36 @@ pub fn order_label(order: Order) -> String {
     )
 }
 
+// One count per row built, on the thread that built it — which is what the
+// `lazy` boundaries in `frame_probe` are held down with: a redraw that rebuilds
+// a memoized row shows up in these counters and nowhere else.
+//
+// Per THREAD, not per process. libtest runs the probes concurrently and every
+// one of them builds the same 200-row screen, so a global counter reads its
+// neighbours' cold builds as its own — which is how the memo contract came to
+// report 85 rows rebuilt for a fill whose row rebuilt exactly once. The memo
+// parking lot in `ui-lang-runtime` is thread-local for the same reason.
+#[cfg(test)]
+thread_local! {
+    /// Fill rows built: `fill_label` is called once per `FillRow` and nowhere
+    /// else.
+    pub(crate) static FILL_LABELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Market rows built: `market_label` is called once per `MarketRow` and
+    /// nowhere else.
+    pub(crate) static MARKET_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Adds one to a per-thread row counter. Reading one is `Cell::take`.
+#[cfg(test)]
+pub(crate) fn count(counter: &'static std::thread::LocalKey<std::cell::Cell<usize>>) {
+    counter.with(|rows| rows.set(rows.get() + 1));
+}
+
 /// A fill names what it did and where. Its realized PnL is the point when it
 /// closed something, and its size when it opened.
 pub fn fill_label(fill: Fill) -> String {
+    #[cfg(test)]
+    count(&FILL_LABELS);
     let side = if fill.buy { "bought" } else { "sold" };
     let outcome = if fill.closed_pnl == 0.0 {
         fmt_size(fill.size)
@@ -2760,6 +2816,17 @@ pub fn demo_fills_many(count: i64) -> Vec<Fill> {
                 tid: 4_000_000 + step,
             }
         })
+        .collect()
+}
+
+/// Fills that opened a position and closed nothing — the ordinary state of an
+/// account that has not round-tripped yet, and the one a win rate cannot be
+/// computed for. Derived from the fixture above rather than typed again, so
+/// the two cannot drift into disagreeing about what an opening fill is.
+pub fn demo_fills_opening() -> Vec<Fill> {
+    demo_fills()
+        .into_iter()
+        .filter(|fill| fill.closed_pnl == 0.0)
         .collect()
 }
 

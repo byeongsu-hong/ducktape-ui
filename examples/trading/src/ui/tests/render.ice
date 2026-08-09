@@ -3,13 +3,14 @@ test trading_browsing_without_an_address_renders
   viewport 1660 820
   expect text "READ ONLY"
   expect text "No levels watched."
+  expect text "Fills need an address."
+  expect text "Orders need an address."
   expect no text "EQUITY"
   expect no text "market not loaded"
   capture browsing
   dispatch navigate(Page.portfolio)
-  expect text "Fills need an address."
-  expect text "Orders need an address."
   expect text "No account is being read. Settings takes an address."
+  expect text "Connect an address to load portfolio performance."
 
 // An account most of the way to its engine, and the rail that says so is per
 // position: it lives on the portfolio page now. Capturing the trade page here
@@ -21,10 +22,6 @@ test trading_an_account_against_its_engine_renders_as_such
   expect text "91%"
   expect text "91% → 100%"
   expect no text "market not loaded"
-  dispatch navigate(Page.portfolio)
-  // The chart marks the same cliff on the trade page, so the price alone does
-  // not say which page this is: the header of the list the rail is drawn in
-  // does.
   expect text "POSITIONS"
   expect text "57,924.05"
   capture at_risk
@@ -46,7 +43,7 @@ test trading_the_crosshair_reads_out_the_candle_under_it
   preset hovering
   viewport 1660 820
   target app = #app
-  target trade = app/trade
+  target trade = app/terminal-fit/trade
   target bar = trade/chart-bar
   target readout = bar/readout
   target opened = readout/cell-open/root
@@ -73,19 +70,24 @@ test trading_lists_longer_than_their_panels_render
   expect no text "market not loaded"
   capture busy
 
-// The longest list of all is the universe, and it is drawn on its own page
-// now. This is a separate test rather than a second capture on the one above
-// because the account poll fires every five seconds while an address is set,
-// and two rasterised captures of two hundred rows take longer than that under
-// a loaded suite: the poll went out to a live exchange. Loading the universe
-// into the addressless `terminal` preset gives the same crowded list with the
-// poll's own guard, `!empty(address)`, holding it off however slow this gets.
+// The longest list of all is the universe, in the smallest window that opens.
+// This is a separate test rather than a second capture on the one above because
+// the account poll fires every five seconds while an address is set, and two
+// rasterised captures of two hundred rows take longer than that under a loaded
+// suite: the poll went out to a live exchange. Loading the universe into the
+// addressless `terminal` preset gives the same crowded list with the poll's own
+// guard, `!empty(address)`, holding it off however slow this gets.
+//
+// At 1180 the rail is folded, so this unfolds it first — which is also the
+// worst case the rail has: 200 rows in a 232px column with the chart, the book
+// and the ticket still beside it.
 test trading_the_market_list_outruns_its_panel
   preset terminal
   viewport 1180 720
   dispatch symbols_loaded(demo_symbols_many())
   dispatch market_ticked(demo_tick())
-  dispatch navigate(Page.markets)
+  dispatch navigate(Page.terminal)
+  dispatch toggle_rail
   expect text "AVAX"
   capture busy_markets
 
@@ -108,8 +110,9 @@ test trading_the_whole_terminal_renders_from_fixtures
   capture terminal
   dispatch navigate(Page.portfolio)
   expect no text "Connect an address"
-  expect text "3,526.53"
-  dispatch navigate(Page.markets)
+  expect text "EXPOSURE ALLOCATION"
+  expect text "$2,063,383.44"
+  dispatch navigate(Page.terminal)
   expect text "SOL"
   expect text "148.620"
 
@@ -121,28 +124,21 @@ test trading_the_whole_terminal_renders_from_fixtures
 test trading_one_pnl_reads_the_same_in_both_places
   preset at_risk
   viewport 1660 820
-  dispatch navigate(Page.portfolio)
+  expect page == Page.terminal
   expect text "-$30.0K"
   expect no text "-$30,000.00"
 
-// The same rule holds a row on its own. With the header far above ten thousand
-// and the rows under it far below, only the rows say which formatter wrote
-// them: a position down 2,400 dollars read "-$2.4K" while a fill of the same
-// size two panels away read the cents.
+// The same rule holds a row on its own, and the positions panel proves it
+// three times over: the fixture's BTC position is up past half a million and
+// reads compact, while ETH down 2,400 and SOL down 33.36 both read to the
+// cent. One formatter, one threshold, and the rows either side of it.
 test trading_a_position_row_quotes_its_own_pnl_to_the_cent
   preset held
   viewport 1660 820
-  dispatch navigate(Page.portfolio)
-  expect text "-$2,400.00"
+  target app = #app
+  target lower = app/terminal-fit/trade/lower
+  target held = lower/positions
+  expect page == Page.terminal
+  expect text "-$2,400.00" within held
   expect no text "-$2.4K"
-  expect text "-$33.36"
-
-test trading_funding_reads_as_money_that_moved_not_as_a_charge
-  preset held
-  viewport 1660 820
-  dispatch navigate(Page.portfolio)
-  // The fixture positions have all been PAID funding, which is money in.
-  expect text "+$3.3M"
-  expect no text "-$3.3M"
-  expect text "+$142"
-  expect text "+$8"
+  expect text "-$33.36" within held

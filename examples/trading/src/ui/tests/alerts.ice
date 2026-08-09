@@ -4,7 +4,7 @@ test trading_an_alert_row_says_that_pressing_it_drops_the_level
   preset held
   viewport 1660 820
   target app = #app
-  target trade = app/trade
+  target trade = app/terminal-fit/trade
   target rail = trade/book
   target watched = rail/alert-list
   target press = watched/alert("64,400.00")/root

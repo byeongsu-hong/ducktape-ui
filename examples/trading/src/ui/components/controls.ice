@@ -129,3 +129,31 @@ component IntervalTab(name:str, current:str)
             align-x=center
             font=digits
             @text-muted
+
+// A pane the narrow terminal has folded away, and the control that unfolds it.
+// It is a toggle and not a tab: the pane it names comes back into this same
+// screen beside everything already on it, and nothing leaves to make room. The
+// button says the act it performs rather than the pane's state, because a
+// button carries no state a reader can hear.
+component PaneToggle(name:str, open:bool)
+  emits
+    pick
+  col #root
+    if open
+      button #toggle-on label=pane_label(name, true) p=5.0 -> emit(pick)
+        active bg=raised text=fg r=4.0
+        hovered bg=raised text=fg r=4.0
+        text name
+          with
+            size=10.0
+            tracking=1.0
+            @text-fg
+    if !open
+      button #toggle-off label=pane_label(name, false) p=5.0 -> emit(pick)
+        active bg=panel text=muted r=4.0
+        hovered bg=raised text=fg r=4.0
+        text name
+          with
+            size=10.0
+            tracking=1.0
+            @text-muted

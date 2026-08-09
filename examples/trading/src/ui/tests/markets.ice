@@ -1,21 +1,21 @@
-test trading_search_keeps_what_was_typed
+test trading_terminal_search_keeps_what_was_typed
   preset terminal
-  viewport 1660 900
+  viewport 1660 820
   target app = #app
-  target markets = app/markets
+  target terminal = app/terminal-fit/trade
+  target markets = terminal/markets
   target search = markets/search
-  dispatch navigate(Page.markets)
   focus search
   type "ET"
   expect query == "ET"
 
-test trading_a_search_that_matches_nothing_says_so
+test trading_terminal_search_filters_and_escape_restores_the_rail
   preset busy
   viewport 1660 820
   target app = #app
-  target markets = app/markets
+  target terminal = app/terminal-fit/trade
+  target markets = terminal/markets
   target search = markets/search
-  dispatch navigate(Page.markets)
   focus search
   type "ZZZ"
   expect text "No market matches that."
@@ -27,47 +27,15 @@ test trading_a_search_that_matches_nothing_says_so
   key escape
   expect text "AVAX" within markets
   expect no text "No market matches that."
-
-test trading_escape_clears_a_search
-  preset terminal
-  viewport 1660 900
-  target app = #app
-  target markets = app/markets
-  target search = markets/search
-  dispatch navigate(Page.markets)
-  focus search
-  type "ZZZ"
-  expect query == "ZZZ"
-  key escape
   expect query == ""
 
-// Escape is bound app-wide but the box it clears is on one page. Pressed on
-// the chart it cleared a filter that was not on screen to be cleared, and the
-// reader came back to a market list wider than the word still in the box.
-test trading_escape_off_the_markets_page_leaves_the_search_alone
-  preset terminal
-  viewport 1660 900
-  target app = #app
-  target markets = app/markets
-  target search = markets/search
-  dispatch navigate(Page.markets)
-  focus search
-  type "ZZZ"
-  expect query == "ZZZ"
-  dispatch navigate(Page.trade)
-  key escape
-  expect query == "ZZZ"
-  dispatch navigate(Page.markets)
-  key escape
-  expect query == ""
-
-test trading_a_search_narrows_the_list_and_keeps_the_selection
+test trading_terminal_search_keeps_the_selected_market
   preset held
   viewport 1660 820
   target app = #app
-  target markets = app/markets
+  target terminal = app/terminal-fit/trade
+  target markets = terminal/markets
   target search = markets/search
-  dispatch navigate(Page.markets)
   focus search
   type "SO"
   expect text "148.620"
@@ -75,17 +43,35 @@ test trading_a_search_narrows_the_list_and_keeps_the_selection
   key escape
   expect text "3,540.00"
 
-// Six tabs carry the same six words whichever one is drawn, so which timeframe
-// the chart is showing was said in highlight colour and nowhere else. All six
-// are named by the act, so the one the chart already draws is only told apart
-// by what it appends — which is nothing an assertion on that one tab alone can
-// see.
-test trading_the_interval_tabs_say_which_one_the_chart_draws
+// Escape is bound app-wide and the box it clears is on the terminal. Pressed
+// on a page without one it cleared a filter the reader could not see, and the
+// rail came back narrowed to a word nothing on screen showed. One page fewer
+// does not retire the guard: portfolio and settings still have no search.
+test trading_escape_away_from_the_terminal_leaves_the_search_alone
+  preset terminal
+  viewport 1660 820
+  target app = #app
+  target markets = app/terminal-fit/trade/markets
+  target search = markets/search
+  focus search
+  type "ZZZ"
+  expect query == "ZZZ"
+  dispatch navigate(Page.portfolio)
+  key escape
+  expect query == "ZZZ"
+  dispatch navigate(Page.settings)
+  key escape
+  expect query == "ZZZ"
+  dispatch navigate(Page.terminal)
+  key escape
+  expect query == ""
+
+test trading_interval_tabs_name_the_selected_width
   preset browsing
   viewport 1660 820
   target app = #app
-  target trade = app/trade
-  target bar = trade/chart-bar
+  target terminal = app/terminal-fit/trade
+  target bar = terminal/chart-bar
   target tabs = bar/intervals
   target showing = tabs/interval-1m/root/tab-on
   target offered = tabs/interval-5m/root/tab-off
@@ -100,3 +86,17 @@ test trading_a_new_market_opens_at_its_own_price
   expect ticket_price == "148.620"
   dispatch pick_symbol("kPEPE")
   expect ticket_price == "0.008421"
+
+// A rail row is three columns and a button. Announced by its ticker alone it
+// asked a reader who cannot see the two figures beside it to choose a market
+// blind, which is the one thing the rail is for. It names what the columns say.
+test trading_a_market_row_announces_the_figures_beside_its_name
+  preset held
+  viewport 1660 820
+  target app = #app
+  target markets = app/terminal-fit/trade/markets
+  target listed = markets/market-list
+  target bitcoin = listed/market("BTC")/row
+  target ether = listed/market("ETH")/row
+  expect a11y bitcoin name "BTC at 64,000.00, +1.25% today"
+  expect a11y ether name "ETH at 3,540.00, +1.14% today"

@@ -226,11 +226,13 @@ fn app(screen: Screen) -> Trading {
     let held = positions(screen.positions, &coin);
 
     state.gate = false;
-    // The fills, the positions and the orders live on the portfolio page since
-    // the terminal was split into pages, and the app opens on the trade page.
-    // A probe that measured the default page would measure a screen with no
-    // rows on it at all and report the memo as free.
-    state.page = crate::Page::Portfolio;
+    // The market list, the chart, the book, the tape, the positions, the
+    // orders and the fills are one screen again, so the probe measures the
+    // page the app opens on and every list it prices is drawn there. It was
+    // seeding the portfolio page while the market list lived on `Page.markets`
+    // — an ablation of market rows was pricing a list that was not rendered,
+    // and returned the small number near zero that says so.
+    state.page = crate::Page::Terminal;
     state.address = ADDRESS.to_owned();
     state.live = true;
     state.latency = 42;
@@ -941,6 +943,172 @@ fn direct_call_cost() {
         "copied, not computed",
         copied as f64 / 1000.0,
         total as f64 / 1000.0
+    );
+}
+
+/// The fills list is the largest thing on this screen and sits behind a `lazy`
+/// boundary keyed on the fill it draws. This holds that boundary down with a
+/// count rather than a clock: `fill_label` is called once per fill row that is
+/// actually built, so a redraw that rebuilds a memoized row is visible here and
+/// nowhere else. Remove the `lazy`, or give `Fill` a `Hash` that does not track
+/// what the row renders, and the counts below move.
+#[test]
+#[ignore = "performance contract, run explicitly: counts fill rows rebuilt per redraw"]
+fn fills_stay_memoized_performance_contract() {
+    use std::cell::Cell;
+
+    use crate::hyperliquid::FILL_LABELS;
+
+    let mut driver = Driver::new(
+        Trading::__program(),
+        Config::new("fills_stay_memoized").viewport(VIEWPORT.0, VIEWPORT.1),
+    );
+    *driver.state_mut() = app(DENSE);
+
+    FILL_LABELS.with(Cell::take);
+    driver.redraw(here());
+    let first = FILL_LABELS.with(Cell::take);
+    // A redraw is not one view build. How many it is belongs to the runtime and
+    // moves when the view is restructured — the page split turned it from one
+    // into several — so this contract measures rows against that number rather
+    // than assuming it. What it holds is the invalidation rule, and the rule is
+    // per row: every row is built on the first redraw, none on a redraw that
+    // changed nothing, and exactly one when exactly one fill moves.
+    assert!(
+        first > 0 && first % DENSE.fills == 0,
+        "a cold redraw builds every fill row a whole number of times: {first} for {} rows",
+        DENSE.fills
+    );
+    // Cold, a row is built once per pass the first redraw makes over it. Warm,
+    // a moved row is built exactly ONCE however many passes there are — which
+    // is the memo working, and the difference between the two numbers is what
+    // it buys.
+
+    driver.redraw(here());
+    let unchanged = FILL_LABELS.with(Cell::take);
+    assert_eq!(
+        unchanged, 0,
+        "a redraw of {} unchanged fills must rebuild none of them",
+        DENSE.fills
+    );
+
+    // The one-sentence invalidation, executed: a row is rebuilt exactly when
+    // the fill it draws changes. Every field the fill has is moved in turn,
+    // because a `Hash` that skipped one would leave rows showing a number the
+    // state no longer holds — and a contract that moved only `heat` would pass
+    // just the same.
+    let moves: &[(&str, fn(&mut Fill))] = &[
+        ("coin", |fill| fill.coin.push('X')),
+        ("ts", |fill| fill.ts += 1),
+        ("price", |fill| fill.price += 0.5),
+        ("size", |fill| fill.size += 0.5),
+        ("buy", |fill| fill.buy = !fill.buy),
+        ("closed_pnl", |fill| fill.closed_pnl += 0.5),
+        ("heat", |fill| fill.heat += 1),
+        ("tid", |fill| fill.tid += 1_000_000),
+    ];
+    for (field, move_it) in moves {
+        move_it(&mut driver.state_mut().fills[0]);
+        driver.redraw(here());
+        assert_eq!(
+            FILL_LABELS.with(Cell::take),
+            1,
+            "moving a fill's {field} must rebuild that row and no other — \
+             a `Hash` that does not cover {field} leaves the row showing a stale one"
+        );
+    }
+
+    eprintln!(
+        "\n{} fills: {first} rows built cold, {unchanged} on an unchanged redraw, \
+         1 after each of the {} fields of one fill moved",
+        DENSE.fills,
+        moves.len()
+    );
+}
+
+/// The same contract for the market list, which has been behind a `lazy`
+/// boundary far longer than the fills have and whose `SymbolRow` carries eleven
+/// fields into a hand-written `Hash`. Counted through `market_label`, the row's
+/// own accessibility name, which nothing else calls — the cold assertion below
+/// is what holds that true.
+#[test]
+#[ignore = "performance contract, run explicitly: counts market rows rebuilt per redraw"]
+fn markets_stay_memoized_performance_contract() {
+    use std::cell::Cell;
+
+    use crate::hyperliquid::MARKET_ROWS;
+
+    let mut driver = Driver::new(
+        Trading::__program(),
+        Config::new("markets_stay_memoized").viewport(VIEWPORT.0, VIEWPORT.1),
+    );
+    *driver.state_mut() = app(DENSE);
+
+    MARKET_ROWS.with(Cell::take);
+    driver.redraw(here());
+    let first = MARKET_ROWS.with(Cell::take);
+    let rows = DENSE.symbols;
+    assert!(
+        first > 0 && first % rows == 0,
+        "a cold redraw builds every market row a whole number of times: {first} for {rows} rows"
+    );
+
+    driver.redraw(here());
+    let unchanged = MARKET_ROWS.with(Cell::take);
+    assert_eq!(
+        unchanged, 0,
+        "a redraw of {rows} unchanged markets must rebuild none of them"
+    );
+
+    // The rail draws `visible`, which is derived — `filter_symbols(symbols,
+    // query, coin)` — so the state a mover can reach is `symbols` and the
+    // derivation is part of what is under test.
+    //
+    // `selected` goes first, and it is the one field no caller writes: the
+    // derivation sets it from `coin`, so the only way to move it is to move the
+    // selection — and that moves two rows, the one losing the highlight and the
+    // one taking it. Two is the assertion. A `Hash` blind to `selected` would
+    // rebuild neither, and the rail would go on highlighting the market that
+    // was left. It runs before the loop below because that loop's first move
+    // renames row 0, which is the row currently holding the selection.
+    let taking = driver.state_mut().symbols[1].name.clone();
+    driver.state_mut().coin = taking.clone();
+    driver.redraw(here());
+    assert_eq!(
+        MARKET_ROWS.with(Cell::take),
+        2,
+        "selecting {taking} must rebuild the row that took the highlight and the \
+         one that lost it, and no others"
+    );
+
+    // The other ten pass straight through the derivation.
+    let moves: &[(&str, fn(&mut SymbolRow))] = &[
+        ("name", |row| row.name.push('X')),
+        ("price", |row| row.price += 0.5),
+        ("change_pct", |row| row.change_pct += 0.5),
+        ("volume", |row| row.volume += 0.5),
+        ("funding_pct", |row| row.funding_pct += 0.5),
+        ("leverage", |row| row.leverage += 0.5),
+        ("open_interest", |row| row.open_interest += 0.5),
+        ("prev", |row| row.prev += 0.5),
+        ("maintenance", |row| row.maintenance += 0.5),
+        ("size_decimals", |row| row.size_decimals += 1),
+    ];
+    for (field, move_it) in moves {
+        move_it(&mut driver.state_mut().symbols[0]);
+        driver.redraw(here());
+        assert_eq!(
+            MARKET_ROWS.with(Cell::take),
+            1,
+            "moving a market's {field} must rebuild that row and no other — \
+             a `Hash` that does not cover {field} leaves the row showing a stale one"
+        );
+    }
+
+    eprintln!(
+        "\n{rows} markets: {first} rows built cold, {unchanged} on an unchanged redraw, \
+         2 after the selection moved, 1 after each of the {} fields of one market moved",
+        moves.len()
     );
 }
 

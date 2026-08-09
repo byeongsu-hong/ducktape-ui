@@ -32,7 +32,7 @@ test trading_says_what_broke_without_spending_a_money_colour
 test trading_a_failure_is_drawn_on_whatever_page_is_showing
   preset stalled
   viewport 1180 720
-  dispatch navigate(Page.markets)
+  dispatch navigate(Page.terminal)
   expect text "Hyperliquid feed dropped"
   dispatch failed(demo_feed_error())
   expect text "Hyperliquid unreachable"
@@ -66,6 +66,9 @@ test trading_a_dead_feed_stops_the_price_looking_live
 test trading_a_beat_moves_the_price_the_position_and_the_levels
   preset held
   viewport 1660 820
+  target app = #app
+  target lower = app/terminal-fit/trade/lower
+  target held = lower/positions
   expect text "64,000.00"
   expect text "64,400.00"
   expect text "▲"
@@ -76,10 +79,12 @@ test trading_a_beat_moves_the_price_the_position_and_the_levels
   expect text "63,000.00"
   expect no text "▲"
   expect text "▼"
-  // The position the beat re-marks is drawn on the other page, and the mark
-  // it was re-marked at is on this one: the same beat has to be read twice.
-  dispatch navigate(Page.portfolio)
-  expect text "+$553.8K"
+  // The position the beat re-marks and the mark it was re-marked at are on
+  // one screen, so a reader watching a beat land sees both move at once.
+  // That is the whole point of the terminal being one page, and the test
+  // reads it the way the reader does: without navigating anywhere.
+  expect page == Page.terminal
+  expect text "+$553.8K" within held
   dispatch market_ticked(demo_tick_at(64500.0))
-  expect text "+$508.8K"
+  expect text "+$508.8K" within held
   expect no text "+$553.8K"

@@ -23,7 +23,6 @@ test trading_gate_refuses_a_malformed_address
 test trading_browse_says_what_needs_an_address
   preset terminal
   viewport 1660 900
-  dispatch navigate(Page.portfolio)
   expect text "Fills need an address."
   expect text "Orders need an address."
   expect text "Connect an address"
@@ -33,7 +32,6 @@ test trading_browse_says_what_needs_an_address
 test trading_connecting_again_does_not_inherit_the_last_accounts_trades
   preset held
   viewport 1660 820
-  dispatch navigate(Page.portfolio)
   expect text "15:10:00"
   expect text "POSITIONS"
   dispatch reopen
