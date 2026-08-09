@@ -67,12 +67,12 @@ test trading_switching_back_reads_the_first_venue_again_rather_than_restoring_it
   viewport 1660 820
   target app = #app
   target header = app/header
-  target switch = header/venues
-  target reading = switch/venue-hyperliquid/root/tab-on
+  target named = header/venues/venue-name
   expect venue == Venue.hyperliquid
   expect text "64,001.00"
   dispatch switch_venue(Venue.lighter)
   expect venue == Venue.lighter
+  expect text "Lighter" within named
   dispatch switch_venue(Venue.hyperliquid)
   expect venue == Venue.hyperliquid
   expect text "Loading book"
@@ -80,9 +80,10 @@ test trading_switching_back_reads_the_first_venue_again_rather_than_restoring_it
   expect empty(positions)
   expect empty(tape_prints)
   expect no text "64,001.00"
-  // And the venue it came back to is the one the switch now says it is
-  // reading. The name alone would not say it: the header draws both.
-  expect a11y reading name "Read Hyperliquid, already reading"
+  // And the network it came back to is the one the header now names. Scoped,
+  // because a ticker or a sentence elsewhere on screen could carry the word.
+  expect text "Hyperliquid" within named
+  expect no text "Lighter" within named
 
 // Switching to the venue already on screen is not a switch. Left ungated it
 // would throw away a loaded terminal and read the same exchange again.
@@ -190,30 +191,90 @@ test trading_a_word_typed_against_one_venue_does_not_filter_the_other
   expect text "ETH" within markets
   expect text "AAPL" within markets
 
-// A button that is only highlighted says which venue is being read to whoever
-// can see two inks. Both are reachable and the name each one carries is the
-// difference.
+// A row that is only highlighted says which network is being read to whoever
+// can see two inks. Every row is reachable and the name each one carries is
+// the difference, so the state is in the name rather than in the colour.
 //
-// Both names are on the header at all times, so a name on screen says nothing
-// about which venue is being read: what says it is which of the two buttons
-// carries the state in its own name, and that has to move when the venue does.
-test trading_the_venue_switch_says_which_exchange_is_being_read
+// Every network's name is on the picker at all times, so a name on screen says
+// nothing about which one is being read: what says it is which row carries the
+// state in its own name, and that has to move when the network does.
+test trading_the_network_picker_says_which_one_is_being_read
   preset held
-  viewport 1660 820
+  viewport 1660 900
   target app = #app
-  target header = app/header
-  target switch = header/venues
-  target here = switch/venue-hyperliquid/root/tab-on
-  target other = switch/venue-lighter/root/tab-off
-  target opened = switch/venue-lighter/root/tab-on
-  target left = switch/venue-hyperliquid/root/tab-off
+  target settings = app/settings
+  target picker = settings/settings-content/network-picker
+  target here = picker/network("Hyperliquid")/root/tab-on
+  target other = picker/network("Lighter")/root/tab-off
+  target test_net = picker/network("Hyperliquid Testnet")/root/tab-off
+  target opened = picker/network("Lighter")/root/tab-on
+  target left = picker/network("Hyperliquid")/root/tab-off
+  dispatch navigate(Page.settings)
+  // The picker is a loop over the registry, so a network added in Rust is
+  // drawn here without this file or the view naming it — which is the whole of
+  // what "extensible" has to mean. Text rather than a target, because a row
+  // that is not drawn has no target to resolve and a test that cannot resolve
+  // one has not observed anything.
+  expect text "Hyperliquid" within picker
+  expect text "Hyperliquid Testnet" within picker
+  expect text "Lighter" within picker
+  // And every row says which kind it is before it is pressed. A picker is
+  // where this mistake is actually made.
+  expect text "TESTNET" within picker
+  expect text "REAL MONEY" within picker
   expect a11y here name "Read Hyperliquid, already reading"
   expect a11y other name "Read Lighter"
+  expect a11y test_net name "Read Hyperliquid Testnet"
   dispatch switch_venue(Venue.lighter)
   expect a11y opened name "Read Lighter, already reading"
   expect a11y left name "Read Hyperliquid"
-  expect text "Hyperliquid"
-  expect text "Lighter"
+
+// Which network is on screen has to be answerable without remembering which
+// one was picked, because the two screens are otherwise identical: the same
+// markets, the same book, the same ticket, and one of them costs money.
+//
+// Both kinds are stated, in the same place and the same shape. A badge drawn
+// only on testnet is a badge whose absence carries the dangerous half of the
+// message, and nobody notices an absence — so the network that can lose money
+// says so too, and the reader learns where to look on the day it is free to
+// get wrong rather than on the day it is not.
+test trading_the_header_says_which_kind_of_network_is_on_screen
+  preset held
+  viewport 1660 820
+  target app = #app
+  target named = app/header/venues/venue-name
+  target kind = app/header/venues/venue-kind/root
+  expect text "Hyperliquid" within named
+  expect text "REAL MONEY" within kind
+  expect no text "TESTNET" within kind
+  dispatch switch_venue(Venue.hyperliquid_testnet)
+  expect venue == Venue.hyperliquid_testnet
+  expect text "Hyperliquid Testnet" within named
+  expect text "TESTNET" within kind
+  expect no text "REAL MONEY" within kind
+
+// The same terminal on the test deployment, drawn. Every figure is the mainnet
+// preset's, on purpose: the picture is evidence that the badge is the only
+// thing separating the two screens, which is exactly why it has to be legible.
+test trading_the_test_deployment_draws_the_same_terminal_under_its_own_label
+  preset testnet
+  viewport 1660 820
+  target app = #app
+  target kind = app/header/venues/venue-kind/root
+  target book_panel = app/terminal-fit/trade/book
+  expect venue_testnet(venue)
+  expect text "TESTNET" within kind
+  expect text "ORDER BOOK"
+  expect text "EQUITY"
+  // What is different about this deployment is a fact about the network, not a
+  // reason a panel is empty. Written where rows would be, it read as a venue
+  // refusing to serve orders — which is the opposite of what a testnet is for.
+  expect no text "This is Hyperliquid's test deployment." within book_panel
+  expect text "No resting orders." within book_panel
+  capture testnet_terminal
+  dispatch navigate(Page.settings)
+  expect text "This is Hyperliquid's test deployment. It answers every read the live one does, and it answers them about its own universe, its own books and its own accounts — so an address funded on mainnet has nothing here until it is funded again here, and nothing traded here is worth anything."
+  capture testnet_settings
 
 // The two panels Lighter does not serve. An empty list under "OPEN ORDERS"
 // reads as an account with nothing resting, which is the one thing it does not
@@ -316,14 +377,12 @@ test trading_the_market_rail_on_the_other_venue
   viewport 1660 820
   target app = #app
   target header = app/header
-  target switch = header/venues
-  target reading = switch/venue-lighter/root/tab-on
+  target named = header/venues/venue-name
   // Every figure below is a row this preset was seeded with, and a seeded row
-  // does not know which venue is on screen — so without this the page would
-  // draw the same on either. The switch beside the page tabs is the one thing
-  // here that is read from `venue`, and only the venue being read has a
-  // `tab-on` to carry the label.
-  expect a11y reading name "Read Lighter, already reading"
+  // does not know which network is on screen — so without this the page would
+  // draw the same on either. The header's name is the one thing here that is
+  // read from `venue`.
+  expect text "Lighter" within named
   expect text "75.460"
   // Two markets the other exchange does not list at all, and one it lists
   // under a different spelling.
@@ -347,7 +406,7 @@ test trading_settings_states_what_this_venue_can_and_cannot_serve
   // section empty and with the venue switched under it.
   target named = settings/settings-content/settings-venue
   dispatch navigate(Page.settings)
-  expect text "VENUE"
+  expect text "NETWORK"
   expect text "Lighter" within named
   expect text "Lighter serves resting orders and this account's fills only to an API-key-signed token, which an address alone cannot get and this app does not hold."
   dispatch switch_venue(Venue.hyperliquid)

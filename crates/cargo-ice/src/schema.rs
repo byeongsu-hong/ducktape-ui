@@ -408,6 +408,7 @@ const COMPLETIONS: &[Completion] = &[
         "effect",
         "run replace lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _",
     ),
+    Completion::new("invalidate", "effect", "invalidate lane=${1:request}"),
     Completion::new("<->", "operator", "<-> ${1:state}"),
     Completion::new("->", "operator", "-> ${1:handler}"),
     Completion::new("~=", "operator", "~= ${1:expected}"),
@@ -1766,6 +1767,14 @@ fn construct_schema(item: &Completion) -> Value {
                 Vec::new(),
             )
         }
+        "invalidate" => details(
+            &["handler-statement"],
+            "invalidate lane=<qualified-identifier>",
+            leaf(),
+            no_binding(),
+            no_route(),
+            properties(&[("lane", "static qualified identifier", true)]),
+        ),
         "<->" => details(
             &["binding-position"],
             "<-> <state-identifier>",
@@ -2615,7 +2624,7 @@ pub fn document() -> Value {
                 "name": "a static qualified identifier; each checked state owner has a finite set of named lanes",
                 "qualification": "unaliased app and preset fragments remain in the root namespace and may share root lanes; an aliased component qualifies its internal lane names, but those lanes remain owned by each component instance",
                 "sharing": "the same fully qualified lane name joins members across handlers; one owner cannot mix latest and replace for a lane",
-                "storage": "fixed per state owner by the source-declared lanes; component-owner count follows retained/mounted lifetime; a replace lane retains only its current abort handle and releases it when its matching completion is accepted, the next replacement starts, or the owner drops",
+                "storage": "fixed per state owner by the source-declared lanes; component-owner count follows retained/mounted lifetime; a replace lane retains only its current abort handle and releases it when its matching completion is accepted, the next replacement starts, the lane is invalidated, or the owner drops",
                 "owner": {
                     "app": "the top-level application state",
                     "daemon": "the daemon state shared across all of its windows",
@@ -2631,6 +2640,16 @@ pub fn document() -> Value {
                     "abortsPriorTask": true,
                     "rollback": false,
                     "memory": "aborting drops work still owned by the task, but cannot undo prior effects or stop detached or blocking backend work"
+                },
+                "invalidate": {
+                    "syntax": "invalidate lane=<qualified-identifier>",
+                    "target": "an existing latest or replace lane in the same state owner; forward references are allowed and invalidation never declares a lane",
+                    "scope": "the app/daemon/preset owner or the current component instance",
+                    "position": "a direct handler statement, never a parallel, sequential, or abortable task member",
+                    "delivery": "advance the generation so every earlier success or failure completion is stale",
+                    "latest": "does not cancel the in-flight Future",
+                    "replace": "aborts and releases the current replacement handle",
+                    "task": false
                 }
             },
             "componentProps": {
@@ -2930,6 +2949,15 @@ mod tests {
         );
         assert_eq!(lanes["latest"]["cancelsStaleWork"], false);
         assert_eq!(lanes["replace"]["rollback"], false);
+        assert_eq!(lanes["invalidate"]["task"], false);
+        assert_eq!(
+            lanes["invalidate"]["scope"],
+            "the app/daemon/preset owner or the current component instance"
+        );
+        assert_eq!(
+            lanes["invalidate"]["target"],
+            "an existing latest or replace lane in the same state owner; forward references are allowed and invalidation never declares a lane"
+        );
         let constructs = schema["core"]["constructs"].as_array().unwrap();
         let construct = |label| {
             constructs
@@ -2943,6 +2971,18 @@ mod tests {
         assert_eq!(
             construct("run latest")["route"]["lane"]["type"],
             "static qualified identifier"
+        );
+        assert_eq!(
+            construct("invalidate")["syntax"],
+            "invalidate lane=<qualified-identifier>"
+        );
+        assert_eq!(
+            construct("invalidate")["properties"],
+            json!([{
+                "name": "lane",
+                "type": "static qualified identifier",
+                "required": true
+            }])
         );
 
         let completions = completion_items();
@@ -2963,6 +3003,10 @@ mod tests {
         assert_eq!(
             completion("run replace")["insertText"],
             "run replace lane=${1:request} ${2:action}(${3}) -> ${4:succeeded} _ | ${5:failed} _"
+        );
+        assert_eq!(
+            completion("invalidate")["insertText"],
+            "invalidate lane=${1:request}"
         );
     }
 
@@ -3108,6 +3152,7 @@ mod tests {
             "run",
             "run latest",
             "run replace",
+            "invalidate",
         ];
         let schema = document();
         let constructs = schema["core"]["constructs"].as_array().unwrap();

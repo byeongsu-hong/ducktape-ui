@@ -3479,6 +3479,7 @@ name = "music-example"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "iced_runtime",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-runtime",

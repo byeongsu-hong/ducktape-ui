@@ -421,14 +421,25 @@ scope, a daemon shares one scope across its windows, and each component instance
 is independent. Names are static qualified identifiers and therefore finite per
 owner; one owner cannot mix `latest` and `replace` for a name.
 
+When a synchronous app, daemon, preset, or component handler supersedes pending
+work without starting another request, write `invalidate lane=search` directly
+in that handler before the state transition. It must resolve to an existing
+lane of the same owner, may refer forward to that lane's `run`, and never
+declares a lane or starts a task. It advances the generation so earlier success
+and failure messages are stale. A `latest` Future keeps running; a `replace`
+task is aborted and its current handle released. A component affects only its
+runtime instance. `parallel`, `sequential`, and `abortable` task composition
+reject invalidation because it produces no task.
+
 `latest` leaves stale Futures and their captured values live until completion.
 `replace` drops work owned by the aborted task but cannot roll back effects
 already performed or stop detached or blocking Rust work. Choose a backend
 boundary with cancellation semantics that match the lane. Generated bookkeeping
 is fixed per declared lane for each state owner; component-owner count follows
-the retained/mounted lifetime contract. If an outer abort prevents the matching completion
-from reaching update, one current replacement handle can remain until the next
-replacement or owner drop; it does not accumulate.
+the retained/mounted lifetime contract. If an outer abort prevents the matching
+completion from reaching update, one current replacement handle can remain
+until the next replacement, explicit invalidation, or owner drop; it does not
+accumulate.
 
 Read [rust-boundary.md](rust-boundary.md) before adding one.
 

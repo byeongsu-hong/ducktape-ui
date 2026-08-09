@@ -216,6 +216,7 @@ pub(in crate::check) fn collect_statement_routes<'a>(
             | Statement::ComboPush { .. }
             | Statement::ReturnIf { .. }
             | Statement::Exit { .. }
+            | Statement::InvalidateLane { .. }
             | Statement::Abort { .. }
             | Statement::DebugStart { .. }
             | Statement::DebugFinish { .. }

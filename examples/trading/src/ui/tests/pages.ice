@@ -193,7 +193,13 @@ test trading_settings_stays_separate
   viewport 1660 820
   dispatch navigate(Page.settings)
   expect page == Page.settings
-  expect text "It signs nothing and sends nothing."
+  // The custody column, which is the app's own facts about what it may do. The
+  // headline is the permanent one — an agent key is the only key here — and
+  // the sentence about sending is the one that changes when the ticket is
+  // wired, so both are asserted rather than either standing for the other.
+  expect text "CUSTODY"
+  expect text "The wallet key is never here."
+  expect text "It still sends nothing. Unlocking decides what may be signed; the ticket has nothing wired to it yet, and until it does this app reads the network beside this and prices orders against that margin engine's own arithmetic."
   expect text "Connect a different address"
   expect text "ROUND TRIP"
   expect text "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
@@ -224,7 +230,9 @@ test trading_settings_centres_its_columns_at_every_width
   resize 1180 720
   expect content.width ~= 1008.0
   expect content.x - app.x ~= app.right - content.right
-  expect text "It signs nothing and sends nothing."
+  // The second column is whole rather than clipped at the minimum width, which
+  // is what a sentence from its far end says.
+  expect text "The wallet key is never here."
   capture page_settings_narrow
 
 test trading_header_offers_exactly_the_three_surfaces

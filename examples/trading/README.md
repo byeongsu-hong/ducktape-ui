@@ -1,16 +1,21 @@
 # Trading
 
-A live perpetuals terminal written in Ice, reading either of two exchanges:
+A live perpetuals terminal written in Ice, reading any of several networks:
 the market list, candles and the order book for the selected market, and — for
 any address you point it at — that account's open positions, resting orders,
 recent fills, and every one of those fills marked on the candle it landed in.
 
-Which exchange it is reading is a switch in the header, beside the page tabs.
-It is not a filter over one exchange's data: the two disagree about which
-markets exist, what they are called, and what the engine holds against a
-position in them, so switching throws every panel away and reads the other
-venue from nothing. What the venue being opened cannot answer is said in the
-panel that would otherwise be empty — see [the venue switch](#the-venue-switch).
+A *network* is an exchange and one of its deployments — Hyperliquid,
+Hyperliquid Testnet, Lighter — because one exchange can have more than one, and
+holding "which exchange" and "which deployment" as two values is how a mainnet
+book comes to price a testnet order with both halves of the screen looking
+right. Which one is being read is named in the header beside a badge saying
+whether being wrong on it costs anything; the picker is on settings. It is not
+a filter over one exchange's data: networks disagree about which markets exist,
+what they are called, and what the engine holds against a position in them, so
+switching throws every panel away and reads the new one from nothing. What the
+network being opened cannot answer is said in the panel that would otherwise be
+empty — see [the network registry](#the-network-registry).
 
 ```bash
 cargo run -p trading-example
@@ -312,11 +317,11 @@ to do, and Escape on the portfolio does not clear a box that is not there.
 
 Nothing is signed and nothing is sent, and the ticket says so where a submit
 button would be a heading: it opens by naming what it does and what it does
-not, rather than closing with a badge. The reason lives on the settings page,
-once. Sending would mean this app holding the key that signs an EIP-712 order,
-which is not a thing an example should ask for. The boundary is the
-interesting part: everything up to the signature is arithmetic worth having,
-and the signature is where a real client starts.
+not, rather than closing with a badge. What may be signed is now a real
+question with an answer — see [custody](#custody) — but nothing is wired to
+this ticket yet, and the settings page says exactly that rather than implying
+otherwise. The boundary is still the interesting part: everything up to the
+signature is arithmetic worth having.
 
 ### The order it describes
 
@@ -353,6 +358,12 @@ converted at — a limit converts at the limit, a market at the book's mid, and 
 conversion whose rate is off screen is a number nobody can check. Both venues
 take a size in the instrument, so the conversion happens once, in `order_size`,
 and nothing downstream learns there was a toggle.
+
+Two of the venue facts above belong to the exchange rather than to the
+deployment it is reached at, so they are fields on the network registry beside
+its endpoints — whether a resting order rests until it is cancelled, and
+whether levels can ride on the entry — rather than a match on the venue. A
+network added to that table has to state them the way it states its chain.
 
 **Reduce-only, and the close that is one.** Reduce-only is a promise the venue
 keeps by refusing the order rather than by shrinking it, so a box that
@@ -425,6 +436,224 @@ a market's maximum leverage, and another exchange holds something else. So the
 market carries it and the ticket reads it, rather than the shared math knowing
 one exchange's rule. It is stated once, next to the parser that knows whose
 rule it is.
+
+## Custody
+
+The app can hold one key and it is not the account's. An **agent key** is a
+separate keypair the account's own wallet approved at the exchange: it places
+and cancels orders, it cannot withdraw, and the exchange stops honouring it on
+a date the exchange chose. Losing it costs an approval, not a balance. That
+property is the whole reason there is a key here at all.
+
+On macOS its secret lives in the keychain behind Touch ID — one guarded
+generic-password item, biometry or passcode, this device only, and not in this
+process or in a file. Unlocking is that prompt. On a build without a keychain
+there is nowhere to keep a secret and nothing to unlock, and the panel says so
+rather than offering a prompt that can only refuse. The keychain item is filed
+under the deployment *and* the address, because a key approved on mainnet is
+unknown on testnet and a secret read back under the wrong one is a signer the
+venue has never heard of.
+
+Three acts, and the app cannot perform the middle one:
+
+1. **NEW KEY** generates an agent key, stores the secret, and prints the
+   address.
+2. **Approve** — done by the account's own wallet, at the exchange, somewhere
+   that is not this app. An `approveAgent` is signed by the master wallet,
+   which is the one key this design exists to avoid holding.
+3. **UNLOCK** raises Touch ID, reads the secret back, asks the venue which of
+   this account's keys are live, and a listing naming ours is what a tradeable
+   session is made of.
+
+The middle step being somebody else's is the property, not a gap.
+
+### What the screen says, and what it must never blur
+
+The header carries a badge on every page, beside the equity strip rather than
+instead of it: the two answer different questions, and they disagree the moment
+there is a key to hold — an unlocked session over an address with no account,
+and a read-only session over a funded one, are both ordinary. It reads
+`UNLOCKED` only while the session may actually trade, and it takes the clock to
+say so, because a window closes on the exchange's schedule rather than on an
+event: a badge read off the state alone would keep saying yes through every
+millisecond between expiry and the next tick, and forever if the ticks stop —
+which is exactly when a laptop that slept through an expiry starts asking.
+`KEY EXPIRED` is its own word, because a reader whose key lapsed has something
+to renew and a reader who never had one has something to make.
+
+A **refusal and a fault are not the same event** and the panel must not draw
+them alike. Cancelling Touch ID released nothing, is nobody's mistake, and
+leaves the button live with a sentence beside it. A keychain that failed, or a
+build that has none, is not a thing to ask again — the keystore is chosen at
+compile time, so a second prompt fetches the same refusal — so the button goes
+dead and states the platform's own words. `session.rs` draws that line in a
+pure function outside every `cfg`, which is why a Linux machine can test it;
+this seam's job is not to blur it on the way to the screen.
+
+A network this app cannot sign for **yet** is refused before any sheet, by
+name. Lighter is that case today, and the distinction is worth stating
+precisely because the first version of this sentence got it wrong: the *venue*
+has a write path. Lighter's orders are L2 transactions signed by an API key the
+account registers — the `api_key_index` in the token `lighter_sign.rs` already
+mints, over the curve it already implements. What is missing is this app's
+transaction half. "Nothing in this module can place an order" is that module
+saying what it implements, not what Lighter can do.
+
+So `Network.chain` is `None` there, meaning "no write path here yet", and the
+refusal says the same. Both stop being true when the Lighter path lands, and
+both go in that change rather than outliving it.
+
+Changing network or address forgets the key. Carried across either, it is a
+session claiming the app may trade somewhere the key is unknown, and the first
+thing that would say otherwise is a rejected order.
+
+### Enrolling on a testnet, end to end
+
+Both venues need the account's own wallet once, and neither lets this app stand
+in for it — that is the property rather than a gap. Both are written down here
+together so neither arrives as a surprise halfway through.
+
+The app generates the key and never surrenders it; the wallet approves an
+address and never enters this process. What crosses between them is an address
+one way and a confirmation the other, and the app checks that confirmation
+against the venue rather than taking anyone's word for it.
+
+#### Hyperliquid Testnet
+
+1. **Fund the account.** The perp account needs testnet USDC, and the faucet is
+   a web action at <https://app.hyperliquid-testnet.xyz/drip>, not an API. Its
+   eligibility rule is Hyperliquid's and is not published through `info`, so
+   check rather than assume — one request answers whether an address has the
+   mainnet standing the drip has historically wanted:
+
+   ```bash
+   curl -s -X POST https://api.hyperliquid.xyz/info \
+     -H 'content-type: application/json' \
+     -d '{"type":"clearinghouseState","user":"0xYOURADDRESS"}' \
+     | python3 -c 'import sys,json;print(json.load(sys.stdin)["marginSummary"]["accountValue"])'
+   ```
+
+   A non-zero figure is the signal. Zero, and the cheapest path is to use an
+   address that already trades on Hyperliquid mainnet rather than to bootstrap
+   one — nothing here needs that address to be the same one used elsewhere.
+   Confirm the drip landed with the same request against
+   `api.hyperliquid-testnet.xyz`.
+
+2. **What the app has already done.** `NEW KEY` on the settings page generated a
+   secp256k1 agent key, put its secret in this Mac's keychain under
+   `testnet:0xYOURADDRESS`, and printed the agent's address. Nothing else has
+   left the machine.
+
+3. **Approve that address.** This is the master wallet's signature and the one
+   action this app will never build a path for. The Hyperliquid UI's own API
+   Wallet page generates a key for you, which is the wrong direction — the key
+   already exists here. So sign the payload for *this* address:
+
+   ```json
+   {
+     "domain": { "name": "HyperliquidSignTransaction", "version": "1",
+                 "chainId": 421614,
+                 "verifyingContract": "0x0000000000000000000000000000000000000000" },
+     "primaryType": "HyperliquidTransaction:ApproveAgent",
+     "types": {
+       "EIP712Domain": [ {"name":"name","type":"string"},
+                         {"name":"version","type":"string"},
+                         {"name":"chainId","type":"uint256"},
+                         {"name":"verifyingContract","type":"address"} ],
+       "HyperliquidTransaction:ApproveAgent": [
+         {"name":"hyperliquidChain","type":"string"},
+         {"name":"agentAddress","type":"address"},
+         {"name":"agentName","type":"string"},
+         {"name":"nonce","type":"uint64"} ]
+     },
+     "message": { "hyperliquidChain": "Testnet",
+                  "agentAddress": "0xTHE-ADDRESS-THE-APP-PRINTED",
+                  "agentName": "",
+                  "nonce": 1786000000000 }
+   }
+   ```
+
+   `nonce` is milliseconds since the epoch and must be recent. `chainId` is
+   `0x66eee`, Arbitrum Sepolia, and it is the *signature's* domain rather than
+   where anything settles.
+
+   Sign it with Foundry, which is what pins this payload's own test vector in
+   `signing.rs` — so the tool checking the app is the tool producing the
+   approval:
+
+   ```bash
+   cast wallet sign --from-keystore <keystore> --data --from-file approve.json
+   ```
+
+   Then post it, with `signatureChainId` back in the action — it names the
+   domain rather than sitting in it, so the exchange reads it from the body:
+
+   ```bash
+   curl -s -X POST https://api.hyperliquid-testnet.xyz/exchange \
+     -H 'content-type: application/json' \
+     -d '{"action":{"type":"approveAgent","hyperliquidChain":"Testnet",
+                    "signatureChainId":"0x66eee",
+                    "agentAddress":"0xTHE-ADDRESS","agentName":"","nonce":1786000000000},
+          "nonce":1786000000000,
+          "signature":{"r":"0x…","s":"0x…","v":27}}'
+   ```
+
+4. **Hand back: nothing.** The app verifies this itself. `UNLOCK` reads
+   `extraAgents` for the account and looks for the address it generated; a
+   listing naming it, with a window still ahead of it, is what `Ready` is made
+   of. If the approval did not land the panel says so and the account stays
+   readable.
+
+#### Lighter Testnet
+
+Landing with the Lighter order path; the steps are here so both venues are
+planned together rather than one at a time.
+
+1. **Fund the account.** One request, and it creates the account as well as
+   funding it:
+
+   ```bash
+   curl -s "https://testnet.zklighter.elliot.ai/api/v1/faucet?l1_address=0xYOURADDRESS"
+   ```
+
+   Confirm with
+   `.../api/v1/accountsByL1Address?l1_address=0xYOURADDRESS`, which answers the
+   `account_index` the next step needs. A fresh account arrives with 10,000
+   collateral.
+
+2. **What the app has already done.** Generated an ECgFp5 key over the curve
+   `lighter_sign.rs` already implements and stored its secret in the keychain
+   under `lighter-testnet:0xYOURADDRESS`.
+
+3. **Register that public key.** A fresh account has no registered API key, and
+   the first registration is signed by the L1 wallet — the same line
+   `approveAgent` draws. Do it at <https://testnet.app.lighter.xyz/>, then hand
+   back the **`account_index`** and the **`api_key_index`** you registered
+   under. Those two are account coordinates rather than secrets, and the app
+   has no way to discover which slot was used.
+
+4. **The app verifies it.** `apikeys?account_index=…&api_key_index=…` publishes
+   the registered public key, so the app compares it against the one it
+   generated before claiming the session may trade — exactly what `extraAgents`
+   does on the other venue.
+
+### What needs a Mac
+
+Everything decidable without a Keychain is decided in CI, on Linux: the state
+machine exhaustively, this seam's projections and both refusals, and the panel
+in every state a preset can put it in. None of it touches a keychain, because a
+build without one answers `Unavailable` — a state with a test rather than a gap.
+
+What no runner reaches is the sheet. `security-framework` is a macOS-only
+dependency, so the macOS jobs compile that path and nothing executes it: a CI
+runner has no window server to raise a Touch ID sheet in front of and no
+enrolled finger to answer it with. The nine experiments `session.rs` lists on
+its `impl Keystore` are still owed, and `custody.rs` adds four that only exist
+now that something calls it — one sheet per unlock rather than two, a cancelled
+sheet leaving a live button, the full enrol-approve-unlock round trip, and a
+re-enrolment keeping the secret it replaces when the add fails. Until a person
+on a Mac reports those, the honest claim is that this seam's logic is tested and
+its platform half is compiled, reviewed and unrun.
 
 ## Fixtures are read as evidence
 
@@ -769,12 +998,68 @@ venue would be a categorization the venue does not have.
 
 ## The venue switch
 
-Two tabs in the header, stacked beside the page tabs, and they answer the outer
-half of the same question: the page tabs pick a surface, this picks the
-exchange every one of those surfaces was read from. The venue already being
-read is still a button, and a button carries no state a reader can hear — so it
-says which it is in its own accessible name (*Read Lighter* against *Read
-Lighter, already reading*) rather than in its highlight colour.
+## The network registry
+
+`NETWORKS` in `venue.rs` is the only place a network is enumerated. One entry
+carries its name, whether it is a test deployment, the `Chain` a signature made
+for it would be pinned to, the reads it answers, the sentence it owes when it
+will not answer one, and the note a reader needs beyond its name. Adding a
+network is that entry, the `Venue` variant it names, and the arm `Network::of`
+will not compile without — the exhaustive match is the point, because a network
+whose reads were wired and whose capability sentence was forgotten is a screen
+that silently claims the wrong exchange answers a panel it will leave empty.
+
+Two facts that used to be constants in `hyperliquid.rs` are entries here now.
+The `info` endpoint is `Chain`'s, and the heading over the exchange's own perp
+group is the network's own name — a rail on the test deployment headed
+"Hyperliquid" over markets that are not the live exchange's would be the one
+place on screen that contradicts the header. What canonical Hyperliquid margins
+in stayed a constant, because it is one: both deployments settle their own
+canonical perps in their own USDC, and what differs is which builder dexs are
+listed beside them. Read live, testnet answers `perpDexs` with around a hundred
+of them — `test dex`, `unit dex` — where mainnet answers five.
+
+Nothing else enumerates them. The picker is a loop over `venue_list()`, so a
+network added in Rust is drawn on settings without the view being touched, and
+a Rust test holds `venue_list()` to the registry's own length and `Network::of`
+to round-tripping every entry — that arm is the one a copy-paste gets wrong,
+and `Venue::HyperliquidTestnet => Network::HYPERLIQUID` compiles, draws the
+right name, and points every read on the testnet at mainnet.
+
+### Which deployment, and what it costs to be wrong
+
+Every read is addressed to a `Chain`, and `Chain` is also what a signature is
+pinned to — it is the phantom agent's `source` and the user-signed
+`hyperliquidChain`, so a mainnet signature cannot be replayed on testnet. One
+value carrying both is what stops the screen and the order disagreeing about
+which deployment is being traded; the endpoints for reads live on it beside the
+one for writes for the same reason.
+
+The header names the network and, under it, states its kind: **REAL MONEY** or
+**TESTNET**, in a box either way, with only the colour moving. Both are stated
+on purpose. A badge drawn only on testnet is a badge whose absence carries the
+dangerous half of the message, and nobody notices an absence — so the network
+that can lose money says so in the same place and the same shape, and the
+reader learns where to look on the day it is free to get wrong rather than on
+the day it is not. Every row of the picker says its own kind for the same
+reason: a picker is where this mistake is actually made, so the row a finger is
+travelling towards has to answer it before it is pressed.
+
+Hyperliquid's test deployment answers every read the live one does, over the
+same protocol and the same parser, so its panels fill exactly like mainnet's.
+What is different about it is a note on settings rather than a sentence under
+an empty panel — written there it read as a venue refusing to serve orders,
+which is the opposite of what a testnet is for. A live test drives the seam and
+asserts the two universes *disagree*, because a testnet reading mainnet's
+markets passes "the reads work", draws a plausible screen, and prices orders
+against a book its own exchange has never seen.
+
+### What switching throws away
+
+The network already being read is still a button, and a button carries no state
+a reader can hear — so it says which it is in its own accessible name (*Read
+Lighter* against *Read Lighter, already reading*) rather than in its highlight
+colour.
 
 Pressing it is not a filter and not an undo. Everything on screen belongs to
 the exchange it was read from, and a row kept across the switch would be drawn
@@ -793,9 +1078,14 @@ Rust test holds the switch to handing over a tape the old feed cannot reach.
 Switching to the venue already on screen is not a switch, and returns early
 rather than re-reading a loaded terminal.
 
-The header was already exactly full at the window's minimum, so the switch had
-to be paid for: the two venue tabs are stacked rather than side by side, and
-the account strip gave up its **FREE** figure. It is the one thing there that
+The picker is on settings rather than in the header because a list that grows
+with the registry cannot live in 58 pixels, and because switching network
+throws the whole screen away and can change which network your money is on —
+which is a deliberate act rather than a header toggle. The header carries the
+answer, not the choice, and is the same shape on every network.
+
+The header was already exactly full at the window's minimum, so naming the
+network had to be paid for: the account strip gave up its **FREE** figure. It is the one thing there that
 does not move between polls — the margin engine answers what is withdrawable
 once every five seconds, and it is a tile on the portfolio page — so it was
 the cheapest of the five to lose. Nothing is clipped: everything the header
@@ -1071,14 +1361,24 @@ deployments are third-party and come and go, so it checks that a second group
 exists at all, that its markets are named `dex:SYMBOL`, that each states what it
 settles in, and that the exchange answers a dex-qualified coin's book as itself.
 
-The venue switch has a file of its own. Switching names a panel at a time and
+The network switch has a file of its own. Switching names a panel at a time and
 asks for what was in it — the book, the tape, the levels, the market list, the
 account, its positions, orders and fills — and switching back reads the first
-venue again rather than restoring what was on screen before it left. Both
-sockets and both REST reads refuse to open under test, so a dispatched switch
-starts the feeds of the venue being opened without any of them reaching an
+network again rather than restoring what was on screen before it left. Every
+socket and every REST read refuses to open under test, so a dispatched switch
+starts the feeds of the network being opened without any of them reaching an
 exchange; a feed that cannot reach one ends rather than retrying, or the app
 would never settle and no test could dispatch a switch at all.
+
+Two of those tests are about the label rather than the data, because the label
+is the whole of what separates two screens drawn from the same fixtures. One
+asserts both kinds in the header — **REAL MONEY** present and **TESTNET**
+absent on the live network, and the reverse after a switch — and one asserts
+that every registry entry reaches the picker with its kind beside it. Each was
+run against a mutation before it was kept: a `venue_kind` that always answers
+**REAL MONEY** fails three of them on the missing word, a `venue_list` that
+filters test deployments out fails the picker on the missing row, and an arm
+resolving `HyperliquidTestnet` to the mainnet entry fails five.
 
 There is one test per surface, and each asks for something only that surface
 draws — a test that asserted the header would pass on all three, which is the

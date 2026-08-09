@@ -263,6 +263,16 @@ remembering that abort cannot undo an effect already performed or stop work
 detached by the Rust backend. Lane names are static and finite per owner.
 Component-owner count follows the retained/mounted lifetime contract.
 
+Use `invalidate lane=<name>` directly in an app, daemon, preset, or component
+handler when an immediate state transition supersedes an existing lane without
+starting a replacement Future. The lane may be declared later in the source
+graph but must already exist for the same owner; invalidation does not allocate
+a lane or return a task. It filters every earlier completion, leaves `latest`
+work running, and aborts and releases the current handle for a `replace` lane.
+A component affects only its runtime instance. `parallel`, `sequential`, and
+`abortable` task composition do not accept invalidation because it produces no
+task.
+
 ## Native task adapters
 
 Declare `task` when Rust already returns `iced::Task`:

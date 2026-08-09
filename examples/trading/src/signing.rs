@@ -433,11 +433,58 @@ impl Chain {
         }
     }
 
-    pub fn endpoint(self) -> &'static str {
+    /// Where a signed action is posted.
+    pub fn exchange_url(self) -> &'static str {
         match self {
             Chain::Mainnet => "https://api.hyperliquid.xyz/exchange",
             Chain::Testnet => "https://api.hyperliquid-testnet.xyz/exchange",
         }
+    }
+
+    /// Where every read is asked, which is the same deployment the writes go
+    /// to and must never be a separate setting.
+    ///
+    /// The two endpoints live on one value because the alternative has a
+    /// failure with no symptom: a screen reading mainnet prices while a
+    /// signature carries `Testnet` prices an order against a book it will
+    /// never reach, and both halves look right on their own. `Chain` is
+    /// already the thing a signature is pinned to — it is the phantom agent's
+    /// `source` and the user-signed `hyperliquidChain`, so a mainnet signature
+    /// cannot be replayed on testnet — and making it the thing a *read* is
+    /// pinned to as well is what stops the screen and the order disagreeing
+    /// about which deployment is being traded.
+    pub fn info_url(self) -> &'static str {
+        match self {
+            Chain::Mainnet => "https://api.hyperliquid.xyz/info",
+            Chain::Testnet => "https://api.hyperliquid-testnet.xyz/info",
+        }
+    }
+
+    pub fn ws_url(self) -> &'static str {
+        match self {
+            Chain::Mainnet => "wss://api.hyperliquid.xyz/ws",
+            Chain::Testnet => "wss://api.hyperliquid-testnet.xyz/ws",
+        }
+    }
+
+    /// A short, stable name for this deployment, for anything that has to file
+    /// something under it. Not for a reader — `venue.rs` names networks — and
+    /// deliberately not the wire spelling, so changing what a keychain item is
+    /// called can never change what a signature says.
+    pub fn key(self) -> &'static str {
+        match self {
+            Chain::Mainnet => "mainnet",
+            Chain::Testnet => "testnet",
+        }
+    }
+
+    /// Whether this deployment trades money that is worth something.
+    ///
+    /// Read by the screen rather than by the signer: what it changes is how
+    /// loudly the app says which network an order is about to go to, and that
+    /// is the one label a trader may never have to work out for themselves.
+    pub fn testnet(self) -> bool {
+        matches!(self, Chain::Testnet)
     }
 }
 
@@ -886,7 +933,7 @@ mod tests {
     /// failure these tests exist to rule out, so it has to be readable rather
     /// than swallowed as a transport error.
     fn post(chain: Chain, body: &Value) -> String {
-        let response = ureq::post(chain.endpoint())
+        let response = ureq::post(chain.exchange_url())
             .config()
             .http_status_as_error(false)
             .build()

@@ -170,6 +170,10 @@ on reopen
   // the same strip as the feed's. Kept, the account that could not be read is
   // reported over the next account's positions.
   error = ""
+  // The key belongs to the account being left, and the next address is not
+  // that account.
+  session = lock_agent()
+  unlock_note = ""
   abort feeds
 
 on pick_symbol(name)
@@ -243,6 +247,13 @@ on switch_venue(next)
   // A level worth being told about was worth it on one exchange, at one
   // exchange's price.
   alerts = []
+  // A key is approved for one account on one deployment. Carried across, it is
+  // a session that says the app may trade on a network the key is unknown on —
+  // and the first thing that would tell the reader otherwise is a rejected
+  // order. The unlock is cheap to repeat; this is not a thing to be clever
+  // about.
+  session = lock_agent()
+  unlock_note = ""
   // One address, two venues, two sets of positions. Fills and orders arrive as
   // a snapshot the app folds into what it already holds, so anything kept here
   // would be folded in with the next venue's.
@@ -331,7 +342,13 @@ on search(typed)
   query = typed
 
 on tick_universe
-  clock = now_seconds()
+  let now = now_seconds()
+  clock = now
+  // A window closes on the exchange's schedule rather than on an event, so the
+  // clock arriving is what turns a key that has run out into a session that
+  // says so — while it still holds the key, which is what lets the panel name
+  // what lapsed and offer to approve it again.
+  session = tick_agent(session, now)
   run venue_symbols(venue) -> symbols_loaded _ | failed _
 
 on tick_account
@@ -506,6 +523,38 @@ on history_loaded(older)
 
 on lower_resized(_dx, dy)
   lower_height = pane_height(lower_height - dy)
+
+// Custody. Three acts and one clock, and none of them decides anything: the
+// state machine in Rust does, and what lands here is whatever came out of it.
+//
+// Every act clears the note first. A sentence left over from the last attempt
+// beside the result of this one is the panel reporting a refusal that has
+// already been answered.
+on unlock
+  return if !session_unlockable(session)
+  unlock_note = ""
+  run unlock_agent(venue, address) -> custody_answered _ | custody_failed _
+
+on enrol
+  unlock_note = ""
+  run enrol_agent(venue, address) -> custody_answered _ | custody_failed _
+
+// Both acts land here because both answer the same question. A declined sheet,
+// a first run, a build with no keychain and an approval nobody has made are
+// states with sentences, not failures, and the machine has already sorted them.
+on custody_answered(entry)
+  session = entry.session
+  unlock_note = entry.note
+
+// The one outcome that is a read that failed rather than an answer: the venue
+// would not say which of this account's keys are live. The session is left
+// exactly where it was, because nothing about it was learned.
+on custody_failed(reason)
+  unlock_note = reason.message
+
+on lock
+  session = lock_agent()
+  unlock_note = ""
 
 subscribe
   // Escape clears the search box, and the search box is in the market rail on

@@ -8,13 +8,22 @@ enum Page
   portfolio
   settings
 
-// Which exchange the terminal is reading. Not a build-time choice and not a
+// Which network the terminal is reading. Not a build-time choice and not a
 // filter over one exchange's data: every panel on screen was read from a
-// venue, and the two disagree about which markets exist, what they are called,
+// network, and they disagree about which markets exist, what they are called,
 // and what the engine holds against a position in them. So it is state, and
 // switching it is `switch_venue` throwing all of it away.
+//
+// One exchange can have more than one deployment, so a variant is an exchange
+// *and* a deployment rather than an exchange. Holding those as two values is
+// how a mainnet book comes to price a testnet order with both halves of the
+// screen looking right. Everything each variant carries — its name, its
+// endpoints, what it will not answer, and whether being wrong on it costs
+// anything — is one entry in `NETWORKS` in `venue.rs`, which is the only place
+// a network is enumerated.
 enum Venue
   hyperliquid
+  hyperliquid_testnet
   lighter
 
 // What kind of order the ticket is describing. Not a filter over one order
@@ -121,6 +130,15 @@ state
   fills_open = false
   portfolio_history:PortfolioHistory = portfolio_empty()
   portfolio_range = "month"
+  // What this app may sign with. Opaque: the rules that move it are a tested
+  // state machine in Rust, and a copy of them here would be a second opinion
+  // about when an order may be signed.
+  session:Session = session_start()
+  // Why the session is where it is, when the state alone cannot say. A
+  // declined sheet and never having pressed the button are both `Locked`, so
+  // without this the panel draws the same thing for "you cancelled" and "you
+  // have not asked".
+  unlock_note = ""
 
 derived
   visible = filter_symbols(symbols, query, coin)
@@ -159,6 +177,57 @@ derived
   // why one level is chosen over another.
   tp_pnl = level_pnl(ticket_at, ticket_tp, ticket_coins, ticket_buy)
   sl_pnl = level_pnl(ticket_at, ticket_sl, ticket_coins, ticket_buy)
+
+// The custody panel in each state it can be drawn in. `clock` is the same
+// reading the view asks `session_can_trade` with, so a fixture is live or
+// lapsed against the clock the screen is holding rather than against one it
+// was built with.
+preset unlocked
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    book = some(demo_book())
+    live = true
+    session = demo_session_ready(now_seconds())
+
+preset key_expired
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    account = some(demo_account())
+    live = true
+    session = demo_session_expired(now_seconds())
+
+// A build with no keychain, which is every build that is not macOS. The panel
+// has to say so rather than offer a prompt that can only refuse.
+preset no_keystore
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    account = some(demo_account())
+    live = true
+    session = demo_session_unavailable()
+
+// Touch ID answered and nobody has approved a key for this account yet, which
+// is where a first unlock lands and where it stays until the account's own
+// wallet approves the address the app is showing.
+preset unapproved
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    account = some(demo_account())
+    live = true
+    session = demo_session_unapproved()
 
 preset gate
 
@@ -218,6 +287,28 @@ preset lighter
     ticket_price = "64,970.00"
     ticket_size = "3.00"
     portfolio_history = portfolio_unavailable("Historical performance on Lighter needs a read-only API token; this address-only session still shows current exposure.")
+
+// The test deployment of the exchange the app boots on. Nothing here is a
+// second exchange's data — the universe, the book and the account are the same
+// fixtures, because what this preset exists to draw is not different numbers
+// but the same screen carrying a different label. A picture where the only
+// change is the badge is the picture worth having: it is the one a reader
+// would have to notice to avoid sending a real order to the wrong place.
+preset testnet
+  state
+    gate = false
+    venue = Venue.hyperliquid_testnet
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
+    live = true
+    ticket_price = "64,000.00"
+    ticket_size = "3.00"
 
 // The same terminal, read for an address that has no account on this venue —
 // which is the ordinary shape of one address read at two exchanges rather than
