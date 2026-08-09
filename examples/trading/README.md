@@ -611,14 +611,16 @@ thing that would say otherwise is a rejected order.
 
 ### Enrolling on a testnet, end to end
 
-Both venues need the account's own wallet once, and neither lets this app stand
-in for it — that is the property rather than a gap. Both are written down here
-together so neither arrives as a surprise halfway through.
+For a *real* account the app generates the key and never surrenders it, the
+account's own wallet authorises it and never enters this process, and the app
+checks the venue's confirmation rather than taking anyone's word for it. That
+one act in the middle being somebody else's is the property, not a gap.
 
-The app generates the key and never surrenders it; the wallet approves an
-address and never enters this process. What crosses between them is an address
-one way and a confirmation the other, and the app checks that confirmation
-against the venue rather than taking anyone's word for it.
+For **live evidence** on a testnet the two venues differ, and only because their
+faucets do. Hyperliquid's drip asks for an address already qualified on mainnet,
+which nothing this process can mint satisfies — so that one step stays with
+whoever owns such an address. Lighter's faucet asks for nothing, so the tooling
+owns a disposable identity there and needs nobody.
 
 #### Hyperliquid Testnet
 
@@ -708,53 +710,45 @@ against the venue rather than taking anyone's word for it.
 
 #### Lighter Testnet
 
-The transaction half is built: `lighter.rs` places and cancels for a key handed
-to it, and the live round trip
-(`the_order_path_places_rests_and_cancels_on_the_test_deployment`) is written
-and waiting on these three values. The panel does not yet take them, so for now
-they arrive as environment variables and the test names each one it is missing.
+**Nothing.** The tooling owns a disposable identity and mints a fresh one per
+run: it generates an L1 keypair, asks the faucet for an account (the testnet
+faucet funds any address that asks — no eligibility gate), generates the ECgFp5
+API key, and **registers that key itself** — the registration is authorised by
+an L1 signature over the venue's own sentence, and the L1 wallet is one the test
+made a moment earlier.
 
-1. **Fund the account.** One request, and it creates the account as well as
-   funding it:
+```
+minted a disposable L1 wallet: 0x545e02f1f987b3c735d64f686ff6fac077e0f3ad
+the faucet opened account 666 for it
+registered bd4f87096a…68177a6c as api key 2 on account 666
+placed 0.01 BTC at 58644.8 as client order 1786287096952
+the book lists it resting
+cancelled, and the book stops listing it
+```
 
-   ```bash
-   curl -s "https://testnet.zklighter.elliot.ai/api/v1/faucet?l1_address=0xYOURADDRESS"
-   ```
+```bash
+cargo test -p trading-example -- --ignored --exact \
+  lighter::tests::the_order_path_places_rests_and_cancels_on_the_test_deployment --nocapture
+```
 
-   Confirm with
-   `.../api/v1/accountsByL1Address?l1_address=0xYOURADDRESS`, which answers the
-   `account_index` the next step needs. A fresh account arrives with 10,000
-   collateral.
+Five to nine seconds, no environment variables, nothing to hand back.
 
-2. **Register the app's public key.** Press `NEW KEY` on Settings: the app
-   generates a 40-byte ECgFp5 key, files the secret in the keychain, and prints
-   the public half. Register that public key at
-   <https://testnet.app.lighter.xyz/> — the first registration is signed by the
-   L1 wallet, the same line `approveAgent` draws and the same reason this app
-   cannot cross it. Any slot will do.
+The custody design exists to keep this app away from an account owner's *real*
+wallet, and that is a statement about value rather than about key material. On a
+deployment where the faucet funds anybody and nothing is worth anything, the
+honest way to get live evidence is for the tooling to own an identity of its own.
 
-3. **Unlock.** The app finds the rest for itself: `account?by=l1_address`
-   answers the account index, `apikeys?account_index=…` answers which slot the
-   public key was registered at, and the key it generated is already in the
-   keychain under `lighter-testnet:0xYOURADDRESS`.
+**Testnet by construction.** Every request in that path goes through
+`disposable_zone`, the only zone the tooling names, which refuses to be anything
+but a test deployment. It is a property rather than a convention: an edit
+pointing it at mainnet fails
+`a_disposable_identity_can_only_ever_touch_a_test_deployment` in the ordinary
+offline suite, long before anything reaches a faucet.
 
-   The live round trip below is separate, and takes the three values as
-   environment variables because it drives the venue path directly rather than
-   through the panel:
-
-   ```bash
-   ICE_LIGHTER_TESTNET_ACCOUNT=… \
-   ICE_LIGHTER_TESTNET_API_KEY=… \
-   ICE_LIGHTER_TESTNET_KEY=0x… \
-     cargo test -p trading-example -- --ignored --exact \
-       lighter::tests::the_order_path_places_rests_and_cancels_on_the_test_deployment
-   ```
-
-4. **Still owed: a Mac.** Everything above is compiled, reviewed and tested on
-   Linux, and the one step no CI runner reaches is the Touch ID sheet itself —
-   `security-framework` is a macOS-only dependency, and a runner has no window
-   server to raise a sheet in front of. So the panel's half of this checklist is
-   unrun until somebody on a Mac reports it.
+Two live rules bound the order from both sides and are worth knowing before
+changing it: a limit price too far from the mark is refused outright (`21734`),
+and an order under ten dollars of notional is refused as well (`21706`). It sits
+ten percent under the mark at 0.01 BTC, which clears both and cannot fill.
 
 ### What needs a Mac
 
