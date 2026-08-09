@@ -171,7 +171,7 @@ on forget
 // The list fills as it is read rather than when it is done: a thousand
 // rollouts take long enough that nothing happening reads as nothing working.
 on mount
-  stream scan_chats() -> chats_scanned _
+  stream every scan_chats() -> chats_scanned _
 
 on chats_scanned(scan)
   chats = scan.chats
@@ -182,7 +182,7 @@ on pick_chat(path)
   open_path = path
   loading_chat = true
   error = ""
-  run open_recent(session, path) -> chat_opened _ | chat_failed _
+  run every open_recent(session, path) -> chat_opened _ | chat_failed _
 
 // Opening a chat replaces this one: the session becomes that conversation, so
 // carrying on from it resends its own history rather than starting beside it.
