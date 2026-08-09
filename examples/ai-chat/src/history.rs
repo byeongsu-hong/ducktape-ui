@@ -92,15 +92,6 @@ fn walk(dir: &Path, found: &mut Vec<PathBuf>, depth: usize) {
     }
 }
 
-/// The chats on offer, without reading any of them through.
-pub fn list_chats() -> Vec<Chat> {
-    rollouts()
-        .into_iter()
-        .filter_map(|path| chat_at(&path))
-        .take(CHATS)
-        .collect()
-}
-
 /// A rollout's name and date, from its head alone.
 fn chat_at(path: &Path) -> Option<Chat> {
     let file = std::fs::File::open(path).ok()?;
@@ -174,10 +165,59 @@ pub fn sample_chats() -> Vec<Chat> {
     ]
 }
 
-/// The chats on offer, off the frame loop — the listing touches a thousand
-/// files.
-pub async fn recent_chats() -> Vec<Chat> {
-    smol::unblock(list_chats).await
+/// How many rollouts to read before saying so. Small enough that the list
+/// fills visibly, large enough not to wake the screen for every file.
+const BATCH: usize = 24;
+
+/// How far the scan has got, and what it has found so far.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Scan {
+    pub chats: Vec<Chat>,
+    pub ratio: f64,
+    pub found: i64,
+    pub total: i64,
+}
+
+/// The chats on offer, handed over as they are found.
+///
+/// A thousand rollouts take a fifth of a second to read the heads of, which is
+/// long enough to look broken if nothing happens meanwhile. So the list is
+/// published as it fills rather than when it is done, and carries how far the
+/// scan has got with it.
+pub fn scan_chats() -> smol::channel::Receiver<Scan> {
+    let (sender, receiver) = smol::channel::unbounded();
+    std::thread::spawn(move || {
+        let files = rollouts();
+        let total = files.len() as i64;
+        let mut found: Vec<Chat> = Vec::new();
+        for (index, path) in files.iter().enumerate() {
+            if let Some(chat) = chat_at(path) {
+                found.push(chat);
+            }
+            let read = index + 1;
+            let full = found.len() >= CHATS;
+            if read % BATCH == 0 || full || read == files.len() {
+                let scan = Scan {
+                    chats: found.clone(),
+                    ratio: if total == 0 {
+                        1.0
+                    } else {
+                        read as f64 / total as f64
+                    },
+                    found: found.len() as i64,
+                    total,
+                };
+                // A closed channel is the window having moved on.
+                if sender.send_blocking(scan).is_err() {
+                    return;
+                }
+            }
+            if full {
+                return;
+            }
+        }
+    });
+    receiver
 }
 
 /// Open a chat, off the frame loop. A rollout runs to tens of megabytes.
@@ -197,6 +237,10 @@ pub fn open_chat(session: Session, path: String) -> Result<Vec<Entry>, CodexErro
     let mut input: Vec<Value> = Vec::new();
     let mut turn = 0i64;
     let mut usage = String::new();
+    // What was asked can arrive three ways depending on how the session was
+    // run, and some rollouts carry only the third. Collapsing by text is what
+    // keeps a chat that carries two of them from saying everything twice.
+    let mut said: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for line in BufReader::new(file).lines().map_while(Result::ok) {
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
@@ -204,15 +248,26 @@ pub fn open_chat(session: Session, path: String) -> Result<Vec<Entry>, CodexErro
         };
         let payload = &record["payload"];
         match record["type"].as_str().unwrap_or_default() {
-            // What the API was given, kept so the chat can be carried on.
-            "response_item" => input.push(payload.clone()),
+            // What the API was given, kept so the chat can be carried on —
+            // and, for the sessions that recorded nothing else, the only place
+            // the question survives.
+            "response_item" => {
+                if payload["type"] == "message" && payload["role"] == "user" {
+                    let asked = text_of(&payload["content"]);
+                    if !asked.trim().is_empty() && said.insert(asked.clone()) {
+                        turn += 1;
+                        let mut row = Entry::of("prompt", "").with_body(asked);
+                        row.turn = turn;
+                        rows.push(row);
+                    }
+                }
+                input.push(payload.clone());
+            }
             "event_msg" => match payload["type"].as_str().unwrap_or_default() {
                 "item_completed" => {
                     if let Some(mut row) = row_for(&payload["item"]) {
                         let repeat = matches!(row.kind.as_str(), "prompt" | "answer")
-                            && rows
-                                .last()
-                                .is_some_and(|last| last.kind == row.kind && last.body == row.body);
+                            && !said.insert(row.body.clone());
                         if !repeat {
                             if row.kind == "prompt" {
                                 turn += 1;
@@ -227,7 +282,7 @@ pub fn open_chat(session: Session, path: String) -> Result<Vec<Entry>, CodexErro
                 // repeating what the event already said is dropped.
                 "user_message" => {
                     let asked = payload["message"].as_str().unwrap_or_default();
-                    if !asked.trim().is_empty() {
+                    if !asked.trim().is_empty() && said.insert(asked.to_owned()) {
                         turn += 1;
                         let mut row = Entry::of("prompt", "").with_body(asked);
                         row.turn = turn;
@@ -238,9 +293,9 @@ pub fn open_chat(session: Session, path: String) -> Result<Vec<Entry>, CodexErro
                 // that draw items record it there too, and the repeat is
                 // dropped the same way a repeated prompt is.
                 "agent_message" => {
-                    let said = payload["message"].as_str().unwrap_or_default();
-                    if !said.trim().is_empty() {
-                        let mut row = Entry::of("answer", "").with_body(said);
+                    let answered = payload["message"].as_str().unwrap_or_default();
+                    if !answered.trim().is_empty() && said.insert(answered.to_owned()) {
+                        let mut row = Entry::of("answer", "").with_body(answered);
                         row.turn = turn;
                         rows.push(row);
                     }
@@ -456,7 +511,12 @@ mod tests {
     #[test]
     #[ignore = "reads the CLI's own session directory, which a machine may not have"]
     fn a_real_rollout_comes_back_as_a_transcript() {
-        let Some(chat) = list_chats().into_iter().next() else {
+        let scan = scan_chats();
+        let mut listed = Vec::new();
+        while let Ok(step) = scan.recv_blocking() {
+            listed = step.chats;
+        }
+        let Some(chat) = listed.into_iter().next() else {
             eprintln!("no rollouts on this machine");
             return;
         };
@@ -489,7 +549,11 @@ mod tests {
     #[ignore = "reads the CLI's own session directory, which a machine may not have"]
     fn listing_reads_only_what_a_name_needs() {
         let started = std::time::Instant::now();
-        let chats = list_chats();
+        let mut chats = Vec::new();
+        let scan = scan_chats();
+        while let Ok(step) = scan.recv_blocking() {
+            chats = step.chats;
+        }
         let took = started.elapsed();
         eprintln!("{} chats in {took:?}", chats.len());
         for chat in chats.iter().take(3) {

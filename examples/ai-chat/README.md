@@ -184,9 +184,11 @@ Further tuning is not warranted, and none was kept.
 ## Chats already had
 
 The sidebar lists the rollouts the Codex CLI wrote under `~/.codex/sessions`,
-newest first, and opening one draws it as a transcript. The list is fetched
-once the window is up rather than before it — it touches a thousand files and
-none of them are needed to start typing. The session becomes that chat — its own
+newest first, and opening one draws it as a transcript. It fills as it is read
+rather than when it is done, with a bar saying how far it has got: a thousand
+rollouts take long enough that nothing happening would read as nothing
+working. Neither the bar nor the list waits on the other, and neither holds up
+typing. The session becomes that chat — its own
 `input` is loaded too — so carrying on from it continues that conversation
 rather than starting beside it.
 
@@ -202,7 +204,9 @@ only each file's head, and opening one streams it a line at a time and keeps a
 bounded number of rows, saying how many it left out. Measured on a machine with
 1,036 of them: the list took 210ms, and a 26MB chat opened in 247ms.
 
-![Chats already had](screenshots/history.png)
+| Chats already had | Still reading them |
+| --- | --- |
+| ![The sidebar](screenshots/history.png) | ![Filling as it reads](screenshots/scanning.png) |
 
 ## Limits
 
@@ -213,6 +217,9 @@ bounded number of rows, saying how many it left out. Measured on a machine with
   drawn item. The raw record carries encrypted content and no summary, so
   chats written without the drawn stream show their prompts, answers and tools
   but not what the model was thinking.
+- There is no blur on a widget in this toolkit — only a window compositing
+  flag and shadow blur — so the list being read is shown filling rather than
+  frosted over. Hiding it would hide the part that is worth watching.
 - A chat whose first prompt sits past the first 256KB of its rollout is listed
   as `Untitled chat` rather than read through for a name.
 - **The sign-in is not fully verified.** Minting a code and telling waiting from

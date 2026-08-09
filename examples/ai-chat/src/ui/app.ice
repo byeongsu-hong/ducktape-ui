@@ -40,6 +40,8 @@ state
   copied = ""
   chats:[Chat] = []
   open_path = ""
+  scan_ratio = 0.0
+  scan_total = 0
   loading_chat = false
   signed:bool = signed_in()
   code = ""
@@ -49,6 +51,7 @@ state
   active_palette:palette[AppTheme] = AppTheme.app
 
 derived
+  scanning = scan_total > 0 && scan_ratio < 1.0
   typed = trim(editor_text(draft))
   can_send = !busy && !empty(typed)
   can_steer = busy && !empty(typed)
@@ -123,6 +126,21 @@ preset steering
     live = markdown("Yes — hold the parsed document and extend it.")
 
 // The list of chats already had, as the panel that offers them.
+// Part way through reading the machine's rollouts: some chats are already
+// listed and the bar says how far it has got.
+preset scanning
+  state
+    signed = true
+    account = "you@example.com"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol"]
+    effort = some("xhigh")
+    efforts = ["xhigh"]
+    entries = sample_entries(false)
+    chats = sample_chats()
+    scan_ratio = 0.38
+    scan_total = 1036
+
 preset history
   state
     open_path = "/sessions/2026-08-10-ducktape-ui.jsonl"
@@ -194,7 +212,24 @@ view
           p=10.0
           gap=8.0
         button "New chat" #new-chat w=fill @outline_action -> reset
-        text "Recent" #recent-label @meta
+        row
+          with
+            w=fill
+            gap=8.0
+            align=center
+          text "Recent" #recent-label @meta
+          space w=fill
+          if scanning
+            text "reading…" @meta_compact
+        if scanning
+          progress scan_ratio #scan
+            with
+              min=0.0
+              max=1.0
+              girth=3.0
+              r=2.0
+              bg=muted_bg
+              bar=primary
         scroll #chat-list w=fill h=fill
           col w=fill gap=2.0
             for chat in chats

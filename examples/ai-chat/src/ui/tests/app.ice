@@ -177,3 +177,22 @@ test the_sidebar_lists_chats_already_had
   expect text "2026-08-08"
   expect a11y first name "Which version of iced is current?"
   capture history
+
+// A thousand rollouts take long enough to read that nothing happening reads as
+// nothing working. The list fills as it is found and says how far it has got,
+// and both of those go away when there is nothing left to say.
+test the_sidebar_says_how_far_it_has_read
+  preset scanning
+  viewport 1180 600
+  target bar = #shell/sidebar/scan
+  expect exists bar
+  expect text "reading…"
+  expect text "Which version of iced is current?"
+  capture scanning
+
+test a_finished_scan_says_nothing
+  preset history
+  viewport 1180 600
+  expect missing #shell/sidebar/scan
+  expect no text "reading…"
+  expect text "Which version of iced is current?"

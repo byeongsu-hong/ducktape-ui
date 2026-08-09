@@ -168,11 +168,15 @@ on forget
 // Chats the CLI has already had. The list is fetched once the window is up
 // rather than before it, because it touches a thousand files and none of them
 // are needed to start typing.
+// The list fills as it is read rather than when it is done: a thousand
+// rollouts take long enough that nothing happening reads as nothing working.
 on mount
-  run recent_chats() -> chats_listed _
+  stream scan_chats() -> chats_scanned _
 
-on chats_listed(found)
-  chats = found
+on chats_scanned(scan)
+  chats = scan.chats
+  scan_ratio = scan.ratio
+  scan_total = scan.total
 
 on pick_chat(path)
   open_path = path
