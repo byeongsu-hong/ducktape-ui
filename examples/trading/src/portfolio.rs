@@ -267,6 +267,24 @@ pub async fn venue_portfolio(venue: Venue, address: String) -> Result<PortfolioH
     }
 }
 
+/// What a range button announces.
+///
+/// These were labelled with `page_label`, which made each one say "Show the 1d
+/// page" — naming navigation that does not happen and a page that does not
+/// exist. A range is how far back the account-value line is drawn, so it says
+/// that, and the one already drawn appends rather than renaming itself, the
+/// way every other control here does.
+pub fn range_label(range: String, shown: bool) -> String {
+    let state = if shown { ", already showing" } else { "" };
+    let span = match range.as_str() {
+        "day" => "the last day",
+        "week" => "the last week",
+        "month" => "the last month",
+        _ => "its whole history",
+    };
+    format!("Show account value over {span}{state}")
+}
+
 pub fn portfolio_empty() -> PortfolioHistory {
     PortfolioHistory {
         note: "Connect an address to load portfolio performance.".to_owned(),

@@ -1016,28 +1016,28 @@ view
                               @text-muted
                         space w=fill
                         row #portfolio-ranges gap=4.0 align=center
-                          PortfolioRange
+                          PortfolioRange #range-day
                             with
                               name="1D"
                               value="day"
                               current=portfolio_range
                             events
                               pick -> pick_portfolio_range _
-                          PortfolioRange
+                          PortfolioRange #range-week
                             with
                               name="1W"
                               value="week"
                               current=portfolio_range
                             events
                               pick -> pick_portfolio_range _
-                          PortfolioRange
+                          PortfolioRange #range-month
                             with
                               name="1M"
                               value="month"
                               current=portfolio_range
                             events
                               pick -> pick_portfolio_range _
-                          PortfolioRange
+                          PortfolioRange #range-all
                             with
                               name="ALL"
                               value="all"

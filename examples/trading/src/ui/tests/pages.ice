@@ -194,3 +194,22 @@ test trading_a_book_that_has_closed_nothing_quotes_no_win_rate
   expect text "WIN RATE" within printed
   expect text "—" within printed
   expect no text "0%" within printed
+
+// The range picker is not navigation. Labelled with `page_label` each button
+// announced "Show the 1d page" — a page that does not exist, and a move the
+// button does not make. It says what it draws, and the one already drawn
+// appends rather than renaming itself.
+test trading_the_range_picker_announces_a_span_not_a_page
+  preset held
+  viewport 1660 820
+  target app = #app
+  target portfolio = app/portfolio
+  target ranges = portfolio/portfolio-ranges
+  target drawn = ranges/range-month/selected
+  target aweek = ranges/range-week/off
+  target ever = ranges/range-all/off
+  dispatch navigate(Page.portfolio)
+  expect portfolio_range == "month"
+  expect a11y drawn name "Show account value over the last month, already showing"
+  expect a11y aweek name "Show account value over the last week"
+  expect a11y ever name "Show account value over its whole history"
