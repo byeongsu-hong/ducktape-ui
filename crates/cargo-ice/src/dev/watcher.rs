@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 const FULL_RESCAN_INTERVAL: Duration = Duration::from_secs(30);
 const POLLING_INTERVAL: Duration = Duration::from_millis(750);
 const POLLING_FALLBACK_MESSAGE: &str =
-    "ice dev: native notifications unavailable; using polling safety mode";
+    "native notifications unavailable; using polling safety mode";
 
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum DevChange {
@@ -194,8 +194,9 @@ impl NativeWatcher {
         let event = match result {
             Ok(event) => event,
             Err(error) => {
-                eprintln!(
-                    "ice dev: filesystem notification failed: {error}; verifying the complete input snapshot"
+                tracing::warn!(
+                    %error,
+                    "filesystem notification failed; verifying the complete input snapshot"
                 );
                 return true;
             }
@@ -263,14 +264,14 @@ fn native_or_polling(
     match create_native(&configuration.roots, &configuration.excluded_roots) {
         Ok(watcher) => WatchBackend::Native(watcher),
         Err(_) => {
-            eprintln!("{POLLING_FALLBACK_MESSAGE}");
+            tracing::warn!("{POLLING_FALLBACK_MESSAGE}");
             WatchBackend::Polling(MetadataPoller::new(configuration))
         }
     }
 }
 
 fn switch_to_polling(backend: &mut WatchBackend, configuration: &WatchConfiguration) {
-    eprintln!("{POLLING_FALLBACK_MESSAGE}");
+    tracing::warn!("{POLLING_FALLBACK_MESSAGE}");
     *backend = WatchBackend::Polling(MetadataPoller::new(configuration));
 }
 
@@ -699,7 +700,7 @@ mod tests {
 
         assert_eq!(
             POLLING_FALLBACK_MESSAGE,
-            "ice dev: native notifications unavailable; using polling safety mode"
+            "native notifications unavailable; using polling safety mode"
         );
         assert!(POLLING_INTERVAL >= Duration::from_millis(500));
         assert!(POLLING_INTERVAL <= Duration::from_secs(1));
