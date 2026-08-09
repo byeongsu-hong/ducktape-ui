@@ -2364,6 +2364,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hotreload-example"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "http"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
