@@ -46,15 +46,15 @@ preset conversation
   state
     account = "you@example.com"
     model = "gpt-5.6-sol"
-    session = sample_session()
-    entries = sample_entries()
+    session = sample_session(false)
+    entries = sample_entries(false)
 
 preset conversation_night
   state
     account = "you@example.com"
     model = "gpt-5.6-sol"
-    session = sample_session()
-    entries = sample_entries()
+    session = sample_session(true)
+    entries = sample_entries(true)
     dark = true
     active_palette = AppTheme.night
 
@@ -62,8 +62,8 @@ preset streaming
   state
     account = "you@example.com"
     model = "gpt-5.6-sol"
-    session = sample_session()
-    entries = sample_entries()
+    session = sample_session(false)
+    entries = sample_entries(false)
     busy = true
     status = "Responding"
     live_thinking = markdown("**Checking the append path**\n\nThe question is whether the tail alone is reparsed.")

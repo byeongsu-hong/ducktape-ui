@@ -13,7 +13,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use iced::widget::markdown;
-use iced::{Color, Element, Font, Padding, border};
+use iced::widget::{column, container, rich_text, scrollable};
+use iced::{Color, Element, Font, Length, Padding, border};
 
 /// Mirrors the `code` font declared in `src/ui/app.ice`.
 const MONO: &str = "Geist Mono";
@@ -27,6 +28,15 @@ const CODE_BG_LIGHT: Color = Color::from_rgb(0.94, 0.93, 0.91);
 const CODE_BG_DARK: Color = Color::from_rgb(0.17, 0.16, 0.15);
 const CODE_FG_LIGHT: Color = Color::from_rgb(0.34, 0.22, 0.14);
 const CODE_FG_DARK: Color = Color::from_rgb(0.91, 0.78, 0.64);
+/// A code block's own ground, dark under either palette — it is the one part
+/// of an answer that should be findable without reading.
+/// On paper the block is ink, and needs no edge. On ink it is a deeper well
+/// than the page, which alone is too small a step to see — so it carries an
+/// edge as well.
+const BLOCK_BG_LIGHT: Color = Color::from_rgb(0.149, 0.145, 0.122);
+const BLOCK_BG_DARK: Color = Color::from_rgb(0.047, 0.043, 0.039);
+const BLOCK_FG: Color = Color::from_rgb(0.953, 0.949, 0.937);
+const BLOCK_EDGE: Color = Color::from_rgb(0.227, 0.216, 0.200);
 
 // Parsed answers, keyed by the id of the row that owns them.
 //
@@ -68,6 +78,59 @@ fn style(dark: bool) -> markdown::Style {
     }
 }
 
+/// The default Markdown view, with the code block given its own ground.
+///
+/// iced derives a code block's container from the theme, which on a dark
+/// palette leaves it the same value as the page behind it — the block stops
+/// reading as a block at all. Everything else here is iced's own default.
+struct Blocks {
+    dark: bool,
+}
+
+impl<'a> markdown::Viewer<'a, String> for Blocks {
+    fn on_link_click(url: markdown::Uri) -> String {
+        url.to_string()
+    }
+
+    fn code_block(
+        &self,
+        settings: markdown::Settings,
+        _language: Option<&'a str>,
+        _code: &'a str,
+        lines: &'a [markdown::Text],
+    ) -> Element<'a, String> {
+        let dark = self.dark;
+        container(
+            scrollable(
+                container(column(lines.iter().map(|line| {
+                    rich_text(line.spans(settings.style))
+                        .on_link_click(Self::on_link_click)
+                        .font(settings.style.code_block_font)
+                        .size(settings.code_size)
+                        .into()
+                })))
+                .padding(settings.code_size),
+            )
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default()
+                    .width(settings.code_size / 2)
+                    .scroller_width(settings.code_size / 2),
+            )),
+        )
+        .width(Length::Fill)
+        .padding(settings.code_size / 4)
+        .style(move |_theme| container::Style {
+            text_color: Some(BLOCK_FG),
+            background: Some(if dark { BLOCK_BG_DARK } else { BLOCK_BG_LIGHT }.into()),
+            border: border::rounded(8)
+                .color(BLOCK_EDGE)
+                .width(if dark { 1.0 } else { 0.0 }),
+            ..container::Style::default()
+        })
+        .into()
+    }
+}
+
 /// One settled Markdown row. The message is the URL of a clicked link.
 pub fn markdown_body(id: i64, source: String, size: f64, dark: bool) -> Element<'static, String> {
     let size = size as f32;
@@ -84,7 +147,7 @@ pub fn markdown_body(id: i64, source: String, size: f64, dark: bool) -> Element<
     settings.code_size = (size * 0.9).into();
     settings.spacing = (size * 0.8).into();
 
-    markdown::view(items(id, &source), settings).map(|url| url.to_string())
+    markdown::view_with(items(id, &source), settings, &Blocks { dark })
 }
 
 #[cfg(test)]

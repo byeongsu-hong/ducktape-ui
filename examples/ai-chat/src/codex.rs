@@ -700,17 +700,20 @@ pub fn codex_model() -> String {
 /// conversation and every handler that changes a row goes through the session.
 /// Seeding only the drawn half would let a preset exercise a path production
 /// never takes.
-pub fn sample_session() -> Session {
+pub fn sample_session(dark: bool) -> Session {
     let session = codex_session();
-    session.lock().entries = sample_entries();
+    let mut state = session.lock();
+    state.dark = dark;
+    state.entries = sample_entries(dark);
+    drop(state);
     session
 }
 
-pub fn sample_entries() -> Vec<Entry> {
+pub fn sample_entries(dark: bool) -> Vec<Entry> {
     // Fixed, negative ids. Live rows count up from one, so a sample row can
     // never collide with a real one — in the Markdown cache or in a widget
     // path — and a test can name a row by hand.
-    let row = |id: i64, entry: Entry| Entry { id, ..entry };
+    let row = |id: i64, entry: Entry| Entry { id, dark, ..entry };
     vec![
         row(
             -1,

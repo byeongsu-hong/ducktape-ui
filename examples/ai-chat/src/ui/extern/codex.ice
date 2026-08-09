@@ -22,8 +22,8 @@ extern crate::codex
   sync push_user(session:Session, text:str) -> [Entry]
   sync set_palette(session:Session, dark:bool) -> [Entry]
   sync toggle_row(session:Session, id:i64) -> [Entry]
-  pure sample_entries() -> [Entry]
-  sync sample_session() -> Session
+  pure sample_entries(dark:bool) -> [Entry]
+  sync sample_session(dark:bool) -> Session
   stream codex_entries(session:Session) -> [Entry]
   sip codex_turn(session:Session) progress=Chunk -> [Entry] ! CodexError
 

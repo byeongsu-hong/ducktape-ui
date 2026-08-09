@@ -27,7 +27,7 @@ mod perf {
 
     /// A settled transcript of `turns` finished exchanges.
     fn transcript(turns: usize, dark: bool) -> Vec<codex::Entry> {
-        let one = codex::sample_entries();
+        let one = codex::sample_entries(false);
         let mut rows = Vec::with_capacity(turns * one.len());
         for turn in 0..turns {
             for (index, row) in one.iter().enumerate() {
