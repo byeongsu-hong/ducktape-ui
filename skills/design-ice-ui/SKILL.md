@@ -36,8 +36,12 @@ Apply these rules before editing:
 - Pass component inputs explicitly. Components do not capture app state.
   Declare slots explicitly; every declared slot is required and receives one
   root.
-- Use the small closed Ice expression language. Move missing domain operations
-  behind typed `sync` or async extern functions instead of embedding Rust.
+- Use the small closed Ice expression language. Move deterministic missing
+  domain operations behind typed `pure` externs, immediate effects/environment
+  reads/retained identity behind app-initializer-or-immediate-handler-only
+  `sync` externs, and asynchronous work behind async externs instead of
+  embedding Rust. Async completion route expressions run later and are
+  pure-only.
 - Prefer the canonical checked representation recorded for the pinned Iced
   capability: direct Ice syntax for common concepts and a typed Rust adapter
   for higher-order or custom native behavior. Do not add a keyword merely to
@@ -115,7 +119,8 @@ Choose the boundary first:
 | --- | --- |
 | layout, display state, styling, event route | `.ice` |
 | reusable view with explicit inputs/slots | Ice `component` |
-| pure domain conversion missing from expressions | Rust + `sync` extern |
+| pure domain conversion missing from expressions | Rust + `pure` extern |
+| immediate effect, environment read, or retained identity | Rust + `sync` extern in a top-level app state initializer or immediately evaluated app/component/preset handler expression; never an async completion route expression |
 | I/O or ordinary future | Rust async function + bare extern + `run` |
 | existing `iced::Task` | Rust `task` extern + `task` statement |
 | custom widget, shader, subscription, or style | matching typed extern adapter |

@@ -1,3 +1,3 @@
 extern crate::backend
-  sync border_round_trip(value:border) -> border
-  sync radius_round_trip(value:radius) -> radius
+  pure border_round_trip(value:border) -> border
+  pure radius_round_trip(value:radius) -> radius

@@ -200,7 +200,7 @@ if [[ $diagnostic_status -eq 0 ]]; then
   exit 1
 fi
 if ! grep -Fq 'src/ui/extern/backend.ice:2:1:' <<< "$diagnostic" ||
-  ! grep -Fq 'sync greeting(name:str) -> str' <<< "$diagnostic" ||
+  ! grep -Fq 'pure greeting(name:str) -> str' <<< "$diagnostic" ||
   ! grep -Fq 'note: generated Rust location:' <<< "$diagnostic"; then
   echo "packaged cargo-ice did not source-map the extern failure" >&2
   printf '%s\n' "$diagnostic" >&2

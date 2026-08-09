@@ -8,9 +8,9 @@
 // the venue it does not come from is how the two got mixed up in the first
 // place.
 extern crate::lighter
-  sync demo_address_lighter() -> str
-  sync demo_symbols_lighter() -> [SymbolRow]
-  sync demo_account_lighter() -> Account
-  sync demo_positions_lighter() -> [Position]
-  sync demo_book_lighter() -> Book
-  sync demo_tape_lighter() -> [Trade]
+  pure demo_address_lighter() -> str
+  pure demo_symbols_lighter() -> [SymbolRow]
+  pure demo_account_lighter() -> Account
+  pure demo_positions_lighter() -> [Position]
+  pure demo_book_lighter() -> Book
+  pure demo_tape_lighter() -> [Trade]

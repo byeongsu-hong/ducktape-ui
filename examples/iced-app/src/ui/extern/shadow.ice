@@ -1,2 +1,2 @@
 extern crate::backend
-  sync shadow_round_trip(value:shadow) -> shadow
+  pure shadow_round_trip(value:shadow) -> shadow

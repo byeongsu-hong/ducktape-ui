@@ -10,6 +10,7 @@ pub struct DocumentFile {
     pub path: String,
     pub name: String,
     pub source: String,
+    pub saved_revision: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -38,7 +39,7 @@ pub async fn open_document() -> Result<DocumentFile, EditorError> {
     let source = String::from_utf8(file.read().await).map_err(|error| EditorError {
         message: format!("The selected file is not valid UTF-8: {error}"),
     })?;
-    Ok(document_file(file.path(), source))
+    Ok(document_file(file.path(), source, -1))
 }
 
 async fn save_document(
@@ -49,8 +50,7 @@ async fn save_document(
     std::fs::write(&path, &source).map_err(|error| EditorError {
         message: format!("Could not save {path}: {error}"),
     })?;
-    crate::editor::mark_saved(revision);
-    Ok(document_file(Path::new(&path), source))
+    Ok(document_file(Path::new(&path), source, revision))
 }
 
 pub async fn save_document_as(
@@ -76,8 +76,7 @@ pub async fn save_document_as(
         .map_err(|error| EditorError {
             message: format!("Could not save {}: {error}", file.path().display()),
         })?;
-    crate::editor::mark_saved(revision);
-    Ok(document_file(file.path(), source))
+    Ok(document_file(file.path(), source, revision))
 }
 
 pub async fn save_current(
@@ -230,14 +229,19 @@ pub fn compact_file_name(name: String) -> String {
     format!("{prefix}…")
 }
 
-fn document_file(path: &Path, source: String) -> DocumentFile {
+fn document_file(path: &Path, source: String, saved_revision: i64) -> DocumentFile {
     let path = normalize_path(path);
     let name = Path::new(&path)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("Untitled.md")
         .to_owned();
-    DocumentFile { path, name, source }
+    DocumentFile {
+        path,
+        name,
+        source,
+        saved_revision,
+    }
 }
 
 fn cancelled_file() -> DocumentFile {
@@ -245,6 +249,7 @@ fn cancelled_file() -> DocumentFile {
         path: String::new(),
         name: String::new(),
         source: String::new(),
+        saved_revision: -1,
     }
 }
 

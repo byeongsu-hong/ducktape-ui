@@ -61,6 +61,40 @@ mod tests {
     }
 
     #[test]
+    fn save_completion_marks_only_the_revision_written_to_disk() {
+        let (mut app, _) = MarkdownEditor::__boot();
+        app.document = crate::editor::reset_document("hello".into());
+
+        let edit = |character| {
+            __MarkdownEditorMessage::EditDocument(RichEditorAction::Edit(Action::Edit(
+                Edit::Insert(character),
+            )))
+        };
+        let saved = |revision| {
+            __MarkdownEditorMessage::Saved(crate::document::DocumentFile {
+                path: "/tmp/notes.md".into(),
+                name: "notes.md".into(),
+                source: "saved".into(),
+                saved_revision: revision,
+            })
+        };
+
+        let _ = app.__update(edit('!'));
+        assert!(app.history.dirty);
+        let written = app.history.revision;
+        let _ = app.__update(saved(written));
+        assert!(!app.history.dirty);
+
+        let _ = app.__update(edit('?'));
+        assert!(app.history.dirty);
+        let _ = app.__update(saved(written));
+        assert!(
+            app.history.dirty,
+            "a completion for an older snapshot must not mark the newer edit as saved"
+        );
+    }
+
+    #[test]
     fn clicking_a_shell_action_clears_editor_selection() {
         let (mut app, _) = MarkdownEditor::__boot();
         app.document = crate::editor::reset_document("hello".into());

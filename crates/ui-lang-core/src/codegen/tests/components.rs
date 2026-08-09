@@ -4,7 +4,7 @@ use super::*;
 fn lowers_multiple_extern_namespaces() {
     let source = r#"app Plugins
 extern crate::backend
-  sync title() -> str
+  pure title() -> str
 extern ducktape_ui::ice
   component native_switch(checked:bool) -> bool
 theme contract AppTheme
@@ -1152,7 +1152,7 @@ view
 fn owns_default_component_strings_passed_to_extern_functions() {
     let source = r#"app Defaults
 extern crate::backend
-  sync normalize(value:str) -> str
+  pure normalize(value:str) -> str
 theme contract AppTheme
   bg
   fg

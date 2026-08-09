@@ -5568,7 +5568,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write(
             "ui.ice",
-            "extern crate::backend\n  sync label(value:str) -> str\nenum Mode\n  idle\nrecipe panel for text\n  @text-fg\ncomponent Card()\n  text \"Card\"\n",
+            "extern crate::backend\n  pure label(value:str) -> str\nenum Mode\n  idle\nrecipe panel for text\n  @text-fg\ncomponent Card()\n  text \"Card\"\n",
         );
         let prefix = "app Demo\nuse \"ui.ice\" as ui\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
         for (name, suffix, selected) in [

@@ -50,7 +50,7 @@ fn exposes_editor_cursor_state_and_native_action_adapters() {
     let source = r#"app Composer
 extern crate::backend
   editor-action track_edits()
-  sync ignore_shortcut(press:key-press) -> unit?
+  pure ignore_shortcut(press:key-press) -> unit?
 theme contract AppTheme
   bg
   fg
@@ -284,7 +284,7 @@ fn lowers_complex_native_controls() {
     let source = r#"app Controls
 extern crate::backend
   SliderNumber()
-  sync slider_number(value:f64) -> SliderNumber
+  pure slider_number(value:f64) -> SliderNumber
   slider-style dynamic_slider(active:bool)
   progress-style dynamic_progress(active:bool)
   radio-style dynamic_radio(highlight:bool)

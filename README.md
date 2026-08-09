@@ -80,6 +80,15 @@ view
         button "Add" disabled=!can_submit p=12.0 @bg-primary text-white -> submit
 ```
 
+`derived` names a read-only computation over state. It may use deterministic
+Ice built-ins or a declared `pure` extern and is recomputed when read; it is not
+cached state that handlers must keep synchronized. `pure` is a trusted Rust
+contract: the same arguments must produce the same value without observable
+effects. Immediate `sync` externs may observe the environment, perform an
+effect, or create retained identity, so Ice confines them to top-level app state
+initializers and immediately evaluated handler expressions. Async completion
+route expressions are evaluated later and may call only `pure` externs.
+
 The punctuation has one job each:
 
 - indentation is the tree;

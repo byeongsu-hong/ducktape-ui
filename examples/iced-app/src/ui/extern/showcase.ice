@@ -6,7 +6,7 @@ extern crate::backend
   list_tasks() -> [Task] ! AppError
   create_task(title:str) -> [Task] ! AppError
   set_task_done(id:i64, done:bool) -> [Task] ! AppError
-  sync slider_number(value:f64) -> SliderNumber
+  pure slider_number(value:f64) -> SliderNumber
   component native_help(active:bool) -> bool
   component borrowed_help(label:&str, active:&bool) -> bool
   markdown-viewer docs_viewer(prefix:str) -> str

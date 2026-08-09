@@ -7,7 +7,7 @@ running work, consuming native Iced capabilities, or testing generated apps.
 
 - [Cargo and entry point](#cargo-and-entry-point)
 - [Extern namespace and structs](#extern-namespace-and-structs)
-- [Pure sync functions](#pure-sync-functions)
+- [Pure functions and immediate sync calls](#pure-functions-and-immediate-sync-calls)
 - [Async futures and result routes](#async-futures-and-result-routes)
 - [Native task adapters](#native-task-adapters)
 - [Streams, sippers, groups, and cancellation](#streams-sippers-groups-and-cancellation)
@@ -137,15 +137,15 @@ Common mappings:
 
 Use the complete type table in `SPEC.md` section 5 for native Iced types.
 
-## Pure sync functions
+## Pure functions and immediate sync calls
 
-Use `sync` for a pure conversion the closed expression language does not
-provide:
+Use `pure` for a deterministic, side-effect-free conversion the closed
+expression language does not provide:
 
 ```ice
 extern crate::backend
   NetworkError(message:str)
-  sync normalize_error(error:NetworkError) -> str
+  pure normalize_error(error:NetworkError) -> str
 
 on network_failed(cause)
   error = normalize_error(cause)
@@ -159,15 +159,38 @@ pub fn normalize_error(error: NetworkError) -> String {
 }
 ```
 
-A sync extern:
+A `pure` extern:
 
 - may be called in checked Ice expressions;
+- may be reevaluated in derived values, views, settings, component defaults and
+  state initializers, subscription filters, easing, handlers, and tests;
 - returns its value directly;
 - cannot declare `! Error`;
-- should be deterministic and side-effect-free;
+- promises the same result for the same arguments and no observable side
+  effects;
 - must not become a back door for arbitrary rendering logic.
 
-Declared sync calls take precedence over built-ins with the same name.
+The compiler checks the signature but cannot inspect the Rust body. Treat
+`pure` as a trusted backend contract, not an optimization hint.
+
+Use `sync` when the call must run immediately and may perform an effect, read
+the environment, or create retained identity. It is valid in a top-level app
+state initializer or an immediately evaluated app, component, or preset handler
+expression, including `let` initializers, assignment right-hand sides, guards,
+and arguments inside nested task statements. A component state initializer
+cannot call it because component rendering may initialize local state again.
+Derived values, component defaults, and component state initializers also reject
+recomputation-unsafe built-ins: `window_id.unique`, `aborted`,
+`debug.time_with`, `image.upgrade`, the unqualified `encoded` and `rgba` image
+constructors, and animation queries with an omitted instant. This category
+covers both runtime reads and fresh retained identities. The checker permits
+these built-ins in top-level app state initializers, handlers, and views. Capture
+the needed value or identity in app state or an immediately evaluated handler
+expression when it must remain stable, then pass it to `pure` functions used by
+recomputed expressions.
+
+Declared `pure` and `sync` calls take precedence over built-ins with the same
+name. Neither kind may declare `! Error`.
 
 ## Async futures and result routes
 
@@ -204,7 +227,10 @@ on submit
 
 `run` lowers to `iced::Task::perform`. A fallible declaration requires both
 routes; an infallible declaration forbids the failure route. The task statement
-must be last.
+must be last. Its arguments are evaluated immediately and may call a declared
+`sync` extern, including inside nested task groups. A completion route expression
+is evaluated later when the callback runs, so declared extern calls there are
+pure-only and `sync` is rejected.
 
 Inside a stateful component, `run latest` filters stale completion from the
 same component instance and call site:
@@ -357,7 +383,7 @@ Rules:
   Iced dispatch status.
 - Use `with=<hashable expression>` to make context part of identity and prepend
   it to route payloads.
-- Use `filter=<sync function>` for a typed `filter_map`.
+- Use `filter=<pure function>` for a typed `filter_map`.
 - Use `event raw` only with deliberate filtering/routing; redraw events can
   otherwise create a loop.
 

@@ -26,7 +26,6 @@ state
   interval = "1m"
   query = ""
   symbols:[SymbolRow] = []
-  visible:[SymbolRow] = []
   focus:SymbolRow? = none
   tape:Tape = tape_new()
   account:Account? = none
@@ -46,6 +45,7 @@ state
   error = ""
   feeds:task-handle? = none
   latency = 0
+  clock:i64 = now_seconds()
   live = false
   feed_error = ""
   flashing = false
@@ -53,6 +53,7 @@ state
   lower_height = 232.0
 
 derived
+  visible = filter_symbols(symbols, query, coin)
   watching = !gate && !empty(address)
 
 preset gate
@@ -66,7 +67,6 @@ preset held
     gate = false
     address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
     symbols = demo_symbols()
-    visible = demo_symbols()
     focus = symbol_row(demo_symbols(), "BTC")
     positions = demo_positions()
     account = some(demo_account())
@@ -99,7 +99,6 @@ preset lighter
     venue = Venue.lighter
     address = demo_address_lighter()
     symbols = demo_symbols_lighter()
-    visible = demo_symbols_lighter()
     focus = symbol_row(demo_symbols_lighter(), "BTC")
     positions = demo_positions_lighter()
     account = some(demo_account_lighter())
@@ -124,7 +123,6 @@ preset unbanked
     venue = Venue.lighter
     address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
     symbols = demo_symbols_lighter()
-    visible = demo_symbols_lighter()
     focus = symbol_row(demo_symbols_lighter(), "BTC")
     book = some(demo_book_lighter())
     tape_prints = demo_tape_lighter()
@@ -134,7 +132,6 @@ preset browsing
   state
     gate = false
     symbols = demo_symbols()
-    visible = demo_symbols()
     focus = symbol_row(demo_symbols(), "BTC")
     quote = price_ticket("", "", "5", symbol_row(demo_symbols(), "BTC"), true, 0.0)
     tape = demo_candles()
@@ -147,7 +144,6 @@ preset at_risk
     gate = false
     address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
     symbols = demo_symbols_at_risk()
-    visible = demo_symbols_at_risk()
     focus = symbol_row(demo_symbols_at_risk(), "BTC")
     positions = demo_positions_at_risk()
     account = some(demo_account_at_risk())
@@ -164,7 +160,6 @@ preset hovering
     gate = false
     address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
     symbols = demo_symbols()
-    visible = demo_symbols()
     focus = symbol_row(demo_symbols(), "BTC")
     positions = demo_positions()
     account = some(demo_account())
@@ -180,7 +175,6 @@ preset busy
     gate = false
     address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
     symbols = demo_symbols_many()
-    visible = demo_symbols_many()
     focus = symbol_row(demo_symbols_many(), "BTC")
     positions = demo_positions()
     account = some(demo_account())
@@ -201,7 +195,6 @@ preset penny
     coin = "kPEPE"
     address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
     symbols = demo_symbols()
-    visible = demo_symbols()
     focus = symbol_row(demo_symbols(), "kPEPE")
     account = some(demo_account())
     tape = demo_candles_for("kPEPE", 0.008421)
@@ -217,7 +210,6 @@ preset stalled
     gate = false
     address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
     symbols = demo_symbols()
-    visible = demo_symbols()
     focus = symbol_row(demo_symbols(), "BTC")
     positions = demo_positions()
     account = some(demo_account())

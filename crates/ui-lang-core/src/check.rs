@@ -98,9 +98,11 @@ fn check(
         .iter()
         .map(preset_handler)
         .collect::<Vec<_>>();
+    let empty_initializer_env = HashMap::new();
+    let initializer_env = SyncTypeEnv::new(&empty_initializer_env);
     for (index, state) in document.states.iter().enumerate() {
         let analysis =
-            expr::analyze_expr_types(&state.initial, &HashMap::new(), document, &state.span)?;
+            expr::analyze_expr_types(&state.initial, &initializer_env, document, &state.span)?;
         let actual = analysis
             .type_of(&state.initial)
             .cloned()
@@ -143,7 +145,7 @@ fn check(
                 .and_then(|options| options.easing.as_deref())
                 && !ANIMATION_EASINGS.contains(&easing)
             {
-                let function = extern_function(document, easing, ExternKind::Sync, &state.span)?;
+                let function = extern_function(document, easing, ExternKind::Pure, &state.span)?;
                 if function.params.len() != 1
                     || function.params[0].1 != Type::F64
                     || function.output != Type::F64
@@ -153,7 +155,7 @@ fn check(
                         "E103",
                         &state.span,
                         format!(
-                            "animation easing `{easing}` must be `sync {easing}(value:f64) -> f64`"
+                            "animation easing `{easing}` must be `pure {easing}(value:f64) -> f64`"
                         ),
                     ));
                 }
@@ -200,6 +202,17 @@ fn check(
                         ),
                     ));
                 }
+                if let Some(function) = recomputation_unsafe_builtin_call(default, document) {
+                    return Err(Error::new(
+                        "E103",
+                        &component.span,
+                        format!(
+                            "component prop `{}` default cannot call recomputation-unsafe builtin `{function}`",
+                            param.name
+                        ),
+                    )
+                    .hint("capture the runtime value in app state and pass it as an explicit prop"));
+                }
                 let analysis =
                     expr::analyze_expr_types(default, &HashMap::new(), document, &component.span)?;
                 let actual = analysis.type_of(default).cloned().ok_or_else(|| {
@@ -224,6 +237,17 @@ fn check(
             }
         }
         for (state_index, state) in component.states.iter().enumerate() {
+            if let Some(function) = recomputation_unsafe_builtin_call(&state.initial, document) {
+                return Err(Error::new(
+                    "E103",
+                    &state.span,
+                    format!(
+                        "component state `{}` initializer cannot call recomputation-unsafe builtin `{function}`",
+                        state.name
+                    ),
+                )
+                .hint("capture the runtime value in app state or assign component state from a handler"));
+            }
             let analysis =
                 expr::analyze_expr_types(&state.initial, &HashMap::new(), document, &state.span)?;
             let actual = analysis.type_of(&state.initial).cloned().ok_or_else(|| {
@@ -664,6 +688,52 @@ fn sync_extern_call<'a>(expr: &'a Expr, document: &Document) -> Option<&'a str> 
     }
 }
 
+fn recomputation_unsafe_builtin_call<'a>(expr: &'a Expr, document: &Document) -> Option<&'a str> {
+    match expr {
+        Expr::Call { name, args } => {
+            let extern_shadows_builtin = document.functions.iter().any(|function| {
+                function.name == *name
+                    && matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
+            });
+            let builtin = crate::unqualified_name(name);
+            let implicit_animation_clock = matches!(
+                (builtin, args.len()),
+                ("animation.animating" | "animation.remaining", 1)
+                    | ("animation.interpolate" | "animation.project", 3)
+            );
+            (!extern_shadows_builtin
+                && (matches!(
+                    builtin,
+                    "window_id.unique"
+                        | "aborted"
+                        | "debug.time_with"
+                        | "image.upgrade"
+                        | "encoded"
+                        | "rgba"
+                ) || implicit_animation_clock))
+                .then_some(name.as_str())
+                .or_else(|| {
+                    args.iter()
+                        .find_map(|argument| recomputation_unsafe_builtin_call(argument, document))
+                })
+        }
+        Expr::List(values) => values
+            .iter()
+            .find_map(|value| recomputation_unsafe_builtin_call(value, document)),
+        Expr::Unary { value, .. } => recomputation_unsafe_builtin_call(value, document),
+        Expr::Binary { left, right, .. } => recomputation_unsafe_builtin_call(left, document)
+            .or_else(|| recomputation_unsafe_builtin_call(right, document)),
+        Expr::Bool(_)
+        | Expr::I64(_)
+        | Expr::F64(_)
+        | Expr::Str(_)
+        | Expr::Bytes(_)
+        | Expr::EmptyList
+        | Expr::None
+        | Expr::Path(_) => None,
+    }
+}
+
 fn check_derived(
     document: &mut Document,
     states: &HashMap<String, Type>,
@@ -735,16 +805,34 @@ fn check_derived(
                 return Ok(ty.clone());
             }
             self.marks[index] = 1;
-            if sync_extern_call(&self.document.derived[index].value, self.document).is_some() {
+            if let Some(function) =
+                sync_extern_call(&self.document.derived[index].value, self.document)
+            {
                 let derived = &self.document.derived[index];
                 return Err(Error::new(
                     "E103",
                     &derived.span,
                     format!(
-                        "derived value `{}` must use a pure Ice expression",
+                        "derived value `{}` cannot call sync extern `{function}`",
                         derived.name
                     ),
-                ));
+                )
+                .hint("declare a deterministic, side-effect-free Rust function as `pure`"));
+            }
+            if let Some(function) = recomputation_unsafe_builtin_call(
+                &self.document.derived[index].value,
+                self.document,
+            ) {
+                let derived = &self.document.derived[index];
+                return Err(Error::new(
+                    "E103",
+                    &derived.span,
+                    format!(
+                        "derived value `{}` cannot call recomputation-unsafe builtin `{function}`",
+                        derived.name
+                    ),
+                )
+                .hint("capture the runtime value in state from an initializer or handler, then derive from that state"));
             }
             let mut env = self.states.clone();
             let mut deps = Vec::new();
@@ -905,7 +993,7 @@ use widgets::*;
 
 pub(crate) use expr::fields::field_type;
 pub(crate) use expr::signature::{BuiltinArgumentContext, ContextualBuiltin, unify_type_evidence};
-pub(crate) use expr::{ExprTypeEnv, ScopedTypeEnv, canonical_builtin_type, expr_type};
+pub(crate) use expr::{ExprTypeEnv, ScopedTypeEnv, SyncTypeEnv, canonical_builtin_type, expr_type};
 use expr::{check_length_value, contains_ui_enum};
 #[cfg(test)]
 pub(crate) use facts::CheckedFactMetrics;

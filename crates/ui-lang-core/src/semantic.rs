@@ -286,6 +286,7 @@ pub enum ExternKind {
     Recipe,
     Selector,
     EventFilter,
+    Pure,
     Sync,
     Subscription,
     Theme,

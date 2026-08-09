@@ -25,7 +25,8 @@ Stop at the first row that meets the need:
 | --- | --- |
 | common layout/control/content | Core `.ice` construct |
 | reusable view structure | Ice component + explicit props/slots |
-| pure conversion | Rust `sync` extern |
+| pure conversion | Rust `pure` extern |
+| immediate effect, environment read, retained identity | Rust `sync` extern in a top-level app state initializer or immediately evaluated handler expression, not an async completion route |
 | domain/I/O future | bare async extern + `run` |
 | covered native operation | built-in `task`/widget/window/pane statement |
 | existing native task/stream/subscription | matching typed extern |

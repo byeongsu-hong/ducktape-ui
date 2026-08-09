@@ -93,8 +93,9 @@ Then copy this example's three-file recipe: the adapter module that re-exports
 
 The Ice/Rust boundary is one extern block
 ([`src/ui/extern/market.ice`](src/ui/extern/market.ice)): an opaque
-`MarketFeed` handle constructed by a `sync` extern, a `subscription` extern
-that emits lightweight `Tick` notices (revision, last price, direction), two
-formatting helpers, and one `component` adapter that renders the chart from
-the shared tape. Candles themselves never cross into Ice; the `Tick` notice
-is the Elm-side invalidation signal and the header's live price.
+`MarketFeed` handle constructed once in top-level app state by a retained-
+identity `sync` extern, a `subscription` extern that emits lightweight `Tick`
+notices (revision, last price, direction), two `pure` formatting helpers, and
+one `component` adapter that renders the chart from the shared tape. Candles
+themselves never cross into Ice; the `Tick` notice is the Elm-side invalidation
+signal and the header's live price.

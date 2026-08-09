@@ -557,6 +557,8 @@ fn parse_document(
                         ));
                     }
                     functions.push(function);
+                } else if let Some(source) = item.text.strip_prefix("pure ") {
+                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Pure)?);
                 } else if let Some(source) = item.text.strip_prefix("sync ") {
                     functions.push(parse_extern_fn(source, item, &path, ExternKind::Sync)?);
                 } else if let Some(source) = item.text.strip_prefix("subscription ") {
@@ -819,9 +821,10 @@ fn parse_document(
                 Expr::Call { name, .. }
                     if matches!(crate::unqualified_name(name), "encoded" | "rgba") =>
                 {
-                    functions
-                        .iter()
-                        .any(|function| function.kind == ExternKind::Sync && function.name == *name)
+                    functions.iter().any(|function| {
+                        matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
+                            && function.name == *name
+                    })
                 }
                 Expr::List(values) => values
                     .iter()
@@ -847,7 +850,7 @@ fn parse_document(
         return Err(Error::new(
             "E031",
             &state.span,
-            "state requires an explicit type when a sync function shadows `encoded` or `rgba`",
+            "state requires an explicit type when a `pure` or `sync` function shadows `encoded` or `rgba`",
         ));
     }
 

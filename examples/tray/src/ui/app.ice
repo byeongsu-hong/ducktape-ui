@@ -23,11 +23,11 @@ font sans family="Geist" default=true
 font digits family="Geist Mono"
 
 extern crate::timer
-  sync clock(seconds:i64) -> str
-  sync elapsed_width(remaining:i64, width:f64) -> f64
-  sync remaining_width(remaining:i64, width:f64) -> f64
-  sync phase(running:bool, remaining:i64) -> str
-  sync minute_label(minutes:i64) -> str
+  pure clock(seconds:i64) -> str
+  pure elapsed_width(remaining:i64, width:f64) -> f64
+  pure remaining_width(remaining:i64, width:f64) -> f64
+  pure phase(running:bool, remaining:i64) -> str
+  pure minute_label(minutes:i64) -> str
 
 component Choice(minutes:i64, session:i64)
   emits
