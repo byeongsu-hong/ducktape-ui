@@ -6,7 +6,8 @@ description: Design, write, modify, explain, debug, format, and verify Ice UI la
 # Design Ice UI
 
 Design and build against Ice's checked indentation-based language and typed
-Rust boundary. Treat the compiler, generated schema, and live LSP as
+Rust boundary. Together they cover the pinned public, application-facing Iced
+surface. Treat the compiler, generated schema, coverage ledger, and live LSP as
 authorities. Do not invent syntax by analogy with React or Iced's Rust API.
 
 Use the references as decision aids, not rituals to execute wholesale. Choose
@@ -37,8 +38,11 @@ Apply these rules before editing:
   root.
 - Use the small closed Ice expression language. Move missing domain operations
   behind typed `sync` or async extern functions instead of embedding Rust.
-- Prefer Core constructs. Use an existing typed Rust adapter for unusual native
-  behavior; do not extend the DSL merely to mirror another Iced method.
+- Prefer the canonical checked representation recorded for the pinned Iced
+  capability: direct Ice syntax for common concepts and a typed Rust adapter
+  for higher-order or custom native behavior. Do not add a keyword merely to
+  mirror another Iced method, and do not treat a missing application-facing
+  capability as outside the language contract.
 - When the `ducktape-ui` source interface exists at a stable relative path,
   import its `default.ice` once and reuse its checked components and recipes
   before declaring local equivalents. A Cargo dependency alone does not create
@@ -115,7 +119,7 @@ Choose the boundary first:
 | I/O or ordinary future | Rust async function + bare extern + `run` |
 | existing `iced::Task` | Rust `task` extern + `task` statement |
 | custom widget, shader, subscription, or style | matching typed extern adapter |
-| common missing authoring concept | propose a language revision; do not improvise syntax |
+| missing public application-facing Iced capability | inspect the coverage ledger, then add one checked direct or typed representation through a language revision |
 
 Keep one canonical spelling and follow nearby formatting. Add no compatibility
 aliases, wrapper components, state mirrors, or new dependencies unless the

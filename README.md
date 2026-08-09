@@ -1,8 +1,10 @@
 # Ice
 
-Ice is a small, statically checked frontend language that compiles to
-[iced](https://iced.rs/). Humans write the screen and interaction flow in
-compact `.ice` files; Rust keeps domain rules, I/O, and custom platform code.
+Ice is a statically checked declarative frontend language for
+[iced](https://iced.rs/). It covers the pinned public, application-facing iced
+surface through canonical Ice syntax and typed Rust boundaries. Humans write
+the screen and interaction flow in compact `.ice` files; Rust keeps domain
+rules, I/O, and custom platform code.
 
 ```text
 .ice source -> parser -> semantic checker -> normalized HIR -> generated Rust -> iced
@@ -96,7 +98,7 @@ authoring surface is defined in [`SPEC.md`](SPEC.md), and the
 
 ## Accessibility
 
-Ice lowers a small Core surface into a deterministic AccessKit tree:
+Ice lowers its checked control surface into a deterministic AccessKit tree:
 
 | Ice node | AccessKit role | Exported state |
 | --- | --- | --- |
@@ -244,19 +246,20 @@ further.
 
 ## Status
 
-Ice 2.0 Preview is an executable language candidate, not an attempt to replace
-iced. Its implemented authoring Core is app/state/derived/component/handler/view
-structure, component-local state, `match`, common layout and widgets, checked
-event routing, typed Rust effects, and first-class headless tests. The extended
-native surface remains available through typed `Element`, `Task`,
-`Subscription`, style, and component boundaries without growing Core merely for
-API parity. Language revisions and Cargo package versions are intentionally
-separate: the specification is the 2.0 Preview candidate; the workspace
-packages use pre-1.0 SemVer `0.1.0`.
+Ice 2.0 Preview is an executable language candidate for the complete public,
+application-facing surface of its pinned iced baseline. Common UI concepts use
+direct declarative syntax; higher-order and custom native behavior uses checked
+`Element`, `Task`, `Subscription`, style, component, and value boundaries.
+Completeness belongs to that combined authoring surface and does not require a
+dedicated keyword for every Rust method. Language revisions and Cargo package
+versions are intentionally separate: the specification is the 2.0 Preview
+candidate; the workspace packages use pre-1.0 SemVer `0.1.0`.
 
 [`SPEC.md`](SPEC.md) defines the Core and backend boundary.
-[`COVERAGE.md`](COVERAGE.md) inventories the existing iced 0.14 surface; it is
-not a roadmap for adding missing native syntax.
+[`COVERAGE.md`](COVERAGE.md) is the versioned completeness contract for the
+pinned iced 0.14 surface. A future iced baseline is not complete while an
+application-facing row remains partial or missing; a gap may close through
+canonical Ice syntax or a typed boundary.
 [`docs/decisions`](docs/decisions) records accepted boundaries (`Accepted` is a
 normative direction, not a support claim), with the matching
 [feature evidence contracts](docs/feature-evidence-contracts.md).
