@@ -28,7 +28,9 @@ use crate::hyperliquid::{
     Account, Fill, HlError, MarketTick, Order, SymbolRow, Tape, hl_account, hl_candles,
     hl_fill_feed, hl_history, hl_market_feed, hl_orders, hl_symbols,
 };
-use crate::lighter::{lighter_account, lighter_market_feed, lighter_symbols};
+use crate::lighter::{
+    lighter_account, lighter_candles, lighter_history, lighter_market_feed, lighter_symbols,
+};
 
 /// What the screen calls a venue.
 ///
@@ -147,7 +149,7 @@ impl Reads {
         fill_feed: hl_fill_feed,
     };
 
-    /// Lighter, wired to what its adapter publishes and stating the four it
+    /// Lighter, wired to what its adapter publishes and stating the two it
     /// cannot serve. The closures are here rather than in `lighter.rs` because
     /// the box is this seam's cost, not the adapter's: an adapter that
     /// returned a boxed future would pay for it even when called directly.
@@ -155,17 +157,13 @@ impl Reads {
     /// A gap answers empty rather than failing, because a venue that does not
     /// carry a channel has not broken: an error here would raise the app's
     /// alarm line over something that is working exactly as documented. What
-    /// tells the reader is `venue_orders_note`, `venue_fills_note` and
-    /// `venue_chart_note`, in the panel that would otherwise be blank.
+    /// tells the reader is `venue_orders_note` and `venue_fills_note`, in the
+    /// panel that would otherwise be blank.
     pub const LIGHTER: Reads = Reads {
         venue: Venue::Lighter,
         markets: || Box::pin(lighter_symbols()),
-        // No candle history exists to ask for: `/candlesticks` answers 403
-        // from CloudFront, and `candle/<id>/<res>` answers a subscription with
-        // the one bar now forming on all eight resolutions it quotes. So the
-        // tape fills forward off the feed alone, from nothing.
-        candles: |_tape, _coin, _interval| Box::pin(async { Ok(0) }),
-        history: |_tape, _coin, _interval| Box::pin(async { Ok(0) }),
+        candles: |tape, coin, interval| Box::pin(lighter_candles(tape, coin, interval)),
+        history: |tape, coin, interval| Box::pin(lighter_history(tape, coin, interval)),
         account: |address| Box::pin(lighter_account(address)),
         // `account_all/<index>` and the order channels are keyed by account
         // index rather than L1 address, and want an API-key-signed token an
@@ -308,22 +306,6 @@ pub fn venue_fills_note(venue: Venue, watching: bool) -> String {
     }
 }
 
-/// What the chart owes the reader about the bars it is drawing, or nothing
-/// when the venue backfills like a chart is expected to.
-///
-/// Lighter's chart opens empty and gains one bar per interval. Left unsaid,
-/// a one-bar chart reads as a market that has not traded.
-pub fn venue_chart_note(venue: Venue) -> String {
-    match venue {
-        Venue::Hyperliquid => String::new(),
-        Venue::Lighter => {
-            "Lighter publishes no candle history — this chart starts empty and gains a bar per \
-             interval."
-                .to_owned()
-        }
-    }
-}
-
 /// What a market's margin engine holds a position to.
 ///
 /// The one figure in the ticket's arithmetic that is a venue's rule rather
@@ -450,7 +432,7 @@ pub fn previous_close(price: f64, change_pct: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hyperliquid::hl_symbols;
+    use crate::hyperliquid::{hl_symbols, tape_new};
     // The book is not on `Reads` — the app never asks a venue for one — so the
     // live seam test reaches the adapter's own read directly.
     use crate::lighter::lighter_book;
@@ -530,11 +512,44 @@ mod tests {
             venue_fills_note(Venue::Hyperliquid, false),
             "Fills need an address."
         );
+    }
 
-        // The chart's gap is a venue's fact rather than an account's, so it
-        // takes no `watching` and it is empty on the venue that backfills.
-        assert!(venue_chart_note(Venue::Hyperliquid).is_empty());
-        assert!(venue_chart_note(Venue::Lighter).contains("no candle history"));
+    /// The chart's read on the other venue is a read, not a zero.
+    ///
+    /// The failure this guards is a `candles` that answers `Ok(0)` for every
+    /// market and every width, which leaves a chart opened on Lighter holding
+    /// the single bar the feed is forming rather than the window it asked for.
+    /// Nothing about an answer of that shape says so: it succeeds, and a chart
+    /// with nothing in it is what a market that has not traded looks like too.
+    ///
+    /// So the oracle is the pair of answers only a real read can give. A width
+    /// the venue does not quote is refused by name, before any request is
+    /// made; a width it does quote goes to the wire, which is closed under
+    /// test and says so. A stub gives neither, and neither does a read wired
+    /// to the wrong venue.
+    #[test]
+    fn the_other_venues_chart_reads_its_candles_rather_than_answering_zero() {
+        let ask = |interval: &str| {
+            smol::block_on(venue_candles(
+                Venue::Lighter,
+                tape_new(),
+                "BTC".to_owned(),
+                interval.to_owned(),
+            ))
+        };
+
+        let refused = ask("3h").expect_err("3h is not a width this venue quotes");
+        assert!(refused.message.contains("3h"), "{}", refused.message);
+        // And it says what could have been asked for instead, which is the
+        // venue's own list rather than the app's tabs.
+        assert!(refused.message.contains("30m, 1h"), "{}", refused.message);
+
+        let reached = ask("1h").expect_err("the wire is closed under test");
+        assert!(
+            reached.message.contains("no wire under test"),
+            "a quoted width should reach the venue, got: {}",
+            reached.message
+        );
     }
 
     /// No account is two different facts and the strip has one line to say
@@ -576,15 +591,6 @@ mod tests {
     fn a_gap_answers_empty_rather_than_failing() {
         let lighter = Reads::of(Venue::Lighter);
         smol::block_on(async {
-            let tape = crate::hyperliquid::tape_new();
-            let bars = (lighter.candles)(tape.clone(), "BTC".to_owned(), "1m".to_owned())
-                .await
-                .expect("a gap is not a failure");
-            assert_eq!(bars, 0);
-            let older = (lighter.history)(tape, "BTC".to_owned(), "1m".to_owned())
-                .await
-                .expect("a gap is not a failure");
-            assert_eq!(older, 0);
             let resting = (lighter.orders)(LIGHTER_ACCOUNT.to_owned())
                 .await
                 .expect("a gap is not a failure");

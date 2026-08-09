@@ -79,7 +79,6 @@ test trading_switching_back_reads_the_first_venue_again_rather_than_restoring_it
   // And the venue it came back to is the one the switch now says it is
   // reading. The name alone would not say it: the header draws both.
   expect a11y reading name "Read Hyperliquid, already reading"
-  expect no text "Lighter publishes no candle history — this chart starts empty and gains a bar per interval."
 
 // Switching to the venue already on screen is not a switch. Left ungated it
 // would throw away a loaded terminal and read the same exchange again.
@@ -271,16 +270,29 @@ test trading_no_address_is_a_different_absence_from_no_account
   expect text "No account is being read. Settings takes an address."
   expect no text "No Hyperliquid account for this address."
 
-// A chart of one bar reads as a market that has not traded. The venue that
-// cannot backfill says so where the widths are chosen.
-test trading_a_venue_with_no_candle_history_says_so_above_the_chart
+// The trade page on the other venue, drawn from that venue's own responses.
+// The chart is the reason this test exists: it opens on a window of history
+// here exactly as it does on the other exchange, so nothing above it has a gap
+// to explain and the crosshair has bars to read out.
+test trading_the_trade_page_on_the_other_venue
   preset lighter
   viewport 1660 820
   target app = #app
   target trade = app/trade
   target bar = trade/chart-bar
-  target note = bar/chart-note
-  expect text "Lighter publishes no candle history — this chart starts empty and gains a bar per interval." within note
+  target tabs = bar/intervals
+  target showing = tabs/interval-1m/root/tab-on
+  target frame = trade/chart-frame
+  expect a11y showing name "Show 1m candles, already showing"
+  expect text "ORDER BOOK"
+  expect text "SPREAD"
+  // The frame and the tabs are drawn whether or not there are bars in them, so
+  // neither says the chart has any. The price axis does: it is scaled off the
+  // tape, so a figure on it is a bar the chart is holding, and a tape holding
+  // nothing — or the one forming bar a chart with no history opens on — draws
+  // no axis at all.
+  expect text "64,500" within frame
+  expect no text "market not loaded"
   capture page_trade_lighter
 
 // The markets page is the venue's universe, and the switch beside the page
@@ -333,11 +345,9 @@ test trading_settings_states_what_this_venue_can_and_cannot_serve
   expect text "VENUE"
   expect text "Lighter" within named
   expect text "Lighter serves resting orders and this account's fills only to an API-key-signed token, which an address alone cannot get and this app does not hold."
-  expect text "Lighter publishes no candle history — this chart starts empty and gains a bar per interval."
   dispatch switch_venue(Venue.hyperliquid)
   expect text "Hyperliquid" within named
   expect no text "Lighter serves resting orders and this account's fills only to an API-key-signed token, which an address alone cannot get and this app does not hold."
-  expect no text "Lighter publishes no candle history — this chart starts empty and gains a bar per interval."
 
 // The gate opens over the terminal rather than replacing it, and the venue is
 // not one of the things leaving an address throws away — so the exchange the

@@ -10,7 +10,6 @@ extern crate::venue
   sync venue_account_note(venue:Venue, watching:bool) -> str
   sync venue_orders_note(venue:Venue, watching:bool) -> str
   sync venue_fills_note(venue:Venue, watching:bool) -> str
-  sync venue_chart_note(venue:Venue) -> str
   venue_symbols(venue:Venue) -> [SymbolRow] ! HlError
   venue_candles(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError
   venue_history(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError

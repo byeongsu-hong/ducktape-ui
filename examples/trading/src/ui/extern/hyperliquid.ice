@@ -106,4 +106,4 @@ extern crate::hyperliquid
   sync fmt_count(value:i64) -> str
   sync fmt_leverage_mode(value:f64, mode:str) -> str
   sync fmt_time(ts:i64) -> str
-  component chart(tape:&Tape, fills:&[Fill], positions:&[Position], orders:&[Order], coin:&str) -> ChartSignal
+  component chart(venue:Venue, tape:&Tape, fills:&[Fill], positions:&[Position], orders:&[Order], coin:&str) -> ChartSignal

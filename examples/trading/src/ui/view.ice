@@ -241,11 +241,6 @@ view
                               events
                                 pick -> pick_interval _
                           rule vertical thickness=1.0 color=edge
-                          // A chart of one bar reads as a market that has not
-                          // traded, so the venue that cannot backfill says so
-                          // beside the widths it is being asked for.
-                          if !empty(venue_chart_note(venue))
-                            text venue_chart_note(venue) #chart-note size=10.0 @text-faint
                           match hover
                             some(hit)
                               row #readout gap=10.0 align=center
@@ -269,7 +264,7 @@ view
                           w=fill
                           h=fill
                           p=6.0
-                        extern chart(tape, fills, positions, orders, coin) #chart -> chart_signalled _
+                        extern chart(venue, tape, fills, positions, orders, coin) #chart -> chart_signalled _
                     rule vertical thickness=1.0 color=edge
                     box #book
                       with
@@ -1173,13 +1168,6 @@ view
                               w=fill
                               wrap=word
                               @text-muted
-                          if !empty(venue_chart_note(venue))
-                            text venue_chart_note(venue)
-                              with
-                                size=12.0
-                                w=fill
-                                wrap=word
-                                @text-muted
                           if !empty(venue_account_gap(venue))
                             text venue_account_gap(venue)
                               with

@@ -22,6 +22,9 @@ use smol::channel::{Receiver, Sender};
 use tungstenite::stream::MaybeTlsStream;
 use ui_lang_runtime::{Role, StableId, accessible};
 
+use crate::Venue;
+use crate::venue::venue_name;
+
 pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
 
 const INFO_URL: &str = "https://api.hyperliquid.xyz/info";
@@ -2970,10 +2973,36 @@ pub struct ChartSignal {
     pub older: bool,
 }
 
-/// The chart for the selected market, with this account's fills marked on it
-/// and its levels drawn across it. It repaints on its own beat, so candles
-/// the feed merges into the tape show without an app message per tick.
+/// What a reader who cannot see the chart is told it is.
+///
+/// A canvas has no text to read, so this sentence is the whole of the chart
+/// for that reader, and both halves of it are claims that can be false. The
+/// app draws two exchanges through one chart, so a fixed venue name describes
+/// the other one half the time; and "with this account's fills marked" over a
+/// chart carrying no marks sends someone hunting it for arrows that are not
+/// there — which is every Lighter chart, since that venue serves no fills to
+/// an address, and every chart on either venue before the first fill lands.
+///
+/// So both halves are read off what the chart is actually given: the venue it
+/// was told to draw, and whether any markers survived the filter.
+fn chart_label(venue: Venue, marked: bool) -> String {
+    let name = venue_name(venue);
+    if marked {
+        format!("{name} candlestick chart with this account's fills marked")
+    } else {
+        format!("{name} candlestick chart")
+    }
+}
+
+/// The chart for the selected market, with this account's levels drawn across
+/// it and its fills marked where there are any. It repaints on its own beat,
+/// so candles the feed merges into the tape show without an app message per
+/// tick.
+///
+/// It draws whichever venue is on screen, so it is told which one — see
+/// `chart_label`.
 pub fn chart(
+    venue: Venue,
     tape: &Tape,
     fills: &[Fill],
     positions: &[Position],
@@ -2996,6 +3025,8 @@ pub fn chart(
             .last()
             .map_or(2, |candle| price_decimals(candle.close))
     };
+    let marks = fill_markers(fills, coin, palette);
+    let label = chart_label(venue, !marks.is_empty());
     let chart = candle_chart_shared(tape.candles.clone(), &theme)
         .precision(scale)
         .height(Length::Fill)
@@ -3003,14 +3034,14 @@ pub fn chart(
         .moving_averages([20, 60])
         .price_lines(position_lines(positions, coin, palette))
         .price_lines(order_lines(orders, coin, palette))
-        .markers(fill_markers(fills, coin, palette))
+        .markers(marks)
         .on_hover(|hover| ChartSignal {
             hover,
             older: false,
         })
         .on_reach_start(|hover| ChartSignal { hover, older: true });
     accessible(chart, StableId::new("trading-chart"), Role::Image)
-        .label("Hyperliquid candlestick chart with this account's fills marked")
+        .label(label)
         .logical_id("trading-chart")
         .into()
 }
@@ -3232,6 +3263,52 @@ mod tests {
                 std::hint::black_box(serde_json::from_str::<Value>(&book_text).unwrap());
             })
         );
+    }
+
+    /// The chart is a canvas with no text in it, so its accessibility name is
+    /// the entire chart for a reader who cannot see it — and both halves of
+    /// that sentence are claims that can be false.
+    ///
+    /// Which venue: the name was fixed at "Hyperliquid" while the chart drew
+    /// whichever venue was on screen, so a Lighter chart announced the other
+    /// exchange's. Both venues are asserted, because a name that is right on
+    /// one and fixed is indistinguishable from one that is right on both.
+    ///
+    /// Whether marks: "with this account's fills marked" over a chart with no
+    /// marks sends someone hunting for arrows that are not there. Lighter
+    /// serves no fills to an address, so that is its every chart — and it is
+    /// Hyperliquid's too until this account's first fill in this market. Both
+    /// states are asserted for the same reason.
+    #[test]
+    fn the_chart_is_named_for_the_venue_it_draws_and_the_marks_it_has() {
+        assert_eq!(
+            chart_label(Venue::Hyperliquid, true),
+            "Hyperliquid candlestick chart with this account's fills marked"
+        );
+        assert_eq!(
+            chart_label(Venue::Lighter, true),
+            "Lighter candlestick chart with this account's fills marked"
+        );
+        // No marks, so no promise of any. The venue is still named.
+        assert_eq!(
+            chart_label(Venue::Hyperliquid, false),
+            "Hyperliquid candlestick chart"
+        );
+        assert_eq!(
+            chart_label(Venue::Lighter, false),
+            "Lighter candlestick chart"
+        );
+
+        // The name is the venue's own, rather than a second spelling of it
+        // that could drift from the one the switch and the header say.
+        for venue in [Venue::Hyperliquid, Venue::Lighter] {
+            for marked in [false, true] {
+                assert!(
+                    chart_label(venue, marked).starts_with(&venue_name(venue)),
+                    "the chart has to open with the name the rest of the app uses"
+                );
+            }
+        }
     }
 
     /// A fixture is read as evidence, so it has to be a state the exchange
