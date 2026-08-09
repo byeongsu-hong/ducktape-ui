@@ -536,7 +536,8 @@ component_event = name ("(" type_list? ")")?
 component_handler = "on" name ("(" name_list? ")")?
                     INDENT component_statement*
 component_statement = "let" name "=" expr | name "=" expr | "return if" expr
-                    | run_statement | component_task_group | component_widget_task
+                    | invalidate_statement | run_statement
+                    | component_task_group | component_widget_task
 component_task_group = ("parallel" | "sequential") INDENT component_task_member+
 component_task_member = component_task_group | run_statement | component_widget_task
 component_widget_task = "task widget" component_widget_operation ("->" route)?
@@ -549,6 +550,7 @@ component_widget_operation = ("focus" | "focused" | "cursor-front" | "cursor-end
 
 run_statement = "run" (("latest" | "replace") "lane=" qualified_name)?
                 call "->" route ("|" route)?
+invalidate_statement = "invalidate" "lane=" qualified_name
 qualified_name = name ("::" name)*
 
 handler_decl   = "on" name ("(" name_list? ")")?
@@ -564,6 +566,7 @@ statement      = "let" name "=" expr
                | "abort" name
                | "debug start" expr "->" name
                | "debug finish" name
+               | invalidate_statement
                | run_statement
                | "task" call "->" route ("|" route)?
                | "stream" call "->" route ("|" route)?
@@ -2890,8 +2893,9 @@ Rules:
 - every statement that immediately returns an iced `Task` must be final:
   `exit`, `run`, `task`, `stream`, `sip`, `flow`, task groups, abortable tasks,
   clipboard writes, widget operations, window tasks, and pane queries;
-- `return if` is a conditional guard, and pane mutations are synchronous state
-  changes, so either may precede later statements;
+- `return if` is a conditional guard, pane mutations are synchronous state
+  changes, and `invalidate lane=<name>` only advances existing request-lane
+  state, so any of them may precede later statements;
 - fallible externs require both success and error routes;
 - infallible externs permit only the success route;
 - parameter names are unique within each handler;
@@ -2916,6 +2920,10 @@ on retry_search
 
 on refresh_preview
   run replace lane=preview render_preview(document) -> previewed _ | failed _
+
+on choose_result(title)
+  invalidate lane=catalog
+  selected_title = title
 ```
 
 The lane belongs to the state owner, not to a handler or source location. The
@@ -2930,6 +2938,18 @@ Lane names are qualified identifiers written in source, so each checked owner
 has a finite set. One owner must use either `latest` or
 `replace` consistently for a name, and one handler execution cannot start the
 same lane twice.
+
+`invalidate lane=<qualified-name>` is an immediate direct app, daemon, preset,
+or component handler statement for a synchronous intent that supersedes
+already started work. It must resolve to an existing `latest` or `replace` lane
+with the same fully qualified name and state owner; declaration order does not
+matter, but an unknown lane is E140. Invalidation never declares a lane,
+allocates bookkeeping, or starts a task. It advances the lane generation so
+every earlier success or failure completion is stale. For a `latest` lane the
+old Future continues running. For a `replace` lane, invalidation also aborts
+and releases the current replacement handle. A component invalidates only that
+runtime instance's lane. `parallel`, `sequential`, and `abortable` task
+composition do not accept this non-task statement.
 
 In a component handler, a named `run` may be direct or a leaf of nested
 `parallel` and `sequential` task structure. Its lane still belongs to that
@@ -2950,10 +2970,11 @@ bookkeeping is fixed by the source-declared names; it does not allocate entries
 from runtime request keys. The number of component owners follows the existing
 retained/mounted component lifetime contract. A replacement lane retains only
 its current abort handle and releases it when its matching completion is
-accepted, the next replacement starts, or its owner is dropped. If an outer
+accepted, the next replacement starts, the lane is explicitly invalidated, or
+its owner is dropped. If an outer
 `abortable` group prevents that completion from reaching update, the fixed-size
-handle may remain
-until one of the latter two events; it does not accumulate.
+handle may remain until the next replacement, explicit invalidation, or owner
+drop; it does not accumulate.
 Future values, generations, and abort handles are backend details rather than
 Ice values.
 

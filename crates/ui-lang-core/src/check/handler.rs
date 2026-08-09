@@ -137,7 +137,7 @@ fn check_handler_statements(
                     span,
                 )?;
             }
-            Statement::Exit { .. } => {}
+            Statement::Exit { .. } | Statement::InvalidateLane { .. } => {}
             Statement::Run {
                 kind,
                 function,

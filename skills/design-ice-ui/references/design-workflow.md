@@ -202,8 +202,11 @@ every handler that starts the same logical work with one fully qualified
 `run latest` lane when completion filtering is enough, or a named `run replace`
 lane when the prior Iced task should be aborted. App and preset handlers split
 across files share a root lane only through unaliased imports; aliased component
-lanes remain instance-owned. Confirm that the Rust boundary
-does not rely on abort to roll back an effect or stop detached work.
+lanes remain instance-owned. When an immediate app, daemon, preset, or
+component handler transition supersedes in-flight lane work without starting
+another request, invalidate that existing owner-scoped lane directly before
+changing the state. Confirm that the Rust boundary does not rely on abort to
+roll back an effect or stop detached work.
 
 Do not hide errors only in logs. Do not use color as the only state signal.
 

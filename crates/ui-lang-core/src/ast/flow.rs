@@ -103,6 +103,10 @@ pub enum Statement {
     Exit {
         span: Span,
     },
+    InvalidateLane {
+        lane: String,
+        span: Span,
+    },
     Run {
         kind: EffectKind,
         mode: FutureMode,
@@ -186,6 +190,7 @@ impl Statement {
             | Self::ComboPush { span, .. }
             | Self::ReturnIf { span, .. }
             | Self::Exit { span }
+            | Self::InvalidateLane { span, .. }
             | Self::Run { span, .. }
             | Self::Sip { span, .. }
             | Self::TaskFlow { span, .. }
@@ -208,6 +213,7 @@ impl Statement {
             | Self::MarkdownAppend { .. }
             | Self::ComboPush { .. }
             | Self::ReturnIf { .. }
+            | Self::InvalidateLane { .. }
             | Self::Abort { .. }
             | Self::DebugStart { .. }
             | Self::DebugFinish { .. } => None,

@@ -287,6 +287,64 @@ view
 }
 
 #[test]
+fn parses_only_canonical_qualified_request_lane_invalidation() {
+    let source = r#"app Demo
+extern crate::backend
+  fetch() -> str
+on stop
+  invalidate lane=requests::search
+on search
+  run latest lane=requests::search fetch() -> loaded _
+on loaded(value)
+view
+  text "Demo"
+"#;
+    let document = parse(source).unwrap();
+    assert!(matches!(
+        &document.handlers[0].statements[0],
+        Statement::InvalidateLane { lane, .. } if lane == "requests::search"
+    ));
+    let namespaces = source
+        .lines()
+        .map(|line| {
+            (line.trim_start().starts_with("invalidate ")
+                || line.trim_start().starts_with("run latest "))
+            .then(|| "imported".to_owned())
+        })
+        .collect::<Vec<_>>();
+    let (imported, _) = parse_with_symbols_and_namespaces(source, &namespaces).unwrap();
+    assert!(matches!(
+        &imported.handlers[0].statements[0],
+        Statement::InvalidateLane { lane, .. } if lane == "imported::requests::search"
+    ));
+    assert!(matches!(
+        &imported.handlers[1].statements[0],
+        Statement::Run { lane: Some(lane), .. } if lane == "imported::requests::search"
+    ));
+
+    for invalid in ["invalidate", "invalidate requests::search"] {
+        let error =
+            parse(&source.replace("invalidate lane=requests::search", invalid)).unwrap_err();
+        assert_eq!(error.code, "E050");
+        assert_eq!(
+            error.message,
+            "`invalidate` requires `lane=<qualified-identifier>`"
+        );
+        assert_eq!(
+            error.hint.as_deref(),
+            Some("write `invalidate lane=request_name`")
+        );
+    }
+
+    let error = parse(&source.replace(
+        "invalidate lane=requests::search",
+        "invalidate lane=requests::search now",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E072");
+}
+
+#[test]
 fn parses_all_native_time_operations() {
     let source = example!("timer.ice");
     let document = parse(source).unwrap();

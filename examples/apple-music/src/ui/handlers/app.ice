@@ -38,6 +38,7 @@ on searched(results)
   loading = false
 
 on play(title, artist, cover)
+  invalidate lane=playback_navigation
   current_title = title
   current_artist = artist
   current_cover = cover
@@ -48,6 +49,7 @@ on toggle_playback
   playing = !playing
 
 on restart_current
+  invalidate lane=playback_navigation
   position = 0.0
   playing = true
 
@@ -62,13 +64,13 @@ on toggle_mute
   volume = toggle_mute(volume, unmuted_volume)
 
 on previous
-  run adjacent_track(current_title, -1) -> track_loaded _ | failed _
+  run latest lane=playback_navigation adjacent_track(current_title, -1) -> track_loaded _ | failed _
 
 on next
-  run adjacent_track(current_title, 1) -> track_loaded _ | failed _
+  run latest lane=playback_navigation adjacent_track(current_title, 1) -> track_loaded _ | failed _
 
 on shuffle
-  run adjacent_track(current_title, 3) -> track_loaded _ | failed _
+  run latest lane=playback_navigation adjacent_track(current_title, 3) -> track_loaded _ | failed _
 
 on queue
   queue_open = !queue_open
