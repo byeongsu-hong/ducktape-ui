@@ -55,9 +55,9 @@ package's unique Ice root, builds and launches its native app or daemon, watches
 the complete Ice and Cargo input graph, and uses native filesystem notifications
 to trigger content verification. Packages with multiple Ice roots can use
 `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]`. If native
-notifications cannot be installed, it reports
-`ice dev: native notifications unavailable; using polling safety mode` and
-checks the relevant metadata inventory every 750 milliseconds instead. Idle
+notifications cannot be installed, it emits the WARN tracing event `native
+notifications unavailable; using polling safety mode` and checks the relevant
+metadata inventory every 750 milliseconds instead. Idle
 native waits and fallback metadata polls do not reread file contents; a
 complete content rescan runs every 30 seconds as a safety net for lost or
 metadata-invisible events. Ordinary edits to known files reuse the accepted
@@ -71,10 +71,11 @@ An accepted edit is first offered to the running process as a view reload. The
 runner re-runs parse, check, and lowering — so the edit is diagnosed exactly as
 before — and republishes the view as data. When the running binary still fills
 the slot table the new view asks for, the runner rewrites the published
-template file, prints `ice dev: view reloaded in place`, and the app renders
-the change on its next frame with application, window, and widget state
-untouched. See [decision 0006](decisions/0006-view-as-data.md) for what that
-contract covers: structure, literals, colours, spacing, and accessibility
+template file, emits the INFO tracing event `view reloaded in place`, and the
+app renders the change on its next frame with application, window, and widget
+state untouched.
+[Decision 0006](decisions/0006-view-as-data.md) describes that contract:
+structure, literals, colours, spacing, and accessibility
 segments reload; reading new state, adding a handler, or using a node the
 template vocabulary does not model does not.
 

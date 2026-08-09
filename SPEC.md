@@ -5642,11 +5642,12 @@ verification. Access-only events and events below excluded build, vendor,
 fixture, or VCS directories do not trigger verification. The idle runner does
 not content-hash the graph on its 100-millisecond process-liveness cadence. If
 the native watcher cannot be created or cannot install a required root, the
-runner emits `ice dev: native notifications unavailable; using polling safety
-mode` and switches to a 750-millisecond metadata-inventory poll. The same
-fallback is installed if the native notification channel disconnects. A
-fallback metadata change, watcher error, or rescan request triggers the existing
-complete content-snapshot verification. The runner also performs a complete
+runner emits the WARN tracing event `native notifications unavailable; using
+polling safety mode` and switches to a 750-millisecond metadata-inventory poll.
+The same fallback is installed if the native notification channel
+disconnects. A fallback metadata change, watcher error, or rescan request
+triggers the existing complete content-snapshot verification. The runner also
+performs a complete
 content rescan every 30 seconds, so missed or metadata-invisible changes remain
 recoverable. For native notifications naming known files, the
 runner reuses the accepted inventory and unchanged content stamps, and hashes

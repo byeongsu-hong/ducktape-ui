@@ -74,6 +74,10 @@ fn run() -> Result<(), String> {
     let root = env::current_dir().map_err(|error| error.to_string())?;
     match command {
         "dev" => {
+            tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .compact()
+                .init();
             let (target, cargo_args) = dev_arguments(trailing).ok_or(DEV_USAGE)?;
             let source = match target {
                 DevTarget::Package(package) => dev::package_ice_source(&root, package, cargo_args)?,
