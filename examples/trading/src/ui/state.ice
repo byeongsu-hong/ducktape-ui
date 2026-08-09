@@ -59,6 +59,10 @@ state
 derived
   visible = filter_symbols(symbols, query, coin)
   watching = !gate && !empty(address)
+  // Why WATCH THIS LEVEL cannot take the price in the field, or empty when it
+  // can. `add_alert` refuses silently, so the button reads this to disable
+  // itself and print the reason rather than answering a press with nothing.
+  watch_refusal = alert_refused(alerts, coin, ticket_price, mark_price(focus))
 
 preset gate
 

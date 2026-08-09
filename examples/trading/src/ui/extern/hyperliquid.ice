@@ -70,6 +70,7 @@ extern crate::hyperliquid
   pure alert_label(alert:Alert) -> str
   pure alert_arrow(alert:Alert) -> str
   pure add_alert(alerts:[Alert], coin:str, price:str, mark:f64) -> [Alert]
+  pure alert_refused(alerts:[Alert], coin:str, price:str, mark:f64) -> str
   pure check_alerts(alerts:[Alert], tick:MarketTick) -> [Alert]
   pure waiting_alerts(alerts:[Alert]) -> i64
   pure drop_alert(alerts:[Alert], coin:str, price:f64) -> [Alert]
