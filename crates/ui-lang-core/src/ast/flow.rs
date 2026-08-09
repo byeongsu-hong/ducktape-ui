@@ -109,7 +109,7 @@ pub enum Statement {
     },
     Run {
         kind: EffectKind,
-        mode: FutureMode,
+        mode: DeliveryMode,
         lane: Option<String>,
         function: String,
         args: Vec<Expr>,

@@ -240,7 +240,7 @@ local instead. The same snapshot rule applies to every `task` statement
 completion route, including built-in tasks; stream, sip, flow, and native query
 route timing is unchanged.
 
-Use a named request lane when starts from one or more handlers supersede the
+Use a named delivery lane when starts from one or more handlers supersede the
 same logical work:
 
 ```ice
@@ -259,30 +259,34 @@ component Search()
     button "Search" -> search
 ```
 
-`run every` delivers every completion and owns no lane. Equal fully qualified
-lane names share one lifecycle across handlers for an app, across all windows
-of a daemon, or within one component instance; component instances remain
-independent. A component imported under an alias qualifies its internal lane
-into that namespace, but the lane remains component-instance-owned. Unaliased
-app and preset fragments remain in the root namespace and may share root lanes.
-`run latest` does not stop stale Futures, so their captures remain live until
-completion. Use `run replace lane=<name>` when the prior Iced task should be
-aborted, while remembering that abort cannot undo an effect already performed
-or stop work detached by the Rust backend. Lane names are static and finite per
-owner.
+`run every` delivers every Future completion and owns no lane. Equal fully
+qualified lane names share one lifecycle across handlers for an app, across all
+windows of a daemon, or within one component instance; component instances
+remain independent. A component imported under an alias qualifies its internal
+lane into that namespace, but the lane remains component-instance-owned.
+Unaliased app and preset fragments remain in the root namespace and may share
+root lanes. `run latest` does not stop stale Futures, so their captures remain
+live until completion. Use `run replace lane=<name>` when the prior Iced task
+should be aborted. Abort cannot undo an effect already performed or stop work
+detached by the Rust backend. Lane names are static and finite per owner, and
+one lane cannot mix effect kinds or delivery modes.
 Component-owner count follows the retained/mounted lifetime contract.
 
-Bare handler `run` is rejected. Subscription `run` remains a long-lived stream
-source, and task-flow `from run call()`/`then value -> run call(value)` remain
-Task adapters without a direct completion route, so those distinct constructs
-do not select a delivery mode.
+Bare handler `run` and `stream`, plus `stream latest`, are rejected.
+Subscription `run` remains a long-lived stream source, and task-flow
+`from`/`then` Future or stream sources remain Task adapters without a direct
+completion route, so those distinct constructs do not select a delivery mode.
 
 Use `invalidate lane=<name>` directly in an app, daemon, preset, or component
 handler when an immediate state transition supersedes an existing lane without
-starting a replacement Future. The lane may be declared later in the source
-graph but must already exist for the same owner; invalidation does not allocate
-a lane or return a task. It filters every earlier completion, leaves `latest`
-work running, and aborts and releases the current handle for a `replace` lane.
+starting replacement work. The lane may be declared later in the source graph
+but must already exist for the same owner; invalidation does not allocate a lane
+or return a task. It advances the generation before aborting, so every earlier
+Future completion or queued stream item is stale. It leaves `latest` work
+running and releases the current handle for a `replace` lane.
+A matching Future replacement completion normally releases that handle first.
+If an outer `abortable` suppresses the completion, one fixed current handle
+remains until replacement, invalidation, or owner drop; it does not accumulate.
 A component affects only its runtime instance. `parallel`, `sequential`, and
 `abortable` task composition do not accept invalidation because it produces no
 task.
@@ -318,7 +322,7 @@ completion matters.
 
 ## Streams, sippers, groups, and cancellation
 
-Use `stream` for repeated task output:
+Use an explicit stream delivery mode for repeated task output:
 
 ```ice
 extern crate::backend
@@ -327,12 +331,21 @@ extern crate::backend
 
 on start
   parallel
-    stream progress(100) -> progressed _
-    stream checked_progress() -> progressed _ | failed _
+    stream every progress(100) -> progressed _
+    stream replace lane=checked checked_progress() -> progressed _ | failed _
 ```
 
 Rust returns `impl Stream<Item = T> + Send + 'static`. A fallible stream yields
-`Result<T,E>` items and requires both routes.
+`Result<T,E>` items and requires both routes; an error item does not terminate
+the stream. `stream every` starts independent work and delivers every item.
+`stream replace lane=<name>` aborts the previous task and filters all items from
+older generations, including items already queued before replacement. Its one
+handle stays live across ordinary items and is released only after natural
+termination, replacement, invalidation, or owner drop. Component handlers allow
+only the replacement form. Handler streams may be direct or in `parallel` and
+`sequential`, but are rejected anywhere under `abortable`; use lane invalidation
+for replacement-stream cancellation or a subscription for view-derived
+long-lived activation.
 
 Use `sip` when repeated progress and one final output are different types:
 
@@ -564,6 +577,8 @@ the relevant app compilation/tests.
   call.
 - Use a bare extern plus an explicit `run every`/`latest`/`replace` delivery
   mode for ordinary futures.
+- Use `stream every` for independent repeated output or a named
+  `stream replace` lane when later work supersedes the stream.
 - Use the matching typed adapter for native Iced return types.
 - Route every fallible effect to success and failure.
 - Keep task-producing statements final.

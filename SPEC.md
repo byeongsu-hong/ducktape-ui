@@ -537,9 +537,11 @@ component_handler = "on" name ("(" name_list? ")")?
                     INDENT component_statement*
 component_statement = "let" name "=" expr | name "=" expr | "return if" expr
                     | invalidate_statement | run_statement
+                    | component_stream_statement
                     | component_task_group | component_widget_task
 component_task_group = ("parallel" | "sequential") INDENT component_task_member+
-component_task_member = component_task_group | run_statement | component_widget_task
+component_task_member = component_task_group | run_statement
+                      | component_stream_statement | component_widget_task
 component_widget_task = "task widget" component_widget_operation ("->" route)?
 component_widget_operation = ("focus" | "focused" | "cursor-front" | "cursor-end"
                              | "select-all" | "snap-end") widget_target
@@ -550,6 +552,10 @@ component_widget_operation = ("focus" | "focused" | "cursor-front" | "cursor-end
 
 run_statement = "run" ("every" | (("latest" | "replace") "lane=" qualified_name))
                 call "->" route ("|" route)?
+stream_statement = "stream" ("every" | ("replace" "lane=" qualified_name))
+                   call "->" route ("|" route)?
+component_stream_statement = "stream" "replace" "lane=" qualified_name
+                             call "->" route ("|" route)?
 invalidate_statement = "invalidate" "lane=" qualified_name
 qualified_name = name ("::" name)*
 
@@ -569,7 +575,7 @@ statement      = "let" name "=" expr
                | invalidate_statement
                | run_statement
                | "task" call "->" route ("|" route)?
-               | "stream" call "->" route ("|" route)?
+               | stream_statement
                | sip_task
                | task_flow
                | "task time now" "->" route
@@ -607,7 +613,7 @@ task_member    = task_group | abortable_task
                | "exit"
                | run_statement
                | "task" call "->" route ("|" route)?
-               | "stream" call "->" route ("|" route)?
+               | stream_statement
                | sip_task
                | task_flow
                | native_task
@@ -2908,7 +2914,7 @@ Rules:
   abortable tasks,
   clipboard writes, widget operations, window tasks, and pane queries;
 - `return if` is a conditional guard, pane mutations are synchronous state
-  changes, and `invalidate lane=<name>` only advances existing request-lane
+  changes, and `invalidate lane=<name>` only advances existing delivery-lane
   state, so any of them may precede later statements;
 - fallible externs require both success and error routes;
 - infallible externs permit only the success route;
@@ -2917,16 +2923,20 @@ Rules:
 - incompatible incoming payloads are a type error;
 - `_` means the payload produced by the current widget or action route.
 
-Every handler Future explicitly selects one delivery mode: `run every`,
-`run latest lane=<qualified-name>`, or `run replace lane=<qualified-name>`.
-Bare handler `run` is E050. `run` inside `subscribe` is the separate long-lived
-stream-source construct; task-flow `from run call()` and
-`then value -> run call(value)` are Task adapters that do not route a Future
-completion directly and therefore have no delivery mode. All three Future
-modes wrap an async Rust function with `Task::perform`. `task` directly maps a
-Rust function that already returns an iced `Task`, which exposes clipboard,
-window, focus, scroll, font, system, cancellation, batching, and other runtime
-operations without duplicating their implementation in Ice.
+Every handler Future and stream explicitly selects a delivery mode. Futures use
+`run every`, `run latest lane=<qualified-name>`, or
+`run replace lane=<qualified-name>`. Streams use `stream every` or
+`stream replace lane=<qualified-name>`; `stream latest` is E050 because an
+obsolete stream is not guaranteed to terminate. Bare handler `run` and
+`stream` are E050.
+`run` inside `subscribe` remains the separate long-lived stream-source
+construct. Task-flow `from run call()`/`from stream call()` and corresponding
+`then` sources remain Task adapters without a directly routed delivery mode.
+Future modes wrap an async Rust function with `Task::perform`; stream modes
+wrap a Rust `Stream` with `Task::run`. `task` directly maps a Rust function that
+already returns an iced `Task`, which exposes clipboard, window, focus, scroll,
+font, system, cancellation, batching, and other runtime operations without
+duplicating their implementation in Ice.
 
 One in-flight Future-mode statement or `task` statement owns one set of
 explicit route snapshots. The set is released when that work completes or is
@@ -2936,9 +2946,9 @@ clones values into each
 delivered message; there is no global snapshot map or completion-by-completion
 accumulation.
 
-`run every` delivers every completion and owns no request lane.
-Request/response work that can be superseded uses a statically named request
-lane:
+`run every` delivers every Future completion and `stream every` delivers every
+stream item; neither owns a delivery lane. Work that can be superseded uses a
+statically named delivery lane:
 
 ```ice
 on search
@@ -2964,25 +2974,29 @@ component imported `as catalog` belongs to that alias namespace, but it remains
 owned by each component instance and cannot join the app owner. Unaliased app
 and preset fragments remain in the root namespace and may share root lanes.
 Lane names are qualified identifiers written in source, so each checked owner
-has a finite set. One owner must use either `latest` or
-`replace` consistently for a name, and one handler execution cannot start the
-same lane twice.
+has a finite set. One owner must use one effect kind and one delivery mode for
+a name: Future and stream starts cannot share a lane, and a Future lane cannot
+mix `latest` with `replace`. One handler execution cannot start the same lane
+twice.
 
 `invalidate lane=<qualified-name>` is an immediate direct app, daemon, preset,
 or component handler statement for a synchronous intent that supersedes
-already started work. It must resolve to an existing `latest` or `replace` lane
-with the same fully qualified name and state owner; declaration order does not
-matter, but an unknown lane is E140. Invalidation never declares a lane,
-allocates bookkeeping, or starts a task. It advances the lane generation so
-every earlier success or failure completion is stale. For a `latest` lane the
-old Future continues running. For a `replace` lane, invalidation also aborts
-and releases the current replacement handle. A component invalidates only that
+already started work. It must resolve to an existing `latest` Future or
+`replace` Future/stream lane with the same fully qualified name and state
+owner; declaration order does not matter, but an unknown lane is E140.
+Invalidation never declares a lane, allocates bookkeeping, or starts a task. It
+advances the lane generation before canceling work, so every earlier Future
+completion or already queued stream item is stale. For a `latest` lane the old
+Future continues running. For a `replace` lane, invalidation also aborts and
+releases the current replacement handle. A component invalidates only that
 runtime instance's lane. `parallel`, `sequential`, and `abortable` task
 composition do not accept this non-task statement.
 
-In a component handler, a named `run latest` or `run replace` may be direct or
-a leaf of nested `parallel` and `sequential` task structure. Its lane still
-belongs to that component instance.
+In a component handler, a named `run latest`, `run replace`, or
+`stream replace` may be direct or a leaf of nested `parallel` and `sequential`
+task structure. Its lane still belongs to that component instance.
+`stream every` is rejected there because it has no compiler-owned lane to end
+work when a mounted component leaves.
 
 `latest` advances the lane generation and routes only the current generation's
 success or failure. It does not cancel stale Futures: they and their captured
@@ -2990,20 +3004,25 @@ values remain live until they finish or their backend drops them. Work that is
 started repeatedly and never finishes can therefore retain memory or external
 resources even though its completions are filtered.
 
-`replace` also filters stale completions and aborts the prior Iced task for the
-lane when a replacement is installed. Aborting drops work still owned by that
-task, but it is not transaction rollback: effects already performed remain,
-and detached or blocking backend work may continue. Use cancellation-safe or
-idempotent Rust boundaries when those effects matter. Per-owner lane
-bookkeeping is fixed by the source-declared names; it does not allocate entries
-from runtime request keys. The number of component owners follows the existing
-retained/mounted component lifetime contract. A replacement lane retains only
-its current abort handle and releases it when its matching completion is
-accepted, the next replacement starts, the lane is explicitly invalidated, or
-its owner is dropped. If an outer
-`abortable` group prevents that completion from reaching update, the fixed-size
-handle may remain until the next replacement, explicit invalidation, or owner
-drop; it does not accumulate.
+`replace` also filters stale delivery and aborts the prior Iced task for the
+lane when a replacement is installed. A Future lane releases its handle when
+its matching terminal completion is accepted, the next replacement starts, the
+lane is invalidated, or its owner drops. If an outer `abortable` prevents that
+completion from reaching update, the fixed one current handle remains until
+one of the latter three events; it does not accumulate. A stream lane keeps one
+handle across all of the current stream's items and releases it only after
+natural termination, the next replacement, explicit invalidation, or owner
+drop. A private terminal message per naturally completed stream performs that
+cleanup; an ordinary item never clears the handle, and a stale item or terminal
+message never touches the current handle. Aborting drops work still owned by
+that task, but it is not
+transaction rollback: effects already performed remain, detached or blocking
+backend work may continue, and messages already queued by the runtime remain
+queued but fail the generation check. Use cancellation-safe or idempotent Rust
+boundaries when those effects matter. Per-owner lane bookkeeping is fixed by
+the source-declared names; it does not allocate entries from runtime request
+keys. The number of component owners follows the existing retained/mounted
+component lifetime contract.
 Future values, generations, and abort handles are backend details rather than
 Ice values.
 
@@ -3057,7 +3076,8 @@ cancels unfinished work when the last clone drops. `abort handle` calls
 `aborted(handle)` can report its status. A missing handle reports `false`.
 Task handles are opaque and cannot be compared or used as lazy keys.
 
-Native task streams route every yielded item through `Task::run`:
+Native task streams route yielded items through `Task::run` and explicitly
+choose whether concurrent starts are independent or replacing:
 
 ```ice
 extern crate::backend
@@ -3067,14 +3087,29 @@ extern crate::backend
 
 on start
   parallel
-    stream progress(100) -> progressed _
-    stream checked_progress() -> progressed _ | failed _
+    stream every progress(100) -> progressed _
+    stream replace lane=checked checked_progress() -> progressed _ | failed _
 ```
 
-An infallible stream item becomes the success-route payload. A fallible stream
-must yield `Result<T, E>` items and requires both success and error routes.
-Stream statements are task-producing, so they work inside `parallel`,
-`sequential`, and `abortable` blocks. Because the mapping closure runs once per
+`stream every` starts an independent task and routes every item until that
+stream terminates. `stream replace lane=<qualified-name>` advances a delivery
+generation, aborts the prior task in that owner and lane, and routes only items
+from the current generation. Bare handler `stream` and `stream latest` are
+E050. `stream every` has no compiler-owned lane or handle, so repeatedly
+starting a stream that never terminates intentionally keeps every producer and
+its captures alive. Extern-aware completion therefore defaults a selected
+stream function to `stream replace lane=<qualified-function-name>`; `every` is
+an explicit opt-in. An infallible stream item becomes the success-route
+payload. A fallible stream must yield `Result<T, E>` items and requires both
+success and error routes; an error is one routed item and does not itself end
+the stream.
+
+Stream statements are task-producing, so they work directly and inside
+`parallel` or `sequential` groups. They are rejected anywhere under an
+`abortable` task: a replace lane is already compiler-owned cancellation, while
+an every stream has no bounded owner handle. Use `invalidate lane=<name>` to
+stop a replace stream without starting another, and use a subscription for
+view-derived long-lived activation. Because the mapping closure runs once per
 item, stream routes may pass one `_` or discard the item with a parameterless
 route; they cannot capture other expressions. Read current UI state inside the
 destination handler.
@@ -3668,10 +3703,11 @@ They have one root, typed inputs, and no implicit capture of app state. A local
 `state` block accepts self-contained ordinary cloneable values. Local `on`
 handlers may assign that state, stop with `return if`, or end with a Future
 extern call using an explicit `run every`, `run latest`, or `run replace`
-delivery mode. Future runs and scoped widget operations may compose
-with `parallel` and `sequential`; `abortable`, other native tasks, streams,
-lifecycle hooks, and implicit prop capture stay at app level. Pass a prop or
-event value explicitly through the route when a local handler needs it.
+delivery mode, or with `stream replace` on an instance-owned lane. Future runs,
+replacement streams, and scoped widget operations may compose with `parallel`
+and `sequential`; `stream every`, `abortable`, other native tasks, lifecycle
+hooks, and implicit prop capture stay at app level. Pass a prop or event value
+explicitly through the route when a local handler needs it.
 
 A prop may declare a default after its type. Calls may omit that named prop;
 required props must precede defaulted props:
@@ -3712,8 +3748,12 @@ that stopped rendering them. The delay is required, not incidental: a
 `responsive` and every other deferred builder constructs its subtree during
 layout, so components under one are marked after their root has finished
 rendering, and removing entries any earlier would drop state the same pass was
-still about to claim. Removing an entry drops its local state
-and request-lane bookkeeping, including any `run replace` abort-on-drop handles.
+still about to claim. Removing an entry drops its local state and delivery-lane
+bookkeeping, including any `run replace` or `stream replace` abort-on-drop
+handles. Stream cancellation therefore occurs at that documented next-pass
+prune boundary, not when `view` first omits the component. A retained component
+instead keeps its stream lane alive while absent, as required by retained
+lifetime.
 Daemon roots include their window ID, so rendering one window never prunes
 another window's scopes. There is no `on unmount` hook or other arbitrary
 lifecycle effect; handlers remain the only place that starts work. Components

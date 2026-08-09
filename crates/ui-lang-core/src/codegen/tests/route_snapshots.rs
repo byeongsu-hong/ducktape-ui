@@ -194,7 +194,7 @@ extern crate::backend
     sequential
       task cached(context) -> loaded(context, _)
       run every fetch(context) -> loaded(context, _)
-    stream events() -> observed _
+    stream every events() -> observed _
 on loaded(context, value)
 on observed(value)
 view

@@ -219,7 +219,7 @@ view
     assert!(matches!(
         document.components[0].handlers[0].statements[0],
         Statement::Run {
-            mode: FutureMode::Replace,
+            mode: DeliveryMode::Replace,
             lane: Some(ref lane),
             ..
         } if lane == "requests::search"
@@ -252,7 +252,7 @@ view
 }
 
 #[test]
-fn parses_explicit_every_while_request_modes_require_named_lanes() {
+fn parses_explicit_every_while_replacement_modes_require_named_delivery_lanes() {
     let source = r#"app Demo
 extern crate::backend
   fetch() -> str
@@ -266,7 +266,7 @@ view
     assert!(matches!(
         document.handlers[0].statements[0],
         Statement::Run {
-            mode: FutureMode::Every,
+            mode: DeliveryMode::Every,
             lane: None,
             ..
         }
@@ -278,13 +278,111 @@ view
         assert_eq!(error.code, "E050");
         assert_eq!(
             error.message,
-            format!("`run {mode}` requires a named request lane")
+            format!("`run {mode}` requires a named delivery lane")
         );
         assert_eq!(
             error.hint.as_deref(),
-            Some(format!("write `run {mode} lane=request_name call(...) -> ...`").as_str())
+            Some(format!("write `run {mode} lane=name call(...) -> ...`").as_str())
         );
     }
+}
+
+#[test]
+fn parses_explicit_stream_delivery_modes() {
+    let source = r#"app Demo
+extern crate::backend
+  stream watch() -> str
+on observe
+  stream every watch() -> observed _
+on replace
+  stream replace lane=feed watch() -> observed _
+on observed(value)
+view
+  text "Demo"
+"#;
+    let document = parse(source).unwrap();
+
+    assert!(matches!(
+        &document.handlers[0].statements[0],
+        Statement::Run {
+            kind: EffectKind::Stream,
+            mode: DeliveryMode::Every,
+            lane: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &document.handlers[1].statements[0],
+        Statement::Run {
+            kind: EffectKind::Stream,
+            mode: DeliveryMode::Replace,
+            lane: Some(lane),
+            ..
+        } if lane == "feed"
+    ));
+
+    let error = parse(&source.replace(
+        "stream every watch() -> observed _",
+        "stream replace watch() -> observed _",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E050");
+    assert_eq!(
+        error.message,
+        "`stream replace` requires a named delivery lane"
+    );
+    assert_eq!(
+        error.hint.as_deref(),
+        Some("write `stream replace lane=name call(...) -> ...`")
+    );
+}
+
+#[test]
+fn rejects_stream_without_an_explicit_delivery_mode() {
+    let error = parse(
+        r#"app Demo
+extern crate::backend
+  stream watch() -> str
+on observe
+  stream watch() -> observed _
+on observed(value)
+view
+  text "Demo"
+"#,
+    )
+    .expect_err("bare stream must not select a delivery mode implicitly");
+    assert_eq!(error.code, "E050");
+    assert_eq!(error.message, "`stream` requires an explicit delivery mode");
+    assert_eq!(
+        error.hint.as_deref(),
+        Some(
+            "write `stream every call(...) -> ...` to deliver every item; use a named `stream replace` lane when a new stream supersedes the old one"
+        )
+    );
+}
+
+#[test]
+fn rejects_stream_latest() {
+    let error = parse(
+        r#"app Demo
+extern crate::backend
+  stream watch() -> str
+on observe
+  stream latest lane=feed watch() -> observed _
+on observed(value)
+view
+  text "Demo"
+"#,
+    )
+    .expect_err("stream latest cannot define a completion-based lane");
+    assert_eq!(error.code, "E050");
+    assert_eq!(error.message, "`stream latest` is not supported");
+    assert_eq!(
+        error.hint.as_deref(),
+        Some(
+            "use `stream replace lane=name call(...) -> ...` to abort and suppress the prior stream"
+        )
+    );
 }
 
 #[test]
@@ -312,7 +410,7 @@ view
 }
 
 #[test]
-fn parses_only_canonical_qualified_request_lane_invalidation() {
+fn parses_only_canonical_qualified_delivery_lane_invalidation() {
     let source = r#"app Demo
 extern crate::backend
   fetch() -> str

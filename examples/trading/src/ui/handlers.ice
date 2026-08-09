@@ -33,10 +33,8 @@ on connect
     run every venue_account(venue, trim(draft)) -> account_loaded _ | account_failed _
     run every venue_orders(venue, trim(draft)) -> orders_loaded _ | orders_failed _
     run every venue_portfolio(venue, trim(draft)) -> portfolio_loaded _ | portfolio_failed _
-    abortable feeds abort-on-drop
-      parallel
-        stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
-        stream venue_fill_feed(venue, trim(draft)) -> fills_streamed _ | fills_failed _
+    stream replace lane=market_feed venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
+    stream replace lane=fill_feed venue_fill_feed(venue, trim(draft)) -> fills_streamed _ | fills_failed _
 
 on browse
   address = ""
@@ -44,11 +42,11 @@ on browse
   status = "Loading"
   tape = tape_focus(tape, coin, interval)
   portfolio_history = portfolio_empty()
+  invalidate lane=fill_feed
   parallel
     run every venue_symbols(venue) -> symbols_loaded _ | failed _
     run every venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
-    abortable feeds abort-on-drop
-      stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
+    stream replace lane=market_feed venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
 
 on seed_ticket(price, buy)
   let seed = fmt_px(price)
@@ -187,7 +185,8 @@ on reopen
   // that account.
   session = lock_agent()
   unlock_note = ""
-  abort feeds
+  invalidate lane=market_feed
+  invalidate lane=fill_feed
 
 on pick_symbol(name)
   // Every row that names a market is a way to it, and the market is drawn on
@@ -331,10 +330,8 @@ on switch_venue(next)
     run every venue_account(venue, address) -> account_loaded _ | account_failed _
     run every venue_orders(venue, address) -> orders_loaded _ | orders_failed _
     run every venue_portfolio(venue, address) -> portfolio_loaded _ | portfolio_failed _
-    abortable feeds abort-on-drop
-      parallel
-        stream venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
-        stream venue_fill_feed(venue, address) -> fills_streamed _ | fills_failed _
+    stream replace lane=market_feed venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
+    stream replace lane=fill_feed venue_fill_feed(venue, address) -> fills_streamed _ | fills_failed _
 
 on pick_interval(next)
   // The width already on the chart is not a change of width. Ungated, pressing

@@ -841,7 +841,7 @@ pub(crate) enum ResolvedEffectTarget {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedRun {
     pub(crate) kind: EffectKind,
-    pub(crate) mode: FutureMode,
+    pub(crate) mode: DeliveryMode,
     pub(crate) lane: Option<RunLaneId>,
     pub(crate) target: ResolvedEffectTarget,
     pub(crate) args: Vec<CheckedExprUseId>,
@@ -1748,7 +1748,7 @@ fn resolved_statement_semantic_key(
         ResolvedStatementKind::InvalidateLane { lane } => {
             let lane = program.declarations.try_run_lane(*lane).ok_or_else(|| {
                 program
-                    .invariant_at_origin(statement.origin, "request-lane ID is outside its arena")
+                    .invariant_at_origin(statement.origin, "delivery-lane ID is outside its arena")
             })?;
             format!("invalidate-lane:{}", lane.name)
         }
@@ -1763,7 +1763,7 @@ fn resolved_statement_semantic_key(
                         .ok_or_else(|| {
                             program.invariant_at_origin(
                                 statement.origin,
-                                "request-lane ID is outside its arena",
+                                "delivery-lane ID is outside its arena",
                             )
                         })
                 })
@@ -2796,7 +2796,7 @@ impl LoweredProgram {
                     let run_lane = program.declarations.try_run_lane(*lane).ok_or_else(|| {
                         program.invariant_at_origin(
                             statement.origin,
-                            "request-lane ID is outside its arena",
+                            "delivery-lane ID is outside its arena",
                         )
                     })?;
                     let owner = match handler.owner {
@@ -2809,7 +2809,7 @@ impl LoweredProgram {
                     {
                         return Err(program.invariant_at_origin(
                             statement.origin,
-                            "request-lane invalidation belongs to a different declaration or owner",
+                            "delivery-lane invalidation belongs to a different declaration or owner",
                         ));
                     }
                 }
@@ -2822,12 +2822,12 @@ impl LoweredProgram {
                     })?;
                     validate_effect_task(program, task, run.kind, &run.target, statement.origin)?;
                     validate_task_operands(program, task, &run.args, statement.origin)?;
-                    if (run.mode == FutureMode::Every) != run.lane.is_none()
+                    if (run.mode == DeliveryMode::Every) != run.lane.is_none()
                         || run.lane != declaration.run_lane
                     {
                         return Err(program.invariant_at_origin(
                             statement.origin,
-                            "run mode and request-lane cardinality diverged",
+                            "delivery mode and delivery-lane cardinality diverged",
                         ));
                     }
                     if let Some(lane) = run.lane {
@@ -2835,20 +2835,22 @@ impl LoweredProgram {
                             program.declarations.try_run_lane(lane).ok_or_else(|| {
                                 program.invariant_at_origin(
                                     statement.origin,
-                                    "request-lane ID is outside its arena",
+                                    "delivery-lane ID is outside its arena",
                                 )
                             })?;
                         let owner = match handler.owner {
                             HandlerOwner::Preset(_) => HandlerOwner::App,
                             owner => owner,
                         };
-                        if run_lane.owner != owner
+                        if run_lane.declaration.id != lane
+                            || run_lane.owner != owner
+                            || run_lane.kind != run.kind
                             || run_lane.mode != run.mode
                             || !run_lane.statements.contains(&statement.id)
                         {
                             return Err(program.invariant_at_origin(
                                 statement.origin,
-                                "request-lane ID belongs to a different owner, statement, or mode",
+                                "delivery-lane ID belongs to a different owner, statement, kind, or mode",
                             ));
                         }
                     }
@@ -7384,7 +7386,7 @@ impl Lowerer {
         {
             return Err(self.invariant(
                 &Span::line(1),
-                "handler lowering did not consume every statement, task, route, and request-lane ID",
+                "handler lowering did not consume every statement, task, route, and delivery-lane ID",
             ));
         }
         Ok(())
@@ -7956,12 +7958,12 @@ impl Lowerer {
             Statement::Exit { .. } => ResolvedStatementKind::Exit,
             Statement::InvalidateLane { lane: name, span } => {
                 let lane = declaration.run_lane.ok_or_else(|| {
-                    self.invariant(span, "request-lane invalidation has no normalized lane ID")
+                    self.invariant(span, "delivery-lane invalidation has no normalized lane ID")
                 })?;
                 let run_lane = self
                     .declarations
                     .try_run_lane(lane)
-                    .ok_or_else(|| self.invariant(span, "request-lane ID is outside its arena"))?;
+                    .ok_or_else(|| self.invariant(span, "delivery-lane ID is outside its arena"))?;
                 let lane_owner = match owner {
                     HandlerOwner::Preset(_) => HandlerOwner::App,
                     owner => owner,
@@ -7972,7 +7974,7 @@ impl Lowerer {
                 {
                     return Err(self.invariant(
                         span,
-                        "request-lane invalidation owner, name, or ID diverged",
+                        "delivery-lane invalidation owner, name, or ID diverged",
                     ));
                 }
                 ResolvedStatementKind::InvalidateLane { lane }
@@ -8010,14 +8012,14 @@ impl Lowerer {
                     })
                     .transpose()?;
                 let lane = declaration.run_lane;
-                if (*mode == FutureMode::Every) != lane.is_none()
+                if (*mode == DeliveryMode::Every) != lane.is_none()
                     || lane_name.is_some() != lane.is_some()
                 {
-                    return Err(self.invariant(span, "run mode and request-lane ID diverged"));
+                    return Err(self.invariant(span, "delivery mode and delivery-lane ID diverged"));
                 }
                 if let Some(lane) = lane {
                     let run_lane = self.declarations.try_run_lane(lane).ok_or_else(|| {
-                        self.invariant(span, "request-lane ID is outside its arena")
+                        self.invariant(span, "delivery-lane ID is outside its arena")
                     })?;
                     let lane_owner = match owner {
                         HandlerOwner::Preset(_) => HandlerOwner::App,
@@ -8026,12 +8028,13 @@ impl Lowerer {
                     if run_lane.declaration.id != lane
                         || run_lane.owner != lane_owner
                         || run_lane.name != *lane_name.as_ref().expect("lane shape checked above")
+                        || run_lane.kind != *kind
                         || run_lane.mode != *mode
                         || !run_lane.statements.contains(&id)
                     {
                         return Err(self.invariant(
                             span,
-                            "request-lane HIR owner, name, mode, or membership diverged",
+                            "delivery-lane HIR owner, name, kind, mode, or membership diverged",
                         ));
                     }
                 }
@@ -10635,7 +10638,8 @@ view
         ));
         let lane = program.run_lane(RunLaneId(0)).unwrap();
         assert_eq!(lane.owner, HandlerOwner::App);
-        assert_eq!(lane.mode, FutureMode::Latest);
+        assert_eq!(lane.kind, EffectKind::Future);
+        assert_eq!(lane.mode, DeliveryMode::Latest);
         assert_eq!(lane.statements.len(), 1);
 
         let mut changed = analyze(&source).unwrap();
@@ -10648,6 +10652,52 @@ view
         let error = lower(changed).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("semantic contract"));
+    }
+
+    #[test]
+    fn lowers_stream_replace_kind_mode_and_forward_delivery_lane() {
+        let source = format!(
+            r#"app StreamLane
+extern crate::backend
+  stream watch() -> str
+{THEME}on stop
+  invalidate lane=feed
+on observe
+  stream replace lane=feed watch() -> observed _
+on observed(value)
+view
+  text "Feed"
+"#
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let lane = program.run_lane(RunLaneId(0)).unwrap();
+        assert_eq!(lane.owner, HandlerOwner::App);
+        assert_eq!(lane.name, "feed");
+        assert_eq!(lane.kind, EffectKind::Stream);
+        assert_eq!(lane.mode, DeliveryMode::Replace);
+        assert_eq!(lane.statements.len(), 1);
+
+        let observe = program
+            .handlers()
+            .iter()
+            .find(|handler| handler.name == "observe")
+            .unwrap();
+        let ResolvedStatementKind::Run(run) = &observe.statements[0].kind else {
+            panic!("expected resolved stream run");
+        };
+        assert_eq!(run.kind, EffectKind::Stream);
+        assert_eq!(run.mode, DeliveryMode::Replace);
+        assert_eq!(run.lane, Some(lane.declaration.id));
+
+        let stop = program
+            .handlers()
+            .iter()
+            .find(|handler| handler.name == "stop")
+            .unwrap();
+        assert!(matches!(
+            stop.statements[0].kind,
+            ResolvedStatementKind::InvalidateLane { lane: RunLaneId(0) }
+        ));
     }
 
     #[test]
@@ -10708,7 +10758,7 @@ view
     }
 
     #[test]
-    fn handler_codegen_uses_checked_expressions_and_request_lanes_after_ast_mutation() {
+    fn handler_codegen_uses_checked_expressions_and_delivery_lanes_after_ast_mutation() {
         let source = format!(
             r#"app Mutation
 extern crate::backend
@@ -10781,7 +10831,7 @@ view
         else {
             panic!("fixture must contain a run");
         };
-        *mode = FutureMode::Replace;
+        *mode = DeliveryMode::Replace;
         let error = lower(changed_mode).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("semantic contract"));
@@ -11144,10 +11194,10 @@ view
         else {
             panic!("fixture must contain a run");
         };
-        run.mode = FutureMode::Latest;
+        run.mode = DeliveryMode::Latest;
         let error = crate::codegen::generate(&invalid_mode, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("run mode"));
+        assert!(error.message.contains("delivery mode"));
 
         let mut invalid_kind = program();
         let ResolvedStatementKind::Run(run) = &mut invalid_kind.handlers[0].statements[0].kind
@@ -11239,7 +11289,7 @@ view
         run.lane = None;
         let error = crate::codegen::generate(&invalid_lane, "invalid.ice").unwrap_err();
         assert_eq!(error.code, "E196");
-        assert!(error.message.contains("request-lane"));
+        assert!(error.message.contains("delivery-lane"));
 
         let widget = format!(
             "app WidgetRoute\n{THEME}state\n  field = \"\"\n  focused = false\non inspect\n  task widget focused #field -> observed _\non observed(value)\n  focused = value\nview\n  input \"Field\" #field <-> field\n"

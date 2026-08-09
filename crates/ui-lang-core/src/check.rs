@@ -263,6 +263,16 @@ fn check(
     for component in &document.components {
         for handler in &component.handlers {
             check_structured_tasks(handler)?;
+            if let Some(span) = handler.statements.iter().find_map(component_stream_every) {
+                return Err(Error::new(
+                    "E140",
+                    span,
+                    "component handlers cannot use `stream every`",
+                )
+                .hint(
+                    "use `stream replace lane=name ...` so the component owns one replaceable stream",
+                ));
+            }
             if handler
                 .statements
                 .iter()
@@ -271,7 +281,7 @@ fn check(
                 return Err(Error::new(
                     "E140",
                     &handler.span,
-                    "component handlers support state assignments, scoped widget operations, `run` futures, and task groups composed from those task-producing statements only",
+                    "component handlers support state assignments, scoped widget operations, `run` futures, `stream replace`, and task groups composed from those task-producing statements only",
                 ));
             }
         }
@@ -1055,6 +1065,11 @@ fn component_handler_statement_supported(statement: &Statement) -> bool {
         | Statement::Run {
             kind: EffectKind::Future,
             ..
+        }
+        | Statement::Run {
+            kind: EffectKind::Stream,
+            mode: DeliveryMode::Replace,
+            ..
         } => true,
         Statement::TaskGroup { statements, .. } => {
             statements.iter().all(component_handler_statement_supported)
@@ -1063,35 +1078,51 @@ fn component_handler_statement_supported(statement: &Statement) -> bool {
     }
 }
 
+fn component_stream_every(statement: &Statement) -> Option<&Span> {
+    match statement {
+        Statement::Run {
+            kind: EffectKind::Stream,
+            mode: DeliveryMode::Every,
+            span,
+            ..
+        } => Some(span),
+        Statement::TaskGroup { statements, .. } => {
+            statements.iter().find_map(component_stream_every)
+        }
+        Statement::Abortable { task, .. } => component_stream_every(task),
+        _ => None,
+    }
+}
+
 fn check_run_lanes(document: &Document) -> Result<(), Error> {
-    let mut modes = HashMap::new();
+    let mut contracts = HashMap::new();
     for handler in &document.handlers {
-        check_handler_run_lanes(&handler.statements, None, &mut modes)?;
+        check_handler_run_lanes(&handler.statements, None, &mut contracts)?;
     }
     for preset in &document.presets {
-        check_handler_run_lanes(&preset.statements, None, &mut modes)?;
+        check_handler_run_lanes(&preset.statements, None, &mut contracts)?;
     }
     for component in &document.components {
         for handler in &component.handlers {
             check_handler_run_lanes(
                 &handler.statements,
                 Some(component.name.as_str()),
-                &mut modes,
+                &mut contracts,
             )?;
         }
     }
     for handler in &document.handlers {
-        check_handler_lane_invalidations(&handler.statements, None, &modes)?;
+        check_handler_lane_invalidations(&handler.statements, None, &contracts)?;
     }
     for preset in &document.presets {
-        check_handler_lane_invalidations(&preset.statements, None, &modes)?;
+        check_handler_lane_invalidations(&preset.statements, None, &contracts)?;
     }
     for component in &document.components {
         for handler in &component.handlers {
             check_handler_lane_invalidations(
                 &handler.statements,
                 Some(component.name.as_str()),
-                &modes,
+                &contracts,
             )?;
         }
     }
@@ -1101,17 +1132,33 @@ fn check_run_lanes(document: &Document) -> Result<(), Error> {
 fn check_handler_run_lanes<'a>(
     statements: &'a [Statement],
     owner: Option<&'a str>,
-    modes: &mut HashMap<(Option<&'a str>, &'a str), (FutureMode, &'a Span)>,
+    contracts: &mut HashMap<(Option<&'a str>, &'a str), (EffectKind, DeliveryMode, &'a Span)>,
 ) -> Result<(), Error> {
     fn visit<'a>(
         statements: &'a [Statement],
         owner: Option<&'a str>,
-        modes: &mut HashMap<(Option<&'a str>, &'a str), (FutureMode, &'a Span)>,
+        contracts: &mut HashMap<(Option<&'a str>, &'a str), (EffectKind, DeliveryMode, &'a Span)>,
         seen: &mut HashSet<&'a str>,
     ) -> Result<(), Error> {
         for statement in statements {
             match statement {
                 Statement::Run {
+                    kind: EffectKind::Stream,
+                    mode: DeliveryMode::Latest,
+                    span,
+                    ..
+                } => {
+                    return Err(Error::new(
+                        "E140",
+                        span,
+                        "`stream latest` is not supported",
+                    )
+                    .hint(
+                        "use `stream replace lane=name ...` to abort and suppress the prior stream",
+                    ));
+                }
+                Statement::Run {
+                    kind,
                     mode,
                     lane: Some(lane),
                     span,
@@ -1122,37 +1169,42 @@ fn check_handler_run_lanes<'a>(
                             "E140",
                             span,
                             format!(
-                                "request lane `{lane}` cannot be started more than once in the same handler"
+                                "delivery lane `{lane}` cannot be started more than once in the same handler"
                             ),
                         ));
                     }
                     let key = (owner, lane.as_str());
-                    if let Some((expected, first)) = modes.get(&key) {
-                        if expected != mode {
+                    if let Some((expected_kind, expected_mode, first)) = contracts.get(&key) {
+                        if expected_kind != kind || expected_mode != mode {
                             return Err(Error::new(
                                 "E140",
                                 span,
                                 format!(
-                                    "request lane `{lane}` uses both `run {}` and `run {}` for the same owner",
-                                    future_mode_name(*expected),
-                                    future_mode_name(*mode),
+                                    "delivery lane `{lane}` uses both `{}` and `{}` for the same owner",
+                                    delivery_statement_name(*expected_kind, *expected_mode),
+                                    delivery_statement_name(*kind, *mode),
                                 ),
                             )
                             .hint(format!(
-                                "use `run {}` for this lane; it was first declared on line {}",
-                                future_mode_name(*expected),
+                                "use `{}` for this lane; it was first declared on line {}",
+                                delivery_statement_name(*expected_kind, *expected_mode),
                                 first.line,
                             )));
                         }
                     } else {
-                        modes.insert(key, (*mode, span));
+                        contracts.insert(key, (*kind, *mode, span));
                     }
                 }
                 Statement::TaskGroup { statements, .. } => {
-                    visit(statements, owner, modes, seen)?;
+                    visit(statements, owner, contracts, seen)?;
                 }
                 Statement::Abortable { task, .. } => {
-                    visit(::std::slice::from_ref(task.as_ref()), owner, modes, seen)?;
+                    visit(
+                        ::std::slice::from_ref(task.as_ref()),
+                        owner,
+                        contracts,
+                        seen,
+                    )?;
                 }
                 _ => {}
             }
@@ -1160,36 +1212,40 @@ fn check_handler_run_lanes<'a>(
         Ok(())
     }
 
-    visit(statements, owner, modes, &mut HashSet::new())
+    visit(statements, owner, contracts, &mut HashSet::new())
 }
 
 fn check_handler_lane_invalidations<'a>(
     statements: &'a [Statement],
     owner: Option<&'a str>,
-    modes: &HashMap<(Option<&'a str>, &'a str), (FutureMode, &'a Span)>,
+    contracts: &HashMap<(Option<&'a str>, &'a str), (EffectKind, DeliveryMode, &'a Span)>,
 ) -> Result<(), Error> {
     for statement in statements {
         if let Statement::InvalidateLane { lane, span } = statement
-            && !modes.contains_key(&(owner, lane.as_str()))
+            && !contracts.contains_key(&(owner, lane.as_str()))
         {
             return Err(Error::new(
                 "E140",
                 span,
-                format!("request lane `{lane}` is not declared for this state owner"),
+                format!("delivery lane `{lane}` is not declared for this state owner"),
             )
-            .hint(format!(
-                "declare it with `run latest lane={lane} ...` or `run replace lane={lane} ...` for the same state owner"
-            )));
+            .hint(
+                "declare it with a named `run latest`, `run replace`, or `stream replace` lane for the same state owner",
+            ));
         }
     }
     Ok(())
 }
 
-fn future_mode_name(mode: FutureMode) -> &'static str {
-    match mode {
-        FutureMode::Every => "every",
-        FutureMode::Latest => "latest",
-        FutureMode::Replace => "replace",
+fn delivery_statement_name(kind: EffectKind, mode: DeliveryMode) -> &'static str {
+    match (kind, mode) {
+        (EffectKind::Future, DeliveryMode::Every) => "run every",
+        (EffectKind::Future, DeliveryMode::Latest) => "run latest",
+        (EffectKind::Future, DeliveryMode::Replace) => "run replace",
+        (EffectKind::Stream, DeliveryMode::Every) => "stream every",
+        (EffectKind::Stream, DeliveryMode::Latest) => "stream latest",
+        (EffectKind::Stream, DeliveryMode::Replace) => "stream replace",
+        (EffectKind::Task, _) => "task",
     }
 }
 

@@ -122,7 +122,6 @@ state
   account_error = ""
   orders_error = ""
   fills_error = ""
-  feeds:task-handle? = none
   latency = 0
   clock:i64 = now_seconds()
   live = false

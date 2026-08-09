@@ -375,8 +375,8 @@ palette app for AppTheme
   danger #ff0000
 on start
   parallel
-    stream numbers(3) -> number _
-    stream fallible() -> text _ | failed _
+    stream every numbers(3) -> number _
+    stream every fallible() -> text _ | failed _
 on number(value)
 on text(value)
 on failed(error)
