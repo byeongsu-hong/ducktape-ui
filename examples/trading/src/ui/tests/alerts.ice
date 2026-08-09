@@ -20,7 +20,7 @@ test trading_a_level_that_cannot_be_watched_says_so_before_the_press
   viewport 1660 820
   target app = #app
   target trade = app/terminal-fit/trade
-  target watch = trade/ticket-panel/ticket-body/alert-here
+  target watch = trade/ticket-panel/ticket-body/limit-group/alert-here
   target watched = trade/book/alert-list
   expect empty(ticket_price)
   expect empty(alerts)

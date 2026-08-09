@@ -226,12 +226,12 @@ first.
 The ticket is a rail beside the book, not a dialog over it. An order is priced
 against what the book is doing, and a modal that covers the book to ask about
 it has the relationship backwards. It prices an order and stops there.
-It seeds the limit price from the book's mid, takes a size and a leverage held
-inside what the market allows, and answers the only three questions worth
-asking before an order exists: what it is worth, what it ties up, and where it
-dies. The liquidation is isolated-margin arithmetic against the maintenance
-requirement this market holds — a cross position dies against the whole
-account instead, which is the rail under the equity figure.
+It describes the order a venue would actually take — kind, time in force,
+side, size and its unit, leverage, margin mode, reduce-only, and an optional
+take-profit and stop-loss — and answers the only three questions worth asking
+before an order exists: what it is worth, what it ties up, and where it dies.
+Which cliff that last one is depends on the margin mode, and the panel says
+which it picked.
 
 Every row that does something is named by what it does, not by what it shows:
 a book level announces the order it would start rather than the price it
@@ -317,6 +317,107 @@ once. Sending would mean this app holding the key that signs an EIP-712 order,
 which is not a thing an example should ask for. The boundary is the
 interesting part: everything up to the signature is arithmetic worth having,
 and the signature is where a real client starts.
+
+### The order it describes
+
+Seven fields, and every one of them is a fact an order carries on the wire
+rather than a preference the panel keeps. They live in one `ticket_*` block of
+app state, and everything under them — the value, the requirement, the cliff,
+the effect on the position, the rent — is a `derived` projection of that block.
+It used to be eight hand-written copies of one `price_ticket` call, re-assigned
+in every handler that touched a field, which is a quote that goes stale the
+first time a new field forgets to join the list.
+
+**Market or limit.** Not a filter over one order shape. A market order has no
+price to type, so the field goes, and the whole panel is quoted at what walking
+the book on screen would actually pay — the same walk the row below prints, so
+the two cannot disagree. A limit order is quoted at the field. Leaving the last
+typed price in place and quoting a market order against it is a panel
+describing an order nobody is placing.
+
+**How long it rests.** `GTC`, `IOC`, `ALO` — one enum, not three booleans,
+because post-only and immediate-or-cancel are two answers to the same question
+and an order carrying both would have to rest and fill at once. Hyperliquid
+takes exactly these three on `limit.tif`; a market order is not a type there at
+all but an `Ioc` limit at a crossing price, which is why the two controls are
+one arithmetic here too. Lighter's three are
+`IMMEDIATE_OR_CANCEL`, `GOOD_TILL_TIME` and `POST_ONLY` — it has no
+rest-until-cancelled, so its button reads `GTT` and a sentence under the row
+says the order carries a deadline it was signed with. A button reading `GTC`
+over that would be this app inventing a guarantee the venue never made.
+
+**The size, and what it is counted in.** The toggle beside `SIZE` is a wording
+rather than a second size: pressing it rewrites the field so the quantity
+survives the press, and one line under it names the price the dollars are being
+converted at — a limit converts at the limit, a market at the book's mid, and a
+conversion whose rate is off screen is a number nobody can check. Both venues
+take a size in the instrument, so the conversion happens once, in `order_size`,
+and nothing downstream learns there was a toggle.
+
+**Reduce-only, and the close that is one.** Reduce-only is a promise the venue
+keeps by refusing the order rather than by shrinking it, so a box that
+guaranteed nothing quietly would be the reader's only warning: an order that
+would add to what is held says so in a sentence under the box. Against the
+other side it is a cap, because the venue fills to the position and no further,
+and the panel quotes what the order would do rather than what was typed.
+**CLOSE POSITION** is this same promise with the size and the side filled in,
+so it sets the box rather than being a second path that happens to agree with
+it.
+
+**Cross or isolated.** The requirement is the same figure either way — the
+venue takes notional over leverage to open, whichever pocket it comes out of —
+and the cliff is not, which is exactly why the mode has to be said out loud
+next to a number that does not move. An isolated position stands on the margin
+posted behind it and its cliff falls out of its own entry and leverage. A cross
+position stands on the whole account: it goes when the account's equity reaches
+the account's requirement, and everything else held cross has already moved
+that line. Quoting the isolated formula under a cross label is the wrong
+order's cliff. A cross cliff needs an account to be measured against, so with
+none read the panel says so rather than filling the gap with the other
+arithmetic; and a builder-deployed market is never held against the account on
+screen at all, so the cross cliff declines there for the same reason
+**AGAINST THE ENGINE** does. The market's own isolated arithmetic is not gated
+by any of that.
+
+**A take-profit and a stop-loss**, folded until they are wanted, with the PnL
+each level would realize drawn beside it and carried in the field's accessible
+name. A level on the wrong side of the entry is the other kind of order and the
+venue sends it as one — the trigger is already true when the order fills — so
+it is refused with the reason. A stop past the liquidation is worse than wrong:
+it reads as protection and is not there, because the engine closes the position
+before the trigger is reached. Hyperliquid takes these attached to the entry as
+a `trigger` order grouped with it. Lighter's public API has no such grouping —
+its SDK exposes take-profit and stop-loss only as whole independent orders,
+with nothing anywhere naming a parent — so on Lighter the fields are not
+offered and a sentence says why. Two fields the app would have to drop are
+worse than no fields: the entry would go and the protection would not.
+
+Nothing here is signed and nothing is sent. The ticket's state block is the
+payload a signing client would project, and `order_size` is the one function
+that turns what was typed into what would be sent.
+
+### Nine groups in 252 pixels
+
+Adding four groups to a panel that was already full is a layout problem before
+it is a feature. The ticket's body scrolls and its readouts do not — they sit
+under the scroll rather than in it, so no window this app opens at can take the
+answer off the screen while leaving the question on it — which meant the new
+controls had to fit above the fold or be unreachable in practice.
+
+Three decisions did it. The size unit rides in the label's own row, which was
+already naming the unit. Cross/isolated and reduce-only share a row, because
+they are two halves of one question — how is this held — and the column has no
+rows to spare. The two level fields fold behind a checkbox and sit side by side
+when open, because most orders carry no levels and two empty fields were
+pushing the leverage above them off the bottom. With the body's rhythm tightened
+from 12 to 8, every control in the ticket is on screen at 1660x820 in the
+fixture that draws the most of them — the one with a position open, so
+**CLOSE POSITION** and its sentence are there too. Unfolding the levels, and
+the narrow 1180x720 window, scroll; the readouts under the rule do not.
+
+Folding also stops a level being attached out of sight: closing the box clears
+both fields, because a level nobody can see is a level the order would still
+carry.
 
 The one figure in that arithmetic that is not arithmetic is the maintenance
 requirement, and it belongs to the venue: Hyperliquid holds half the margin at
@@ -712,6 +813,10 @@ still carries is on screen at the minimum size, and the page tests run there.
 | Resting orders | yes | **no** |
 | Fills, as they print | yes, on the socket | **no** |
 | Liquidation prints on the tape | yes | **no** — see below |
+| Resting rules the ticket offers | `Gtc`, `Ioc`, `Alo` | `GOOD_TILL_TIME`, `IMMEDIATE_OR_CANCEL`, `POST_ONLY` — no rest-until-cancelled |
+| Reduce-only on the order | yes (`r`) | yes (`reduce_only`) |
+| Take-profit and stop-loss attached to the entry | yes, a grouped `trigger` order | **no** — separate orders only |
+| Cross and isolated margin | yes, per asset | yes, per market |
 
 The gaps are stated on screen rather than left as empty panels, because an
 empty list reads as *nothing has happened* and on Lighter nothing *can* happen:
@@ -722,6 +827,11 @@ empty list reads as *nothing has happened* and on Lighter nothing *can* happen:
   all this app asks a reader for. Both panels say so where their rows would be,
   and the settings page says it once more beside the venue's name. Connecting
   an address would not change it, so the sentence does not offer that.
+- **Attached levels.** Lighter's SDK exposes `create_tp_order` and
+  `create_sl_order` as whole independent orders taking their own trigger price,
+  price and size; no parent-order, OTOCO or position-TPSL field appears
+  anywhere in it or in the docs. So the ticket does not offer the two fields
+  there, and says why where they would have been.
 - **Liquidation prints.** Lighter carries them in a second array on the trade
   channel, keyed to merge by trade id, and the copy that arrives with the
   subscription is hours stale — so including them would put old prints on screen
@@ -920,6 +1030,30 @@ survives being typed and clears on Escape; the panels that need an account say
 so when there is none; and a failure outranks the progress line it shares a
 slot with, in the terminal's plain ink rather than in either money colour.
 None of those reach the network, so they run wherever the rest does.
+
+The ticket's own arithmetic is tested where it lives. The cross cliff is
+checked against the isolated closed form for the one case the two describe
+alike — an account holding nothing else — and against the directions they part
+in: more equity is a longer fall, a requirement elsewhere raises the floor, no
+account is no cliff, and a builder market is the wrong account either way. The
+size the venue would be sent is checked as a size rather than as a string:
+dollars divide and land on the instrument's step downward, reduce-only trims to
+the position on the other side and leaves the refused case as typed, and the
+unit toggle round-trips a quantity. Each refusal is checked against the level
+that earns it and the level next to it that does not.
+
+Driven in the app, each of those is one press. A market order hides the price
+field, relabels the crossing row, and prices the panel off the walk. The
+selected order type, resting rule, margin mode and size unit each say so in
+their own accessible name. A take-profit under a long entry is refused with the
+sentence and loses its figure with it; a stop past the cliff is refused for the
+second reason and not the first. Reduce-only refuses the side it cannot reduce
+and is silent on the side it can. **CLOSE POSITION** sets the box, and typing
+past the position is capped by it. Cross and isolated quote two different
+cliffs for one order and the same requirement. And a size in dollars is the
+same order as the size in coins. Every one of those has been run against a
+minimal mutation of the behaviour it names and seen to fail on its own
+assertion.
 
 A categorized universe has fixtures and tests of its own. The rail heads the
 exchange's own perps and each builder dex; a search reaches every category and

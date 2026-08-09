@@ -23,7 +23,6 @@ use std::pin::Pin;
 
 use smol::channel::Receiver;
 
-use crate::Venue;
 use crate::hyperliquid::{
     Account, Fill, HlError, MarketTick, Order, SymbolRow, Tape, hl_account, hl_candles,
     hl_fill_feed, hl_history, hl_market_feed, hl_orders, hl_symbols,
@@ -31,6 +30,7 @@ use crate::hyperliquid::{
 use crate::lighter::{
     lighter_account, lighter_candles, lighter_history, lighter_market_feed, lighter_symbols,
 };
+use crate::{Tif, Venue};
 
 /// What the screen calls a venue.
 ///
@@ -324,6 +324,84 @@ pub fn venue_fills_note(venue: Venue, watching: bool, failure: String) -> String
         _ if watching => "No fills on this account yet.".to_owned(),
         _ => "Fills need an address.".to_owned(),
     }
+}
+
+/// What a venue calls the three ways an order can rest, in the four
+/// characters the segmented row has for it.
+///
+/// Two of the three are the same word at both exchanges. The third is not, and
+/// the difference is not cosmetic: Hyperliquid's `Gtc` rests until it is
+/// cancelled, and Lighter has no such thing — its order carries a deadline it
+/// was signed with (`ORDER_TIME_IN_FORCE_GOOD_TILL_TIME`), so an order left
+/// alone expires rather than waiting. A button reading GTC over that would be
+/// this app inventing a guarantee the venue never made.
+///
+/// Read from the exchange endpoint's `limit.tif` (`Alo` | `Ioc` | `Gtc`) and
+/// from Lighter's own SDK enum (`IMMEDIATE_OR_CANCEL` | `GOOD_TILL_TIME` |
+/// `POST_ONLY`).
+pub fn tif_name(venue: Venue, tif: Tif) -> String {
+    match (venue, tif) {
+        (Venue::Hyperliquid, Tif::Gtc) => "GTC",
+        (Venue::Lighter, Tif::Gtc) => "GTT",
+        (_, Tif::Ioc) => "IOC",
+        (_, Tif::Alo) => "ALO",
+    }
+    .to_owned()
+}
+
+/// The same three, as the act a reader hears rather than as the abbreviation
+/// they are painted in. Four letters is what the column has and no help at all
+/// to anyone hearing them one at a time.
+pub fn tif_act(venue: Venue, tif: Tif) -> String {
+    match (venue, tif) {
+        (Venue::Hyperliquid, Tif::Gtc) => "Rest until cancelled",
+        (Venue::Lighter, Tif::Gtc) => "Rest until its deadline",
+        (_, Tif::Ioc) => "Fill now or cancel the rest",
+        (_, Tif::Alo) => "Rest only; cancel if it would cross",
+    }
+    .to_owned()
+}
+
+/// What the chosen resting rule does not mean at this venue, or nothing when
+/// the name is the whole of it.
+///
+/// One sentence under the row rather than a renamed button alone, because the
+/// name is four letters and the difference is a deadline the reader is about
+/// to sign.
+pub fn venue_tif_note(venue: Venue, tif: Tif) -> String {
+    match (venue, tif) {
+        (Venue::Lighter, Tif::Gtc) => {
+            "Lighter has no rest-until-cancelled: the order carries a deadline it is signed with \
+             and expires there."
+                .to_owned()
+        }
+        _ => String::new(),
+    }
+}
+
+/// Whether this venue takes a take-profit and a stop-loss attached to the
+/// order that opens the position, and what it does instead when it does not.
+///
+/// Hyperliquid takes them on the same action: a `trigger` order carrying
+/// `triggerPx` and `tpsl`, grouped with the entry. Lighter's public API has no
+/// such grouping — its SDK exposes `create_tp_order` and `create_sl_order` as
+/// whole independent orders, and nothing anywhere in it names a parent. So on
+/// Lighter these two fields would be a promise the app cannot keep: the entry
+/// would go, and the protection would be a second order nobody placed.
+pub fn venue_attaches_levels(venue: Venue) -> bool {
+    match venue {
+        Venue::Hyperliquid => true,
+        Venue::Lighter => false,
+    }
+}
+
+pub fn venue_levels_note(venue: Venue) -> String {
+    if venue_attaches_levels(venue) {
+        return String::new();
+    }
+    "Lighter attaches no levels to an entry. Its API takes them as separate orders once the \
+     position exists, which this app does not place."
+        .to_owned()
 }
 
 /// What a market's margin engine holds a position to.

@@ -55,24 +55,24 @@ on seed_ticket(price, buy)
   ticket_buy = buy
   ticket_price = seed
   ticket_size = ""
-  quote = price_ticket(seed, "", ticket_leverage, focus, buy, position_held(positions, coin))
 
 on ticket_priced(typed)
   ticket_price = typed
-  quote = price_ticket(typed, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_sized(typed)
   ticket_size = typed
-  quote = price_ticket(ticket_price, typed, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_levered(typed)
   ticket_leverage = typed
-  quote = price_ticket(ticket_price, ticket_size, typed, focus, ticket_buy, position_held(positions, coin))
 
 on search_key(event)
   return if event.key != key.named("Escape")
   query = ""
 
+// A close is a reduce-only order with the size and the side already known, so
+// this fills those three in rather than being a fourth path that happens to
+// agree with them. What follows from the box being set follows here too: the
+// order is capped at the position, opens nothing, and asks for no margin.
 on close_held
   let held = position_held(positions, coin)
   return if held == 0.0
@@ -85,8 +85,12 @@ on close_held
   let seed = ticket_seed(book, focus)
   ticket_buy = held < 0.0
   ticket_price = seed
+  // The size that flattens a position is in the instrument, so the field goes
+  // back to the instrument to hold it. Left in dollars it would read as the
+  // position's notional, which is a different number that looks like a size.
+  ticket_usd = false
   ticket_size = fmt_size(held)
-  quote = price_ticket(seed, fmt_size(held), ticket_leverage, focus, held < 0.0, held)
+  ticket_reduce = true
 
 on add_alert_here
   alerts = add_alert(alerts, coin, ticket_price, mark_price(focus))
@@ -95,14 +99,47 @@ on drop_alert_at(at_coin, price)
   alerts = drop_alert(alerts, at_coin, price)
 
 on size_share(share)
-  let sized = ticket_afford(account, ticket_price, focus, quote.leverage, share)
+  let sized = ticket_afford(account, ticket_at, focus, quote.leverage, share, ticket_usd)
   return if empty(sized)
   ticket_size = sized
-  quote = price_ticket(ticket_price, sized, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on ticket_side(buy)
   ticket_buy = buy
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, buy, position_held(positions, coin))
+
+on ticket_kinded(next)
+  ticket_kind = next
+
+on ticket_timed(next)
+  ticket_tif = next
+
+on ticket_moded(cross)
+  ticket_cross = cross
+
+on ticket_reduced(on)
+  ticket_reduce = on
+
+// The unit toggle is a change of wording rather than a change of order, so the
+// number in the field is rewritten to hold the same quantity. Left alone, a
+// reader who typed three bitcoin and pressed USD would be offering to buy
+// three dollars of it, and the field looks identical either way.
+on ticket_denom(usd)
+  return if usd == ticket_usd
+  ticket_size = retype_size(ticket_size, usd, ticket_unit, focus)
+  ticket_usd = usd
+
+on ticket_attached(on)
+  ticket_levels = on
+  return if on
+  // Folded away, a level nobody can see is a level the order would still
+  // carry. The fold is a view flag; the fields it hides are the order.
+  ticket_tp = ""
+  ticket_sl = ""
+
+on ticket_took(typed)
+  ticket_tp = typed
+
+on ticket_stopped(typed)
+  ticket_sl = typed
 
 on reopen
   draft = address
@@ -164,7 +201,14 @@ on pick_symbol(name)
   coin = name
   ticket_price = seed
   ticket_size = ""
-  quote = price_ticket(seed, "", ticket_leverage, market, ticket_buy, position_held(positions, name))
+  // A take-profit and a stop-loss are prices of the market being left, and
+  // reduce-only is a promise about a position held in it. Carried over they
+  // are levels on the wrong instrument and a promise about nothing, and both
+  // look exactly like levels and a promise.
+  ticket_tp = ""
+  ticket_sl = ""
+  ticket_levels = false
+  ticket_reduce = false
   tape_prints = []
   focus = symbol_row(symbols, name)
   hover = none
@@ -218,6 +262,14 @@ on switch_venue(next)
   // the next one may not even list.
   ticket_price = ""
   ticket_size = ""
+  // A take-profit and a stop-loss are prices of the market being left, and
+  // reduce-only is a promise about a position held in it. Carried over they
+  // are levels on the wrong instrument and a promise about nothing, and both
+  // look exactly like levels and a promise.
+  ticket_tp = ""
+  ticket_sl = ""
+  ticket_levels = false
+  ticket_reduce = false
   // The typed leverage stays, and it is the only typed field that does. A
   // price and a size are readings of one market — the price came off a book
   // and the size is denominated in a coin — but "5x" is how much risk the
@@ -228,7 +280,6 @@ on switch_venue(next)
   // the clamp is re-applied the moment `symbols_loaded` brings a row to clamp
   // against. Resetting it here would also mean resetting it in `pick_symbol`,
   // which changes market and cap for the same reason and deliberately does not.
-  quote = price_ticket("", "", ticket_leverage, none, ticket_buy, 0.0)
   hover = none
   loading_history = false
   history_exhausted = false
@@ -313,7 +364,6 @@ on symbols_loaded(rows)
   coin = landed
   focus = symbol_row(rows, landed)
   status = ""
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, landed))
   return if !moved
   // Past here the market changed under the reader, so this owes what
   // `pick_symbol` owes: the book, the prints and the typed order belong to the
@@ -324,7 +374,14 @@ on symbols_loaded(rows)
   tape_prints = []
   ticket_price = ""
   ticket_size = ""
-  quote = price_ticket("", "", ticket_leverage, focus, ticket_buy, position_held(positions, landed))
+  // A take-profit and a stop-loss are prices of the market being left, and
+  // reduce-only is a promise about a position held in it. Carried over they
+  // are levels on the wrong instrument and a promise about nothing, and both
+  // look exactly like levels and a promise.
+  ticket_tp = ""
+  ticket_sl = ""
+  ticket_levels = false
+  ticket_reduce = false
   hover = none
   status = "Loading candles"
   tape = tape_focus(tape, landed, interval)
@@ -370,7 +427,6 @@ on account_loaded(next)
   account_missing = !account_read(next)
   account = next
   positions = held_positions(next)
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on fills_streamed(rows)
   fills_error = ""
@@ -399,7 +455,6 @@ on market_ticked(tick)
   account = mark_account(account, positions)
   tape_prints = push_trades(tape_prints, tick, 60)
   alerts = check_alerts(alerts, tick)
-  quote = price_ticket(ticket_price, ticket_size, ticket_leverage, focus, ticket_buy, position_held(positions, coin))
 
 on failed(reason)
   error = reason.message

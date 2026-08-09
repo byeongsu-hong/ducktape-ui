@@ -908,7 +908,7 @@ view
                             y-scroller bg=muted r=3.0
                           col
                             with
-                              gap=12.0
+                              gap=8.0
                               w=fill
                               pr=10.0
                             row
@@ -990,6 +990,26 @@ view
                                         w=fill
                                         align-x=center
                                         @text-muted
+                            // Market or limit, which is not a filter over one
+                            // order shape. A market order has no price to
+                            // type, so the field below goes and the whole
+                            // panel is quoted at what walking the book would
+                            // pay instead of at a number left in a field.
+                            row #ticket-kind gap=8.0 w=fill
+                              Choice #kind-market
+                                with
+                                  name="MARKET"
+                                  act="Cross the spread now"
+                                  on=ticket_market
+                                events
+                                  pick -> ticket_kinded(OrderKind.market)
+                              Choice #kind-limit
+                                with
+                                  name="LIMIT"
+                                  act="Rest at a price you choose"
+                                  on=!ticket_market
+                                events
+                                  pick -> ticket_kinded(OrderKind.limit)
                             if position_held(positions, coin) != 0.0
                               button #close-held -> close_held
                                 with
@@ -1005,53 +1025,127 @@ view
                                     align-x=center
                                     tracking=1.1
                                     @text-muted
-                            if !empty(ticket_effect(positions, coin, ticket_size, ticket_buy))
-                              text ticket_effect(positions, coin, ticket_size, ticket_buy)
+                            if !empty(ticket_effect(positions, coin, ticket_coins, ticket_buy))
+                              text ticket_effect(positions, coin, ticket_coins, ticket_buy)
                                 with
                                   size=11.0
                                   w=fill
                                   wrap=word
                                   @text-muted
-                            col gap=8.0 w=fill
-                              Label value="LIMIT PRICE"
-                              input "" #ticket-price <-> ticket_price
+                            if !ticket_market
+                              col #limit-group gap=6.0 w=fill
+                                Label value="LIMIT PRICE"
+                                input "" #ticket-price <-> ticket_price
+                                  with
+                                    label="Limit price"
+                                    hint="0.00"
+                                    change=ticket_priced
+                                    text-size=12.0
+                                    font=digits
+                                  focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                // How long the order lives, which is one fact
+                                // about it rather than three. Post-only and
+                                // immediate-or-cancel are two answers to the
+                                // same question, and an order carrying both
+                                // would have to rest and fill at once.
+                                row #ticket-tif gap=4.0 w=fill
+                                  Choice #tif-gtc
+                                    with
+                                      name=tif_name(venue, Tif.gtc)
+                                      act=tif_act(venue, Tif.gtc)
+                                      on=(ticket_tif == Tif.gtc)
+                                    events
+                                      pick -> ticket_timed(Tif.gtc)
+                                  Choice #tif-ioc
+                                    with
+                                      name=tif_name(venue, Tif.ioc)
+                                      act=tif_act(venue, Tif.ioc)
+                                      on=(ticket_tif == Tif.ioc)
+                                    events
+                                      pick -> ticket_timed(Tif.ioc)
+                                  Choice #tif-alo
+                                    with
+                                      name=tif_name(venue, Tif.alo)
+                                      act=tif_act(venue, Tif.alo)
+                                      on=(ticket_tif == Tif.alo)
+                                    events
+                                      pick -> ticket_timed(Tif.alo)
+                                // Where the two venues mean different things
+                                // by the same button. Four letters cannot
+                                // carry a deadline the reader is about to
+                                // sign, so the sentence does.
+                                if !empty(venue_tif_note(venue, ticket_tif))
+                                  text venue_tif_note(venue, ticket_tif)
+                                    with
+                                      size=10.0
+                                      w=fill
+                                      wrap=word
+                                      @text-faint
+                                button #alert-here -> add_alert_here
+                                  with
+                                    label="Watch this level"
+                                    w=fill
+                                    p=5.0
+                                    disabled=!empty(watch_refusal)
+                                  active bg=raised text=muted r=3.0
+                                  hovered bg=edge text=fg r=3.0
+                                  disabled bg=raised text=faint r=3.0
+                                  text "WATCH THIS LEVEL"
+                                    with
+                                      size=9.0
+                                      w=fill
+                                      align-x=center
+                                      tracking=1.1
+                                // A press the list refuses reads as a press
+                                // that worked: the level is simply not there.
+                                // The button goes dead and says which refusal
+                                // it is, in the same shape the gate refuses an
+                                // address.
+                                if !empty(watch_refusal)
+                                  text watch_refusal
+                                    with
+                                      size=10.0
+                                      w=fill
+                                      wrap=word
+                                      @text-faint
+                            // The field's worth of space a market order does
+                            // not need, spent on the price it is being quoted
+                            // at rather than on saying there is none.
+                            if ticket_market
+                              text market_note(book, ticket_coins, ticket_buy, focus)
                                 with
-                                  label="Limit price"
-                                  hint="0.00"
-                                  change=ticket_priced
-                                  text-size=12.0
-                                  font=digits
-                                focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                              button #alert-here -> add_alert_here
-                                with
-                                  label="Watch this level"
+                                  size=10.0
                                   w=fill
-                                  p=5.0
-                                  disabled=!empty(watch_refusal)
-                                active bg=raised text=muted r=3.0
-                                hovered bg=edge text=fg r=3.0
-                                disabled bg=raised text=faint r=3.0
-                                text "WATCH THIS LEVEL"
-                                  with
-                                    size=9.0
-                                    w=fill
-                                    align-x=center
-                                    tracking=1.1
-                              // A press the list refuses reads as a press that
-                              // worked: the level is simply not there. The
-                              // button goes dead and says which refusal it is,
-                              // in the same shape the gate refuses an address.
-                              if !empty(watch_refusal)
-                                text watch_refusal
-                                  with
-                                    size=10.0
-                                    w=fill
-                                    wrap=word
-                                    @text-faint
-                            col gap=8.0 w=fill
-                              row gap=6.0 align=center
+                                  wrap=word
+                                  @text-faint
+                            col gap=6.0 w=fill
+                              // The unit rides in the label's own row, which
+                              // is where the unit was already being named. A
+                              // toggle on a line of its own would have cost
+                              // the ticket a row for a fact it was already
+                              // showing.
+                              row
+                                with
+                                  gap=6.0
+                                  align=center
+                                  w=fill
                                 Label value="SIZE"
-                                Label value=coin
+                                space w=fill
+                                row #size-unit gap=4.0 w=96.0
+                                  Choice #unit-coin
+                                    with
+                                      name=coin
+                                      act="Type the size in coins"
+                                      on=!ticket_usd
+                                    events
+                                      pick -> ticket_denom(false)
+                                  Choice #unit-usd
+                                    with
+                                      name="USD"
+                                      act="Type the size in dollars"
+                                      on=ticket_usd
+                                    events
+                                      pick -> ticket_denom(true)
                               input "" #ticket-size <-> ticket_size
                                 with
                                   label="Size"
@@ -1060,6 +1154,16 @@ view
                                   text-size=12.0
                                   font=digits
                                 focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                              // Which price the dollars are being turned into
+                              // a size at. A rate that is off screen is a
+                              // number nobody can check.
+                              if ticket_usd
+                                text size_note(ticket_usd, ticket_market, ticket_price, book, focus)
+                                  with
+                                    size=10.0
+                                    w=fill
+                                    wrap=word
+                                    @text-faint
                             row gap=4.0 w=fill
                               Share label="25%" share=0.25
                                 events
@@ -1073,7 +1177,7 @@ view
                               Share label="MAX" share=1.0
                                 events
                                   pick -> size_share _
-                            col gap=8.0 w=fill
+                            col gap=6.0 w=fill
                               row gap=6.0 align=center
                                 Label value="LEVERAGE"
                                 match focus
@@ -1095,6 +1199,133 @@ view
                                   text-size=12.0
                                   font=digits
                                 focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                              // How the order is held, which is two questions
+                              // with one answer between them: which pocket the
+                              // requirement comes out of, and whether the
+                              // order is allowed to open anything at all. They
+                              // share a row because they share a subject and
+                              // because the column has 252 pixels of width and
+                              // no rows to spare.
+                              row
+                                with
+                                  gap=8.0
+                                  w=fill
+                                  align=center
+                                row #margin-mode gap=4.0 w=112.0
+                                  Choice #mode-cross
+                                    with
+                                      name="CROSS"
+                                      act="Hold this order against the whole account"
+                                      on=ticket_cross
+                                    events
+                                      pick -> ticket_moded(true)
+                                  Choice #mode-isolated
+                                    with
+                                      name="ISOLATED"
+                                      act="Hold this order against its own margin"
+                                      on=!ticket_cross
+                                    events
+                                      pick -> ticket_moded(false)
+                                checkbox "Reduce only" #ticket-reduce -> ticket_reduced _
+                                  with
+                                    checked=ticket_reduce
+                                    size=13.0
+                                    gap=6.0
+                                    text-size=10.0
+                              // A promise the venue keeps by sending nothing
+                              // rather than by sending less, so a box that
+                              // guaranteed nothing quietly would have been the
+                              // reader's only warning.
+                              if ticket_reduce && !empty(reduce_refusal)
+                                text reduce_refusal
+                                  with
+                                    size=10.0
+                                    w=fill
+                                    wrap=word
+                                    @text-down
+                            // A target and a stop carried by the order that
+                            // opens the position, which is the only moment
+                            // they can be attached to it — a venue that will
+                            // not take them then says so instead of offering
+                            // two fields it would drop.
+                            if venue_attaches_levels(venue)
+                              col gap=6.0 w=fill
+                                // Folded until it is wanted. Most orders carry
+                                // no levels, the column is 252 pixels wide,
+                                // and two fields nobody is filling in were
+                                // pushing the leverage they sit under off the
+                                // bottom of the panel. Folding is also what
+                                // stops a level being attached out of sight:
+                                // closing the box clears both.
+                                checkbox "Attach a take-profit and a stop-loss" #ticket-attach -> ticket_attached _
+                                  with
+                                    checked=ticket_levels
+                                    size=13.0
+                                    gap=6.0
+                                    text-size=10.0
+                                if ticket_levels
+                                  col #ticket-levels gap=8.0 w=fill
+                                    // Side by side because they are one
+                                    // decision with two ends, and because the
+                                    // ticket has the width for two columns and
+                                    // not the height for two stacks.
+                                    row gap=8.0 w=fill
+                                      col w=fill gap=6.0
+                                        Label value="TAKE PROFIT"
+                                        input "" #ticket-tp <-> ticket_tp
+                                          with
+                                            label=level_label("Take profit", tp_pnl)
+                                            hint="0.00"
+                                            change=ticket_took
+                                            text-size=12.0
+                                            font=digits
+                                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                        if empty(tp_refusal) && tp_pnl != 0.0
+                                          text fmt_pnl(tp_pnl)
+                                            with
+                                              size=11.0
+                                              font=digits
+                                              @text-up
+                                      col w=fill gap=6.0
+                                        Label value="STOP LOSS"
+                                        input "" #ticket-sl <-> ticket_sl
+                                          with
+                                            label=level_label("Stop loss", sl_pnl)
+                                            hint="0.00"
+                                            change=ticket_stopped
+                                            text-size=12.0
+                                            font=digits
+                                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                        if empty(sl_refusal) && sl_pnl != 0.0
+                                          text fmt_pnl(sl_pnl)
+                                            with
+                                              size=11.0
+                                              font=digits
+                                              @text-down
+                                    // Full width under both, because a refusal
+                                    // is a sentence and half a column is not a
+                                    // place to read one.
+                                    if !empty(tp_refusal)
+                                      text tp_refusal
+                                        with
+                                          size=10.0
+                                          w=fill
+                                          wrap=word
+                                          @text-down
+                                    if !empty(sl_refusal)
+                                      text sl_refusal
+                                        with
+                                          size=10.0
+                                          w=fill
+                                          wrap=word
+                                          @text-down
+                            if !venue_attaches_levels(venue)
+                              text venue_levels_note(venue)
+                                with
+                                  size=10.0
+                                  w=fill
+                                  wrap=word
+                                  @text-faint
                         rule horizontal thickness=1.0 color=edge
                         col gap=10.0 w=fill
                           row w=fill align=center
@@ -1105,21 +1336,31 @@ view
                                 size=12.0
                                 font=digits
                                 @text-muted
+                          // One walk of the book, under whichever of its two
+                          // names is true. A limit order is quoted at the
+                          // field and this is the other price — the one it
+                          // would get by crossing instead, which is the whole
+                          // question of resting or taking. A market order has
+                          // no other price: this is what it fills at, and
+                          // every figure below is priced off it.
                           row w=fill align=center
-                            Label value="IF YOU CROSS"
+                            if ticket_market
+                              Label value="FILLS AT"
+                            if !ticket_market
+                              Label value="IF YOU CROSS"
                             space w=fill
                             row gap=8.0 align=center
-                              text impact_price(book, ticket_size, ticket_buy)
+                              text impact_price(book, ticket_coins, ticket_buy)
                                 with
                                   size=12.0
                                   font=digits
                                   @text-fg
-                              text impact_slippage(book, ticket_size, ticket_buy)
+                              text impact_slippage(book, ticket_coins, ticket_buy)
                                 with
                                   size=10.0
                                   font=digits
                                   @text-faint
-                          if impact_short(book, ticket_size, ticket_buy)
+                          if impact_short(book, ticket_coins, ticket_buy)
                             text "The book on screen cannot fill that size."
                               with
                                 size=10.0
@@ -1136,7 +1377,7 @@ view
                           row w=fill align=center
                             Label value="RENT PER DAY"
                             space w=fill
-                            text funding_day(focus, ticket_price, ticket_size, ticket_buy)
+                            text funding_day(focus, ticket_at, ticket_coins, ticket_buy)
                               with
                                 size=12.0
                                 font=digits
@@ -1144,7 +1385,7 @@ view
                           row w=fill align=center
                             Label value="AGAINST THE ENGINE"
                             space w=fill
-                            text order_load(account, coin, ticket_size, ticket_buy, focus)
+                            text order_load(account, coin, ticket_coins, ticket_buy, focus)
                               with
                                 size=12.0
                                 font=digits
@@ -1173,12 +1414,12 @@ view
                                   font=digits
                                   @text-faint
                             if !quote.known
-                              text liquidation_gap(focus, !empty(symbols))
+                              text liquidation_gap(focus, !empty(symbols), ticket_cross, account_read(account))
                                 with
                                   size=11.0
                                   font=digits
                                   @text-faint
-                          text "Isolated margin, at the maintenance requirement this market holds. A cross position dies against the whole account instead, which is the rail under the equity figure."
+                          text margin_note(ticket_cross)
                             with
                               size=10.0
                               w=fill
