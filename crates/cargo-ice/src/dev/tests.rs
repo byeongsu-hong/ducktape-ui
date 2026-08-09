@@ -20,6 +20,32 @@ fn valid_app() -> &'static str {
 }
 
 #[test]
+fn package_selection_discovers_its_ice_root() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let package = root.join("app");
+    let source = package.join("src/ui/app.ice");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"app\"]\nresolver = \"3\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("Cargo.toml"),
+        "[package]\nname = \"demo-app\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    std::fs::write(package.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(&source, valid_app()).unwrap();
+
+    assert_eq!(
+        package_ice_source(root, "demo-app", &["-p".into(), "demo-app".into()]).unwrap(),
+        source.canonicalize().unwrap()
+    );
+}
+
+#[test]
 fn only_accepts_a_settled_input_snapshot() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path();
@@ -800,6 +826,23 @@ fn rustc_dep_info_uses_the_unique_hard_linked_artifact() {
 
     assert_eq!(rustc_dep_info_path(&executable).unwrap(), expected);
 }
+
+#[test]
+fn rustc_dep_info_uses_the_unique_copied_artifact() {
+    let fixture = tempfile::tempdir().unwrap();
+    let extension = std::env::consts::EXE_EXTENSION;
+    let executable = fixture.path().join("demo").with_extension(extension);
+    let artifact = fixture
+        .path()
+        .join("demo-0123456789abcdef")
+        .with_extension(extension);
+    std::fs::write(&artifact, b"binary").unwrap();
+    std::fs::copy(&artifact, &executable).unwrap();
+    let expected = artifact.with_extension("d");
+    std::fs::write(&expected, b"demo: src/main.rs\n").unwrap();
+
+    assert_eq!(rustc_dep_info_path(&executable).unwrap(), expected);
+}
 fn stamp_at(stamp: &[(PathBuf, FileStamp)], path: &Path) -> Option<FileStamp> {
     stamp
         .iter()
@@ -1502,9 +1545,7 @@ fn cargo_build_discovers_rustc_and_build_script_inputs() {
     assert_ne!(dep_info, build.executable.with_extension("d"));
     assert!(dep_info.starts_with(build.executable.parent().unwrap().join("deps")));
     assert!(
-        build
-            .discovered_inputs
-            .contains(&embedded.canonicalize().unwrap()),
+        build.discovered_inputs.contains(&embedded),
         "rustc dep-info did not report include_bytes input: {:?}",
         build.discovered_inputs
     );

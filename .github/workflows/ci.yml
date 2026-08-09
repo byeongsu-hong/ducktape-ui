@@ -307,6 +307,11 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --locked
+      - name: Test development runner discovery
+        if: matrix.runner == 'macos-latest'
+        run: |
+          cargo test --locked -p cargo-ice package_selection_discovers_its_ice_root
+          cargo test --locked -p cargo-ice cargo_build_discovers_rustc_and_build_script_inputs
       - name: Test native editor interactions
         run: |
           cargo test --locked -p ui-lang-runtime rich_text_editor --lib

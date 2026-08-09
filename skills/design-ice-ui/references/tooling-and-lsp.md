@@ -40,7 +40,7 @@ cargo ice help
 Expected form:
 
 ```text
-cargo ice <fmt [--check] | check | test | clippy | compat | expand <file.ice> | dev <file.ice> [-- cargo-build-args... [-- app-args...]] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | schema | lsp>
+cargo ice <fmt [--check] | check | test | clippy | compat | expand <file.ice> | dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | schema | lsp>
 ```
 
 ## Command reference

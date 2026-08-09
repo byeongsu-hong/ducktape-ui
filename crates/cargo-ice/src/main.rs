@@ -16,6 +16,14 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+const DEV_USAGE: &str =
+    "cargo ice dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...]";
+
+enum DevTarget<'a> {
+    Package(&'a str),
+    Source(&'a str),
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -56,7 +64,7 @@ fn run() -> Result<(), String> {
         "review" => return review::review(&root_for_command()?, trailing),
         "help" | "--help" | "-h" => {
             println!(
-                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <file.ice> [-- cargo-build-args... [-- app-args...]] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | review <file.ice> [options] | schema | lsp>"
+                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | review <file.ice> [options] | schema | lsp>"
             );
             return Ok(());
         }
@@ -66,14 +74,12 @@ fn run() -> Result<(), String> {
     let root = env::current_dir().map_err(|error| error.to_string())?;
     match command {
         "dev" => {
-            let requested = trailing.first().ok_or_else(|| {
-                "cargo ice dev <file.ice> [-- cargo-build-args... [-- app-args...]]".to_owned()
-            })?;
-            let cargo_args = trailing
-                .get(2..)
-                .filter(|_| trailing.get(1).is_some_and(|arg| arg == "--"))
-                .unwrap_or_default();
-            return dev::run(&root, &root.join(requested), cargo_args);
+            let (target, cargo_args) = dev_arguments(trailing).ok_or(DEV_USAGE)?;
+            let source = match target {
+                DevTarget::Package(package) => dev::package_ice_source(&root, package, cargo_args)?,
+                DevTarget::Source(requested) => root.join(requested),
+            };
+            return dev::run(&root, &source, cargo_args);
         }
         "expand" => {
             let requested = args
@@ -151,15 +157,25 @@ fn valid_command_args(command: &str, trailing: &[String]) -> bool {
     match command {
         "fmt" => trailing.is_empty() || trailing == ["--check"],
         "expand" => trailing.len() == 1,
-        "dev" => {
-            trailing.len() == 1
-                || trailing.len() >= 2 && trailing.get(1).is_some_and(|arg| arg == "--")
-        }
+        "dev" => dev_arguments(trailing).is_some(),
         "test" | "inspect" | "diff" | "api" | "review" => true,
         "schema" | "lsp" | "help" | "--help" | "-h" | "check" | "clippy" | "compat" => {
             trailing.is_empty()
         }
         _ => true,
+    }
+}
+
+fn dev_arguments(args: &[String]) -> Option<(DevTarget<'_>, &[String])> {
+    match args {
+        [flag, package, ..] if flag == "-p" && !package.is_empty() => {
+            Some((DevTarget::Package(package), args))
+        }
+        [source] => Some((DevTarget::Source(source), &[])),
+        [source, separator, cargo_args @ ..] if separator == "--" => {
+            Some((DevTarget::Source(source), cargo_args))
+        }
+        _ => None,
     }
 }
 
@@ -524,8 +540,8 @@ fn decode_hex(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        IceLocation, ice_files, ignored_dir, mapped_ice_location_in, orphan_ice_files,
-        remap_compiler_diagnostic, root_files, valid_command_args,
+        DevTarget, IceLocation, dev_arguments, ice_files, ignored_dir, mapped_ice_location_in,
+        orphan_ice_files, remap_compiler_diagnostic, root_files, valid_command_args,
     };
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
@@ -556,6 +572,21 @@ mod tests {
         ));
         assert!(valid_command_args("expand", &["app.ice".into()]));
         assert!(!valid_command_args("expand", &[]));
+    }
+
+    #[test]
+    fn accepts_package_selected_dev_arguments() {
+        let args = [
+            "-p".into(),
+            "hotreload-example".into(),
+            "--".into(),
+            "--demo".into(),
+        ];
+
+        assert!(valid_command_args("dev", &args));
+        let (target, cargo_args) = dev_arguments(&args).unwrap();
+        assert!(matches!(target, DevTarget::Package("hotreload-example")));
+        assert_eq!(cargo_args, args);
     }
 
     #[test]

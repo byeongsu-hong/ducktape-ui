@@ -27,6 +27,14 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
+pub(super) fn package_ice_source(
+    root: &Path,
+    package_name: &str,
+    cargo_args: &[String],
+) -> Result<PathBuf, String> {
+    inputs::package_ice_source(root, package_name, cargo_args)
+}
+
 #[derive(Debug)]
 struct DevCompilation {
     dependencies: Vec<PathBuf>,
