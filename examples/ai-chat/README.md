@@ -194,10 +194,13 @@ rather than starting beside it.
 
 Two streams run through a rollout: the raw `response_item` records, which are
 what was resent to the API, and the `event_msg` records, which are what the CLI
-drew. This reads the second, because it is already the list this window draws.
-It brings back things this window cannot itself produce — shell commands with
-their output, file changes, MCP calls — because a chat is being read back, not
-re-run.
+drew. Both are read — the drawn one for what to show, the raw one for what a
+next turn would resend, and either for the question, which different sessions
+record in different places.
+
+The drawn stream is what brings back the things this window cannot itself
+produce: shell commands with their output, file changes, MCP calls. A chat is
+being read back, not re-run.
 
 These files are large: a median of 2MB and a tail past 90MB. The listing reads
 only each file's head, and opening one streams it a line at a time and keeps a
@@ -213,15 +216,17 @@ bounded number of rows, saying how many it left out. Measured on a machine with
 - An overlay's contents are outside the tree the test harness scans, so a
   menu's appearance is reviewed from a capture rather than asserted. The test
   that produces it says so.
-- A past reasoning summary comes back only from rollouts that recorded the
-  drawn item. The raw record carries encrypted content and no summary, so
-  chats written without the drawn stream show their prompts, answers and tools
-  but not what the model was thinking.
+- **Past reasoning does not come back at all.** The raw record is encrypted,
+  and the drawn record's `summary_text` and `raw_content` are both empty —
+  in all 14,319 reasoning items across the 1,037 rollouts on this machine.
+  The parser reads either field if a future version fills one, and the audit
+  in `src/qa.rs` watches for exactly that; today a chat read back shows its
+  questions, answers and tools, and nothing of what the model was thinking.
 - There is no blur on a widget in this toolkit — only a window compositing
   flag and shadow blur — so the list being read is shown filling rather than
   frosted over. Hiding it would hide the part that is worth watching.
-- A chat whose first prompt sits past the first 256KB of its rollout is listed
-  as `Untitled chat` rather than read through for a name.
+- A chat whose question sits past the first 256KB of its rollout is listed as
+  `Untitled chat` rather than read through for a name.
 - **The sign-in is not fully verified.** Minting a code and telling waiting from
   refused are both checked against the live host; the half past approval — what
   the host returns once a code is typed, and the token exchange — is read off

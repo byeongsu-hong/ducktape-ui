@@ -111,6 +111,15 @@ fn chat_at(path: &Path) -> Option<Chat> {
             "event_msg" if payload["type"] == "user_message" && title.is_empty() => {
                 title = first_line(payload["message"].as_str().unwrap_or_default());
             }
+            // Most rollouts record the question only here, so a head that
+            // looked for the event alone found a name for almost none of them.
+            "response_item"
+                if payload["type"] == "message"
+                    && payload["role"] == "user"
+                    && title.is_empty() =>
+            {
+                title = first_line(&text_of(&payload["content"]));
+            }
             _ => {}
         }
         if !when.is_empty() && !title.is_empty() {
@@ -337,12 +346,21 @@ fn row_for(item: &Value) -> Option<Entry> {
     match kind {
         "UserMessage" => Some(Entry::of("prompt", "").with_body(text_of(&item["content"]))),
         "AgentMessage" => Some(Entry::of("answer", "").with_body(text_of(&item["content"]))),
+        // Recorded, but empty in every rollout written so far: `summary_text`
+        // and `raw_content` are both `[]` in all 14,319 reasoning items across
+        // the 1,037 on this machine, and the raw record is encrypted. Read
+        // either shape the field takes, and expect nothing.
         "Reasoning" => {
-            let summary = item["summary_text"].as_str().unwrap_or_default();
+            let summary = text_of(&item["summary_text"]);
+            let summary = if summary.trim().is_empty() {
+                text_of(&item["raw_content"])
+            } else {
+                summary
+            };
             if summary.trim().is_empty() {
                 return None;
             }
-            let (title, body) = crate::codex::headed(summary);
+            let (title, body) = crate::codex::headed(&summary);
             Some(Entry::of("reasoning", title).with_body(body))
         }
         "CommandExecution" => {

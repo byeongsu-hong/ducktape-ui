@@ -2,6 +2,7 @@ mod auth;
 mod codex;
 mod composer;
 mod history;
+mod qa;
 mod render;
 
 ui_lang::include_app!("src/ui/app.ice");
