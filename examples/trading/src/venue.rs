@@ -317,9 +317,15 @@ impl Network {
         venue: Venue::Lighter,
         name: "Lighter",
         testnet: false,
-        // This app has no write path here at all: `lighter_sign.rs` signs the
-        // token Lighter's gated *reads* want and states in its own header that
-        // nothing in it can place an order or move funds.
+        // Nothing yet, and the reason is this app rather than the venue.
+        // Lighter's orders are L2 transactions signed by an API key the account
+        // registers — the `api_key_index` in the token `lighter_sign.rs`
+        // already mints, over the curve it already implements — so the missing
+        // half is the transaction, not the signing. `None` here means "this app
+        // has no write path", and when that changes this field changes shape:
+        // Lighter's writes are not pinned to an EIP-712 chain, so carrying both
+        // schemes is the seam's own next revision rather than a `Chain` bent to
+        // fit.
         chain: None,
         gap: "Lighter serves resting orders and this account's fills only to an \
               API-key-signed token, which an address alone cannot get and this app \
@@ -714,7 +720,8 @@ mod tests {
         assert_eq!(
             Network::LIGHTER.chain,
             None,
-            "this app has no write path to Lighter, and a chain here would claim one"
+            "this app has no Lighter write path yet, and an EIP-712 chain here \
+             would claim both that it has one and that it is that scheme"
         );
     }
 

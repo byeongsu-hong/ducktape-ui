@@ -383,11 +383,18 @@ dead and states the platform's own words. `session.rs` draws that line in a
 pure function outside every `cfg`, which is why a Linux machine can test it;
 this seam's job is not to blur it on the way to the screen.
 
-A network this app cannot sign for is refused before any sheet, by name. On
-Lighter there is no write path at all — `lighter_sign.rs` signs the token that
-venue's gated *reads* want and says in its own header that nothing in it can
-place an order or move funds — so `Network.chain` is `None` there and offering
-to hold a key would be the app claiming a capability it does not have.
+A network this app cannot sign for **yet** is refused before any sheet, by
+name. Lighter is that case today, and the distinction is worth stating
+precisely because the first version of this sentence got it wrong: the *venue*
+has a write path. Lighter's orders are L2 transactions signed by an API key the
+account registers — the `api_key_index` in the token `lighter_sign.rs` already
+mints, over the curve it already implements. What is missing is this app's
+transaction half. "Nothing in this module can place an order" is that module
+saying what it implements, not what Lighter can do.
+
+So `Network.chain` is `None` there, meaning "no write path here yet", and the
+refusal says the same. Both stop being true when the Lighter path lands, and
+both go in that change rather than outliving it.
 
 Changing network or address forgets the key. Carried across either, it is a
 session claiming the app may trade somewhere the key is unknown, and the first

@@ -164,21 +164,28 @@ fn item(chain: Chain, address: &str) -> String {
     format!("{}:{}", chain.key(), address.trim().to_lowercase())
 }
 
-/// The deployment this network signs for, or the sentence saying it has none.
+/// The Hyperliquid deployment this network signs for, or the sentence saying
+/// this app has not built a write path to it yet.
 ///
-/// Lighter is the second case and it is not a shortcoming of this module:
-/// `lighter_sign.rs` signs the token that venue's gated *reads* want and states
-/// in its own header that nothing in it can place an order or move funds. There
-/// is no write path to hold a key for, so offering to hold one would be the app
-/// claiming a capability it does not have.
+/// Lighter is the second case, and the distinction matters: the *venue* has a
+/// write path — orders are L2 transactions signed by an API key the account
+/// registers, which is the `api_key_index` in the token `lighter_sign.rs`
+/// already mints, over the same curve it already implements. What is missing is
+/// this app's transaction half, not the venue's. `lighter_sign.rs` says as much
+/// where it says it: "nothing in *this module* can place an order" is a note on
+/// what is implemented, not a claim about what Lighter can do.
+///
+/// So the refusal below is about this app at this moment and says so. It stops
+/// being true the day the Lighter path lands, and it has to go in the same
+/// change rather than outlive it.
 fn deployment(venue: Venue) -> Result<Chain, Entry> {
     Network::of(venue).chain.ok_or_else(|| {
         Entry::saying(
             Session::Locked,
             &format!(
-                "This app has no way to sign for {}: its orders want an API key registered \
-                 with the exchange, which an address alone cannot get. Reading it needs no \
-                 key and is unaffected.",
+                "This app cannot sign for {} yet: its orders are transactions signed by an \
+                 API key the account registers with the exchange, and that path is not \
+                 built here. Reading it needs no key and is unaffected.",
                 venue_name(venue),
             ),
         )
@@ -321,15 +328,44 @@ pub async fn unlock_agent(venue: Venue, address: String) -> Result<Entry, Custod
     // rule, not an oversight: "the secret goes to the caller that asked for
     // it, never into the state machine".
     //
-    // That leaves the next thing to be built with a decision to make rather
-    // than a default to fall into. Signing an order needs this key again, and
-    // there are only two honest answers: hold the live `Wallet` somewhere
-    // outside the Ice state for as long as the session is `Ready` and drop it
-    // on `Lock`, or read the keychain again per order and raise a sheet every
-    // time. The first is what "unlocked" means to a reader and what every
-    // other client does; the second is defensible only if a sheet per order is
-    // wanted. Whichever it is, it is a choice with a reason attached and not
-    // something to discover halfway through wiring the ticket.
+    // **Decided by the repository owner, 2026-08-09: the key is held in memory
+    // for the session's lifetime — one Touch ID sheet per unlock, not one per
+    // order.** The trade-off that buys is stated so it cannot be forgotten: a
+    // sheet per order would have made every single order carry its own proof
+    // of presence, and that is what was given up for the convenience of
+    // unlocking once. **The confirmation step in front of send is now the
+    // per-order safety, and it is the whole of it.** Weakening it — a "don't
+    // ask again", a confirm that does not restate the priced figures, a path
+    // that sends without one — spends a guarantee this decision already spent
+    // once, and nothing else is left underneath. Anyone loosening that confirm
+    // is loosening this.
+    //
+    // The retention is not written yet; the ticket has nothing wired to it.
+    // What is settled is the shape it must take, so it is mechanical rather
+    // than rediscovered:
+    //
+    // - The live `Wallet` lives outside Ice state. Ice state is cloned,
+    //   inspected, captured into fixtures and printed by tests, and a key that
+    //   can reach any of those has already leaked. It belongs in this module,
+    //   behind this seam, and never crosses an extern.
+    // - Its lifetime is exactly the `Ready` window. `step` is the one thing
+    //   that decides whether a session may sign, so the drop hangs off `step`
+    //   rather than beside it: every transition goes through one function here
+    //   that calls `step` and, when what comes back is not `Ready`, drops the
+    //   held key on the way past. Lock, expiry, and the network and address
+    //   switches that already forget the keychain item then need no rule of
+    //   their own — they are already transitions, and there is no second
+    //   ledger to keep in agreement with the first. Dropping is the wipe:
+    //   `Secret` fills itself on the way out and `k256` zeroizes its own
+    //   scalar, so the hygiene is the one `session.rs` already established
+    //   rather than a new one.
+    // - `can_trade` stays the only gate, and the compiler should hold it
+    //   rather than review: the accessor returns a handle that only exists
+    //   when a `Ready` session and a clock produced it, so a path that reaches
+    //   the key without asking does not typecheck. `can_trade` already takes
+    //   the clock for the reason that matters here — a `Ready` that answered
+    //   on its variant alone would sign on a window that closed while the app
+    //   was asleep.
     Ok(Entry::plain(step(held, Event::Approved { key, now })))
 }
 
@@ -498,7 +534,7 @@ pub fn session_unlockable(session: Session) -> bool {
 pub fn session_refusal(venue: Venue, session: Session) -> String {
     if Network::of(venue).chain.is_none() {
         return format!(
-            "There is no key to hold for {}: this app cannot sign its orders at all.",
+            "This app cannot sign {} orders yet, so there is no key to hold for it here.",
             venue_name(venue),
         );
     }

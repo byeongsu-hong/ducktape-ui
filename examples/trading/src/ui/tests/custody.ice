@@ -92,13 +92,13 @@ test trading_a_network_with_no_write_path_refuses_the_unlock_by_name
   target unlock = custody/unlock
   dispatch navigate(Page.settings)
   expect a11y unlock disabled true
-  expect text "There is no key to hold for Lighter: this app cannot sign its orders at all." within custody
+  expect text "This app cannot sign Lighter orders yet, so there is no key to hold for it here." within custody
   // And the network that can be signed for leaves the same button live, so the
   // refusal is about this network rather than about the button always being
   // dead.
   dispatch switch_venue(Venue.hyperliquid)
   expect a11y unlock disabled false
-  expect no text "There is no key to hold for Lighter: this app cannot sign its orders at all." within custody
+  expect no text "This app cannot sign Lighter orders yet, so there is no key to hold for it here." within custody
 
 // A key is approved for one account on one deployment. Carried across either
 // change, it is a session claiming the app may trade somewhere the key is
