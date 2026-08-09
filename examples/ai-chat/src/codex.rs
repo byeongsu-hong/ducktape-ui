@@ -143,9 +143,16 @@ impl Entry {
 /// Text arriving token by token, addressed to the surface that draws it.
 ///
 /// There is a field per live surface rather than a kind to switch on, because
-/// Ice handlers do not branch: the screen appends both unconditionally and an
-/// empty one is a no-op. `status` is what the composer says at that moment,
-/// carried by every chunk so progress is never inferred from what arrived.
+/// Ice handlers do not branch. The two are handed over differently on purpose:
+/// `answer` is a piece to append, because an answer grows and reparsing it per
+/// token would be quadratic; `thinking` is the whole of what should be showing,
+/// because a summary is replaced rather than extended — it ends, settles into a
+/// row of its own, and the next one starts from nothing. Appending there was
+/// what left every summary of a turn stacked in the live box, each one also
+/// already drawn as a settled row.
+///
+/// `status` is what the composer says at that moment, carried by every chunk so
+/// progress is never inferred from what arrived.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chunk {
     pub answer: String,
@@ -169,9 +176,9 @@ impl Chunk {
         }
     }
 
-    fn thinking(text: impl Into<String>) -> Self {
+    fn thinking(showing: impl Into<String>) -> Self {
         Self {
-            thinking: text.into(),
+            thinking: showing.into(),
             ..Self::status("Thinking")
         }
     }
@@ -641,6 +648,7 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
     }
 
     let mut answer = String::new();
+    let mut thinking = String::new();
     let reader = BufReader::new(response.into_body().into_reader());
     for line in reader.lines() {
         // Asked to stop: keep what has been said and close the turn, rather
@@ -667,7 +675,7 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
         if let Some(failure) = failure(&event) {
             return Err(CodexError::new(failure));
         }
-        for chunk in stream_text(&event, &mut answer) {
+        for chunk in stream_text(&event, &mut answer, &mut thinking) {
             // A closed channel is the screen having moved on, so there is
             // nothing left to draw for.
             if chunks.send_blocking(chunk).is_err() {
@@ -735,9 +743,10 @@ fn offline(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, Code
             "output_tokens_details":{"reasoning_tokens":257}}}}"#,
     ];
     let mut answer = String::new();
+    let mut thinking = String::new();
     for raw in TURN {
         let event: Value = serde_json::from_str(raw).expect("fixture events parse");
-        for chunk in stream_text(&event, &mut answer) {
+        for chunk in stream_text(&event, &mut answer, &mut thinking) {
             if chunks.send_blocking(chunk).is_err() {
                 return Err(CodexError::new("Turn cancelled."));
             }
@@ -748,13 +757,23 @@ fn offline(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, Code
 }
 
 /// The two things that arrive in pieces, handed over as pieces.
-fn stream_text(event: &Value, answer: &mut String) -> Vec<Chunk> {
+fn stream_text(event: &Value, answer: &mut String, thinking: &mut String) -> Vec<Chunk> {
     match event["type"].as_str().unwrap_or_default() {
         "response.created" | "response.in_progress" => vec![Chunk::status("Thinking")],
         "response.reasoning_summary_text.delta" => {
-            vec![Chunk::thinking(event["delta"].as_str().unwrap_or_default())]
+            thinking.push_str(event["delta"].as_str().unwrap_or_default());
+            vec![Chunk::thinking(thinking.clone())]
         }
-        "response.reasoning_summary_part.done" => vec![Chunk::thinking("\n\n")],
+        "response.reasoning_summary_part.done" => {
+            thinking.push_str("\n\n");
+            vec![Chunk::thinking(thinking.clone())]
+        }
+        // The summary is a settled row from here on, so the live box lets go of
+        // it rather than carrying it under the next one.
+        "response.output_item.done" if event["item"]["type"] == "reasoning" => {
+            thinking.clear();
+            vec![Chunk::thinking(String::new())]
+        }
         "response.output_text.delta" => {
             let delta = event["delta"].as_str().unwrap_or_default();
             answer.push_str(delta);
@@ -1217,12 +1236,13 @@ mod tests {
     #[test]
     fn streamed_answer_accumulates_and_is_handed_over_in_pieces() {
         let mut answer = String::new();
+        let mut thinking = String::new();
         let drawn: Vec<Chunk> = [
             r#"{"type":"response.output_text.delta","delta":"Hel"}"#,
             r#"{"type":"response.output_text.delta","delta":"lo"}"#,
         ]
         .iter()
-        .flat_map(|raw| stream_text(&event(raw), &mut answer))
+        .flat_map(|raw| stream_text(&event(raw), &mut answer, &mut thinking))
         .collect();
 
         assert_eq!(answer, "Hello", "the settled row needs the whole answer");
@@ -1231,6 +1251,45 @@ mod tests {
             ["Hel", "lo"],
             "pieces, not prefixes: a repeated prefix would double the text"
         );
+    }
+
+    /// A summary is replaced, not extended: it is handed over whole while it is
+    /// being written, and let go of the moment it settles into a row of its
+    /// own. Appending instead left every summary of a turn stacked in the live
+    /// box, each one also already drawn below it.
+    #[test]
+    fn a_finished_summary_is_let_go_of_rather_than_stacked() {
+        let (mut answer, mut thinking) = (String::new(), String::new());
+        let showing = |chunks: Vec<Chunk>| chunks.last().map(|c| c.thinking.clone());
+
+        assert_eq!(
+            showing(stream_text(
+                &event(r#"{"type":"response.reasoning_summary_text.delta","delta":"Check"}"#),
+                &mut answer,
+                &mut thinking,
+            )),
+            Some("Check".to_owned()),
+        );
+        assert_eq!(
+            showing(stream_text(
+                &event(r#"{"type":"response.reasoning_summary_text.delta","delta":"ing it"}"#),
+                &mut answer,
+                &mut thinking,
+            )),
+            Some("Checking it".to_owned()),
+            "handed over whole, so the screen replaces rather than appends"
+        );
+
+        assert_eq!(
+            showing(stream_text(
+                &event(r#"{"type":"response.output_item.done","item":{"type":"reasoning"}}"#),
+                &mut answer,
+                &mut thinking,
+            )),
+            Some(String::new()),
+            "and let go of once it is a row of its own"
+        );
+        assert!(thinking.is_empty(), "the next summary starts from nothing");
     }
 
     /// A tool has to be on screen while it is still running, then say what it

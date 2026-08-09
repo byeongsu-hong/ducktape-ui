@@ -28,7 +28,7 @@ on send
 on streamed(part)
   status = part.status
   markdown live append part.answer
-  markdown live_thinking append part.thinking
+  live_thinking = markdown(part.thinking)
   task widget snap-end #app/transcript
 
 // A block settled, or a tool started or finished. The live surfaces are left
