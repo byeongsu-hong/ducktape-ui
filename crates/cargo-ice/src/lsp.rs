@@ -2625,16 +2625,68 @@ fn block_insertion(source: &str, lines: &[&str], at: usize, text: String) -> Val
     }
 }
 
+fn top_level_positions(source: &str, target: char) -> Vec<usize> {
+    let mut positions = Vec::new();
+    let mut quote = false;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    for (index, ch) in source.char_indices() {
+        if quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                quote = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => quote = true,
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && ch == target => positions.push(index),
+            _ => {}
+        }
+    }
+    positions
+}
+
+fn top_level_single_pipe(source: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    top_level_positions(source, '|').into_iter().find(|index| {
+        (index.checked_sub(1).and_then(|index| bytes.get(index)) != Some(&b'|'))
+            && bytes.get(index + 1) != Some(&b'|')
+    })
+}
+
+fn route_argument_count(source: &str) -> usize {
+    usize::from(!source.trim().is_empty()) + top_level_positions(source, ',').len()
+}
+
 fn route_handler(line: &str) -> Option<(&str, usize)> {
-    let route = line.split_once("->")?.1.trim();
-    let success = route.split('|').next()?.trim();
+    let arrow = top_level_positions(line, '-')
+        .into_iter()
+        .find(|index| line[*index..].starts_with("->"))?;
+    let route = line[arrow + 2..].trim();
+    let end = top_level_single_pipe(route).unwrap_or(route.len());
+    let success = route[..end].trim();
+    if let Some((handler, args)) = success
+        .strip_suffix(')')
+        .and_then(|route| route.split_once('('))
+    {
+        let handler = handler.trim();
+        if handler == "_" {
+            return None;
+        }
+        return Some((handler, route_argument_count(args)));
+    }
     let mut words = success.split_ascii_whitespace();
     let handler = words.next()?;
     if handler == "_" {
         return None;
     }
-    let payloads = words.filter(|word| *word == "_").count();
-    Some((handler, payloads))
+    Some((handler, words.count()))
 }
 
 fn handler_skeleton_action(
@@ -2645,13 +2697,13 @@ fn handler_skeleton_action(
     uri: &str,
     actions: &mut Vec<Value>,
 ) {
-    let Some((handler, payloads)) = route_handler(current) else {
+    let Some((handler, arity)) = route_handler(current) else {
         return;
     };
     if document.handlers.iter().any(|item| item.name == handler) {
         return;
     }
-    let skeleton = handler_skeleton(source, handler, payloads);
+    let skeleton = handler_skeleton(source, handler, arity);
     actions.push(code_action(
         &format!("Create handler `{handler}`"),
         "quickfix",
@@ -2660,8 +2712,8 @@ fn handler_skeleton_action(
     ));
 }
 
-fn handler_skeleton(source: &str, handler: &str, payloads: usize) -> String {
-    let parameters = (0..payloads)
+fn handler_skeleton(source: &str, handler: &str, arity: usize) -> String {
+    let parameters = (0..arity)
         .map(|index| {
             if index == 0 {
                 "value".into()
@@ -2692,7 +2744,7 @@ fn fallible_route_action(
     uri: &str,
     actions: &mut Vec<Value>,
 ) {
-    if current.contains('|') {
+    if top_level_single_pipe(current).is_some() {
         return;
     }
     let trimmed = current.trim();
@@ -5855,6 +5907,60 @@ mod tests {
                 !title.starts_with("Add error route") && !title.starts_with("Create handler")
             }),
             "lane invalidation has no completion route: {actions:?}"
+        );
+    }
+
+    #[test]
+    fn route_handler_parses_canonical_parenthesized_route() {
+        assert_eq!(
+            super::route_handler(
+                "  run load(snapshot) -> loaded(snapshot, _) | failed(snapshot, _)"
+            ),
+            Some(("loaded", 2))
+        );
+        assert_eq!(
+            super::route_handler(
+                "  run load(\"a->b\") -> loaded(flag || ready, \"a|b\", _) | failed(_)"
+            ),
+            Some(("loaded", 3))
+        );
+    }
+
+    #[test]
+    fn handler_skeleton_action_uses_parenthesized_route_name_and_arity() {
+        let uri = "file:///tmp/route-snapshot-action.ice";
+        let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non submit\n  let snapshot = \"launch\"\n  run load(\"a->b\") -> loaded(snapshot, true || false, \"a|b\", _)\nview\n  text \"Ready\"\n";
+        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let line = source
+            .lines()
+            .position(|candidate| {
+                candidate == "  run load(\"a->b\") -> loaded(snapshot, true || false, \"a|b\", _)"
+            })
+            .unwrap();
+        let actions = code_actions_at(
+            &documents,
+            &json!({
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": line, "character": 2 },
+                    "end": { "line": line, "character": 2 },
+                },
+                "context": { "diagnostics": [] },
+            }),
+        )
+        .unwrap();
+        let action = actions
+            .iter()
+            .find(|action| action["title"] == "Create handler `loaded`")
+            .unwrap();
+        assert_eq!(
+            action["edit"]["changes"][uri][0]["newText"],
+            "\non loaded(value, value2, value3, value4)\n  return if true\n"
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| action["title"] == "Add error route for `load`")
         );
     }
 

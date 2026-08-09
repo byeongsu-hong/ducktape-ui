@@ -298,8 +298,9 @@ frames. They reject `sync` externs and recomputation-unsafe built-ins:
 `rgba` image constructors, and animation queries whose instant is omitted. The
 category covers both runtime reads and calls that create a fresh retained
 identity. The checker still permits the set in top-level app state initializers,
-handlers, and views; capture the needed value or identity in state when it must
-remain stable across view passes.
+views, and handler expressions other than direct `run`/`task` completion route
+expressions. Evaluate one in a preceding handler `let` and route that local, or
+capture it in state when it must remain stable across view passes.
 
 The expression language is deliberately closed:
 
@@ -316,8 +317,11 @@ The expression language is deliberately closed:
 - declared `pure` extern calls in every expression context;
 - declared `sync` extern calls only in top-level app state initializers and
   immediately evaluated app/component/preset handler expressions, including
-  arguments inside nested task statements; async completion route expressions
-  are evaluated when the callback runs and are pure-only;
+  arguments inside nested task statements; explicit `run` Future and `task`
+  statement success and failure route expressions are pure-only owned snapshots
+  materialized when the statement launches, while `_` is supplied by the
+  delivered completion. Use a preceding handler `let` to route a value produced
+  by `sync`; stream, sip, flow, and native query route timing is unchanged;
 - checked native constructor/query families documented by the specification.
 
 Examples:
@@ -374,8 +378,12 @@ Rules:
 - Use `return if <bool>` as an early guard.
 - Use `sync` externs only in expressions evaluated while the handler runs, such
   as `let` initializers, assignment right-hand sides, guards, and nested task
-  arguments. Completion route expressions run later in callbacks and may call
-  only `pure` externs.
+  arguments. Explicit `run` Future and `task` statement success and failure
+  route expressions become owned snapshots when the statement launches, while
+  `_` is supplied by the delivered completion. Both branches materialize at
+  launch but remain pure-only so an unused branch cannot perform an effect;
+  evaluate `sync` in a preceding `let` and route that local. Stream, sip, flow,
+  and native query route timing is unchanged.
 - Put a task-producing statement last; it returns one Iced `Task`.
 - Route fallible externs to both success and failure handlers.
 - Route infallible externs only to success.

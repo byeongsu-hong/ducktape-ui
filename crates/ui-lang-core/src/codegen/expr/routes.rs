@@ -7,6 +7,28 @@ pub(in crate::codegen) fn resolved_route_code(
     program: &LoweredProgram,
     message: &str,
 ) -> Result<String, Error> {
+    resolved_route_code_impl(route, payloads, None, env, program, message)
+}
+
+pub(in crate::codegen) fn resolved_route_code_with_snapshots(
+    route: &crate::lower::ResolvedRoute,
+    payloads: &[&str],
+    snapshots: &[String],
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
+    resolved_route_code_impl(route, payloads, Some(snapshots), env, program, message)
+}
+
+fn resolved_route_code_impl(
+    route: &crate::lower::ResolvedRoute,
+    payloads: &[&str],
+    snapshots: Option<&[String]>,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
     let invariant = |message| program.invariant_at_origin(route.origin, message);
     let (variant, component) = match &route.target {
         crate::lower::ResolvedRouteTarget::App { handler, name } => {
@@ -42,21 +64,36 @@ pub(in crate::codegen) fn resolved_route_code(
             )
         }
     };
-    let mut args = route
-        .args
-        .iter()
-        .map(|arg| match arg {
+    let mut snapshot = 0;
+    let mut args = Vec::with_capacity(route.args.len());
+    for arg in &route.args {
+        args.push(match arg {
             crate::lower::ResolvedRouteArg::Payload { index, .. } => payloads
                 .get(*index as usize)
                 .map(|payload| (*payload).to_owned())
                 .ok_or_else(|| {
                     invariant("normalized route payload index is outside its payload contract")
-                }),
+                })?,
             crate::lower::ResolvedRouteArg::Expression(expression) => {
-                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)
+                if let Some(snapshots) = snapshots {
+                    let code = snapshots.get(snapshot).cloned().ok_or_else(|| {
+                        invariant("normalized route has fewer snapshots than expressions")
+                    })?;
+                    snapshot += 1;
+                    code
+                } else {
+                    resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
+                }
             }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        });
+    }
+    if let Some(snapshots) = snapshots
+        && snapshot != snapshots.len()
+    {
+        return Err(invariant(
+            "normalized route has more snapshots than expressions",
+        ));
+    }
     if let Some(component_name) = component {
         let (active, context) = env.component_context().ok_or_else(|| {
             invariant("normalized component route has no component emission scope")

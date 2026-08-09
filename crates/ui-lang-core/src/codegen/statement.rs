@@ -165,6 +165,67 @@ fn resolved_pane_find_code(
     }
 }
 
+struct RunRouteSnapshots {
+    prelude: String,
+    success: Vec<String>,
+    error: Option<Vec<String>>,
+}
+
+fn resolved_run_route_snapshots(
+    run: &ResolvedRun,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<RunRouteSnapshots, Error> {
+    let repeatable = match run.kind {
+        EffectKind::Future => false,
+        EffectKind::Task => true,
+        EffectKind::Stream => {
+            if std::iter::once(&run.success)
+                .chain(run.error.iter())
+                .flat_map(|route| &route.args)
+                .any(|arg| matches!(arg, ResolvedRouteArg::Expression(_)))
+            {
+                return Err(program.invariant_at_origin(
+                    run.success.origin,
+                    "normalized stream route contains an expression snapshot",
+                ));
+            }
+            false
+        }
+    };
+    let mut prelude = String::new();
+    let mut route = |route: &ResolvedRoute| {
+        route
+            .args
+            .iter()
+            .enumerate()
+            .filter_map(|(index, arg)| {
+                let ResolvedRouteArg::Expression(expression) = arg else {
+                    return None;
+                };
+                Some((index, *expression))
+            })
+            .map(|(index, expression)| {
+                let name = format!("__ice_run_route_{}_{}", route.id.0, index);
+                let value = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
+                writeln!(prelude, "let {name} = {value};").unwrap();
+                Ok(if repeatable {
+                    format!("{name}.clone()")
+                } else {
+                    name
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()
+    };
+    let success = route(&run.success)?;
+    let error = run.error.as_ref().map(route).transpose()?;
+    Ok(RunRouteSnapshots {
+        prelude,
+        success,
+        error,
+    })
+}
+
 fn resolved_run_task_code(
     run: &ResolvedRun,
     program: &LoweredProgram,
@@ -179,39 +240,66 @@ fn resolved_run_task_code(
         error,
         ..
     } = run;
-    let mapper = if env.component_context().is_some() {
+    let snapshots = resolved_run_route_snapshots(run, env, program)?;
+    let mapper = if env.component_context().is_some() || !snapshots.prelude.is_empty() {
         "move "
     } else {
         ""
     };
+    let wrap = |task: String| {
+        if snapshots.prelude.is_empty() {
+            task
+        } else {
+            format!("{{ {}{task} }}", snapshots.prelude)
+        }
+    };
+    let success_message = route_result_code(
+        success,
+        "value",
+        resolved_route_code_with_snapshots(
+            success,
+            &["value"],
+            &snapshots.success,
+            env,
+            program,
+            message,
+        )?,
+    );
+    let error_message = error
+        .as_ref()
+        .map(|route| {
+            Ok(route_result_code(
+                route,
+                "error",
+                resolved_route_code_with_snapshots(
+                    route,
+                    &["error"],
+                    snapshots
+                        .error
+                        .as_deref()
+                        .expect("checked error route has snapshots"),
+                    env,
+                    program,
+                    message,
+                )?,
+            ))
+        })
+        .transpose()?;
     if let ResolvedEffectTarget::Builtin(function) = target {
         if function == "__ice_font_load" {
             let bytes = resolved_expr_use_code(program, args[0], env, ValueMode::Owned)?;
-            let success_message = route_result_code(
-                success,
-                "value",
-                resolved_route_code(success, &["value"], env, program, message)?,
-            );
-            return Ok(format!(
+            return Ok(wrap(format!(
                 "::iced::font::load({bytes}).map(move |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => match error {{}} }})"
-            ));
+            )));
         }
         if function == "__ice_image_allocate" {
             let handle = resolved_expr_use_code(program, args[0], env, ValueMode::Owned)?;
-            let success_message = route_result_code(
-                success,
-                "value",
-                resolved_route_code(success, &["value"], env, program, message)?,
-            );
-            let error_route = error.as_ref().expect("checker requires image error route");
-            let error_message = route_result_code(
-                error_route,
-                "error",
-                resolved_route_code(error_route, &["error"], env, program, message)?,
-            );
-            return Ok(format!(
+            let error_message = error_message
+                .as_ref()
+                .expect("checker requires image error route");
+            return Ok(wrap(format!(
                 "::iced::widget::image::allocate({handle}).map(move |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})"
-            ));
+            )));
         }
         let task = match function.as_str() {
             "__ice_system_info" => "::iced::system::information().map(__ice_system_info)",
@@ -221,12 +309,7 @@ fn resolved_run_task_code(
             "__ice_clipboard_read_primary" => "::iced::clipboard::read_primary()",
             _ => unreachable!(),
         };
-        let success_message = route_result_code(
-            success,
-            "value",
-            resolved_route_code(success, &["value"], env, program, message)?,
-        );
-        return Ok(format!("{task}.map(move |value| {success_message})"));
+        return Ok(wrap(format!("{task}.map(move |value| {success_message})")));
     }
     let ResolvedEffectTarget::Extern(action) = target else {
         unreachable!("built-in effects return above")
@@ -237,25 +320,15 @@ fn resolved_run_task_code(
         .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
-    let success_message = route_result_code(
-        success,
-        "value",
-        resolved_route_code(success, &["value"], env, program, message)?,
-    );
-    Ok(
-        if let (Some(error_route), Some(_)) = (error, &action.error) {
-            let error_message = route_result_code(
-                error_route,
-                "error",
-                resolved_route_code(error_route, &["error"], env, program, message)?,
-            );
+    Ok(wrap(
+        if let (Some(error_message), Some(_)) = (&error_message, &action.error) {
             match kind {
                 EffectKind::Future => format!(
                     "::iced::Task::perform({}({args}), {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
                     action.rust_path
                 ),
                 EffectKind::Task => format!(
-                    "{}({args}).map(|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
+                    "{}({args}).map({mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
                     action.rust_path
                 ),
                 EffectKind::Stream => format!(
@@ -270,7 +343,7 @@ fn resolved_run_task_code(
                     action.rust_path
                 ),
                 EffectKind::Task => format!(
-                    "{}({args}).map(|value| {success_message})",
+                    "{}({args}).map({mapper}|value| {success_message})",
                     action.rust_path
                 ),
                 EffectKind::Stream => format!(
@@ -279,7 +352,7 @@ fn resolved_run_task_code(
                 ),
             }
         },
-    )
+    ))
 }
 
 fn run_lane_task_code(

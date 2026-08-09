@@ -2740,10 +2740,27 @@ pub fn document() -> Value {
                     ],
                     "componentStateInitializer": false,
                     "reason": "component rendering may initialize local state again",
-                    "asyncCompletionRouteExpression": {
+                    "runTaskCompletionRouteExpression": {
+                        "statements": ["run Future", "task statement, including built-in tasks"],
+                        "explicitValues": ["state", "derived value", "handler parameter", "handler let local", "pure expression"],
+                        "evaluation": "each explicit success and failure expression becomes an owned snapshot when the statement launches",
+                        "valueType": "ordinary cloneable Ice data",
+                        "branches": "both success and failure snapshots materialize at launch even though only the delivered branch routes",
+                        "payloadPlaceholder": "_ is supplied by the delivered completion and is not snapshotted",
                         "syncExtern": false,
                         "externKinds": ["pure"],
-                        "reason": "the route expression is evaluated when the callback runs",
+                        "recomputationUnsafeBuiltin": false,
+                        "syncPattern": "evaluate sync once in a preceding handler let and route that local",
+                        "runtimeValuePattern": "evaluate a recomputation-unsafe builtin once in a preceding handler let and route that local",
+                        "unchangedFamilies": ["stream", "sip", "flow", "native query"],
+                        "memory": {
+                            "ownership": "one snapshot set per in-flight task",
+                            "release": "task completion, drop, or replace abort",
+                            "latest": "a stale latest Future retains its snapshot set until it finishes",
+                            "multiOutputTask": "retain one original snapshot set and clone values into each delivered message",
+                            "globalMap": false,
+                            "accumulatesPerCompletion": false,
+                        },
                     },
                 },
                 "errorType": false,
@@ -2770,10 +2787,11 @@ pub fn document() -> Value {
                         "derived",
                         "component prop default",
                         "component state initializer",
+                        "direct run/task completion route expression",
                     ],
                     "allowedContexts": [
                         "top-level app state initializer",
-                        "handler",
+                        "handler expressions other than direct run/task completion route expressions",
                         "view",
                     ],
                 },
@@ -3241,13 +3259,32 @@ mod tests {
             schema["core"]["externFunctions"]["sync"]["componentStateInitializer"],
             false
         );
+        let sync = &schema["core"]["externFunctions"]["sync"];
+        assert!(sync.get("asyncCompletionRouteExpression").is_none());
         assert_eq!(
-            schema["core"]["externFunctions"]["sync"]["asyncCompletionRouteExpression"]["externKinds"],
-            json!(["pure"])
-        );
-        assert_eq!(
-            schema["core"]["externFunctions"]["sync"]["asyncCompletionRouteExpression"]["syncExtern"],
-            false
+            sync["runTaskCompletionRouteExpression"],
+            json!({
+                "statements": ["run Future", "task statement, including built-in tasks"],
+                "explicitValues": ["state", "derived value", "handler parameter", "handler let local", "pure expression"],
+                "evaluation": "each explicit success and failure expression becomes an owned snapshot when the statement launches",
+                "valueType": "ordinary cloneable Ice data",
+                "branches": "both success and failure snapshots materialize at launch even though only the delivered branch routes",
+                "payloadPlaceholder": "_ is supplied by the delivered completion and is not snapshotted",
+                "syncExtern": false,
+                "externKinds": ["pure"],
+                "recomputationUnsafeBuiltin": false,
+                "syncPattern": "evaluate sync once in a preceding handler let and route that local",
+                "runtimeValuePattern": "evaluate a recomputation-unsafe builtin once in a preceding handler let and route that local",
+                "unchangedFamilies": ["stream", "sip", "flow", "native query"],
+                "memory": {
+                    "ownership": "one snapshot set per in-flight task",
+                    "release": "task completion, drop, or replace abort",
+                    "latest": "a stale latest Future retains its snapshot set until it finishes",
+                    "multiOutputTask": "retain one original snapshot set and clone values into each delivered message",
+                    "globalMap": false,
+                    "accumulatesPerCompletion": false,
+                },
+            })
         );
         assert_eq!(
             schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["forbiddenContexts"],
@@ -3255,6 +3292,7 @@ mod tests {
                 "derived",
                 "component prop default",
                 "component state initializer",
+                "direct run/task completion route expression",
             ])
         );
         assert_eq!(
@@ -3263,7 +3301,11 @@ mod tests {
         );
         assert_eq!(
             schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["allowedContexts"],
-            json!(["top-level app state initializer", "handler", "view"])
+            json!([
+                "top-level app state initializer",
+                "handler expressions other than direct run/task completion route expressions",
+                "view"
+            ])
         );
         assert!(
             schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["names"]
