@@ -1,16 +1,21 @@
 # Trading
 
-A live perpetuals terminal written in Ice, reading either of two exchanges:
+A live perpetuals terminal written in Ice, reading any of several networks:
 the market list, candles and the order book for the selected market, and — for
 any address you point it at — that account's open positions, resting orders,
 recent fills, and every one of those fills marked on the candle it landed in.
 
-Which exchange it is reading is a switch in the header, beside the page tabs.
-It is not a filter over one exchange's data: the two disagree about which
-markets exist, what they are called, and what the engine holds against a
-position in them, so switching throws every panel away and reads the other
-venue from nothing. What the venue being opened cannot answer is said in the
-panel that would otherwise be empty — see [the venue switch](#the-venue-switch).
+A *network* is an exchange and one of its deployments — Hyperliquid,
+Hyperliquid Testnet, Lighter — because one exchange can have more than one, and
+holding "which exchange" and "which deployment" as two values is how a mainnet
+book comes to price a testnet order with both halves of the screen looking
+right. Which one is being read is named in the header beside a badge saying
+whether being wrong on it costs anything; the picker is on settings. It is not
+a filter over one exchange's data: networks disagree about which markets exist,
+what they are called, and what the engine holds against a position in them, so
+switching throws every panel away and reads the new one from nothing. What the
+network being opened cannot answer is said in the panel that would otherwise be
+empty — see [the network registry](#the-network-registry).
 
 ```bash
 cargo run -p trading-example
@@ -585,14 +590,58 @@ as the book and the tape, because they are watching a price rather than a
 position. They outlive the market they were set from, so every row names its
 own — and dismisses by it, rather than by whatever is on screen.
 
-## The venue switch
+## The network registry
 
-Two tabs in the header, stacked beside the page tabs, and they answer the outer
-half of the same question: the page tabs pick a surface, this picks the
-exchange every one of those surfaces was read from. The venue already being
-read is still a button, and a button carries no state a reader can hear — so it
-says which it is in its own accessible name (*Read Lighter* against *Read
-Lighter, already reading*) rather than in its highlight colour.
+`NETWORKS` in `venue.rs` is the only place a network is enumerated. One entry
+carries its name, whether it is a test deployment, the `Chain` a signature made
+for it would be pinned to, the reads it answers, the sentence it owes when it
+will not answer one, and the note a reader needs beyond its name. Adding a
+network is that entry, the `Venue` variant it names, and the arm `Network::of`
+will not compile without — the exhaustive match is the point, because a network
+whose reads were wired and whose capability sentence was forgotten is a screen
+that silently claims the wrong exchange answers a panel it will leave empty.
+
+Nothing else enumerates them. The picker is a loop over `venue_list()`, so a
+network added in Rust is drawn on settings without the view being touched, and
+a Rust test holds `venue_list()` to the registry's own length and `Network::of`
+to round-tripping every entry — that arm is the one a copy-paste gets wrong,
+and `Venue::HyperliquidTestnet => Network::HYPERLIQUID` compiles, draws the
+right name, and points every read on the testnet at mainnet.
+
+### Which deployment, and what it costs to be wrong
+
+Every read is addressed to a `Chain`, and `Chain` is also what a signature is
+pinned to — it is the phantom agent's `source` and the user-signed
+`hyperliquidChain`, so a mainnet signature cannot be replayed on testnet. One
+value carrying both is what stops the screen and the order disagreeing about
+which deployment is being traded; the endpoints for reads live on it beside the
+one for writes for the same reason.
+
+The header names the network and, under it, states its kind: **REAL MONEY** or
+**TESTNET**, in a box either way, with only the colour moving. Both are stated
+on purpose. A badge drawn only on testnet is a badge whose absence carries the
+dangerous half of the message, and nobody notices an absence — so the network
+that can lose money says so in the same place and the same shape, and the
+reader learns where to look on the day it is free to get wrong rather than on
+the day it is not. Every row of the picker says its own kind for the same
+reason: a picker is where this mistake is actually made, so the row a finger is
+travelling towards has to answer it before it is pressed.
+
+Hyperliquid's test deployment answers every read the live one does, over the
+same protocol and the same parser, so its panels fill exactly like mainnet's.
+What is different about it is a note on settings rather than a sentence under
+an empty panel — written there it read as a venue refusing to serve orders,
+which is the opposite of what a testnet is for. A live test drives the seam and
+asserts the two universes *disagree*, because a testnet reading mainnet's
+markets passes "the reads work", draws a plausible screen, and prices orders
+against a book its own exchange has never seen.
+
+### What switching throws away
+
+The network already being read is still a button, and a button carries no state
+a reader can hear — so it says which it is in its own accessible name (*Read
+Lighter* against *Read Lighter, already reading*) rather than in its highlight
+colour.
 
 Pressing it is not a filter and not an undo. Everything on screen belongs to
 the exchange it was read from, and a row kept across the switch would be drawn
@@ -611,9 +660,14 @@ Rust test holds the switch to handing over a tape the old feed cannot reach.
 Switching to the venue already on screen is not a switch, and returns early
 rather than re-reading a loaded terminal.
 
-The header was already exactly full at the window's minimum, so the switch had
-to be paid for: the two venue tabs are stacked rather than side by side, and
-the account strip gave up its **FREE** figure. It is the one thing there that
+The picker is on settings rather than in the header because a list that grows
+with the registry cannot live in 58 pixels, and because switching network
+throws the whole screen away and can change which network your money is on —
+which is a deliberate act rather than a header toggle. The header carries the
+answer, not the choice, and is the same shape on every network.
+
+The header was already exactly full at the window's minimum, so naming the
+network had to be paid for: the account strip gave up its **FREE** figure. It is the one thing there that
 does not move between polls — the margin engine answers what is withdrawable
 once every five seconds, and it is a tile on the portfolio page — so it was
 the cheapest of the five to lose. Nothing is clipped: everything the header
@@ -840,14 +894,24 @@ so when there is none; and a failure outranks the progress line it shares a
 slot with, in the terminal's plain ink rather than in either money colour.
 None of those reach the network, so they run wherever the rest does.
 
-The venue switch has a file of its own. Switching names a panel at a time and
+The network switch has a file of its own. Switching names a panel at a time and
 asks for what was in it — the book, the tape, the levels, the market list, the
 account, its positions, orders and fills — and switching back reads the first
-venue again rather than restoring what was on screen before it left. Both
-sockets and both REST reads refuse to open under test, so a dispatched switch
-starts the feeds of the venue being opened without any of them reaching an
+network again rather than restoring what was on screen before it left. Every
+socket and every REST read refuses to open under test, so a dispatched switch
+starts the feeds of the network being opened without any of them reaching an
 exchange; a feed that cannot reach one ends rather than retrying, or the app
 would never settle and no test could dispatch a switch at all.
+
+Two of those tests are about the label rather than the data, because the label
+is the whole of what separates two screens drawn from the same fixtures. One
+asserts both kinds in the header — **REAL MONEY** present and **TESTNET**
+absent on the live network, and the reverse after a switch — and one asserts
+that every registry entry reaches the picker with its kind beside it. Each was
+run against a mutation before it was kept: a `venue_kind` that always answers
+**REAL MONEY** fails three of them on the missing word, a `venue_list` that
+filters test deployments out fails the picker on the missing row, and an arm
+resolving `HyperliquidTestnet` to the mainnet entry fails five.
 
 There is one test per surface, and each asks for something only that surface
 draws — a test that asserted the header would pass on all three, which is the

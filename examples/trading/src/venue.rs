@@ -1,15 +1,24 @@
-//! What a venue owes the terminal, so one screen can show two exchanges.
+//! What a network owes the terminal, so one screen can show several of them.
 //!
 //! The panels, the folds, the formatters, the ticket's arithmetic and the
 //! chart adapter never learn whose exchange they are drawing. What does is
-//! short: the reads listed on `Reads`, the sentences a venue owes when it
-//! cannot answer one of them, and the handful of figures the two venues state
-//! in different units. Those live here rather than in either adapter, because
-//! a conversion that lives with one venue is a rule the other one has to know
+//! `NETWORKS`: one entry per network, carrying its name, whether it is a test
+//! deployment, the reads it answers, the sentence it owes when it cannot
+//! answer one of them, and the handful of figures the exchanges state in
+//! different units. Those live here rather than in either adapter, because a
+//! conversion that lives with one venue is a rule the other one has to know
 //! about.
 //!
-//! Nothing here signs or sends. The boundary is the same one the ticket stops
-//! at: everything up to the signature is arithmetic worth having.
+//! A *network* rather than an exchange is the identity because one exchange
+//! can have more than one deployment. Hyperliquid's testnet is the same
+//! protocol, the same parser and a different pair of endpoints, and the app
+//! must never hold "which exchange" and "which deployment" as two values that
+//! can disagree — a mainnet book pricing a testnet order looks entirely
+//! right on both halves. So a network is one value, every read on it is
+//! pinned to a `Chain`, and a signature is pinned to the same `Chain`.
+//!
+//! Adding one is an entry in `NETWORKS`, the `Venue` variant it names, and the
+//! arm `Network::of` will not compile without.
 
 // The neutral readings below — the margin rule, the aggressor, the signed
 // size, yesterday's close — are the vocabulary this seam publishes, and each
@@ -31,6 +40,8 @@ use crate::hyperliquid::{
 use crate::lighter::{
     lighter_account, lighter_candles, lighter_history, lighter_market_feed, lighter_symbols,
 };
+use crate::portfolio::{PortfolioHistory, hl_portfolio, portfolio_unavailable};
+use crate::signing::Chain;
 
 /// What the screen calls a venue.
 ///
@@ -39,11 +50,56 @@ use crate::lighter::{
 /// hang this on, which is the right way round: what a venue is called is a
 /// sentence for a reader, and every other sentence here is a free function too.
 pub fn venue_name(venue: Venue) -> String {
-    match venue {
-        Venue::Hyperliquid => "Hyperliquid".to_owned(),
-        Venue::Lighter => "Lighter".to_owned(),
+    Network::of(venue).name.to_owned()
+}
+
+/// Whether the network on screen trades money that is worth something.
+///
+/// The one fact on this seam that is not decoration. Everything else a network
+/// carries changes what is drawn; this changes whether a mistake costs
+/// anything, so it is read by the badge beside the venue, by the ticket, and
+/// by the confirmation an order passes through — never inferred from the name.
+pub fn venue_testnet(venue: Venue) -> bool {
+    Network::of(venue).testnet
+}
+
+/// What kind of network this is, in the two words a reader has to be sure of
+/// before they press anything.
+///
+/// Both are stated. A badge that appears only on testnet is a badge whose
+/// absence has to be noticed, and nobody notices an absence — so the network
+/// that can lose money says so in the same place, in the same shape, and the
+/// reader learns where to look once rather than learning it the day it matters.
+pub fn venue_kind(venue: Venue) -> String {
+    if Network::of(venue).testnet {
+        "TESTNET".to_owned()
+    } else {
+        "REAL MONEY".to_owned()
     }
 }
+
+/// Every network the app can point at, in the order the picker lists them.
+///
+/// The picker reads this rather than naming its entries, so a network added to
+/// `NETWORKS` appears in the header without the view being touched. Real money
+/// first, because that is the order a reader expects to find them in and the
+/// order that puts the test networks where a deliberate choice reaches them.
+pub fn venue_list() -> Vec<Venue> {
+    NETWORKS.iter().map(|network| network.venue).collect()
+}
+
+/// The whole registry, and the only place a network is enumerated.
+///
+/// Adding one is this array, the `Venue` variant it names, and the arm
+/// `Network::of` then refuses to compile without. The exhaustive match is the
+/// point rather than an inconvenience: a network whose reads were wired and
+/// whose capability sentence was forgotten is a screen that silently claims
+/// the wrong exchange answers a panel it will leave empty.
+const NETWORKS: [Network; 3] = [
+    Network::HYPERLIQUID,
+    Network::HYPERLIQUID_TESTNET,
+    Network::LIGHTER,
+];
 
 /// What a reader hears on the switch, by the rule the page and interval tabs
 /// already follow: the button is named for the act, and the one already taken
@@ -62,7 +118,7 @@ pub fn venue_label(venue: Venue, shown: bool) -> String {
 /// once here, because a trait of `async fn`s is not dyn-compatible.
 ///
 /// The error is `HlError` rather than a second one-field type: a failure is a
-/// message, and which venue produced it is on the `Reads` the caller asked
+/// message, and which network produced it is on the `Network` the caller asked
 /// through. It is misnamed until the module split moves it out of
 /// `hyperliquid.rs`, along with the rest of the neutral shapes parked there.
 pub type Fetch<T> = Pin<Box<dyn Future<Output = Result<T, HlError>> + Send>>;
@@ -77,12 +133,13 @@ fn no_stream<T>() -> Receiver<Result<T, HlError>> {
     receiver
 }
 
-/// Everything the terminal asks a venue for. Read-only, and each answer is
-/// already in the shape the panels read rather than the shape the exchange
-/// returned — the field map is the adapter's whole job.
+/// One network: what it is called, what it costs to be wrong on it, and
+/// everything the terminal asks it for. Read-only, and each answer is already
+/// in the shape the panels read rather than the shape the exchange returned —
+/// the field map is the adapter's whole job.
 ///
 /// This is the list the app actually asks, one field per `venue_*` extern, so
-/// a venue that cannot answer one of them has to say so here rather than
+/// a network that cannot answer one of them has to say so here rather than
 /// somewhere a handler would have to know about. There is no `book`: both
 /// venues publish theirs on the socket, and a REST book would be a read the
 /// app never makes.
@@ -93,9 +150,56 @@ fn no_stream<T>() -> Receiver<Result<T, HlError>> {
 /// already read out of the universe. That is a lookup, not a second
 /// identifier for the app to carry.
 #[derive(Clone, Copy)]
-pub struct Reads {
-    /// Which exchange answers these.
+pub struct Network {
+    /// Which network answers these. The identity the app holds as state, and
+    /// an exchange *and* a deployment rather than an exchange: Hyperliquid's
+    /// testnet is the same protocol and the same parser behind a different
+    /// pair of endpoints, so a screen that held only the exchange would have
+    /// to hold the deployment somewhere else and let the two disagree.
     pub venue: Venue,
+    /// What the reader is told they are looking at. A test network says so in
+    /// its own name, because the name is what a picker shows and a picker is
+    /// where the choice is actually made.
+    pub name: &'static str,
+    /// Whether an order here costs anything to get wrong.
+    pub testnet: bool,
+    /// The deployment a signature made for this network is pinned to, or
+    /// nothing where this app cannot write at all.
+    ///
+    /// Declared here rather than left inside the read closures because it is
+    /// the one fact about a network that two halves of the app have to agree
+    /// on: `Chain` is what the reads are addressed to *and* what a signature
+    /// carries, so an entry whose badge says testnet while its chain says
+    /// mainnet is a screen that prices an order on one deployment and sends it
+    /// to the other. The test below holds the pair together.
+    ///
+    /// What it cannot hold: each read closure still names its own `Chain`
+    /// literal, because a closure that captured this field would no longer be
+    /// the `fn` pointer the seam is built from. A closure naming the wrong one
+    /// compiles, and only review and the endpoint in the failure message catch
+    /// it.
+    pub chain: Option<Chain>,
+    /// What this network will not tell the app about the account it is
+    /// watching, or nothing when it answers everything asked of it. Stated
+    /// once here so the panels that go empty read the same reason.
+    ///
+    /// Strictly a *refusal*: it is drawn where rows would have been, so a
+    /// sentence here is a claim that those rows are never coming. Anything
+    /// else a reader ought to know about a network is `note`, which is drawn
+    /// on settings and nowhere near an empty panel.
+    pub gap: &'static str,
+    /// What a reader has to know about this network beyond its name, or
+    /// nothing when the name says it all.
+    ///
+    /// Kept apart from `gap` because they are drawn in different places and
+    /// only one of them explains a missing row. A test deployment answers
+    /// every read this app makes — its panels fill exactly like the live one's
+    /// — and putting "this is a test deployment" where "these rows are not
+    /// coming" belongs made an empty order book read as a venue that refuses.
+    pub note: &'static str,
+    /// This account's realised history over a window, or the sentence saying
+    /// why the network will not serve one.
+    pub portfolio: fn(String) -> Fetch<PortfolioHistory>,
     /// The tradeable universe: one row per market, with the day's figures and
     /// the margin rule that market holds a position to.
     pub markets: fn() -> Fetch<Vec<SymbolRow>>,
@@ -122,31 +226,79 @@ pub struct Reads {
     pub fill_feed: fn(String) -> Receiver<Result<Vec<Fill>, HlError>>,
 }
 
-impl Reads {
-    /// The venue on screen. Returned by value because every field is a
-    /// pointer: choosing a venue costs a copy of seven of them and no
-    /// allocation.
-    pub fn of(venue: Venue) -> Reads {
+impl Network {
+    /// The network on screen. Returned by value because every field is a
+    /// pointer or a `&'static str`: choosing one costs a copy of a dozen of
+    /// them and no allocation.
+    pub fn of(venue: Venue) -> Network {
         match venue {
-            Venue::Hyperliquid => Reads::HYPERLIQUID,
-            Venue::Lighter => Reads::LIGHTER,
+            Venue::Hyperliquid => Network::HYPERLIQUID,
+            Venue::HyperliquidTestnet => Network::HYPERLIQUID_TESTNET,
+            Venue::Lighter => Network::LIGHTER,
         }
     }
 
-    /// Hyperliquid, which answers all seven.
-    pub const HYPERLIQUID: Reads = Reads {
+    /// Hyperliquid's mainnet, which answers all eight.
+    pub const HYPERLIQUID: Network = Network {
         venue: Venue::Hyperliquid,
-        markets: || Box::pin(hl_symbols()),
-        candles: |tape, coin, interval| Box::pin(hl_candles(tape, coin, interval)),
-        history: |tape, coin, interval| Box::pin(hl_history(tape, coin, interval)),
+        name: "Hyperliquid",
+        testnet: false,
+        chain: Some(Chain::Mainnet),
+        gap: "",
+        note: "",
+        portfolio: |address| Box::pin(hl_portfolio(Chain::Mainnet, address)),
+        markets: || Box::pin(hl_symbols(Chain::Mainnet)),
+        candles: |tape, coin, interval| Box::pin(hl_candles(Chain::Mainnet, tape, coin, interval)),
+        history: |tape, coin, interval| Box::pin(hl_history(Chain::Mainnet, tape, coin, interval)),
         // Always an account: an address that has never traded here reads back
         // a zeroed `clearinghouseState` rather than a refusal, so the venue
         // draws no line between an empty account and an absent one and neither
         // does this.
-        account: |address| Box::pin(async move { hl_account(address).await.map(Some) }),
-        orders: |address| Box::pin(hl_orders(address)),
-        market_feed: hl_market_feed,
-        fill_feed: hl_fill_feed,
+        account: |address| {
+            Box::pin(async move { hl_account(Chain::Mainnet, address).await.map(Some) })
+        },
+        orders: |address| Box::pin(hl_orders(Chain::Mainnet, address)),
+        market_feed: |tape| hl_market_feed(Chain::Mainnet, tape),
+        fill_feed: |address| hl_fill_feed(Chain::Mainnet, address),
+    };
+
+    /// The same exchange's test deployment: the same protocol, the same
+    /// parser, and a different pair of endpoints.
+    ///
+    /// It is a separate entry rather than a flag on the one above because the
+    /// two must never be one value the app toggles. Everything on this seam is
+    /// pinned to `Chain`, which is also what a signature is pinned to — so a
+    /// screen drawn from these endpoints can only be traded by an order
+    /// carrying this chain, and the mistake where a mainnet book prices a
+    /// testnet order has no way to happen.
+    ///
+    /// What is different here is real and is not hidden: the deployment holds
+    /// its own universe, its own accounts and its own books, so an address
+    /// with a mainnet position has nothing here until it is funded on testnet,
+    /// and prices are whatever this deployment's traders last agreed on.
+    pub const HYPERLIQUID_TESTNET: Network = Network {
+        venue: Venue::HyperliquidTestnet,
+        name: "Hyperliquid Testnet",
+        testnet: true,
+        chain: Some(Chain::Testnet),
+        // It answers every read this app makes, so it refuses nothing and this
+        // is empty. What is different about it is a `note`.
+        gap: "",
+        note: "This is Hyperliquid's test deployment. It answers every read the \
+               live one does, and it answers them about its own universe, its own \
+               books and its own accounts — so an address funded on mainnet has \
+               nothing here until it is funded again here, and nothing traded here \
+               is worth anything.",
+        portfolio: |address| Box::pin(hl_portfolio(Chain::Testnet, address)),
+        markets: || Box::pin(hl_symbols(Chain::Testnet)),
+        candles: |tape, coin, interval| Box::pin(hl_candles(Chain::Testnet, tape, coin, interval)),
+        history: |tape, coin, interval| Box::pin(hl_history(Chain::Testnet, tape, coin, interval)),
+        account: |address| {
+            Box::pin(async move { hl_account(Chain::Testnet, address).await.map(Some) })
+        },
+        orders: |address| Box::pin(hl_orders(Chain::Testnet, address)),
+        market_feed: |tape| hl_market_feed(Chain::Testnet, tape),
+        fill_feed: |address| hl_fill_feed(Chain::Testnet, address),
     };
 
     /// Lighter, wired to what its adapter publishes and stating the two it
@@ -159,8 +311,27 @@ impl Reads {
     /// alarm line over something that is working exactly as documented. What
     /// tells the reader is `venue_orders_note` and `venue_fills_note`, in the
     /// panel that would otherwise be blank.
-    pub const LIGHTER: Reads = Reads {
+    pub const LIGHTER: Network = Network {
         venue: Venue::Lighter,
+        name: "Lighter",
+        testnet: false,
+        // This app has no write path here at all: `lighter_sign.rs` signs the
+        // token Lighter's gated *reads* want and states in its own header that
+        // nothing in it can place an order or move funds.
+        chain: None,
+        gap: "Lighter serves resting orders and this account's fills only to an \
+              API-key-signed token, which an address alone cannot get and this app \
+              does not hold.",
+        note: "",
+        portfolio: |_address| {
+            Box::pin(async {
+                Ok(portfolio_unavailable(
+                    "Historical performance on Lighter needs a read-only API token; \
+                     this address-only session still shows current exposure."
+                        .to_owned(),
+                ))
+            })
+        },
         markets: || Box::pin(lighter_symbols()),
         candles: |tape, coin, interval| Box::pin(lighter_candles(tape, coin, interval)),
         history: |tape, coin, interval| Box::pin(lighter_history(tape, coin, interval)),
@@ -191,7 +362,7 @@ impl Reads {
 /// call site, so the choice is made here, and a handler names the operation
 /// and hands over the venue it is holding.
 pub async fn venue_symbols(venue: Venue) -> Result<Vec<SymbolRow>, HlError> {
-    (Reads::of(venue).markets)().await
+    (Network::of(venue).markets)().await
 }
 
 pub async fn venue_candles(
@@ -200,7 +371,7 @@ pub async fn venue_candles(
     coin: String,
     interval: String,
 ) -> Result<i64, HlError> {
-    (Reads::of(venue).candles)(tape, coin, interval).await
+    (Network::of(venue).candles)(tape, coin, interval).await
 }
 
 pub async fn venue_history(
@@ -209,7 +380,7 @@ pub async fn venue_history(
     coin: String,
     interval: String,
 ) -> Result<i64, HlError> {
-    (Reads::of(venue).history)(tape, coin, interval).await
+    (Network::of(venue).history)(tape, coin, interval).await
 }
 
 /// The three account reads share one rule, and it is here rather than in the
@@ -222,18 +393,18 @@ pub async fn venue_account(venue: Venue, address: String) -> Result<Option<Accou
     if address.trim().is_empty() {
         return Ok(None);
     }
-    (Reads::of(venue).account)(address).await
+    (Network::of(venue).account)(address).await
 }
 
 pub async fn venue_orders(venue: Venue, address: String) -> Result<Vec<Order>, HlError> {
     if address.trim().is_empty() {
         return Ok(Vec::new());
     }
-    (Reads::of(venue).orders)(address).await
+    (Network::of(venue).orders)(address).await
 }
 
 pub fn venue_market_feed(venue: Venue, tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
-    (Reads::of(venue).market_feed)(tape)
+    (Network::of(venue).market_feed)(tape)
 }
 
 /// The same rule on the socket. A fills subscription names the account it is
@@ -243,7 +414,7 @@ pub fn venue_fill_feed(venue: Venue, address: String) -> Receiver<Result<Vec<Fil
     if address.trim().is_empty() {
         return no_stream();
     }
-    (Reads::of(venue).fill_feed)(address)
+    (Network::of(venue).fill_feed)(address)
 }
 
 /// What a venue will not tell this app about the account it is watching, or
@@ -253,14 +424,14 @@ pub fn venue_fill_feed(venue: Venue, address: String) -> Receiver<Result<Vec<Fil
 /// same reason, so the two panels below read their emptiness out of this rather
 /// than each carrying its own opinion of why.
 pub fn venue_account_gap(venue: Venue) -> String {
-    match venue {
-        Venue::Hyperliquid => String::new(),
-        Venue::Lighter => {
-            "Lighter serves resting orders and this account's fills only to an API-key-signed \
-             token, which an address alone cannot get and this app does not hold."
-                .to_owned()
-        }
-    }
+    Network::of(venue).gap.to_owned()
+}
+
+/// What a reader has to know about this network that its name does not say,
+/// or nothing. Drawn on settings beside the picker, never where rows would be:
+/// a sentence under an empty panel is read as the reason the panel is empty.
+pub fn venue_note(venue: Venue) -> String {
+    Network::of(venue).note.to_owned()
 }
 
 /// What the account strip says when there is no account to draw.
@@ -464,6 +635,86 @@ mod tests {
     /// The two venues the switch offers, so a loop below can assert something
     /// of both without naming them twice.
     const BOTH: [Venue; 2] = [Venue::Hyperliquid, Venue::Lighter];
+
+    /// The registry is the one place a network is enumerated, so the picker
+    /// drawing it and `Network::of` resolving it must both be that list and
+    /// not a second copy of it.
+    ///
+    /// The round trip is the part worth having. Adding a network is a variant,
+    /// an entry and an arm, and the arm is the one a copy-paste gets wrong:
+    /// `Venue::HyperliquidTestnet => Network::HYPERLIQUID` compiles, draws the
+    /// right name in the picker, and points every read on the testnet at
+    /// mainnet. Nothing else in this file would notice.
+    #[test]
+    fn the_registry_is_the_only_list_of_networks() {
+        assert_eq!(
+            venue_list().len(),
+            NETWORKS.len(),
+            "the picker draws the registry rather than its own list"
+        );
+        for network in NETWORKS {
+            assert_eq!(
+                Network::of(network.venue).name,
+                network.name,
+                "{}: the arm resolves to some other entry",
+                network.name,
+            );
+            assert!(
+                !network.name.is_empty(),
+                "a network a reader has to choose between needs a name"
+            );
+        }
+
+        let mut names: Vec<&str> = NETWORKS.iter().map(|network| network.name).collect();
+        names.sort_unstable();
+        let listed = names.len();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            listed,
+            "two networks under one name are two networks a reader cannot tell apart"
+        );
+    }
+
+    /// The badge and the chain a signature would carry are the same fact, and
+    /// an entry where they disagree is the failure this whole seam exists to
+    /// make impossible: a screen labelled TESTNET whose orders are signed for
+    /// mainnet reads correctly on both halves and empties a real account.
+    ///
+    /// What this does not reach: each read closure names its own `Chain`
+    /// literal, because capturing this field would stop it being the `fn`
+    /// pointer the seam is built from. A closure naming the wrong deployment
+    /// compiles and is caught by review, not by this.
+    #[test]
+    fn a_network_signs_for_the_deployment_it_says_it_is() {
+        for network in NETWORKS {
+            assert_eq!(
+                network.testnet,
+                network.chain.is_some_and(Chain::testnet),
+                "{}: the badge and the signing chain name different deployments",
+                network.name,
+            );
+        }
+
+        assert_eq!(
+            Network::HYPERLIQUID.chain.map(Chain::info_url),
+            Some("https://api.hyperliquid.xyz/info"),
+        );
+        assert_eq!(
+            Network::HYPERLIQUID_TESTNET.chain.map(Chain::info_url),
+            Some("https://api.hyperliquid-testnet.xyz/info"),
+        );
+        assert_ne!(
+            Network::HYPERLIQUID.chain,
+            Network::HYPERLIQUID_TESTNET.chain,
+            "one exchange's two deployments have to be two chains"
+        );
+        assert_eq!(
+            Network::LIGHTER.chain,
+            None,
+            "this app has no write path to Lighter, and a chain here would claim one"
+        );
+    }
 
     /// A switch that says which venue is being read only in its highlight
     /// colour says it to whoever can see two inks. The name a reader hears
@@ -675,7 +926,7 @@ mod tests {
     /// working screen.
     #[test]
     fn a_gap_answers_empty_rather_than_failing() {
-        let lighter = Reads::of(Venue::Lighter);
+        let lighter = Network::of(Venue::Lighter);
         smol::block_on(async {
             let resting = (lighter.orders)(LIGHTER_ACCOUNT.to_owned())
                 .await
@@ -849,7 +1100,7 @@ mod tests {
     #[ignore = "hits the live venue, run explicitly: the whole universe against the rule"]
     fn the_rule_agrees_with_what_hyperliquid_already_parses() {
         crate::hyperliquid::open_the_wire();
-        let rows = smol::block_on(hl_symbols()).expect("the universe");
+        let rows = smol::block_on(hl_symbols(Chain::Mainnet)).expect("the universe");
         assert!(rows.len() > 100, "the venue lists a couple hundred markets");
         for row in rows {
             assert_eq!(
@@ -878,7 +1129,7 @@ mod tests {
     #[ignore = "hits the live venue, run explicitly: the Lighter seam end to end"]
     fn the_lighter_reads_answer_through_the_seam() {
         crate::hyperliquid::open_the_wire();
-        let reads = Reads::of(Venue::Lighter);
+        let reads = Network::of(Venue::Lighter);
         assert_eq!(venue_name(reads.venue), "Lighter");
         smol::block_on(async {
             let rows = (reads.markets)().await.expect("markets");
@@ -907,6 +1158,67 @@ mod tests {
                 .expect("account")
                 .expect("an account this venue holds");
             assert!(account.value > 0.0);
+        });
+    }
+
+    /// The test deployment answering the same reads, and answering them
+    /// *differently* from mainnet.
+    ///
+    /// Both halves matter. That the reads succeed says the endpoints and the
+    /// parser are right; that the two universes disagree says the entry is
+    /// actually pointed at its own deployment, which is the failure a copy-
+    /// pasted `Chain` produces and which every offline test walks straight
+    /// past. A testnet reading mainnet's markets passes "the reads work",
+    /// draws a plausible screen, and prices orders against a book its own
+    /// exchange has never seen.
+    ///
+    /// The disagreement is asserted on the shape of the universe rather than
+    /// on any particular market: which markets a test deployment lists is its
+    /// own business and changes, but it is a different, smaller universe than
+    /// the live one and the maximum leverage its BTC carries is its own.
+    #[test]
+    #[ignore = "hits the live venue, run explicitly: the testnet seam reads its own deployment"]
+    fn the_test_deployment_answers_its_own_reads_rather_than_the_live_ones() {
+        crate::hyperliquid::open_the_wire();
+        let test = Network::of(Venue::HyperliquidTestnet);
+        assert_eq!(test.name, "Hyperliquid Testnet");
+        assert!(test.testnet, "the entry has to say what it is");
+
+        smol::block_on(async {
+            let rows = (test.markets)().await.expect("the testnet universe");
+            assert!(
+                rows.len() > 10,
+                "the test deployment lists a real universe, not a stub"
+            );
+            let top = &rows[0];
+            assert!(top.price > 0.0, "a market on it has a price");
+            assert!(
+                top.leverage > 0.0 && top.maintenance > 0.0,
+                "and the margin rule the ticket prices against"
+            );
+
+            let live = (Network::HYPERLIQUID.markets)()
+                .await
+                .expect("the live universe");
+            assert_ne!(
+                rows.len(),
+                live.len(),
+                "two deployments listing the same number of markets is what \
+                 reading one of them through the other's endpoints looks like"
+            );
+
+            // An address is the same string on both and the accounts behind it
+            // are not, which is the fact a reader has to be told rather than
+            // discover. Nothing is asserted about the balance: a test account
+            // is funded by whoever is running this.
+            let held = (test.account)(LIGHTER_ACCOUNT.to_owned())
+                .await
+                .expect("the testnet answers an account read");
+            assert!(
+                held.is_some(),
+                "this deployment answers a zeroed account rather than refusing, \
+                 the same way its mainnet does"
+            );
         });
     }
 

@@ -23,12 +23,11 @@ use tungstenite::stream::MaybeTlsStream;
 use ui_lang_runtime::{Role, StableId, accessible};
 
 use crate::Venue;
+use crate::signing::Chain;
 use crate::venue::venue_name;
 
 pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
 
-const INFO_URL: &str = "https://api.hyperliquid.xyz/info";
-const WS_URL: &str = "wss://api.hyperliquid.xyz/ws";
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// Candles fetched when a market is opened, and when the chart is panned back
 /// past the oldest one it holds.
@@ -155,8 +154,14 @@ fn only_the_live_tests_are_running(mut args: impl Iterator<Item = String>) -> bo
     !args.any(|arg| arg == "--include-ignored")
 }
 
-/// Everything the exchange can tell us goes through this one endpoint.
-pub(crate) async fn info(body: Value) -> Result<Value, HlError> {
+/// Everything the exchange can tell us goes through this one endpoint, on the
+/// deployment the caller names.
+///
+/// The chain is a parameter rather than a constant because the app reads two
+/// Hyperliquid deployments and one of them is the one where an order costs
+/// nothing to get wrong. A default here would be a network chosen by whoever
+/// forgot to pass one.
+pub(crate) async fn info(chain: Chain, body: Value) -> Result<Value, HlError> {
     // A test drives the real program, subscriptions included, so the 5s account
     // poll fires inside any test the suite's own load stretches past five
     // seconds and this endpoint answers it from the live exchange. Whichever
@@ -169,7 +174,7 @@ pub(crate) async fn info(body: Value) -> Result<Value, HlError> {
     }
     smol::unblock(move || {
         let mut response = agent()
-            .post(INFO_URL)
+            .post(chain.info_url())
             .send_json(&body)
             .map_err(|error| HlError::new(format!("Hyperliquid unreachable: {error}")))?;
         response
@@ -510,7 +515,12 @@ pub(crate) fn merge(tape: &mut Vec<Candle>, fresh: Vec<Candle>) {
 /// Brings the tape up to date. An empty tape backfills a full window; a
 /// loaded one only asks for the candles that can still have changed, so the
 /// caller never has to know which of the two it needs.
-pub async fn hl_candles(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
+pub async fn hl_candles(
+    chain: Chain,
+    tape: Tape,
+    coin: String,
+    interval: String,
+) -> Result<i64, HlError> {
     let key = focus_key(&coin, &interval);
     let bars = if lock(&tape.candles).is_empty() {
         BACKFILL_BARS
@@ -519,10 +529,13 @@ pub async fn hl_candles(tape: Tape, coin: String, interval: String) -> Result<i6
     };
     let end = now_ms();
     let start = end - bars * interval_secs(&interval) * 1_000;
-    let response = info(json!({
-        "type": "candleSnapshot",
-        "req": { "coin": coin, "interval": interval, "startTime": start, "endTime": end },
-    }))
+    let response = info(
+        chain,
+        json!({
+            "type": "candleSnapshot",
+            "req": { "coin": coin, "interval": interval, "startTime": start, "endTime": end },
+        }),
+    )
     .await?;
 
     let mut candles = lock(&tape.candles);
@@ -557,7 +570,12 @@ pub(crate) fn older_than(candles: &[Candle], oldest: i64) -> i64 {
 /// read that lands after the reader has moved on adds nothing either, and
 /// answers zero for the same reason a read of an empty tape does — it moved
 /// no left edge.
-pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i64, HlError> {
+pub async fn hl_history(
+    chain: Chain,
+    tape: Tape,
+    coin: String,
+    interval: String,
+) -> Result<i64, HlError> {
     let key = focus_key(&coin, &interval);
     let oldest = { lock(&tape.candles).first().map(|candle| candle.ts) };
     let Some(oldest) = oldest else {
@@ -565,10 +583,13 @@ pub async fn hl_history(tape: Tape, coin: String, interval: String) -> Result<i6
     };
     let end = oldest * 1_000;
     let start = end - BACKFILL_BARS * interval_secs(&interval) * 1_000;
-    let response = info(json!({
-        "type": "candleSnapshot",
-        "req": { "coin": coin, "interval": interval, "startTime": start, "endTime": end },
-    }))
+    let response = info(
+        chain,
+        json!({
+            "type": "candleSnapshot",
+            "req": { "coin": coin, "interval": interval, "startTime": start, "endTime": end },
+        }),
+    )
     .await?;
 
     let mut candles = lock(&tape.candles);
@@ -670,9 +691,9 @@ fn size_decimals(asset: &Value) -> usize {
         .min(SIZE_DECIMALS)
 }
 
-pub async fn hl_symbols() -> Result<Vec<SymbolRow>, HlError> {
+pub async fn hl_symbols(chain: Chain) -> Result<Vec<SymbolRow>, HlError> {
     Ok(parse_symbols(
-        &info(json!({ "type": "metaAndAssetCtxs" })).await?,
+        &info(chain, json!({ "type": "metaAndAssetCtxs" })).await?,
     ))
 }
 
@@ -1041,9 +1062,13 @@ fn margin_load(equity: f64, maintenance: f64) -> f64 {
     (maintenance / equity).clamp(0.0, 1.0)
 }
 
-pub async fn hl_account(address: String) -> Result<Account, HlError> {
+pub async fn hl_account(chain: Chain, address: String) -> Result<Account, HlError> {
     Ok(parse_account(
-        &info(json!({ "type": "clearinghouseState", "user": address })).await?,
+        &info(
+            chain,
+            json!({ "type": "clearinghouseState", "user": address }),
+        )
+        .await?,
     ))
 }
 
@@ -1197,9 +1222,9 @@ fn parse_book(value: &Value) -> Book {
     }
 }
 
-pub async fn hl_orders(address: String) -> Result<Vec<Order>, HlError> {
+pub async fn hl_orders(chain: Chain, address: String) -> Result<Vec<Order>, HlError> {
     Ok(parse_orders(
-        &info(json!({ "type": "openOrders", "user": address })).await?,
+        &info(chain, json!({ "type": "openOrders", "user": address })).await?,
     ))
 }
 
@@ -1211,7 +1236,7 @@ struct Socket {
 }
 
 impl Socket {
-    fn connect() -> Result<Self, HlError> {
+    fn connect(chain: Chain) -> Result<Self, HlError> {
         // The same gate `info` passes, and for the same reason: a test drives
         // the real program, so a handler that starts a feed would open a
         // socket to the exchange and make the suite depend on it being up.
@@ -1222,7 +1247,7 @@ impl Socket {
                 "Hyperliquid feed unreachable: no wire under test".to_owned(),
             ));
         }
-        let (ws, _) = tungstenite::connect(WS_URL)
+        let (ws, _) = tungstenite::connect(chain.ws_url())
             .map_err(|error| HlError::new(format!("Hyperliquid feed unreachable: {error}")))?;
         // Reads have to time out, or the loop could never look at the clock
         // to ping, or at the app to see that it changed markets.
@@ -1294,7 +1319,7 @@ pub(crate) enum Event<'a> {
 /// connect, so a feed follows the app's market by re-subscribing instead of
 /// reconnecting. The thread reconnects through an error and stops when the
 /// receiver is dropped, which is what aborting the stream does.
-fn feed<T, S, R>(mut subscribe: S, mut read: R) -> Receiver<Result<T, HlError>>
+fn feed<T, S, R>(chain: Chain, mut subscribe: S, mut read: R) -> Receiver<Result<T, HlError>>
 where
     T: Send + 'static,
     S: FnMut() -> Vec<Value> + Send + 'static,
@@ -1303,7 +1328,7 @@ where
     let (sender, receiver) = smol::channel::unbounded();
     std::thread::spawn(move || {
         while !sender.is_closed() {
-            let Err(error) = pump(&mut subscribe, &mut read, &sender) else {
+            let Err(error) = pump(chain, &mut subscribe, &mut read, &sender) else {
                 return;
             };
             if sender.send_blocking(Err(error)).is_err() {
@@ -1325,6 +1350,7 @@ where
 /// One connection's lifetime. Returns `Ok` only when the app has stopped
 /// listening; anything else is an error the caller reconnects through.
 fn pump<T, S, R>(
+    chain: Chain,
     subscribe: &mut S,
     read: &mut R,
     sender: &Sender<Result<T, HlError>>,
@@ -1333,7 +1359,7 @@ where
     S: FnMut() -> Vec<Value>,
     R: FnMut(Event<'_>) -> Option<T>,
 {
-    let mut socket = Socket::connect()?;
+    let mut socket = Socket::connect(chain)?;
     let mut beat = Instant::now();
     let mut ping = Instant::now();
     let mut sent: Option<Instant> = None;
@@ -1423,9 +1449,10 @@ pub struct MarketTick {
 /// candles, and context of whatever market the tape is pointed at. Candles
 /// are merged into the tape in place, so the chart follows them on its own
 /// repaint beat without an app message per tick.
-pub fn hl_market_feed(tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
+pub fn hl_market_feed(chain: Chain, tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
     let subscriptions = tape.clone();
     feed(
+        chain,
         move || {
             let mut wanted = vec![json!({ "type": "allMids" })];
             if let Some((coin, interval)) = subscriptions.focus() {
@@ -1540,8 +1567,9 @@ fn market_reader(tape: Tape) -> impl FnMut(Event<'_>) -> Option<MarketTick> + Se
 /// This account's fills as they print. The exchange opens with a snapshot of
 /// the recent ones and pushes each new one after that; only the pushed ones
 /// are lit, so the list flashes what just happened rather than its history.
-pub fn hl_fill_feed(address: String) -> Receiver<Result<Vec<Fill>, HlError>> {
+pub fn hl_fill_feed(chain: Chain, address: String) -> Receiver<Result<Vec<Fill>, HlError>> {
     feed(
+        chain,
         move || vec![json!({ "type": "userFills", "user": address })],
         move |event| {
             let Event::Payload("userFills", data) = event else {
@@ -5667,14 +5695,14 @@ mod tests {
     fn live_api_matches_the_shapes_parsed_here() {
         open_the_wire();
         smol::block_on(async {
-            let symbols = hl_symbols().await.expect("symbol list");
+            let symbols = hl_symbols(Chain::Mainnet).await.expect("symbol list");
             assert!(symbols.len() > 20, "got {} markets", symbols.len());
             let btc = symbols.iter().find(|row| row.name == "BTC").expect("BTC");
             assert!(btc.price > 0.0 && btc.volume > 0.0, "BTC context is empty");
 
             // A fresh tape adopts the first market loaded into it.
             let tape = tape_new();
-            let bars = hl_candles(tape.clone(), "BTC".into(), "1m".into())
+            let bars = hl_candles(Chain::Mainnet, tape.clone(), "BTC".into(), "1m".into())
                 .await
                 .expect("candle backfill");
             assert!(bars > 100, "expected a backfill, got {bars} candles");
@@ -5693,16 +5721,19 @@ mod tests {
             }
 
             // A vault address: reachable, and its summary parses.
-            let account = hl_account("0xdfc24b077bc1425ad1dea75bcb6f8158e10df303".into())
-                .await
-                .expect("clearinghouse state");
+            let account = hl_account(
+                Chain::Mainnet,
+                "0xdfc24b077bc1425ad1dea75bcb6f8158e10df303".into(),
+            )
+            .await
+            .expect("clearinghouse state");
             assert!(account.value > 0.0, "the HLP vault holds a balance");
 
             // The exchange reports a mark, a PnL, and a return; the feed only
             // sends a price. Hand its own marks back to the arithmetic that
             // turns one into the others, and it has to land where the
             // exchange did — position by position, on a live book.
-            let watched = hl_account(WATCHED.to_owned())
+            let watched = hl_account(Chain::Mainnet, WATCHED.to_owned())
                 .await
                 .expect("clearinghouse state");
             assert!(
@@ -5768,7 +5799,7 @@ mod tests {
     fn the_live_feed_fills_the_tape_and_the_book() {
         open_the_wire();
         let tape = tape_focus(tape_new(), "BTC".into(), "1m".into());
-        let feed = hl_market_feed(tape.clone());
+        let feed = hl_market_feed(Chain::Mainnet, tape.clone());
         let deadline = Instant::now() + Duration::from_secs(45);
         let mut ticks = Vec::new();
 
