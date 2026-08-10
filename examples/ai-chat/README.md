@@ -249,5 +249,5 @@ takes 954µs and the frame that follows takes 465µs.
   backend, so a real tool call still reaches the screen.
 - Stopping a turn takes effect between events, so a turn waiting on a slow
   first token stops when that token arrives rather than immediately.
-- The Markdown cache is never emptied: clearing a chat orphans its entries for
-  the life of the process.
+- Settled answers share the runtime's lazy-row parking policy: up to 1,024
+  unmounted rows stay parsed for a cheap remount, and eviction releases them.

@@ -122,15 +122,15 @@ component ToolCall(row_id:i64, title:str, detail:str, status:str, open:bool) -> 
           text detail wrap=word @machine
 
 // The answer itself. `markdown_body` is a Rust adapter rather than the built-in
-// widget because a parsed document cannot live in component state; it keeps one
-// parse per row for the life of the window.
+// widget because a parsed document cannot live in component state; the adapter
+// owns one parse for exactly as long as this lazy row is retained or parked.
 component Answer(row_id:i64, body:str, dark:bool) -> str
   col #root
     with
       w=fill
       pt=6.0
       gap=4.0
-    extern markdown_body(row_id, body, 13.5, dark) #body -> emit(_)
+    extern markdown_body(body, 13.5, dark) #body -> emit(_)
     // iced draws non-editable text without selection, so an answer cannot be
     // dragged over and copied the way it could in a browser. Until the toolkit
     // grows that, this is how the text leaves the window.

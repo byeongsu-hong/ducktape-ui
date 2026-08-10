@@ -41,7 +41,7 @@ mod perf {
             for (index, row) in one.iter().enumerate() {
                 rows.push(codex::Entry {
                     // Ids must stay distinct: they key both the `keyed` list
-                    // and the parsed-Markdown cache.
+                    // and the lazy-row parking lot.
                     id: -((turn * one.len() + index + 1) as i64),
                     dark,
                     ..row.clone()
@@ -57,8 +57,8 @@ mod perf {
     const TOKENS: u32 = 200;
 
     fn measure(mut cycle: impl FnMut()) -> Duration {
-        // Warm the parse cache and the first build, so what follows is the
-        // steady state rather than arriving at it.
+        // Warm the first build, so what follows is the steady state rather
+        // than arriving at it.
         for _ in 0..20 {
             cycle();
         }

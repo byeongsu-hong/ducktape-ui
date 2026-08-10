@@ -41,12 +41,12 @@ extern crate::codex
   stream codex_entries(session:Session) -> [Entry]
   sip codex_turn(session:Session) progress=Chunk -> [Entry] ! CodexError
 
-// A settled row's Markdown, parsed once and kept against its row id. Ice keeps
-// only cloneable values in component state, so a parsed document cannot live in
-// the language; this adapter is where it lives. The route carries the URL of a
-// clicked link.
+// A settled row's Markdown, parsed once and owned by the surrounding lazy row.
+// Ice keeps only cloneable values in component state, so this adapter owns the
+// parsed document until that row leaves the runtime's bounded parking lot. The
+// route carries the URL of a clicked link.
 extern crate::render
-  component markdown_body(id:i64, source:str, size:f64, dark:bool) -> str
+  component markdown_body(source:str, size:f64, dark:bool) -> str
   markdown-viewer answer_viewer(dark:bool) -> str
 
 // Signing in without leaving the window: ask the host for a short code, show

@@ -274,3 +274,23 @@ mod component_output {
         assert!(app.active);
     }
 }
+
+#[cfg(test)]
+mod handler_component_retention {
+    ui_lang::include_app!("src/ui/handler_component_retention.ice");
+
+    #[test]
+    fn handler_only_component_does_not_retain_dynamic_scopes() {
+        let (mut app, _) = HandlerComponentRetention::__boot();
+        assert!(app.__ice_component_ephemeral.is_empty());
+
+        for index in 0..128 {
+            let scope = format!("HandlerComponentRetention/action({index})");
+            let _ = app.__update(__HandlerComponentRetentionMessage::__EphemeralHandlePress(
+                scope,
+            ));
+        }
+
+        assert_eq!(app.__ice_component_ephemeral.len(), 0);
+    }
+}
