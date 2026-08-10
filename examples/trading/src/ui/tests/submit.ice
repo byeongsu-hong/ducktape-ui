@@ -217,6 +217,64 @@ test trading_a_builder_market_is_refused_before_the_review
   expect a11y review disabled true
   expect send_refusal == "xyz:NVDA is margined against a clearinghouse this app cannot read, so it will not send an order there."
 
+// A resting order pressed comes back into the ticket that could have placed it.
+//
+// The two accessible names are the oracle and they are built at opposite ends:
+// the row's from the `Order` the venue served, the review button's from the
+// `Draft` the ticket projects. Making them describe the same side, size and
+// market is what a seed that took the wrong field could not do.
+test trading_a_resting_order_comes_back_into_the_ticket
+  preset held
+  viewport 1660 820
+  target app = #app
+  target resting_list = app/terminal-fit/trade/book/order-list
+  // The sell, because the ticket is holding a buy of 3.00 at 64,000: every
+  // field of this order differs from every field on the ticket, so no
+  // assertion below can pass on a ticket that was left alone.
+  target resting = resting_list/order("64,440.00")/root
+  target pick = resting/row
+  target review = app/terminal-fit/trade/ticket-panel/ticket-review
+  expect ticket_buy
+  expect ticket_price == "64,000.00"
+  expect ticket_size == "3.00"
+  expect a11y review name "Send this buy of 3 BTC on Hyperliquid, REAL MONEY"
+  // The press says what it does, beside a CANCEL on the same row whose name is
+  // the same order with a different verb.
+  expect a11y pick name "Load this BTC sell 0.8 at 64,440.00 into the ticket"
+  click pick
+  expect !ticket_buy
+  expect a11y review name "Send this sell of 0.8 BTC on Hyperliquid, REAL MONEY"
+  expect ticket_price == "64,440.00"
+  expect ticket_size == "0.8"
+  // A resting order is a limit order, whatever the ticket was describing.
+  dispatch ticket_kinded(OrderKind.market)
+  click pick
+  expect ticket_kind == OrderKind.limit
+  // And it is still resting. Copying an order is not withdrawing one: CANCEL
+  // on the same row is that act and it stays the trader's own.
+  expect len(orders) == 2
+
+// An order on a market the terminal is not showing takes the terminal to it,
+// and arrives with the ticket already filled — which is the whole of
+// cancel-and-replace on a book you are not currently watching.
+test trading_a_resting_order_on_another_market_brings_the_terminal_with_it
+  preset held
+  viewport 1660 820
+  target app = #app
+  target resting_list = app/terminal-fit/trade/book/order-list
+  target resting = resting_list/order("64,440.00")/root
+  target pick = resting/row
+  // The orders panel lists the account's orders rather than this market's, so
+  // an order for a market that is not on screen is the ordinary case.
+  dispatch pick_symbol("ETH")
+  expect coin == "ETH"
+  expect ticket_size == ""
+  click pick
+  expect coin == "BTC"
+  expect ticket_price == "64,440.00"
+  expect ticket_size == "0.8"
+  expect !ticket_buy
+
 // CANCEL on a resting order asks nothing of the ticket, so a half-typed size
 // must not be a reason a resting order cannot be pulled — and no key still is.
 test trading_cancelling_a_resting_order_needs_a_key_and_not_a_ticket

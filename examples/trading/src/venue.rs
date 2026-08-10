@@ -35,9 +35,9 @@ use std::pin::Pin;
 use smol::channel::Receiver;
 
 use crate::hyperliquid::{
-    Account, Fill, HL_CANONICAL, HlError, MarketTick, Order, SymbolRow, Tape, Ticket, amount,
-    fmt_size, hl_account, hl_candles, hl_fill_feed, hl_history, hl_market_feed, hl_orders,
-    hl_symbols,
+    Account, Fill, HL_CANONICAL, HlError, MarketTick, Order, Position, SymbolRow, Tape, Ticket,
+    amount, fmt_px, fmt_size, hl_account, hl_candles, hl_fill_feed, hl_history, hl_market_feed,
+    hl_orders, hl_symbols, order_label,
 };
 use crate::lighter::{
     Zone, lighter_account, lighter_candles, lighter_history, lighter_market_feed, lighter_symbols,
@@ -1236,6 +1236,234 @@ pub fn margin_estimate_note() -> String {
 pub fn order_pending(draft: Option<Draft>) -> bool {
     draft.is_some()
 }
+
+/// How far through the mark a flatten is allowed to pay.
+///
+/// A close-everything is a market order and a market order needs a price the
+/// book will actually take. There is no book on screen for the markets a
+/// reader is not watching, so the crossing price is the position's own mark
+/// moved this far in the direction that fills — which is what Hyperliquid's own
+/// SDK does for `market_close`, at this same figure. It is stated on the
+/// confirmation rather than left as a constant nobody sees, because a limit
+/// five per cent through the mark is a real amount of money on a wide book.
+const FLATTEN_SLIPPAGE: f64 = 0.05;
+
+/// One act over every row of a panel, frozen on the press.
+///
+/// The panel-wide controls are loops over the single paths and nothing else:
+/// CANCEL ALL is the row's own CANCEL run down the list, FLATTEN ALL is CLOSE
+/// POSITION run down the list. What makes them worth a type is the same thing
+/// that makes `Draft` worth one — the confirmation and the wire have to be
+/// describing the same act, and a list re-read between the press and the send
+/// is a list that changed.
+///
+/// Frozen at list granularity for exactly the reason `Draft` is frozen at order
+/// granularity: an order can fill and a position can move while the reader is
+/// reading the panel. What is agreed to is what is sent, and the rows below are
+/// the rows that go.
+#[derive(Clone, PartialEq)]
+pub struct Sweep {
+    /// Which act this is: pull every resting order, or flatten every position.
+    /// One field rather than two lists that could both be full.
+    pub cancel: bool,
+    /// The resting orders, when this is a cancel. Empty otherwise.
+    pub orders: Vec<Order>,
+    /// One closing order per position, when this is a flatten. Each is an
+    /// ordinary `Draft` and goes down the ordinary send path, so nothing here
+    /// reaches an exchange by a route a single order does not.
+    pub drafts: Vec<Draft>,
+    /// What the confirmation's heading says, in the count it froze.
+    pub act: String,
+    /// What this costs to be wrong about, under the heading.
+    pub note: String,
+    /// One line per row, for the panel to list what is about to go. The lists
+    /// above are the payload; this is the only part the view reads.
+    pub rows: Vec<String>,
+}
+
+/// Prints the act and the count rather than the payload: a failure that dumped
+/// forty orders buries the one fact worth reading.
+impl fmt::Debug for Sweep {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Sweep")
+            .field("cancel", &self.cancel)
+            .field("rows", &self.rows.len())
+            .field("act", &self.act)
+            .finish()
+    }
+}
+
+/// Pull every resting order, frozen.
+pub fn sweep_orders(orders: Vec<Order>) -> Sweep {
+    let rows = orders.iter().cloned().map(order_label).collect();
+    Sweep {
+        cancel: true,
+        act: sweep_act(orders.len(), true),
+        note: "Every order below stops resting. Nothing is bought or sold: a cancelled order \
+               that had not filled leaves no position behind, and one that had filled has \
+               already left one."
+            .to_owned(),
+        orders,
+        drafts: Vec::new(),
+        rows,
+    }
+}
+
+/// Close every position, frozen: one ordinary closing order per row.
+///
+/// Each draft is built the way CLOSE POSITION builds one — reduce-only, the
+/// side that moves the position towards zero, the whole size — and priced to
+/// cross rather than to rest, because a flatten that quietly rested would be a
+/// panic button that did nothing.
+pub fn sweep_positions(venue: Venue, positions: Vec<Position>, markets: Vec<SymbolRow>) -> Sweep {
+    let drafts: Vec<Draft> = positions
+        .iter()
+        .map(|held| flatten_draft(venue, held, &markets))
+        .collect();
+    let rows = drafts.iter().map(flatten_line).collect();
+    Sweep {
+        cancel: false,
+        act: sweep_act(positions.len(), false),
+        note: format!(
+            "Each goes as a reduce-only order priced up to {}% through its own mark, so it \
+             crosses rather than rests. This spends money and it is not reversible.",
+            (FLATTEN_SLIPPAGE * 100.0).round()
+        ),
+        orders: Vec::new(),
+        drafts,
+        rows,
+    }
+}
+
+/// One line of a flatten's list: the position being closed and the limit the
+/// order that closes it carries.
+///
+/// The same shape a cancel's line has, because both lists are lists of orders
+/// that are about to go. The side named is the *position's* — a buy closes a
+/// short — because that is what the reader is looking at in the panel behind.
+fn flatten_line(draft: &Draft) -> String {
+    let side = if draft.buy { "short" } else { "long" };
+    format!(
+        "Close {} {side} {} at up to {}",
+        draft.coin,
+        fmt_size(draft.size),
+        fmt_px(draft.price)
+    )
+}
+
+/// The closing order for one position, which is CLOSE POSITION without a ticket
+/// to seed.
+///
+/// Neither figure the ticket would have quoted is invented here: the margin a
+/// close asks for is none and the cliff it moves towards is none, which is what
+/// `price_ticket` already answers for a reduce-only order and what the ticket's
+/// own readouts already print. `draft_refusal` runs over it exactly as it runs
+/// over a typed one, so a market this app cannot price is refused here and not
+/// at the exchange.
+fn flatten_draft(venue: Venue, held: &Position, markets: &[SymbolRow]) -> Draft {
+    let buy = held.size < 0.0;
+    let size = held.size.abs();
+    let market = markets
+        .iter()
+        .find(|row| row.name == held.coin && !row.heading)
+        .cloned();
+    let cross = held.margin_mode == "cross";
+    let slip = if buy {
+        1.0 + FLATTEN_SLIPPAGE
+    } else {
+        1.0 - FLATTEN_SLIPPAGE
+    };
+    let price = (held.mark * slip).max(0.0);
+    Draft {
+        venue,
+        coin: held.coin.clone(),
+        market: market.clone(),
+        buy,
+        size,
+        price,
+        walked: true,
+        reduce_only: true,
+        cross,
+        tif: Tif::Ioc,
+        leverage: held.leverage,
+        notional: size * held.mark,
+        margin: 0.0,
+        liquidation: 0.0,
+        tp: 0.0,
+        sl: 0.0,
+        refusal: draft_refusal(
+            &held.coin,
+            market.as_ref(),
+            size,
+            price,
+            0.0,
+            0.0,
+            [String::new(), String::new(), String::new()],
+        ),
+    }
+}
+
+/// The heading a sweep's confirmation carries, in the count it froze.
+fn sweep_act(count: usize, cancel: bool) -> String {
+    let thing = if cancel { "resting order" } else { "position" };
+    let plural = if count == 1 { "" } else { "s" };
+    let verb = if cancel { "Cancel" } else { "Close" };
+    format!("{verb} {count} {thing}{plural}")
+}
+
+/// Why a panel-wide control is dead, or nothing when it is live.
+///
+/// The session's own refusal outranks the panel's: a locked session cannot
+/// cancel one order or seven, and saying "no orders to cancel" over a list that
+/// has seven in it would be a second, wrong reason.
+pub fn sweep_refused(locked: String, count: i64, cancel: bool) -> String {
+    if !locked.is_empty() {
+        return locked;
+    }
+    if count > 0 {
+        return String::new();
+    }
+    if cancel {
+        "No resting orders to cancel.".to_owned()
+    } else {
+        "No open positions to close.".to_owned()
+    }
+}
+
+/// What a panel-wide control does, said in full — including why it will not.
+///
+/// The reason travels in the name because these two sit in header rows a
+/// sentence does not fit in, and a control that is dead for a reason nobody can
+/// read is the thing this app refuses to ship elsewhere.
+pub fn sweep_label(count: i64, cancel: bool, refusal: String) -> String {
+    let count = usize::try_from(count).unwrap_or(0);
+    if refusal.is_empty() {
+        return format!("{}, one confirmation", sweep_act(count, cancel));
+    }
+    format!("{} — {refusal}", sweep_act(count, cancel))
+}
+
+/// Whether a sweep's confirmation is standing over the terminal.
+pub fn sweep_pending(sweep: Option<Sweep>) -> bool {
+    sweep.is_some()
+}
+
+/// The frozen sweep's own words, read the way the order confirmation reads a
+/// frozen draft's own figures: through an accessor per line rather than by
+/// projecting the option in the view. Nothing here computes; each is the string
+/// the press already built.
+pub fn sweep_heading(sweep: Option<Sweep>) -> String {
+    sweep.map(|act| act.act).unwrap_or_default()
+}
+
+pub fn sweep_note(sweep: Option<Sweep>) -> String {
+    sweep.map(|act| act.note).unwrap_or_default()
+}
+
+pub fn sweep_rows(sweep: Option<Sweep>) -> Vec<String> {
+    sweep.map(|act| act.rows).unwrap_or_default()
+}
 /// How long until this market is funded again, as the positions panel
 /// prints it.
 ///
@@ -1406,7 +1634,9 @@ pub fn previous_close(price: f64, change_pct: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hyperliquid::{demo_fills, hl_symbols, tape_new};
+    use crate::hyperliquid::{
+        demo_fills, demo_orders, demo_positions, demo_symbols, hl_symbols, tape_new,
+    };
     // The book is not on `Reads` — the app never asks a venue for one — so the
     // live seam test reaches the adapter's own read directly.
     use crate::lighter::{demo_symbols_lighter, lighter_book};
@@ -2655,5 +2885,114 @@ mod tests {
         let refused = write_fills_csv(Venue::Hyperliquid, Vec::new());
         assert!(refused.note.is_empty());
         assert_eq!(refused.error, "No fills to export.");
+    }
+
+    /// A flatten is one ordinary closing order per position, and every field of
+    /// each one follows from the position rather than from anything typed.
+    ///
+    /// The side is the interesting half: a buy closes a short, and getting it
+    /// backwards doubles a position instead of closing it — which the venue
+    /// would happily do, because reduce-only refuses the order rather than
+    /// flipping it.
+    #[test]
+    fn a_flatten_closes_each_position_with_its_own_order() {
+        let markets = demo_symbols();
+        let act = sweep_positions(Venue::Hyperliquid, demo_positions(), markets);
+        assert!(!act.cancel);
+        assert!(act.orders.is_empty(), "a flatten pulls nothing");
+        assert_eq!(act.act, "Close 3 positions");
+        assert_eq!(act.drafts.len(), 3, "one order per position, and no more");
+        assert_eq!(act.rows.len(), 3);
+
+        // The fixture is short 30 bitcoin at a mark of 64,000, so the order
+        // that closes it buys 30 and is willing to pay five per cent through.
+        let btc = &act.drafts[0];
+        assert_eq!(btc.coin, "BTC");
+        assert!(btc.buy, "a buy closes a short");
+        assert_eq!(btc.size, 30.0);
+        assert_eq!(btc.price, 64_000.0 * 1.05);
+        assert!(btc.reduce_only, "a close only moves towards zero");
+        assert_eq!(btc.tif, Tif::Ioc, "it crosses rather than rests");
+        assert!(btc.market.is_some(), "the wire names a market by its index");
+        assert!(btc.refusal.is_empty());
+        assert_eq!(act.rows[0], "Close BTC short 30 at up to 67,200.00");
+
+        // And the long the other way, at a price under its mark rather than
+        // over it.
+        let eth = &act.drafts[1];
+        assert!(!eth.buy, "a sell closes a long");
+        assert_eq!(eth.size, 40.0);
+        assert_eq!(eth.price, 3_540.0 * 0.95);
+        assert!(eth.reduce_only);
+
+        // Neither figure the ticket would have quoted is invented: a close
+        // asks for no margin and moves towards no cliff.
+        assert!(act.drafts.iter().all(|draft| draft.margin == 0.0));
+        assert!(act.drafts.iter().all(|draft| draft.liquidation == 0.0));
+    }
+
+    /// A market this app cannot price is refused in the list rather than at the
+    /// exchange, by the same rule a typed order is refused by.
+    #[test]
+    fn a_flatten_refuses_a_market_it_cannot_margin() {
+        let mut held = demo_positions();
+        held.truncate(1);
+        held[0].coin = "xyz:NVDA".to_owned();
+        let act = sweep_positions(Venue::Hyperliquid, held, demo_symbols());
+        assert_eq!(act.drafts.len(), 1);
+        assert!(
+            act.drafts[0]
+                .refusal
+                .contains("clearinghouse this app cannot read"),
+            "got {}",
+            act.drafts[0].refusal
+        );
+    }
+
+    /// The cancel half: every resting order named once, in the order the panel
+    /// listed them.
+    #[test]
+    fn a_cancel_all_names_every_resting_order() {
+        let act = sweep_orders(demo_orders());
+        assert!(act.cancel);
+        assert!(act.drafts.is_empty(), "a cancel places nothing");
+        assert_eq!(act.act, "Cancel 2 resting orders");
+        assert_eq!(
+            act.rows,
+            vec![
+                "BTC buy 1.5 at 63,600.00".to_owned(),
+                "BTC sell 0.8 at 64,440.00".to_owned(),
+            ]
+        );
+        assert_eq!(sweep_orders(Vec::new()).act, "Cancel 0 resting orders");
+    }
+
+    /// Why a panel-wide control is dead, and in which order the two reasons are
+    /// asked. Custody first: a locked session cannot cancel one order or seven,
+    /// and "nothing to cancel" over a full list is a second and wrong reason.
+    #[test]
+    fn a_panel_wide_refusal_asks_custody_before_the_panel() {
+        let locked = "Unlock on Settings before sending an order.".to_owned();
+        assert_eq!(sweep_refused(locked.clone(), 7, true), locked);
+        assert_eq!(sweep_refused(locked.clone(), 0, true), locked);
+        assert_eq!(sweep_refused(String::new(), 7, true), "");
+        assert_eq!(
+            sweep_refused(String::new(), 0, true),
+            "No resting orders to cancel."
+        );
+        assert_eq!(
+            sweep_refused(String::new(), 0, false),
+            "No open positions to close."
+        );
+        // The reason travels in the name, because a header row has no width
+        // for a sentence.
+        assert_eq!(
+            sweep_label(7, true, locked.clone()),
+            "Cancel 7 resting orders — Unlock on Settings before sending an order."
+        );
+        assert_eq!(
+            sweep_label(1, false, String::new()),
+            "Close 1 position, one confirmation"
+        );
     }
 }

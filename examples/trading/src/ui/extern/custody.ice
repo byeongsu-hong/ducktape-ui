@@ -49,6 +49,10 @@ extern crate::custody
   // sentence the status line prints, in the venue's own words when it refused.
   submit_order(venue:Venue, session:Session, now:i64, draft:Draft?) -> str ! HlError
   cancel_resting(venue:Venue, session:Session, now:i64, coin:str, oid:i64) -> str ! HlError
+  // A whole panel's worth, which is a loop over the two above and nothing
+  // else: no bulk endpoint, no second gate, and every row still refused for
+  // its own reasons.
+  submit_sweep(venue:Venue, session:Session, now:i64, sweep:Sweep?) -> str ! HlError
   // Sessions a preset can be drawn in. Each is built by driving the real state
   // machine rather than by naming a variant, so a fixture cannot be a state the
   // machine would never reach.

@@ -88,7 +88,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use crate::hyperliquid::{
-    HlError, Order, SymbolRow, fmt_px, fmt_size, hl_agents, hl_cancel, hl_place,
+    HlError, Order, SymbolRow, fmt_px, fmt_size, hl_agents, hl_cancel, hl_place, order_label,
 };
 use crate::lighter::{lighter_account_index, lighter_api_keys, lighter_cancel, lighter_place};
 use crate::lighter_sign::{PrivateKey, Resting};
@@ -101,7 +101,7 @@ use crate::session::{
     step,
 };
 use crate::signing::{self, Wallet};
-use crate::venue::{Draft, Network, Signing, venue_list, venue_name};
+use crate::venue::{Draft, Network, Signing, Sweep, venue_list, venue_name};
 use crate::{Tif, Venue};
 
 /// What one act of custody produced: where the session now stands, and the
@@ -980,6 +980,76 @@ pub async fn cancel_resting(
             "The key this session holds is not for this network.".to_owned(),
         )),
     }
+}
+
+/// Send a whole panel's worth: every resting order pulled, or every position
+/// closed.
+///
+/// A loop over the two paths above and nothing else. Neither venue is asked
+/// anything a single row does not already ask it, and every draft goes through
+/// `submit_order`, so the gate, the key, the network's own signing scheme and
+/// the per-order refusals all apply row by row exactly as they do to a typed
+/// order. There is no bulk endpoint and this does not invent one.
+///
+/// Sequential rather than concurrent. Both venues sign with one key and one
+/// nonce sequence, and firing seven signatures at once is how a nonce race
+/// turns six good orders into one — the visible cost is a few round trips on a
+/// button nobody presses twice a minute.
+///
+/// A row that fails does not stop the ones after it. A flatten that gave up on
+/// its second position would leave five open and read as done; each is an
+/// independent act, so each is attempted and the answer says which did not go.
+pub async fn submit_sweep(
+    venue: Venue,
+    session: Session,
+    now_s: i64,
+    sweep: Option<Sweep>,
+) -> Result<String, HlError> {
+    let Some(sweep) = sweep else {
+        return Err(HlError::new(
+            "There is no confirmed sweep to send.".to_owned(),
+        ));
+    };
+    let refused = trade_refusal(venue, session.clone(), now_s);
+    if !refused.is_empty() {
+        return Err(HlError::new(refused));
+    }
+    let mut sent = 0_usize;
+    let mut refusals: Vec<String> = Vec::new();
+    if sweep.cancel {
+        for order in &sweep.orders {
+            match cancel_resting(venue, session.clone(), now_s, order.coin.clone(), order.oid).await
+            {
+                Ok(_) => sent += 1,
+                Err(error) => {
+                    refusals.push(format!("{}: {}", order_label(order.clone()), error.message))
+                }
+            }
+        }
+    } else {
+        for draft in &sweep.drafts {
+            match submit_order(venue, session.clone(), now_s, Some(draft.clone())).await {
+                Ok(_) => sent += 1,
+                Err(error) => refusals.push(format!("{}: {}", draft.coin, error.message)),
+            }
+        }
+    }
+    let asked = if sweep.cancel {
+        sweep.orders.len()
+    } else {
+        sweep.drafts.len()
+    };
+    let what = if sweep.cancel { "cancelled" } else { "closed" };
+    if refusals.is_empty() {
+        return Ok(format!("{sent} of {asked} {what}."));
+    }
+    // Partly done is a failure and says so, because the half that went is
+    // already money. The panel stays up over the list it froze and the account
+    // poll behind it is what says which rows are still there.
+    Err(HlError::new(format!(
+        "{sent} of {asked} {what}. {}",
+        refusals.join(" ")
+    )))
 }
 
 /// The order the wire carries, from the order that was confirmed.

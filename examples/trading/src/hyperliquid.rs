@@ -5,6 +5,7 @@
 //! numbers as JSON strings, so a derive would need a custom deserializer per
 //! field anyway.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::net::TcpStream;
@@ -2610,6 +2611,34 @@ fn price_decimals(value: f64) -> usize {
     }
 }
 
+/// The smallest price step this market is actually quoting, read off the book
+/// rather than assumed.
+///
+/// Both venues publish a book already grouped to the tick they accept, so the
+/// gap between two adjacent levels is the tick — and one tick is what a trader
+/// means by "one up". Taken as the smallest gap across both sides merged,
+/// because the one gap in that list that is *not* a tick is the spread, and it
+/// is never the smallest.
+///
+/// With no book to read, one unit of the precision the price is printed at:
+/// the smallest step that changes what the field says.
+pub(crate) fn book_tick(book: Option<&Book>, price: f64) -> f64 {
+    let mut levels: Vec<f64> = book
+        .into_iter()
+        .flat_map(|depth| depth.bids.iter().chain(depth.asks.iter()))
+        .map(|level| level.price)
+        .collect();
+    levels.sort_by(|left, right| left.partial_cmp(right).unwrap_or(Ordering::Equal));
+    levels
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .filter(|gap| *gap > 0.0)
+        .fold(None, |best: Option<f64>, gap| {
+            Some(best.map_or(gap, |best| best.min(gap)))
+        })
+        .unwrap_or_else(|| 10_f64.powi(-(price_decimals(price) as i32)))
+}
+
 pub fn fmt_px(value: f64) -> String {
     format_price(value, price_decimals(value))
 }
@@ -3164,6 +3193,64 @@ pub fn ticket_afford(
     fmt_size(size)
 }
 
+/// What a share button fills in, which is a share of two different things.
+///
+/// Opening, it is a slice of what the account could put on. Once CLOSE
+/// POSITION has set reduce-only, the only quantity on the screen is the
+/// position itself, and "50%" has to be half of what is held: sized off free
+/// margin it is a number with no relation to the thing being closed, and it
+/// looks exactly like a size. `order_size` already caps a reduce-only order at
+/// the position, so the old behaviour was not dangerous — it was silently
+/// wrong, which is worse to read.
+///
+/// MAX closes the position rather than the position floored to the
+/// instrument's step. Every other size this app works out is floored, because
+/// rounding an *opening* order up asks the margin engine for margin that is not
+/// there; a close asks for none, and the floor would leave a few thousandths of
+/// dust the venue still carries as an open position. The figure came off the
+/// venue on the step it quotes, so there is nothing to round.
+///
+/// The account and the leverage are still taken and are deliberately unread on
+/// the reduce path: closing asks nothing of either.
+#[allow(clippy::too_many_arguments)]
+pub fn share_size(
+    account: Option<Account>,
+    price: f64,
+    market: Option<SymbolRow>,
+    leverage: f64,
+    share: f64,
+    usd: bool,
+    reduce: bool,
+    held: f64,
+) -> String {
+    if !reduce {
+        return ticket_afford(account, price, market, leverage, share, usd);
+    }
+    let position = held.abs();
+    if position <= 0.0 || share <= 0.0 {
+        return String::new();
+    }
+    let coins = if share >= 1.0 {
+        position
+    } else {
+        let step = size_step(market.as_ref());
+        (position * share * step).floor() / step
+    };
+    if coins <= 0.0 {
+        return String::new();
+    }
+    // The field answers in the unit it is being typed in, the way the
+    // buying-power path does. A share of a position starts as a size, so here
+    // it is the dollar case that is the extra conversion.
+    if usd {
+        if price <= 0.0 {
+            return String::new();
+        }
+        return format_price(coins * price, 2);
+    }
+    fmt_size(coins)
+}
+
 /// What an order would do to what you already hold. Opening and closing are
 /// different acts on the same ticket, and the difference is the sign of a
 /// number two panels apart — the size you typed here and the position sitting
@@ -3409,6 +3496,25 @@ pub fn level_label(name: String, pnl: f64) -> String {
 /// carries a toggled state for a checkbox and a switch but not for a button,
 /// so the highlight is the whole answer for everyone who can see it and no
 /// answer at all for anyone who cannot.
+/// What a share button fills in, said in full for a reader who cannot see
+/// which ticket it sits in.
+///
+/// The percentage on the face is the same number whether the ticket is opening
+/// or closing and means two different things, so the name carries which. Left
+/// at "25%" it named the fraction and never the thing it was a fraction of,
+/// which was already thin and became wrong the moment there were two.
+pub fn share_act(share: f64, reduce: bool) -> String {
+    let of = if reduce {
+        "this position"
+    } else {
+        "your buying power"
+    };
+    if share >= 1.0 {
+        return format!("Set the size to all of {of}");
+    }
+    format!("Set the size to {}% of {of}", (share * 100.0).round())
+}
+
 pub fn choice_label(act: String, shown: bool) -> String {
     let state = if shown { ", already selected" } else { "" };
     format!("{act}{state}")
@@ -3611,6 +3717,16 @@ pub fn order_label(order: Order) -> String {
         fmt_size(order.size),
         fmt_px(order.price)
     )
+}
+
+/// What pressing the row itself would do, which is no longer only "go there".
+///
+/// The row loads the order back into the ticket, so the name says that rather
+/// than naming the order and leaving the act to be guessed at — and it says it
+/// beside a CANCEL on the same row whose name is the same order with a
+/// different verb, which is the pair a reader has to tell apart.
+pub fn order_pick_label(order: Order) -> String {
+    format!("Load this {} into the ticket", order_label(order))
 }
 
 /// What CANCEL on this row would do, for whoever cannot see which row it is on.

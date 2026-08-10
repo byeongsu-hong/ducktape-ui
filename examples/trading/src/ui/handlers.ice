@@ -80,6 +80,29 @@ on search_key(event)
   return if event.key != key.named("Escape")
   query = ""
 
+// The terminal's own keys, in one handler because a handler cannot branch.
+//
+// Each line asks one mapping what its key means and assigns the answer, and
+// every mapping answers "unchanged" for a key it does not own — so a press that
+// belongs to one of them moves that one thing and leaves the other two where
+// they were. Written as branches this would be one handler and one subscription
+// per key, every one of them woken by every keystroke.
+//
+// Nothing here sends, and nothing here can: the subscription is off while a
+// confirmation is standing, and the only key that opens one is `submit=` on the
+// ticket's own fields — a widget's own Enter, which cannot fire from a widget
+// the reader is not in.
+on ticket_key(event)
+  ticket_buy = hotkey_side(event.key, ticket_buy)
+  ticket_price = hotkey_price(event.key, ticket_price, book)
+  // The share row's own arithmetic, so a keyed 50% and a pressed 50% are the
+  // same size — including which thing it is 50% of. An unowned key answers zero
+  // here, which `share_size` already reads as "no size to fill in", so the
+  // guard below is the one the buttons already have rather than a second rule.
+  let sized = share_size(account, ticket_unit, focus, quote.leverage, hotkey_share(event.key), ticket_usd, ticket_reduce, position_held(positions, coin))
+  return if empty(sized)
+  ticket_size = sized
+
 // The network picker, opened from the block in the header that names the
 // network. There is no toggle here because there cannot be a second press: the
 // panel opens over a backdrop that takes every click outside it, so the way
@@ -123,8 +146,13 @@ on add_alert_here
 on drop_alert_at(at_coin, price)
   alerts = drop_alert(alerts, at_coin, price)
 
+// 25/50/75/MAX, and what they are a share *of* depends on what the ticket is
+// doing. Opening, it is the buying power; once CLOSE POSITION has set
+// reduce-only it is the position, because that is the only quantity the panel
+// is describing — "50%" of an account, beside an order that promises to move a
+// position towards zero, is a number about neither.
 on size_share(share)
-  let sized = ticket_afford(account, ticket_unit, focus, quote.leverage, share, ticket_usd)
+  let sized = share_size(account, ticket_unit, focus, quote.leverage, share, ticket_usd, ticket_reduce, position_held(positions, coin))
   return if empty(sized)
   ticket_size = sized
 
@@ -246,6 +274,53 @@ on pick_symbol(name)
   loading_history = false
   history_exhausted = false
   run every venue_candles(venue, tape, name, interval) -> candles_loaded _ | failed _
+
+// A resting order, pressed, comes back into the ticket it was placed from.
+//
+// Cancel-and-replace is two acts a trader already knows — adjust and REVIEW —
+// and before this it was a form to retype from a row four columns wide. What is
+// loaded is exactly what the row shows: the market, the side, the price and the
+// size, as a limit order, because a resting order is one.
+//
+// It does *not* cancel the order it copied. Pulling an order is money the
+// reader decides to stop resting, and a press that both copied and cancelled
+// would make reading an order the same act as withdrawing it. CANCEL sits on
+// the same row and stays the trader's own explicit act.
+//
+// The tail below is the market change `pick_symbol` and `symbols_loaded` both
+// make, for the same reason and with the same list. Ice has no way for one
+// handler to run another, so the three are kept in step by hand: anything a
+// market change has to throw away has to be thrown away in all three.
+on pick_resting(order)
+  page = Page.terminal
+  rail_open = false
+  // The order first, so the market-change tail below cannot re-seed the price
+  // out of the book on top of the one the row is holding.
+  ticket_kind = OrderKind.limit
+  ticket_buy = order.buy
+  // A resting size is a quantity of the instrument. Left in dollars the field
+  // would hold the order's notional, which is a different number that looks
+  // exactly like a size.
+  ticket_usd = false
+  ticket_price = fmt_px(order.price)
+  ticket_size = fmt_size(order.size)
+  // A fresh description of one order: a promise about a position and two
+  // levels belong to whatever the ticket was doing before the press.
+  ticket_reduce = false
+  ticket_tp = ""
+  ticket_sl = ""
+  ticket_levels = false
+  return if order.coin == coin
+  book = none
+  coin = order.coin
+  tape_prints = []
+  focus = symbol_row(symbols, order.coin)
+  hover = none
+  status = "Loading candles"
+  tape = tape_focus(tape, order.coin, interval)
+  loading_history = false
+  history_exhausted = false
+  run every venue_candles(venue, tape, order.coin, interval) -> candles_loaded _ | failed _
 
 // A venue owns every panel on the screen, so this throws away at least what
 // `pick_symbol` throws away, plus everything that belongs to an account. Two
@@ -561,9 +636,15 @@ on ticket_review
 // Backing out. The order is dropped rather than remembered, because a
 // confirmation the reader declined is not a draft to offer again — the ticket
 // still holds every field they typed.
+//
+// It clears both because there is one modal surface and one way off it: the
+// backdrop hands every click outside the panel here, whichever of the two is
+// standing on it. Only one ever is — each is opened from a control the other
+// one covers.
 on confirm_dismissed
   return if sending
   confirm = none
+  sweep = none
 
 // The one press in this app that spends money.
 on confirm_sent
@@ -576,6 +657,7 @@ on confirm_sent
 on order_sent(said)
   sending = false
   confirm = none
+  sweep = none
   error = ""
   status = said
 
@@ -593,6 +675,35 @@ on cancel_order(coin_of, oid)
   error = ""
   status = "Cancelling"
   run every cancel_resting(venue, session, clock, coin_of, oid) -> order_sent _ | order_refused _
+
+// The two panel-wide acts, each a loop over the single path above it.
+//
+// One summary confirmation rather than one per row, and that is a decision
+// about the freeze rather than about convenience. Seven sheets would be seven
+// snapshots taken seven moments apart, over a list that moves between them —
+// an order fills, a position is marked — so what the reader agreed to on the
+// third sheet would already describe something else by the seventh. Freezing
+// the list once keeps the property the single-order path has: what is
+// confirmed is what is sent. It is also the honest reading of the act. FLATTEN
+// ALL is the panic button, and a panic button behind five sheets is not five
+// safeties, it is a reader pressing through five sheets.
+on cancel_all
+  return if !empty(cancel_all_refusal)
+  sweep = some(sweep_orders(orders))
+
+on flatten_all
+  return if !empty(flatten_all_refusal)
+  // The universe goes with it: a closing order names its market to the venue by
+  // the index the universe carries, and the positions panel holds tickers.
+  sweep = some(sweep_positions(venue, positions, symbols))
+
+// The other press that spends money, and it spends it once per row.
+on sweep_sent
+  return if sending
+  sending = true
+  error = ""
+  status = "Sending"
+  run every submit_sweep(venue, session, clock, sweep) -> order_sent _ | order_refused _
 
 on unlock
   return if !session_unlockable(session)
@@ -630,6 +741,16 @@ subscribe
   // one press is one act, and the act a reader means is the panel covering
   // the screen rather than a word in a rail behind it.
   keyboard press when venues_open -> venues_key _
+  // The ticket's keys, and `status=ignored` is the guard that matters: a
+  // focused widget marks the keys it consumed captured, so the search box, the
+  // price, the size and the leverage all keep their own keystrokes and this
+  // never sees them. Every key in the scheme is one a text input consumes.
+  //
+  // The three conditions after the page are `modal` spelled out, because a
+  // subscription reads state rather than derived values. They are the safety
+  // rule as a condition: with the gate or either confirmation standing, the
+  // whole scheme is off, so no key can reach past a panel to the send.
+  keyboard press status=ignored when page == Page.terminal && !gate && !order_pending(confirm) && !sweep_pending(sweep) && !venues_open -> ticket_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 60s when !gate && !empty(address) -> tick_portfolio
