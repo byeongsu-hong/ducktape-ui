@@ -2529,20 +2529,20 @@ view
                                     @text-muted
                           col gap=12.0 w=480.0
                             Label value="CUSTODY"
-                            text "The wallet key is never here."
+                            text "Two keys, and only one of them can trade."
                               with
                                 size=16.0
                                 w=fill
                                 wrap=word
                                 @text-fg
                                 @font-bold
-                            text "What this app can hold is an agent key: a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance."
+                            text "The trading key is a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance, and it is the only key an order is ever signed with."
                               with
                                 size=12.0
                                 w=fill
                                 wrap=word
                                 @text-muted
-                            text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session below says rather than something this paragraph decides. Locking forgets it; so does changing network or address, because a key is approved for one account on one deployment."
+                            text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session below says rather than something this paragraph decides. Locking forgets it, and so does connecting a different address. Switching network does not: one unlock releases every network this address has enrolled, and each of them still holds a key of its own."
                               with
                                 size=12.0
                                 w=fill
@@ -3128,3 +3128,15 @@ view
                     active bg=panel text=muted r=4.0
                     hovered bg=raised text=fg r=4.0
                     text "Browse markets" size=12.0
+                  space w=fill
+                  // The other door to the import step, and the one that makes
+                  // its placement true: an owner with a phrase and no address
+                  // yet has nowhere else to start, and the step covers this
+                  // dialog rather than opening behind it.
+                  button #gate-import -> open_import
+                    with
+                      p=11.0
+                      label="Import a wallet from a recovery phrase"
+                    active bg=panel text=muted r=4.0
+                    hovered bg=raised text=fg r=4.0
+                    text "Import a wallet" size=12.0

@@ -61,7 +61,7 @@
 //! path and nothing executes it — a CI runner has no window server to raise a
 //! Touch ID sheet in front of, and no enrolled finger to answer it with. The
 //! nine experiments `session.rs` lists on its `impl Keystore` are still owed,
-//! and this wiring adds four more that only exist now that something calls it:
+//! and this wiring adds seven more that only exist now that something calls it:
 //!
 //! 1. **UNLOCK raises one sheet, not two.** `load` is the only guarded read
 //!    this path makes, so it should be one. Two would mean something else is
@@ -71,15 +71,25 @@
 //!    "Touch ID was cancelled" beside a live button — never the dead button and
 //!    red platform sentence a fault gets. This is the distinction the whole
 //!    seam is shaped around and the one place it is visible.
-//! 3. **The round trip.** NEW KEY on a first run, the address it prints
-//!    approved from the account's own wallet at the exchange, then UNLOCK
-//!    reaching `Ready` with a window the exchange assigned. Every step but the
-//!    middle one is this app's; the middle one proves the middle one is not.
-//! 4. **NEW KEY over an existing enrolment costs a sheet and keeps the old
+//! 3. **The round trip.** ENROL ALL on a first run, then UNLOCK reaching
+//!    `Ready` with a window the exchange assigned, for every network the plan
+//!    named.
+//! 4. **ENROL ALL over an existing enrolment costs a sheet and keeps the old
 //!    secret when the add fails.** `session.rs` reads the old bytes back before
 //!    it deletes them precisely so a failed replace is survivable, and that
 //!    read is a guarded read — so expect a sheet on re-enrolment, none on a
 //!    first run, and the previous key still loading afterwards.
+//! 5. **THIS IS MINE stores the account key and says so.** One sheet, an item
+//!    at `wallet:0x…`, and the panel's sentence naming the address it kept —
+//!    which is the arm a build with no keychain answers with the platform's
+//!    refusal instead, and the only arm a Linux runner ever sees.
+//! 6. **ENROL ALL costs one sheet for four networks, not four.** The account
+//!    key is read once and used for each network in turn, so the sheet count is
+//!    the assertion — and it is the whole of what makes the owner's rule about
+//!    naming rather than granularity hold up in practice.
+//! 7. **A cancelled enrolment sheet registers nothing.** `Held::Declined`
+//!    returns before the first network, so the failure mode to rule out is a
+//!    partial enrolment nobody agreed to.
 //!
 //! Until a person on a Mac reports those, the honest claim is that this seam's
 //! logic is tested and its platform half is compiled, reviewed and unrun.
@@ -467,9 +477,18 @@ pub async fn keep_wallet() -> Result<Entry, CustodyFault> {
     let address = master.address().to_string();
     smol::unblock(move || {
         match PlatformKeystore.store(&wallet_item(&address), &Secret::new(master.secret())) {
-            Err(failure) => Ok(Entry::plain(Session::Unavailable {
-                reason: failure.message,
-            })),
+            // Said on the step as well as held in the session, because the step
+            // is the only thing the owner is looking at: the address leaves the
+            // panel either way, and without a sentence a build with nowhere to
+            // put a key answers THIS IS MINE by emptying the screen. The rule
+            // `session_refusal` already states — the platform's own words rather
+            // than a press that answers with nothing — applies to this press too.
+            Err(failure) => Ok(Entry::saying(
+                Session::Unavailable {
+                    reason: failure.message.clone(),
+                },
+                &failure.message,
+            )),
             Ok(()) => Ok(Entry::saying(
                 Session::Locked,
                 &format!(
@@ -2468,5 +2487,66 @@ mod tests {
         let wound_back = tick_agent(lapsed, now);
         assert!(matches!(wound_back, Session::Expired { .. }));
         assert!(!session_can_trade(wound_back, now));
+    }
+
+    /// A revoked key surfaces as the thing to do about it, and nothing else does.
+    ///
+    /// These two sentences are the venues' own, read live while the order paths
+    /// were written, and they are the *only* way an eviction reaches a reader
+    /// between unlocks: the key can be revoked from the exchange's own interface
+    /// at any moment and this app finds out when it next tries to use it. Drawn
+    /// as an ordinary failure it reads as the exchange being down, and the reader
+    /// waits for something that is never coming back.
+    ///
+    /// Both sides are held. A test that only checked the eviction would pass for
+    /// a `re_enrol` that rewrote every failure into this sentence, which would
+    /// send somebody to re-enrol over a network timeout.
+    #[test]
+    fn an_evicted_key_reads_as_the_thing_to_do_about_it() {
+        // Hyperliquid answers HTTP 200 with a sentence and no code; Lighter has
+        // the code. Both are quoted rather than paraphrased.
+        for (venue, refusal) in [
+            (
+                Venue::Hyperliquid,
+                "User or API Wallet 0x13070cb3597c75100928720060c7acff4d22bc09 does not exist.",
+            ),
+            (
+                Venue::LighterTestnet,
+                "code 21109: api key not registered for this account",
+            ),
+        ] {
+            assert!(evicted(refusal), "{refusal}");
+            let said = re_enrol(venue, HlError::new(refusal.to_owned())).message;
+            assert_eq!(said, eviction_note(venue), "{refusal}");
+            assert!(
+                said.starts_with(&venue_name(venue)),
+                "the incident names its network: {said}"
+            );
+            assert!(
+                said.contains("enrol again from Settings"),
+                "the incident says what to do about it: {said}"
+            );
+            assert!(
+                said.contains("Nothing was sent"),
+                "the order did not happen, and the sentence says so: {said}"
+            );
+            // And the venue's raw words are gone, because they are what read as
+            // an outage.
+            assert!(!said.contains(refusal), "{said}");
+        }
+
+        // Everything else reaches the reader unchanged. An exchange that is
+        // simply down is not a key that was taken away.
+        for ordinary in [
+            "code 21734: price too far from mark",
+            "connection reset by peer",
+            "code 21706: order notional below the minimum",
+        ] {
+            assert!(!evicted(ordinary), "{ordinary}");
+            assert_eq!(
+                re_enrol(Venue::Hyperliquid, HlError::new(ordinary.to_owned())).message,
+                ordinary,
+            );
+        }
     }
 }

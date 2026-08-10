@@ -586,33 +586,92 @@ rule it is.
 
 ## Custody
 
-The app can hold one key and it is not the account's. An **agent key** is a
-separate keypair the account's own wallet approved at the exchange: it places
-and cancels orders, it cannot withdraw, and the exchange stops honouring it on
-a date the exchange chose. Losing it costs an approval, not a balance. That
-property is the whole reason there is a key here at all.
+The app holds two kinds of key and only one of them can trade. A **trading key**
+is a separate keypair the account's own wallet approved at the exchange: it
+places and cancels orders, it cannot withdraw, and the exchange stops honouring
+it on a date the exchange chose. Losing it costs an approval, not a balance.
+That property is the whole reason there is a key here at all, and it is the only
+key an order is ever signed with.
 
-On macOS its secret lives in the keychain behind Touch ID — one guarded
-generic-password item, biometry or passcode, this device only, and not in this
+The other is the **account's own key**, and it is here only if somebody imported
+it. It signs enrolments — the approval that makes a trading key real — and
+nothing else. What keeps that true is a type rather than a habit: `MasterKey`
+and `Wallet` are different types with different methods, `order` and `cancel`
+build an `Action<Trading>` where `approve_agent` builds an `Action<Enrolment>`,
+and each signer implements exactly one of them. A master key handed an order
+does not compile, and neither does a trading key handed an approval — it is
+`E0308` at the call site rather than a rule in a comment, and it caught a real
+mix-up in `signing.rs`'s own live tests while they were being written. There is
+no test pinning the refusal itself: this is a binary crate, so it has no
+doc-test target for a `compile_fail` block, and `trybuild` would be a dependency
+carried for one assertion the compiler already makes at every call site.
+
+On macOS both secrets live in the keychain behind Touch ID — guarded
+generic-password items, biometry or passcode, this device only, and not in this
 process or in a file. Unlocking is that prompt. On a build without a keychain
 there is nowhere to keep a secret and nothing to unlock, and the panel says so
-rather than offering a prompt that can only refuse. The keychain item is filed
-under the deployment *and* the address, because a key approved on mainnet is
-unknown on testnet and a secret read back under the wrong one is a signer the
-venue has never heard of.
+rather than offering a prompt that can only refuse. A **trading key's** item is
+filed under the deployment *and* the address, because a key approved on mainnet
+is unknown on testnet and a secret read back under the wrong one is a signer the
+venue has never heard of. The **account key's** item is `wallet:0x…` — the
+address alone, no venue in it — because the same twelve words are the same
+account on every network there is. One item, so a phrase is typed once rather
+than once per venue, and so there is one thing to delete when this machine is
+done with.
 
-Three acts, and the app cannot perform the middle one:
+Three acts, and the middle one is somebody else's only until it is imported:
 
-1. **NEW KEY** generates an agent key, stores the secret, and prints the
-   address.
-2. **Approve** — done by the account's own wallet, at the exchange, somewhere
-   that is not this app. An `approveAgent` is signed by the master wallet,
-   which is the one key this design exists to avoid holding.
-3. **UNLOCK** raises Touch ID, reads the secret back, asks the venue which of
+1. **ENROL ALL** generates a trading key for every network in the registry,
+   stores each secret, and registers each one.
+2. **Approve.** The `approveAgent` on Hyperliquid and the `L2ChangePubKey` on
+   Lighter are signed by the account's own key. With no wallet on this machine
+   that signature is somebody else's, at the exchange, somewhere that is not
+   this app — which is where this design started. With one imported it is the
+   step above, on one Touch ID, over the plan named on the panel first.
+3. **UNLOCK** raises Touch ID, reads the secrets back, asks each venue which of
    this account's keys are live, and a listing naming ours is what a tradeable
    session is made of.
 
-The middle step being somebody else's is the property, not a gap.
+The app never needs the account's key to *trade*, and that has not changed. What
+changed is that it can now be handed the key that approves one, under its own
+step, for one press.
+
+### The account's own key
+
+A phrase reaches the app through one step and no other. **CHECK** derives and
+answers the address, stores nothing, and raises no sheet: the whole point of
+that half is that the owner reads an address they recognise before anything is
+written. The phrase is cleared from Ice state the instant it has derived, and
+the derived key waits outside state — for the reason the trading keys do, which
+is that state is cloned, captured into fixtures and printed by tests. **THIS IS
+MINE** is the one prompt an import costs.
+
+A raw private key is accepted by shape rather than by a second field: 64 hex
+characters, with or without the prefix, is somebody pasting a key, and no
+recovery phrase is either.
+
+BIP-39 and BIP-32 are implemented here on `hmac`, `sha2` and `k256` rather than
+taken from a wallet crate, and they are pinned to three outside oracles:
+
+| Oracle | What it fixes |
+| --- | --- |
+| Trezor's `vectors.json` | seed bytes for 12, 18 and 24 words under the `TREZOR` passphrase |
+| BIP-32 Test Vector 1 | the derivation chain across hardened, normal and `index > 2³¹` nodes — cross-checked so ethers' `extendedKey` equals the spec's `xprv` at every node |
+| ethers v6.17.0 | four phrase → address answers at `m/44'/60'/0'/0/0` |
+
+The English wordlist is pinned by SHA-256, a mistyped word or a failed checksum
+is refused where the owner can still see what they typed, and a passphrase this
+app will not normalise — anything outside ASCII, since NFKD is not implemented
+here — is refused rather than silently derived into a different account.
+
+**ponytail: the phrase transits Ice state while it is being typed.** The
+language has no write-only input, so the field binds to state like every other
+field. What holds it down is that the life is one press, that `check_phrase`
+clears both fields the moment it has derived, and that no preset ever sets one —
+`trading_an_import_answers_the_account_and_one_press_spends_it` asserts the
+clearing, and the fixtures are what every screenshot in this repository is taken
+from. The upgrade is an input the language does not bind to state, which is
+filed as its own task rather than built here.
 
 ### What the screen says, and what it must never blur
 
@@ -643,10 +702,17 @@ whichever key the network's scheme signs with — a secp256k1 agent wallet on on
 a 40-byte ECgFp5 API key on the other — and the only reasons left for a dead
 UNLOCK are the platform's: a build with no keychain, and a prompt already up.
 
-The two schemes differ in the act the owner has to perform, so the sentence the
-panel prints differs with them. Hyperliquid *approves an address* as an API
-wallet; Lighter *registers a public key* at an api-key slot. Naming the act
-wrongly sends somebody to the right screen with the wrong string.
+The two schemes differ in what a registration *is*, so the enrolment differs
+with them. Hyperliquid *approves an address* as an API wallet, signed as typed
+data; Lighter *registers a public key* at an api-key slot, authorised by a
+signature over the venue's own sentence. **ENROL ALL** does both from one Touch
+ID, and the panel names every network and its REAL MONEY / TESTNET kind above
+the button before it is pressed — the owner's rule is that a master signature
+never happens without a sheet just answered and a naming of everything it
+covers, and the naming is what makes one prompt for four networks more explicit
+than four prompts that each say "approve a key". The interpretation is recorded
+beside the retention decision in `custody.rs`. A network that fails is named and
+the other three continue.
 
 `Network.signing` names the scheme rather than a chain, and the two Lighter
 entries carry `Signing::ApiKey(Zone)` where the two Hyperliquid ones carry
@@ -719,16 +785,18 @@ switch* — holds either way; the sheets, however many, all happen at the unlock
 
 ### Enrolling on a testnet, end to end
 
-For a *real* account the app generates the key and never surrenders it, the
-account's own wallet authorises it and never enters this process, and the app
-checks the venue's confirmation rather than taking anyone's word for it. That
-one act in the middle being somebody else's is the property, not a gap.
+The app generates every trading key and never surrenders one, and it checks the
+venue's confirmation rather than taking anyone's word for it. The authorisation
+in the middle is the account's own signature: import a wallet and the app makes
+it, on one Touch ID, over a plan naming every network; import nothing and it
+stays somebody else's, made somewhere that is not this process. Both are
+supported and only the first is a checklist.
 
-For **live evidence** on a testnet the two venues differ, and only because their
-faucets do. Hyperliquid's drip asks for an address already qualified on mainnet,
-which nothing this process can mint satisfies — so that one step stays with
-whoever owns such an address. Lighter's faucet asks for nothing, so the tooling
-owns a disposable identity there and needs nobody.
+What is left on a testnet is the *money*, and there the two venues differ only
+because their faucets do. Hyperliquid's drip asks for an address already
+qualified on mainnet, which nothing this process can mint satisfies — so that
+one step stays with whoever owns such an address. Lighter's faucet asks for
+nothing, so the tooling owns a disposable identity there and needs nobody.
 
 #### Hyperliquid Testnet
 
@@ -751,70 +819,33 @@ owns a disposable identity there and needs nobody.
    Confirm the drip landed with the same request against
    `api.hyperliquid-testnet.xyz`.
 
-2. **What the app has already done.** `NEW KEY` on the settings page generated a
-   secp256k1 agent key, put its secret in this Mac's keychain under
-   `testnet:0xYOURADDRESS`, and printed the agent's address. Nothing else has
-   left the machine.
+2. **Type your mnemonic once.** IMPORT A WALLET, from the gate or from
+   Settings. CHECK derives and shows the address it makes — read it, because
+   nothing has been stored yet and a phrase typed wrong answers a different
+   account rather than an error. THIS IS MINE is the one prompt, and it files
+   the 32 bytes under `wallet:0xYOURADDRESS` with no venue in the name.
 
-3. **Approve that address.** This is the master wallet's signature and the one
-   action this app will never build a path for. The Hyperliquid UI's own API
-   Wallet page generates a key for you, which is the wrong direction — the key
-   already exists here. So sign the payload for *this* address:
+3. **ENROL ALL.** One Touch ID. The panel lists every network with its REAL
+   MONEY or TESTNET kind first; the press then generates a fresh trading key per
+   network, files each secret under its own `<exchange>-<deployment>:<address>`
+   item, and signs the registration each venue wants — an `approveAgent` as
+   typed data on Hyperliquid, an `L2ChangePubKey` authorised by a signature over
+   the venue's sentence on Lighter. Whatever does not take is named, and the
+   rest still land.
 
-   ```json
-   {
-     "domain": { "name": "HyperliquidSignTransaction", "version": "1",
-                 "chainId": 421614,
-                 "verifyingContract": "0x0000000000000000000000000000000000000000" },
-     "primaryType": "HyperliquidTransaction:ApproveAgent",
-     "types": {
-       "EIP712Domain": [ {"name":"name","type":"string"},
-                         {"name":"version","type":"string"},
-                         {"name":"chainId","type":"uint256"},
-                         {"name":"verifyingContract","type":"address"} ],
-       "HyperliquidTransaction:ApproveAgent": [
-         {"name":"hyperliquidChain","type":"string"},
-         {"name":"agentAddress","type":"address"},
-         {"name":"agentName","type":"string"},
-         {"name":"nonce","type":"uint64"} ]
-     },
-     "message": { "hyperliquidChain": "Testnet",
-                  "agentAddress": "0xTHE-ADDRESS-THE-APP-PRINTED",
-                  "agentName": "",
-                  "nonce": 1786000000000 }
-   }
-   ```
-
-   `nonce` is milliseconds since the epoch and must be recent. `chainId` is
-   `0x66eee`, Arbitrum Sepolia, and it is the *signature's* domain rather than
-   where anything settles.
-
-   Sign it with Foundry, which is what pins this payload's own test vector in
-   `signing.rs` — so the tool checking the app is the tool producing the
-   approval:
-
-   ```bash
-   cast wallet sign --from-keystore <keystore> --data --from-file approve.json
-   ```
-
-   Then post it, with `signatureChainId` back in the action — it names the
-   domain rather than sitting in it, so the exchange reads it from the body:
-
-   ```bash
-   curl -s -X POST https://api.hyperliquid-testnet.xyz/exchange \
-     -H 'content-type: application/json' \
-     -d '{"action":{"type":"approveAgent","hyperliquidChain":"Testnet",
-                    "signatureChainId":"0x66eee",
-                    "agentAddress":"0xTHE-ADDRESS","agentName":"","nonce":1786000000000},
-          "nonce":1786000000000,
-          "signature":{"r":"0x…","s":"0x…","v":27}}'
-   ```
+   That EIP-712 payload is not reproduced here: its bytes are pinned as a
+   Foundry-signed vector in `signing.rs`, so the tool that would have produced
+   an approval by hand is the tool that checks the one the app makes.
 
 4. **Hand back: nothing.** The app verifies this itself. `UNLOCK` reads
    `extraAgents` for the account and looks for the address it generated; a
    listing naming it, with a window still ahead of it, is what `Ready` is made
-   of. If the approval did not land the panel says so and the account stays
+   of. If the registration did not land the panel says so and the account stays
    readable.
+
+Without a wallet on the machine step 3 is the account owner's, wherever they
+keep their key, and the app still checks the result in step 4 rather than
+believing it.
 
 #### Lighter Testnet
 
@@ -865,16 +896,27 @@ machine exhaustively, this seam's projections and both refusals, and the panel
 in every state a preset can put it in. None of it touches a keychain, because a
 build without one answers `Unavailable` — a state with a test rather than a gap.
 
+The import's first half is decided there too, and it is real rather than
+mocked: `trading_an_import_answers_the_account_and_one_press_spends_it` types a
+phrase into the step, presses CHECK, and holds the address against the one
+`seed.rs` pins to ethers — a derivation, a clearing and a rendered address, all
+on Linux. What that test cannot reach is what a keychain does with the secret
+afterwards, so it asserts the press *spends* the waiting key and that the step
+says what came of it, and leaves which sentence that is to the platform.
+
 What no runner reaches is the sheet. `security-framework` is a macOS-only
 dependency, so the macOS jobs compile that path and nothing executes it: a CI
 runner has no window server to raise a Touch ID sheet in front of and no
 enrolled finger to answer it with. The nine experiments `session.rs` lists on
-its `impl Keystore` are still owed, and `custody.rs` adds four that only exist
+its `impl Keystore` are still owed, and `custody.rs` adds seven that only exist
 now that something calls it — one sheet per unlock rather than two, a cancelled
-sheet leaving a live button, the full enrol-approve-unlock round trip, and a
-re-enrolment keeping the secret it replaces when the add fails. Until a person
-on a Mac reports those, the honest claim is that this seam's logic is tested and
-its platform half is compiled, reviewed and unrun.
+sheet leaving a live button, the full enrol-approve-unlock round trip, a
+re-enrolment keeping the secret it replaces when the add fails, THIS IS MINE
+storing the account key under `wallet:0x…` and saying so, ENROL ALL costing one
+sheet for four networks rather than four, and a cancelled enrolment sheet
+leaving nothing registered. Until a person on a Mac reports those, the honest
+claim is that this seam's logic is tested and its platform half is compiled,
+reviewed and unrun.
 
 ## Fixtures are read as evidence
 

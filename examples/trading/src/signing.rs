@@ -720,9 +720,13 @@ impl Action<Enrolment> {
     }
 }
 
-/// Approve an agent wallet. Signed by the **master** wallet, not by the agent:
-/// this is the one action in this file the app cannot sign for itself, which is
-/// the entire point of an agent key.
+/// Approve an agent wallet. Signed by the **master** wallet, not by the agent —
+/// an agent key that could approve its own successor would be an agent key with
+/// no ceiling on it, which is the entire point of having one.
+///
+/// The app can sign this itself once a wallet has been imported, and only then;
+/// with no wallet on the machine it is still somebody else's signature, made
+/// somewhere that is not this process.
 ///
 /// There is no expiry argument because the action has no field for one — the
 /// exchange picks the window and reports it back through `extraAgents`.
