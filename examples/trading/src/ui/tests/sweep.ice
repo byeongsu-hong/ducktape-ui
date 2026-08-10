@@ -208,5 +208,12 @@ test trading_a_confirmed_flatten_sends_one_close_per_position
   click all
   click send
   expect exists panel
-  expect text "0 of 3 closed. BTC: Unlock on Settings before sending an order. ETH: Unlock on Settings before sending an order. SOL: Unlock on Settings before sending an order." within failed
+  // Each refusal names the line the panel listed rather than a second
+  // description of the row. A flatten's rows are one market each and the ticker
+  // told them apart; a ladder's are all one market, so the whole line is what
+  // says which order the venue turned down — and it is the line the reader
+  // agreed to. Read off the panel as well as off the state, which is #539's
+  // rule: a modal assertion reads the modal.
+  expect error == "0 of 3 closed. Close BTC short 30 at up to 67,200.00: Unlock on Settings before sending an order. Close ETH long 40 at up to 3,363.00: Unlock on Settings before sending an order. Close SOL long 12 at up to 141.189: Unlock on Settings before sending an order."
+  expect text error within failed
   expect len(positions) == 3

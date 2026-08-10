@@ -484,12 +484,61 @@ It used to be eight hand-written copies of one `price_ticket` call, re-assigned
 in every handler that touched a field, which is a quote that goes stale the
 first time a new field forgets to join the list.
 
-**Market or limit.** Not a filter over one order shape. A market order has no
-price to type, so the field goes, and the whole panel is quoted at what walking
-the book on screen would actually pay — the same walk the row below prints, so
-the two cannot disagree. A limit order is quoted at the field. Leaving the last
-typed price in place and quoting a market order against it is a panel
-describing an order nobody is placing.
+**Market, limit or scale.** Not a filter over one order shape. A market order
+has no price to type, so the field goes, and the whole panel is quoted at what
+walking the book on screen would actually pay — the same walk the row below
+prints, so the two cannot disagree. A limit order is quoted at the field.
+Leaving the last typed price in place and quoting a market order against it is a
+panel describing an order nobody is placing.
+
+**A scale order is not a venue order.** Neither exchange has the type: both take
+a ladder as the orders it is made of, so the splitting happens here, in front of
+the reader, and what leaves is one limit order per rung. The panel asks for a
+range and a count instead of a price, rests the rungs evenly with both ends on
+the grid, and splits the one size the ticket states rather than repeating it.
+Its readouts are the ladder's own: the price they are quoted from is the average
+the rungs fill at, which for an evenly spaced ladder is the midpoint of the
+range — so `ORDER VALUE`, `MARGIN REQUIRED` and `LIQUIDATION` under a scale
+ticket describe the whole ladder rather than a field that is not on screen.
+Above them the ticket says how many orders, what range they landed on, and what
+one rung carries, read off the rungs themselves so a rung that missed the grid
+moves the summary instead of hiding behind it.
+
+Because a scale is a list, it freezes into the list confirmation the two
+panel-wide acts already use rather than into the single-order one: the
+confirmation lists every rung, restates the five figures under the labels the
+ticket used, and the send spends it a rung at a time through the same
+`submit_order` a typed order goes through — one key, one nonce sequence,
+sequential. Every gate reaches every rung because every rung *is* an order: the
+session's refusal outranks the ladder's, a market margined against a
+clearinghouse this app cannot read is refused before a key is asked for, and the
+network's kind is on the panel in the same badge. A rung the venue turns down is
+named by the line the reader agreed to, with the venue's own sentence and a
+count of what did go — the ones that went are already resting, and the panel
+does not take them back. A ladder is capped at twenty rungs, because each one is
+its own signature and its own round trip.
+
+**A TWAP is the other way round from a scale, in every way that matters.** A
+ladder is this app's arithmetic and leaves as the orders it is made of; a worked
+order leaves as *one* order and the exchange slices it, into sub-orders no API
+key may place. So there is nothing to preview and everything to gate: the window
+replaces the resting rule, because the venue fixes that one — its own validation
+refuses a TWAP that is not good-till-time, and the expiry such an order carries
+is not a deadline but the length of the working. The ticket says the window back
+in the unit it means (`over 3 hours`, not `over 180 minutes`) and the
+confirmation restates it where a resting rule would have been.
+
+It is offered only where this app can sign one, and that is a fact on the
+network registry beside `rests_forever` — not a match on the venue. Lighter's
+TWAP is the ordinary create-order transaction filed as `TWAPOrder = 6`, so the
+encoding reaches it by one field, and that field is pinned against a vector
+driven out of the venue's own signer the way every other Lighter field is.
+Hyperliquid's is a separate `twapOrder` action, documented on the exchange
+endpoint and absent from the Python SDK every Hyperliquid vector here comes from
+— so there is nothing to hold those bytes against, and an order signed to a
+shape nobody has checked is one the exchange cannot tell from a stranger's. The
+button is not drawn there and a sentence says which of the two things is
+missing, because "Hyperliquid has no TWAP" would be false.
 
 **How long it rests.** `GTC`, `IOC`, `ALO` — one enum, not three booleans,
 because post-only and immediate-or-cancel are two answers to the same question

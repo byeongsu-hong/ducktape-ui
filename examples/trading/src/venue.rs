@@ -36,15 +36,15 @@ use smol::channel::Receiver;
 
 use crate::hyperliquid::{
     Account, Fill, HL_CANONICAL, HlError, MarketTick, Order, Position, SymbolRow, Tape, Ticket,
-    amount, fmt_px, fmt_size, hl_account, hl_candles, hl_fill_feed, hl_history, hl_market_feed,
-    hl_orders, hl_symbols, order_label,
+    amount, fmt_margin, fmt_px, fmt_size, hl_account, hl_candles, hl_fill_feed, hl_history,
+    hl_market_feed, hl_orders, hl_symbols, order_label, price_ticket,
 };
 use crate::lighter::{
     Zone, lighter_account, lighter_candles, lighter_history, lighter_market_feed, lighter_symbols,
 };
 use crate::portfolio::{PortfolioHistory, hl_portfolio, portfolio_unavailable};
 use crate::signing::Chain;
-use crate::{Tif, Venue};
+use crate::{OrderKind, Tif, Venue};
 
 /// What the screen calls a venue.
 ///
@@ -314,6 +314,33 @@ pub struct Network {
     /// flips it is not an encoder passing its vectors: it is an order carrying
     /// one having been seen resting at the venue.
     pub attaches_levels: bool,
+    /// Whether this app sends a TWAP here — an order the venue works over a
+    /// window rather than at one moment.
+    ///
+    /// Both exchanges have one and they are not the same kind of thing.
+    /// Lighter's is the ordinary create-order transaction filed as
+    /// `TWAPOrder = 6`, with its expiry carrying the length of the working, so
+    /// the encoding this app already signs reaches it by one field — and that
+    /// field is pinned in `lighter_sign.rs` against a vector driven out of the
+    /// venue's own signer, which is the standard every other Lighter field is
+    /// held to. Hyperliquid's is a separate `twapOrder` action carrying a
+    /// `twap` object, documented on the exchange endpoint and **absent from the
+    /// Python SDK this repository takes every Hyperliquid vector from**: that
+    /// SDK reads TWAP slice fills and signs no TWAP.
+    ///
+    /// `#529` is why the difference is decisive rather than inconvenient. The
+    /// one thing no amount of reasoning settled there was that the SDK's
+    /// *encoder* packs `isMarket` before `triggerPx` while its *type* declares
+    /// the other order — and MessagePack writes a map in the order it is handed,
+    /// so following the declaration would have signed an action that recovers a
+    /// stranger, which the exchange cannot tell from a bad key. With no encoder
+    /// to drive and no funded account for the exchange to be the oracle
+    /// instead, there is nothing on that venue to hold an encoding against.
+    ///
+    /// On the registry rather than in a match, because it is a fact about the
+    /// exchange this network deploys and a network added to that table has to
+    /// state it the way it states its chain.
+    pub places_twap: bool,
     /// Whether this network states the time it last charged funding.
     ///
     /// Both exchanges fund hourly, so both boundaries can be counted down to;
@@ -376,6 +403,7 @@ impl Network {
         name: "Hyperliquid",
         rests_forever: true,
         attaches_levels: false,
+        places_twap: false,
         stamps_funding: false,
         testnet: false,
         signing: Signing::Eip712(Chain::Mainnet),
@@ -417,6 +445,7 @@ impl Network {
         venue: Venue::HyperliquidTestnet,
         rests_forever: true,
         attaches_levels: false,
+        places_twap: false,
         stamps_funding: false,
         name: "Hyperliquid Testnet",
         testnet: true,
@@ -455,6 +484,7 @@ impl Network {
         venue: Venue::Lighter,
         rests_forever: false,
         attaches_levels: false,
+        places_twap: true,
         stamps_funding: true,
         name: "Lighter",
         testnet: false,
@@ -508,6 +538,7 @@ impl Network {
         venue: Venue::LighterTestnet,
         rests_forever: false,
         attaches_levels: false,
+        places_twap: true,
         stamps_funding: true,
         name: "Lighter Testnet",
         testnet: true,
@@ -933,6 +964,30 @@ pub fn venue_attaches_levels(venue: Venue) -> bool {
     Network::of(venue).attaches_levels
 }
 
+/// Whether this app works an order over a window here.
+pub fn venue_places_twap(venue: Venue) -> bool {
+    Network::of(venue).places_twap
+}
+
+/// Why this network is not offered a TWAP, or nothing when it is.
+///
+/// It names the *missing* thing rather than the venue, because the venue has
+/// one: what is missing is an encoder to hold this app's bytes against. A
+/// sentence reading "Hyperliquid has no TWAP" would be false, and a reader who
+/// knows the exchange would be right not to believe the rest of this panel.
+pub fn venue_twap_note(venue: Venue) -> String {
+    if venue_places_twap(venue) {
+        return String::new();
+    }
+    format!(
+        "{} has a TWAP order and this app does not send one: its published SDK signs no such \
+         action, so there is nothing to hold these bytes against, and an order signed to a shape \
+         nobody has checked is one the exchange cannot tell from a stranger's. It is offered \
+         nowhere rather than offered here.",
+        venue_name(venue)
+    )
+}
+
 pub fn venue_levels_note(venue: Venue) -> String {
     if venue_attaches_levels(venue) {
         return String::new();
@@ -1003,6 +1058,13 @@ pub struct Draft {
     pub liquidation: f64,
     pub tp: f64,
     pub sl: f64,
+    /// How long the venue is to work this order over, in minutes, and zero for
+    /// an order that goes at one moment.
+    ///
+    /// A duration rather than a flag beside one, so an order cannot be a TWAP
+    /// with no window or a limit order with one. Zero is not "a TWAP of no
+    /// length": it is the whole of what says this order is not one.
+    pub minutes: f64,
     /// Why this order cannot be sent as typed, or nothing when it can.
     ///
     /// Folded here rather than left to the view because sendability is one
@@ -1034,6 +1096,66 @@ impl fmt::Debug for Draft {
     }
 }
 
+/// The price the ticket's readouts are quoted from, whichever field the kind it
+/// is on actually has.
+///
+/// A limit order's is in the price field. A market order has no field at all,
+/// and the empty string is what sends `order_price` and `size_price` to the
+/// book instead. A scale ticket has *two* fields, and the single figure that
+/// stands for the pair is the price its rungs average out at — which for a
+/// ladder spaced evenly with both ends on it is exactly the midpoint of the
+/// range. So ORDER VALUE, MARGIN REQUIRED and LIQUIDATION under a scale ticket
+/// are the whole ladder's, priced by the arithmetic that prices one order,
+/// rather than a column of zeroes standing over a field that is not on screen.
+///
+/// A string because that is what the two functions downstream take, and the
+/// figure survives the trip: `f64`'s own printing round-trips exactly and
+/// `amount` parses it back.
+pub fn quoted_price(kind: OrderKind, price: String, from: String, to: String) -> String {
+    if kind != OrderKind::Scale {
+        return price;
+    }
+    let (from, to) = (amount(&from), amount(&to));
+    if from <= 0.0 || to <= 0.0 {
+        return String::new();
+    }
+    ((from + to) / 2.0).to_string()
+}
+
+/// The window an order of this kind carries, and nothing for a kind that has
+/// none.
+///
+/// Read once so a kind switched away from cannot leave a window standing on an
+/// order that is not worked. It is the same rule the level fold follows —
+/// closing it clears both fields — expressed as a projection rather than as a
+/// handler that has to remember.
+pub fn order_window(kind: OrderKind, minutes: String) -> String {
+    if kind == OrderKind::Twap {
+        return minutes;
+    }
+    String::new()
+}
+
+/// How long the venue will be working this order, in the words the panel
+/// prints, and nothing for an order that goes at one moment.
+///
+/// Minutes and hours rather than minutes alone: a window is a thing a reader
+/// chose and has to recognise, and "180 minutes" is a figure they have to
+/// convert before they can tell whether it is the one they meant.
+pub fn order_worked(minutes: String) -> String {
+    let minutes = amount(&minutes);
+    if minutes.is_nan() || minutes <= 0.0 {
+        return String::new();
+    }
+    if minutes < 60.0 || minutes % 60.0 != 0.0 {
+        let plural = if minutes == 1.0 { "" } else { "s" };
+        return format!("over {} minute{plural}", fmt_size(minutes));
+    }
+    let hours = minutes / 60.0;
+    let plural = if hours == 1.0 { "" } else { "s" };
+    format!("over {} hour{plural}", fmt_size(hours))
+}
+
 /// Project the order the ticket is describing.
 ///
 /// Every argument is a value the panel is already showing. Nothing is
@@ -1055,12 +1177,24 @@ pub fn order_draft(
     quote: Ticket,
     tp: String,
     sl: String,
+    minutes: String,
     reduce_refusal: String,
     tp_refusal: String,
     sl_refusal: String,
 ) -> Draft {
     let size = amount(&size).abs();
     let (tp, sl) = (amount(&tp), amount(&sl));
+    let minutes = amount(&minutes).max(0.0);
+    // A worked order's resting rule is the venue's rather than the reader's:
+    // Lighter's own validation takes `GOOD_TILL_TIME` and nothing else, and the
+    // ticket says so by not offering the row. But the row was offered a moment
+    // ago, on the kind before this one, and `ticket_tif` keeps what was pressed
+    // — so without this an order switched from an IOC limit to a TWAP would
+    // carry `Ioc` to a signer that refuses the pairing, and the reader would be
+    // told about a control that is not on screen. Fixed here rather than in the
+    // handler because it is a fact about the order, and here is where the order
+    // is projected.
+    let tif = if minutes > 0.0 { Tif::Gtc } else { tif };
     Draft {
         venue,
         coin: coin.clone(),
@@ -1078,13 +1212,16 @@ pub fn order_draft(
         liquidation: quote.liquidation,
         tp,
         sl,
+        minutes,
         refusal: draft_refusal(
+            venue,
             &coin,
             market.as_ref(),
             size,
             price,
             tp,
             sl,
+            minutes,
             [
                 // Only when the promise is actually being made. The refusal is
                 // computed whether or not the box is ticked — the ticket draws
@@ -1113,12 +1250,14 @@ pub fn order_draft(
 /// something vaguer.
 #[allow(clippy::too_many_arguments)]
 fn draft_refusal(
+    venue: Venue,
     coin: &str,
     market: Option<&SymbolRow>,
     size: f64,
     price: f64,
     tp: f64,
     sl: f64,
+    minutes: f64,
     refusals: [String; 3],
 ) -> String {
     if let Some(said) = refusals.into_iter().find(|said| !said.is_empty()) {
@@ -1149,6 +1288,13 @@ fn draft_refusal(
         return "This app does not attach a target or a stop to an order yet, so it will not \
                 send one that has them."
             .to_owned();
+    }
+    // Belt beside the venue fact, exactly as the levels arm is. `places_twap`
+    // is what stops the window being offered; this is what stops an order
+    // carrying one from reaching a wire that has nowhere to put it — and, on a
+    // network that does, what stops a window nobody typed.
+    if minutes > 0.0 && !venue_places_twap(venue) {
+        return venue_twap_note(venue);
     }
     // `<=` rather than `!(_ > _)`: a size that is NaN is not a size either,
     // and both spellings refuse it — this one just says so readably.
@@ -1258,37 +1404,98 @@ pub fn order_pending(draft: Option<Draft>) -> bool {
 /// five per cent through the mark is a real amount of money on a wide book.
 const FLATTEN_SLIPPAGE: f64 = 0.05;
 
-/// One act over every row of a panel, frozen on the press.
+/// Which act a frozen list is.
+///
+/// One field rather than two lists that could both be full, and an enum rather
+/// than the boolean it replaced because a ladder is a third answer: the two
+/// panel-wide acts undo what an account is holding, and this one places orders.
+/// A boolean widened to carry it would have made "not a cancel" mean both
+/// "close everything" and "buy in five pieces".
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Act {
+    /// Pull every resting order.
+    Cancel,
+    /// Close every open position.
+    Flatten,
+    /// Place a scale ticket's rungs, one limit order each.
+    Ladder,
+}
+
+impl Act {
+    /// What happened to a row that went, for the sentence the send answers
+    /// with. Past tense because it is reporting rather than offering.
+    pub(crate) fn done(self) -> &'static str {
+        match self {
+            Act::Cancel => "cancelled",
+            Act::Flatten => "closed",
+            Act::Ladder => "placed",
+        }
+    }
+}
+
+/// One figure a frozen list states about itself, as a label and the string the
+/// panel paints beside it.
+///
+/// Formatted here rather than in the view for the reason every figure on the
+/// confirmation is: the panel restates and computes nothing, so a number it
+/// shows has to arrive already written by whoever worked it out.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Figure {
+    pub label: String,
+    pub value: String,
+}
+
+fn figure(label: &str, value: String) -> Figure {
+    Figure {
+        label: label.to_owned(),
+        value,
+    }
+}
+
+/// One act over a list of orders, frozen on the press.
 ///
 /// The panel-wide controls are loops over the single paths and nothing else:
 /// CANCEL ALL is the row's own CANCEL run down the list, FLATTEN ALL is CLOSE
-/// POSITION run down the list. What makes them worth a type is the same thing
-/// that makes `Draft` worth one — the confirmation and the wire have to be
-/// describing the same act, and a list re-read between the press and the send
-/// is a list that changed.
+/// POSITION run down the list, and a scale ticket is the ticket's own send run
+/// down its rungs. What makes them worth a type is the same thing that makes
+/// `Draft` worth one — the confirmation and the wire have to be describing the
+/// same act, and a list re-read between the press and the send is a list that
+/// changed.
 ///
 /// Frozen at list granularity for exactly the reason `Draft` is frozen at order
 /// granularity: an order can fill and a position can move while the reader is
-/// reading the panel. What is agreed to is what is sent, and the rows below are
-/// the rows that go.
+/// reading the panel, and a book beat moves what a ladder would be priced at.
+/// What is agreed to is what is sent, and the rows below are the rows that go.
 #[derive(Clone, PartialEq)]
 pub struct Sweep {
-    /// Which act this is: pull every resting order, or flatten every position.
-    /// One field rather than two lists that could both be full.
-    pub cancel: bool,
+    pub act: Act,
     /// The resting orders, when this is a cancel. Empty otherwise.
     pub orders: Vec<Order>,
-    /// One closing order per position, when this is a flatten. Each is an
-    /// ordinary `Draft` and goes down the ordinary send path, so nothing here
-    /// reaches an exchange by a route a single order does not.
+    /// One order per row otherwise: a closing order per position for a flatten,
+    /// a rung per price for a ladder. Each is an ordinary `Draft` and goes down
+    /// the ordinary send path, so nothing here reaches an exchange by a route a
+    /// single order does not — which is also what makes every per-order refusal
+    /// and the whole gate apply row by row without being restated.
     pub drafts: Vec<Draft>,
     /// What the confirmation's heading says, in the count it froze.
-    pub act: String,
+    pub heading: String,
     /// What this costs to be wrong about, under the heading.
     pub note: String,
     /// One line per row, for the panel to list what is about to go. The lists
     /// above are the payload; this is the only part the view reads.
     pub rows: Vec<String>,
+    /// What the list adds up to, for a confirmation that has figures as well as
+    /// rows. Empty for the two panel-wide acts, which are lists and nothing
+    /// else — a cancel adds up to nothing and a flatten's arithmetic is the
+    /// positions panel's, already on screen behind the panel.
+    pub figures: Vec<Figure>,
+    /// Why this list cannot be sent as it stands, or nothing when it can.
+    ///
+    /// Only a ladder ever carries one, because only a ladder is projected from
+    /// a ticket somebody is still typing into. The two panel-wide acts are
+    /// built from lists the app already holds and are refused before the press
+    /// by `sweep_refused` instead.
+    pub refusal: String,
 }
 
 /// Prints the act and the count rather than the payload: a failure that dumped
@@ -1297,9 +1504,10 @@ impl fmt::Debug for Sweep {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Sweep")
-            .field("cancel", &self.cancel)
-            .field("rows", &self.rows.len())
             .field("act", &self.act)
+            .field("rows", &self.rows.len())
+            .field("heading", &self.heading)
+            .field("refusal", &self.refusal)
             .finish()
     }
 }
@@ -1308,8 +1516,8 @@ impl fmt::Debug for Sweep {
 pub fn sweep_orders(orders: Vec<Order>) -> Sweep {
     let rows = orders.iter().cloned().map(order_label).collect();
     Sweep {
-        cancel: true,
-        act: sweep_act(orders.len(), true),
+        act: Act::Cancel,
+        heading: sweep_act(orders.len(), true),
         note: "Every order below stops resting. Nothing is bought or sold: a cancelled order \
                that had not filled leaves no position behind, and one that had filled has \
                already left one."
@@ -1317,6 +1525,8 @@ pub fn sweep_orders(orders: Vec<Order>) -> Sweep {
         orders,
         drafts: Vec::new(),
         rows,
+        figures: Vec::new(),
+        refusal: String::new(),
     }
 }
 
@@ -1333,8 +1543,8 @@ pub fn sweep_positions(venue: Venue, positions: Vec<Position>, markets: Vec<Symb
         .collect();
     let rows = drafts.iter().map(flatten_line).collect();
     Sweep {
-        cancel: false,
-        act: sweep_act(positions.len(), false),
+        act: Act::Flatten,
+        heading: sweep_act(positions.len(), false),
         note: format!(
             "Each goes as a reduce-only order priced up to {}% through its own mark, so it \
              crosses rather than rests. This spends money and it is not reversible.",
@@ -1343,7 +1553,309 @@ pub fn sweep_positions(venue: Venue, positions: Vec<Position>, markets: Vec<Symb
         orders: Vec::new(),
         drafts,
         rows,
+        figures: Vec::new(),
+        refusal: String::new(),
     }
+}
+
+/// The most rungs a ladder may carry.
+///
+/// A bound rather than a preference: every rung is its own signature, its own
+/// nonce and its own round trip, sent one after another — so a ladder of two
+/// hundred is a button that holds the app for a minute and asks an exchange two
+/// hundred questions nobody is watching the answers to. Twenty is more than any
+/// range this panel can describe needs and short enough that the send finishes
+/// while the reader is still looking at it.
+const MAX_RUNGS: f64 = 20.0;
+
+/// The ladder the scale ticket is describing, frozen: one ordinary `Draft` per
+/// rung.
+///
+/// **A scale order is not a venue order.** Neither exchange has one — both take
+/// a ladder as the orders it is made of — so this is where the splitting
+/// happens, once, in front of the reader. The rungs it answers are the same
+/// values the preview draws, the confirmation lists and the wire carries, which
+/// is the `Draft` freeze design at list granularity: a rung on screen and a rung
+/// on the wire cannot be different orders because they are the same value.
+///
+/// Every figure is derived from the rungs rather than computed beside them. The
+/// range is the first and last rung's own prices and the value is the sum of
+/// what each rung is worth, so a rung that landed off the grid moves the
+/// summary rather than hiding behind it.
+#[allow(clippy::too_many_arguments)]
+pub fn order_ladder(
+    venue: Venue,
+    coin: String,
+    market: Option<SymbolRow>,
+    buy: bool,
+    size: String,
+    from: String,
+    to: String,
+    rungs: String,
+    reduce_only: bool,
+    cross: bool,
+    tif: Tif,
+    quote: Ticket,
+    reduce_refusal: String,
+    account: Option<Account>,
+    held: f64,
+) -> Sweep {
+    let total = amount(&size).abs();
+    let (from, to, count) = (amount(&from), amount(&to), amount(&rungs));
+    let prices = ladder_prices(from, to, count);
+    // The size each rung carries. A ladder is one order's worth spread over a
+    // range rather than one order repeated, so the whole size the ticket states
+    // is what leaves — split, not multiplied.
+    let per = if prices.is_empty() {
+        0.0
+    } else {
+        total / prices.len() as f64
+    };
+    let drafts: Vec<Draft> = prices
+        .iter()
+        .map(|price| {
+            // The same arithmetic the ticket's own readouts are priced by,
+            // asked once per rung. A second formula here — even the obvious
+            // one — would be a second opinion about what a rung is worth.
+            let rung = price_ticket(
+                *price,
+                per.to_string(),
+                quote.leverage.to_string(),
+                market.clone(),
+                buy,
+                held,
+                cross,
+                account.clone(),
+            );
+            Draft {
+                venue,
+                coin: coin.clone(),
+                market: market.clone(),
+                buy,
+                size: per,
+                price: *price,
+                // Every rung is a limit order at a price that was typed, so
+                // none of them is a walk of the book.
+                walked: false,
+                reduce_only,
+                cross,
+                tif,
+                leverage: rung.leverage,
+                notional: rung.notional,
+                margin: rung.margin,
+                liquidation: rung.liquidation,
+                // A ladder attaches neither, and `venue_attaches_levels` is
+                // false everywhere anyway. Stated rather than inherited: a rung
+                // is built here and not by `order_draft`.
+                tp: 0.0,
+                sl: 0.0,
+                // A ladder is limit orders, and a rung worked over a window
+                // would be a TWAP per rung rather than a ladder.
+                minutes: 0.0,
+                refusal: draft_refusal(
+                    venue,
+                    &coin,
+                    market.as_ref(),
+                    per,
+                    *price,
+                    0.0,
+                    0.0,
+                    0.0,
+                    [
+                        if reduce_only {
+                            reduce_refusal.clone()
+                        } else {
+                            String::new()
+                        },
+                        String::new(),
+                        String::new(),
+                    ],
+                ),
+            }
+        })
+        .collect();
+    let rows = drafts.iter().map(ladder_line).collect();
+    let side = if buy { "Buy" } else { "Sell" };
+    Sweep {
+        act: Act::Ladder,
+        heading: format!(
+            "{side} {} {coin} in {} orders",
+            fmt_size(total),
+            drafts.len()
+        ),
+        note: "Each rung below is its own limit order, signed and sent one after another. A \
+               rung the venue refuses is named on its own — the ones that went are already \
+               resting, and this panel does not take them back."
+            .to_owned(),
+        orders: Vec::new(),
+        figures: ladder_figures(&drafts, market.as_ref(), &quote),
+        refusal: ladder_refusal(&drafts, from, to, count),
+        rows,
+        drafts,
+    }
+}
+
+/// The prices a ladder rests at: evenly spaced, both ends included.
+///
+/// Both ends are rungs because both ends are numbers the reader typed. A grid
+/// that quietly dropped the far end would be a ladder that stops short of the
+/// price its own panel says it reaches.
+///
+/// Empty when the range is not describable yet, which is what leaves the
+/// preview blank rather than drawn around a guess.
+fn ladder_prices(from: f64, to: f64, count: f64) -> Vec<f64> {
+    if !(2.0..=MAX_RUNGS).contains(&count) || count.fract() != 0.0 {
+        return Vec::new();
+    }
+    if from <= 0.0 || to <= 0.0 || from == to {
+        return Vec::new();
+    }
+    let last = count - 1.0;
+    (0..count as usize)
+        .map(|step| from + (to - from) * (step as f64) / last)
+        .collect()
+}
+
+/// One line of a ladder's list, in the words the resting orders panel uses for
+/// an order that is already there.
+///
+/// The same wording on purpose: these rows are what those rows are about to
+/// become, and a reader comparing the panel behind the confirmation to the list
+/// on it should not have to translate between two spellings of one order.
+fn ladder_line(draft: &Draft) -> String {
+    order_label(Order {
+        oid: 0,
+        coin: draft.coin.clone(),
+        buy: draft.buy,
+        price: draft.price,
+        size: draft.size,
+        ts: 0,
+    })
+}
+
+/// What the ladder adds up to.
+///
+/// The shape of it is read off the rungs — how many there are, the prices the
+/// two ends actually landed on, what one of them carries — so a rung that
+/// missed the grid moves the summary rather than hiding behind it.
+///
+/// The two money figures are the ticket's own, not a sum over the rungs. They
+/// are the same numbers the panel behind the confirmation is printing, priced
+/// by `price_ticket` at the ladder's average for the whole size, and that is
+/// the one reading of them that is right: summing rung margins asks each rung
+/// on its own whether it opens anything, and an order that closes two coins and
+/// opens one is three rungs that each look like they close and a ladder that
+/// opens. One arithmetic, quoted once, restated here.
+fn ladder_figures(drafts: &[Draft], market: Option<&SymbolRow>, quote: &Ticket) -> Vec<Figure> {
+    let mut figures = ladder_shape_of(drafts);
+    if figures.is_empty() {
+        return figures;
+    }
+    // Both labels are the ticket's own, because both figures are: the panel is
+    // already printing them under those words and the confirmation restates
+    // what the reader read rather than renaming it on the way past.
+    figures.push(figure(
+        "ORDER VALUE",
+        fmt_margin(quote.notional, market.cloned()),
+    ));
+    figures.push(figure(
+        "MARGIN REQUIRED",
+        fmt_margin(quote.margin, market.cloned()),
+    ));
+    figures
+}
+
+/// What shape the ladder is, read off the rungs themselves — how many there
+/// are, the prices its two ends actually landed on, and what one rung carries.
+///
+/// Off the rungs rather than off the fields they were built from, so a rung
+/// that missed the grid moves the summary instead of hiding behind it.
+fn ladder_shape_of(drafts: &[Draft]) -> Vec<Figure> {
+    let (Some(first), Some(last)) = (drafts.first(), drafts.last()) else {
+        return Vec::new();
+    };
+    vec![
+        figure("ORDERS", drafts.len().to_string()),
+        figure(
+            "RANGE",
+            format!("{} — {}", fmt_px(first.price), fmt_px(last.price)),
+        ),
+        figure(
+            "PER ORDER",
+            format!("{} {}", fmt_size(first.size), first.coin),
+        ),
+    ]
+}
+
+/// The three the ticket's own preview draws, which are the three the ladder
+/// adds beyond what the panel under it already says.
+///
+/// The value and the requirement are not repeated here: they are the rows this
+/// preview sits directly above, and a figure printed twice on one panel is a
+/// figure a reader has to check against itself.
+pub fn ladder_shape(sweep: Sweep) -> Vec<Figure> {
+    ladder_shape_of(&sweep.drafts)
+}
+
+/// Why a ladder as typed cannot be sent, in the order a reader fixes them.
+///
+/// The ladder's own shape first, because a range that is not a range has no
+/// rungs to refuse for their own reasons; then whatever the first rung that is
+/// not sendable says, which is the ordinary per-order refusal — a market this
+/// app will not price, a size of nothing, a reduce-only promise it cannot keep.
+/// Sendability is one decision for a ladder exactly as it is for one order.
+fn ladder_refusal(drafts: &[Draft], from: f64, to: f64, count: f64) -> String {
+    if count.is_nan() || count.fract() != 0.0 {
+        return "A ladder is a whole number of orders.".to_owned();
+    }
+    if count < 2.0 {
+        return "A ladder is at least two orders. One order at one price is a limit order."
+            .to_owned();
+    }
+    if count > MAX_RUNGS {
+        return format!(
+            "A ladder is at most {} orders: each rung is its own signature and its own round \
+             trip.",
+            MAX_RUNGS as usize
+        );
+    }
+    if from <= 0.0 || to <= 0.0 {
+        return "This ladder has no price range yet.".to_owned();
+    }
+    if from == to {
+        return "Both ends of the range are the same price, so there is nothing to spread over."
+            .to_owned();
+    }
+    drafts
+        .iter()
+        .map(|rung| rung.refusal.clone())
+        .find(|said| !said.is_empty())
+        .unwrap_or_default()
+}
+
+/// Why this ladder cannot be sent, for the gate the send button reads.
+///
+/// An accessor rather than a field on the extern for the reason every other
+/// `Sweep` reading is one: the panel and the button ask it questions and never
+/// project it, so nothing on screen can be a part of the act the send does not
+/// carry.
+pub fn ladder_refused(sweep: Sweep) -> String {
+    sweep.refusal
+}
+
+/// What the press freezes, which is one of the two and never both.
+///
+/// A scale ticket is a list and every other kind is one order, and the two are
+/// frozen into different slots because they are restated by different panels.
+/// Answered here rather than branched in a handler — an Ice handler cannot
+/// branch — and answered as a *pair*, so the kind decides both and neither can
+/// be left standing from the last press.
+pub fn reviewed_draft(kind: OrderKind, draft: Draft) -> Option<Draft> {
+    (kind != OrderKind::Scale).then_some(draft)
+}
+
+pub fn reviewed_ladder(kind: OrderKind, ladder: Sweep) -> Option<Sweep> {
+    (kind == OrderKind::Scale).then_some(ladder)
 }
 
 /// One line of a flatten's list: the position being closed and the limit the
@@ -1402,11 +1914,14 @@ fn flatten_draft(venue: Venue, held: &Position, markets: &[SymbolRow]) -> Draft 
         liquidation: 0.0,
         tp: 0.0,
         sl: 0.0,
+        minutes: 0.0,
         refusal: draft_refusal(
+            venue,
             &held.coin,
             market.as_ref(),
             size,
             price,
+            0.0,
             0.0,
             0.0,
             [String::new(), String::new(), String::new()],
@@ -1464,7 +1979,7 @@ pub fn sweep_pending(sweep: Option<Sweep>) -> bool {
 /// projecting the option in the view. Nothing here computes; each is the string
 /// the press already built.
 pub fn sweep_heading(sweep: Option<Sweep>) -> String {
-    sweep.map(|act| act.act).unwrap_or_default()
+    sweep.map(|act| act.heading).unwrap_or_default()
 }
 
 pub fn sweep_note(sweep: Option<Sweep>) -> String {
@@ -1473,6 +1988,10 @@ pub fn sweep_note(sweep: Option<Sweep>) -> String {
 
 pub fn sweep_rows(sweep: Option<Sweep>) -> Vec<String> {
     sweep.map(|act| act.rows).unwrap_or_default()
+}
+
+pub fn sweep_figures(sweep: Option<Sweep>) -> Vec<Figure> {
+    sweep.map(|act| act.figures).unwrap_or_default()
 }
 /// How long until this market is funded again, as the positions panel
 /// prints it.
@@ -1645,7 +2164,7 @@ pub fn previous_close(price: f64, change_pct: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::hyperliquid::{
-        demo_fills, demo_orders, demo_positions, demo_symbols, hl_symbols, tape_new,
+        demo_fills, demo_orders, demo_positions, demo_symbols, hl_symbols, position_held, tape_new,
     };
     // The book is not on `Reads` — the app never asks a venue for one — so the
     // live seam test reaches the adapter's own read directly.
@@ -2124,6 +2643,7 @@ mod tests {
             String::new(),
             String::new(),
             String::new(),
+            String::new(),
         );
         assert_eq!(
             draft.size, 3.0,
@@ -2155,6 +2675,7 @@ mod tests {
             Tif::Ioc,
             quote,
             "70,000".to_owned(),
+            String::new(),
             String::new(),
             String::new(),
             String::new(),
@@ -2203,6 +2724,7 @@ mod tests {
                 String::new(),
                 String::new(),
                 String::new(),
+                String::new(),
             )
             .refusal
         };
@@ -2230,6 +2752,7 @@ mod tests {
                 false,
                 Tif::Gtc,
                 unpriced(),
+                String::new(),
                 String::new(),
                 String::new(),
                 "nothing to reduce".to_owned(),
@@ -2267,6 +2790,7 @@ mod tests {
                 String::new(),
                 String::new(),
                 String::new(),
+                String::new(),
             )
             .refusal
         };
@@ -2296,6 +2820,7 @@ mod tests {
             false,
             Tif::Gtc,
             unpriced(),
+            String::new(),
             String::new(),
             String::new(),
             String::new(),
@@ -2908,9 +3433,9 @@ mod tests {
     fn a_flatten_closes_each_position_with_its_own_order() {
         let markets = demo_symbols();
         let act = sweep_positions(Venue::Hyperliquid, demo_positions(), markets);
-        assert!(!act.cancel);
+        assert_eq!(act.act, Act::Flatten);
         assert!(act.orders.is_empty(), "a flatten pulls nothing");
-        assert_eq!(act.act, "Close 3 positions");
+        assert_eq!(act.heading, "Close 3 positions");
         assert_eq!(act.drafts.len(), 3, "one order per position, and no more");
         assert_eq!(act.rows.len(), 3);
 
@@ -2941,6 +3466,279 @@ mod tests {
         assert!(act.drafts.iter().all(|draft| draft.liquidation == 0.0));
     }
 
+    /// One ladder of the fixture's own market, for the tests below.
+    ///
+    /// Every argument is what the ticket would hand over: the size and the
+    /// leverage already normalised, the two ends and the count as they were
+    /// typed. Nothing here is a shortcut around the projection.
+    ///
+    /// A sell, because the fixture account is short thirty bitcoin: a buy
+    /// ladder into that position opens nothing and asks for no margin, which is
+    /// right and says nothing about the arithmetic these tests are here for.
+    fn ladder(from: &str, to: &str, rungs: &str, size: &str, reduce_only: bool) -> Sweep {
+        let market = demo_symbols().into_iter().find(|row| row.name == "BTC");
+        let held = position_held(demo_positions(), "BTC".to_owned());
+        let quote = price_ticket(
+            (amount(from) + amount(to)) / 2.0,
+            size.to_owned(),
+            "5".to_owned(),
+            market.clone(),
+            false,
+            held,
+            false,
+            None,
+        );
+        order_ladder(
+            Venue::Hyperliquid,
+            "BTC".to_owned(),
+            market,
+            false,
+            size.to_owned(),
+            from.to_owned(),
+            to.to_owned(),
+            rungs.to_owned(),
+            reduce_only,
+            false,
+            Tif::Gtc,
+            quote,
+            String::new(),
+            None,
+            held,
+        )
+    }
+
+    /// A worked order carries the only resting rule its venue takes.
+    ///
+    /// The row that offers one was on screen a moment ago, on the kind before
+    /// this, and `ticket_tif` keeps what was pressed there. Left alone, an
+    /// order switched from an `Ioc` limit to a TWAP carries `Ioc` to a signer
+    /// whose venue takes good-till-time and nothing else — so the reader would
+    /// be refused over a control the ticket is no longer showing them, and the
+    /// refusal would be this app's own rather than anything they did.
+    ///
+    /// Asserted on the draft rather than on the panel because the panel cannot
+    /// see it: the confirmation prints `WORKED` in place of `RESTS` for any
+    /// order carrying a window, so a wrong resting rule is invisible there and
+    /// reaches the wire in silence.
+    #[test]
+    fn a_worked_order_carries_the_only_resting_rule_its_venue_takes() {
+        let draft = |minutes: &str, tif: Tif| {
+            order_draft(
+                Venue::LighterTestnet,
+                "BTC".to_owned(),
+                Some(market("BTC")),
+                true,
+                "3".to_owned(),
+                64_000.0,
+                false,
+                false,
+                false,
+                tif,
+                unpriced(),
+                String::new(),
+                String::new(),
+                minutes.to_owned(),
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+        };
+        let worked = draft("30", Tif::Ioc);
+        assert_eq!(worked.minutes, 30.0);
+        assert_eq!(
+            worked.tif,
+            Tif::Gtc,
+            "a worked order took the resting rule the kind before it was on",
+        );
+        // And it is the window that decides, not the kind alone: the same
+        // press on an order with no window is the reader's own choice and is
+        // carried untouched.
+        assert_eq!(draft("", Tif::Ioc).tif, Tif::Ioc);
+        assert_eq!(draft("", Tif::Alo).tif, Tif::Alo);
+    }
+
+    /// **A ladder's rungs sit on an even grid with both ends on it.**
+    ///
+    /// The claim the whole feature stands on, and the one an eyeball on a
+    /// screenshot cannot check: five rows of plausible prices look identical
+    /// whether the step is right or a rounding of it, and a ladder whose
+    /// middle rungs have crept is a reader buying at prices they did not
+    /// choose. So the expectation is computed from the two ends and the count
+    /// rather than typed out — a test carrying the answers would agree with any
+    /// grid that produced them once.
+    #[test]
+    fn a_ladder_rests_on_an_even_grid_between_the_two_ends() {
+        let act = ladder("63,600.00", "64,400.00", "5", "3", false);
+        assert_eq!(act.act, Act::Ladder);
+        assert!(act.orders.is_empty(), "a ladder pulls nothing");
+        assert_eq!(act.drafts.len(), 5, "one rung per order asked for");
+        assert!(act.refusal.is_empty(), "got {}", act.refusal);
+
+        let (from, to, count) = (63_600.0_f64, 64_400.0_f64, 5_usize);
+        for (step, rung) in act.drafts.iter().enumerate() {
+            let want = from + (to - from) * (step as f64) / (count - 1) as f64;
+            assert!(
+                (rung.price - want).abs() < 1e-9,
+                "rung {step} rests at {} and the grid puts it at {want}",
+                rung.price
+            );
+            // Every rung is an ordinary limit order at a price somebody typed,
+            // so none of them is a walk of the book.
+            assert!(!rung.walked);
+            assert_eq!(rung.tif, Tif::Gtc);
+            assert!(rung.refusal.is_empty(), "got {}", rung.refusal);
+        }
+        // Both ends are rungs. A grid that stopped short of the far end would
+        // be a ladder that does not reach the price its own panel says it does.
+        assert_eq!(act.drafts[0].price, from);
+        assert_eq!(act.drafts[4].price, to);
+
+        // One order's worth spread over the range rather than one order
+        // repeated: what leaves is the size the ticket states, split.
+        let placed: f64 = act.drafts.iter().map(|rung| rung.size).sum();
+        assert!((placed - 3.0).abs() < 1e-9, "the ladder places {placed}");
+        assert!(
+            act.drafts
+                .iter()
+                .all(|rung| rung.size == act.drafts[0].size),
+            "the rungs are equal parts of one size",
+        );
+    }
+
+    /// The ladder says what it actually built, not what it was asked for.
+    ///
+    /// The summary is read off the rungs, so it cannot agree with a grid the
+    /// rungs are not on — which is exactly the failure the test above catches
+    /// in the prices and this one catches on the screen.
+    #[test]
+    fn a_ladder_states_the_shape_it_built() {
+        let act = ladder("63,600.00", "64,400.00", "5", "3", false);
+        let said: Vec<(String, String)> = act
+            .figures
+            .iter()
+            .map(|figure| (figure.label.clone(), figure.value.clone()))
+            .collect();
+        assert_eq!(said[0], ("ORDERS".to_owned(), "5".to_owned()));
+        assert_eq!(
+            said[1],
+            ("RANGE".to_owned(), "63,600.00 — 64,400.00".to_owned())
+        );
+        assert_eq!(said[2], ("PER ORDER".to_owned(), "0.6 BTC".to_owned()));
+        // The two money figures are the ticket's own, under the ticket's own
+        // labels: the whole ladder at its average, which is 64,000 for this
+        // range, times three bitcoin, at the fixture's five times leverage.
+        assert_eq!(
+            said[3],
+            ("ORDER VALUE".to_owned(), "$192,000.00".to_owned())
+        );
+        assert_eq!(
+            said[4],
+            ("MARGIN REQUIRED".to_owned(), "$38,400.00".to_owned())
+        );
+        // And the shape the preview draws is the first three of exactly those,
+        // rather than a second reading of the same rungs.
+        assert_eq!(ladder_shape(act.clone()), act.figures[..3].to_vec());
+
+        // One line per rung, in the words the resting orders panel already
+        // uses for an order that is there.
+        assert_eq!(
+            act.rows,
+            vec![
+                "BTC sell 0.6 at 63,600.00".to_owned(),
+                "BTC sell 0.6 at 63,800.00".to_owned(),
+                "BTC sell 0.6 at 64,000.00".to_owned(),
+                "BTC sell 0.6 at 64,200.00".to_owned(),
+                "BTC sell 0.6 at 64,400.00".to_owned(),
+            ]
+        );
+        assert_eq!(act.heading, "Sell 3 BTC in 5 orders");
+    }
+
+    /// Every way a ladder is not one yet, each said in the words that are true
+    /// of it — and each said *instead of* a preview drawn around a guess.
+    #[test]
+    fn a_ladder_that_is_not_a_ladder_says_which() {
+        let cases = [
+            ("1", "a ladder needs a second order", "at least two orders"),
+            ("21", "a ladder is bounded", "at most 20 orders"),
+            ("2.5", "a ladder is whole orders", "whole number of orders"),
+        ];
+        for (rungs, why, said) in cases {
+            let act = ladder("63,600.00", "64,400.00", rungs, "3", false);
+            assert!(act.refusal.contains(said), "{why}: {}", act.refusal);
+            assert!(act.drafts.is_empty(), "{why}: it built rungs anyway");
+            assert!(act.figures.is_empty(), "{why}: it quoted a shape anyway");
+        }
+        let flat = ladder("64,000.00", "64,000.00", "5", "3", false);
+        assert!(
+            flat.refusal.contains("nothing to spread over"),
+            "got {}",
+            flat.refusal
+        );
+        let unpriced = ladder("", "", "5", "3", false);
+        assert!(
+            unpriced.refusal.contains("no price range yet"),
+            "got {}",
+            unpriced.refusal
+        );
+    }
+
+    /// A rung's own refusal is the ladder's, because sendability is one
+    /// decision for a list exactly as it is for one order.
+    ///
+    /// The market is the case that matters: a builder dex is margined against a
+    /// clearinghouse this app cannot read, and a ladder there would be five
+    /// orders into an account nothing on screen describes.
+    #[test]
+    fn a_ladder_inherits_the_refusal_of_the_rung_it_is_made_of() {
+        let sizeless = ladder("63,600.00", "64,400.00", "5", "", false);
+        assert!(
+            sizeless.refusal.contains("no size yet"),
+            "got {}",
+            sizeless.refusal
+        );
+
+        let quote = price_ticket(
+            64_000.0,
+            "3".to_owned(),
+            "5".to_owned(),
+            None,
+            true,
+            0.0,
+            false,
+            None,
+        );
+        let builder = order_ladder(
+            Venue::Hyperliquid,
+            "xyz:NVDA".to_owned(),
+            None,
+            true,
+            "3".to_owned(),
+            "63,600.00".to_owned(),
+            "64,400.00".to_owned(),
+            "5".to_owned(),
+            false,
+            false,
+            Tif::Gtc,
+            quote,
+            String::new(),
+            None,
+            0.0,
+        );
+        assert_eq!(
+            builder.drafts.len(),
+            5,
+            "the grid is describable either way"
+        );
+        assert!(
+            builder
+                .refusal
+                .contains("clearinghouse this app cannot read"),
+            "got {}",
+            builder.refusal
+        );
+    }
+
     /// A market this app cannot price is refused in the list rather than at the
     /// exchange, by the same rule a typed order is refused by.
     #[test]
@@ -2964,9 +3762,9 @@ mod tests {
     #[test]
     fn a_cancel_all_names_every_resting_order() {
         let act = sweep_orders(demo_orders());
-        assert!(act.cancel);
+        assert_eq!(act.act, Act::Cancel);
         assert!(act.drafts.is_empty(), "a cancel places nothing");
-        assert_eq!(act.act, "Cancel 2 resting orders");
+        assert_eq!(act.heading, "Cancel 2 resting orders");
         assert_eq!(
             act.rows,
             vec![
@@ -2974,7 +3772,7 @@ mod tests {
                 "BTC sell 0.8 at 64,440.00".to_owned(),
             ]
         );
-        assert_eq!(sweep_orders(Vec::new()).act, "Cancel 0 resting orders");
+        assert_eq!(sweep_orders(Vec::new()).heading, "Cancel 0 resting orders");
     }
 
     /// Why a panel-wide control is dead, and in which order the two reasons are

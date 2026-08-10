@@ -70,6 +70,18 @@ on seed_ticket(price, buy)
 on ticket_priced(typed)
   ticket_price = typed
 
+on ticket_from_typed(typed)
+  ticket_from = typed
+
+on ticket_to_typed(typed)
+  ticket_to = typed
+
+on ticket_runged(typed)
+  ticket_rungs = typed
+
+on ticket_worked(typed)
+  ticket_minutes = typed
+
 on ticket_sized(typed)
   ticket_size = typed
 
@@ -640,9 +652,16 @@ on lower_resized(_dx, dy)
 // It freezes the draft rather than setting a flag: what the confirmation
 // restates and what the send spends are then the same value, and no keystroke
 // or book beat between the two can move one without the other.
+// A scale ticket freezes into the list panel and every other kind into the
+// order panel, because the two are restated by different confirmations: one
+// order has figures and a ladder has figures and rungs. Both are assigned from
+// one pair of projections rather than guarded apart — a handler cannot branch,
+// and a kind that decided only one of them would leave the other standing from
+// the press before it.
 on ticket_review
   return if !empty(send_refusal)
-  confirm = some(ticket_draft)
+  confirm = reviewed_draft(ticket_kind, ticket_draft)
+  sweep = reviewed_ladder(ticket_kind, ticket_ladder)
 
 // Backing out. The order is dropped rather than remembered, because a
 // confirmation the reader declined is not a draft to offer again — the ticket

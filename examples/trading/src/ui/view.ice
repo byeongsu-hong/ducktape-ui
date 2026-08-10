@@ -1209,7 +1209,7 @@ view
                                 // type, so the field below goes and the whole
                                 // panel is quoted at what walking the book would
                                 // pay instead of at a number left in a field.
-                                row #ticket-kind gap=8.0 w=fill
+                                row #ticket-kind gap=6.0 w=fill
                                   Choice #kind-market
                                     with
                                       name="MARKET"
@@ -1221,9 +1221,29 @@ view
                                     with
                                       name="LIMIT"
                                       act="Rest at a price you choose"
-                                      on=!ticket_market
+                                      on=(ticket_kind == OrderKind.limit)
                                     events
                                       pick -> ticket_kinded(OrderKind.limit)
+                                  Choice #kind-scale
+                                    with
+                                      name="SCALE"
+                                      act="Spread the size over a range of prices"
+                                      on=ticket_scale
+                                    events
+                                      pick -> ticket_kinded(OrderKind.scale)
+                                  // Offered only where this app can sign one.
+                                  // A fourth button that could only ever refuse
+                                  // is worse than three and a sentence: the
+                                  // sentence says which network takes a TWAP
+                                  // and which part of sending one is missing.
+                                  if venue_places_twap(venue)
+                                    Choice #kind-twap
+                                      with
+                                        name="TWAP"
+                                        act="Let the venue work the size over a window"
+                                        on=ticket_twap
+                                      events
+                                        pick -> ticket_kinded(OrderKind.twap)
                                 if position_held(positions, coin) != 0.0
                                   button #close-held -> close_held
                                     with
@@ -1241,84 +1261,157 @@ view
                                         @text-muted
                                 if !ticket_market
                                   col #limit-group gap=6.0 w=fill
-                                    Label value="LIMIT PRICE"
-                                    // Enter reviews. It is the field's own
-                                    // submit rather than a key the app listens
-                                    // for, which is the strongest form of the
-                                    // rule the whole scheme follows: a widget's
-                                    // Enter cannot fire from a widget the reader
-                                    // is not in, so this can never open a
-                                    // confirmation out of the search box. It
-                                    // opens one and stops there; nothing typed
-                                    // sends.
-                                    input "" #ticket-price <-> ticket_price
-                                      with
-                                        label="Limit price"
-                                        hint="0.00"
-                                        change=ticket_priced
-                                        submit=ticket_review
-                                        text-size=12.0
-                                        font=digits
-                                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                                    // How long the order lives, which is one fact
-                                    // about it rather than three. Post-only and
-                                    // immediate-or-cancel are two answers to the
-                                    // same question, and an order carrying both
-                                    // would have to rest and fill at once.
-                                    row #ticket-tif gap=4.0 w=fill
-                                      Choice #tif-gtc
+                                    if !ticket_scale
+                                      Label value="LIMIT PRICE"
+                                      // Enter reviews. It is the field's own
+                                      // submit rather than a key the app listens
+                                      // for, which is the strongest form of the
+                                      // rule the whole scheme follows: a widget's
+                                      // Enter cannot fire from a widget the reader
+                                      // is not in, so this can never open a
+                                      // confirmation out of the search box. It
+                                      // opens one and stops there; nothing typed
+                                      // sends.
+                                      input "" #ticket-price <-> ticket_price
                                         with
-                                          name=tif_name(venue, Tif.gtc)
-                                          act=tif_act(venue, Tif.gtc)
-                                          on=(ticket_tif == Tif.gtc)
-                                        events
-                                          pick -> ticket_timed(Tif.gtc)
-                                      Choice #tif-ioc
+                                          label="Limit price"
+                                          hint="0.00"
+                                          change=ticket_priced
+                                          submit=ticket_review
+                                          text-size=12.0
+                                          font=digits
+                                        focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                    // The ladder's shape, which is a range and a
+                                    // count rather than a price. Three fields on
+                                    // one row because they are one decision and
+                                    // the column is 252 pixels wide, and here
+                                    // rather than in a panel of their own because
+                                    // they stand exactly where the price they
+                                    // replace stood.
+                                    if ticket_scale
+                                      col #scale-group gap=6.0 w=fill
+                                        row gap=6.0 w=fill
+                                          col w=fill gap=6.0
+                                            Label value="FROM"
+                                            input "" #ticket-from <-> ticket_from
+                                              with
+                                                label="Ladder from this price"
+                                                hint="0.00"
+                                                change=ticket_from_typed
+                                                submit=ticket_review
+                                                text-size=12.0
+                                                font=digits
+                                              focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                          col w=fill gap=6.0
+                                            Label value="TO"
+                                            input "" #ticket-to <-> ticket_to
+                                              with
+                                                label="Ladder to this price"
+                                                hint="0.00"
+                                                change=ticket_to_typed
+                                                submit=ticket_review
+                                                text-size=12.0
+                                                font=digits
+                                              focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                          col w=54.0 gap=6.0
+                                            Label value="ORDERS"
+                                            input "" #ticket-rungs <-> ticket_rungs
+                                              with
+                                                label="How many orders the ladder is"
+                                                hint="5"
+                                                change=ticket_runged
+                                                submit=ticket_review
+                                                text-size=12.0
+                                                font=digits
+                                              focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                    // How long the venue works it over, which is
+                                    // the whole of what makes a worked order one.
+                                    // It stands where the resting rule stands
+                                    // because it answers the same question — how
+                                    // long is this order alive — and it replaces
+                                    // it because the venue fixes the other: a
+                                    // TWAP rests until its window closes, and
+                                    // nothing else is a choice the reader has.
+                                    if ticket_twap
+                                      col #twap-group gap=6.0 w=fill
+                                        row w=fill align=center
+                                          Label value="OVER"
+                                          space w=fill
+                                          text order_worked(ticket_minutes)
+                                            with
+                                              size=11.0
+                                              font=digits
+                                              @text-muted
+                                        input "" #ticket-minutes <-> ticket_minutes
+                                          with
+                                            label="Minutes to work this order over"
+                                            hint="30"
+                                            change=ticket_worked
+                                            submit=ticket_review
+                                            text-size=12.0
+                                            font=digits
+                                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                    if !ticket_twap
+                                      row #ticket-tif gap=4.0 w=fill
+                                        Choice #tif-gtc
+                                          with
+                                            name=tif_name(venue, Tif.gtc)
+                                            act=tif_act(venue, Tif.gtc)
+                                            on=(ticket_tif == Tif.gtc)
+                                          events
+                                            pick -> ticket_timed(Tif.gtc)
+                                        Choice #tif-ioc
+                                          with
+                                            name=tif_name(venue, Tif.ioc)
+                                            act=tif_act(venue, Tif.ioc)
+                                            on=(ticket_tif == Tif.ioc)
+                                          events
+                                            pick -> ticket_timed(Tif.ioc)
+                                        Choice #tif-alo
+                                          with
+                                            name=tif_name(venue, Tif.alo)
+                                            act=tif_act(venue, Tif.alo)
+                                            on=(ticket_tif == Tif.alo)
+                                          events
+                                            pick -> ticket_timed(Tif.alo)
+                                      // Where the two venues mean different
+                                      // things by the same button. Four letters
+                                      // cannot carry a deadline the reader is
+                                      // about to sign, so the sentence does.
+                                      if !empty(venue_tif_note(venue, ticket_tif))
+                                        text venue_tif_note(venue, ticket_tif)
+                                          with
+                                            size=10.0
+                                            w=fill
+                                            wrap=word
+                                            @text-faint
+                                    // The alert takes the price in the field, and
+                                    // a scale ticket has no such field: two ends
+                                    // of a range are not a level to watch. So it
+                                    // goes with the field it reads rather than
+                                    // standing there refusing every press.
+                                    if !ticket_scale
+                                      button #alert-here -> add_alert_here
                                         with
-                                          name=tif_name(venue, Tif.ioc)
-                                          act=tif_act(venue, Tif.ioc)
-                                          on=(ticket_tif == Tif.ioc)
-                                        events
-                                          pick -> ticket_timed(Tif.ioc)
-                                      Choice #tif-alo
-                                        with
-                                          name=tif_name(venue, Tif.alo)
-                                          act=tif_act(venue, Tif.alo)
-                                          on=(ticket_tif == Tif.alo)
-                                        events
-                                          pick -> ticket_timed(Tif.alo)
-                                    // Where the two venues mean different things
-                                    // by the same button. Four letters cannot
-                                    // carry a deadline the reader is about to
-                                    // sign, so the sentence does.
-                                    if !empty(venue_tif_note(venue, ticket_tif))
-                                      text venue_tif_note(venue, ticket_tif)
-                                        with
-                                          size=10.0
+                                          label="Watch this level"
                                           w=fill
-                                          wrap=word
-                                          @text-faint
-                                    button #alert-here -> add_alert_here
-                                      with
-                                        label="Watch this level"
-                                        w=fill
-                                        p=5.0
-                                        disabled=!empty(watch_refusal)
-                                      active bg=raised text=muted r=3.0
-                                      hovered bg=edge text=fg r=3.0
-                                      disabled bg=raised text=faint r=3.0
-                                      text "WATCH THIS LEVEL"
-                                        with
-                                          size=9.0
-                                          w=fill
-                                          align-x=center
-                                          tracking=1.1
+                                          p=5.0
+                                          disabled=!empty(watch_refusal)
+                                        active bg=raised text=muted r=3.0
+                                        hovered bg=edge text=fg r=3.0
+                                        disabled bg=raised text=faint r=3.0
+                                        text "WATCH THIS LEVEL"
+                                          with
+                                            size=9.0
+                                            w=fill
+                                            align-x=center
+                                            tracking=1.1
                                     // A press the list refuses reads as a press
                                     // that worked: the level is simply not there.
                                     // The button goes dead and says which refusal
                                     // it is, in the same shape the gate refuses an
                                     // address.
-                                    if !empty(watch_refusal)
+                                    if !ticket_scale && !empty(watch_refusal)
                                       text watch_refusal
                                         with
                                           size=10.0
@@ -1573,6 +1666,22 @@ view
                                               w=fill
                                               wrap=word
                                               @text-down
+                                // Where the fourth kind is not. A row three wide
+                                // on one network and four on another is a
+                                // difference a reader has to be able to account
+                                // for, and the account is not "this exchange has
+                                // no TWAP" — it has one. Beside the other gap
+                                // rather than under the row it is missing from,
+                                // because the two are the same kind of sentence
+                                // and the top of a 252-pixel column is not where
+                                // three lines of small print belong.
+                                if !venue_places_twap(venue)
+                                  text venue_twap_note(venue) #twap-gap
+                                    with
+                                      size=10.0
+                                      w=fill
+                                      wrap=word
+                                      @text-faint
                                 if !venue_attaches_levels(venue)
                                   text venue_levels_note(venue)
                                     with
@@ -1582,6 +1691,24 @@ view
                                       @text-faint
                             rule horizontal thickness=1.0 color=edge
                             col gap=10.0 w=fill
+                              // What the ladder actually is, above the figures
+                              // it is worth. Drawn from the same projection the
+                              // confirmation lists and the wire spends, so the
+                              // count and the range a reader agrees to are the
+                              // count and the range that go — and empty until
+                              // the range describes something, rather than
+                              // drawn around a guess.
+                              if ticket_scale && len(ladder_shape(ticket_ladder)) > 0
+                                col #ladder-preview gap=10.0 w=fill
+                                  for figure in ladder_shape(ticket_ladder)
+                                    row w=fill align=center
+                                      Label value=figure.label
+                                      space w=fill
+                                      text figure.value
+                                        with
+                                          size=12.0
+                                          font=digits
+                                          @text-muted
                               row w=fill align=center
                                 Label value="ORDER VALUE"
                                 space w=fill
@@ -3043,10 +3170,20 @@ view
                             size=13.0
                             font=digits
                             @text-muted
-                      row w=fill align=center
-                        Label value="RESTS"
-                        space w=fill
-                        text tif_act(venue, ticket_tif) size=13.0 @text-muted
+                      // How long it is alive, in whichever of the two ways
+                      // this order is: a resting rule, or a window the venue
+                      // works it over. Never both — a worked order's resting
+                      // rule is the venue's and not a choice the ticket made.
+                      if draft.minutes > 0.0
+                        row w=fill align=center
+                          Label value="WORKED"
+                          space w=fill
+                          text order_worked(fmt_size(draft.minutes)) size=13.0 @text-muted
+                      if draft.minutes <= 0.0
+                        row w=fill align=center
+                          Label value="RESTS"
+                          space w=fill
+                          text tif_act(venue, ticket_tif) size=13.0 @text-muted
                       // The three promises an order can carry beyond its price
                       // and its size, drawn only when they are made: a row
                       // reading "none" three times is three rows a reader has
@@ -3168,6 +3305,22 @@ view
                       w=fill
                       wrap=word
                       @text-muted
+                // What the list adds up to, when the act has an arithmetic at
+                // all. Every one of these was already on the ticket under the
+                // same label, formatted by the same helper — the panel restates
+                // and computes nothing, which is why a ladder cannot be
+                // confirmed at figures the wire never saw.
+                if len(sweep_figures(sweep)) > 0
+                  col #sweep-figures gap=9.0 w=fill
+                    for figure in sweep_figures(sweep)
+                      row w=fill align=center
+                        Label value=figure.label
+                        space w=fill
+                        text figure.value
+                          with
+                            size=13.0
+                            font=digits
+                            @text-fg
                 col #sweep-rows gap=4.0 w=fill
                   for row in sweep_rows(sweep)
                     text row
