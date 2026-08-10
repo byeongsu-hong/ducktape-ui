@@ -67,6 +67,7 @@ use "tests/submit.ice"
 use "tests/tray.ice"
 use "tests/render.ice"
 use "tests/export.ice"
+use "tests/scrolling.ice"
 
 font plex family="IBM Plex Sans KR" default=true
 font digits family="Monoplex KR"
