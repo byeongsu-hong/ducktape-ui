@@ -199,6 +199,27 @@ The release packages job independently regenerates the artifact and requires
 byte equality plus a zero JSON diff before a tag can publish. This is tooling
 evidence over the existing Core contract, not a new syntax or LSP capability.
 
+`cargo ice bundle` turns a checked app into an installable macOS artifact. The
+app declaration supplies the identity, so nothing is restated to get one: the
+`app` name becomes the bundle name and `CFBundleName`, its `id` becomes
+`CFBundleIdentifier`, and the package version becomes both version strings.
+Only icon, category, copyright, and minimum system version are declared in
+`[package.metadata.ice.bundle]`, where an unknown key fails instead of doing
+nothing. The icon is one SVG rendered into every `.icns` entry macOS asks for;
+because the renderer carries no fonts, an icon still holding a `<text>` element
+is refused rather than drawn with a hole in it. Host-independent contracts
+cover the `Info.plist` keys Gatekeeper reads, the `.icns` entry table and its
+PNG payloads, the layout a rebuild leaves behind, request parsing, per-target
+binary paths, and the refusal to notarize an ad-hoc signature before the upload
+rather than after it. One contract resolves the real showcase manifest and Ice
+root into a complete bundle identity, so a renamed icon or a dropped `id` fails
+in ordinary CI rather than on a release tag. macOS CI additionally drives the
+real `codesign`, `ditto`, and `hdiutil` sequence and verifies both the
+signature and the disk image. A tag builds both Apple architectures, joins them
+with `lipo`, and publishes an attested, checksummed disk image, notarized and
+stapled once the signing secrets exist. This is distribution evidence over the
+existing Core contract, not a new syntax or LSP capability.
+
 `cargo ice dev` exercises that same ahead-of-time path. `-p PACKAGE` discovers
 the package's unique Ice app or daemon root. Content stamps cover the selected
 Ice import graph, embedded fonts, icons, and media files,
