@@ -1,16 +1,21 @@
-//! macOS application bundling.
+//! Application bundling for the three desktop platforms.
 //!
-//! `cargo ice bundle -p <package>` builds the package in release, lays a `.app`
-//! out around the binary, renders the declared SVG icon into the `.icns` sizes
-//! macOS asks for, code signs the bundle, and writes a `.dmg`. Notarization
-//! runs when App Store Connect API credentials are present in the environment.
+//! `cargo ice bundle -p <package>` builds the package in release and hands the
+//! binary to the packager the host knows how to run: a signed, notarized
+//! `.dmg` on macOS, a `.deb` on Linux, a per-user `.msi` on Windows.
 //!
-//! The bundle identifier and display name come from the package's Ice `app`
-//! declaration, which already names both; only the icon and the store metadata
-//! macOS has no other source for live in `[package.metadata.ice.bundle]`.
+//! Identity comes from what the project already declares. The Ice `app`
+//! declaration names the application and its `id`; the Cargo manifest carries
+//! the version, description, authors, and homepage. Only what none of those
+//! can express — the icon and the per-platform store fields — lives in
+//! `[package.metadata.ice.bundle]`.
+
+mod icon;
+mod linux;
+mod macos;
+mod windows;
 
 use serde_json::Value;
-use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,60 +23,63 @@ use std::process::Command;
 
 const USAGE: &str = "cargo ice bundle -p <package> [--target <triple>]...";
 const DEFAULT_MINIMUM_SYSTEM_VERSION: &str = "11.0";
-const AD_HOC_IDENTITY: &str = "-";
-
-/// `.icns` entry types paired with the pixel size each carries. macOS chooses
-/// between the 1x and 2x members of a pair by display scale, so 256 and 512 are
-/// rendered once and stored under both of their type codes.
-const ICNS_ENTRIES: &[(&str, u32)] = &[
-    ("ic11", 32),
-    ("ic12", 64),
-    ("ic07", 128),
-    ("ic08", 256),
-    ("ic13", 256),
-    ("ic09", 512),
-    ("ic14", 512),
-    ("ic10", 1024),
-];
 
 pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     let request = Request::parse(args)?;
-    if !cfg!(target_os = "macos") {
-        return Err("cargo ice bundle writes macOS bundles and must run on macOS".into());
+    let platform = Platform::host()?;
+    if platform != Platform::MacOs && request.targets.len() > 1 {
+        return Err(
+            "only macOS joins several --target builds into one artifact; name at most one".into(),
+        );
     }
-    let package = Package::resolve(&crate::dev::metadata(root)?, &request.package)?;
-    let meta = BundleMeta::resolve(&package)?;
-    let identity = signing_identity();
-    let notary = Notary::from_env();
-    check_signing_plan(&identity, notary.is_some())?;
+    let package = Package::resolve(&crate::dev::metadata(root)?, &request.package, platform)?;
+    let meta = BundleMeta::resolve(&package, platform)?;
 
     let build = build_arguments(&request);
     crate::cargo(&build.iter().map(String::as_str).collect::<Vec<_>>())?;
 
     let output = package.target_directory.join("ice-bundle");
+    create_dir(&output)?;
     let executable = link_executable(&package, &request, &output)?;
-    let app = output.join(format!("{}.app", meta.name));
-    write_app(&app, &meta, &executable, package.icon.as_deref())?;
-    sign(&app, &identity)?;
+    let arch = request.arch_label();
+    let source = package.icon.as_deref();
+    let built = match platform {
+        Platform::MacOs => macos::bundle(&output, &meta, &executable, source, &arch)?,
+        Platform::Linux => linux::bundle(&output, &meta, &executable, source, &arch)?,
+        Platform::Windows => windows::bundle(&output, &meta, &executable, source, &arch)?,
+    };
+    for artifact in &built {
+        println!("{}", artifact.display());
+    }
+    Ok(())
+}
 
-    let dmg = output.join(format!(
-        "{}-{}-{}.dmg",
-        meta.name,
-        meta.version,
-        request.arch_label()
-    ));
-    write_dmg(&app, &meta, &dmg)?;
-    sign(&dmg, &identity)?;
-    match notary {
-        Some(notary) => notary.submit(&dmg)?,
-        None => println!(
-            "signed with `{identity}`; set ICE_NOTARY_KEY, ICE_NOTARY_KEY_ID, and ICE_NOTARY_ISSUER to notarize"
-        ),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Platform {
+    MacOs,
+    Linux,
+    Windows,
+}
+
+impl Platform {
+    fn host() -> Result<Self, String> {
+        match env::consts::OS {
+            "macos" => Ok(Self::MacOs),
+            "linux" => Ok(Self::Linux),
+            "windows" => Ok(Self::Windows),
+            other => Err(format!(
+                "cargo ice bundle packages for macOS, Linux, and Windows; this is `{other}`"
+            )),
+        }
     }
 
-    println!("{}", app.display());
-    println!("{}", dmg.display());
-    Ok(())
+    fn executable_suffix(self) -> &'static str {
+        if matches!(self, Self::Windows) {
+            ".exe"
+        } else {
+            ""
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -110,7 +118,7 @@ impl Request {
         Ok(Self { package, targets })
     }
 
-    /// Names the slice of hardware the `.dmg` runs on, so two architectures
+    /// Names the slice of hardware the artifact runs on, so two architectures
     /// published from one release do not collide on one file name.
     fn arch_label(&self) -> String {
         match self.targets.as_slice() {
@@ -143,15 +151,20 @@ fn build_arguments(request: &Request) -> Vec<String> {
 #[derive(Debug)]
 struct Package {
     root: PathBuf,
+    name: String,
     version: String,
+    description: Option<String>,
+    authors: Vec<String>,
+    homepage: Option<String>,
     executable: String,
+    source: PathBuf,
     target_directory: PathBuf,
     icon: Option<PathBuf>,
     options: BundleOptions,
 }
 
 impl Package {
-    fn resolve(metadata: &Value, name: &str) -> Result<Self, String> {
+    fn resolve(metadata: &Value, name: &str, platform: Platform) -> Result<Self, String> {
         let packages = metadata["packages"]
             .as_array()
             .ok_or_else(|| "cargo metadata output has no package list".to_owned())?;
@@ -171,19 +184,8 @@ impl Package {
             .parent()
             .ok_or_else(|| format!("ice bundle: package `{name}` has no package directory"))?
             .to_path_buf();
-        let version = package["version"]
-            .as_str()
-            .ok_or_else(|| format!("ice bundle: package `{name}` has no version"))?
-            .to_owned();
         let options = BundleOptions::read(&package["metadata"]["ice"]["bundle"])?;
-        let executable = options
-            .executable
-            .clone()
-            .map_or_else(|| single_binary(package, name), Ok)?;
-        let target_directory = metadata["target_directory"]
-            .as_str()
-            .ok_or_else(|| "cargo metadata output has no target directory".to_owned())?
-            .into();
+        let (binary, source) = binary_target(package, name, options.executable.as_deref())?;
         let icon = options
             .icon
             .as_ref()
@@ -191,16 +193,47 @@ impl Package {
             .transpose()?;
         Ok(Self {
             root,
-            version,
-            executable,
-            target_directory,
+            name: name.to_owned(),
+            version: package["version"]
+                .as_str()
+                .ok_or_else(|| format!("ice bundle: package `{name}` has no version"))?
+                .to_owned(),
+            description: text(&package["description"]),
+            authors: package["authors"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|author| author.as_str().map(str::to_owned))
+                .collect(),
+            homepage: text(&package["homepage"]),
+            executable: format!("{binary}{}", platform.executable_suffix()),
+            source,
+            target_directory: metadata["target_directory"]
+                .as_str()
+                .ok_or_else(|| "cargo metadata output has no target directory".to_owned())?
+                .into(),
             icon,
             options,
         })
     }
 }
 
-fn single_binary(package: &Value, name: &str) -> Result<String, String> {
+fn text(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+/// Finds the binary a bundle wraps, along with the crate root it is built
+/// from, which is where a Windows subsystem attribute would have to live.
+fn binary_target(
+    package: &Value,
+    name: &str,
+    requested: Option<&str>,
+) -> Result<(String, PathBuf), String> {
     let binaries = package["targets"]
         .as_array()
         .map(Vec::as_slice)
@@ -211,16 +244,31 @@ fn single_binary(package: &Value, name: &str) -> Result<String, String> {
                 .as_array()
                 .is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
         })
-        .filter_map(|target| target["name"].as_str())
+        .filter_map(|target| Some((target["name"].as_str()?, target["src_path"].as_str()?)))
         .collect::<Vec<_>>();
-    match binaries.as_slice() {
-        [binary] => Ok((*binary).to_owned()),
-        [] => Err(format!("ice bundle: package `{name}` has no binary target")),
-        _ => Err(format!(
-            "ice bundle: package `{name}` has several binary targets ({}); name one under [package.metadata.ice.bundle] executable",
-            binaries.join(", ")
-        )),
-    }
+    let selected = match requested {
+        Some(requested) => binaries
+            .iter()
+            .find(|(binary, _)| *binary == requested)
+            .ok_or_else(|| {
+                format!("ice bundle: package `{name}` has no binary target `{requested}`")
+            })?,
+        None => match binaries.as_slice() {
+            [binary] => binary,
+            [] => return Err(format!("ice bundle: package `{name}` has no binary target")),
+            _ => {
+                return Err(format!(
+                    "ice bundle: package `{name}` has several binary targets ({}); name one under [package.metadata.ice.bundle] executable",
+                    binaries
+                        .iter()
+                        .map(|(binary, _)| *binary)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        },
+    };
+    Ok((selected.0.to_owned(), PathBuf::from(selected.1)))
 }
 
 fn resolve_icon(root: &Path, icon: &str) -> Result<PathBuf, String> {
@@ -236,7 +284,7 @@ fn resolve_icon(root: &Path, icon: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// The parts of a bundle macOS cannot infer from the Ice app declaration.
+/// The parts of a bundle no standard Cargo or Ice declaration can express.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct BundleOptions {
     name: Option<String>,
@@ -292,14 +340,18 @@ impl BundleOptions {
     }
 }
 
-/// Everything written into `Info.plist`, resolved from the Ice app declaration
-/// and the package manifest before any file is touched.
+/// One resolved identity, complete for the host platform before any file is
+/// written, so a missing field is a message rather than a broken package.
 #[derive(Debug, PartialEq, Eq)]
 struct BundleMeta {
     name: String,
+    package: String,
     identifier: String,
     executable: String,
     version: String,
+    description: String,
+    maintainer: String,
+    homepage: Option<String>,
     icon: bool,
     category: Option<String>,
     copyright: Option<String>,
@@ -309,7 +361,7 @@ struct BundleMeta {
 impl BundleMeta {
     /// Reads the app declaration through the ordinary analysis path, so a
     /// graph that does not check never reaches a release build or a signature.
-    fn resolve(package: &Package) -> Result<Self, String> {
+    fn resolve(package: &Package, platform: Platform) -> Result<Self, String> {
         let source = ice_root(&package.root)?;
         let analysis = ui_lang_core::AnalysisDb::default()
             .analyze_root(&source)
@@ -322,15 +374,35 @@ impl BundleMeta {
             .or(document.settings.id)
             .ok_or_else(|| {
                 format!(
-                    "`{}` declares no app `id`; macOS needs a bundle identifier, so set one there or under [package.metadata.ice.bundle]",
+                    "`{}` declares no app `id`; a bundle identifier is required, so set one there or under [package.metadata.ice.bundle]",
                     source.display()
                 )
             })?;
+        let name = package.options.name.clone().unwrap_or(document.app);
+        let description = package
+            .description
+            .clone()
+            .ok_or_else(|| manifest_field(&package.name, "description"))?;
+        let maintainer = package
+            .authors
+            .first()
+            .cloned()
+            .ok_or_else(|| manifest_field(&package.name, "authors"))?;
+        if platform == Platform::Windows {
+            check_windows_subsystem(&package.source)?;
+        }
+        if platform == Platform::Linux {
+            check_debian_name(&package.name)?;
+        }
         Ok(Self {
-            name: package.options.name.clone().unwrap_or(document.app),
+            name,
+            package: package.name.clone(),
             identifier,
             executable: package.executable.clone(),
             version: package.version.clone(),
+            description,
+            maintainer,
+            homepage: package.homepage.clone(),
             icon: package.icon.is_some(),
             category: package.options.category.clone(),
             copyright: package.options.copyright.clone(),
@@ -340,6 +412,43 @@ impl BundleMeta {
                 .clone()
                 .unwrap_or_else(|| DEFAULT_MINIMUM_SYSTEM_VERSION.to_owned()),
         })
+    }
+}
+
+fn manifest_field(package: &str, field: &str) -> String {
+    format!("package `{package}` sets no `{field}`; an installable package has to name one")
+}
+
+/// A Rust binary is a console program unless its crate root says otherwise, so
+/// an installed release would open a terminal behind its window. The attribute
+/// is crate-level, which no generated code can add, and the console is
+/// invisible until someone runs the installed build — so it is checked here.
+fn check_windows_subsystem(source: &Path) -> Result<(), String> {
+    if read_to_string(source)?.contains("windows_subsystem") {
+        return Ok(());
+    }
+    Err(format!(
+        "`{}` does not set `windows_subsystem`, so the installed application would open a console window behind it; add `#![cfg_attr(not(debug_assertions), windows_subsystem = \"windows\")]` above its first item",
+        source.display()
+    ))
+}
+
+/// dpkg accepts only these characters, and rejects the package at build time
+/// rather than explaining which character it disliked.
+fn check_debian_name(package: &str) -> Result<(), String> {
+    let valid = package.len() >= 2
+        && package.starts_with(|first: char| first.is_ascii_lowercase() || first.is_ascii_digit())
+        && package.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || "+-.".contains(character)
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{package}` is not a Debian package name; it must start with a lower-case letter or digit and use only those, digits, and `+-.`"
+        ))
     }
 }
 
@@ -357,124 +466,6 @@ fn ice_root(package_root: &Path) -> Result<PathBuf, String> {
                 .join(", ")
         )),
     }
-}
-
-fn info_plist(meta: &BundleMeta) -> plist::Value {
-    let mut dictionary = plist::Dictionary::new();
-    let mut set = |key: &str, value: plist::Value| {
-        dictionary.insert(key.to_owned(), value);
-    };
-    let text = |value: &str| plist::Value::String(value.to_owned());
-    set("CFBundleInfoDictionaryVersion", text("6.0"));
-    set("CFBundlePackageType", text("APPL"));
-    set("CFBundleName", text(&meta.name));
-    set("CFBundleDisplayName", text(&meta.name));
-    set("CFBundleIdentifier", text(&meta.identifier));
-    set("CFBundleExecutable", text(&meta.executable));
-    set("CFBundleShortVersionString", text(&meta.version));
-    set("CFBundleVersion", text(&meta.version));
-    set("LSMinimumSystemVersion", text(&meta.minimum_system_version));
-    set("NSHighResolutionCapable", plist::Value::Boolean(true));
-    set(
-        "CFBundleSupportedPlatforms",
-        plist::Value::Array(vec![text("MacOSX")]),
-    );
-    if meta.icon {
-        set("CFBundleIconFile", text(&meta.name));
-    }
-    if let Some(category) = &meta.category {
-        set("LSApplicationCategoryType", text(category));
-    }
-    if let Some(copyright) = &meta.copyright {
-        set("NSHumanReadableCopyright", text(copyright));
-    }
-    plist::Value::Dictionary(dictionary)
-}
-
-fn write_app(
-    app: &Path,
-    meta: &BundleMeta,
-    executable: &Path,
-    icon: Option<&Path>,
-) -> Result<(), String> {
-    // A stale bundle keeps files the new one does not list, and codesign seals
-    // whatever it finds, so the layout starts empty every time.
-    if app.exists() {
-        fs::remove_dir_all(app)
-            .map_err(|error| format!("cannot clear `{}`: {error}", app.display()))?;
-    }
-    let contents = app.join("Contents");
-    let binaries = contents.join("MacOS");
-    let resources = contents.join("Resources");
-    for directory in [&binaries, &resources] {
-        fs::create_dir_all(directory)
-            .map_err(|error| format!("cannot create `{}`: {error}", directory.display()))?;
-    }
-    fs::copy(executable, binaries.join(&meta.executable)).map_err(|error| {
-        format!(
-            "cannot copy `{}` into the bundle: {error}",
-            executable.display()
-        )
-    })?;
-    if let Some(icon) = icon {
-        let svg =
-            fs::read(icon).map_err(|error| format!("cannot read `{}`: {error}", icon.display()))?;
-        let icns = icns_from_svg(&svg)?;
-        let path = resources.join(format!("{}.icns", meta.name));
-        fs::write(&path, icns)
-            .map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
-    }
-    let path = contents.join("Info.plist");
-    plist::to_file_xml(&path, &info_plist(meta))
-        .map_err(|error| format!("cannot write `{}`: {error}", path.display()))
-}
-
-fn icns_from_svg(svg: &[u8]) -> Result<Vec<u8>, String> {
-    // The renderer is built without font support, which would drop a `<text>`
-    // element instead of drawing it. Saying so beats shipping a hole.
-    if svg.windows(5).any(|window| window == b"<text") {
-        return Err(
-            "a bundle icon is rendered without fonts; convert its <text> elements to paths".into(),
-        );
-    }
-    let tree = resvg::usvg::Tree::from_data(svg, &resvg::usvg::Options::default())
-        .map_err(|error| format!("cannot read the bundle icon: {error}"))?;
-    let mut rendered = BTreeMap::new();
-    for (_, size) in ICNS_ENTRIES {
-        if !rendered.contains_key(size) {
-            rendered.insert(*size, render_png(&tree, *size)?);
-        }
-    }
-    let mut body = Vec::new();
-    for (kind, size) in ICNS_ENTRIES {
-        let png = &rendered[size];
-        let length = u32::try_from(png.len() + 8)
-            .map_err(|_| format!("the {size}x{size} icon is too large for an .icns entry"))?;
-        body.extend_from_slice(kind.as_bytes());
-        body.extend_from_slice(&length.to_be_bytes());
-        body.extend_from_slice(png);
-    }
-    let total = u32::try_from(body.len() + 8)
-        .map_err(|_| "the rendered icon is too large for an .icns file".to_owned())?;
-    let mut icns = Vec::with_capacity(body.len() + 8);
-    icns.extend_from_slice(b"icns");
-    icns.extend_from_slice(&total.to_be_bytes());
-    icns.extend_from_slice(&body);
-    Ok(icns)
-}
-
-fn render_png(tree: &resvg::usvg::Tree, size: u32) -> Result<Vec<u8>, String> {
-    let mut pixmap = tiny_skia::Pixmap::new(size, size)
-        .ok_or_else(|| format!("cannot allocate a {size}x{size} icon"))?;
-    let scale = size as f32 / tree.size().width();
-    resvg::render(
-        tree,
-        tiny_skia::Transform::from_scale(scale, scale),
-        &mut pixmap.as_mut(),
-    );
-    pixmap
-        .encode_png()
-        .map_err(|error| format!("cannot encode the {size}x{size} icon: {error}"))
 }
 
 /// Where Cargo left each requested build. Naming `--target` moves the profile
@@ -497,30 +488,11 @@ fn link_executable(package: &Package, request: &Request, output: &Path) -> Resul
     if let [binary] = binaries.as_slice() {
         return Ok(binary.clone());
     }
-    fs::create_dir_all(output)
-        .map_err(|error| format!("cannot create `{}`: {error}", output.display()))?;
-    let universal = output.join(&package.executable);
+    let universal = output.join(format!("{}-universal", package.executable));
     let mut arguments = vec!["-create".to_owned(), "-output".to_owned(), path(&universal)];
     arguments.extend(binaries.iter().map(|binary| path(binary)));
     tool("lipo", &arguments)?;
     Ok(universal)
-}
-
-/// Notarization only ever accepts a Developer ID signature, and it reports the
-/// mismatch after the upload and the wait. Refusing the combination up front
-/// turns a round trip to Apple into an immediate message.
-fn check_signing_plan(identity: &str, notarizing: bool) -> Result<(), String> {
-    if notarizing && identity == AD_HOC_IDENTITY {
-        return Err(
-            "notarization credentials are set but ICE_CODESIGN_IDENTITY is not; Apple rejects an ad-hoc signature"
-                .into(),
-        );
-    }
-    Ok(())
-}
-
-fn signing_identity() -> String {
-    setting("ICE_CODESIGN_IDENTITY").unwrap_or_else(|| AD_HOC_IDENTITY.to_owned())
 }
 
 /// A workflow that maps an unset repository secret onto an environment
@@ -529,116 +501,39 @@ fn setting(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-fn sign(target: &Path, identity: &str) -> Result<(), String> {
-    tool("codesign", &sign_arguments(target, identity))
-}
-
-fn sign_arguments(target: &Path, identity: &str) -> Vec<String> {
-    let mut arguments = vec![
-        "--force".to_owned(),
-        "--sign".to_owned(),
-        identity.to_owned(),
-    ];
-    if identity != AD_HOC_IDENTITY {
-        // The hardened runtime and a trusted timestamp are both preconditions
-        // for notarization; neither is available to an ad-hoc signature.
-        arguments.extend([
-            "--timestamp".to_owned(),
-            "--options".to_owned(),
-            "runtime".to_owned(),
-        ]);
-    }
-    arguments.push(path(target));
-    arguments
-}
-
-fn write_dmg(app: &Path, meta: &BundleMeta, dmg: &Path) -> Result<(), String> {
-    let staging = dmg.with_extension("staging");
-    if staging.exists() {
-        fs::remove_dir_all(&staging)
-            .map_err(|error| format!("cannot clear `{}`: {error}", staging.display()))?;
-    }
-    fs::create_dir_all(&staging)
-        .map_err(|error| format!("cannot create `{}`: {error}", staging.display()))?;
-    // `ditto` keeps the bundle's symlinks, modes, and extended attributes, so
-    // the copy carries the same signature the original was sealed with.
-    tool(
-        "ditto",
-        &[path(app), path(&staging.join(format!("{}.app", meta.name)))],
-    )?;
-    tool(
-        "ln",
-        &[
-            "-s".to_owned(),
-            "/Applications".to_owned(),
-            path(&staging.join("Applications")),
-        ],
-    )?;
-    tool(
-        "hdiutil",
-        &[
-            "create".to_owned(),
-            "-volname".to_owned(),
-            meta.name.clone(),
-            "-srcfolder".to_owned(),
-            path(&staging),
-            "-ov".to_owned(),
-            "-format".to_owned(),
-            "UDZO".to_owned(),
-            path(dmg),
-        ],
-    )
-}
-
-struct Notary {
-    key: String,
-    key_id: String,
-    issuer: String,
-}
-
-impl Notary {
-    fn from_env() -> Option<Self> {
-        let (Some(key), Some(key_id), Some(issuer)) = (
-            setting("ICE_NOTARY_KEY"),
-            setting("ICE_NOTARY_KEY_ID"),
-            setting("ICE_NOTARY_ISSUER"),
-        ) else {
-            return None;
-        };
-        Some(Self {
-            key,
-            key_id,
-            issuer,
-        })
-    }
-
-    fn submit(&self, dmg: &Path) -> Result<(), String> {
-        tool(
-            "xcrun",
-            &[
-                "notarytool".to_owned(),
-                "submit".to_owned(),
-                path(dmg),
-                "--key".to_owned(),
-                self.key.clone(),
-                "--key-id".to_owned(),
-                self.key_id.clone(),
-                "--issuer".to_owned(),
-                self.issuer.clone(),
-                "--wait".to_owned(),
-            ],
-        )?;
-        // Stapling puts the notarization ticket inside the disk image, so a
-        // first launch on a machine with no network still passes Gatekeeper.
-        tool(
-            "xcrun",
-            &["stapler".to_owned(), "staple".to_owned(), path(dmg)],
-        )
-    }
-}
-
 fn path(value: &Path) -> String {
     value.display().to_string()
+}
+
+fn recreate(directory: &Path) -> Result<(), String> {
+    if directory.exists() {
+        fs::remove_dir_all(directory)
+            .map_err(|error| format!("cannot clear `{}`: {error}", directory.display()))?;
+    }
+    create_dir(directory)
+}
+
+fn create_dir(directory: &Path) -> Result<(), String> {
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("cannot create `{}`: {error}", directory.display()))
+}
+
+fn install(from: &Path, to: &Path) -> Result<(), String> {
+    fs::copy(from, to)
+        .map(|_| ())
+        .map_err(|error| format!("cannot copy `{}` into the package: {error}", from.display()))
+}
+
+fn read(file: &Path) -> Result<Vec<u8>, String> {
+    fs::read(file).map_err(|error| format!("cannot read `{}`: {error}", file.display()))
+}
+
+fn read_to_string(file: &Path) -> Result<String, String> {
+    fs::read_to_string(file).map_err(|error| format!("cannot read `{}`: {error}", file.display()))
+}
+
+fn write(file: &Path, bytes: &[u8]) -> Result<(), String> {
+    fs::write(file, bytes).map_err(|error| format!("cannot write `{}`: {error}", file.display()))
 }
 
 fn tool(program: &str, arguments: &[String]) -> Result<(), String> {
@@ -653,17 +548,44 @@ fn tool(program: &str, arguments: &[String]) -> Result<(), String> {
     }
 }
 
+fn capture(
+    program: &str,
+    arguments: &[String],
+    directory: Option<&Path>,
+) -> Result<String, String> {
+    let mut command = Command::new(program);
+    command.args(arguments);
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("cannot run {program}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{program} {} failed: {}",
+            arguments.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
-    fn meta() -> BundleMeta {
+    pub(crate) fn showcase_meta() -> BundleMeta {
         BundleMeta {
             name: "Showcase".into(),
+            package: "showcase".into(),
             identifier: "dev.ducktape.ui.showcase".into(),
             executable: "showcase".into(),
             version: "0.1.0".into(),
+            description: "Default iced components, composed and checked by Ice.".into(),
+            maintainer: "ducktape-ui <noreply@example.invalid>".into(),
+            homepage: Some("https://github.com/byeongsu-hong/ducktape-ui".into()),
             icon: true,
             category: Some("public.app-category.developer-tools".into()),
             copyright: None,
@@ -671,129 +593,15 @@ mod tests {
         }
     }
 
-    fn plist_of(meta: &BundleMeta) -> plist::Dictionary {
-        match info_plist(meta) {
-            plist::Value::Dictionary(dictionary) => dictionary,
-            other => panic!("Info.plist is not a dictionary: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn info_plist_carries_what_gatekeeper_reads() {
-        let plist = plist_of(&meta());
-        for (key, value) in [
-            ("CFBundleIdentifier", "dev.ducktape.ui.showcase"),
-            ("CFBundleExecutable", "showcase"),
-            ("CFBundleName", "Showcase"),
-            ("CFBundleShortVersionString", "0.1.0"),
-            ("CFBundleVersion", "0.1.0"),
-            ("CFBundlePackageType", "APPL"),
-            ("LSMinimumSystemVersion", "11.0"),
-            ("CFBundleIconFile", "Showcase"),
-            (
-                "LSApplicationCategoryType",
-                "public.app-category.developer-tools",
-            ),
-        ] {
-            assert_eq!(
-                plist.get(key).and_then(plist::Value::as_string),
-                Some(value),
-                "Info.plist {key}"
-            );
-        }
-        assert_eq!(
-            plist
-                .get("NSHighResolutionCapable")
-                .and_then(plist::Value::as_boolean),
-            Some(true)
-        );
-        assert!(plist.get("NSHumanReadableCopyright").is_none());
-    }
-
-    #[test]
-    fn an_icon_free_bundle_names_no_icon_file() {
-        let plist = plist_of(&BundleMeta {
-            icon: false,
-            ..meta()
-        });
-        assert!(plist.get("CFBundleIconFile").is_none());
-    }
-
-    #[test]
-    fn icns_stores_one_png_per_declared_size() {
-        let svg =
-            fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/ice.svg"))
-                .expect("read the repository icon");
-        let icns = icns_from_svg(&svg).expect("render the icon");
-
-        assert_eq!(&icns[..4], b"icns");
-        assert_eq!(
-            u32::from_be_bytes(icns[4..8].try_into().expect("length field")) as usize,
-            icns.len(),
-            "the header length must cover the whole file"
-        );
-
-        let mut offset = 8;
-        let mut seen = Vec::new();
-        while offset < icns.len() {
-            let kind = std::str::from_utf8(&icns[offset..offset + 4]).expect("entry type");
-            let length = u32::from_be_bytes(
-                icns[offset + 4..offset + 8]
-                    .try_into()
-                    .expect("entry length"),
-            ) as usize;
-            let png = &icns[offset + 8..offset + length];
-            assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n", "{kind} is not a PNG");
-            let width = u32::from_be_bytes(png[16..20].try_into().expect("PNG width"));
-            let height = u32::from_be_bytes(png[20..24].try_into().expect("PNG height"));
-            seen.push((kind.to_owned(), width));
-            assert_eq!(width, height, "{kind} is not square");
-            offset += length;
-        }
-        assert_eq!(offset, icns.len(), "entries must tile the file exactly");
-        assert_eq!(
-            seen,
-            ICNS_ENTRIES
-                .iter()
-                .map(|(kind, size)| ((*kind).to_owned(), *size))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn the_app_layout_places_the_three_files_macos_opens() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let executable = directory.path().join("showcase");
-        fs::write(&executable, b"binary").expect("write the executable");
-        let icon = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/ice.svg");
-        let app = directory.path().join("Showcase.app");
-        fs::create_dir_all(app.join("Contents/MacOS")).expect("seed a stale bundle");
-        fs::write(app.join("Contents/MacOS/stale"), b"old").expect("seed a stale file");
-
-        write_app(&app, &meta(), &executable, Some(&icon)).expect("write the bundle");
-
-        assert_eq!(
-            fs::read(app.join("Contents/MacOS/showcase")).expect("bundled executable"),
-            b"binary"
-        );
-        assert!(app.join("Contents/Resources/Showcase.icns").is_file());
-        assert!(
-            !app.join("Contents/MacOS/stale").exists(),
-            "a rebuilt bundle must not keep files codesign would seal"
-        );
-        let plist = fs::read_to_string(app.join("Contents/Info.plist")).expect("Info.plist");
-        assert!(plist.contains("<key>CFBundleIdentifier</key>"));
-        assert!(plist.contains("<string>dev.ducktape.ui.showcase</string>"));
-    }
-
-    /// The macOS half of `run` cannot execute here, so this covers everything
-    /// before it: a released app has to resolve to a complete, signable
+    /// The per-platform packagers cannot run here, so this covers everything
+    /// before them: a released app has to resolve to a complete, installable
     /// identity from its own manifest and Ice declaration, on any host.
     #[test]
     fn the_showcase_app_resolves_into_a_signable_bundle() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let metadata = crate::dev::metadata(&workspace).expect("read cargo metadata");
-        let package = Package::resolve(&metadata, "showcase").expect("resolve showcase");
+        let package =
+            Package::resolve(&metadata, "showcase", Platform::MacOs).expect("resolve showcase");
         assert_eq!(package.executable, "showcase");
         assert!(
             package.icon.as_deref().is_some_and(Path::is_file),
@@ -801,32 +609,84 @@ mod tests {
             package.icon
         );
 
-        let meta = BundleMeta::resolve(&package).expect("resolve the bundle identity");
+        let meta =
+            BundleMeta::resolve(&package, Platform::MacOs).expect("resolve the bundle identity");
+        assert_eq!(meta.name, "Showcase");
+        assert_eq!(meta.identifier, "dev.ducktape.ui.showcase");
+        assert_eq!(meta.package, "showcase");
+        assert_eq!(meta.version, package.version);
+        assert!(meta.icon);
         assert_eq!(
-            meta,
-            BundleMeta {
-                name: "Showcase".into(),
-                identifier: "dev.ducktape.ui.showcase".into(),
-                executable: "showcase".into(),
-                version: package.version.clone(),
-                icon: true,
-                category: Some("public.app-category.developer-tools".into()),
-                copyright: meta.copyright.clone(),
-                minimum_system_version: DEFAULT_MINIMUM_SYSTEM_VERSION.into(),
-            }
+            meta.category.as_deref(),
+            Some("public.app-category.developer-tools")
         );
         assert!(
             meta.copyright.is_some_and(|notice| notice.contains("MIT")),
             "a shipped bundle carries its licence notice"
         );
+        // Every packager needs these, and only the Cargo manifest has them.
+        assert!(!meta.description.is_empty(), "a description");
+        assert!(meta.maintainer.contains('@'), "{}", meta.maintainer);
+        assert!(meta.homepage.is_some());
+    }
+
+    /// Windows resolution is the same identity plus two platform demands, and
+    /// both must hold for the app this repository actually publishes.
+    #[test]
+    fn the_showcase_app_resolves_for_every_platform() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let metadata = crate::dev::metadata(&workspace).expect("read cargo metadata");
+        for (platform, executable) in [
+            (Platform::Linux, "showcase"),
+            (Platform::Windows, "showcase.exe"),
+        ] {
+            let package = Package::resolve(&metadata, "showcase", platform)
+                .unwrap_or_else(|error| panic!("resolve showcase for {platform:?}: {error}"));
+            assert_eq!(package.executable, executable);
+            let meta = BundleMeta::resolve(&package, platform)
+                .unwrap_or_else(|error| panic!("resolve {platform:?} identity: {error}"));
+            assert_eq!(meta.executable, executable);
+        }
+    }
+
+    #[test]
+    fn a_console_window_behind_the_app_is_refused_on_windows() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source = directory.path().join("main.rs");
+        fs::write(&source, "fn main() {}\n").expect("write a crate root");
+        let error = check_windows_subsystem(&source).expect_err("a console subsystem binary");
+        assert!(error.contains("windows_subsystem"), "{error}");
+        assert!(error.contains("cfg_attr"), "the message names the fix");
+
+        fs::write(
+            &source,
+            "#![cfg_attr(not(debug_assertions), windows_subsystem = \"windows\")]\nfn main() {}\n",
+        )
+        .expect("write a windowed crate root");
+        assert!(check_windows_subsystem(&source).is_ok());
+    }
+
+    #[test]
+    fn debian_rejects_a_name_it_cannot_encode() {
+        assert!(check_debian_name("showcase").is_ok());
+        assert!(check_debian_name("ice-starter").is_ok());
+        assert!(check_debian_name("Showcase").is_err(), "upper case");
+        assert!(check_debian_name("my_app").is_err(), "underscore");
+        assert!(check_debian_name("-app").is_err(), "leading dash");
+        assert!(check_debian_name("a").is_err(), "one character");
     }
 
     #[test]
     fn a_named_target_moves_the_binary_under_its_triple() {
         let package = Package {
             root: "/workspace/examples/showcase".into(),
+            name: "showcase".into(),
             version: "0.1.0".into(),
+            description: None,
+            authors: Vec::new(),
+            homepage: None,
             executable: "showcase".into(),
+            source: "/workspace/examples/showcase/src/main.rs".into(),
             target_directory: "/workspace/target".into(),
             icon: None,
             options: BundleOptions::default(),
@@ -854,47 +714,6 @@ mod tests {
                 Path::new("/workspace/target/x86_64-apple-darwin/release/showcase"),
             ]
         );
-    }
-
-    /// Everything above this point runs on any host. This is the one check
-    /// that drives the real `codesign`, `ditto`, and `hdiutil` sequence, so
-    /// the tool arguments are wrong here rather than on a release tag.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_signed_bundle_becomes_a_mountable_disk_image() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        // The test binary is a real Mach-O for this architecture, which is
-        // what codesign needs; no system path is assumed to be signable.
-        let executable = directory.path().join("showcase");
-        fs::copy(env::current_exe().expect("this test binary"), &executable)
-            .expect("stage an executable");
-        let meta = meta();
-        let app = directory.path().join("Showcase.app");
-        let icon = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/ice.svg");
-
-        write_app(&app, &meta, &executable, Some(&icon)).expect("write the bundle");
-        sign(&app, AD_HOC_IDENTITY).expect("sign the bundle");
-        tool(
-            "codesign",
-            &["--verify".to_owned(), "--strict".to_owned(), path(&app)],
-        )
-        .expect("the bundle signature verifies");
-
-        let dmg = directory.path().join("Showcase-0.1.0-test.dmg");
-        write_dmg(&app, &meta, &dmg).expect("write the disk image");
-        tool("hdiutil", &["verify".to_owned(), path(&dmg)]).expect("the disk image verifies");
-        assert!(dmg.is_file(), "the disk image is where the release looks");
-    }
-
-    #[test]
-    fn an_icon_that_needs_a_font_is_refused() {
-        let lettered = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
-            <text x="2" y="12">I</text></svg>"##;
-        let error = icns_from_svg(lettered).expect_err("a text icon cannot render");
-        assert!(error.contains("paths"), "{error}");
-        let drawn = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
-            <rect width="16" height="16" fill="#000"/></svg>"##;
-        assert!(icns_from_svg(drawn).is_ok(), "a drawn icon still renders");
     }
 
     #[test]
@@ -1002,42 +821,6 @@ mod tests {
                 "showcase",
                 "--target",
                 "aarch64-apple-darwin"
-            ]
-        );
-    }
-
-    #[test]
-    fn notarizing_without_an_identity_fails_before_the_upload() {
-        let identity = "Developer ID Application: Example (TEAMID)";
-        assert!(check_signing_plan(identity, true).is_ok());
-        assert!(check_signing_plan(identity, false).is_ok());
-        assert!(check_signing_plan(AD_HOC_IDENTITY, false).is_ok());
-        let error = check_signing_plan(AD_HOC_IDENTITY, true)
-            .expect_err("an ad-hoc signature cannot be notarized");
-        assert!(error.contains("ICE_CODESIGN_IDENTITY"), "{error}");
-    }
-
-    #[test]
-    fn a_real_identity_signs_for_the_hardened_runtime() {
-        // codesign refuses `--options runtime` alongside an ad-hoc signature,
-        // and notarization refuses a bundle that was signed without it.
-        let app = Path::new("/tmp/Showcase.app");
-        let ad_hoc = sign_arguments(app, AD_HOC_IDENTITY);
-        assert_eq!(
-            ad_hoc,
-            ["--force", "--sign", "-", "/tmp/Showcase.app"],
-            "an ad-hoc signature takes no runtime or timestamp options"
-        );
-        assert_eq!(
-            sign_arguments(app, "Developer ID Application: Example (TEAMID)"),
-            [
-                "--force",
-                "--sign",
-                "Developer ID Application: Example (TEAMID)",
-                "--timestamp",
-                "--options",
-                "runtime",
-                "/tmp/Showcase.app",
             ]
         );
     }

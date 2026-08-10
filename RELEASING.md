@@ -77,28 +77,31 @@ JSON diff before publishing. Because the package version participates in the
 fingerprint payload, an intentional release version bump must regenerate and
 review the baseline too.
 
-## macOS application
+## Desktop applications
 
-A tag also publishes the showcase application as a signed, notarized disk
-image. The `Showcase disk image` job builds `aarch64-apple-darwin` and
-`x86_64-apple-darwin`, joins them into one universal binary, and runs
+A tag publishes the showcase application for all three desktop platforms:
 
-```bash
-cargo ice bundle -p showcase \
-  --target aarch64-apple-darwin --target x86_64-apple-darwin
-```
+| Job | Artifact | Verified by |
+| --- | --- | --- |
+| `Showcase disk image` | universal `.dmg` | both architectures present, `codesign --verify --strict`, and when notarized, `stapler validate` plus `spctl --assess` |
+| `Showcase package` | `.deb` | `apt install ./file.deb`, `desktop-file-validate`, installed binary and icon present, then removal |
+| `Showcase installer` | `.msi` | `msiexec /i /qn`, installed executable present, then `msiexec /x /qn` |
 
-The job verifies the result before it is uploaded: both architectures are
-present, the icon and bundle identifier are in place, and `codesign --verify
---strict` passes. When notarization ran, `stapler validate` and `spctl
---assess` confirm the ticket is stapled, which is what lets a first launch
-succeed on a machine that cannot reach Apple. The disk image and its SHA-256
-join the attested release assets.
+Each runs `cargo ice bundle -p showcase`; the macOS job adds
+`--target aarch64-apple-darwin --target x86_64-apple-darwin` so one disk image
+covers both architectures. Every artifact is checksummed and joins the attested
+release assets. `docs/tooling.md` documents the command itself, including how
+another package declares its own bundle.
 
-Signing is driven entirely by repository secrets, so the job is runnable before
-they exist — an unset secret arrives as an empty string, and the bundle is then
-signed ad hoc and never sent to Apple. Set all six to publish a distributable
-build:
+The jobs also run on `workflow_dispatch`, which is how a packaging change gets
+exercised on a branch instead of debugged on a tag.
+
+## Signing secrets
+
+Signing is driven entirely by repository secrets, so every job is runnable
+before they exist — an unset secret arrives as an empty string, which is read
+as "not configured". macOS then signs ad hoc and skips notarization, and
+Windows leaves the installer unsigned.
 
 | Secret | Contents |
 | --- | --- |
@@ -113,8 +116,12 @@ Certificates expire. A signature made before expiry stays valid because it
 carries a trusted timestamp, but the next release fails at `codesign` — renew
 the Developer ID certificate and replace the first three secrets.
 
-`docs/tooling.md` documents the command itself, including how another package
-declares its own bundle.
+Windows signing reads `ICE_WINDOWS_CERTIFICATE` and
+`ICE_WINDOWS_CERTIFICATE_PASSWORD`; the release job does not map secrets onto
+them yet, because an Authenticode certificate issued today requires either
+hardware token access or a cloud signing service, and which one to use is a
+decision this repository has not made. A `.deb` is authenticated by the
+repository serving it, so Linux needs no signing secret.
 
 ## Registry order
 

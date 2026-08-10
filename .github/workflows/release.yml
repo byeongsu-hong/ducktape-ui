@@ -27,6 +27,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # apt bounds and retries its own downloads with these; without them a
+  # stalled mirror holds the runner until the job's timeout.
+  APT: -o Acquire::Retries=3 -o Acquire::http::Timeout=15
 
 jobs:
   packages:
@@ -211,10 +214,94 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  package:
+    name: Showcase ${{ matrix.format }}
+    # A tag publishes these; a manual run is how a packaging change gets
+    # exercised first. Pull requests skip them — the staging layout and the
+    # authoring are covered by unit contracts in CI on every commit.
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    # One release build of an iced application through the release profile's
+    # fat LTO and single codegen unit, with no compiler cache.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            format: package
+          - runner: windows-latest
+            format: installer
+    steps:
+      - uses: actions/checkout@v7
+      # `dpkg-shlibdeps` and `dpkg-deb` are already on the runner; only the
+      # validator the verification step runs has to be installed.
+      - name: Install the desktop entry validator
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          set -euo pipefail
+          sudo apt-get $APT update
+          sudo apt-get $APT install --yes --no-install-recommends desktop-file-utils
+      - name: Install the WiX toolset
+        if: matrix.runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet tool install --global wix --version 6.0.2
+          # The global tool directory is not always on PATH for later steps.
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Build the package
+        run: cargo ice bundle -p showcase
+      - name: Verify the Debian package
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          set -euo pipefail
+          deb="$(ls target/ice-bundle/*.deb)"
+          dpkg-deb --info "$deb"
+          # `apt install` is what a user runs, and it is the step that fails if
+          # a declared dependency cannot be satisfied on a clean machine.
+          sudo apt-get install -y ${{ env.APT }} "$PWD/$deb"
+          test -x /usr/bin/showcase
+          desktop-file-validate /usr/share/applications/dev.ducktape.ui.showcase.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/dev.ducktape.ui.showcase.png
+          sudo apt-get remove -y showcase
+      - name: Verify the Windows installer
+        if: matrix.runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Get-ChildItem target/ice-bundle/*.msi)[0].FullName
+          # A silent install and uninstall is the only check that proves the
+          # authoring is valid rather than merely well-formed XML.
+          $log = "$env:RUNNER_TEMP/install.log"
+          Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /l*v `"$log`"" -Wait -NoNewWindow
+          $installed = "$env:LOCALAPPDATA/Showcase/showcase.exe"
+          if (-not (Test-Path $installed)) { Get-Content $log -Tail 40; throw "not installed" }
+          Start-Process msiexec -ArgumentList "/x `"$msi`" /qn" -Wait -NoNewWindow
+          if (Test-Path $installed) { throw "not uninstalled" }
+      - name: Checksum the artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target/ice-bundle
+          for artifact in *.deb *.msi; do
+            [ -e "$artifact" ] || continue
+            shasum -a 256 "$artifact" > "$artifact.sha256"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: showcase-${{ matrix.runner }}
+          path: |
+            target/ice-bundle/*.deb
+            target/ice-bundle/*.msi
+            target/ice-bundle/*.sha256
+          compression-level: 0
+          retention-days: 7
+
   publish:
     name: Publish GitHub release
     if: github.event_name == 'push'
-    needs: [app, build, packages]
+    needs: [app, build, package, packages]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -232,6 +319,8 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.dmg
+            dist/*.deb
+            dist/*.msi
       - name: Publish release
         env:
           GH_REPO: ${{ github.repository }}
