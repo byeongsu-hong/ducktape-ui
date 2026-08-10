@@ -1,0 +1,25 @@
+[package]
+name = "ai-chat-example"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+# Reading the unsigned claims of the stored id token, to name the account on
+# screen. Already in the lockfile, so this costs a line and no build time.
+base64 = "0.22"
+iced = { version = "=0.14.0", default-features = false, features = ["advanced", "lazy", "markdown", "sipper", "smol", "wgpu", "x11"] }
+serde_json = "1"
+smol = "2"
+ui-lang.workspace = true
+ui-lang-runtime.workspace = true
+# Blocking HTTP with a readable body, which is all an SSE stream needs. Already
+# carrying the workspace's TLS stack for the trading example.
+ureq = { version = "3", features = ["json"] }
+
+[build-dependencies]
+ui-lang-build.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
