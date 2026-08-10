@@ -600,24 +600,12 @@ pub fn backup_refused(phrase: String, positions: Vec<i64>, given: Vec<String>) -
     }
 }
 
-/// Derive the account a phrase names, and hold it for confirmation.
+/// Derive the account a typed phrase names, and hold it for confirmation.
 ///
-/// Nothing is stored and no sheet is raised: this answers an address and
-/// waits. A phrase with a bad checksum, an unknown word or a passphrase this
-/// app will not normalise is refused here, where the owner can still see what
-/// they typed.
-///
-/// The alternate input is a raw private key, because both venues' SDKs take one
-/// and not every owner holds a phrase — the same 32 bytes reached by a shorter
-/// road, and stored and wiped identically.
-/// The typed door. Both arguments arrive as `ui_lang_runtime::Secret`, which is
-/// the only reading of those buffers that exists anywhere in the program: not
-/// clonable, redacted when printed, borrowed once here, and wiped when this
-/// function returns.
-///
-/// Which of the two things was typed stays a question for this side.
-/// `looks_like_a_key` reads the borrow, so no fact about the text's shape ever
-/// needs a name in Ice — the box is one box and the screen says so statically.
+/// Both arguments arrive as `ui_lang_runtime::Secret`, which is the only
+/// reading of those buffers that exists anywhere in the program: not clonable,
+/// redacted when printed, borrowed once here, and wiped when this function
+/// returns.
 pub async fn read_wallet(
     phrase: ui_lang_runtime::Secret,
     passphrase: ui_lang_runtime::Secret,
@@ -625,7 +613,7 @@ pub async fn read_wallet(
     read_phrase(phrase.expose(), passphrase.expose()).await
 }
 
-/// The made door, over a phrase this app generated and put on the screen.
+/// The same derivation over a phrase this app generated and put on the screen.
 ///
 /// It takes a `String` because that is what a phrase on screen is. Keeping it
 /// separate rather than widening `read_wallet` is the point: `secret` is the
@@ -635,6 +623,16 @@ pub async fn read_made_wallet(phrase: String) -> Result<Entry, CustodyFault> {
     read_phrase(&phrase, "").await
 }
 
+/// Nothing is stored and no sheet is raised: this answers an address and
+/// waits. A phrase with a bad checksum, an unknown word or a passphrase this
+/// app will not normalise is refused here, where the owner can still see what
+/// they typed.
+///
+/// The alternate input is a raw private key, because both venues' SDKs take one
+/// and not every owner holds a phrase — the same 32 bytes reached by a shorter
+/// road, and stored and wiped identically. Which of the two it is stays a
+/// question for this side: `looks_like_a_key` reads the borrow, so no fact
+/// about the text's shape ever needs a name in Ice, and the box stays one box.
 async fn read_phrase(phrase: &str, passphrase: &str) -> Result<Entry, CustodyFault> {
     let derived = if looks_like_a_key(phrase) {
         from_raw_key(phrase.trim())
