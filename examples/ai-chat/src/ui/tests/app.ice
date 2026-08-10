@@ -133,6 +133,73 @@ test a_running_turn_with_nothing_typed_offers_only_stop
   expect missing #shell/app/composer/steer
   expect missing #shell/app/composer/queue
 
+// Starting over cannot detach a turn that is still producing output.
+test new_chat_is_unavailable_while_a_turn_is_running
+  preset streaming
+  viewport 920 560
+  target new_chat = #shell/sidebar/new-chat
+  expect a11y new_chat disabled true
+
+// The handler keeps the same boundary even when invoked without the button.
+test reset_cannot_abandon_a_running_turn
+  preset streaming
+  viewport 920 560
+  dispatch reset
+  expect busy == true
+  expect status == "Responding"
+
+// A pending disk read owns the same session until its result is delivered.
+test new_chat_is_unavailable_while_a_chat_is_opening
+  preset opening
+  viewport 920 560
+  target new_chat = #shell/sidebar/new-chat
+  expect a11y new_chat disabled true
+  dispatch reset
+  expect loading_chat == true
+  expect open_path == "/sessions/2.jsonl"
+
+// Idle controls stay live; the guards are state boundaries, not dead routes.
+test an_idle_chat_can_start_over
+  preset conversation
+  viewport 920 560
+  target new_chat = #shell/sidebar/new-chat
+  expect a11y new_chat disabled false
+  click new_chat
+  expect busy == false
+  expect text "What are we working on?"
+  expect no text "Worked for 12s · 4 steps"
+
+test an_idle_chat_can_sign_out
+  preset conversation
+  viewport 920 560
+  target sign_out = #shell/app/header/sign-out
+  expect a11y sign_out disabled false
+  click sign_out
+  expect signed == false
+  expect text "Sign in to Codex"
+  expect no text "Worked for 12s · 4 steps"
+
+// Signing out cannot detach either kind of work that still owns the session.
+test sign_out_is_unavailable_while_a_turn_is_running
+  preset streaming
+  viewport 920 560
+  target sign_out = #shell/app/header/sign-out
+  expect a11y sign_out disabled true
+  dispatch forget
+  expect signed == true
+  expect busy == true
+  expect status == "Responding"
+
+test sign_out_is_unavailable_while_a_chat_is_opening
+  preset opening
+  viewport 920 560
+  target sign_out = #shell/app/header/sign-out
+  expect a11y sign_out disabled true
+  dispatch forget
+  expect signed == true
+  expect loading_chat == true
+  expect open_path == "/sessions/2.jsonl"
+
 // And with no turn running there is nothing to stop.
 test an_idle_composer_offers_only_send
   preset conversation

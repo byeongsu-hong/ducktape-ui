@@ -287,6 +287,7 @@ pub fn stored() -> Option<(Value, Login)> {
 
 /// Forget this app's login. The CLI's is left alone, so signing out here and
 /// finding yourself still signed in through `codex login` is expected.
+#[cfg(not(test))]
 pub fn sign_out() -> bool {
     std::fs::remove_file(our_path()).is_ok()
 }

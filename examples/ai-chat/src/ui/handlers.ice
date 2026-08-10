@@ -21,7 +21,7 @@ on send
       progress -> streamed _
       done -> settled _
       error -> failed _
-    stream every codex_entries(session) -> rows _
+    stream replace lane=turn_rows codex_entries(session) -> rows _
 
 // Two appends and a scroll, once per token. Nothing above is rebuilt: settled
 // rows sit behind `lazy`, and Markdown is appended into the parsed document
@@ -60,7 +60,7 @@ on settled(complete)
       progress -> streamed _
       done -> settled _
       error -> failed _
-    stream every codex_entries(session) -> rows _
+    stream replace lane=turn_rows codex_entries(session) -> rows _
 
 on failed(cause)
   busy = false
@@ -68,6 +68,8 @@ on failed(cause)
   error = cause.message
 
 on reset
+  return if busy || loading_chat
+  invalidate lane=turn_rows
   open_path = ""
   session = new_chat(session)
   entries = []
@@ -164,6 +166,8 @@ on copy_url
 // Forgetting this app's login. The CLI's is left alone, so staying signed in
 // through `codex login` afterwards is the expected outcome.
 on forget
+  return if busy || loading_chat
+  invalidate lane=turn_rows
   signed = sign_out()
   account = codex_account()
   session = codex_session()
@@ -184,6 +188,7 @@ on chats_scanned(scan)
 
 on pick_chat(path)
   return if busy || loading_chat || path == open_path
+  invalidate lane=turn_rows
   open_path = path
   loading_chat = true
   error = ""

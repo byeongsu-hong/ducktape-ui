@@ -66,6 +66,74 @@ mod history_loads {
     }
 }
 
+#[cfg(test)]
+mod turn_row_lifecycle {
+    use super::*;
+
+    fn seeded_app() -> AiChat {
+        let (mut app, boot) = AiChat::__boot();
+        drop(boot);
+        app.signed = true;
+        app.session = codex::sample_session(false);
+        app.entries = codex::sample_entries(false);
+        app
+    }
+
+    fn queued_rows(app: &AiChat) -> __AiChatMessage {
+        __AiChatMessage::__RequestLane0(
+            app.__ice_run_lane_0_generation,
+            Some(Box::new(__AiChatMessage::Rows(codex::sample_running(
+                false,
+            )))),
+        )
+    }
+
+    #[test]
+    fn reset_rejects_rows_queued_by_the_previous_session() {
+        let mut app = seeded_app();
+        let started_generation = app.__ice_run_lane_0_generation;
+        let stale = queued_rows(&app);
+
+        drop(app.__update(__AiChatMessage::Reset));
+        assert!(app.entries.is_empty());
+        drop(app.__update(stale));
+
+        assert!(app.entries.is_empty(), "stale rows must stay filtered");
+        assert!(app.__ice_run_lane_0_generation > started_generation);
+    }
+
+    #[test]
+    fn sign_out_rejects_rows_queued_by_the_previous_session() {
+        let mut app = seeded_app();
+        let started_generation = app.__ice_run_lane_0_generation;
+        let stale = queued_rows(&app);
+
+        drop(app.__update(__AiChatMessage::Forget));
+        assert!(!app.signed);
+        assert!(app.entries.is_empty());
+        drop(app.__update(stale));
+
+        assert!(app.entries.is_empty(), "stale rows must stay filtered");
+        assert!(app.__ice_run_lane_0_generation > started_generation);
+    }
+
+    #[test]
+    fn opening_a_chat_rejects_rows_queued_by_the_previous_session() {
+        let mut app = seeded_app();
+        let started_generation = app.__ice_run_lane_0_generation;
+        let stale = queued_rows(&app);
+        let opened = codex::sample_entries(false);
+
+        drop(app.__update(__AiChatMessage::PickChat("/sessions/2.jsonl".into())));
+        drop(app.__update(__AiChatMessage::ChatOpened(opened.clone())));
+        assert_eq!(app.entries, opened);
+        drop(app.__update(stale));
+
+        assert_eq!(app.entries, opened, "stale rows must stay filtered");
+        assert!(app.__ice_run_lane_0_generation > started_generation);
+    }
+}
+
 /// What one streamed token costs against a transcript already on screen.
 ///
 /// This is the claim the screen is built around. A settled row sits behind a
