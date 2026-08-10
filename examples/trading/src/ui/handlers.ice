@@ -722,6 +722,7 @@ on sweep_sent
 on open_import
   import_open = true
   import_note = ""
+  create_made = false
 
 // Make one, and open the step on the words. The press mints: there is no screen
 // between it and the phrase, because a step that asked "are you sure" before
@@ -734,7 +735,10 @@ on create_wallet
   import_passphrase = ""
   import_address = ""
   create_shown = false
-  create_confirm = ""
+  create_made = true
+  backup_one = ""
+  backup_two = ""
+  backup_three = ""
   let made = mint_wallet()
   create_phrase = made.phrase
   create_positions = made.positions
@@ -747,16 +751,24 @@ on backup_written
   create_shown = true
   import_note = ""
 
-on backup_typed(typed)
-  create_confirm = typed
+on backup_one_typed(typed)
+  backup_one = typed
+
+on backup_two_typed(typed)
+  backup_two = typed
+
+on backup_three_typed(typed)
+  backup_three = typed
 
 // The proof. A wrong answer is refused with a sentence and the words stay off
 // the screen: showing them again on a failed check would turn the check into a
 // prompt.
 on confirm_backup
-  import_note = backup_refused(create_phrase, create_positions, create_confirm)
+  import_note = backup_refused(create_phrase, create_positions, [backup_one, backup_two, backup_three])
   return if !empty(import_note)
-  create_confirm = ""
+  backup_one = ""
+  backup_two = ""
+  backup_three = ""
   // From here the two doors are one path: the phrase derives, the address is
   // shown, and THIS IS MINE stores it.
   run every read_wallet(create_phrase, "") -> phrase_read _ | custody_failed _
@@ -772,7 +784,10 @@ on close_import
   create_phrase = ""
   create_positions = []
   create_shown = false
-  create_confirm = ""
+  create_made = false
+  backup_one = ""
+  backup_two = ""
+  backup_three = ""
   session = forget_wallet()
 
 on import_typed(typed)
@@ -810,6 +825,7 @@ on store_wallet
   run every keep_wallet() -> wallet_kept _ | custody_failed _
 
 on wallet_kept(entry)
+  create_made = false
   import_address = ""
   import_note = entry.note
   session = entry.session

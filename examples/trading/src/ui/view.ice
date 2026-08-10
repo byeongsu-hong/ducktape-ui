@@ -2732,18 +2732,22 @@ view
               col gap=16.0 w=fill
                 col gap=6.0 w=fill
                   Label value="THIS MACHINE"
-                  if empty(create_phrase)
+                  // Keyed off the door rather than off the phrase. The phrase
+                  // is cleared the instant it derives, so keying the title off
+                  // it renamed this box "Import a wallet" at the exact moment a
+                  // reader who had just made one was being shown their address.
+                  if !create_made
                     text "Import a wallet" size=22.0 @text-fg
-                  if !empty(create_phrase)
+                  if create_made
                     text "Make a wallet" size=22.0 @text-fg
-                  if empty(create_phrase)
+                  if !create_made
                     text "Twelve to twenty-four words, or a private key. It is turned into the one key this app signs enrolments with, kept behind Touch ID, and never sent anywhere."
                       with
                         size=11.0
                         w=fill
                         wrap=word
                         @text-muted
-                  if !empty(create_phrase)
+                  if create_made
                     text "Twenty-four words, made on this machine from the system's own randomness. They are the account: this app keeps what they derive, sealed to this Mac, and it will not show the words again."
                       with
                         size=11.0
@@ -2779,23 +2783,52 @@ view
                         w=fill
                         wrap=word
                         @text-fg
-                    text "Type those words, in that order, separated by spaces. The phrase is off the screen on purpose: this is the step that finds out whether it reached paper."
+                    text "One box each, in the order they are numbered. The phrase is off the screen on purpose: this is the step that finds out whether it reached paper."
                       with
                         size=11.0
                         w=fill
                         wrap=word
                         @text-muted
-                    input "" #backup-input <-> create_confirm
-                      with
-                        label="The words you were asked for"
-                        hint="three words"
-                        change=backup_typed
-                        text-size=12.0
-                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                    // One field per word asked for. Three answers to three
+                    // questions are three boxes; one box taking all three made
+                    // the reader do the parsing and made a stray space look
+                    // like a wrong phrase.
+                    row #backup-fields gap=8.0 w=fill
+                      col gap=4.0 w=fill
+                        Label value=backup_label(create_positions, 0) #backup-label-one
+                        input "" #backup-one <-> backup_one
+                          with
+                            label=backup_label(create_positions, 0)
+                            change=backup_one_typed
+                            text-size=12.0
+                            w=fill
+                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                      col gap=4.0 w=fill
+                        Label value=backup_label(create_positions, 1) #backup-label-two
+                        input "" #backup-two <-> backup_two
+                          with
+                            label=backup_label(create_positions, 1)
+                            change=backup_two_typed
+                            text-size=12.0
+                            w=fill
+                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                      col gap=4.0 w=fill
+                        Label value=backup_label(create_positions, 2) #backup-label-three
+                        input "" #backup-three <-> backup_three
+                          with
+                            label=backup_label(create_positions, 2)
+                            change=backup_three_typed
+                            text-size=12.0
+                            w=fill
+                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                 // Before the address is derived: the words. After it: the
                 // address and nothing else, because the phrase has done its
                 // work and the shortest life it can have is that one.
-                if empty(import_address) && empty(create_phrase)
+                // Never on the created path. The app is already holding the
+                // phrase it made, so a box asking for one again is a screen
+                // that looks like starting over — and a derivation that failed
+                // must not fall through to it either.
+                if empty(import_address) && !create_made
                   col gap=10.0 w=fill
                     input "" #import-phrase <-> import_phrase
                       with
@@ -2827,12 +2860,24 @@ view
                         wrap=word
                         font=digits
                         @text-fg
-                    text "Nothing has been stored. If that is not the address you expect, go back and check the words."
-                      with
-                        size=11.0
-                        w=fill
-                        wrap=word
-                        @text-muted
+                    // The advice differs by door, because "go back and check
+                    // the words" is not something a reader who just *made* a
+                    // wallet can do — the words are gone, on purpose, and the
+                    // address is simply the account they now have.
+                    if !create_made
+                      text "Nothing has been stored. If that is not the address you expect, go back and check the words."
+                        with
+                          size=11.0
+                          w=fill
+                          wrap=word
+                          @text-muted
+                    if create_made
+                      text "Nothing has been stored yet. This is the account those twenty-four words make — keep it, and this app can sign enrolments for it." #create-address-note
+                        with
+                          size=11.0
+                          w=fill
+                          wrap=word
+                          @text-muted
                 if !empty(import_note)
                   text import_note #import-note
                     with
@@ -2863,12 +2908,12 @@ view
                       with
                         label="Confirm the words you wrote down"
                         p=11.0
-                        disabled=empty(create_confirm)
+                        disabled=backup_incomplete
                       active bg=fg text=fg_invert r=4.0
                       hovered bg=fg text=fg_invert r=4.0
                       disabled bg=raised text=faint r=4.0
                       text "CONFIRM" size=11.0 tracking=1.1
-                  if empty(import_address) && empty(create_phrase)
+                  if empty(import_address) && !create_made
                     button #import-check -> check_phrase
                       with
                         label="Show the account these words derive"

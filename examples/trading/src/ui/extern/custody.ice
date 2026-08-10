@@ -47,7 +47,8 @@ extern crate::custody
   sync mint_wallet() -> Minted
   // What the backup step asks for, and why it has not been answered yet.
   pure backup_asks(positions:[i64]) -> str
-  pure backup_refused(phrase:str, positions:[i64], typed:str) -> str
+  pure backup_label(positions:[i64], at:i64) -> str
+  pure backup_refused(phrase:str, positions:[i64], given:[str]) -> str
   read_wallet(phrase:str, passphrase:str) -> Entry ! CustodyFault
   pure pending_wallet() -> str
   pure forget_wallet() -> Session

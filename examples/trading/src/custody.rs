@@ -496,37 +496,63 @@ pub fn backup_asks(positions: Vec<i64>) -> String {
     }
 }
 
+/// What one of the asked-for positions is called, for the field that takes it.
+///
+/// One field per position, so the label *is* the question: nobody has to work
+/// out which of three boxes the ninth word goes in.
+pub fn backup_label(positions: Vec<i64>, at: i64) -> String {
+    usize::try_from(at)
+        .ok()
+        .and_then(|at| positions.get(at))
+        .map_or_else(String::new, |at| format!("Word {at}"))
+}
+
 /// Why the backup check has not passed, or nothing when it has.
 ///
-/// It never says *which* word was wrong. Naming the wrong one turns three
-/// unknown words into three separate one-word questions, which is a check
-/// somebody can pass by guessing at it rather than by having written the phrase
-/// down.
-pub fn backup_refused(phrase: String, positions: Vec<i64>, typed: String) -> String {
+/// It names the **fields** that do not match and never the words that would.
+/// Which positions are being asked for is on screen already — each field
+/// carries its own label — so saying which of them is wrong tells an attacker
+/// nothing they cannot read, and tells the owner the one thing they need in
+/// order to fix it. Naming the expected word would be the leak: it turns a
+/// check into a prompt, and a phrase nobody wrote down would pass on the second
+/// attempt.
+///
+/// This is a change from the single blind field it replaces, where hiding the
+/// position was right precisely because the positions were not each their own
+/// visible question.
+pub fn backup_refused(phrase: String, positions: Vec<i64>, given: Vec<String>) -> String {
     let words: Vec<&str> = phrase.split_whitespace().collect();
     if words.is_empty() || positions.is_empty() {
         return "There is no phrase waiting to be confirmed.".to_owned();
     }
-    let given: Vec<String> = typed.split_whitespace().map(str::to_lowercase).collect();
     if given.len() != positions.len() {
-        return format!(
-            "Type {}, separated by spaces.",
-            backup_asks(positions.clone()),
-        );
+        return format!("Fill in {}.", backup_asks(positions));
     }
-    let held = positions.iter().zip(&given).all(|(at, given)| {
-        usize::try_from(*at)
-            .ok()
-            .and_then(|at| at.checked_sub(1))
-            .and_then(|at| words.get(at))
-            .is_some_and(|expected| expected.eq_ignore_ascii_case(given))
-    });
-    if held {
+    let wrong: Vec<i64> = positions
+        .iter()
+        .zip(&given)
+        .filter(|(at, given)| {
+            // One word per field. Two words in a box is not the word that was
+            // asked for, however the first of them reads.
+            let mut typed = given.split_whitespace();
+            let (Some(word), None) = (typed.next(), typed.next()) else {
+                return true;
+            };
+            !usize::try_from(**at)
+                .ok()
+                .and_then(|at| at.checked_sub(1))
+                .and_then(|at| words.get(at))
+                .is_some_and(|expected| expected.eq_ignore_ascii_case(word))
+        })
+        .map(|(at, _)| *at)
+        .collect();
+    if wrong.is_empty() {
         String::new()
     } else {
-        "That does not match the phrase you were shown. Check it against your copy — nothing has \
-         been stored."
-            .to_owned()
+        format!(
+            "{} does not match what you wrote down. Check your copy — nothing has been stored.",
+            backup_asks(wrong),
+        )
     }
 }
 
@@ -2899,70 +2925,117 @@ mod tests {
     fn backup_refused_takes_the_words_that_were_shown_and_nothing_else() {
         let phrase: Vec<&str> = ZEROS_24.split_whitespace().collect();
         let positions = vec![2i64, 9, 24];
-        let right = format!("{} {} {}", phrase[1], phrase[8], phrase[23]);
+        let right = || {
+            vec![
+                phrase[1].to_owned(),
+                phrase[8].to_owned(),
+                phrase[23].to_owned(),
+            ]
+        };
 
         assert_eq!(
-            backup_refused(ZEROS_24.to_owned(), positions.clone(), right.clone()),
+            backup_refused(ZEROS_24.to_owned(), positions.clone(), right()),
             "",
-            "the words that were shown, in the order asked for",
+            "the words that were shown, each in its own box",
         );
-        // Case and spacing are the copier's, not the check's: somebody reading
-        // off paper types how they type.
+        // Capitals are the same word: somebody reading off paper types how they
+        // type, and surrounding space is the field's, not the answer's.
         assert_eq!(
             backup_refused(
                 ZEROS_24.to_owned(),
                 positions.clone(),
-                format!("  {}   {}\t{}  ", right.to_uppercase(), "", "")
-                    .replace("  ", " ")
-                    .trim()
-                    .to_owned(),
+                right()
+                    .into_iter()
+                    .map(|word| format!("  {}  ", word.to_uppercase()))
+                    .collect(),
             ),
-            backup_refused(ZEROS_24.to_owned(), positions.clone(), right.to_uppercase()),
-        );
-        assert_eq!(
-            backup_refused(ZEROS_24.to_owned(), positions.clone(), right.to_uppercase()),
             "",
-            "capitals are the same words",
+            "case and stray space are not wrong answers",
         );
 
-        // Wrong word, right count.
-        let wrong = format!("{} {} {}", phrase[1], phrase[8], "zoo");
-        assert!(!backup_refused(ZEROS_24.to_owned(), positions.clone(), wrong).is_empty());
-        // Right words, wrong order — a check that sorted would pass this.
-        let swapped = format!("{} {} {}", phrase[23], phrase[8], phrase[1]);
+        // One wrong box, and the refusal says which box — never what belongs
+        // in it.
+        let mut wrong = right();
+        wrong[2] = "zoo".to_owned();
+        let said = backup_refused(ZEROS_24.to_owned(), positions.clone(), wrong);
+        assert_eq!(
+            said,
+            "word 24 does not match what you wrote down. Check your copy — nothing has been stored."
+        );
+
+        // Right words, wrong boxes — a check that sorted would pass this.
+        let swapped = vec![
+            phrase[23].to_owned(),
+            phrase[8].to_owned(),
+            phrase[1].to_owned(),
+        ];
         assert!(
             !backup_refused(ZEROS_24.to_owned(), positions.clone(), swapped).is_empty(),
-            "order is part of the answer",
+            "which box a word went in is part of the answer",
         );
-        // Too few and too many.
-        for count in ["art", "art art", "art art art art"] {
-            assert!(
-                !backup_refused(ZEROS_24.to_owned(), positions.clone(), count.to_owned())
-                    .is_empty(),
-                "{count}",
-            );
-        }
+
+        // A box holding two words is not the word that was asked for, however
+        // the first of them reads.
+        let mut crowded = right();
+        crowded[0] = format!("{} {}", phrase[1], phrase[1]);
+        assert!(
+            !backup_refused(ZEROS_24.to_owned(), positions.clone(), crowded).is_empty(),
+            "one word per box",
+        );
+
+        // An empty box, and too few boxes.
+        let mut blank = right();
+        blank[1] = String::new();
+        assert!(!backup_refused(ZEROS_24.to_owned(), positions.clone(), blank).is_empty());
+        assert!(
+            !backup_refused(
+                ZEROS_24.to_owned(),
+                positions.clone(),
+                vec![phrase[1].to_owned()],
+            )
+            .is_empty(),
+        );
+
         // And nothing to check is refused rather than passed, which is the arm
         // a skipped mint would land on.
-        assert!(!backup_refused(String::new(), positions, right).is_empty());
+        assert!(!backup_refused(String::new(), positions, right()).is_empty());
     }
 
     /// What the refusal says, and what it must not say.
     ///
-    /// Naming the wrong position would turn one three-word question into three
-    /// one-word questions, which is a check somebody can walk rather than pass.
+    /// It names the box, because each box is already labelled with its own
+    /// position on screen — saying which one is wrong tells an attacker nothing
+    /// they cannot read. What it must never name is the word that belongs
+    /// there: that would turn a check into a prompt.
     #[test]
-    fn the_backup_refusal_names_no_word_and_no_position() {
+    fn the_backup_refusal_names_the_box_and_never_the_word() {
         let phrase: Vec<&str> = ZEROS_24.split_whitespace().collect();
         let said = backup_refused(
             ZEROS_24.to_owned(),
             vec![2, 9, 24],
-            format!("{} zoo zoo", phrase[1]),
+            vec![phrase[1].to_owned(), "zoo".to_owned(), "zoo".to_owned()],
         );
-        assert!(!said.is_empty());
-        for leak in [phrase[1], phrase[8], phrase[23], "2", "9", "24"] {
+        assert!(
+            said.contains("word 9") && said.contains("word 24"),
+            "{said}"
+        );
+        assert!(
+            !said.contains("word 2,") && !said.starts_with("word 2 "),
+            "{said}"
+        );
+        for leak in [phrase[8], phrase[23]] {
             assert!(!said.contains(leak), "the refusal leaked {leak:?}: {said}");
         }
+    }
+
+    /// The label each box carries, which is the question it is asking.
+    #[test]
+    fn each_box_is_labelled_with_the_position_it_takes() {
+        let positions = vec![2i64, 9, 24];
+        assert_eq!(backup_label(positions.clone(), 0), "Word 2");
+        assert_eq!(backup_label(positions.clone(), 1), "Word 9");
+        assert_eq!(backup_label(positions.clone(), 2), "Word 24");
+        assert_eq!(backup_label(positions, 3), "");
     }
 
     /// A minted wallet: the shape the panel and the check both depend on.
@@ -3005,7 +3078,11 @@ mod tests {
             .map(|at| words[usize::try_from(*at).expect("a position") - 1])
             .collect();
         assert_eq!(
-            backup_refused(made.phrase.clone(), made.positions, right.join(" ")),
+            backup_refused(
+                made.phrase.clone(),
+                made.positions,
+                right.into_iter().map(str::to_owned).collect(),
+            ),
             "",
         );
     }
