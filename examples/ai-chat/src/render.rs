@@ -11,12 +11,12 @@
 
 use std::rc::Rc;
 
-use iced::advanced::text::highlighter::PlainText;
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
-use iced::widget::text_editor::{self, TextEditor};
-use iced::widget::{column, container, markdown, rich_text, scrollable};
+use iced::widget::{column, container, markdown, scrollable};
 use iced::{Color, Element, Event, Font, Length, Padding, Rectangle, Size, border};
+
+use crate::select::selectable;
 
 /// Mirrors the `code` font declared in `src/ui/app.ice`.
 const MONO: &str = "JetBrains Mono";
@@ -32,13 +32,6 @@ const CODE_BG_LIGHT: Color = Color::from_rgb(0.953, 0.949, 0.937);
 const CODE_BG_DARK: Color = Color::from_rgb(0.149, 0.145, 0.137);
 const CODE_FG_LIGHT: Color = Color::from_rgb(0.247, 0.243, 0.224);
 const CODE_FG_DARK: Color = Color::from_rgb(0.847, 0.835, 0.804);
-/// The palette's `fg`, and `brand` held back far enough to read through. Used
-/// only by the selectable view of an answer, which is a text editor and so
-/// draws its own text and its own selection.
-const TEXT_LIGHT: Color = Color::from_rgb(0.173, 0.169, 0.153);
-const TEXT_DARK: Color = Color::from_rgb(0.910, 0.902, 0.878);
-const SELECTION_LIGHT: Color = Color::from_rgba(0.627, 0.353, 0.235, 0.26);
-const SELECTION_DARK: Color = Color::from_rgba(0.871, 0.667, 0.502, 0.32);
 /// A code block's own ground, dark under either palette — it is the one part
 /// of an answer that should be findable without reading.
 /// On paper the block is ink, and needs no edge. On ink it is a deeper well
@@ -52,7 +45,11 @@ const BLOCK_EDGE: Color = Color::from_rgb(0.227, 0.216, 0.200);
 fn style(dark: bool) -> markdown::Style {
     let mono = Font::with_name(MONO);
     markdown::Style {
-        font: Font::default(),
+        // Every span carries its own font, so this is the answer's prose face
+        // rather than a fallback. iced's default here is the generic sans, and
+        // an answer set in it was the one thing in the window not in the
+        // window's own face.
+        font: mono,
         // The highlight is painted around the span but the line is laid out
         // from the glyphs alone, so horizontal padding here is drawn over
         // whatever sits beside it: anything wider than a hair swallows the
@@ -83,6 +80,39 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
         url.to_string()
     }
 
+    fn paragraph(
+        &self,
+        settings: markdown::Settings,
+        text: &markdown::Text,
+    ) -> Element<'a, String> {
+        selectable(text.spans(settings.style), settings.text_size)
+    }
+
+    fn heading(
+        &self,
+        settings: markdown::Settings,
+        level: &'a markdown::HeadingLevel,
+        text: &'a markdown::Text,
+        index: usize,
+    ) -> Element<'a, String> {
+        let size = match level {
+            markdown::HeadingLevel::H1 => settings.h1_size,
+            markdown::HeadingLevel::H2 => settings.h2_size,
+            markdown::HeadingLevel::H3 => settings.h3_size,
+            markdown::HeadingLevel::H4 => settings.h4_size,
+            markdown::HeadingLevel::H5 => settings.h5_size,
+            markdown::HeadingLevel::H6 => settings.h6_size,
+        };
+
+        container(selectable(text.spans(settings.style), size))
+            .padding(iced::padding::top(if index > 0 {
+                settings.text_size / 2.0
+            } else {
+                iced::Pixels::ZERO
+            }))
+            .into()
+    }
+
     fn code_block(
         &self,
         settings: markdown::Settings,
@@ -94,11 +124,7 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
         container(
             scrollable(
                 container(column(lines.iter().map(|line| {
-                    rich_text(line.spans(settings.style))
-                        .on_link_click(Self::on_link_click)
-                        .font(settings.style.code_block_font)
-                        .size(settings.code_size)
-                        .into()
+                    selectable(line.spans(settings.style), settings.code_size)
                 })))
                 .padding(settings.code_size),
             )
@@ -141,77 +167,20 @@ struct MarkdownBody {
     items: Rc<[markdown::Item]>,
     settings: markdown::Settings,
     viewer: Blocks,
-    size: f32,
-    dark: bool,
-    /// The same answer as its own source, held in an editor, when the row is
-    /// asked for its text rather than its rendering. `None` while it is drawn
-    /// as Markdown.
-    selection: Option<text_editor::Content>,
 }
 
 impl MarkdownBody {
-    fn new(source: &str, size: f64, dark: bool, selecting: bool) -> Self {
+    fn new(source: &str, size: f64, dark: bool) -> Self {
         Self {
             items: markdown::parse(source).collect::<Vec<_>>().into(),
             settings: settings(size, dark),
             viewer: Blocks { dark },
-            size: size as f32,
-            dark,
-            selection: selecting.then(|| text_editor::Content::with_text(source)),
         }
     }
 
     fn view(&self) -> Element<'_, String> {
-        match &self.selection {
-            Some(content) => selectable(content, self.size, self.dark)
-                .on_action(|_| String::new())
-                .into(),
-            None => markdown::view_with(self.items.iter(), self.settings, &self.viewer),
-        }
+        markdown::view_with(self.items.iter(), self.settings, &self.viewer)
     }
-}
-
-/// Everything the editor asked for except an edit.
-///
-/// Selecting and typing arrive on the same route, and dropping half of it here
-/// is what leaves a widget built to be written in behaving as text that can
-/// only be read and copied.
-fn apply(content: &mut text_editor::Content, asked: Vec<text_editor::Action>) {
-    for action in asked {
-        if !matches!(action, text_editor::Action::Edit(_)) {
-            content.perform(action);
-        }
-    }
-}
-
-/// The answer as plain text that can be dragged over.
-///
-/// iced draws non-editable text without selection, and a rendered Markdown
-/// document is non-editable text. A text editor is the one widget on this
-/// toolkit that hit-tests its own glyphs, so selecting part of an answer means
-/// showing the answer's source in one — with every edit dropped on the way back
-/// in, so it reads as text rather than as a box that can be typed into.
-fn selectable<Message>(
-    content: &text_editor::Content,
-    size: f32,
-    dark: bool,
-) -> TextEditor<'_, PlainText, Message> {
-    TextEditor::new(content)
-        .font(Font::default())
-        .size(size)
-        .line_height(1.5)
-        .padding(0)
-        .style(move |_theme, _status| text_editor::Style {
-            background: Color::TRANSPARENT.into(),
-            border: border::rounded(0),
-            placeholder: Color::TRANSPARENT,
-            value: if dark { TEXT_DARK } else { TEXT_LIGHT },
-            selection: if dark {
-                SELECTION_DARK
-            } else {
-                SELECTION_LIGHT
-            },
-        })
 }
 
 impl Widget<String, iced::Theme, iced::Renderer> for MarkdownBody {
@@ -271,49 +240,9 @@ impl Widget<String, iced::Theme, iced::Renderer> for MarkdownBody {
         shell: &mut Shell<'_, String>,
         viewport: &Rectangle,
     ) {
-        if self.selection.is_none() {
-            self.view().as_widget_mut().update(
-                tree, event, layout, cursor, renderer, clipboard, shell, viewport,
-            );
-            return;
-        }
-
-        // The editor claims the wheel for its own scrollbar, which this one
-        // never has: it is drawn at its full height inside the transcript's
-        // scroll. Left alone it would swallow every wheel event landing on an
-        // answer, and the transcript would stop scrolling over its own text.
-        if matches!(event, Event::Mouse(mouse::Event::WheelScrolled { .. })) {
-            return;
-        }
-
-        let (size, dark) = (self.size, self.dark);
-        let content = self.selection.as_mut().expect("checked just above");
-
-        // The editor reports what it wants done through a message. Nothing
-        // outside this row wants to hear about a drag, so the reply is caught
-        // here and applied here — minus the edits, which is what makes a
-        // widget built to be typed into read as text that can only be copied.
-        let mut asked = Vec::new();
-        let mut inner = Shell::new(&mut asked);
-        {
-            let mut view: Element<'_, text_editor::Action> = selectable(content, size, dark)
-                .on_action(|action| action)
-                .into();
-            view.as_widget_mut().update(
-                tree, event, layout, cursor, renderer, clipboard, &mut inner, viewport,
-            );
-        }
-        let captured = inner.is_event_captured();
-        let redraw = !inner.is_empty();
-        drop(inner);
-
-        apply(content, asked);
-        if captured {
-            shell.capture_event();
-        }
-        if redraw {
-            shell.request_redraw();
-        }
+        self.view().as_widget_mut().update(
+            tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+        );
     }
 
     fn mouse_interaction(
@@ -365,16 +294,8 @@ fn settings(size: f64, dark: bool) -> markdown::Settings {
 }
 
 /// One settled Markdown row. The message is the URL of a clicked link.
-///
-/// `selecting` swaps the rendering for the answer's own source in a form that
-/// can be dragged over and copied.
-pub fn markdown_body(
-    source: String,
-    size: f64,
-    dark: bool,
-    selecting: bool,
-) -> Element<'static, String> {
-    Element::new(MarkdownBody::new(&source, size, dark, selecting))
+pub fn markdown_body(source: String, size: f64, dark: bool) -> Element<'static, String> {
+    Element::new(MarkdownBody::new(&source, size, dark))
 }
 
 #[cfg(test)]
@@ -400,34 +321,6 @@ mod tests {
         )
     }
 
-    /// An answer handed over as text is there to be dragged across and copied,
-    /// not written in. Both arrive on the same route from the same widget, so
-    /// what separates them is this — and getting it wrong turns a transcript
-    /// into something a stray keystroke can rewrite.
-    #[test]
-    fn an_answer_handed_over_as_text_selects_but_does_not_take_an_edit() {
-        let mut body = MarkdownBody::new("one two", 13.5, false, true);
-        let content = body
-            .selection
-            .as_mut()
-            .expect("asked for its text, the row holds the source");
-
-        apply(
-            content,
-            vec![
-                text_editor::Action::Edit(text_editor::Edit::Insert('x')),
-                text_editor::Action::SelectAll,
-            ],
-        );
-
-        assert_eq!(content.text(), "one two", "an edit must not land");
-        assert_eq!(
-            content.selection().as_deref(),
-            Some("one two"),
-            "and a selection must"
-        );
-    }
-
     /// A removed lazy row may stay in the runtime's bounded parking lot for a
     /// cheap remount. Once that lot evicts the row, nothing else may keep its
     /// parsed Markdown alive.
@@ -438,7 +331,7 @@ mod tests {
         let row: Lazy = ui_lang_runtime::memo_lazy(
             0,
             move |_: &u16| {
-                let body = MarkdownBody::new("# One\n\n- and a list", 13.5, false, false);
+                let body = MarkdownBody::new("# One\n\n- and a list", 13.5, false);
                 *probe.borrow_mut() = Some(Rc::downgrade(&body.items));
                 Element::new(body)
             },

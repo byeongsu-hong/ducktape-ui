@@ -38,6 +38,7 @@ extern crate::codex
   pure sample_entries(dark:bool) -> [Entry]
   pure sample_running(dark:bool) -> [Entry]
   sync sample_session(dark:bool) -> Session
+  sync sample_answer() -> [Entry]
   stream codex_entries(session:Session) -> [Entry]
   sip codex_turn(session:Session) progress=Chunk -> [Entry] ! CodexError
 
@@ -46,7 +47,7 @@ extern crate::codex
 // parsed document until that row leaves the runtime's bounded parking lot. The
 // route carries the URL of a clicked link.
 extern crate::render
-  component markdown_body(source:str, size:f64, dark:bool, selecting:bool) -> str
+  component markdown_body(source:str, size:f64, dark:bool) -> str
   markdown-viewer answer_viewer(dark:bool) -> str
 
 // Signing in without leaving the window: ask the host for a short code, show

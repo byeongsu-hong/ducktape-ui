@@ -25,7 +25,10 @@ use "entries.ice"
 use "handlers.ice"
 use "tests/app.ice"
 
-font body family="IBM Plex Sans KR" default=true
+// One face for the whole window. JetBrains Mono has no Hangul, so IBM Plex
+// Sans KR stays loaded underneath it: a Korean word falls back to the face
+// that has the glyphs rather than to a box.
+font body family="JetBrains Mono" default=true
 font code family="JetBrains Mono"
 
 state
@@ -101,6 +104,17 @@ preset streaming
     status = "Responding"
     live_thinking = markdown("**Checking the append path**\n\nThe question is whether the tail alone is reparsed.")
     live = markdown("Yes — hold the parsed document and extend it:\n\n```rust\ncontent.push_str(&delta);\n```")
+
+// One answer on its own, for the drag a selection is made with.
+preset one_answer
+  state
+    signed = true
+    account = "you@example.com"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol"]
+    effort = some("xhigh")
+    efforts = ["xhigh"]
+    entries = sample_answer()
 
 // An empty chat with nobody's address in it, for a test that starts from the
 // welcome screen and captures what it reaches.
@@ -422,12 +436,6 @@ view
                             with
                               body=settled.body
                               dark=settled.dark
-                              selecting=settled.open
-                            row
-                              if !settled.open
-                                button "Select" #select @ghost_action -> toggle_row(settled.id)
-                              if settled.open
-                                button "Done" #done @ghost_action -> toggle_row(settled.id)
                         if settled.kind == "usage"
                           Usage #usage(settled.id) detail=settled.detail
                         if settled.kind == "note"
@@ -451,12 +459,14 @@ view
                             with
                               gap=6.0
                               text-size=12.5
+                              viewer=answer_viewer(dark)
                             style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=1.0 inline-code-py=0.0 inline-code-r=4.0 link=brand
                       markdown live #live-body -> copy_text _
                         with
                           gap=10.0
                           text-size=13.5
                           code-size=12.5
+                          viewer=answer_viewer(dark)
                         style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=1.0 inline-code-py=0.0 inline-code-r=4.0 link=brand
         Separator
         box #composer

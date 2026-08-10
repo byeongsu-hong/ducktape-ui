@@ -10,17 +10,36 @@
 
 // The mark every fold in the transcript opens by.
 //
-// It is a fixed-width box rather than a bare glyph because ▾ and ▸ do not have
-// the same advance: drawn loose, the heading beside them steps sideways every
-// time a row is opened. The size is set against the heading's cap height —
-// these are the "small" triangles, which draw at about a third of their point
-// size, so matching 13px text takes about 20.
+// ▼ and ▶ rather than ▾ and ▸. The arrowhead pair is drawn small on purpose —
+// about a third of its point size — so reaching a heading's cap height with
+// one meant a 20-point glyph, and a 20-point glyph carries 20 points of
+// leading it then hangs at the bottom of. These are drawn at their own size.
+//
+// The square around it is fixed and the glyph is centred in both directions
+// inside it, because ▼ and ▶ do not share an advance: drawn loose, the heading
+// beside them steps sideways every time a row is opened.
 component Fold(open:bool)
-  col #root w=17.0 align=center
+  col #root w=20.0 h=20.0
     if open
-      text "▾" size=20.0 @text-muted
+      text "▼" #open
+        with
+          w=fill
+          h=fill
+          size=12.0
+          line-h=1.0
+          align-x=center
+          align-y=center
+          @text-muted
     if !open
-      text "▸" size=20.0 @text-muted
+      text "▶" #closed
+        with
+          w=fill
+          h=fill
+          size=12.0
+          line-h=1.0
+          align-x=center
+          align-y=center
+          @text-muted
 
 // What was asked, leaning to its own side of the column.
 component Prompt(body:str) -> str
@@ -60,8 +79,16 @@ component Reasoning(row_id:i64, title:str, body:str, open:bool) -> i64
             w=fill
             gap=8.0
             align=center
-          box w=17.0 align-x=center
-            text "·" size=20.0 @text-muted
+          col w=20.0 h=20.0
+            text "·"
+              with
+                w=fill
+                h=fill
+                size=14.0
+                line-h=1.0
+                align-x=center
+                align-y=center
+                @text-muted
           text title @field_label
       if !empty(body)
         button #toggle -> emit(row_id)
@@ -131,21 +158,18 @@ component ToolCall(row_id:i64, title:str, detail:str, status:str, open:bool) -> 
 // The answer itself. `markdown_body` is a Rust adapter rather than the built-in
 // widget because a parsed document cannot live in component state; the adapter
 // owns one parse for exactly as long as this lazy row is retained or parked.
-// `selecting` swaps the rendering for the answer's own source, which can be
-// dragged over the way text in a browser can — see `src/render.rs` for why a
-// rendered document cannot be. The control that asks for it comes in through
-// the slot, because whether a row is selecting belongs to the row rather than
-// to this component: a settled row is drawn behind `lazy`.
-component Answer(body:str, dark:bool, selecting:bool) -> str
+// The answer is dragged over where it stands — `src/select.rs` is the rich
+// text that allows it. The button is still here for the times the whole answer
+// is what is wanted.
+component Answer(body:str, dark:bool) -> str
   col #root
     with
       w=fill
       pt=6.0
       gap=4.0
-    extern markdown_body(body, 13.5, dark, selecting) #body -> emit(_)
-    row w=fill gap=8.0
+    extern markdown_body(body, 13.5, dark) #body -> emit(_)
+    row w=fill
       space w=fill h=1.0
-      slot
       button "Copy" #copy @ghost_action -> emit(body)
 
 // What the turn cost, set quietly against the right edge.
@@ -175,8 +199,8 @@ component Chip(options:[str], selected:str?) -> str
     opened-hovered text=fg handle=fg bg=accent border=border r=7.0
     menu text=fg selected-text=fg selected-bg=accent bg=surface border=border border-w=1.0 r=10.0 shadow=shadow_popover shadow-y=6.0 shadow-blur=18.0
     handle dynamic
-      closed code="▾" size=21.0
-      open code="▴" size=21.0
+      closed code="▼" size=12.0
+      open code="▲" size=12.0
 
 // One chat that already happened, as a row to open it by.
 component PastChat(chat:Chat, open:bool) -> str

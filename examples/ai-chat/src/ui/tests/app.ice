@@ -208,39 +208,9 @@ test an_idle_composer_offers_only_send
   expect missing #shell/app/composer/field/stop
   expect missing #shell/app/composer/steer
 
-// Taking part of an answer rather than all of it. A rendered Markdown document
-// is drawn as rich text, which this toolkit paints without selection, so the
-// row hands over its own source instead — text a pointer can be dragged
-// across, which is the only form of an answer that can be.
-//
-// Neither form's glyphs reach the harness: the rendering paints rich text and
-// the source paints an editor, and it reads neither. What it can see is that
-// the row is laid out as something else entirely — the rendering is a heading,
-// a code block on its own ground and a list, and the source is one column of
-// plain lines, so the two cannot be the same height.
-test asking_an_answer_for_its_text_hands_over_the_source_it_was_written_as
-  preset conversation
-  viewport 920 800
-  target answer = #shell/app/transcript/rows/key(-6)/answer(-6)/root
-  target body = answer/body
-  target select = answer/select
-  target done = answer/done
-  expect body.height < 270.0
-  expect missing done
-
-  click select
-  expect body.height > 290.0
-  expect exists done
-  expect missing select
-
-  // And back, because the rendering is what a settled answer rests in.
-  click done
-  expect body.height < 270.0
-  expect exists select
-  expect missing done
-
-// The button beside it is the whole answer in one press, which is still the
-// shorter route when the whole answer is what is wanted.
+// Part of an answer leaves by being dragged over; the whole of one leaves by
+// this button, which is still the shorter route when the whole of it is what
+// is wanted.
 test copying_a_message_puts_its_own_text_on_the_clipboard
   preset conversation
   viewport 920 800
@@ -331,3 +301,34 @@ test a_chat_that_is_open_says_nothing_about_opening
   viewport 1180 700
   expect missing #shell/app/transcript/opening
   expect text "Worked for 12s · 4 steps"
+
+// Dragging across an answer selects it where it stands. The rendering is rich
+// text, which this toolkit paints without selection until something owns the
+// paragraph — `src/select.rs` is that, and this is the drag reaching it.
+//
+// The drag runs from the middle of the sentence down past its end, so what is
+// selected is the tail of the answer — and copying it is what says so exactly,
+// because a selection leaves this window by the same route a clicked link and
+// the Copy button use. The highlight itself is in the capture.
+test dragging_across_an_answer_selects_it_rather_than_clicking_through_it
+  preset one_answer
+  viewport 920 400
+  target answer = #shell/app/transcript/rows/key(-31)/answer(-31)/root
+  target body = answer/body
+  target copy = answer/copy
+  expect copied == ""
+
+  press body
+  move copy
+  release
+  capture dragged
+  // A drag is not a click on what either end landed on.
+  expect copied == ""
+
+  // The middle of the row lands mid-word, so the tail starts a letter in.
+  chord control "c"
+  expect copied == "nd extend it as it grows."
+
+  // And the button beside it still takes the whole of the answer.
+  click copy
+  expect copied == "Hold the parsed document and extend it as it grows."
