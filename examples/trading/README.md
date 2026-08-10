@@ -21,7 +21,19 @@ empty — see [the network registry](#the-network-registry).
 ```bash
 cargo run -p trading-example
 cargo test -p trading-example
+
+# On macOS, to import a wallet and trade: build, sign and run in one step.
+export ICE_PROVISION_PROFILE=~/Downloads/ducktape.provisionprofile
+scripts/sign-dev.sh -p trading-example
 ```
+
+`cargo run` is enough for everything that only reads: markets, candles, the
+book, and any address watched read-only. Custody is the half that is not — the
+Secure Enclave and the data-protection keychain serve signed code only, so on
+an unsigned build the first key this app tries to make comes back `-34018` and
+the import refuses rather than storing a wallet it cannot seal. See [what needs
+a Mac](#what-needs-a-mac) for what the signature takes and why nothing cheaper
+does.
 
 The app opens on a gate that leads with **Import a wallet** — see [where
 onboarding starts](#where-onboarding-starts). One press behind it, **Watch an
@@ -1143,6 +1155,67 @@ sheet for four networks rather than four, and a cancelled enrolment sheet
 leaving nothing registered. Until a person on a Mac reports those, the honest
 claim is that this seam's logic is tested and its platform half is compiled,
 reviewed and unrun.
+
+#### The first thing a Mac said
+
+On 2026-08-10 the owner ran the app on a Mac, pressed THIS IS MINE, and got:
+
+```
+making the wrapping key in the Secure Enclave: The operation couldn't be
+completed. (OSStatus error -34018 - failed to add key to keychain: <SecKeyRef
+curve type: kSecECCurveSecp256r1, ...>)
+```
+
+`-34018` is `errSecMissingEntitlement`, and it is a deployment answer rather
+than a defect. Apple's [TN3137][tn3137] makes protecting a key with the Secure
+Enclave a data-protection keychain feature, and says macOS builds a program's
+list of data-protection access groups from its code signing entitlements —
+"these entitlements must be authorized by a provisioning profile".
+[TN3125][tn3125] adds that `keychain-access-groups` and `application-identifier`
+are *restricted* entitlements, which is the security feature that stops one
+developer's code from claiming another's keychain group. A binary `cargo` built
+and nobody signed claims neither, so the Enclave declines to make it a key.
+
+Three things follow, and none of them is a change to how custody works.
+
+**An ad-hoc signature does not fix it, and cannot.** `codesign -s -` writes an
+entitlements plist into the signature, but an ad-hoc signature has no team and
+authorizes no restricted entitlement, so macOS ignores the claim. TN3137 adds
+the other half: a profile has to be *embedded*, and "your program needs an
+app-like bundle structure in which to embed that profile. This is standard for
+app and app extensions but not for command-line tools." So the working path is
+an Apple Development identity, an explicit App ID with Keychain Sharing, a
+development provisioning profile, and a `.app` around the binary — which is
+what `scripts/sign-dev.sh` assembles, builds and runs in one command. This
+paragraph is read off Apple's documentation and has not been executed here;
+**the owner's Mac confirms it or it does not stand.**
+
+**What the app says instead of the dump.** That message named a curve and a
+pair of coordinates in front of a reader whose entire problem was a build step.
+`described` in `session.rs` gives `-34018` alone a sentence about the binary —
+that it is unsigned, that nothing was stored, and the one command that fixes
+it — and every keychain and Enclave call composes its message there, because
+the entitlement is not specific to the wrapping key. Every other status keeps
+the platform's own words, which for every other status are the true ones.
+
+**What an unsigned build does with a wallet: nothing.** `store_sealed` seals
+before it files, so a build that cannot reach the Enclave has no path that
+writes an unsealed secret — the import refuses and names the fix. That refusal
+is the property #532 bought, and it is worth being explicit that the
+alternative was considered and rejected: an "unsealed anyway, labelled" option
+would put the account's own key in a keychain item at the exact moment the app
+has just proven it cannot protect it, in exchange for letting somebody skip a
+signing step. A phrase is written down; the convenience is not worth the other
+outcome.
+
+What is still open, and now needs a *signed* Mac rather than a Mac: all sixteen
+experiments above, none of which an unsigned build can reach. And one new one —
+whether a free Apple ID's Personal Team may authorize `keychain-access-groups`
+at all, which Apple documents in neither direction, and which decides whether
+running this example costs ninety-nine dollars a year.
+
+[tn3137]: https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains
+[tn3125]: https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles
 
 ## Fixtures are read as evidence
 

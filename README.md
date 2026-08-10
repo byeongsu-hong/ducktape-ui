@@ -206,6 +206,13 @@ cargo run -p tray-example      # the smallest macOS menu bar app: status item, l
 cargo run -p ai-chat-example   # streaming Codex chat: reasoning, tool calls, Markdown (see examples/ai-chat)
 ```
 
+Importing a wallet needs a signed build: the Secure Enclave and the
+data-protection keychain serve signed code only, so `cargo run` reads markets
+and watches addresses but refuses to store a key it cannot seal. On macOS,
+`scripts/sign-dev.sh -p trading-example` builds, signs and runs in one step —
+see [what needs a Mac](examples/trading/README.md#what-needs-a-mac) for what
+the signature takes.
+
 Trade with real money on `cargo run --release -p trading-example`. The dev
 profile optimizes that app itself (see `[profile.dev.package.trading-example]`),
 which takes a third off a debug frame on the terminal's densest screen, but only
