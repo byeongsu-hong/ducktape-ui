@@ -723,6 +723,44 @@ on open_import
   import_open = true
   import_note = ""
 
+// Make one, and open the step on the words. The press mints: there is no screen
+// between it and the phrase, because a step that asked "are you sure" before
+// generating would be asking about nothing — nothing is stored until the backup
+// is confirmed and the address is accepted.
+on create_wallet
+  import_open = true
+  import_note = ""
+  import_phrase = ""
+  import_passphrase = ""
+  import_address = ""
+  create_shown = false
+  create_confirm = ""
+  let made = mint_wallet()
+  create_phrase = made.phrase
+  create_positions = made.positions
+  import_note = made.error
+
+// The words have been written down — or so the owner says. This is the press
+// that takes them off the screen, and the next one has to prove it.
+on backup_written
+  return if empty(create_phrase)
+  create_shown = true
+  import_note = ""
+
+on backup_typed(typed)
+  create_confirm = typed
+
+// The proof. A wrong answer is refused with a sentence and the words stay off
+// the screen: showing them again on a failed check would turn the check into a
+// prompt.
+on confirm_backup
+  import_note = backup_refused(create_phrase, create_positions, create_confirm)
+  return if !empty(import_note)
+  create_confirm = ""
+  // From here the two doors are one path: the phrase derives, the address is
+  // shown, and THIS IS MINE stores it.
+  run every read_wallet(create_phrase, "") -> phrase_read _ | custody_failed _
+
 // Every exit clears the phrase and the key it derived. A step that remembered
 // either would be a recovery phrase left in state for the rest of the session.
 on close_import
@@ -731,6 +769,10 @@ on close_import
   import_passphrase = ""
   import_address = ""
   import_note = ""
+  create_phrase = ""
+  create_positions = []
+  create_shown = false
+  create_confirm = ""
   session = forget_wallet()
 
 on import_typed(typed)
@@ -749,9 +791,14 @@ on check_phrase
 
 on phrase_read(entry)
   // Cleared here rather than on the way out: the phrase has done its work, and
-  // the shortest life it can have is the one that ends the moment it has.
+  // the shortest life it can have is the one that ends the moment it has. A
+  // made phrase goes the same way at the same moment — this is the point the
+  // two doors converge on.
   import_phrase = ""
   import_passphrase = ""
+  create_phrase = ""
+  create_positions = []
+  create_shown = false
   import_address = pending_wallet()
   import_note = entry.note
   session = entry.session

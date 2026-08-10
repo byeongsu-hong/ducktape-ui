@@ -37,25 +37,33 @@ test trading_the_gate_leads_with_the_wallet
   preset gate
   viewport 1440 900
   target dialog = #gate
-  target import_path = dialog/gate-import
+  target primary = dialog/gate-primary
+  target create_path = primary/gate-create
+  target import_path = primary/gate-import
   target watch_path = dialog/gate-watch
   target browse_path = dialog/browse
   target field = dialog/address-input
-  // Three paths, each announced as what it is for rather than what it is.
+  // Four paths, each announced as what it is for rather than what it is.
+  expect a11y create_path name "Create a wallet, and trade this new account from this Mac"
   expect a11y import_path name "Import a wallet, and trade this account from this Mac"
   expect a11y watch_path name "Watch an address, read-only, without holding its key"
   expect a11y browse_path name "Browse markets only, with no account at all"
-  // Primary: first down the dialog, and the only one taking its whole width.
+  // Primary: the wallet row is first down the dialog and takes its whole width.
   // The width is asserted against the dialog's own rather than against the other
   // buttons', because a tracked label is wide enough to win that comparison by
   // accident — `IMPORT A WALLET` beats `Watch an address` on letter-spacing
-  // alone, so a button that had stopped filling the row would still have passed.
+  // alone, so a row that had stopped filling the dialog would still have passed.
   // The dialog is 460 with 28 of padding a side.
-  expect import_path.y < watch_path.y
-  expect import_path.y < browse_path.y
-  expect import_path.width ~= dialog.width - 56.0
-  expect watch_path.width < import_path.width
-  expect browse_path.width < import_path.width
+  expect primary.y < watch_path.y
+  expect primary.y < browse_path.y
+  expect primary.width ~= dialog.width - 56.0
+  expect watch_path.width < primary.width
+  expect browse_path.width < primary.width
+  // And the two wallet doors carry equal weight: same row, same width. Making
+  // one and bringing one are the same size of decision, and a reader who has a
+  // phrase should not have to hunt for where it goes.
+  expect create_path.y ~= import_path.y
+  expect create_path.width ~= import_path.width
   // And the read-only box is not here.
   expect missing field
   expect !gate_watch
@@ -127,7 +135,7 @@ test trading_leaving_a_browse_session_opens_on_the_wallet
   viewport 1660 900
   target dialog = #gate
   target field = dialog/address-input
-  target import_path = dialog/gate-import
+  target import_path = dialog/gate-primary/gate-import
   expect empty(address)
   dispatch reopen
   expect gate

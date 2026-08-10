@@ -675,6 +675,99 @@ A raw private key is accepted by shape rather than by a second field: 64 hex
 characters, with or without the prefix, is somebody pasting a key, and no
 recovery phrase is either.
 
+### Making one, and proving it was written down
+
+**CREATE A WALLET** mints twenty-four words from `getrandom::fill` — the OS
+generator, `getentropy` on macOS, the same call a trading key is minted with. It
+is not seeded by this process and cannot be replayed by it, and it fails loudly
+rather than falling back: a phrase from a weaker source is an account whose
+owner is whoever else can reach that source.
+
+Twenty-four rather than twelve. Twelve is already 128 bits and already matches
+what secp256k1 itself offers, so this is not a security margin that exists — it
+is that a phrase is written down exactly once and kept for years, and the cost
+of the longer one is paid in that single sitting while the cost of wishing it
+were longer cannot be paid at all. An imported 12-word phrase is unaffected;
+`check_phrase` takes every legal length.
+
+Then the part that is actually hard: **finding out whether it reached paper.**
+
+1. The words are shown, once, with what they are — *anyone who reads these words
+   owns this account, and nobody can take it back* — and told to go on paper
+   rather than into a screenshot or a password manager's note field.
+2. **I'VE WRITTEN IT DOWN** takes them off the screen. That press is the only
+   way past this step, and the check on the far side is what it is for.
+3. Three positions, chosen by the same generator that made the phrase, are read
+   back — *word 9, word 12 and word 23* — typed into a field with the phrase no
+   longer visible.
+
+Three, not zero and not twenty-four. Zero is negligent: a phrase nobody copied
+is an account nobody can recover, and the app cannot tell until it is too late
+to fix. Twenty-four is hostile — re-typing the whole phrase is a chore that
+trains people to paste it from wherever they saved it, which is the habit this
+step exists to discourage. Three sampled positions cannot be answered by
+somebody who did not copy the phrase and take seconds for somebody who did.
+
+A wrong answer is refused with a sentence that names **no word and no position**
+— naming one would turn a single three-word question into three one-word
+questions somebody can walk rather than pass — and the words stay off the
+screen, because showing them again on a failed check turns the check into a
+prompt. Nothing is derived and nothing is stored until it passes. Past it, the
+two doors are one path: the phrase derives, the address is shown, THIS IS MINE
+stores it, and ENROL ALL registers the networks.
+
+### What the keychain actually holds
+
+**The owner's requirement, 2026-08-10: the stored form is ciphertext.**
+
+The keychain already encrypts what it holds — a data-protection item is sealed
+at rest under a class key the Secure Enclave protects — so this is not the first
+layer of encryption over the account's key, and saying otherwise would be
+selling the same protection twice. It is the second, and it exists because the
+first is the *platform's* judgement about who may read the item. Anything that
+gets past that judgement — an entitlement that widens an access group, an access
+control that did not take, a future path in this app that reads without the
+guard — comes away with bytes that still need a separate assertion against a key
+that cannot leave the chip.
+
+| | |
+| --- | --- |
+| Wrapping key | P-256, generated with `kSecAttrTokenIDSecureEnclave`, permanent in the data-protection keychain, one per account |
+| Guard on it | `kSecAccessControlPrivateKeyUsage` + `kSecAccessControlBiometryCurrentSet`, protection `WhenPasscodeSetThisDeviceOnly` |
+| Envelope | ECIES — ephemeral key agreement, X9.63 KDF, AES-GCM (`kSecKeyAlgorithmECIESEncryptionCofactorX963SHA256AESGCM`) |
+| Stored item | `ducktape-sealed-1:` + ciphertext, under the same `wallet:0x…` account |
+| Plaintext lifetime | after a fresh biometric assertion, in this process, until the `Secret` wrapping it drops |
+
+Sealing uses the public half, so storing costs no prompt. Opening is the private
+half, and that is the assertion. `BIOMETRY_CURRENT_SET` is deliberately stricter
+than the item's `USER_PRESENCE`: enrolling a new finger invalidates the wrapping
+key, so somebody who learns the passcode and adds their own biometry cannot then
+unwrap the account. The trade is real — an owner who re-enrols their own finger
+loses the wrapping key and imports the phrase again — and it is the right way
+round for a key that approves trading keys. The phrase is on paper; the
+convenience is not worth the other outcome.
+
+**Passkeys, honestly.** The owner asked for "unlockable with a passkey", and
+what shipped is the Secure Enclave envelope above. A WebAuthn passkey unlocking
+the blob would mean a PRF/`hmac-secret` extension assertion producing a key to
+wrap with — and that assertion has no native API on macOS outside a
+`WKWebView`/`ASAuthorization` flow, neither of which is reachable from this
+process without an Objective-C bridge and the `unsafe` this workspace forbids.
+It would also buy something different from what it sounds like: a *synced*
+passkey makes the account recoverable on another Mac, which is a change to where
+the key lives rather than to how it is encrypted. The Enclave envelope is
+"encrypted, biometrically unlocked" as the platform offers it natively; a synced
+passkey is a portability feature and belongs in its own change with its own
+decision about iCloud.
+
+**Migration.** #523 stored the account key as itself. An item without the
+`ducktape-sealed-1:` marker is one of those, and it is re-sealed on the read that
+finds it — `store` replaces rather than adds, so the bare form is gone the moment
+the replacement lands and a second read is an ordinary sealed read. The arm is
+dated rather than permanent: it can be deleted once no machine holds a #523
+item, because a branch that reads keychain bytes as a bare key is exactly what
+this change exists to stop.
+
 BIP-39 and BIP-32 are implemented here on `hmac`, `sha2` and `k256` rather than
 taken from a wallet crate, and they are pinned to three outside oracles:
 
@@ -695,12 +788,15 @@ The gate leads with the wallet. An app that can place orders should not open by
 asking for somebody else's address, so the three ways in are ordered by what
 they are *for* rather than by what the app happened to support first:
 
-1. **Import a wallet** — the primary control, the only one taking the dialog's
-   whole width. The address on this path is *derived*: asking an owner to type
-   an address the app can compute from their phrase is work the derivation
-   exists to remove, and a typo in it reads back an account that is not theirs
-   with nothing on screen admitting it. This is why the address field is not on
-   this surface at all.
+1. **Create a wallet** and **Import a wallet** — two doors of equal weight on
+   one row, and that row is the only control taking the dialog's whole width.
+   Making one comes first because somebody arriving here with no wallet is the
+   ordinary case; somebody who already has a phrase knows which button they
+   want. The address on both paths is *derived*: asking an owner to type an
+   address the app can compute from their phrase is work the derivation exists
+   to remove, and a typo in it reads back an account that is not theirs with
+   nothing on screen admitting it. This is why the address field is not on this
+   surface at all.
 2. **Watch an address** — the read-only path, one press behind the first, named
    for its honest use. An account whose key you do not hold is one you can only
    watch, and the address field lives here with it. Nothing on this path can
@@ -966,7 +1062,12 @@ now that something calls it — one sheet per unlock rather than two, a cancelle
 sheet leaving a live button, the full enrol-approve-unlock round trip, a
 re-enrolment keeping the secret it replaces when the add fails — and with it
 `enrol_one`'s ordering, which asks the venue before it files anything so a
-refused registration leaves the previous key where it was — THIS IS MINE
+refused registration leaves the previous key where it was — the Secure Enclave
+envelope end to end (a key generated in the chip, a secret sealed to it, a
+Touch ID assertion to open it, and what a re-enrolled finger does to a key
+bound to `BIOMETRY_CURRENT_SET`), the sheet count for one wallet read now that
+the item's guard and the key's guard are two assertions, the migration of a
+real #523 item on a real keychain, THIS IS MINE
 storing the account key under `wallet:0x…` and saying so, ENROL ALL costing one
 sheet for four networks rather than four, and a cancelled enrolment sheet
 leaving nothing registered. Until a person on a Mac reports those, the honest
