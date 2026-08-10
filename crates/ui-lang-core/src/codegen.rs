@@ -813,6 +813,13 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             ComponentStorage::Stateless => unreachable!(),
         }
     }
+    if !program.secrets().is_empty() {
+        writeln!(
+            out,
+            "pub(crate) {SECRET_STORE_FIELD}: ::ui_lang_runtime::SecretStore,"
+        )
+        .unwrap();
+    }
     writeln!(out, "}}").unwrap();
     writeln!(
         out,
@@ -897,6 +904,13 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             )
             .unwrap();
         }
+    }
+    if !program.secrets().is_empty() {
+        writeln!(
+            out,
+            "{SECRET_TYPED_VARIANT}(::std::string::String, ::std::string::String),"
+        )
+        .unwrap();
     }
     for binding in program.controlled_input_bindings()? {
         writeln!(out, "{}(::std::string::String),", binding_variant(binding)).unwrap();

@@ -317,6 +317,23 @@ pub(in crate::codegen) fn checked_state_env(
             )
         })
         .collect::<HashMap<_, _>>();
+    // A secret's binding code is the *store*, not its content. The two reads
+    // it can turn into are chosen at the use site by value mode: borrowed for
+    // `empty`/`len`, owned for the one extern parameter that may take it.
+    env.extend(program.secrets().iter().enumerate().map(|(index, slot)| {
+        (
+            slot.clone(),
+            Binding {
+                code: format!("{name}.{SECRET_STORE_FIELD}"),
+                ty: Type::Secret,
+                local: false,
+                state: None,
+                owner: Some(BindingOwner::Value(ResolvedValueRef::Secret(
+                    crate::hir::SecretId(index as u32),
+                ))),
+            },
+        )
+    }));
     env.extend(program.derived().iter().map(|derived| {
         (
             derived.name.clone(),

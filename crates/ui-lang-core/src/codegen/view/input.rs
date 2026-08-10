@@ -9,29 +9,56 @@ pub(in crate::codegen) fn render_input(
     scope: &str,
 ) -> Result<String, Error> {
     let program = document;
-    let state = resolved_input_state(input, env, program)?;
-    let binding_constructor = match &state.state {
-        Some(StateBinding::App(name)) => {
-            let variant = binding_variant(name);
-            format!("{message}::{variant} as fn(::std::string::String) -> {message}")
-        }
-        Some(StateBinding::Component {
-            component,
-            name,
-            scope,
-        }) => {
-            let variant = component_binding_variant(component, name);
+    // A secret input reads and writes the runtime store instead of app state.
+    // `value_code` is what the widget draws from; there is no second copy, and
+    // no expression anywhere else in the program can reach it.
+    let (value_code, binding_constructor) = if let Some(slot) = input.binding.secret() {
+        // The store's receiver comes from the render scope rather than a
+        // hard-coded `self`, the same way ordinary state's does.
+        let store = env.get(slot).ok_or_else(|| {
+            program
+                .invariant_at_origin(input.origin, "secret store is absent from its render scope")
+        })?;
+        (
+            format!("{}.text({})", store.code, rust_string(slot)),
             format!(
-                "{{ let __scope = ({}).clone(); move |__value| {message}::{variant}(__scope.clone(), __value) }}",
-                borrowed_scope(scope)
-            )
-        }
-        None => {
-            return Err(program.invariant_at_origin(
-                input.origin,
-                "normalized input binding is absent from the state environment",
-            ));
-        }
+                "{message}::{}(::std::string::String::from({}), __text)",
+                SECRET_TYPED_VARIANT,
+                rust_string(slot)
+            ),
+        )
+    } else {
+        let state = resolved_input_state(input, env, program)?;
+        let constructor = match &state.state {
+            Some(StateBinding::App(name)) => {
+                let variant = binding_variant(name);
+                format!("{message}::{variant} as fn(::std::string::String) -> {message}")
+            }
+            Some(StateBinding::Component {
+                component,
+                name,
+                scope,
+            }) => {
+                let variant = component_binding_variant(component, name);
+                format!(
+                    "{{ let __scope = ({}).clone(); move |__value| {message}::{variant}(__scope.clone(), __value) }}",
+                    borrowed_scope(scope)
+                )
+            }
+            None => {
+                return Err(program.invariant_at_origin(
+                    input.origin,
+                    "normalized input binding is absent from the state environment",
+                ));
+            }
+        };
+        (state.code.clone(), constructor)
+    };
+    let secret_slot = input.binding.secret();
+    let binding_constructor = if secret_slot.is_some() {
+        format!("move |__text| {binding_constructor}")
+    } else {
+        binding_constructor
     };
     let constructor = input
         .change
@@ -66,16 +93,21 @@ pub(in crate::codegen) fn render_input(
         .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "false".into());
-    let secure = input
-        .secure
-        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
-        .transpose()?
-        .unwrap_or_else(|| "false".into());
+    // A secret input is masked permanently; the checker refuses `secure=` on
+    // one, so there is no expression that could ever unmask it.
+    let secure = if secret_slot.is_some() {
+        "true".to_owned()
+    } else {
+        input
+            .secure
+            .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
+            .transpose()?
+            .unwrap_or_else(|| "false".into())
+    };
 
     let mut widget = format!(
-        "::iced::widget::text_input({}, &{})",
+        "::iced::widget::text_input({}, &{value_code})",
         rust_string(&input.hint),
-        state.code
     );
     widget.push_str(".id(::iced::widget::Id::from(__a11y_key.clone()))");
     if let Some(padding) = input.utility_style.padding_code() {
@@ -165,6 +197,13 @@ pub(in crate::codegen) fn render_input(
         .unwrap();
     }
     widget.push_str(&resolved_input_style_code(input, program, env)?);
+    let a11y_value = if secret_slot.is_some() {
+        // Not "the branch is false" — there is no expression here that could
+        // produce the text, so no later edit can make one true.
+        ".value_maybe(::std::option::Option::None)".to_owned()
+    } else {
+        format!(".value_maybe((!__secure).then(|| ({value_code}).to_owned()))")
+    };
     let view = if input.label.is_empty() {
         "__input.into()".to_owned()
     } else {
@@ -174,8 +213,7 @@ pub(in crate::codegen) fn render_input(
         )
     };
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled}; let __secure = {secure}; let __role = if __secure {{ ::ui_lang_runtime::Role::PasswordInput }} else {{ ::ui_lang_runtime::Role::TextInput }}; let __input = ::ui_lang_runtime::accessible({widget}, __a11y_id, __role).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).value_maybe((!__secure).then(|| ({}).clone())).disabled(__disabled){accessibility_description}; {view} }}",
-        state.code,
+        "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled}; let __secure = {secure}; let __role = if __secure {{ ::ui_lang_runtime::Role::PasswordInput }} else {{ ::ui_lang_runtime::Role::TextInput }}; let __input = ::ui_lang_runtime::accessible({widget}, __a11y_id, __role).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}){a11y_value}.disabled(__disabled){accessibility_description}; {view} }}"
     ))
 }
 
@@ -184,18 +222,23 @@ fn resolved_input_state<'a>(
     env: &'a dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<&'a Binding, Error> {
-    let state = env.get(input.binding.name()).ok_or_else(|| {
+    let ResolvedInputBinding::State(binding) = &input.binding else {
+        return Err(
+            program.invariant_at_origin(input.origin, "secret input asked for a state binding")
+        );
+    };
+    let state = env.get(binding.name()).ok_or_else(|| {
         program.invariant_at_origin(input.origin, "input state is absent from its render scope")
     })?;
-    if !input.binding.accepts_type(&state.ty)
-        || state.owner != Some(BindingOwner::Value(input.binding.checked_ref()))
+    if !binding.accepts_type(&state.ty)
+        || state.owner != Some(BindingOwner::Value(binding.checked_ref()))
     {
         return Err(program.invariant_at_origin(
             input.origin,
             "input render binding does not match its normalized state ID",
         ));
     }
-    match (&input.binding, &state.state) {
+    match (binding, &state.state) {
         (WritableStateRef::App { name, .. }, Some(StateBinding::App(actual))) if name == actual => {
         }
         (WritableStateRef::ComponentParam { .. }, Some(_)) => {}

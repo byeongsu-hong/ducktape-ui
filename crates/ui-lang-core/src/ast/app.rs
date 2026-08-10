@@ -16,6 +16,7 @@ pub struct Document {
     pub palettes: Vec<Palette>,
     pub fonts: Vec<FontDecl>,
     pub states: Vec<State>,
+    pub secrets: Vec<SecretDecl>,
     pub derived: Vec<Derived>,
     pub components: Vec<Component>,
     pub handlers: Vec<Handler>,

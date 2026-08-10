@@ -28,6 +28,15 @@ impl DeclarationIndex {
                 origin: origins.push(&value.span, None),
             })
             .collect::<Vec<_>>();
+        let secrets = document
+            .secrets
+            .iter()
+            .enumerate()
+            .map(|(index, secret)| Declaration {
+                id: SecretId(index as u32),
+                origin: origins.push(&secret.span, None),
+            })
+            .collect::<Vec<_>>();
         let mut components = document
             .components
             .iter()
@@ -511,6 +520,7 @@ impl DeclarationIndex {
             app_setting_expressions,
             app_states,
             derived,
+            secrets,
             components,
             components_by_name,
             structs,

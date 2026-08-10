@@ -1064,7 +1064,7 @@ pub(in crate::check) fn compatible(left: &Type, right: &Type) -> bool {
 }
 
 pub(in crate::check) fn type_error(span: &Span, expected: &Type, actual: &Type) -> Error {
-    Error::new(
+    let error = Error::new(
         "E101",
         span,
         format!(
@@ -1072,5 +1072,14 @@ pub(in crate::check) fn type_error(span: &Span, expected: &Type, actual: &Type) 
             expected.display(),
             actual.display()
         ),
-    )
+    );
+    // Every way a secret could become an ordinary value arrives here, because
+    // no operation on `secret` produces anything else. One sentence at the
+    // single funnel beats a rule per widget.
+    if *actual == Type::Secret {
+        return error.hint(
+            "a secret never becomes a value: bind one `input` to it, ask it `empty` or `len`, clear it with `= \"\"`, and pass it to an extern parameter declared `secret`",
+        );
+    }
+    error
 }

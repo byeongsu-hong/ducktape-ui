@@ -1,0 +1,2 @@
+E103
+`secret` cannot be application state

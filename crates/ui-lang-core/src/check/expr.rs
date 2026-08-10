@@ -2712,7 +2712,7 @@ fn check_contextual_builtin(
                 ));
             }
             match expr_type(&args[0], env, document, span)? {
-                Type::List(_) | Type::Str | Type::Bytes => {
+                Type::List(_) | Type::Str | Type::Bytes | Type::Secret => {
                     Ok(if builtin == ContextualBuiltin::Len {
                         Type::I64
                     } else {

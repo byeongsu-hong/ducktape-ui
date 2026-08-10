@@ -18,6 +18,7 @@ mod resize_handle;
 #[cfg(feature = "full-runtime")]
 pub mod rich_text_editor;
 mod scroll_anchor;
+mod secret;
 mod selectable_text;
 pub mod selection;
 mod stack_relief;
@@ -54,6 +55,7 @@ pub use resize_handle::*;
 #[cfg(feature = "full-runtime")]
 pub use rich_text_editor::{ContentVersion, EditorChange, RichTextEditor};
 pub use scroll_anchor::*;
+pub use secret::{Secret, SecretStore};
 pub use selectable_text::*;
 pub use stack_relief::*;
 #[cfg(feature = "virtual-list")]

@@ -48,7 +48,13 @@ fn controlled_bindings(
         output: &mut ControlledOutput,
     ) -> Result<(), Error> {
         let binding = match node {
-            ViewNode::Input { binding, span, .. } if !editors => {
+            ViewNode::Input { binding, span, .. }
+                if !editors
+                    && !document
+                        .secrets
+                        .iter()
+                        .any(|secret| secret.name == *binding) =>
+            {
                 Some((binding, "input", span, None))
             }
             ViewNode::TextEditor {
