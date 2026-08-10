@@ -5,6 +5,7 @@
 //! numbers as JSON strings, so a derive would need a custom deserializer per
 //! field anyway.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::net::TcpStream;
@@ -2462,6 +2463,34 @@ fn price_decimals(value: f64) -> usize {
     } else {
         6
     }
+}
+
+/// The smallest price step this market is actually quoting, read off the book
+/// rather than assumed.
+///
+/// Both venues publish a book already grouped to the tick they accept, so the
+/// gap between two adjacent levels is the tick — and one tick is what a trader
+/// means by "one up". Taken as the smallest gap across both sides merged,
+/// because the one gap in that list that is *not* a tick is the spread, and it
+/// is never the smallest.
+///
+/// With no book to read, one unit of the precision the price is printed at:
+/// the smallest step that changes what the field says.
+pub(crate) fn book_tick(book: Option<&Book>, price: f64) -> f64 {
+    let mut levels: Vec<f64> = book
+        .into_iter()
+        .flat_map(|depth| depth.bids.iter().chain(depth.asks.iter()))
+        .map(|level| level.price)
+        .collect();
+    levels.sort_by(|left, right| left.partial_cmp(right).unwrap_or(Ordering::Equal));
+    levels
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .filter(|gap| *gap > 0.0)
+        .fold(None, |best: Option<f64>, gap| {
+            Some(best.map_or(gap, |best| best.min(gap)))
+        })
+        .unwrap_or_else(|| 10_f64.powi(-(price_decimals(price) as i32)))
 }
 
 pub fn fmt_px(value: f64) -> String {

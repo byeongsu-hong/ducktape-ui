@@ -1,6 +1,7 @@
 mod custody;
 #[cfg(test)]
 mod frame_probe;
+mod hotkeys;
 mod hyperliquid;
 mod lighter;
 mod lighter_sign;

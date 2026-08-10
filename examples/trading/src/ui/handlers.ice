@@ -80,6 +80,29 @@ on search_key(event)
   return if event.key != key.named("Escape")
   query = ""
 
+// The terminal's own keys, in one handler because a handler cannot branch.
+//
+// Each line asks one mapping what its key means and assigns the answer, and
+// every mapping answers "unchanged" for a key it does not own — so a press that
+// belongs to one of them moves that one thing and leaves the other two where
+// they were. Written as branches this would be one handler and one subscription
+// per key, all four of them woken by every keystroke.
+//
+// Nothing here sends, and nothing here can: the subscription is off while a
+// confirmation is standing, and the only key that opens one is `submit=` on the
+// ticket's own fields — a widget's own Enter, which cannot fire from a widget
+// the reader is not in.
+on ticket_key(event)
+  ticket_buy = hotkey_side(event.key, ticket_buy)
+  ticket_price = hotkey_price(event.key, ticket_price, book)
+  // The share row's own arithmetic, so a keyed 50% and a pressed 50% are the
+  // same size — including which thing it is 50% of. An unowned key answers zero
+  // here, which `share_size` already reads as "no size to fill in", so the
+  // guard below is the one the buttons already have rather than a second rule.
+  let sized = share_size(account, ticket_unit, focus, quote.leverage, hotkey_share(event.key), ticket_usd, ticket_reduce, position_held(positions, coin))
+  return if empty(sized)
+  ticket_size = sized
+
 // The network picker, opened from the block in the header that names the
 // network. There is no toggle here because there cannot be a second press: the
 // panel opens over a backdrop that takes every click outside it, so the way
@@ -717,6 +740,16 @@ subscribe
   // one press is one act, and the act a reader means is the panel covering
   // the screen rather than a word in a rail behind it.
   keyboard press when venues_open -> venues_key _
+  // The ticket's keys, and `status=ignored` is the guard that matters: a
+  // focused widget marks the keys it consumed captured, so the search box, the
+  // price, the size and the leverage all keep their own keystrokes and this
+  // never sees them. Every key in the scheme is one a text input consumes.
+  //
+  // The three conditions after the page are `modal` spelled out, because a
+  // subscription reads state rather than derived values. They are the safety
+  // rule as a condition: with the gate or either confirmation standing, the
+  // whole scheme is off, so no key can reach past a panel to the send.
+  keyboard press status=ignored when page == Page.terminal && !gate && !order_pending(confirm) && !sweep_pending(sweep) && !venues_open -> ticket_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 60s when !gate && !empty(address) -> tick_portfolio

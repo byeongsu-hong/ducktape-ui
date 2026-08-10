@@ -1211,21 +1211,24 @@ view
                                         align-x=center
                                         tracking=1.1
                                         @text-muted
-                                if !empty(ticket_effect(positions, coin, ticket_coins, ticket_buy))
-                                  text ticket_effect(positions, coin, ticket_coins, ticket_buy)
-                                    with
-                                      size=11.0
-                                      w=fill
-                                      wrap=word
-                                      @text-muted
                                 if !ticket_market
                                   col #limit-group gap=6.0 w=fill
                                     Label value="LIMIT PRICE"
+                                    // Enter reviews. It is the field's own
+                                    // submit rather than a key the app listens
+                                    // for, which is the strongest form of the
+                                    // rule the whole scheme follows: a widget's
+                                    // Enter cannot fire from a widget the reader
+                                    // is not in, so this can never open a
+                                    // confirmation out of the search box. It
+                                    // opens one and stops there; nothing typed
+                                    // sends.
                                     input "" #ticket-price <-> ticket_price
                                       with
                                         label="Limit price"
                                         hint="0.00"
                                         change=ticket_priced
+                                        submit=ticket_review
                                         text-size=12.0
                                         font=digits
                                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
@@ -1337,6 +1340,7 @@ view
                                       label="Size"
                                       hint="0.00"
                                       change=ticket_sized
+                                      submit=ticket_review
                                       text-size=12.0
                                       font=digits
                                     focused bg=raised border=muted r=4.0 placeholder=faint value=fg
@@ -1379,6 +1383,25 @@ view
                                       reduce=ticket_reduce
                                     events
                                       pick -> size_share _
+                                // What this order does to what is already held,
+                                // under the size that decides it rather than
+                                // over it.
+                                //
+                                // Under, because it comes and goes with the size
+                                // field: iced matches widget state by position,
+                                // so a line that vanished from *above* the field
+                                // took the field's focus with it the moment a
+                                // reader emptied it — and the next keystroke,
+                                // owned by nothing, reached the app's own
+                                // shortcuts instead. A readout belongs after the
+                                // control it reads anyway.
+                                if !empty(ticket_effect(positions, coin, ticket_coins, ticket_buy))
+                                  text ticket_effect(positions, coin, ticket_coins, ticket_buy)
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      wrap=word
+                                      @text-muted
                                 col gap=6.0 w=fill
                                   row gap=6.0 align=center
                                     Label value="LEVERAGE"
@@ -1398,6 +1421,7 @@ view
                                       label="Leverage"
                                       hint="5"
                                       change=ticket_levered
+                                      submit=ticket_review
                                       text-size=12.0
                                       font=digits
                                     focused bg=raised border=muted r=4.0 placeholder=faint value=fg
@@ -2446,6 +2470,43 @@ view
                                     wrap=word
                                     @text-muted
                             rule horizontal thickness=1.0 color=edge
+                            // The keyboard, written where the app's own facts
+                            // are written rather than behind a `?` overlay. An
+                            // overlay is a fourth thing that can stand on the
+                            // one modal surface, and this page is already the
+                            // place a reader comes to find out what the app
+                            // will and will not do.
+                            //
+                            // The rows are the scheme itself rather than a copy
+                            // of it: one list in Rust answers the keys and
+                            // prints them here, so a binding that changes
+                            // cannot leave its documentation behind.
+                            col #shortcuts gap=10.0 w=fill
+                              Label value="KEYBOARD"
+                              for bound in hotkey_list()
+                                row #shortcut(bound.keys)
+                                  with
+                                    gap=12.0
+                                    w=fill
+                                    align=center
+                                  text bound.keys
+                                    with
+                                      size=12.0
+                                      w=96.0
+                                      font=digits
+                                      @text-fg
+                                  text bound.act
+                                    with
+                                      size=12.0
+                                      w=fill
+                                      wrap=word
+                                      @text-muted
+                              text hotkey_note() #shortcuts-note
+                                with
+                                  size=12.0
+                                  w=fill
+                                  wrap=word
+                                  @text-muted
                             rule horizontal thickness=1.0 color=edge
                             col gap=10.0 w=fill
                               Label value="FEED"
