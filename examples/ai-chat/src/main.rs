@@ -11,6 +11,62 @@ fn main() -> iced::Result {
     AiChat::run()
 }
 
+#[cfg(test)]
+mod history_loads {
+    use super::*;
+
+    #[test]
+    fn busy_loading_and_current_chats_do_not_start_another_read() {
+        let (mut app, boot) = AiChat::__boot();
+        drop(boot);
+        let first = "/sessions/first.jsonl".to_owned();
+        let second = "/sessions/second.jsonl".to_owned();
+
+        app.busy = true;
+        let busy = app.__update(__AiChatMessage::PickChat(first.clone()));
+        assert!(!app.loading_chat);
+        assert!(app.open_path.is_empty());
+        app.busy = false;
+
+        let opening = app.__update(__AiChatMessage::PickChat(first.clone()));
+        assert!(app.loading_chat);
+        assert_eq!(app.open_path, first);
+
+        let ignored = app.__update(__AiChatMessage::PickChat(second));
+        assert!(app.loading_chat);
+        assert_eq!(app.open_path, first);
+
+        drop((busy, opening, ignored));
+        app.loading_chat = false;
+        app.error = "keep this".to_owned();
+        let current = app.__update(__AiChatMessage::PickChat(first.clone()));
+        assert!(!app.loading_chat);
+        assert_eq!(app.open_path, first);
+        assert_eq!(app.error, "keep this");
+        drop(current);
+    }
+
+    #[test]
+    fn a_failed_chat_can_be_retried() {
+        let (mut app, boot) = AiChat::__boot();
+        drop(boot);
+        let path = "/sessions/retry.jsonl".to_owned();
+
+        let failed_open = app.__update(__AiChatMessage::PickChat(path.clone()));
+        drop(failed_open);
+        let failure = app.__update(__AiChatMessage::ChatFailed(codex::CodexError::new(
+            "could not read chat",
+        )));
+        assert!(!app.loading_chat);
+        assert!(app.open_path.is_empty());
+
+        let retry = app.__update(__AiChatMessage::PickChat(path.clone()));
+        assert!(app.loading_chat);
+        assert_eq!(app.open_path, path);
+        drop((failure, retry));
+    }
+}
+
 /// What one streamed token costs against a transcript already on screen.
 ///
 /// This is the claim the screen is built around. A settled row sits behind a
