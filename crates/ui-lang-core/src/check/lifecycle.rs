@@ -227,19 +227,19 @@ fn component_has_identity_state(component: &Component) -> bool {
         || component
             .handlers
             .iter()
-            .any(|handler| handler.statements.iter().any(statement_has_request_lane))
+            .any(|handler| handler.statements.iter().any(statement_has_delivery_lane))
 }
 
-fn statement_has_request_lane(statement: &Statement) -> bool {
+fn statement_has_delivery_lane(statement: &Statement) -> bool {
     match statement {
         Statement::Run {
-            mode: FutureMode::Latest | FutureMode::Replace,
+            mode: DeliveryMode::Latest | DeliveryMode::Replace,
             ..
         } => true,
         Statement::TaskGroup { statements, .. } => {
-            statements.iter().any(statement_has_request_lane)
+            statements.iter().any(statement_has_delivery_lane)
         }
-        Statement::Abortable { task, .. } => statement_has_request_lane(task),
+        Statement::Abortable { task, .. } => statement_has_delivery_lane(task),
         _ => false,
     }
 }

@@ -116,6 +116,19 @@ pub fn portfolio_leverage(account: Option<Account>) -> f64 {
         .map_or(0.0, |account| account.notional / account.value)
 }
 
+/// One position as the allocation table reads it: what it is worth, what share
+/// of the book that is, and how it is doing.
+///
+/// The last of those is the position's own `roe_pct` rather than a second
+/// derivation of it. This column used to divide the PnL by notional while the
+/// terminal's position row divided it by margin, and both rendered as a bare
+/// percentage under a header spelled UNREALIZED — so the fixture's 40x BTC leg
+/// read `+21.44%` on the dashboard and `+857.41%` in the terminal, same
+/// account, same position, nothing on either screen saying they were different
+/// questions. ROE is the one the venue itself answers: the Hyperliquid adapter
+/// takes `roe_pct` straight from `returnOnEquity`, so a dashboard computing its
+/// own return would be contradicting the exchange's reported figure for the
+/// position beside it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PortfolioAsset {
     pub coin: String,
@@ -126,7 +139,7 @@ pub struct PortfolioAsset {
     pub share: f64,
     pub bar: f64,
     pub pnl: f64,
-    pub pnl_pct: f64,
+    pub roe_pct: f64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -158,7 +171,6 @@ pub fn portfolio_assets(positions: Vec<Position>) -> Vec<PortfolioAsset> {
             } else {
                 0.0
             };
-            let cost = position.entry * position.size.abs();
             PortfolioAsset {
                 coin: position.coin.clone(),
                 side: if position.size >= 0.0 {
@@ -173,11 +185,7 @@ pub fn portfolio_assets(positions: Vec<Position>) -> Vec<PortfolioAsset> {
                 share,
                 bar: share / 100.0 * BAR_WIDTH,
                 pnl: position.pnl,
-                pnl_pct: if cost > 0.0 {
-                    position.pnl / cost * 100.0
-                } else {
-                    0.0
-                },
+                roe_pct: position.roe_pct,
             }
         })
         .collect();
@@ -465,6 +473,46 @@ mod tests {
         assert!(assets.windows(2).all(|pair| pair[0].value >= pair[1].value));
         let share: f64 = assets.iter().map(|asset| asset.share).sum();
         assert!((share - 100.0).abs() < 1e-9, "{share}");
+    }
+
+    /// The dashboard's percentage is the terminal's, because both answer the
+    /// same question about the same position. Nothing is derived a second time
+    /// here: a return over notional and a return over margin are the same
+    /// figure only at 1x, and every expectation below comes off the fixture so
+    /// that a column quietly divided by something else stops reading as
+    /// agreement.
+    #[test]
+    fn an_asset_reports_the_same_return_the_terminal_does() {
+        let positions = crate::hyperliquid::demo_positions();
+        let assets = portfolio_assets(positions.clone());
+
+        for position in &positions {
+            let asset = assets
+                .iter()
+                .find(|asset| asset.coin == position.coin)
+                .expect("every position is allocated a row");
+            assert_eq!(asset.pnl, position.pnl, "{}", position.coin);
+            assert_eq!(
+                asset.roe_pct, position.roe_pct,
+                "{}: the dashboard is not reading the position's own return",
+                position.coin
+            );
+        }
+
+        // And the assertion above is not vacuous: at 1x the two bases coincide,
+        // so a fixture of unlevered positions would agree whichever one the
+        // column divided by. This one holds a leg that tells them apart.
+        let levered = positions
+            .iter()
+            .find(|position| {
+                let over_notional = position.pnl / (position.entry * position.size.abs()) * 100.0;
+                (position.roe_pct - over_notional).abs() > 1.0
+            })
+            .map(|position| position.coin.clone());
+        assert!(
+            levered.is_some(),
+            "no fixture position separates a return over margin from one over notional"
+        );
     }
 
     #[test]

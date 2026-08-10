@@ -1464,9 +1464,9 @@ state
   ready = false
 preset seeded
   boot
-    stream load() -> loaded _
+    stream every load() -> loaded _
 on mount
-  stream load() -> loaded _
+  stream every load() -> loaded _
 on loaded(value)
   ready = value
 theme contract AppTheme

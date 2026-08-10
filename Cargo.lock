@@ -131,6 +131,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-chat-example"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "iced",
+ "serde_json",
+ "smol",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
+ "ureq",
+]
+
+[[package]]
 name = "alacritty_terminal"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

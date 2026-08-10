@@ -286,6 +286,16 @@ pub struct SymbolRow {
     pub change_pct: f64,
     pub volume: f64,
     pub funding_pct: f64,
+    /// When this venue last charged funding on this market, in epoch seconds,
+    /// or zero when the venue does not say.
+    ///
+    /// A rate says what funding costs and never when it lands, which is the
+    /// half a holder of a position actually has to plan around. This is the
+    /// anchor the countdown is measured from, and it is the venue's own stamp
+    /// rather than a boundary this app assumed: see `funding_countdown` in
+    /// `venue.rs` for which network states one and which is derived from the
+    /// clock.
+    pub funding_at: i64,
     pub leverage: f64,
     pub open_interest: f64,
     /// Yesterday's close, kept so a streamed mid price can be turned back
@@ -338,6 +348,7 @@ impl Hash for SymbolRow {
         self.heading.hash(state);
         self.selected.hash(state);
         self.size_decimals.hash(state);
+        self.funding_at.hash(state);
         for value in [
             self.price,
             self.change_pct,
@@ -735,6 +746,14 @@ fn parse_context(name: String, context: &Value) -> SymbolRow {
         change_pct: change_pct(price, previous),
         volume: num(context, "dayNtlVlm"),
         funding_pct: num(context, "funding") * 100.0,
+        // Hyperliquid states no funding time anywhere in an asset context, and
+        // the one place its API does publish `nextFundingTime` — the separate
+        // `predictedFundings` request — reports a boundary that has already
+        // gone by: read at 23:49:06Z on 2026-08-09 it answered 23:00:00Z for
+        // every market. A countdown drawn from that would run negative for
+        // most of every hour, so this stays zero and `funding_countdown` takes
+        // the venue's documented hourly boundary off the clock instead.
+        funding_at: 0,
         // The streamed context restates neither the asset's index nor its
         // maximum nor its size step, so the universe's reading of all of them
         // is kept by the caller.

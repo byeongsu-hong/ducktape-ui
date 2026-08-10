@@ -423,13 +423,13 @@ fn resolved_match_pattern_code(
 
 fn collect_run_lanes(
     statements: &[ResolvedStatement],
-    lanes: &mut BTreeMap<u32, (RunLaneId, FutureMode)>,
+    lanes: &mut BTreeMap<u32, (RunLaneId, EffectKind, DeliveryMode)>,
 ) {
     for statement in statements {
         match &statement.kind {
             ResolvedStatementKind::Run(run) => {
                 if let Some(lane) = run.lane {
-                    lanes.entry(lane.0).or_insert((lane, run.mode));
+                    lanes.entry(lane.0).or_insert((lane, run.kind, run.mode));
                 }
             }
             ResolvedStatementKind::TaskGroup { statements, .. } => {
@@ -445,7 +445,7 @@ fn collect_run_lanes(
 
 fn handler_run_lanes<'a>(
     handlers: impl Iterator<Item = &'a ResolvedHandler>,
-) -> Vec<(RunLaneId, FutureMode)> {
+) -> Vec<(RunLaneId, EffectKind, DeliveryMode)> {
     let mut lanes = BTreeMap::new();
     for handler in handlers {
         collect_run_lanes(&handler.statements, &mut lanes);
@@ -453,14 +453,16 @@ fn handler_run_lanes<'a>(
     lanes.into_values().collect()
 }
 
-pub(in crate::codegen) fn app_run_lanes(program: &LoweredProgram) -> Vec<(RunLaneId, FutureMode)> {
+pub(in crate::codegen) fn app_run_lanes(
+    program: &LoweredProgram,
+) -> Vec<(RunLaneId, EffectKind, DeliveryMode)> {
     handler_run_lanes(program.app_handlers().chain(program.preset_handlers()))
 }
 
 pub(in crate::codegen) fn component_run_lanes(
     program: &LoweredProgram,
     handlers: &[HandlerId],
-) -> Vec<(RunLaneId, FutureMode)> {
+) -> Vec<(RunLaneId, EffectKind, DeliveryMode)> {
     handler_run_lanes(handlers.iter().map(|handler| program.handler(*handler)))
 }
 
@@ -673,12 +675,12 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
-        for (lane, _) in component_run_lanes(program, &component.handlers) {
+        for (lane, _, _) in component_run_lanes(program, &component.handlers) {
             writeln!(out, "{}: u64,", run_lane_generation_field(lane.0 as usize)).unwrap();
         }
-        for (lane, _mode) in component_run_lanes(program, &component.handlers)
+        for (lane, _, _mode) in component_run_lanes(program, &component.handlers)
             .into_iter()
-            .filter(|(_, mode)| *mode == FutureMode::Replace)
+            .filter(|(_, _, mode)| *mode == DeliveryMode::Replace)
         {
             writeln!(
                 out,
@@ -703,12 +705,12 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
-        for (lane, _) in component_run_lanes(program, &component.handlers) {
+        for (lane, _, _) in component_run_lanes(program, &component.handlers) {
             writeln!(out, "{}: 0,", run_lane_generation_field(lane.0 as usize)).unwrap();
         }
-        for (lane, _mode) in component_run_lanes(program, &component.handlers)
+        for (lane, _, _mode) in component_run_lanes(program, &component.handlers)
             .into_iter()
-            .filter(|(_, mode)| *mode == FutureMode::Replace)
+            .filter(|(_, _, mode)| *mode == DeliveryMode::Replace)
         {
             writeln!(
                 out,
@@ -733,14 +735,14 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
-    for (lane, mode) in app_run_lanes(program) {
+    for (lane, _, mode) in app_run_lanes(program) {
         writeln!(
             out,
             "pub(crate) {}: u64,",
             run_lane_generation_field(lane.0 as usize)
         )
         .unwrap();
-        if mode == FutureMode::Replace {
+        if mode == DeliveryMode::Replace {
             writeln!(
                 out,
                 "pub(crate) {}: ::std::option::Option<::iced::task::Handle>,",
@@ -826,10 +828,15 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,\n__TemplateChanged,"
     )
     .unwrap();
-    for (lane, _) in app_run_lanes(program) {
+    for (lane, kind, mode) in app_run_lanes(program) {
+        let payload = if kind == EffectKind::Stream && mode == DeliveryMode::Replace {
+            format!("::std::option::Option<::std::boxed::Box<{message}>>")
+        } else {
+            format!("::std::boxed::Box<{message}>")
+        };
         writeln!(
             out,
-            "{}(u64, ::std::boxed::Box<{message}>),",
+            "{}(u64, {payload}),",
             run_lane_variant(lane.0 as usize)
         )
         .unwrap();
@@ -852,10 +859,15 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         }
     }
     for component in program.components() {
-        for (lane, _) in component_run_lanes(program, &component.handlers) {
+        for (lane, kind, mode) in component_run_lanes(program, &component.handlers) {
+            let payload = if kind == EffectKind::Stream && mode == DeliveryMode::Replace {
+                format!("::std::option::Option<::std::boxed::Box<{message}>>")
+            } else {
+                format!("::std::boxed::Box<{message}>")
+            };
             writeln!(
                 out,
-                "{}(::std::string::String, u64, ::std::boxed::Box<{message}>),",
+                "{}(::std::string::String, u64, {payload}),",
                 run_lane_variant(lane.0 as usize)
             )
             .unwrap();

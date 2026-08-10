@@ -332,6 +332,12 @@ fn parse_symbol(detail: &Value, funding: &HashMap<i64, f64>) -> SymbolRow {
         funding_pct: funding
             .get(&value_i64(detail, "market_id"))
             .map_or(0.0, |rate| rate / FUNDING_HOURS * 100.0),
+        // `/orderBookDetails` carries no funding time — the stamp is published
+        // on the `market_stats` channel and nowhere else — so a market read
+        // over REST has no boundary to count down to until the socket says
+        // one, and the countdown reads as unknown rather than as an hour this
+        // read never saw.
+        funding_at: 0,
         leverage: max_leverage(num(detail, "min_initial_margin_fraction")),
         open_interest: num(detail, "open_interest"),
         prev: previous_price(price, change_pct),
@@ -1521,6 +1527,17 @@ fn parse_stats(stats: &Value) -> SymbolRow {
         // REST rate is 12.5 with every quartile on 12.5 — which is the 100/8
         // that turns an eight-hour fraction into an hourly percentage.
         funding_pct: num(stats, "current_funding_rate"),
+        // The one funding time either venue publishes. It stamps the charge
+        // that has already been taken rather than the one coming: read live at
+        // 23:49:23Z on 2026-08-09, BTC answered 1786316400000 — 23:00:00Z,
+        // forty-nine minutes gone — and the captured fixture below stamps
+        // 11:00:00.002Z for the same reason, two milliseconds past the hour it
+        // was applied on. So it is the anchor and not the answer; the next
+        // charge is an interval later, which `funding_countdown` adds.
+        //
+        // Milliseconds, and a bare JSON number rather than the strings the
+        // rates beside it are quoted as.
+        funding_at: value_i64(stats, "funding_timestamp") / 1_000,
         leverage: 0.0,
         maintenance: 0.0,
         size_decimals: 0,
@@ -4007,6 +4024,28 @@ mod tests {
         let btc = over_rest.iter().find(|row| row.name == "BTC").expect("BTC");
         assert!((streamed.funding_pct - btc.funding_pct).abs() < 1e-15);
         assert!((streamed.funding_pct - hourly_pct).abs() < 1e-15);
+    }
+
+    /// The stamp is the only funding time either venue publishes, and it is
+    /// the channel's alone: the REST universe carries none, so a row read there
+    /// has no boundary to count down to until this arrives.
+    ///
+    /// Seconds off the wire's milliseconds, on the hour the charge was taken —
+    /// which is what makes it an anchor rather than an answer. Two
+    /// milliseconds past 11:00:00Z is a stamp written when funding was
+    /// applied, not a time it is scheduled for.
+    #[test]
+    fn the_streamed_stats_carry_the_hour_funding_was_last_taken() {
+        let streamed = parse_stats(&stats());
+        assert_eq!(streamed.funding_at, 1_786_186_800);
+        assert_eq!(
+            streamed.funding_at % 3_600,
+            0,
+            "the charge lands on an hour"
+        );
+        let universe = parse_symbols(&captured_universe(), &captured_rates());
+        let btc = universe.iter().find(|row| row.name == "BTC").expect("BTC");
+        assert_eq!(btc.funding_at, 0, "orderBookDetails states no funding time");
     }
 
     #[test]

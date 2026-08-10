@@ -122,7 +122,6 @@ state
   account_error = ""
   orders_error = ""
   fills_error = ""
-  feeds:task-handle? = none
   latency = 0
   clock:i64 = now_seconds()
   live = false
@@ -276,6 +275,19 @@ preset unapproved
     account = some(demo_account())
     live = true
     session = demo_session_unapproved()
+
+// The terminal at a stated hour. Every other fixture here leaves `clock` where
+// `now_seconds` put it, which says the same thing all day for a badge and
+// nothing at all for a countdown: an assertion measured against the real clock
+// is right whatever the arithmetic underneath it does. 23:30:00Z on 2026-08-09
+// — half an hour before Hyperliquid's next funding, by the boundary it keeps.
+preset funding
+  state
+    gate = false
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    live = true
+    clock = 1786318200
 
 preset gate
 

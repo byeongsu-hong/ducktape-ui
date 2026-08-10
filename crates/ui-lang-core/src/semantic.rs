@@ -440,7 +440,7 @@ impl AnimationStart {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FutureMode {
+pub enum DeliveryMode {
     Every,
     Latest,
     Replace,

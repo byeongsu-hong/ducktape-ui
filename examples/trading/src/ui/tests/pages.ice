@@ -179,6 +179,34 @@ test trading_portfolio_uses_its_own_allocation_history_and_asset_list
   expect text "WEIGHT"
   capture page_portfolio_assets
 
+// A position makes one return, so it reads the same wherever it is drawn. The
+// terminal divides its PnL by the margin behind it; the dashboard's asset table
+// divided the same PnL by notional and printed that under a header spelled the
+// same way, so the fixture's 40x BTC leg said +857.41% on one page and +21.44%
+// on the other with nothing on either screen admitting they were different
+// questions. Both figures are asserted on both surfaces: the right one arriving
+// is only half the claim while the wrong one can still be standing beside it.
+test trading_a_position_reads_the_same_return_on_both_pages
+  preset held
+  viewport 1660 1200
+  target app = #app
+  target terminal = app/terminal-fit/trade
+  target lower = terminal/lower
+  target open_positions = lower/positions
+  target portfolio = app/portfolio
+  target assets = portfolio/portfolio-assets
+  expect page == Page.terminal
+  expect text "+857.41%" within open_positions
+  expect no text "+21.44%" within open_positions
+  dispatch navigate(Page.portfolio)
+  expect page == Page.portfolio
+  // The asset table is the bottom of a dashboard taller than its window, and
+  // the rows are below the header the other test stops at — hence the taller
+  // viewport, which is the only one that draws a whole asset row.
+  scroll-to portfolio 0.0 2000.0
+  expect text "+857.41%" within assets
+  expect no text "+21.44%" within assets
+
 test trading_portfolio_range_changes_without_leaving_the_dashboard
   preset held
   viewport 1660 820

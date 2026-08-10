@@ -753,6 +753,7 @@ fn index_statement_declaration(
     }
 
     if let Statement::Run {
+        kind,
         mode,
         lane: Some(name),
         ..
@@ -775,6 +776,7 @@ fn index_statement_declaration(
                 },
                 owner,
                 name: name.clone(),
+                kind: *kind,
                 mode: *mode,
                 statements: vec![id],
             });

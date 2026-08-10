@@ -103,20 +103,27 @@ For example, `run every fetch(query) -> loaded(query, _)` captures `query` at
 launch, not completion; that explicit value may come from state, a derived
 value, a handler parameter, or a `let` local.
 
-Every directly routed handler Future names its delivery mode. `run every`
-delivers every completion. For superseding requests, `run latest lane=<name>`
-routes only the newest completion without canceling older work, while
-`run replace lane=<name>` also aborts the prior Iced task. Bare handler `run` is
-not syntax. `run` under a `subscribe` block is the distinct long-lived
-stream-source form; task-flow
-`from run call()` and `then value -> run call(value)` are Task adapters that do
-not route a Future completion directly and therefore have no delivery mode.
+Every directly routed handler Future and stream names its delivery mode.
+`run every` delivers every Future completion; `stream every` delivers every
+item until that stream ends. Superseding Futures use `run latest lane=<name>`
+to filter older completions without canceling their work, or
+`run replace lane=<name>` to abort the prior Iced task. Superseding streams use
+`stream replace lane=<name>`; `stream latest` is rejected because an obsolete
+stream may never finish. Bare handler `run` and `stream` are not syntax.
+Subscription `run` remains the distinct long-lived stream-source form, while task-flow
+`from run call()`/`from stream call()` and corresponding `then` sources remain
+Task adapters without a directly routed delivery mode.
+`stream every` owns no compiler lane or handle: repeatedly starting a stream
+that never terminates intentionally keeps every producer and its captures
+alive. Extern-aware tooling therefore defaults stream completion to
+`stream replace lane=<qualified-function-name>`; choose `every` explicitly only
+when those independent lifetimes are intended.
 A direct app, daemon, preset, or component handler statement whose immediate
 intent supersedes an in-flight request can use `invalidate lane=<name>` before
-its state changes. Invalidation advances the existing owner-scoped lane without
-starting work or declaring another lane, so any earlier success or failure is
-stale; it leaves a `latest` Future running and aborts the current `replace`
-task.
+its state changes. Invalidation advances the existing owner-scoped delivery
+lane without starting work or declaring another lane, so any earlier Future
+completion or stream item is stale; it leaves a `latest` Future running and
+aborts the current `replace` task.
 A lane is a static, finite qualified name owned by the app, the daemon shared
 across its windows, or one component instance, so the same fully qualified name
 deliberately joins calls from different handlers of that owner. Unaliased app
@@ -125,12 +132,18 @@ Aliased imports cannot contribute app or preset handlers; lanes inside an
 aliased component remain owned by each component instance. `latest` can retain
 stale Futures and their captures until they finish. `replace` releases work
 owned by the aborted task but cannot roll back effects already performed or
-stop work the Rust backend detached. Per-owner lane bookkeeping is fixed by
-source-declared names;
-component-owner count follows the existing retained/mounted lifetime contract.
-If an outer abort prevents a matching completion from reaching update, one
-current replacement handle can remain until the next replacement, explicit
-invalidation, or owner drop, but handles do not accumulate per owner.
+stop work the Rust backend detached. A stream `replace` lane keeps one handle
+across all current-generation items and releases it only when the stream ends,
+a replacement starts, the lane is invalidated, or its owner is dropped. Items
+already queued before replacement are still discarded by the generation gate.
+If an outer `abortable` suppresses a matching Future `run replace` completion
+before update, that lane's one current handle remains until the next
+replacement, explicit invalidation, or owner drop; it does not accumulate.
+Per-owner lane bookkeeping is fixed by source-declared names; one lane cannot
+mix Future and stream effects or `latest` and `replace` modes. Component-owner
+count follows the existing retained/mounted lifetime contract. Component
+handlers accept `stream replace` but reject `stream every`; handler streams are
+also rejected under `abortable`, where two cancellation owners would conflict.
 
 The punctuation has one job each:
 
@@ -190,6 +203,7 @@ cargo run -p ice-starter       # the minimal copyable build/include/test path
 cargo run -p candles-example   # native lightweight financial chart (see examples/candles)
 cargo run -p trading-example   # live Hyperliquid markets, positions, and fills (see examples/trading)
 cargo run -p tray-example      # the smallest macOS menu bar app: status item, live label, native menu
+cargo run -p ai-chat-example   # streaming Codex chat: reasoning, tool calls, Markdown (see examples/ai-chat)
 ```
 
 The `tray` app-setting block puts an app in the macOS menu bar: codec-free

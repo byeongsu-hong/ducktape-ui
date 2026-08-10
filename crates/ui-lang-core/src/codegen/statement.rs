@@ -332,7 +332,7 @@ fn resolved_run_task_code(
                     action.rust_path
                 ),
                 EffectKind::Stream => format!(
-                    "::iced::Task::run({}({args}), |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
+                    "::iced::Task::run({}({args}), {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
                     action.rust_path
                 ),
             }
@@ -347,7 +347,7 @@ fn resolved_run_task_code(
                     action.rust_path
                 ),
                 EffectKind::Stream => format!(
-                    "::iced::Task::run({}({args}), |value| {success_message})",
+                    "::iced::Task::run({}({args}), {mapper}|value| {success_message})",
                     action.rust_path
                 ),
             }
@@ -365,20 +365,27 @@ fn run_lane_task_code(
     state: &str,
 ) -> Result<String, Error> {
     let lane = run.lane.ok_or_else(|| {
-        program.invariant_at_origin(statement.origin, "request-lane wrapper has no lane ID")
+        program.invariant_at_origin(statement.origin, "delivery-lane wrapper has no lane ID")
     })?;
     let generation = run_lane_generation_field(lane.0 as usize);
     let variant = run_lane_variant(lane.0 as usize);
-    let replace = (run.mode == FutureMode::Replace).then(|| {
+    let replace = (run.mode == DeliveryMode::Replace).then(|| {
         let handle = run_lane_handle_field(lane.0 as usize);
         format!(
             "let (__task, __handle) = __task.abortable(); if let ::std::option::Option::Some(__previous) = {state}.{handle}.replace(__handle.abort_on_drop()) {{ __previous.abort(); }} "
         )
     });
+    let stream = run.kind == EffectKind::Stream && run.mode == DeliveryMode::Replace;
     let Some((component, scope)) = env.component_context() else {
+        if stream {
+            return Ok(format!(
+                "{{ let __task = {task}; {state}.{generation} = {state}.{generation}.wrapping_add(1); let __generation = {state}.{generation}; let __task = __task.map(move |__message| {message}::{variant}(__generation, ::std::option::Option::Some(::std::boxed::Box::new(__message)))).chain(::iced::Task::done({message}::{variant}(__generation, ::std::option::Option::None))); {}__task }}",
+                replace.as_deref().unwrap_or_default()
+            ));
+        }
         return Ok(format!(
             "{{ let __task = {task}; {state}.{generation} = {state}.{generation}.wrapping_add(1); let __generation = {state}.{generation}; {}__task.map(move |__message| {message}::{variant}(__generation, ::std::boxed::Box::new(__message))) }}",
-            replace.unwrap_or_default()
+            replace.as_deref().unwrap_or_default()
         ));
     };
     let contract = program
@@ -407,10 +414,17 @@ fn run_lane_task_code(
         }
     };
     let lane_scope = format!("__ice_lane_scope_{}", statement.id.0);
+    if stream {
+        return Ok(format!(
+            "{{ let {lane_scope} = ({}).clone(); let __task = {task}; {generation_code} let __terminal = {message}::{variant}({lane_scope}.clone(), __generation, ::std::option::Option::None); let __task = __task.map(move |__message| {message}::{variant}({lane_scope}.clone(), __generation, ::std::option::Option::Some(::std::boxed::Box::new(__message)))).chain(::iced::Task::done(__terminal)); {}__task }}",
+            borrowed_scope(&scope.code),
+            replace.as_deref().unwrap_or_default()
+        ));
+    }
     Ok(format!(
         "{{ let {lane_scope} = ({}).clone(); let __task = {task}; {generation_code} {}__task.map(move |__message| {message}::{variant}({lane_scope}.clone(), __generation, ::std::boxed::Box::new(__message))) }}",
         borrowed_scope(&scope.code),
-        replace.unwrap_or_default()
+        replace.as_deref().unwrap_or_default()
     ))
 }
 
@@ -422,7 +436,7 @@ fn invalidate_run_lane_code(
     state: &str,
 ) -> Result<String, Error> {
     let declaration = program.run_lane(lane).ok_or_else(|| {
-        program.invariant_at_origin(statement.origin, "request-lane ID is outside its arena")
+        program.invariant_at_origin(statement.origin, "delivery-lane ID is outside its arena")
     })?;
     let generation = run_lane_generation_field(lane.0 as usize);
     let advance = if let Some((component, _)) = env.component_context() {
@@ -433,7 +447,7 @@ fn invalidate_run_lane_code(
             .ok_or_else(|| {
                 program.invariant_at_origin(
                     statement.origin,
-                    "request-lane invalidation has no active component contract",
+                    "delivery-lane invalidation has no active component contract",
                 )
             })?;
         match contract.storage {
@@ -447,14 +461,14 @@ fn invalidate_run_lane_code(
             ComponentStorage::Stateless => {
                 return Err(program.invariant_at_origin(
                     statement.origin,
-                    "request-lane invalidation belongs to a stateless component",
+                    "delivery-lane invalidation belongs to a stateless component",
                 ));
             }
         }
     } else {
         format!("{state}.{generation} = {state}.{generation}.wrapping_add(1);")
     };
-    let abort = if declaration.mode == FutureMode::Replace {
+    let abort = if declaration.mode == DeliveryMode::Replace {
         let handle = run_lane_handle_field(lane.0 as usize);
         format!(
             " if let ::std::option::Option::Some(__previous) = {state}.{handle}.take() {{ __previous.abort(); }}"

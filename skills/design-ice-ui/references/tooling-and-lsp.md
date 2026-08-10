@@ -193,11 +193,14 @@ The exact initialization capability object includes:
 
 Formatting calls the same `ui_lang_core::format_fragment` implementation as
 `cargo ice fmt`. Completion items come from the generated Core construct table.
-Handler completion offers separate `run every`, `run latest lane=...`,
-`run replace lane=...`, and `invalidate lane=...` snippets. The error-route
-quick fix recognizes the three explicit handler Future modes and does not treat
-lane invalidation, subscription `run`, or task-flow `run` sources as routed
-Future statements.
+Handler completion offers `run every`, `run latest lane=...`,
+`run replace lane=...`, `stream every`, `stream replace lane=...`, and
+`invalidate lane=...` snippets. Extern-aware completion safely defaults a
+selected stream function to `stream replace lane=<qualified-function-name>`;
+`stream every` remains an intentional generic-snippet opt-in. It never proposes
+bare `stream` or `stream latest`. The error-route quick fix recognizes all
+canonical routed Future/stream modes and does not treat lane invalidation,
+subscription `run`, or task-flow sources as routed handler statements.
 Current completion is intentionally vocabulary-wide rather than
 cursor-context-aware; let diagnostics reject a construct in the wrong context.
 

@@ -213,3 +213,42 @@ test trading_the_move_sits_beside_the_price_not_across_the_slot
   dispatch pick_symbol("kPEPE")
   expect text "+6.15%" within change
   expect change.text_x ~= change.x
+
+// Funding has only ever been a rate on this screen — RENT PER DAY on the
+// ticket, dollars charged in the positions table's own column — and a rate
+// answers what holding costs without ever answering when the next bill is due.
+// The panel that lists what is being held says when, once, over the column the
+// charge lands in.
+//
+// Half past the hour on a network that funds on it, so the answer is thirty
+// minutes rather than a shape: a countdown reading the hour already gone, or
+// flooring where it should ceil, prints a different string rather than a
+// differently formatted one.
+test trading_the_positions_panel_says_when_the_next_funding_lands
+  preset funding
+  viewport 1660 820
+  target app = #app
+  target held = app/terminal-fit/trade/lower/positions
+  target countdown = held/funding-next
+  target named = held/funding-label
+  expect a11y named value "FUNDING IN"
+  expect text "30m" within countdown
+  expect no text "—" within countdown
+  capture funding_countdown
+
+// The other half, and the one worth having. Lighter publishes its funding time
+// on the stats channel and nowhere else, so a market read out of the universe
+// request has no boundary at all — and the slot says so rather than borrowing
+// the hour the other venue happens to keep. Both venues fund on the hour today;
+// a screen that quietly assumed it would be wrong on the day one of them stops,
+// and wrong about money already committed.
+test trading_a_venue_that_has_not_stated_a_funding_time_says_so
+  preset lighter
+  viewport 1660 820
+  target app = #app
+  target held = app/terminal-fit/trade/lower/positions
+  target countdown = held/funding-next
+  target named = held/funding-label
+  expect a11y named value "FUNDING IN"
+  expect text "—" within countdown
+  expect no text "30m" within countdown

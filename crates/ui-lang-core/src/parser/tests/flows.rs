@@ -38,8 +38,8 @@ palette app for AppTheme
   bg #000000
 on start
   parallel
-    stream numbers(3) -> number _
-    stream fallible() -> text _ | failed _
+    stream every numbers(3) -> number _
+    stream every fallible() -> text _ | failed _
 on number(value)
 on text(value)
 on failed(error)
@@ -104,8 +104,11 @@ view
     .unwrap_err();
     assert_eq!(error.code, "E022");
 
-    let error =
-        parse(&source.replace("stream numbers(3) -> number _", "stream numbers(3)")).unwrap_err();
+    let error = parse(&source.replace(
+        "stream every numbers(3) -> number _",
+        "stream every numbers(3)",
+    ))
+    .unwrap_err();
     assert_eq!(error.code, "E050");
     assert!(error.message.contains("stream requires"));
 }
