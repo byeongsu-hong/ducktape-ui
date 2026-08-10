@@ -230,8 +230,11 @@ test trading_the_positions_panel_says_when_the_next_funding_lands
   target app = #app
   target held = app/terminal-fit/trade/lower/positions
   target countdown = held/funding-next
-  target named = held/funding-label
-  expect a11y named value "FUNDING IN"
+  // The label is asked for as ink rather than as an accessible name, and
+  // asked for over the whole screen rather than inside its own box: it sits
+  // one gap along from the panel's count, and it is the count that used to
+  // eat its first letter.
+  expect text "FUNDING IN"
   expect text "30m" within countdown
   expect no text "—" within countdown
   capture funding_countdown

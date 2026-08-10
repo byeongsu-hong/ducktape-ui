@@ -250,6 +250,31 @@ test dialog_preserves_catalog_position
   expect !dialog_open
   expect scroller.scroll_y > 9000.0
 
+// A modal is the part of the screen the reader is looking at, so what it says
+// has to be answerable. Its layer draws through iced's overlay rather than in
+// place, and a question that never reaches the overlay answers "missing" for
+// ink that is plainly there — harmless-looking in the positive form, which
+// merely cannot be written, and dangerous in the negative one, which passes.
+//
+// Both sides, and in this order: the heading is genuinely absent while the
+// layer is unbuilt, and the press is what makes the absence worth asserting.
+test dialog_text_is_visible_while_the_layer_is_open
+  preset test
+  viewport 720 560
+  target app = #app
+  target scroller = app/catalog-scroll
+  target page = scroller/page
+  target open_dialog = page/open-dialog
+  snap-end scroller
+  expect no text "Default dialog"
+  click open_dialog
+  expect dialog_open
+  expect text "Default dialog"
+  // Nested inside a component on the layer, not just its outermost text.
+  expect text "No Rust view code"
+  dispatch close_dialog
+  expect no text "Default dialog"
+
 test focused_component_feedback
   preset test
   viewport 560 280

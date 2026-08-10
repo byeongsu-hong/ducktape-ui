@@ -3480,7 +3480,15 @@ where
         let theme = self.theme();
         let style = self.program.style(&self.state, &theme);
         let cursor = self.cursor;
-        let rendered = self.with_interface(|interface, renderer, _| {
+        let rendered = self.with_interface(|interface, renderer, clipboard| {
+            // An Ice `layer` draws through iced's overlay, and a freshly built
+            // interface draws only an overlay it has already laid out — so
+            // without this the modal's ink is missing from the index entirely
+            // and every question about it answers "missing", including the
+            // negative form, which then passes for text plainly on screen.
+            // An update with no events lays the overlay out and dispatches
+            // nothing.
+            let _ = interface.update(&[], cursor, renderer, clipboard, &mut Vec::new());
             interface.draw(
                 renderer,
                 &theme,
@@ -4677,6 +4685,14 @@ fn for_each_visible_text<Renderer: 'static>(
 /// the layout gap does not. A gap wider than the run's own by about a space
 /// is a space: the character paints nothing, so it arrives as a hole rather
 /// than a primitive.
+///
+/// A run learns its spacing from its first gap, and a run one grapheme long
+/// — a count beside a heading, a lone `0` — has only the gap crossing to the
+/// NEXT label to learn it from. Taking that gap on trust glued the count to
+/// the label after it and broke that label one letter in, so `POSITIONS 0`
+/// beside `FUNDING IN` rebuilt as `0F` and `UNDING IN`. The gap after it says
+/// which it was: tracking is the tightest spacing on the row, so a first gap
+/// wider than the one following it is a label boundary rather than a step.
 fn tracked_runs(texts: &[TextPaint]) -> Vec<String> {
     let mut buckets: Vec<(f64, Color, f64, Font, Vec<&TextPaint>)> = Vec::new();
     for text in texts {
@@ -4708,17 +4724,27 @@ fn tracked_runs(texts: &[TextPaint]) -> Vec<String> {
         let mut run = String::new();
         let mut end: Option<f32> = None;
         let mut spacing: Option<f32> = None;
-        for text in row {
+        for (index, text) in row.iter().enumerate() {
             let Some(content) = text.content.as_deref() else {
                 continue;
             };
             let gap = end.map(|end| text.bounds.x - end);
+            let next = row
+                .get(index + 1)
+                .map(|next| next.bounds.x - (text.bounds.x + text.bounds.width));
             match gap {
-                // A gap this run has not established yet sets its spacing;
-                // one that matches continues it; one about a space wider
-                // crosses a space; anything else is the next label along.
-                Some(gap) if spacing.is_none_or(|spacing| close(gap, spacing)) => {
-                    spacing.get_or_insert(gap);
+                // A gap that matches the run's spacing continues it; one
+                // about a space wider crosses a space; anything else is the
+                // next label along. A run with no spacing yet takes this gap
+                // as its own only when the gap after it is no tighter —
+                // otherwise the tighter one is the tracking and this one is
+                // the boundary it was mistaken for.
+                Some(gap) if spacing.is_some_and(|spacing| close(gap, spacing)) => {}
+                Some(gap)
+                    if spacing.is_none()
+                        && next.is_none_or(|next| gap <= next || close(gap, next)) =>
+                {
+                    spacing = Some(gap);
                 }
                 Some(gap) if spacing.is_some_and(|spacing| is_space(gap - spacing, size)) => {
                     run.push(' ');
@@ -5462,6 +5488,27 @@ mod tracked_text {
         }
     }
 
+    /// A count beside a heading is one grapheme wide, so the run it starts
+    /// has a single gap to learn its spacing from — and that gap is the one
+    /// crossing to the NEXT label. Reading it as tracking glued the count to
+    /// the following label's first letter and broke that label one letter in,
+    /// which is what made `FUNDING IN` unfindable beside `POSITIONS 0`.
+    #[test]
+    fn a_one_glyph_label_does_not_swallow_the_next_label() {
+        let mut row = tracked("POSITIONS", 10.0, 40.0, 1.1, 10.0);
+        row.extend(tracked("0", 90.0, 40.0, 1.1, 10.0));
+        row.extend(tracked("FUNDING IN", 300.0, 40.0, 1.1, 10.0));
+        let runs = tracked_runs(&row);
+        assert_eq!(
+            runs,
+            vec![
+                "POSITIONS".to_owned(),
+                "0".to_owned(),
+                "FUNDING IN".to_owned(),
+            ]
+        );
+    }
+
     /// Ordinary text is one primitive holding the whole string, and joining
     /// two of those into a word that is not on screen would be a lie.
     #[test]
@@ -5826,6 +5873,21 @@ mod tests {
             .into()
     }
 
+    /// An Ice `layer` lowers to a translated `float`, which draws nothing in
+    /// place and everything through iced's overlay instead — exactly the shape
+    /// the generator emits for an open `overlay`.
+    fn layered_view(_state: &State) -> Element<'_, Message> {
+        iced::widget::Stack::new()
+            .width(iced::Fill)
+            .height(iced::Fill)
+            .push(text("beneath the layer"))
+            .push(
+                iced::widget::float(container(text("inside the layer")).id("Layer/panel"))
+                    .translate(|_, _| iced::Vector::new(f32::EPSILON, 0.0)),
+            )
+            .into()
+    }
+
     fn stable_scroll_view(_state: &State) -> Element<'_, Message> {
         scrollable(container(text("Stable content")).height(200))
             .id(StableId::new("Stable/scroll").widget_id())
@@ -5912,6 +5974,29 @@ mod tests {
         let scroll = driver.target("App/root/scroll", HERE);
         assert!(scroll.content_height() >= 200.0);
         assert_eq!(scroll.scroll_y(), 0.0);
+    }
+
+    /// What is drawn on a layer is on screen, so a question about what is on
+    /// screen has to reach it. Both sides are asserted: a modal that answered
+    /// "present" to everything would be no more use than one that answered
+    /// "missing" to everything, and it is the second that let `expect no text`
+    /// inside a modal pass for ink that was plainly there.
+    #[test]
+    fn text_drawn_on_a_layer_is_visible_to_the_text_index() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                layered_view,
+            ),
+            Config::new("layered_text").viewport(320.0, 240.0),
+        );
+
+        assert!(driver.text_exists("beneath the layer", None, HERE));
+        assert!(driver.text_exists("inside the layer", None, HERE));
+        assert!(!driver.text_exists("nowhere on this screen", None, HERE));
+        let panel = driver.target("Layer/panel", HERE);
+        assert!(driver.text_exists("inside the layer", Some(&panel), HERE));
     }
 
     #[test]
