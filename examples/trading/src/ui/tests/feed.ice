@@ -85,7 +85,7 @@ test trading_the_tray_stops_printing_the_last_price_as_the_price
   expect text "NOT LIVE"
   expect tray label "NOT LIVE"
   expect tray item "NOT LIVE"
-  expect tray label tray_status(coin, focus, live)
+  expect tray label tray_status(coin, focus, live, venue)
   // The figure is still the last thing the exchange said, so it stays; what
   // changed is that it is no longer offered as the price.
   expect tray label "64,000.00"

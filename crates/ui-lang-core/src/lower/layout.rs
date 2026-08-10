@@ -109,6 +109,9 @@ pub(crate) enum ResolvedScrollDirection {
 pub(crate) enum ResolvedScrollAnchor {
     Start,
     End,
+    /// See [`crate::ast::ScrollAnchor::Keep`]: iced's `Start` anchor plus the
+    /// runtime correction that keeps content still when rows land above it.
+    Keep,
 }
 
 #[derive(Clone, Debug)]
@@ -612,6 +615,7 @@ impl Lowerer {
         let anchor = |anchor| match anchor {
             ScrollAnchor::Start => ResolvedScrollAnchor::Start,
             ScrollAnchor::End => ResolvedScrollAnchor::End,
+            ScrollAnchor::Keep => ResolvedScrollAnchor::Keep,
         };
         Ok(ResolvedScrollLayout {
             direction,

@@ -30,6 +30,19 @@ use crate::venue::venue_name;
 pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
+/// Items waiting between a websocket thread and Ice.
+///
+/// The handoff is lossless: a full buffer stops the socket thread instead of
+/// dropping a tick or fill delta. That can delay reads and heartbeats while
+/// the UI is stalled; if the venue closes the quiet socket, the existing retry
+/// loop reconnects after the UI drains the backlog. Dropping the receiver
+/// wakes a blocked send and ends the thread.
+pub(crate) const FEED_BUFFER_CAPACITY: usize = 16;
+
+pub(crate) fn feed_channel<T>() -> (Sender<T>, Receiver<T>) {
+    smol::channel::bounded(FEED_BUFFER_CAPACITY)
+}
+
 /// Candles fetched when a market is opened, and when the chart is panned back
 /// past the oldest one it holds.
 const BACKFILL_BARS: i64 = 500;
@@ -1077,12 +1090,145 @@ pub fn ticket_seed(book: Option<Book>, focus: Option<SymbolRow>) -> String {
 /// string with no ink to spend, so it says the same thing in the same words.
 /// With no row to price there is no figure to qualify, and the coin alone
 /// claims nothing.
-pub fn tray_status(coin: String, focus: Option<SymbolRow>, live: bool) -> String {
-    match focus.filter(|row| row.price > 0.0) {
+///
+/// TESTNET is stamped here and REAL MONEY is not, which is the one place this
+/// app marks only one side of that distinction. The header states both because
+/// it has room and because a badge whose absence must be noticed is a badge
+/// nobody notices. This string is the label, and the label is what a glance
+/// gets before any click: the danger a glance can carry is reading a test
+/// network as the real one, and the menu below states both in `tray_venue` one
+/// click later. `menu_kind` is the same word the header's badge uses.
+pub fn tray_status(coin: String, focus: Option<SymbolRow>, live: bool, venue: Venue) -> String {
+    let price = match focus.filter(|row| row.price > 0.0) {
         Some(row) if live => format!("{coin} {}", fmt_px(row.price)),
         Some(row) => format!("{coin} {} NOT LIVE", fmt_px(row.price)),
         None => coin,
+    };
+    if crate::venue::venue_testnet(venue) {
+        return format!("{price} TESTNET");
     }
+    price
+}
+
+/// The alert row, and the one event on this menu worth opening it for.
+///
+/// A level being hit is the only thing the terminal knows that a reader wants
+/// pushed at them rather than looked up, so it takes the top of the menu and
+/// says HIT in the word the rail already uses. Waiting alerts are a smaller
+/// fact and read as one; no alerts says so rather than leaving the row blank,
+/// because a blank row is indistinguishable from a row that failed to fill.
+pub fn tray_alerts(alerts: Vec<Alert>) -> String {
+    let hit = alerts.iter().filter(|alert| alert.fired).count();
+    let waiting = alerts.len() - hit;
+    match (hit, waiting) {
+        (0, 0) => "No alerts".to_owned(),
+        (0, waiting) => format!("{waiting} alert{} waiting", plural(waiting)),
+        (hit, 0) => format!("{hit} ALERT{} HIT", plural(hit).to_uppercase()),
+        (hit, waiting) => format!(
+            "{hit} ALERT{} HIT · {waiting} waiting",
+            plural(hit).to_uppercase()
+        ),
+    }
+}
+
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
+/// The account submenu's title, which is where its rows get their liveness.
+///
+/// The header does not qualify equity and PnL by `live`, and it is right not
+/// to: `mark_account` re-marks them from the same feed, so the NOT LIVE badge
+/// sitting on the same strip covers the whole reading. A menu row inherits no
+/// strip. Putting the word on the title rather than on both figures is what
+/// keeps that true without stamping the same qualifier twice — a reader cannot
+/// reach the rows without opening the row that carries it.
+pub fn tray_account(account: Option<Account>, live: bool) -> String {
+    match account {
+        None => "Account — no address".to_owned(),
+        Some(_) if live => "Account".to_owned(),
+        Some(_) => "Account — NOT LIVE".to_owned(),
+    }
+}
+
+/// Equity, in the header's own words and formatter.
+///
+/// The dash is the header's too: a missing figure is a dash in the slot it
+/// will come back to, never a differently shaped row.
+pub fn tray_equity(account: Option<Account>) -> String {
+    match account {
+        Some(held) => format!("EQUITY  {}", fmt_usd(held.value)),
+        None => "EQUITY  —".to_owned(),
+    }
+}
+
+/// Unrealized PnL, through `fmt_pnl` like every other PnL in this app.
+///
+/// `Account::pnl` rather than a sum over positions: `mark_account` writes it
+/// as exactly that sum on every tick, and a second computation of one number
+/// is how two figures that must agree stop agreeing.
+pub fn tray_pnl(account: Option<Account>) -> String {
+    match account {
+        Some(held) => format!("PNL  {}", fmt_pnl(held.pnl)),
+        None => "PNL  —".to_owned(),
+    }
+}
+
+/// What the account is in, as one row: how many positions and which coins.
+///
+/// A menu's row count is fixed when the app compiles, so there is no row per
+/// position to give. This says the two things a fixed row honestly can — the
+/// count, and the names — and states neither a size nor a PnL per coin, which
+/// would need the rows this surface does not have. The window is where a
+/// position is read; the menu bar is where you learn there are three.
+pub fn tray_positions(positions: Vec<Position>) -> String {
+    if positions.is_empty() {
+        return "No open positions".to_owned();
+    }
+    const SHOWN: usize = 4;
+    let mut coins: Vec<&str> = positions
+        .iter()
+        .take(SHOWN)
+        .map(|held| held.coin.as_str())
+        .collect();
+    let more = positions.len().saturating_sub(SHOWN);
+    let extra;
+    if more > 0 {
+        extra = format!("+{more} more");
+        coins.push(&extra);
+    }
+    format!("{} open: {}", positions.len(), coins.join(", "))
+}
+
+/// The feed row, named rather than left as a bare figure.
+///
+/// `fmt_latency` alone puts a lone `—` in the menu when there is no feed,
+/// which says nothing at all: a menu row is read without the header's column
+/// heading beside it, so it carries its own. A dead feed says so here because
+/// this is the row the connection is about — the label says it for the price
+/// and the account title says it for the figures, and each of the three is
+/// read on its own.
+pub fn tray_feed(millis: i64, live: bool) -> String {
+    if live {
+        format!("FEED  {}", fmt_latency(millis))
+    } else {
+        "FEED  NOT LIVE".to_owned()
+    }
+}
+
+/// The venue submenu's title: which exchange, and whether being wrong on it
+/// costs anything.
+///
+/// Both kinds are stated, the same way and in the same place as the header's
+/// badge, because this is the surface with room for both. The label above has
+/// none and marks only TESTNET; between them a reader never has to notice an
+/// absence to know which network they are on.
+pub fn tray_venue(venue: Venue) -> String {
+    format!(
+        "{} — {}",
+        crate::venue::venue_name(venue),
+        crate::venue::venue_kind(venue)
+    )
 }
 
 /// A number as typed into a ticket field. Anything that is not one reads as
@@ -2029,7 +2175,7 @@ where
     S: FnMut() -> Vec<Value> + Send + 'static,
     R: FnMut(Event<'_>) -> Option<T> + Send + 'static,
 {
-    let (sender, receiver) = smol::channel::unbounded();
+    let (sender, receiver) = feed_channel();
     std::thread::spawn(move || {
         while !sender.is_closed() {
             let Err(error) = pump(chain, &mut subscribe, &mut read, &sender) else {
@@ -4578,6 +4724,50 @@ pub(crate) mod probe {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hyperliquid_market_feed_has_a_finite_handoff() {
+        let receiver = hl_market_feed(Chain::Mainnet, tape_new());
+        assert_eq!(receiver.capacity(), Some(FEED_BUFFER_CAPACITY));
+    }
+
+    #[test]
+    fn hyperliquid_fill_feed_has_a_finite_handoff() {
+        let receiver = hl_fill_feed(Chain::Mainnet, String::new());
+        assert_eq!(receiver.capacity(), Some(FEED_BUFFER_CAPACITY));
+    }
+
+    #[test]
+    fn a_full_feed_buffer_blocks_until_the_receiver_is_dropped() {
+        let (sender, receiver) = feed_channel();
+        for item in 0..FEED_BUFFER_CAPACITY {
+            sender.send_blocking(item).expect("receiver is open");
+        }
+        assert!(sender.is_full());
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let worker_barrier = barrier.clone();
+        let (done, blocked) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            worker_barrier.wait();
+            done.send(sender.send_blocking(FEED_BUFFER_CAPACITY).is_err())
+                .expect("test is listening");
+        });
+        barrier.wait();
+
+        assert_eq!(
+            blocked.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout),
+            "the full buffer must backpressure its producer"
+        );
+        drop(receiver);
+        assert_eq!(
+            blocked.recv_timeout(Duration::from_secs(1)),
+            Ok(true),
+            "dropping the UI receiver must wake the blocked producer"
+        );
+        worker.join().expect("producer exits");
+    }
 
     /// The whole order path against the live test deployment: place, see it
     /// resting, cancel it, see it gone.

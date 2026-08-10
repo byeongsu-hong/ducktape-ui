@@ -40,10 +40,15 @@ on rows(next)
   task widget snap-end #shell/app/transcript
 
 // A turn ends, and a message typed while it ran goes out on its own.
+//
+// The chat was written out by the time this route runs, so the list is read
+// again here: a chat that has just been had should be in the sidebar, not one
+// restart later.
 on settled(complete)
   entries = complete
   live = markdown("")
   live_thinking = markdown("")
+  chats = recent_chats()
   let next = take_pending(session)
   busy = !empty(next)
   status = ""
@@ -165,11 +170,10 @@ on forget
   entries = []
   error = ""
 
-// Chats the CLI has already had. The list is fetched once the window is up
-// rather than before it, because it touches a thousand files and none of them
-// are needed to start typing.
-// The list fills as it is read rather than when it is done: a thousand
-// rollouts take long enough that nothing happening reads as nothing working.
+// The chats this window has had. The list is fetched once the window is up
+// rather than before it: it touches the disk, and none of it is needed to
+// start typing. It fills as it is read rather than when it is done, so a store
+// that has grown shows something while it is being counted.
 on mount
   stream every scan_chats() -> chats_scanned _
 
@@ -179,13 +183,15 @@ on chats_scanned(scan)
   scan_total = scan.total
 
 on pick_chat(path)
+  return if busy || loading_chat || path == open_path
   open_path = path
   loading_chat = true
   error = ""
   run every open_recent(session, path) -> chat_opened _ | chat_failed _
 
 // Opening a chat replaces this one: the session becomes that conversation, so
-// carrying on from it resends its own history rather than starting beside it.
+// carrying on from it resends its own history and writes back to its own file
+// rather than starting beside it.
 on chat_opened(rows)
   entries = rows
   loading_chat = false
@@ -195,5 +201,6 @@ on chat_opened(rows)
   task widget snap-end #shell/app/transcript
 
 on chat_failed(cause)
+  open_path = ""
   loading_chat = false
   error = cause.message

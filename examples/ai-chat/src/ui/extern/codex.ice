@@ -63,12 +63,14 @@ extern crate::composer
   Send()
   editor-binding composer_keys() -> Send
 
-// Chats the CLI has already had. The listing reads only each rollout's head;
-// opening one streams it, because these files run to tens of megabytes.
-extern crate::history
-  Chat(path:str, title:str, when:str, cwd:str)
+// The chats this window has had. Each turn is written out as the rows it
+// produced, so reopening one gives back the turn — reasoning included — rather
+// than a reconstruction of it. The listing reads one line per chat.
+extern crate::store
+  Chat(path:str, title:str, when:str, model:str)
   pure sample_chats() -> [Chat]
   pure sample_transcript(rows:i64) -> [Entry]
   Scan(chats:[Chat], ratio:f64, found:i64, total:i64)
+  sync recent_chats() -> [Chat]
   stream scan_chats() -> Scan
   open_recent(session:Session, path:str) -> [Entry] ! CodexError

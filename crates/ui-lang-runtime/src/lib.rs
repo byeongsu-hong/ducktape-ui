@@ -17,6 +17,7 @@ mod qr;
 mod resize_handle;
 #[cfg(feature = "full-runtime")]
 pub mod rich_text_editor;
+mod scroll_anchor;
 mod selectable_text;
 mod stack_relief;
 pub mod template;
@@ -51,6 +52,7 @@ pub use qr::*;
 pub use resize_handle::*;
 #[cfg(feature = "full-runtime")]
 pub use rich_text_editor::{ContentVersion, EditorChange, RichTextEditor};
+pub use scroll_anchor::*;
 pub use selectable_text::*;
 pub use stack_relief::*;
 #[cfg(feature = "virtual-list")]

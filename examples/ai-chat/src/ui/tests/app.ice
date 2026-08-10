@@ -162,6 +162,26 @@ test copying_a_message_puts_its_own_text_on_the_clipboard
   click reply
   expect copied != "Which version of iced is current, and how do I stream a reply into a Markdown view?"
 
+// The whole reason this window keeps its own record: a chat had here is kept
+// here, and it is in the sidebar the moment the turn ends rather than one
+// restart later. Nothing is preset — the turn is driven through the real
+// composer and the list comes back off disk.
+test a_chat_just_had_is_listed_the_moment_it_ends
+  preset signed_in
+  viewport 1180 700
+  target composer = #shell/app/composer/field/draft
+  target send = #shell/app/composer/field/send
+  target list = #shell/sidebar/chat-list
+  expect no text "Where does this window keep its chats?" within list
+
+  click composer
+  type "Where does this window keep its chats?"
+  click send
+
+  // The turn finished, so it was written out and read back.
+  expect text "22,875 in · 321 out · 257 reasoning"
+  expect text "Where does this window keep its chats?" within list
+
 // Chats already had are a place on screen, not something that appears over
 // one: the list is beside the transcript, the chat being read is marked in it,
 // and picking one opens it.
@@ -169,7 +189,7 @@ test the_sidebar_lists_chats_already_had
   preset history
   viewport 1180 700
   target list = #shell/sidebar/chat-list
-  target first = #shell/sidebar/chat-list/chat("/sessions/2026-08-10-ducktape-ui.jsonl")/root
+  target first = #shell/sidebar/chat-list/chat("/sessions/4.jsonl")/root
   expect exists list
   expect text "Recent"
   expect text "Which version of iced is current?"

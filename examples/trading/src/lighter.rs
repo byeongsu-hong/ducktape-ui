@@ -23,7 +23,7 @@ use tungstenite::stream::MaybeTlsStream;
 
 use crate::hyperliquid::{
     Account, Book, Candle, Event, HlError, Level, MarketTick, Order, Position, SymbolRow, Tape,
-    Trade, merge, older_than, wire_is_open,
+    Trade, feed_channel, merge, older_than, wire_is_open,
 };
 use crate::lighter_sign::{self, PrivateKey, Resting, Transaction};
 #[cfg(test)]
@@ -1581,7 +1581,7 @@ fn open_interest(quote: f64, price: f64) -> f64 {
 /// arrive are the venue's own; nothing is folded out of the tape to stand in
 /// for the ones it will not send.
 pub fn lighter_market_feed(zone: Zone, tape: Tape) -> Receiver<Result<MarketTick, HlError>> {
-    let (sender, receiver) = smol::channel::unbounded();
+    let (sender, receiver) = feed_channel();
     // What the reader hands the socket: the channels whose held state it had
     // to throw away, which only a fresh snapshot can restore.
     let refresh: Arc<Mutex<Vec<String>>> = Arc::default();
@@ -2328,9 +2328,15 @@ pub fn demo_tape_lighter() -> Vec<Trade> {
 
 #[cfg(test)]
 mod tests {
-    use crate::hyperliquid::{apply_feed, symbol_row, tape_focus, tape_new};
+    use crate::hyperliquid::{FEED_BUFFER_CAPACITY, apply_feed, symbol_row, tape_focus, tape_new};
 
     use super::*;
+
+    #[test]
+    fn lighter_market_feed_has_a_finite_handoff() {
+        let receiver = lighter_market_feed(Zone::Mainnet, tape_new());
+        assert_eq!(receiver.capacity(), Some(FEED_BUFFER_CAPACITY));
+    }
 
     /// The row of one market out of the captured universe, by name — because
     /// the rows come back in volume order and an index is a claim about the
