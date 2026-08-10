@@ -151,6 +151,13 @@ state
   // Whether the send is in flight, so the confirmation cannot be pressed twice
   // into two orders.
   sending = false
+  // Whether the gate's read-only path is unfolded. The gate leads with the
+  // wallet — an app that can trade should not open by asking for somebody
+  // else's address — so watching is a second surface behind one press, and the
+  // address field lives on it rather than on the first thing a reader sees.
+  // A flag rather than a page: there is no history to walk and nothing the
+  // second surface holds that this state does not.
+  gate_watch = false
   // The import step: its own door rather than a settings row, because typing a
   // recovery phrase is a different act from every other thing on that page and
   // the address it derives has to be confirmed before anything is stored.
@@ -318,6 +325,21 @@ preset funding
     clock = 1786318200
 
 preset gate
+
+// The same first surface on a network where being wrong costs nothing. Nothing
+// here differs but the kind beside the name, which is the point: a first-run
+// reader is about to hand over a phrase, and the one fact they must not have to
+// go looking for is which world they are handing it to.
+preset gate_testnet
+  state
+    venue = Venue.hyperliquid_testnet
+
+// The gate with its read-only path already unfolded, which is where `reopen`
+// leaves a reader who was watching an address and asked for another. A preset
+// rather than a press, so the surface can be drawn and captured on its own.
+preset gate_watching
+  state
+    gate_watch = true
 
 preset terminal
   state

@@ -263,7 +263,9 @@ test trading_the_gate_opens_the_import_step_in_front_of_itself
   target step = #import
   expect exists dialog
   expect missing step
-  expect a11y door name "Import a wallet from a recovery phrase"
+  // The gate's primary path. `gate.ice` holds that it *is* the primary one;
+  // this holds where pressing it lands.
+  expect a11y door name "Import a wallet, and trade this account from this Mac"
   click door
   expect import_open
   expect exists step

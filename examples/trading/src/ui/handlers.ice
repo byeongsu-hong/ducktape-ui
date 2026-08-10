@@ -194,8 +194,19 @@ on ticket_took(typed)
 on ticket_stopped(typed)
   ticket_sl = typed
 
+// Unfold the gate's read-only path. The address field is on this surface and
+// not on the one before it, so a reader who wants to watch says so first — and
+// a reader who owns the account never sees a box asking them to type what the
+// app can derive.
+on watch_address
+  gate_watch = true
+
 on reopen
   draft = address
+  // A reader who was watching an address and asked for a different one gets the
+  // field they came for; one who was browsing gets the first surface. The state
+  // already knows which they were.
+  gate_watch = !empty(address)
   gate = true
   // Whatever is on screen belongs to the address being left. Fills and orders
   // arrive as a snapshot the app folds into what it already holds, so anything

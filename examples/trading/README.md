@@ -664,6 +664,34 @@ is refused where the owner can still see what they typed, and a passphrase this
 app will not normalise — anything outside ASCII, since NFKD is not implemented
 here — is refused rather than silently derived into a different account.
 
+### Where onboarding starts
+
+The gate leads with the wallet. An app that can place orders should not open by
+asking for somebody else's address, so the three ways in are ordered by what
+they are *for* rather than by what the app happened to support first:
+
+1. **Import a wallet** — the primary control, the only one taking the dialog's
+   whole width. The address on this path is *derived*: asking an owner to type
+   an address the app can compute from their phrase is work the derivation
+   exists to remove, and a typo in it reads back an account that is not theirs
+   with nothing on screen admitting it. This is why the address field is not on
+   this surface at all.
+2. **Watch an address** — the read-only path, one press behind the first, named
+   for its honest use. An account whose key you do not hold is one you can only
+   watch, and the address field lives here with it. Nothing on this path can
+   sign, and the button says so before it is pressed.
+3. **Browse markets** — no account, no key, prices only.
+
+The network's name and its **REAL MONEY / TESTNET** kind sit above all three,
+because the next thing this screen asks for is a recovery phrase and nobody
+should have to go looking for which world they are handing it to.
+
+The hierarchy is asserted as a rendered fact rather than as a wording —
+`trading_the_gate_leads_with_the_wallet` holds that the import is above both
+other paths, that it spans the dialog's content width, and that the address box
+is *missing* from the surface — because a paragraph saying "wallet first" over a
+dialog that renders address-first would pass any assertion about the prose.
+
 **ponytail: the phrase transits Ice state while it is being typed.** The
 language has no write-only input, so the field binds to state like every other
 field. What holds it down is that the life is one press, that `check_phrase`
@@ -1795,11 +1823,11 @@ fixed point of it — and are opt-in:
 cargo test -p trading-example -- --ignored
 ```
 
-To capture the prompt as evidence:
+To capture the first surface as evidence:
 
 ```bash
 ICE_TEST_ARTIFACT_DIR=target/trading-evidence \
   cargo test -p trading-example __ice_tests::trading_gate_gates_the_app -- --exact --nocapture
 ```
 
-![Address prompt](screenshots/gate.png)
+![Onboarding](screenshots/gate.png)
