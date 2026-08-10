@@ -477,17 +477,23 @@ fn render_png(tree: &resvg::usvg::Tree, size: u32) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("cannot encode the {size}x{size} icon: {error}"))
 }
 
-/// Links one executable for the bundle, joining several architectures into a
-/// universal binary when the request named more than one target.
-fn link_executable(package: &Package, request: &Request, output: &Path) -> Result<PathBuf, String> {
+/// Where Cargo left each requested build. Naming `--target` moves the profile
+/// directory under the triple, and naming none leaves it at the top.
+fn binary_paths(package: &Package, request: &Request) -> Vec<PathBuf> {
     let release = |directory: PathBuf| directory.join("release").join(&package.executable);
-    let binaries = match request.targets.as_slice() {
+    match request.targets.as_slice() {
         [] => vec![release(package.target_directory.clone())],
         targets => targets
             .iter()
             .map(|target| release(package.target_directory.join(target)))
             .collect(),
-    };
+    }
+}
+
+/// Links one executable for the bundle, joining several architectures into a
+/// universal binary when the request named more than one target.
+fn link_executable(package: &Package, request: &Request, output: &Path) -> Result<PathBuf, String> {
+    let binaries = binary_paths(package, request);
     if let [binary] = binaries.as_slice() {
         return Ok(binary.clone());
     }
@@ -813,6 +819,71 @@ mod tests {
             meta.copyright.is_some_and(|notice| notice.contains("MIT")),
             "a shipped bundle carries its licence notice"
         );
+    }
+
+    #[test]
+    fn a_named_target_moves_the_binary_under_its_triple() {
+        let package = Package {
+            root: "/workspace/examples/showcase".into(),
+            version: "0.1.0".into(),
+            executable: "showcase".into(),
+            target_directory: "/workspace/target".into(),
+            icon: None,
+            options: BundleOptions::default(),
+        };
+        assert_eq!(
+            binary_paths(
+                &package,
+                &Request {
+                    package: "showcase".into(),
+                    targets: Vec::new()
+                }
+            ),
+            [Path::new("/workspace/target/release/showcase")]
+        );
+        assert_eq!(
+            binary_paths(
+                &package,
+                &Request {
+                    package: "showcase".into(),
+                    targets: vec!["aarch64-apple-darwin".into(), "x86_64-apple-darwin".into()],
+                }
+            ),
+            [
+                Path::new("/workspace/target/aarch64-apple-darwin/release/showcase"),
+                Path::new("/workspace/target/x86_64-apple-darwin/release/showcase"),
+            ]
+        );
+    }
+
+    /// Everything above this point runs on any host. This is the one check
+    /// that drives the real `codesign`, `ditto`, and `hdiutil` sequence, so
+    /// the tool arguments are wrong here rather than on a release tag.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_signed_bundle_becomes_a_mountable_disk_image() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        // The test binary is a real Mach-O for this architecture, which is
+        // what codesign needs; no system path is assumed to be signable.
+        let executable = directory.path().join("showcase");
+        fs::copy(env::current_exe().expect("this test binary"), &executable)
+            .expect("stage an executable");
+        let meta = meta();
+        let app = directory.path().join("Showcase.app");
+        let icon = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/ice.svg");
+
+        write_app(&app, &meta, &executable, Some(&icon)).expect("write the bundle");
+        sign(&app, AD_HOC_IDENTITY).expect("sign the bundle");
+        tool(
+            "codesign",
+            &["--verify".to_owned(), "--strict".to_owned(), path(&app)],
+        )
+        .expect("the bundle signature verifies");
+
+        let dmg = directory.path().join("Showcase-0.1.0-test.dmg");
+        write_dmg(&app, &meta, &dmg).expect("write the disk image");
+        tool("hdiutil", &["verify".to_owned(), path(&dmg)]).expect("the disk image verifies");
+        assert!(dmg.is_file(), "the disk image is where the release looks");
     }
 
     #[test]

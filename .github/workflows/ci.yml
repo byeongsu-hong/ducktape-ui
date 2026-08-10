@@ -327,6 +327,11 @@ jobs:
         run: |
           cargo test --locked -p cargo-ice package_selection_discovers_its_ice_root
           cargo test --locked -p cargo-ice cargo_build_discovers_rustc_and_build_script_inputs
+      # The codesign/ditto/hdiutil sequence behind `cargo ice bundle` exists
+      # nowhere else, and a release tag is a bad place to discover it is wrong.
+      - name: Test macOS bundling
+        if: matrix.runner == 'macos-latest'
+        run: cargo test --locked -p cargo-ice a_signed_bundle_becomes_a_mountable_disk_image
       - name: Test native editor interactions
         run: |
           cargo test --locked -p ui-lang-runtime rich_text_editor --lib

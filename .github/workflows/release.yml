@@ -18,6 +18,9 @@ on:
       - crates/ui-lang-template/**
   push:
     tags: ["v*"]
+  # Lets a maintainer exercise the signing and notarization path once, on a
+  # branch, instead of finding out what it does on a release tag.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -120,7 +123,10 @@ jobs:
 
   app:
     name: Showcase disk image
-    if: github.event_name == 'push'
+    # A tag publishes it; a manual run is how the signing path gets exercised
+    # first. Pull requests skip it — the macOS bundling steps are covered by
+    # `Workspace (macos-latest)` in CI, without two release builds.
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     # Two architectures through the release profile's fat LTO and single
     # codegen unit, with no compiler cache, is the whole cost of this job.
