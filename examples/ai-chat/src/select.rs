@@ -46,7 +46,7 @@ thread_local! {
     static SELECTION: RefCell<Option<Selection>> = const { RefCell::new(None) };
     /// What each block contributed to the copy being assembled. Cleared by the
     /// block that finishes it.
-    static PARTS: RefCell<BTreeMap<usize, String>> = const {
+    static PARTS: RefCell<BTreeMap<usize, Part>> = const {
         RefCell::new(BTreeMap::new())
     };
 }
@@ -56,6 +56,30 @@ thread_local! {
 /// cannot be given one.
 const LANES: u64 = 8;
 static NEXT_GROUP: AtomicU64 = AtomicU64::new(LANES);
+
+/// One block's share of a copy, and how it follows the block before it.
+#[derive(Debug, PartialEq, Eq)]
+struct Part {
+    text: String,
+    /// A line of a code block, which follows the line above it by a newline.
+    /// Everything else is a block of the document and follows by a blank line.
+    tight: bool,
+}
+
+/// The blocks of a copy, in the order they are drawn.
+fn assemble(parts: &BTreeMap<usize, Part>) -> String {
+    let mut whole = String::new();
+    for part in parts.values() {
+        if !whole.is_empty() {
+            whole.push('\n');
+            if !part.tight {
+                whole.push('\n');
+            }
+        }
+        whole.push_str(&part.text);
+    }
+    whole
+}
 
 /// Where one end of a selection sits: which block, and how far into it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -122,6 +146,10 @@ pub struct Selectable {
     /// is one range across the group, so a block needs both to know its share.
     group: u64,
     block: usize,
+    /// A line of a code block rather than a block of the document. It changes
+    /// nothing about how it is drawn or selected — only how a copy that crosses
+    /// it is put back together.
+    tight: bool,
     /// How many blocks the answer has, shared with every one of them. Only the
     /// first and the last need it, to answer for a drag that has left the
     /// answer at the top or the bottom.
@@ -139,6 +167,7 @@ pub struct Selectable {
 pub fn selectable(
     group: u64,
     block: usize,
+    tight: bool,
     blocks: Rc<Cell<usize>>,
     spans: Arc<[Line]>,
     size: Pixels,
@@ -146,6 +175,7 @@ pub fn selectable(
     Element::new(Selectable {
         group,
         block,
+        tight,
         blocks,
         spans,
         plain: OnceCell::new(),
@@ -437,7 +467,8 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                 // A copy is assembled the same way: each block leaves its own
                 // share behind, and the last block of the selection — reached
                 // last, because a column hands its children the event in the
-                // order it draws them — sends the whole of it.
+                // order it draws them — sends the whole of it, put back
+                // together the way it is drawn.
                 //
                 // Out through the app rather than straight to the clipboard,
                 // because this window has one route for text leaving it: the
@@ -448,13 +479,19 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                         return;
                     };
                     PARTS.with_borrow_mut(|parts| {
-                        parts.insert(self.block, self.plain()[range].to_owned());
+                        parts.insert(
+                            self.block,
+                            Part {
+                                text: self.plain()[range].to_owned(),
+                                tight: self.tight,
+                            },
+                        );
                     });
                     shell.capture_event();
 
                     if self.last_of_selection() {
                         let whole = PARTS.with_borrow_mut(|parts| {
-                            let whole = parts.values().cloned().collect::<Vec<_>>().join("\n\n");
+                            let whole = assemble(parts);
                             parts.clear();
                             whole
                         });
@@ -731,6 +768,43 @@ mod tests {
             },
             dragging: false,
         }
+    }
+
+    fn part(text: &str, tight: bool) -> Part {
+        Part {
+            text: text.to_owned(),
+            tight,
+        }
+    }
+
+    /// A copy is put back together the way the answer is drawn. Prose blocks
+    /// are set apart by a blank line and lines of code by nothing but a new
+    /// one — joining code the way prose is joined doubles every line break in
+    /// it, which is a copied code block nobody can paste.
+    ///
+    /// A code block's first line is not one of those: what is above it is
+    /// prose, and it takes the blank line prose takes.
+    #[test]
+    fn a_copy_joins_prose_by_a_blank_line_and_code_by_a_new_one() {
+        let parts = BTreeMap::from([
+            (0, part("a paragraph", false)),
+            (1, part("let a = 1;", false)),
+            (2, part("let b = 2;", true)),
+            (3, part("and prose again", false)),
+        ]);
+
+        assert_eq!(
+            assemble(&parts),
+            "a paragraph\n\nlet a = 1;\nlet b = 2;\n\nand prose again"
+        );
+    }
+
+    /// One block is itself, with nothing joined to it.
+    #[test]
+    fn a_copy_of_one_block_is_that_block() {
+        let parts = BTreeMap::from([(2, part("just this", true))]);
+
+        assert_eq!(assemble(&parts), "just this");
     }
 
     /// A selection belongs to the answer, not to the block it started in: the
