@@ -5955,6 +5955,7 @@ candidate children, and removes staged executables on replacement or shutdown.
 | `cargo ice compat` | analyzes app graphs, verifies exact `iced`, `iced_widget`, `ui-lang-build`, runtime, and AccessKit lockfile versions plus direct reference-app/runtime manifest pins, and runs the reference app tests |
 | `cargo ice expand FILE` | prints generated Rust for debugging |
 | `cargo ice dev -p PACKAGE [<cargo-build-args>] [-- <app-args>]` | discovers the package's unique Ice root, watches complete source/build inputs, reloads compatible views in place, and replaces the running app only after a rebuilt shadow candidate reports ready |
+| `cargo ice bundle -p PACKAGE [--target TRIPLE]...` | analyzes the package's Ice root, builds it in release, and writes a macOS `.app` and `.dmg`; the app name and `id` become the bundle name and identifier, repeated targets are joined with `lipo`, and signing and notarization come from the environment |
 | `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts for a fixed input tuple |
 | `cargo ice diff BASE.json CURRENT.json [options]` | compares structured manifests and RGBA pixels, writes JSON/PNG diff artifacts, and fails outside explicit tolerances |
 | `cargo ice api FILE` | checks an app or declaration-only interface graph and prints its deterministic, versioned public API fingerprint |

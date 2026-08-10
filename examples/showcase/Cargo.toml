@@ -4,6 +4,13 @@ version = "0.1.0"
 edition.workspace = true
 publish = false
 
+# `cargo ice bundle -p showcase` takes the name and identifier from the Ice app
+# declaration; only what macOS has no other source for lives here.
+[package.metadata.ice.bundle]
+icon = "../../assets/icons/ice.svg"
+category = "public.app-category.developer-tools"
+copyright = "Copyright © 2026 ducktape-ui contributors. MIT licensed."
+
 [dependencies]
 ducktape-ui = { workspace = true, features = ["full"] }
 iced = { version = "=0.14.0", features = ["smol"] }

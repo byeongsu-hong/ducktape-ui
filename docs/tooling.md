@@ -25,6 +25,44 @@ package selection. `cargo ice diff BASE.json CURRENT.json` writes
 changed-pixel ratio exceeds explicit `--pixel-threshold`,
 `--max-changed-ratio`, or `--value-tolerance` settings.
 
+## bundle
+
+`cargo ice bundle -p PACKAGE` turns one Ice application into something a person
+can install. It analyzes the package's single Ice root first, so a graph that
+does not check never reaches a release build, then builds `--release
+--locked`, lays out `Contents/{MacOS,Resources,Info.plist}`, code signs the
+bundle, and writes a `.dmg` holding the app beside a symlink to
+`/Applications`. Repeat `--target TRIPLE` to build several architectures and
+join them with `lipo`; the disk image is then named `universal` instead of one
+architecture. Everything lands under `target/ice-bundle/`.
+
+The app declaration is the source of identity: `app Showcase` becomes
+`Showcase.app` and `CFBundleName`, and its `id` becomes `CFBundleIdentifier`.
+Only what macOS has no other source for is configured in the manifest:
+
+```toml
+[package.metadata.ice.bundle]
+icon = "../../assets/icons/ice.svg"
+category = "public.app-category.developer-tools"
+copyright = "Copyright © 2026 ducktape-ui contributors. MIT licensed."
+# name, identifier, executable, and minimum-system-version are also accepted;
+# an unknown key is an error rather than a silently ignored line.
+```
+
+The icon is an SVG. Every `.icns` size macOS asks for — 32 through 1024,
+including the 2x entries — is rendered from it at bundle time, so there are no
+exported rasters to keep in sync. The renderer carries no fonts, so an icon
+that still contains a `<text>` element is refused rather than drawn with a hole
+in it; convert lettering to paths, which is what an icon export does anyway.
+
+Signing and notarization read the environment, which is how a CI secret reaches
+them. `ICE_CODESIGN_IDENTITY` names a Developer ID identity in the keychain;
+without it the bundle is signed ad hoc, which is the minimum Apple silicon
+needs to launch a local build at all. Setting `ICE_NOTARY_KEY` (an App Store
+Connect `.p8` path), `ICE_NOTARY_KEY_ID`, and `ICE_NOTARY_ISSUER` submits the
+disk image to `notarytool`, waits, and staples the ticket. Notary credentials
+without a signing identity are refused before the upload rather than after it.
+
 ## review
 
 `cargo ice review ROOT.ice` runs every declared Ice test in the root graph, or

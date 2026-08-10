@@ -278,6 +278,7 @@ cargo ice clippy          # clippy with generated errors mapped to .ice lines
 cargo ice compat          # lockfile/manifest baseline + app tests
 cargo ice expand FILE     # print the generated Rust for a root
 cargo ice dev -p PACKAGE  # discover its Ice root, watch, reload, and restart as needed
+cargo ice bundle -p PKG   # macOS .app + signed, notarized .dmg with a rendered icon
 cargo ice inspect FILE    # headless render -> PNG + JSON manifest
 cargo ice diff A B        # compare two manifests + PNGs
 cargo ice api FILE        # public-surface fingerprint; `api diff` classifies changes

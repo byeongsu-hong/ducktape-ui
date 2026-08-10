@@ -77,6 +77,45 @@ JSON diff before publishing. Because the package version participates in the
 fingerprint payload, an intentional release version bump must regenerate and
 review the baseline too.
 
+## macOS application
+
+A tag also publishes the showcase application as a signed, notarized disk
+image. The `Showcase disk image` job builds `aarch64-apple-darwin` and
+`x86_64-apple-darwin`, joins them into one universal binary, and runs
+
+```bash
+cargo ice bundle -p showcase \
+  --target aarch64-apple-darwin --target x86_64-apple-darwin
+```
+
+The job verifies the result before it is uploaded: both architectures are
+present, the icon and bundle identifier are in place, and `codesign --verify
+--strict` passes. When notarization ran, `stapler validate` and `spctl
+--assess` confirm the ticket is stapled, which is what lets a first launch
+succeed on a machine that cannot reach Apple. The disk image and its SHA-256
+join the attested release assets.
+
+Signing is driven entirely by repository secrets, so the job is runnable before
+they exist — an unset secret arrives as an empty string, and the bundle is then
+signed ad hoc and never sent to Apple. Set all six to publish a distributable
+build:
+
+| Secret | Contents |
+| --- | --- |
+| `MACOS_CERTIFICATE` | base64 of the Developer ID Application `.p12` |
+| `MACOS_CERTIFICATE_PASSWORD` | that `.p12`'s export password |
+| `MACOS_SIGNING_IDENTITY` | `Developer ID Application: NAME (TEAMID)` |
+| `MACOS_NOTARY_KEY` | base64 of the App Store Connect API `.p8` |
+| `MACOS_NOTARY_KEY_ID` | that key's ID |
+| `MACOS_NOTARY_ISSUER` | the issuer UUID for that key |
+
+Certificates expire. A signature made before expiry stays valid because it
+carries a trusted timestamp, but the next release fails at `codesign` — renew
+the Developer ID certificate and replace the first three secrets.
+
+`docs/tooling.md` documents the command itself, including how another package
+declares its own bundle.
+
 ## Registry order
 
 The first crates.io publication must respect this dependency graph:
