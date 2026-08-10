@@ -50,6 +50,25 @@ split-debuginfo = "unpacked"
 [profile.dev.package.music-example]
 debug = 0
 
+# `cargo run -p trading-example` is a debug build, and a debug frame on the
+# terminal's densest screen was 11221us of build and layout against release's
+# 3.3ms — the one reading in `docs/testing.md` with no headroom at 60Hz. This
+# takes it to 7155us, and takes back nothing: touching a source file and
+# rebuilding the crate is 2.51s against 2.58s at opt-level 0, because
+# opt-level 0 hands LLVM more IR to lower than opt-level 1 does. A cold build
+# of the graph goes 48s to 59s.
+#
+# `[profile.dev.package."*"] opt-level = 2` was measured on top of this and
+# rejected. It takes the frame a further 0.82x, because a frame is iced's
+# generic widget machinery monomorphized into the crate that *instantiates* it
+# — this one — and a monomorphization is codegen'd at the instantiating crate's
+# opt-level, not at iced's. So most of the frame is already here. What the
+# dependency stanza does cost is every job in CI: on run 31359419019 `Rust and
+# Ice` went 7m12s to 22m20s against a 30-minute cap, and every other dev job
+# roughly tripled, because sccache misses everything on the changed flags.
+[profile.dev.package.trading-example]
+opt-level = 1
+
 # Whole-program optimization pays twice here: showcase ships at 20.5MB instead
 # of 33.0MB, and every frame phase drops 11-13% with p95 tightening 18% — the
 # generated view is thousands of tiny calls into iced, which is exactly what

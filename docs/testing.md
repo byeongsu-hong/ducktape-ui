@@ -611,10 +611,43 @@ a drag step plus redraw costs what an idle redraw costs:
 | rows rebuilt over 40 drag steps | 0 | 0 |
 
 So a drag costs exactly one frame, and the whole of the symptom is what a frame
-costs. `cargo run -p trading-example` is a **debug** build, where that is 9ms of
-build and layout before any paint — the only reading here that leaves no
-headroom at 60Hz. Nothing was changed for this; the finding is that there is no
-invalidation defect to narrow.
+costs. There is no invalidation defect to narrow.
+
+**What was changed is the dev profile.** `cargo run -p trading-example` is a
+**debug** build, and 9ms of build and layout before any paint is the only
+reading here that leaves no headroom at 60Hz. The app now compiles at
+`[profile.dev.package.trading-example] opt-level = 1`. Measured by running two
+builds' `frame_cost` alternately on one shared machine, so a load spike lands
+on both — absolute numbers run high there and only the ratio is a reading:
+
+| idle redraw, dense terminal, dev profile | p50 | against opt-level 0 |
+|---|---|---|
+| app at opt-level 0 | 11221us | — |
+| app at opt-level 1 | 7155us | **0.62x** |
+| app at 1, dependencies at 2 | — | 0.51x |
+
+Why the *app*, when the frame is spent inside iced: a frame is iced's generic
+widget machinery monomorphized into the crate that *instantiates* it, and a
+monomorphization is codegen'd at the instantiating crate's opt-level, not at
+iced's. Raising the framework crates (`ui-lang-runtime`, `ducktape-ui`) to 2
+moved nothing, for the same reason — they instantiate very little of what a
+frame walks.
+
+Optimizing the app costs no iteration speed, which is the trade this had to
+clear. Touching one of its source files and rebuilding is **2.51s against
+2.58s** at opt-level 0 — opt-level 0 hands LLVM more IR to lower than
+opt-level 1 does, and that pays for the optimizing. A cold build of the graph
+goes 48s to 59s.
+
+**`[profile.dev.package."*"] opt-level = 2` was measured and rejected**, so
+nobody repeats it. It is the last row above, a further 0.82x, and it costs
+every job in CI: on run 31359419019 `Rust and Ice` went 7m12s to 22m20s
+against a 30-minute cap, `Review bundles` 12m26s to 21m15s, `Workspace
+(windows)` 5m16s to 22m09s. sccache is content-keyed on the compiler flags, so
+changing them misses the entire dependency graph in every job at once.
+
+None of this replaces `--release`, which is still what a real trading session
+runs.
 
 **The row fade is not it either.** #490's `window::frames()` subscription is
 global — while any `FillFlash` is animating, the whole app rebuilds at refresh

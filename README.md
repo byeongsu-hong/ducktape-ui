@@ -206,6 +206,11 @@ cargo run -p tray-example      # the smallest macOS menu bar app: status item, l
 cargo run -p ai-chat-example   # streaming Codex chat: reasoning, tool calls, Markdown (see examples/ai-chat)
 ```
 
+Trade with real money on `cargo run --release -p trading-example`. The dev
+profile optimizes that app itself (see `[profile.dev.package.trading-example]`),
+which takes a third off a debug frame on the terminal's densest screen, but only
+a release build carries that screen with room to spare at 60Hz.
+
 The `tray` app-setting block puts an app in the macOS menu bar: codec-free
 RGBA status icons selected by `when` guards, a live `label` expression beside
 them, and a native `menu` whose rows are expressions and whose routed rows
