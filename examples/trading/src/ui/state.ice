@@ -189,7 +189,18 @@ state
   // rather than a check, and the whole point is to find out whether it was
   // written down somewhere this app cannot see.
   create_shown = false
-  create_confirm = ""
+  // One field per word asked for, because three answers to three questions is
+  // three boxes. A single box taking "three words separated by spaces" made the
+  // reader do the parsing, and made a mistyped space look like a wrong phrase.
+  backup_one = ""
+  backup_two = ""
+  backup_three = ""
+  // Which door this step was entered by, and the only thing here that survives
+  // the derivation. Everything else about a made wallet is cleared the instant
+  // the phrase has done its work — so keying the step's own heading off
+  // `create_phrase` retitled the address confirmation "Import a wallet" at
+  // exactly the moment the owner was reading it.
+  create_made = false
   // The address the phrase derived, which is the whole of what the owner
   // confirms. Nothing is stored until they do.
   import_address = ""
@@ -260,6 +271,11 @@ derived
   // order goes, the same confirmation over a whole panel's worth, and the
   // import step. None may be reachable past another, which is what one backdrop
   // guarantees and four stacked ones would not.
+  // Whether the backup check still has an empty box in it. Derived rather than
+  // spelled at the button, because a `with` property will not take a `||` — the
+  // checker refuses it and the formatter rewrites the line into something that
+  // no longer parses, which is worse than the refusal.
+  backup_incomplete = empty(backup_one) || empty(backup_two) || empty(backup_three)
   modal = gate || order_pending(confirm) || sweep_pending(sweep) || import_open
 
 // The custody panel in each state it can be drawn in. `clock` is the same
@@ -350,6 +366,27 @@ preset gate
 // here differs but the kind beside the name, which is the point: a first-run
 // reader is about to hand over a phrase, and the one fact they must not have to
 // go looking for is which world they are handing it to.
+// The moment after a made wallet's backup check passes: the phrase has done its
+// work and is gone, the address it derived is on screen, and the step is still
+// the one the reader walked into. No phrase is set here — the address is public
+// and the words are not this fixture's to hold — so the rule that no preset
+// ever carries a phrase is intact.
+preset created_address
+  state
+    import_open = true
+    create_made = true
+    import_address = "0x9858effd232b4033e47d90003d41ec34ecaeda94"
+
+// A made wallet whose derivation did not land: the phrase has been cleared, no
+// address came back, and the step is still the one the reader walked into. The
+// state the phrase box used to fall through to — which is what made a failed
+// creation look like being sent back to the start.
+preset created_failed
+  state
+    import_open = true
+    create_made = true
+    import_note = "That phrase does not derive a usable key on this path."
+
 preset gate_testnet
   state
     venue = Venue.hyperliquid_testnet

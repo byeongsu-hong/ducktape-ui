@@ -443,6 +443,11 @@ test trading_making_a_wallet_shows_the_words_and_stores_nothing
   target phrase = step/create-phrase
   target written = step/backup-written
   target asks = step/backup-asks
+  target fields = step/backup-fields
+  target one = fields/backup-one
+  target two = fields/backup-two
+  target three = fields/backup-three
+  target import_field = step/import-phrase
   expect missing step
   click create_door
   expect exists step
@@ -462,6 +467,15 @@ test trading_making_a_wallet_shows_the_words_and_stores_nothing
   expect create_shown
   expect missing phrase
   expect exists asks
+  // Three labelled boxes rather than one that takes all three answers.
+  expect exists one
+  expect exists two
+  expect exists three
+  // And the phrase box is nowhere on this path: the app is already holding the
+  // words it made, so a field asking for them again is a screen that looks
+  // like starting over.
+  expect missing import_field
+  expect create_made
   capture create_backup
 
 // The backup check is a gate, not a formality.
@@ -479,17 +493,37 @@ test trading_a_wallet_is_not_made_until_the_words_are_read_back
   target step = #import
   target phrase = step/create-phrase
   target written = step/backup-written
-  target answer = step/backup-input
+  target fields = step/backup-fields
+  target one = fields/backup-one
+  target two = fields/backup-two
+  target three = fields/backup-three
   target prove = step/backup-confirm
   target note = step/import-note
   click create_door
   click written
-  // Dead until something is typed, which is the rule every other control on
-  // this screen follows.
+  // Three boxes, one per word asked for, each labelled with its own position.
+  // A reader answering three questions should not have to work out which of
+  // them a single box is asking first.
+  expect exists one
+  expect exists two
+  expect exists three
+  // Dead until every box has something in it, which is the rule every other
+  // control on this screen follows.
   expect a11y prove disabled true
-  focus answer
-  replace "abandon abandon abandon"
-  expect create_confirm == "abandon abandon abandon"
+  // Three *different* words, so a second box wired to the first box's state
+  // shows up as one of these reading the wrong thing. Typing the same word into
+  // all three would pass for a single field drawn three times.
+  focus one
+  replace "alpha"
+  expect a11y prove disabled true
+  focus two
+  replace "bravo"
+  expect a11y prove disabled true
+  focus three
+  replace "charlie"
+  expect backup_one == "alpha"
+  expect backup_two == "bravo"
+  expect backup_three == "charlie"
   expect a11y prove disabled false
   click prove
   // Refused, and said. The odds that three words drawn from a random phrase are
@@ -503,3 +537,82 @@ test trading_a_wallet_is_not_made_until_the_words_are_read_back
   expect create_shown
   expect missing phrase
   expect !empty(create_phrase)
+
+// Where a made wallet lands once the words are read back: on its own address,
+// under its own heading, with the phrase box nowhere on screen.
+//
+// This is the defect the owner found. The step's title used to be keyed off
+// `create_phrase`, which the derivation clears — so at the exact moment a
+// reader who had just *made* a wallet was shown their address, the box retitled
+// itself "Import a wallet", and a derivation that failed fell through to the
+// phrase field. Both were the same mistake: asking a transient value which door
+// the reader came through.
+test trading_a_made_wallet_lands_on_its_address_not_on_the_import_step
+  preset created_address
+  viewport 1440 900
+  target step = #import
+  target shown = step/import-address
+  target keep = step/import-keep
+  target import_field = step/import-phrase
+  target check = step/import-check
+  expect exists step
+  // The address the words derived, and the one press that stores it.
+  expect exists shown
+  expect a11y shown value "0x9858effd232b4033e47d90003d41ec34ecaeda94"
+  expect a11y keep name "Keep this wallet on this Mac, behind Touch ID"
+  // Still the step it started as.
+  expect text "Make a wallet"
+  expect no text "Import a wallet"
+  // The advice belongs to this door too. "Go back and check the words" is not
+  // something a reader who just made a wallet can do — the words are gone, on
+  // purpose — so the created path says what the address *is* instead.
+  expect text "Nothing has been stored yet. This is the account those twenty-four words make — keep it, and this app can sign enrolments for it."
+  expect no text "Nothing has been stored. If that is not the address you expect, go back and check the words."
+  // And no way back to a screen that looks like starting over: no phrase box,
+  // no CHECK, because the app is already holding what those would ask for.
+  expect missing import_field
+  expect missing check
+  capture create_address
+
+// The other door still reaches the same address surface, under its own name.
+// The heading is the only thing that differs, which is the whole of the fix:
+// one surface, two honest titles, keyed off which door was taken.
+test trading_an_imported_wallet_lands_on_the_same_address_under_its_own_name
+  preset held
+  viewport 1660 900
+  target step = #import
+  target field = step/import-phrase
+  target check = step/import-check
+  dispatch open_import
+  expect !create_made
+  expect exists field
+  expect exists check
+  expect text "Import a wallet"
+  expect no text "Make a wallet"
+
+// A creation that did not derive stays a creation.
+//
+// This is the arm the `!create_made` guard exists for: the phrase is cleared and
+// no address came back, so a guard asking `empty(create_phrase)` would put the
+// import step's phrase box on screen and make a failed creation look like being
+// sent back to the beginning. The note says what happened; CLOSE is the way out.
+test trading_a_creation_that_did_not_derive_does_not_become_an_import
+  preset created_failed
+  viewport 1440 900
+  target step = #import
+  target import_field = step/import-phrase
+  target check = step/import-check
+  target note = step/import-note
+  target close = step/import-close
+  expect exists step
+  expect empty(import_address)
+  expect empty(create_phrase)
+  // No phrase box and no CHECK, even with nothing else on the surface.
+  expect missing import_field
+  expect missing check
+  // What did happen, and the way out.
+  expect exists note
+  expect a11y note value "That phrase does not derive a usable key on this path."
+  expect exists close
+  expect text "Make a wallet"
+  expect no text "Import a wallet"
