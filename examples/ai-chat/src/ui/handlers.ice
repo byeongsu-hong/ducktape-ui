@@ -179,6 +179,7 @@ on chats_scanned(scan)
   scan_total = scan.total
 
 on pick_chat(path)
+  return if busy || loading_chat || path == open_path
   open_path = path
   loading_chat = true
   error = ""
@@ -195,5 +196,6 @@ on chat_opened(rows)
   task widget snap-end #shell/app/transcript
 
 on chat_failed(cause)
+  open_path = ""
   loading_chat = false
   error = cause.message
