@@ -697,18 +697,52 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 /// cannot be re-filed as another kind after it is signed.
 const TX_CREATE_ORDER: u8 = 14;
 const TX_CANCEL_ORDER: u8 = 15;
+const TX_CHANGE_PUB_KEY: u8 = 8;
 
-/// The one order shape this app places, as the venue's own tables number it: a
-/// limit order that rests until its own expiry, with no trigger.
+/// The one order *type* this app places, as the venue's own tables number it: a
+/// limit order, priced by the ticket and never by a trigger.
 ///
-/// Written out rather than parameterised because every other shape is a
-/// different validation table at the venue — a market order must be
-/// immediate-or-cancel and carry no expiry, a stop must carry a trigger and is
-/// refused on spot — and none of them has a caller here. A `Tif` enum with one
-/// inhabitant reached would be a choice nobody makes.
+/// The type is fixed where the resting rule is not. A stop or a take-profit is
+/// a different type with its own validation table and its own trigger price,
+/// and this app attaches neither on this venue — `venue_attaches_levels` says
+/// so on the ticket. How long the order rests, though, is a control the reader
+/// has, so that one is carried.
 const ORDER_LIMIT: i64 = 0;
-const ORDER_GOOD_TILL_TIME: i64 = 1;
 const NO_TRIGGER: i64 = 0;
+
+/// How long a Lighter order rests, in the venue's own numbering.
+///
+/// The same three the ticket offers, and the mapping is not quite the naming:
+/// this venue has no rest-until-cancelled, so its longest-lived order carries
+/// the deadline it was signed with — which is what `venue_tif_note` tells the
+/// reader and why `Resting::Deadline` is not called `Gtc` here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resting {
+    /// Take what is on the book now and cancel the rest. Carries no expiry,
+    /// and the venue refuses one that does.
+    Immediate,
+    /// Rest until the expiry the order carries. Requires that expiry.
+    Deadline,
+    /// Never cross: a maker order or nothing.
+    PostOnly,
+}
+
+impl Resting {
+    fn code(self) -> i64 {
+        match self {
+            Resting::Immediate => 0,
+            Resting::Deadline => 1,
+            Resting::PostOnly => 2,
+        }
+    }
+
+    /// Whether an order resting this way carries an expiry at all. The venue
+    /// validates the pairing rather than ignoring it: an immediate order with
+    /// an expiry is refused, and a resting one without is refused too.
+    pub fn expires(self) -> bool {
+        !matches!(self, Resting::Immediate)
+    }
+}
 
 /// One limit order, as the transaction carries it.
 ///
@@ -732,7 +766,9 @@ pub struct NewOrder {
     pub price: u32,
     pub ask: bool,
     pub reduce_only: bool,
-    /// When the resting order stops resting.
+    pub resting: Resting,
+    /// When the resting order stops resting, and zero for one that never rests.
+    /// `Resting::expires` is which of those this must be.
     pub expiry_ms: i64,
     /// When the *transaction* stops being submittable, which is a different
     /// deadline and a far shorter one: it bounds how long a signed transaction
@@ -811,7 +847,7 @@ pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignErr
         ("price", i64::from(order.price)),
         ("side", ask),
         ("order type", ORDER_LIMIT),
-        ("time in force", ORDER_GOOD_TILL_TIME),
+        ("time in force", order.resting.code()),
         ("reduce-only flag", reduce_only),
         ("trigger price", NO_TRIGGER),
         ("order expiry", order.expiry_ms),
@@ -822,7 +858,7 @@ pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignErr
         fields: format!(
             "\"AccountIndex\":{},\"ApiKeyIndex\":{},\"MarketIndex\":{},\
              \"ClientOrderIndex\":{},\"BaseAmount\":{},\"Price\":{},\"IsAsk\":{ask},\
-             \"Type\":{ORDER_LIMIT},\"TimeInForce\":{ORDER_GOOD_TILL_TIME},\
+             \"Type\":{ORDER_LIMIT},\"TimeInForce\":{},\
              \"ReduceOnly\":{reduce_only},\"TriggerPrice\":{NO_TRIGGER},\
              \"OrderExpiry\":{},\"ExpiredAt\":{},\"Nonce\":{}",
             order.account,
@@ -831,6 +867,7 @@ pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignErr
             order.client_index,
             order.base_amount,
             order.price,
+            order.resting.code(),
             order.expiry_ms,
             order.deadline_ms,
             order.nonce,
@@ -867,6 +904,85 @@ pub fn cancel_order(zone: Zone, cancel: &Cancel) -> Result<Transaction, SignErro
     })
 }
 
+/// Registering an API key against an account: the one transaction here that is
+/// signed twice.
+///
+/// The new key signs the digest, which proves whoever asks for the slot holds
+/// the key going into it. The account's own L1 wallet signs a sentence naming
+/// the same four values, which is what says the account agreed — and it is the
+/// signature this app never makes for a real account. `registration_body` is
+/// that sentence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Registration {
+    pub account: i64,
+    pub api_key: u8,
+    /// The compressed ECgFp5 point going into the slot.
+    pub public_key: [u8; 40],
+    pub deadline_ms: i64,
+    pub nonce: i64,
+}
+
+/// What the account's L1 wallet signs to authorise a registration.
+///
+/// Transcribed from `lighter-go`'s `TemplateChangePubKey` and its
+/// `GetL1SignatureBody`, down to the padding: the three numbers are written as
+/// `0x` and exactly sixteen hex digits, zero-filled, which is what
+/// `getHex10FromUint64` produces. The venue recovers an address from this exact
+/// string, so a byte out of place recovers a stranger and the registration is
+/// refused for an account nobody owns.
+pub fn registration_body(registration: &Registration) -> String {
+    let wide = |value: i64| format!("0x{:016x}", value as u64);
+    format!(
+        "Register Lighter Account\n\npubkey: 0x{}\nnonce: {}\naccount index: {}\napi key \
+         index: {}\nOnly sign this message for a trusted client!",
+        hex(&registration.public_key),
+        wide(registration.nonce),
+        wide(registration.account),
+        wide(i64::from(registration.api_key)),
+    )
+}
+
+/// Build the registration, given the L1 wallet's signature over
+/// [`registration_body`].
+///
+/// The digest's tail is the public key itself, as the five field elements it
+/// decodes to rather than as bytes — so a key that is not a canonical element
+/// is refused here rather than hashed into something the venue will not
+/// reproduce.
+pub fn change_pub_key(
+    zone: Zone,
+    registration: &Registration,
+    l1_signature: &str,
+) -> Result<Transaction, SignError> {
+    let (public, canonical) = GFp5::decode(&registration.public_key);
+    if canonical == 0 {
+        return Err(SignError::Field("public key"));
+    }
+    let mut elements = checked(&[
+        ("chain id", i64::from(zone.chain_id())),
+        ("transaction type", i64::from(TX_CHANGE_PUB_KEY)),
+        ("nonce", registration.nonce),
+        ("deadline", registration.deadline_ms),
+        ("account index", registration.account),
+        ("api key index", i64::from(registration.api_key)),
+    ])?;
+    elements.extend_from_slice(&public.0);
+    Ok(Transaction {
+        tx_type: TX_CHANGE_PUB_KEY,
+        digest: Digest(hash_to_quintic_extension(&elements)),
+        fields: format!(
+            "\"AccountIndex\":{},\"ApiKeyIndex\":{},\"PubKey\":\"{}\",\"L1Sig\":\"{}\",\
+             \"ExpiredAt\":{},\"Nonce\":{}",
+            registration.account,
+            registration.api_key,
+            BASE64.encode(registration.public_key),
+            l1_signature,
+            registration.deadline_ms,
+            registration.nonce,
+        ),
+    })
+}
+
 /// Hash the named fields, refusing any that a digest cannot carry.
 ///
 /// The venue casts each field straight into a Goldilocks element, so a
@@ -877,6 +993,12 @@ pub fn cancel_order(zone: Zone, cancel: &Cancel) -> Result<Transaction, SignErro
 /// Goldilocks prime is 2^64 - 2^32 + 1, which is above `i64::MAX`, so every
 /// value that passes this is already canonical.
 fn digest_of(fields: &[(&'static str, i64)]) -> Result<Digest, SignError> {
+    Ok(Digest(hash_to_quintic_extension(&checked(fields)?)))
+}
+
+/// The same check, answering the elements rather than their hash, for the one
+/// transaction whose digest carries something that is not a named integer.
+fn checked(fields: &[(&'static str, i64)]) -> Result<Vec<GFp>, SignError> {
     let mut elements = Vec::with_capacity(fields.len());
     for (name, value) in fields {
         if *value < 0 {
@@ -884,7 +1006,7 @@ fn digest_of(fields: &[(&'static str, i64)]) -> Result<Digest, SignError> {
         }
         elements.push(GFp::from_u64_reduce(*value as u64));
     }
-    Ok(Digest(hash_to_quintic_extension(&elements)))
+    Ok(elements)
 }
 
 #[cfg(test)]
@@ -1302,6 +1424,7 @@ mod tests {
         price: 6_500_000,
         ask: false,
         reduce_only: false,
+        resting: Resting::Deadline,
         expiry_ms: 1_786_300_000_000,
         deadline_ms: 1_786_279_157_060,
         nonce: 7,
@@ -1348,6 +1471,7 @@ mod tests {
         price: u32::MAX,
         ask: true,
         reduce_only: true,
+        resting: Resting::Deadline,
         expiry_ms: 4_102_444_800_000,
         deadline_ms: 1_786_279_157_061,
         nonce: 281_474_976_710_655,
@@ -1672,6 +1796,110 @@ mod tests {
         // A cancel is not the order it cancels, which is the transaction type
         // doing its job: every other element these two share is equal.
         assert_ne!(resting, base);
+    }
+
+    /// The registration this app performs only for a disposable identity, held
+    /// to the same signer the order vectors came from.
+    ///
+    /// Two claims, and the second is the one no amount of care substitutes for:
+    /// the digest matches theirs, and the sentence the account's L1 wallet signs
+    /// matches theirs **character for character** — including the sixteen-digit
+    /// zero padding on all three numbers, which is the part a careful
+    /// reimplementation gets wrong and which makes the venue recover a stranger.
+    #[test]
+    fn a_registration_matches_the_official_signer() {
+        let registration = Registration {
+            account: ACCOUNT,
+            api_key: API_KEY,
+            public_key: bytes(PUBLIC_KEY),
+            deadline_ms: 1_786_287_355_528,
+            nonce: 11,
+        };
+        assert_eq!(
+            hex(&change_pub_key(Zone::Testnet, &registration, "")
+                .expect("a buildable registration")
+                .digest()
+                .to_bytes()),
+            "fb3c0d46efe575675a194ef2cb8351b09851255221324af023f824b2775acec27f33849c2814d957",
+        );
+        assert_eq!(
+            registration_body(&registration),
+            concat!(
+                "Register Lighter Account\n\npubkey: 0xcb92c72468df173cab282606e6a8ee8ef94e965d",
+                "ef5215f9688c0134cda1c401babe8a04576e64df\nnonce: 0x000000000000000b\n",
+                "account index: 0x00000000000ab7b0\napi key index: 0x0000000000000003\n",
+                "Only sign this message for a trusted client!",
+            ),
+        );
+        // The body is what an L1 wallet is asked to sign, so every value in it
+        // has to move it. A registration for another slot is another sentence.
+        for moved in [
+            Registration {
+                api_key: API_KEY + 1,
+                ..registration
+            },
+            Registration {
+                account: ACCOUNT + 1,
+                ..registration
+            },
+            Registration {
+                nonce: 12,
+                ..registration
+            },
+        ] {
+            assert_ne!(registration_body(&moved), registration_body(&registration));
+        }
+        // The deadline is *not* in the sentence — it is in the digest only —
+        // which is the venue's own split and worth pinning so nobody adds it.
+        assert_eq!(
+            registration_body(&Registration {
+                deadline_ms: 1,
+                ..registration
+            }),
+            registration_body(&registration),
+        );
+    }
+
+    /// The body's JSON, beside the signer's own, and the two signatures a
+    /// registration carries in it.
+    #[test]
+    fn a_registration_body_carries_both_signatures() {
+        let registration = Registration {
+            account: ACCOUNT,
+            api_key: API_KEY,
+            public_key: bytes(PUBLIC_KEY),
+            deadline_ms: 1_786_287_355_528,
+            nonce: 11,
+        };
+        let built = change_pub_key(Zone::Testnet, &registration, "0xdeadbeef")
+            .expect("a buildable registration")
+            .signed(&key());
+        assert_eq!(
+            without_signature(&built),
+            concat!(
+                r#"{"AccountIndex":702384,"ApiKeyIndex":3,"PubKey":"y5LHJGjfFzyrKCYG5qjujvlOll"#,
+                r#"3vUhX5aIwBNM2hxAG6vooEV25k3w==","L1Sig":"0xdeadbeef","ExpiredAt":178628735"#,
+                r#"5528,"Nonce":11,"Sig":"…","L2TxAttributes":null}"#,
+            ),
+        );
+    }
+
+    /// A public key that is not a canonical field element is refused rather
+    /// than hashed into something the venue cannot reproduce.
+    #[test]
+    fn a_registration_refuses_a_public_key_that_is_not_an_element() {
+        let registration = Registration {
+            account: ACCOUNT,
+            api_key: API_KEY,
+            // Every limb at its maximum, which is above the field's modulus.
+            public_key: [0xff; 40],
+            deadline_ms: 1,
+            nonce: 0,
+        };
+        assert_eq!(
+            change_pub_key(Zone::Testnet, &registration, "").expect_err("not an element"),
+            SignError::Field("public key"),
+        );
     }
 
     /// A negative field is refused by name rather than hashed.

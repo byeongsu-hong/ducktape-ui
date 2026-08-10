@@ -9,7 +9,7 @@ extern crate::hyperliquid
   Account(value:f64, cross_value:f64, pnl:f64, withdrawable:f64, notional:f64, maintenance:f64, health:f64, margin_pct:f64)
   Trade(ts:i64, price:f64, size:f64, buy:bool, sweep:i64)
   Fill(coin:str, ts:i64, price:f64, size:f64, buy:bool, closed_pnl:f64, hot:bool, tid:i64)
-  Order(coin:str, buy:bool, price:f64, size:f64, ts:i64)
+  Order(oid:i64, coin:str, buy:bool, price:f64, size:f64, ts:i64)
   Level(price:f64, size:f64, bar:f64)
   Book(bids:[Level], asks:[Level], spread_pct:f64, mid:f64)
   Alert(coin:str, price:f64, fired:bool)
@@ -95,6 +95,7 @@ extern crate::hyperliquid
   pure market_label(market:SymbolRow) -> str
   pure group_note(market:SymbolRow) -> str
   pure order_label(order:Order) -> str
+  pure order_cancel_label(order:Order) -> str
   pure fill_label(fill:Fill) -> str
   pure book_label(price:f64, buy:bool) -> str
   pure position_label(held:Position) -> str

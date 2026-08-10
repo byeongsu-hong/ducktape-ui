@@ -137,6 +137,15 @@ state
   // state machine in Rust, and a copy of them here would be a second opinion
   // about when an order may be signed.
   session:Session = session_start()
+  // The order a confirmation is standing over, or nothing when none is. This
+  // is a *snapshot*: the book moves, and a confirmation that re-derived itself
+  // between the press and the send would show one price and send another —
+  // the reader would have agreed to neither. What is confirmed is what is
+  // sent.
+  confirm:Draft? = none
+  // Whether the send is in flight, so the confirmation cannot be pressed twice
+  // into two orders.
+  sending = false
   // Why the session is where it is, when the state alone cannot say. A
   // declined sheet and never having pressed the button are both `Locked`, so
   // without this the panel draws the same thing for "you cancelled" and "you
@@ -180,6 +189,23 @@ derived
   // why one level is chosen over another.
   tp_pnl = level_pnl(ticket_at, ticket_tp, ticket_coins, ticket_buy)
   sl_pnl = level_pnl(ticket_at, ticket_sl, ticket_coins, ticket_buy)
+  // The order as it stands, projected from the fields above and from nothing
+  // else. The send button reads it, the confirmation freezes it, and the wire
+  // is built from it — one description of one order.
+  ticket_draft = order_draft(venue, coin, focus, ticket_buy, ticket_coins, ticket_at, ticket_market, ticket_reduce, ticket_cross, ticket_tif, quote, ticket_tp, ticket_sl, reduce_refusal, tp_refusal, sl_refusal)
+  // Why the send is dead, or nothing when it is live. Both halves of the
+  // question in one sentence: whether this session may sign at all, and
+  // whether the order as typed is one a venue would take.
+  send_refusal = order_gate(venue, session, clock, ticket_draft)
+  // Why CANCEL on a resting order is dead. The session half of the send's
+  // refusal and nothing else: pulling an order asks nothing of the ticket, so
+  // a half-typed size must not be a reason a resting order cannot be pulled.
+  cancel_refusal = trade_refusal(venue, session, clock)
+  // Whether anything is standing on the app's one modal surface. Two things
+  // can: the gate before an address is connected, and the confirmation before
+  // an order goes. Neither may be reachable past the other, which is what one
+  // backdrop guarantees and two stacked ones would not.
+  modal = gate || order_pending(confirm)
 
 // The custody panel in each state it can be drawn in. `clock` is the same
 // reading the view asks `session_can_trade` with, so a fixture is live or
@@ -196,6 +222,24 @@ preset unlocked
     book = some(demo_book())
     live = true
     session = demo_session_ready(now_seconds())
+
+// An unlocked session over a market with an order already typed into it, which
+// is the one state the send path can be driven from. `held` has the orders and
+// the fills; this has the key.
+preset ready_to_send
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    book = some(demo_book())
+    orders = demo_orders()
+    live = true
+    session = demo_session_ready(now_seconds())
+    ticket_price = "64,000.00"
+    ticket_size = "3.00"
 
 preset key_expired
   state

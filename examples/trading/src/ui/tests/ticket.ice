@@ -199,122 +199,40 @@ test trading_a_venue_that_expires_an_order_does_not_call_it_cancelled
   expect ticket_tif == Tif.ioc
   expect text "IOC" within ticket
   expect no text "expires there"
-
-// A target on the wrong side of the entry is a stop wearing the wrong name,
-// and the venue sends it as one: the trigger is already true when the order
-// fills, so the position closes at a loss immediately. That is one press from
-// the opposite of what was asked for, so it is refused with the reason.
-test trading_a_target_on_the_wrong_side_of_the_entry_is_refused_with_the_reason
+// No venue offers a target and a stop on the entry, and each says why in its
+// own words.
+//
+// Hyperliquid's answer changed with the order path: it *does* take them, on the
+// same action as a trigger order grouped with the entry, and this app does not
+// send them. The two fields used to be offered here over an order that carried
+// neither — a panel promising a position is protected, above a wire with no
+// protection in it. Offered nowhere is the honest state until one has been seen
+// to rest on a test deployment.
+//
+// The arithmetic behind the two fields is unchanged and still tested where it
+// lives: `tp_refused` and `sl_refused` have their own cases in Rust.
+test trading_no_venue_offers_a_target_and_a_stop_and_each_says_why
   preset held
   viewport 1660 820
   target app = #app
   target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
   target attach = ticket/ticket-attach
-  target take = ticket/ticket-levels/ticket-tp
-  dispatch ticket_sized("2.0")
-  // Folded away, and folded away is not attached: there is no field to type
-  // a level into and no level on the order.
-  expect missing take
-  click attach
-  expect ticket_levels
-  expect ticket_buy
-  expect ticket_at ~= mark_price(focus)
-  // Two fields open at the foot of a panel that scrolls by design, so reading
-  // what they paint is a scroll — the reader's, and this one. Every statement
-  // that follows a change in what the panel holds scrolls again, because the
-  // foot of it has moved.
-  scroll-to ticket 0.0 400.0
-  // Typed into the field rather than dispatched, because the route from that
-  // field to the order is part of the claim. Above the entry on a long: two
-  // bitcoin taken 1,000 higher is 2,000.
-  focus take
-  replace "65,000.00"
-  expect ticket_tp == "65,000.00"
-  expect empty(tp_refusal)
-  expect tp_pnl ~= 2000.0
-  expect a11y take name "Take profit price, +$2,000.00 at that level"
-  expect text "+$2,000.00"
-  // Below it, and the same field is a stop that fires on fill. Dispatched from
-  // here on: the field's route is proved above, and what is left is the
-  // arithmetic and the sentence, neither of which is about typing.
-  dispatch ticket_took("63,000.00")
-  expect tp_refusal == "A take-profit on a long sits above the 64,000.00 it opens at."
-  expect a11y take name "Take profit price, -$2,000.00 at that level"
-  scroll-to ticket 0.0 400.0
-  expect text tp_refusal
-  capture ticket_levels_refused
-  // The figure goes with the refusal rather than sitting beside it saying the
-  // order loses 2,000 on purpose. It was painted one statement ago, which is
-  // what stops this being an assertion about text that was never there.
-  expect no text "+$2,000.00"
-  expect no text "-$2,000.00"
-  // The short is the mirror, and it is the assertion that stops this reading
-  // "any level below the entry is refused".
-  dispatch ticket_side(false)
-  expect empty(tp_refusal)
-  expect tp_pnl ~= 2000.0
-
-// A stop past the cliff is worse than a stop on the wrong side: it reads as
-// protection and is not there. The engine closes the position before the
-// trigger is reached, at the engine's price rather than the chosen one.
-test trading_a_stop_past_the_cliff_says_the_engine_gets_there_first
-  preset held
-  viewport 1660 820
-  target app = #app
-  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
-  target attach = ticket/ticket-attach
-  target stop = ticket/ticket-levels/ticket-sl
-  click attach
-  // A sell adds to the short the fixture holds, so the order opens a position
-  // and has a cliff to be past. A buy would close one and have none.
-  dispatch ticket_side(false)
-  dispatch ticket_sized("2.0")
-  expect quote.liquidation > ticket_at
-  // Between the entry and the cliff, which is where a stop belongs — typed,
-  // because the route from the field to the order is part of the claim.
-  focus stop
-  replace "70,000.00"
-  expect ticket_sl == "70,000.00"
-  expect empty(sl_refusal)
-  expect sl_pnl ~= -12000.0
-  // Below the entry on a short is the other kind of order, refused in the
-  // take-profit's words. Establishing it here is what makes the last
-  // assertion about a sentence that was really on screen.
-  dispatch ticket_stopped("60,000.00")
-  expect sl_refusal == "A stop-loss on a short sits above the 64,000.00 it opens at."
-  scroll-to ticket 0.0 400.0
-  expect text sl_refusal
-  // Past the cliff, and the stop is decoration: still on the right side of the
-  // entry, so this is the second refusal rather than the first firing twice.
-  dispatch ticket_stopped("80,000.00")
-  expect sl_refusal == "The engine closes this short at 75,851.85, before that stop is reached."
-  scroll-to ticket 0.0 400.0
-  expect text sl_refusal
-  expect no text "A stop-loss on a short sits above the 64,000.00 it opens at."
-
-// Lighter's public API takes no take-profit or stop-loss attached to an entry
-// — its SDK exposes them only as whole independent orders, with nothing
-// anywhere naming a parent. Two fields the app would have to drop are worse
-// than no fields: the entry would go and the protection would not.
-test trading_a_venue_that_attaches_no_levels_says_so_instead_of_offering_them
-  preset lighter
-  viewport 1660 820
-  target app = #app
-  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
-  target attach = ticket/ticket-attach
+  expect !venue_attaches_levels(venue)
   expect missing attach
   expect no text "Attach a take-profit and a stop-loss"
   // The sentence is the last thing in a panel that scrolls, and it is prose
   // rather than a control: every control the ticket has is on screen already.
   scroll-to ticket 0.0 400.0
+  expect text "Hyperliquid does take a target and a stop on the entry, and this app does not send them yet. They are offered nowhere rather than offered here: a field promising a position is protected, over an order that carries no protection, is the one mistake this panel must never make."
+  // The other venue is refused for its own reason, which is the venue's rather
+  // than this app's — so the two sentences must not become one sentence.
+  dispatch switch_venue(Venue.lighter)
+  dispatch symbols_loaded(demo_symbols_lighter())
+  expect !venue_attaches_levels(venue)
+  expect missing attach
+  scroll-to ticket 0.0 400.0
   expect text "Lighter attaches no levels to an entry. Its API takes them as separate orders once the position exists, which this app does not place."
-  // And the venue that does take them offers them, which is what makes this a
-  // gap rather than a feature nobody built.
-  dispatch switch_venue(Venue.hyperliquid)
-  dispatch symbols_loaded(demo_symbols())
-  expect exists attach
-  expect text "Attach a take-profit and a stop-loss"
-  expect no text "Lighter attaches no levels to an entry"
+  expect no text "this app does not send them yet"
 
 // Reduce-only is a promise to the venue that the order only moves the position
 // towards zero, and the venue keeps it by refusing the order rather than by
@@ -331,6 +249,7 @@ test trading_reduce_only_refuses_to_add_to_what_is_held
   // one the order keeps.
   expect position_held(positions, coin) < 0.0
   expect ticket_buy
+  scroll-to ticket 0.0 400.0
   click reduce
   expect ticket_reduce
   expect empty(reduce_refusal)
@@ -341,6 +260,7 @@ test trading_reduce_only_refuses_to_add_to_what_is_held
   expect reduce_refusal == "This order adds to the short you hold. Reduce-only sends nothing rather than a smaller order."
   expect text reduce_refusal
   // Unticked, the same order is ordinary and says nothing.
+  scroll-to ticket 0.0 400.0
   click reduce
   expect !ticket_reduce
   expect no text "Reduce-only sends nothing"
@@ -391,6 +311,7 @@ test trading_a_cross_order_dies_against_the_account_and_an_isolated_one_does_not
   // the leverage the ticket priced at and the requirement this market holds.
   expect quote.liquidation ~= 75851.851851
   expect text "Isolated margin: this order stands on the requirement above and on nothing else, at the maintenance this market holds. The rest of the account is untouched by it."
+  scroll-to ticket 0.0 400.0
   click cross
   expect ticket_cross
   // Cross: the account is $3.7m against a $24k requirement, so the same order
@@ -403,6 +324,7 @@ test trading_a_cross_order_dies_against_the_account_and_an_isolated_one_does_not
   // stands and what kills it that differ, which is why the mode is said out
   // loud rather than left to the number.
   expect quote.margin ~= 12800.0
+  scroll-to ticket 0.0 400.0
   click isolated
   expect !ticket_cross
   expect quote.liquidation ~= 75851.851851
@@ -422,6 +344,7 @@ test trading_a_cross_cliff_needs_the_account_it_is_measured_against
   expect !account_read(account)
   expect quote.known
   expect quote.liquidation > 0.0
+  scroll-to ticket 0.0 400.0
   click cross
   expect !quote.known
   expect quote.liquidation ~= 0.0

@@ -25,7 +25,9 @@ use crate::hyperliquid::{
     Account, Book, Candle, Event, HlError, Level, MarketTick, Order, Position, SymbolRow, Tape,
     Trade, merge, older_than, wire_is_open,
 };
-use crate::lighter_sign::{self, PrivateKey, Transaction};
+use crate::lighter_sign::{self, PrivateKey, Resting, Transaction};
+#[cfg(test)]
+use crate::signing::Wallet;
 use crate::venue::lighter_buy;
 
 /// Which Lighter deployment a read is addressed to.
@@ -923,6 +925,7 @@ fn stepped(what: &str, value: f64, decimals: u32) -> Result<i64, HlError> {
 /// A person pressing a button cannot, and the sequencer's nonce is what stops a
 /// transaction being replayed regardless — so the counter this would need waits
 /// until something places orders in a loop.
+#[allow(clippy::too_many_arguments)]
 pub async fn lighter_place(
     zone: Zone,
     key: &PrivateKey,
@@ -931,6 +934,7 @@ pub async fn lighter_place(
     coin: &str,
     order: Order,
     reduce_only: bool,
+    resting: Resting,
 ) -> Result<i64, HlError> {
     let market = market_of(zone, coin).await?;
     let now = now_ms();
@@ -957,7 +961,15 @@ pub async fn lighter_place(
             )?,
             ask: !order.buy,
             reduce_only,
-            expiry_ms: now + ORDER_LIFETIME_MS,
+            resting,
+            // The venue validates the pairing rather than ignoring it: an
+            // order that does not rest must carry no expiry, and one that
+            // rests must carry one.
+            expiry_ms: if resting.expires() {
+                now + ORDER_LIFETIME_MS
+            } else {
+                0
+            },
             deadline_ms: now + TX_LIFETIME_MS,
             nonce: lighter_nonce(zone, account, api_key).await?,
         },
@@ -995,6 +1007,46 @@ pub async fn lighter_cancel(
     )
     .map_err(|error| fail(error.to_string()))?;
     send_tx(zone, &built, key).await.map(|_| ())
+}
+
+/// The account index an L1 address trades under here, or nothing when the
+/// address has no account on this deployment.
+///
+/// Every write is keyed by this rather than by the address — a transaction
+/// carries an `AccountIndex` and never an `0x…` — so custody has to resolve it
+/// once at unlock and hold it beside the key. It is the venue's answer rather
+/// than a derivation: an address opens its account by being funded, and the
+/// index it is given is the sequencer's to assign.
+pub async fn lighter_account_index(zone: Zone, address: String) -> Result<Option<i64>, HlError> {
+    let path = format!("account?by=l1_address&value={address}");
+    match read(zone, path.clone()).await? {
+        (OK, body) => Ok(list(&body, "accounts")
+            .iter()
+            .find(|account| value_i64(account, "account_type") == MAIN_ACCOUNT)
+            .map(|account| value_i64(account, "account_index"))),
+        (NO_ACCOUNT, _) => Ok(None),
+        (code, body) => Err(refused(&path, code, &body)),
+    }
+}
+
+/// Every API key this account has registered, as the index it sits under and
+/// the public key registered there.
+///
+/// This is Lighter's `extraAgents`: the venue's own word on which keys may
+/// sign for an account, and the only thing that can turn a key this app
+/// generated into one the app may trade with. The index comes back *from* the
+/// listing rather than being asked of the reader — the owner registers a public
+/// key at whichever slot they like, and the venue then says which.
+pub async fn lighter_api_keys(zone: Zone, account: i64) -> Result<Vec<(u8, String)>, HlError> {
+    let body = get(zone, format!("apikeys?account_index={account}")).await?;
+    Ok(list(&body, "api_keys")
+        .iter()
+        .filter_map(|key| {
+            let index = u8::try_from(value_i64(key, "api_key_index")).ok()?;
+            let public = text(key, "public_key");
+            (!public.is_empty()).then_some((index, public))
+        })
+        .collect())
 }
 
 /// The most bars one `/candles` call will serve, which is also the window a
@@ -2385,6 +2437,18 @@ mod tests {
             (BAD_TX_INFO, "invalid tx info"),
             (21602, "invalid market index"),
             (21701, "invalid base amount"),
+            // The rule a bid far below the mark trips: the venue asks for a
+            // minimum notional as well as a minimum size.
+            (21706, "invalid order base or quote amount"),
+            // And the band a limit order has to sit inside, which is the rule
+            // an order priced to be unfillable trips.
+            (21734, "limit order price is too far from the mark price"),
+            // A registration whose L1 sentence recovers somebody else. It is
+            // the only refusal here about a signature this app makes with an
+            // Ethereum key, and it is what proves `personal_sign` frames the
+            // message the way every wallet does: the venue recovers an address
+            // from that string, so a byte out of place recovers a stranger.
+            (21504, "fail to l1 signature"),
             (21702, "invalid price"),
             (21705, "invalid OrderTimeInForce"),
             (21104, "invalid nonce"),
@@ -2542,6 +2606,7 @@ mod tests {
                     ts: 0,
                 },
                 false,
+                Resting::Deadline,
             )
             .await
             .expect_err("an unenrolled key cannot place an order");
@@ -2564,15 +2629,151 @@ mod tests {
         });
     }
 
-    /// The whole round trip on the test deployment: an order placed, found
-    /// resting under the index it was placed with, and pulled again.
+    // -----------------------------------------------------------------------
+    // A disposable identity, minted per run.
+    //
+    // The custody design exists to keep this app away from an account owner's
+    // real wallet. That is a statement about *value*, not about key material —
+    // so on a test deployment whose faucet funds any address that asks, the
+    // honest way to get live evidence is for the tooling to own an identity of
+    // its own and register its own API key. Nobody is asked for anything, and
+    // nothing this key can reach is worth anything.
+    //
+    // **Testnet by construction.** Every request below goes through
+    // `disposable_zone`, which is the only zone this tooling names, and it
+    // refuses to be anything but a test deployment. That is the property rather
+    // than a convention: an edit pointing this at mainnet fails
+    // `a_disposable_identity_can_only_ever_touch_a_test_deployment` in the
+    // ordinary suite, long before anything reaches a wallet.
+    // -----------------------------------------------------------------------
+
+    /// The one deployment a key this process minted may touch.
+    fn disposable_zone() -> Zone {
+        let zone = Zone::Testnet;
+        assert!(
+            zone.testnet(),
+            "a disposable L1 key may only ever reach a deployment where being \
+             wrong costs nothing",
+        );
+        zone
+    }
+
+    /// The slot this tooling registers its key at. Any would do on an account
+    /// nobody else has ever touched; naming one keeps the transcript readable.
+    const DISPOSABLE_SLOT: u8 = 2;
+
+    /// An account nobody owns, funded by the faucet, with an API key this
+    /// process registered for it.
+    struct Disposable {
+        key: PrivateKey,
+        account: i64,
+        slot: u8,
+    }
+
+    /// Mint one, end to end.
     ///
-    /// Gated on the environment because it needs something no CI runner can
-    /// have and this repository must never hold: an API key the account
-    /// registered with the exchange. Registering the first one is signed by the
-    /// L1 wallet that owns the account, which is the one key this app never
-    /// holds — the same shape as Hyperliquid's approval step, and owner-side
-    /// for the same reason.
+    /// Four acts, and the third is the one the owner would otherwise have to
+    /// perform: the registration is authorised by an L1 signature over the
+    /// venue's own sentence, and the L1 wallet here is one this function made a
+    /// moment ago.
+    fn disposable_identity() -> Disposable {
+        let zone = disposable_zone();
+        let wallet = Wallet::generate();
+        let address = wallet.address().to_string();
+
+        // 1. An account, from a faucet that asks nothing of the address.
+        eprintln!("minted a disposable L1 wallet: {address}");
+        smol::block_on(get(zone, format!("faucet?l1_address={address}")))
+            .expect("the faucet funds any address on this deployment");
+
+        // 2. Which index it was given. The faucet answers before the account is
+        //    readable, so this is a poll rather than a read.
+        let account = settle("the faucet's account", || {
+            smol::block_on(lighter_account_index(zone, address.clone())).expect("the account read")
+        });
+        eprintln!("the faucet opened account {account} for it");
+
+        // 3. A key, and the registration that puts it in a slot. The digest is
+        //    signed by the new key — proof it is held — and the sentence by the
+        //    L1 wallet, which is what says the account agreed.
+        let mut secret = [0u8; 40];
+        let key = loop {
+            getrandom::fill(&mut secret).expect("OS entropy");
+            if let Ok(key) = crate::lighter_sign::PrivateKey::from_hex(&hex::encode(secret)) {
+                break key;
+            }
+        };
+        let registration = crate::lighter_sign::Registration {
+            account,
+            api_key: DISPOSABLE_SLOT,
+            public_key: key.public_key(),
+            deadline_ms: now_ms() + TX_LIFETIME_MS,
+            nonce: smol::block_on(lighter_nonce(zone, account, DISPOSABLE_SLOT))
+                .expect("the nonce for a fresh slot"),
+        };
+        let l1 = wallet
+            .personal_sign(&crate::lighter_sign::registration_body(&registration))
+            .hex();
+        let built = crate::lighter_sign::change_pub_key(zone, &registration, &l1)
+            .expect("a buildable registration");
+        smol::block_on(send_tx(zone, &built, &key)).expect("the venue takes the registration");
+
+        // 4. The venue's own word on it, which is what custody would ask for
+        //    too: our public key, in a slot the listing names.
+        let ours = hex::encode(key.public_key());
+        let slot = settle("the registered key", || {
+            smol::block_on(lighter_api_keys(zone, account))
+                .expect("the key listing")
+                .into_iter()
+                .find(|(_, public)| public.eq_ignore_ascii_case(&ours))
+                .map(|(slot, _)| slot)
+        });
+        assert_eq!(
+            slot, DISPOSABLE_SLOT,
+            "the venue put the key where it was asked"
+        );
+        eprintln!("registered {ours} as api key {slot} on account {account}");
+        Disposable { key, account, slot }
+    }
+
+    /// Poll until the venue answers, or say what never arrived.
+    ///
+    /// The sequencer takes a transaction before it has applied it, so every
+    /// read that follows one is a poll. Thirty seconds because a testnet
+    /// sequencer is not a fast one, and a bare `sleep` long enough to always
+    /// work would make every run pay for the worst one.
+    fn settle<T>(what: &str, mut read: impl FnMut() -> Option<T>) -> T {
+        for _ in 0..60 {
+            if let Some(answer) = read() {
+                return answer;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        panic!("{what} never arrived");
+    }
+
+    /// The disposable identity can only ever be pointed at a test deployment.
+    ///
+    /// Cheap, offline, and in the ordinary suite on purpose: it is the guard
+    /// that makes the live test below safe to own an L1 key at all. An edit
+    /// pointing this tooling at mainnet fails here rather than at a faucet.
+    #[test]
+    fn a_disposable_identity_can_only_ever_touch_a_test_deployment() {
+        let zone = disposable_zone();
+        assert!(zone.testnet());
+        assert_eq!(zone, Zone::Testnet);
+        assert!(
+            zone.api_url().contains("testnet.") && zone.stream_url().contains("testnet."),
+            "every endpoint this tooling reaches names the test deployment: {}",
+            zone.api_url(),
+        );
+        assert_ne!(zone.chain_id(), Zone::Mainnet.chain_id());
+    }
+
+    /// The whole round trip on the test deployment, with nobody asked for
+    /// anything: an identity minted here, an API key it registered for itself,
+    /// an order placed, found resting under the index it was placed with, and
+    /// pulled again.
     ///
     /// The order rests far from the market on purpose: a bid at a fraction of
     /// the mark cannot fill, so the round trip ends with the book exactly as it
@@ -2581,97 +2782,88 @@ mod tests {
     /// It reads the book back through `accountActiveOrders`, which is a gated
     /// read and wants the token `lighter_sign.rs` already mints. That read is
     /// built here rather than published, because the app's own orders panel
-    /// does not make it — it holds no key — and a function with one caller in a
-    /// test is a seam nothing crosses.
+    /// does not make it and a function with one caller in a test is a seam
+    /// nothing crosses.
     #[test]
-    #[ignore = "places a real order on Lighter testnet; needs ICE_LIGHTER_TESTNET_ACCOUNT, ICE_LIGHTER_TESTNET_API_KEY and ICE_LIGHTER_TESTNET_KEY"]
+    #[ignore = "mints a testnet identity and places a real order on Lighter testnet"]
     fn the_order_path_places_rests_and_cancels_on_the_test_deployment() {
-        let (Ok(account), Ok(api_key), Ok(secret)) = (
-            std::env::var("ICE_LIGHTER_TESTNET_ACCOUNT"),
-            std::env::var("ICE_LIGHTER_TESTNET_API_KEY"),
-            std::env::var("ICE_LIGHTER_TESTNET_KEY"),
-        ) else {
-            panic!(
-                "set ICE_LIGHTER_TESTNET_ACCOUNT to the funded testnet account index, \
-                 ICE_LIGHTER_TESTNET_API_KEY to the index that account registered a key \
-                 under, and ICE_LIGHTER_TESTNET_KEY to that key's 40-byte hex secret — \
-                 see the enrolment checklist in README.md. Registering the first key is \
-                 signed by the account's L1 wallet and cannot be done from here."
-            );
-        };
-        let account: i64 = account.trim().parse().expect("an account index");
-        let api_key: u8 = api_key.trim().parse().expect("an api key index");
-        let key = PrivateKey::from_hex(secret.trim()).expect("40 bytes of hex");
-
         crate::hyperliquid::open_the_wire();
+        let zone = disposable_zone();
+        let held = disposable_identity();
+
         smol::block_on(async {
-            let markets = lighter_symbols(Zone::Testnet)
-                .await
-                .expect("the testnet universe");
+            let markets = lighter_symbols(zone).await.expect("the testnet universe");
             let btc = markets
                 .iter()
                 .find(|row| row.name == "BTC")
                 .expect("the test deployment lists BTC");
-            let step = market_of(Zone::Testnet, "BTC").await.expect("the market");
+            let step = market_of(zone, "BTC").await.expect("the market");
 
-            // A tenth of the mark, rounded onto the market's own tick so
-            // nothing is refused for a price it cannot spell.
+            // A tenth under the mark, rounded onto the market's own tick so
+            // nothing is refused for a price it cannot spell. Two live rules
+            // bound this from both sides and the order has to sit between them:
+            // a bid far below the mark is refused outright (`21734`, the
+            // venue's own price band), and one too near it would fill. Ten
+            // percent clears the band and is nowhere near the book.
             let tick = 10f64.powi(step.price_decimals as i32);
-            let price = (btc.price / 10.0 * tick).round() / tick;
+            let price = (btc.price * 0.9 * tick).round() / tick;
+            // And big enough to clear the market's minimum *notional*, which is
+            // the other rule an order priced under the mark trips: the venue
+            // asks for ten dollars of it, and answers `21706` below that.
+            let size = 0.01;
             let index = lighter_place(
-                Zone::Testnet,
-                &key,
-                account,
-                api_key,
+                zone,
+                &held.key,
+                held.account,
+                held.slot,
                 "BTC",
                 Order {
                     oid: 0,
                     coin: "BTC".to_owned(),
                     buy: true,
                     price,
-                    size: 0.001,
+                    size,
                     ts: 0,
                 },
                 false,
+                Resting::Deadline,
             )
             .await
             .expect("the venue takes the order");
+            eprintln!("placed {size} BTC at {price} as client order {index}");
 
             // The submission is a receipt rather than a fill, so the book is
-            // what says the order rested — and it is read after the sequencer
-            // has had time to take it.
-            std::thread::sleep(Duration::from_secs(3));
-            assert!(
-                resting(Zone::Testnet, &key, account, api_key, step.id).contains(&index),
-                "an order the venue accepted is one it lists back under the \
-                 index it was placed with"
-            );
+            // what says the order rested.
+            settle("the resting order", || {
+                resting(zone, &held, step.id).contains(&index).then_some(())
+            });
+            eprintln!("the book lists it resting");
 
-            lighter_cancel(Zone::Testnet, &key, account, api_key, "BTC", index)
+            lighter_cancel(zone, &held.key, held.account, held.slot, "BTC", index)
                 .await
                 .expect("the venue takes the cancel");
-            std::thread::sleep(Duration::from_secs(3));
-            assert!(
-                !resting(Zone::Testnet, &key, account, api_key, step.id).contains(&index),
-                "a cancel the venue accepted is an order it stops listing"
-            );
+            settle("the cancellation", || {
+                (!resting(zone, &held, step.id).contains(&index)).then_some(())
+            });
+            eprintln!("cancelled, and the book stops listing it");
         });
     }
 
     /// The client order indices this account is resting in one market, read
     /// through the gated endpoint with a token minted for the same key.
-    fn resting(zone: Zone, key: &PrivateKey, account: i64, api_key: u8, market: i64) -> Vec<i64> {
+    fn resting(zone: Zone, held: &Disposable, market: i64) -> Vec<i64> {
         let deadline = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("a clock after 1970")
             .as_secs()
             + 600;
-        let token = crate::lighter_sign::auth_token(key, account, api_key, deadline)
+        let token = crate::lighter_sign::auth_token(&held.key, held.account, held.slot, deadline)
             .expect("a token inside the venue's window");
         let mut response = agent()
             .get(&format!(
-                "{}/accountActiveOrders?account_index={account}&market_id={market}",
-                zone.api_url()
+                "{}/accountActiveOrders?account_index={}&market_id={market}",
+                zone.api_url(),
+                held.account,
             ))
             .header("Authorization", &token)
             .call()

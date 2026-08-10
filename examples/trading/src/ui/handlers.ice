@@ -276,13 +276,12 @@ on switch_venue(next)
   // A level worth being told about was worth it on one exchange, at one
   // exchange's price.
   alerts = []
-  // A key is approved for one account on one deployment. Carried across, it is
-  // a session that says the app may trade on a network the key is unknown on —
-  // and the first thing that would tell the reader otherwise is a rejected
-  // order. The unlock is cheap to repeat; this is not a thing to be clever
-  // about.
-  session = lock_agent()
-  unlock_note = ""
+  // The session survives. One unlock activates every network this address has
+  // enrolled — decided by the repository owner, 2026-08-10 — so switching is no
+  // longer an authentication boundary and no longer costs a prompt. A network
+  // this address has not enrolled still reaches no key and still reads as
+  // needing enrolment, because the keys are held per network even though the
+  // prompt was not.
   // One address, two venues, two sets of positions. Fills and orders arrive as
   // a snapshot the app folds into what it already holds, so anything kept here
   // would be folded in with the next venue's.
@@ -551,6 +550,50 @@ on lower_resized(_dx, dy)
 // Every act clears the note first. A sentence left over from the last attempt
 // beside the result of this one is the panel reporting a refusal that has
 // already been answered.
+// The press that opens the confirmation, which is the only way to an order.
+// It freezes the draft rather than setting a flag: what the confirmation
+// restates and what the send spends are then the same value, and no keystroke
+// or book beat between the two can move one without the other.
+on ticket_review
+  return if !empty(send_refusal)
+  confirm = some(ticket_draft)
+
+// Backing out. The order is dropped rather than remembered, because a
+// confirmation the reader declined is not a draft to offer again — the ticket
+// still holds every field they typed.
+on confirm_dismissed
+  return if sending
+  confirm = none
+
+// The one press in this app that spends money.
+on confirm_sent
+  return if sending
+  sending = true
+  error = ""
+  status = "Sending"
+  run every submit_order(venue, session, clock, confirm) -> order_sent _ | order_refused _
+
+on order_sent(said)
+  sending = false
+  confirm = none
+  error = ""
+  status = said
+
+// The venue's own sentence, in the app's alarm line beside every other failed
+// read. The confirmation stays up: an order that was refused is one the reader
+// may want to change and send again, and closing the panel would make them
+// describe it a second time.
+on order_refused(reason)
+  sending = false
+  status = ""
+  error = reason.message
+
+// Pulling a resting order, by whichever name its venue gave it.
+on cancel_order(coin_of, oid)
+  error = ""
+  status = "Cancelling"
+  run every cancel_resting(venue, session, clock, coin_of, oid) -> order_sent _ | order_refused _
+
 on unlock
   return if !session_unlockable(session)
   unlock_note = ""

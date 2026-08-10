@@ -171,6 +171,30 @@ impl Wallet {
         self.sign_digest(action.digest())
     }
 
+    /// Sign an ordinary text message the way every wallet's "personal sign"
+    /// does: EIP-191's prefix, then keccak, then the same ECDSA.
+    ///
+    /// Not for Hyperliquid — its actions are typed data and are signed above.
+    /// This is what an *account owner* signs to authorise something at a venue
+    /// that asks for a sentence rather than a struct, and the only such thing
+    /// this app builds is a Lighter API-key registration.
+    ///
+    /// The length in the prefix is the byte length, not the character count, so
+    /// a message with anything outside ASCII in it still recovers the signer
+    /// the venue expects.
+    ///
+    /// Its oracle is the venue, for the reason every other signature in this
+    /// file has one: an encoder checked against itself proves nothing. Lighter
+    /// recovers an L1 address from the sentence and refuses a registration that
+    /// names anybody else — `21504 fail to l1 signature`, which is what the
+    /// live round trip in `lighter.rs` answers if this framing is wrong.
+    pub fn personal_sign(&self, message: &str) -> Signature {
+        let bytes = message.as_bytes();
+        let mut framed = format!("\x19Ethereum Signed Message:\n{}", bytes.len()).into_bytes();
+        framed.extend_from_slice(bytes);
+        self.sign_digest(keccak(&framed))
+    }
+
     fn sign_digest(&self, digest: [u8; 32]) -> Signature {
         let (signature, recovery) = self
             .key
@@ -231,6 +255,16 @@ impl Signature {
         let key = VerifyingKey::recover_from_prehash(&digest, &signature, recovery)
             .map_err(|error| err(format!("no signer recovers from this: {error}")))?;
         Ok(address_of(&key))
+    }
+
+    /// The 65 bytes a venue that asks for a hex signature expects: r, then s,
+    /// then v.
+    pub fn hex(&self) -> String {
+        let mut bytes = Vec::with_capacity(65);
+        bytes.extend_from_slice(&self.r);
+        bytes.extend_from_slice(&self.s);
+        bytes.push(self.v);
+        format!("0x{}", hex::encode(bytes))
     }
 
     pub fn json(&self) -> Value {

@@ -227,17 +227,108 @@ tightest market on the exchange on Bitcoin and no market at all on a coin worth
 three. One number you can carry between markets beats one you have to divide
 first.
 
-## The ticket sends nothing
+## The ticket, and the one press that spends money
 
 The ticket is a rail beside the book, not a dialog over it. An order is priced
 against what the book is doing, and a modal that covers the book to ask about
-it has the relationship backwards. It prices an order and stops there.
+it has the relationship backwards. So the ticket prices, and the modal appears
+only once — between the reader and the send.
 It describes the order a venue would actually take — kind, time in force,
 side, size and its unit, leverage, margin mode, reduce-only, and an optional
 take-profit and stop-loss — and answers the only three questions worth asking
 before an order exists: what it is worth, what it ties up, and where it dies.
 Which cliff that last one is depends on the margin mode, and the panel says
 which it picked.
+
+### The confirmation is the per-order safety
+
+The key is held for the session's window rather than released per order — one
+platform prompt per unlock, decided by the repository owner and recorded in
+[`src/custody.rs`](src/custody.rs). What that bought convenience with is stated
+where it was spent: a sheet per order would have made every order carry its own
+proof of presence. **The confirmation is what stands in its place, and it is the
+whole of it.** Weakening it — a "don't ask again", a confirm that does not
+restate the priced figures, a path that sends without one — spends a guarantee
+that was already spent once, and nothing is left underneath.
+
+So the button under the ticket is named `REVIEW BUY`, not `SEND`: it opens the
+panel, and a button labelled for an act it does not perform teaches a reader to
+press the next one without reading it.
+
+What the confirmation restates: the side, the size, the price and whether that
+price is a typed limit or a walk of the book, the network and whether it is
+**REAL MONEY** or **TESTNET**, the order's value, the margin it requires, the
+liquidation, the margin mode and leverage, how long it rests, and reduce-only
+and the two levels *when they are set*. Every figure is one the ticket already
+showed, formatted by the same helper — it computes nothing, because a
+confirmation that did its own arithmetic would be a second opinion about the
+order and the reader would have no way to know which one the wire got.
+
+It is a **snapshot**, taken on the press. The book moves; a panel that
+re-derived itself between the press and the send would show one price and send
+another, and the reader would have agreed to neither. `venue::Draft` is that
+snapshot and it is also the payload — one description of one order, projected
+once from the ticket's own `order_size` and `order_price`.
+
+### One gate, one sentence
+
+`order_gate` folds every reason a send cannot happen into the one sentence the
+dead button prints: whether this session may sign at all, then whether the order
+as typed is one a venue would take — a control that is already saying what is
+wrong with it outranks the button saying something vaguer. It is one function
+because the view would otherwise have to `&&` the conditions together, and a
+condition somebody forgot to add is a live button over an order that should
+never have been offered.
+
+It is asked **again** inside `submit_order`, on the far side of the press: a
+press and a send are two moments, and a window that closed between them is
+exactly what a screen-level check cannot see.
+
+### What the confirmation does not promise
+
+Two things it states are not things the order carries, and it says so rather
+than letting the figures imply otherwise.
+
+**Margin mode and leverage.** Both exchanges keep these per market on the
+account; an order carries neither, and a position opens at whatever the account
+says. So the margin and liquidation on the confirmation are arithmetic done
+here, for the mode and leverage shown, and a line under them says exactly that.
+Hyperliquid has an `updateLeverage` action that would make them true, and it is
+deliberately not wired into the send: it sets the leverage for the *market*, so
+it would silently re-lever any position already open there, and a pair where the
+first half lands and the second does not leaves an account changed with nothing
+bought. That is a second promise the panel would be making and not keeping.
+
+**A target and a stop**, above — offered nowhere, so the confirmation has none
+to restate.
+
+The rule both follow: what the panel shows is what the wire carries, or the
+panel says which it is. `the_wire_carries_what_the_confirmation_said` holds that
+field by field, and it names every field of `Draft` in a destructuring pattern —
+so a figure added to the confirmation and not to the wire does not compile until
+somebody says which of the two it is.
+
+### What an acknowledgement means
+
+Hyperliquid answers a resting order with the id it rests under, and a crossed
+one with how much crossed and at what — `filled.totalSz` and `avgPx`, read
+rather than assumed. Three outcomes, three sentences: rested whole, filled
+whole, or filled part and either rested or cancelled the remainder. An
+immediate-or-cancel order for ten that crosses two is reported as two of ten,
+because reporting it at the size that was *typed* tells a trader they hold five
+times what they hold and every screen afterwards agrees with the venue rather
+than with the receipt. Lighter answers a
+transaction hash and a predicted execution time — a receipt that the sequencer
+took the transaction, which is **not** the book having taken the order. The
+sentence there says "submitted", and only the orders read can upgrade it to
+resting. A refusal is the venue's own sentence, and the panel stays up so the
+order can be changed and sent again.
+
+CANCEL on a resting order names it by whichever name its venue gave it —
+Hyperliquid's `oid`, and on Lighter the client order index the placer chose,
+which is the only handle that venue offers. One field on the neutral row holds
+both, and it is signed because Ice has no unsigned integer and Lighter's index
+is signed by the venue's own reckoning.
 
 Every row that does something is named by what it does, not by what it shows:
 a book level announces the order it would start rather than the price it
@@ -391,18 +482,29 @@ screen at all, so the cross cliff declines there for the same reason
 **AGAINST THE ENGINE** does. The market's own isolated arithmetic is not gated
 by any of that.
 
-**A take-profit and a stop-loss**, folded until they are wanted, with the PnL
-each level would realize drawn beside it and carried in the field's accessible
-name. A level on the wrong side of the entry is the other kind of order and the
-venue sends it as one — the trigger is already true when the order fills — so
-it is refused with the reason. A stop past the liquidation is worse than wrong:
-it reads as protection and is not there, because the engine closes the position
-before the trigger is reached. Hyperliquid takes these attached to the entry as
-a `trigger` order grouped with it. Lighter's public API has no such grouping —
-its SDK exposes take-profit and stop-loss only as whole independent orders,
-with nothing anywhere naming a parent — so on Lighter the fields are not
-offered and a sentence says why. Two fields the app would have to drop are
-worse than no fields: the entry would go and the protection would not.
+**A take-profit and a stop-loss** — offered on no venue, and each says why in
+its own words. Lighter has nothing to attach: its SDK exposes the two only as
+whole independent orders, with nothing anywhere naming a parent. Hyperliquid
+*does* take them, as a `trigger` order carrying `triggerPx` and `tpsl` grouped
+with the entry under `grouping: "normalTpsl"` where this app's wire hardcodes
+`"na"` — and this app does not send them yet.
+
+They were offered on Hyperliquid until the order path landed, over an order
+that carried neither. That is the one mistake this panel must never make: a
+field promising a position is protected, above a wire with no protection in it.
+Two fields the app would have to drop are worse than no fields.
+
+What is left to do is small and the standard is set: the venue's own SDK
+carries a signing vector for a trigger order
+(`test_l1_action_signing_tpsl_order_matches`, on the same key `signing.rs`
+already pins its other vectors against), so the encoding is pinnable offline.
+What is not pinnable without a funded test account is that the grouping
+*attaches* — and for a stop-loss, "the bytes are right" is not the claim that
+matters. So it waits for an order carrying one to be seen resting.
+
+The arithmetic behind the two fields is unchanged and still tested: a level on
+the wrong side of the entry, and a stop past the liquidation, are both refused
+with their reason.
 
 Nothing here is signed and nothing is sent. The ticket's state block is the
 payload a signing client would project, and `order_size` is the one function
@@ -491,40 +593,98 @@ dead and states the platform's own words. `session.rs` draws that line in a
 pure function outside every `cfg`, which is why a Linux machine can test it;
 this seam's job is not to blur it on the way to the screen.
 
-A network **this panel holds no key for** is refused before any sheet, by name.
-Lighter is that case, and the distinction is worth stating precisely because
-two earlier versions of this sentence got it wrong in opposite directions. The
-venue has a write path and so does this app: `lighter_sign.rs` builds and signs
-both L2 transactions and `lighter.rs` posts them. What is missing is the
-*enrolment*. This panel makes an Ethereum agent key and shows its address for
-the account's own wallet to approve; Lighter uses neither — the key is an API
-key the account registers with the exchange, and the app has no way to take one
-yet.
+**Every network can be unlocked.** This panel used to refuse Lighter before any
+sheet, because it minted Ethereum agent keys and nothing else; it now mints
+whichever key the network's scheme signs with — a secp256k1 agent wallet on one,
+a 40-byte ECgFp5 API key on the other — and the only reasons left for a dead
+UNLOCK are the platform's: a build with no keychain, and a prompt already up.
 
-So `Network.signing` names the scheme rather than a chain, and the two Lighter
+The two schemes differ in the act the owner has to perform, so the sentence the
+panel prints differs with them. Hyperliquid *approves an address* as an API
+wallet; Lighter *registers a public key* at an api-key slot. Naming the act
+wrongly sends somebody to the right screen with the wrong string.
+
+`Network.signing` names the scheme rather than a chain, and the two Lighter
 entries carry `Signing::ApiKey(Zone)` where the two Hyperliquid ones carry
-`Signing::Eip712(Chain)`. Every network in the registry can be signed for; the
-refusal is about which keys this panel holds, and it says so.
+`Signing::Eip712(Chain)`.
+
+Unlock asks the same question of both and gets it answered by a different read:
+`extraAgents` lists the addresses approved for a Hyperliquid account,
+`apikeys?account_index=…` lists the public keys registered against a Lighter
+one. Finding ours in that listing is what `Ready` is made of either way — and on
+Lighter the listing also answers **which slot**, so the reader is never asked for
+an index the venue already knows.
+
+One window is the exchange's and one is the app's, and the panel does not blur
+them. Hyperliquid reports a `validUntil` and stops honouring the key there
+whatever this app thinks. Lighter puts no expiry on a registered key at all, so
+the eight hours it is held for are this app's own limit — the same ceiling
+`lighter_sign.rs` already refuses to mint a read token past. The shorter of
+"what the venue allows" and "what this app will hold" governs, and on that venue
+the venue allows everything.
+
+### Where the key lives while it may sign
+
+Held in this module and nowhere else, for exactly the `Ready` window:
+
+- **Outside Ice state.** Ice state is cloned, captured into fixtures and printed
+  by tests; a key that could reach any of those has already leaked. A preset
+  that drives the machine to `Ready` therefore holds *no key* — which is what
+  makes every screenshot in this repository safe to take, and is asserted.
+- **Dropped by the transition, not beside it.** `step` is the one thing that
+  decides whether a session may sign, so the drop hangs off it: every real
+  transition goes through `advance`, which drops the key whenever what comes
+  back is not `Ready`. Lock and expiry need no rule of their own — they are
+  already transitions — and a change of address is held by the accessor, which
+  reaches nothing for a session that is not the one the vault was unlocked for.
+- **`can_trade` is the only gate, and the compiler holds it.** The key is
+  reachable through one private accessor that returns nothing unless a `Ready`
+  session *and a clock* said yes. A laptop that slept through an expiry has a
+  `Ready` in state and no right to sign, which a check on the variant alone gets
+  wrong.
 
 That scheme is also why the keychain item names the exchange and not only the
 deployment. Both venues have a mainnet, one address is read at both, and the
 two hold unrelated secrets — so `Signing::key` spells `hyperliquid-mainnet` and
 `lighter-testnet`, and a second enrolment cannot overwrite the first.
 
-Changing network or address forgets the key. Carried across either, it is a
-session claiming the app may trade somewhere the key is unknown, and the first
-thing that would say otherwise is a rejected order.
+**One unlock activates every network this address has enrolled** — decided by
+the repository owner, 2026-08-10. The prompt releases the whole set; switching
+network is not an authentication boundary and costs no second sheet. That is
+what the header's venue picker needs, and a session that dropped on every switch
+fought it.
+
+What it spends is worth naming: a switch used to re-ask for a finger on the way
+from a test deployment to a live one, and now it does not. **What remains
+between a reader and an order on the wrong network is the confirmation panel and
+the REAL MONEY / TESTNET kind stated inside it** — that panel now carries two
+decisions' worth of safety.
+
+The keychain is unchanged: still one item per exchange, deployment and address,
+because a key approved on one deployment is unknown on the others. Only the
+in-memory set widened. A network this address has *not* enrolled still reaches
+no key and still reads as needing enrolment, because the keys are held per
+network even though the prompt was not.
+
+Changing address forgets them all, and so do locking and expiry.
+
+On macOS a keychain read is what raises the sheet, so an address with keys on
+several networks may see more than one prompt during that single unlock, until a
+shared authentication context lands. The decided behaviour — *no prompt on a
+switch* — holds either way; the sheets, however many, all happen at the unlock.
 
 ### Enrolling on a testnet, end to end
 
-Both venues need the account's own wallet once, and neither lets this app stand
-in for it — that is the property rather than a gap. Both are written down here
-together so neither arrives as a surprise halfway through.
+For a *real* account the app generates the key and never surrenders it, the
+account's own wallet authorises it and never enters this process, and the app
+checks the venue's confirmation rather than taking anyone's word for it. That
+one act in the middle being somebody else's is the property, not a gap.
 
-The app generates the key and never surrenders it; the wallet approves an
-address and never enters this process. What crosses between them is an address
-one way and a confirmation the other, and the app checks that confirmation
-against the venue rather than taking anyone's word for it.
+For **live evidence** on a testnet the two venues differ, and only because their
+faucets do. Hyperliquid's drip asks for an address already qualified on mainnet,
+which nothing this process can mint satisfies — so that one step stays with
+whoever owns such an address. Lighter's faucet asks for nothing, so the tooling
+owns a disposable identity there and needs nobody.
 
 #### Hyperliquid Testnet
 
@@ -614,49 +774,45 @@ against the venue rather than taking anyone's word for it.
 
 #### Lighter Testnet
 
-The transaction half is built: `lighter.rs` places and cancels for a key handed
-to it, and the live round trip
-(`the_order_path_places_rests_and_cancels_on_the_test_deployment`) is written
-and waiting on these three values. The panel does not yet take them, so for now
-they arrive as environment variables and the test names each one it is missing.
+**Nothing.** The tooling owns a disposable identity and mints a fresh one per
+run: it generates an L1 keypair, asks the faucet for an account (the testnet
+faucet funds any address that asks — no eligibility gate), generates the ECgFp5
+API key, and **registers that key itself** — the registration is authorised by
+an L1 signature over the venue's own sentence, and the L1 wallet is one the test
+made a moment earlier.
 
-1. **Fund the account.** One request, and it creates the account as well as
-   funding it:
+```
+minted a disposable L1 wallet: 0x545e02f1f987b3c735d64f686ff6fac077e0f3ad
+the faucet opened account 666 for it
+registered bd4f87096a…68177a6c as api key 2 on account 666
+placed 0.01 BTC at 58644.8 as client order 1786287096952
+the book lists it resting
+cancelled, and the book stops listing it
+```
 
-   ```bash
-   curl -s "https://testnet.zklighter.elliot.ai/api/v1/faucet?l1_address=0xYOURADDRESS"
-   ```
+```bash
+cargo test -p trading-example -- --ignored --exact \
+  lighter::tests::the_order_path_places_rests_and_cancels_on_the_test_deployment --nocapture
+```
 
-   Confirm with
-   `.../api/v1/accountsByL1Address?l1_address=0xYOURADDRESS`, which answers the
-   `account_index` the next step needs. A fresh account arrives with 10,000
-   collateral.
+Five to nine seconds, no environment variables, nothing to hand back.
 
-2. **Register an API key.** A fresh account has none, and the first
-   registration is signed by the L1 wallet — the same line `approveAgent`
-   draws, and the same reason this app cannot cross it. Do it at
-   <https://testnet.app.lighter.xyz/>.
+The custody design exists to keep this app away from an account owner's *real*
+wallet, and that is a statement about value rather than about key material. On a
+deployment where the faucet funds anybody and nothing is worth anything, the
+honest way to get live evidence is for the tooling to own an identity of its own.
 
-3. **Hand back three values.** The **`account_index`**, the
-   **`api_key_index`** the key was registered under, and that key's 40-byte hex
-   secret. The first two are account coordinates rather than secrets and the app
-   has no way to discover which slot was used; the third is what signs.
+**Testnet by construction.** Every request in that path goes through
+`disposable_zone`, the only zone the tooling names, which refuses to be anything
+but a test deployment. It is a property rather than a convention: an edit
+pointing it at mainnet fails
+`a_disposable_identity_can_only_ever_touch_a_test_deployment` in the ordinary
+offline suite, long before anything reaches a faucet.
 
-   ```bash
-   ICE_LIGHTER_TESTNET_ACCOUNT=… \
-   ICE_LIGHTER_TESTNET_API_KEY=… \
-   ICE_LIGHTER_TESTNET_KEY=0x… \
-     cargo test -p trading-example -- --ignored --exact \
-       lighter::tests::the_order_path_places_rests_and_cancels_on_the_test_deployment
-   ```
-
-4. **Still owed: the panel's half.** Making the keypair, filing the secret
-   under `lighter-testnet:0xYOURADDRESS`, and holding the two indices beside it
-   are custody work this panel does not do yet — it makes Ethereum agent keys,
-   which this venue does not use. When it lands, the verification is
-   `apikeys?account_index=…&api_key_index=…`, which publishes the registered
-   public key for the app to compare against the one it holds, exactly as
-   `extraAgents` is compared on the other venue.
+Two live rules bound the order from both sides and are worth knowing before
+changing it: a limit price too far from the mark is refused outright (`21734`),
+and an order under ten dollars of notional is refused as well (`21706`). It sits
+ten percent under the mark at 0.01 BTC, which clears both and cannot fill.
 
 ### What needs a Mac
 
@@ -1202,8 +1358,8 @@ still carries is on screen at the minimum size, and the page tests run there.
 | Liquidation prints on the tape | yes | **no** — see below |
 | Resting rules the ticket offers | `Gtc`, `Ioc`, `Alo` | `GOOD_TILL_TIME`, `IMMEDIATE_OR_CANCEL`, `POST_ONLY` — no rest-until-cancelled |
 | Reduce-only on the order | yes (`r`) | yes (`reduce_only`) |
-| Take-profit and stop-loss attached to the entry | yes, a grouped `trigger` order | **no** — separate orders only |
-| Cross and isolated margin | yes, per asset | yes, per market |
+| Take-profit and stop-loss attached to the entry | the venue takes a grouped `trigger` order; **this app does not send one yet** | **no** — separate orders only |
+| Cross and isolated margin | per asset, on the account — **not carried by the order** | per market, on the account — same |
 
 The gaps are stated on screen rather than left as empty panels, because an
 empty list reads as *nothing has happened* and on Lighter nothing *can* happen:

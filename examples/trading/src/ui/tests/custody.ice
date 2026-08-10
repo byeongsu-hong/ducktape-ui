@@ -80,14 +80,35 @@ test trading_a_build_with_no_keychain_says_so_instead_of_offering_a_prompt
   expect text "no platform keychain on this build" within custody
   expect !session_can_trade(session, clock)
 
-// The other half of that distinction, and the half that must not be blurred: a
-// network whose key this panel does not hold is refused before any sheet, and
-// the refusal names the network and the reason rather than looking like a
-// broken keychain. Lighter's orders are signed by an API key the account
-// registers, so there is nothing here to make and nothing here to unlock — and
-// that is about enrolment, not about whether the app can sign at all.
-test trading_a_network_this_panel_does_not_hold_a_key_for_refuses_by_name
+// The refusal that went away, asserted as the absence it became. This panel
+// used to mint Ethereum agent keys only, so Lighter was refused before any
+// sheet; it now mints whichever key the network's scheme signs with. Both
+// halves are held, because "no refusal anywhere" is also what a broken
+// `session_refusal` looks like: Lighter's button is live, and a build with no
+// keychain still refuses on both.
+test trading_every_network_offers_its_own_key
   preset lighter
+  viewport 1660 900
+  target app = #app
+  target settings = app/settings
+  target custody = settings/settings-content/custody
+  target unlock = custody/unlock
+  target enrol = custody/enrol
+  dispatch navigate(Page.settings)
+  expect a11y unlock disabled false
+  expect a11y enrol disabled false
+  expect no text "not one this panel can make"
+  // The network that was never refused is unchanged beside it.
+  dispatch switch_venue(Venue.hyperliquid)
+  expect a11y unlock disabled false
+  expect a11y enrol disabled false
+
+// And the refusal that is still real, which is the platform's rather than any
+// venue's. It is asserted without a venue switch on purpose: switching network
+// forgets the key and resets the session, so a switch would be testing that
+// rather than this.
+test trading_a_build_with_no_keychain_still_refuses_the_unlock
+  preset no_keystore
   viewport 1660 900
   target app = #app
   target settings = app/settings
@@ -95,24 +116,85 @@ test trading_a_network_this_panel_does_not_hold_a_key_for_refuses_by_name
   target unlock = custody/unlock
   dispatch navigate(Page.settings)
   expect a11y unlock disabled true
-  expect text "Lighter signs with an API key the account registers, not one this panel can make." within custody
-  // And the network whose keys it does hold leaves the same button live, so the
-  // refusal is about this network rather than about the button always being
-  // dead.
-  dispatch switch_venue(Venue.hyperliquid)
-  expect a11y unlock disabled false
-  expect no text "Lighter signs with an API key the account registers, not one this panel can make." within custody
+  expect text "no platform keychain on this build" within custody
 
-// A key is approved for one account on one deployment. Carried across either
-// change, it is a session claiming the app may trade somewhere the key is
-// unknown — and the first thing that would say otherwise is a rejected order.
-test trading_changing_network_forgets_the_key
+// One unlock activates every network this address has enrolled — decided by
+// the repository owner, 2026-08-10 — so switching network is no longer an
+// authentication boundary and no longer costs a prompt.
+//
+// This test used to assert the opposite, which is the point: the header's venue
+// picker makes switching frequent, and a session that dropped on every switch
+// fought it. What replaces the switch as the guard is the confirmation panel
+// and the REAL MONEY / TESTNET kind stated inside it — which the tests in
+// `submit.ice` hold.
+test trading_changing_network_keeps_the_session
   preset unlocked
   viewport 1660 820
   target app = #app
   target badge = app/header/session-badge
   expect session_can_trade(session, clock)
+  // The send's own view of custody, which is what the ticket and the CANCEL on
+  // every resting order read: empty means "this session may sign".
+  expect empty(cancel_refusal)
   dispatch switch_venue(Venue.hyperliquid_testnet)
+  expect session_can_trade(session, clock)
+  expect empty(cancel_refusal)
+  expect text "UNLOCKED" within badge
+  expect !empty(session_agent(session))
+  // And back again, because a switch is not a thing that spends the session
+  // once.
+  dispatch switch_venue(Venue.lighter)
+  expect session_can_trade(session, clock)
+  expect !empty(session_agent(session))
+
+// The same claim through the control a reader actually presses, which a
+// dispatch cannot make: the header's picker, opened and clicked. A switch that
+// went through some other path than the handler would pass the test above and
+// fail this one.
+test trading_switching_through_the_picker_keeps_the_session
+  preset unlocked
+  viewport 1660 820
+  target app = #app
+  target header = app/header
+  target venues = header/venues
+  target panel = #venue-panel
+  target picker = panel/network-picker
+  target other = picker/network("Lighter")/root/tab-off
+  expect session_can_trade(session, clock)
+  expect empty(cancel_refusal)
+  click venues
+  expect exists panel
+  click other
+  // The picker closes, the terminal is pointed at the other network, and the
+  // session it was unlocked with is still the session.
+  expect !venues_open
+  expect venue == Venue.lighter
+  expect session_can_trade(session, clock)
+  expect empty(cancel_refusal)
+  expect !empty(session_agent(session))
+
+// What a switch *does* still throw away, which is everything the other venue
+// answered. The key survives; the other exchange's book, universe and account
+// do not.
+test trading_changing_network_still_drops_what_the_other_venue_answered
+  preset unlocked
+  viewport 1660 820
+  target app = #app
+  expect !empty(symbols)
+  dispatch switch_venue(Venue.hyperliquid_testnet)
+  expect empty(symbols)
+  expect !account_read(account)
+  expect empty(orders)
+
+// And the two events that do end a session still do. Locking is the one with
+// no conditions on it, and it takes every network's key with it.
+test trading_locking_still_forgets_every_network
+  preset unlocked
+  viewport 1660 820
+  target app = #app
+  target badge = app/header/session-badge
+  expect session_can_trade(session, clock)
+  dispatch lock
   expect !session_can_trade(session, clock)
   expect text "READ ONLY" within badge
   expect empty(session_agent(session))

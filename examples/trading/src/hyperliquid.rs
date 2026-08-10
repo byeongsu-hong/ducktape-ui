@@ -247,7 +247,7 @@ pub struct HlError {
 }
 
 impl HlError {
-    fn new(message: String) -> Self {
+    pub(crate) fn new(message: String) -> Self {
         Self { message }
     }
 }
@@ -463,10 +463,17 @@ impl Hash for Fill {
 /// One resting order, listed and drawn on the chart as a level.
 #[derive(Clone, PartialEq)]
 pub struct Order {
-    /// The exchange's own id for this resting order, and the only thing a
+    /// The exchange's own name for this resting order, and the only thing a
     /// cancel can name it by: a coin and a price identify a level, not an
     /// order, and an account may rest several at one price.
-    pub oid: u64,
+    ///
+    /// Signed, because it is the neutral shape's field and the two venues name
+    /// an order differently: Hyperliquid answers an unsigned `oid`, and Lighter
+    /// has no order id at all in its acknowledgement — an order there is named
+    /// by the `ClientOrderIndex` its placer chose, which is an `i64` by the
+    /// venue's own reckoning. One signed field holds both, and it is what
+    /// crosses to Ice, which has no unsigned integer.
+    pub oid: i64,
     pub coin: String,
     pub buy: bool,
     pub price: f64,
@@ -1079,7 +1086,7 @@ pub fn tray_status(coin: String, focus: Option<SymbolRow>, live: bool) -> String
 
 /// A number as typed into a ticket field. Anything that is not one reads as
 /// zero, which every figure downstream already treats as "not yet".
-fn amount(typed: &str) -> f64 {
+pub(crate) fn amount(typed: &str) -> f64 {
     typed.trim().replace(',', "").parse().map_or(
         0.0,
         |value: f64| if value.is_finite() { value } else { 0.0 },
@@ -1667,7 +1674,7 @@ fn parse_orders(value: &Value) -> Vec<Order> {
         .unwrap_or_default()
         .iter()
         .map(|order| Order {
-            oid: value_i64(order, "oid").max(0) as u64,
+            oid: value_i64(order, "oid").max(0),
             coin: text(order, "coin"),
             buy: text(order, "side") == "B",
             price: num(order, "limitPx"),
@@ -1807,7 +1814,23 @@ pub(crate) async fn exchange(chain: Chain, body: Value) -> Result<Value, HlError
 /// per-order statuses — so "the request succeeded" and "the order rested" are
 /// two different questions and only the second one matters. Reading the outer
 /// status alone reports a rejected order as placed.
-fn placed(answer: &Value) -> Result<Vec<u64>, HlError> {
+/// What the exchange actually did with the order, in its own numbers.
+///
+/// Three outcomes and they are not one word: an order can rest whole, fill
+/// whole, or fill part and rest the remainder — and an immediate-or-cancel one
+/// fills part and cancels the rest. Reporting any of those at the size that was
+/// *typed* tells a trader they hold something they do not.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Placed {
+    /// The id the remainder rests under, or zero when nothing rested.
+    pub resting: i64,
+    /// How much filled on arrival, as the venue counted it.
+    pub filled: f64,
+    /// The average price it filled at, and zero when nothing filled.
+    pub at: f64,
+}
+
+fn placed(answer: &Value) -> Result<Placed, HlError> {
     if let Some(message) = answer.get("response").and_then(Value::as_str) {
         return Err(HlError::new(message.to_owned()));
     }
@@ -1829,29 +1852,31 @@ fn placed(answer: &Value) -> Result<Vec<u64>, HlError> {
             "Hyperliquid accepted the request and reported nothing about the order".to_owned(),
         ));
     }
-    let mut ids = Vec::new();
+    let mut done = Placed::default();
     for status in statuses {
         // One refusal among several is still a refusal, and the venue's own
         // sentence is the only useful thing to say about it.
         if let Some(said) = status.get("error").and_then(Value::as_str) {
             return Err(HlError::new(said.to_owned()));
         }
-        // A resting order answers with its id; one that filled immediately
-        // answers `filled` and has no id to cancel later.
-        if let Some(oid) = status
-            .get("resting")
-            .and_then(|resting| resting.get("oid"))
-            .and_then(Value::as_u64)
-        {
-            ids.push(oid);
+        // A resting order answers with its id. One that crossed answers how
+        // much of it crossed and at what — read rather than assumed, because
+        // the amount the venue filled is the only honest thing to report and it
+        // is not always the amount that was asked for.
+        if let Some(resting) = status.get("resting") {
+            done.resting = value_i64(resting, "oid");
+        }
+        if let Some(filled) = status.get("filled") {
+            done.filled += num(filled, "totalSz");
+            done.at = num(filled, "avgPx");
         }
     }
-    Ok(ids)
+    Ok(done)
 }
 
 #[allow(dead_code)]
 /// Send a signed action and read what the venue made of it.
-async fn acted(chain: Chain, wallet: &Wallet, action: &Action) -> Result<Vec<u64>, HlError> {
+async fn acted(chain: Chain, wallet: &Wallet, action: &Action) -> Result<Placed, HlError> {
     placed(&exchange(chain, action.request(wallet)).await?)
 }
 
@@ -1866,9 +1891,8 @@ pub async fn hl_place(
     chain: Chain,
     wallet: &Wallet,
     market: &SymbolRow,
-    order: Order,
-    reduce_only: bool,
-) -> Result<Vec<u64>, HlError> {
+    wire: signing::Order,
+) -> Result<Placed, HlError> {
     if market.name.contains(':') {
         return Err(HlError::new(format!(
             "{} is margined against a clearinghouse this app cannot read, so it will not send \
@@ -1876,18 +1900,7 @@ pub async fn hl_place(
             market.name,
         )));
     }
-    let action = signing::order(
-        chain,
-        &[signing::Order {
-            asset: market.asset,
-            buy: order.buy,
-            price: order.price,
-            size: order.size,
-            reduce_only,
-            tif: signing::Tif::Gtc,
-        }],
-        now_ms() as u64,
-    )?;
+    let action = signing::order(chain, &[wire], now_ms() as u64)?;
     acted(chain, wallet, &action).await
 }
 
@@ -1897,13 +1910,15 @@ pub async fn hl_cancel(
     chain: Chain,
     wallet: &Wallet,
     market: &SymbolRow,
-    oid: u64,
+    oid: i64,
 ) -> Result<(), HlError> {
     let action = signing::cancel(
         chain,
         &[signing::Cancel {
             asset: market.asset,
-            oid,
+            // The wire is unsigned; the neutral row is not, and an id below
+            // zero is one no exchange issued.
+            oid: oid.max(0) as u64,
         }],
         now_ms() as u64,
     );
@@ -3452,6 +3467,14 @@ pub fn order_label(order: Order) -> String {
     )
 }
 
+/// What CANCEL on this row would do, for whoever cannot see which row it is on.
+///
+/// It names the order rather than the act, because "cancel" is what every one
+/// of these buttons says and the row is the whole of what tells them apart.
+pub fn order_cancel_label(order: Order) -> String {
+    format!("Cancel this {}", order_label(order))
+}
+
 // One count per row built, on the thread that built it — which is what the
 // `lazy` boundaries in `frame_probe` are held down with: a redraw that rebuilds
 // a memoized row shows up in these counters and nowhere else.
@@ -4484,18 +4507,27 @@ mod tests {
                 .clone();
 
             // A tenth of the mark: a bid nothing will cross.
-            let resting = Order {
-                oid: 0,
-                coin: market.name.clone(),
-                buy: true,
-                price: (market.price / 10.0).round(),
-                size: 0.001,
-                ts: 0,
-            };
-            let ids = hl_place(Chain::Testnet, &wallet, &market, resting, false)
-                .await
-                .expect("the order is accepted");
-            let oid = *ids.first().expect("a resting order has an id");
+            let done = hl_place(
+                Chain::Testnet,
+                &wallet,
+                &market,
+                signing::Order {
+                    asset: market.asset,
+                    buy: true,
+                    price: (market.price / 10.0).round(),
+                    size: 0.001,
+                    reduce_only: false,
+                    tif: signing::Tif::Gtc,
+                },
+            )
+            .await
+            .expect("the order is accepted");
+            let oid = done.resting;
+            assert_ne!(
+                oid, 0,
+                "a bid this far under the book rests, it does not fill"
+            );
+            assert_eq!(done.filled, 0.0, "and nothing of it crossed");
 
             let open = hl_orders(Chain::Testnet, account.clone())
                 .await
@@ -4532,7 +4564,14 @@ mod tests {
                 { "resting": { "oid": 77_665_544 } }
             ]}},
         });
-        assert_eq!(placed(&resting).expect("a resting order"), vec![77_665_544]);
+        assert_eq!(
+            placed(&resting).expect("a resting order"),
+            Placed {
+                resting: 77_665_544,
+                filled: 0.0,
+                at: 0.0
+            },
+        );
 
         // Refused outright, at the top level.
         let refused = json!({ "status": "err", "response": "Insufficient margin to place order." });
@@ -4565,9 +4604,51 @@ mod tests {
                 { "filled": { "totalSz": "1.0", "avgPx": "64000.0", "oid": 5 } }
             ]}},
         });
-        assert!(
-            placed(&filled).expect("a fill is not a failure").is_empty(),
-            "a filled order rests under no id, so there is none to hand back"
+        assert_eq!(
+            placed(&filled).expect("a fill is not a failure"),
+            Placed {
+                resting: 0,
+                filled: 1.0,
+                at: 64_000.0
+            },
+            "a filled order rests under no id, and the amount it filled is the \
+             venue's own number rather than the size that was asked for",
+        );
+
+        // The shape this app used to report at the size that was typed: an
+        // immediate-or-cancel order for ten that crossed two. The venue says
+        // two, and two is what a reader has to be told.
+        let partial_fill = json!({
+            "status": "ok",
+            "response": { "type": "order", "data": { "statuses": [
+                { "filled": { "totalSz": "2.0", "avgPx": "63999.5", "oid": 9 } }
+            ]}},
+        });
+        assert_eq!(
+            placed(&partial_fill).expect("a partial fill is not a failure"),
+            Placed {
+                resting: 0,
+                filled: 2.0,
+                at: 63_999.5
+            },
+        );
+
+        // And the shape where both happen at once: part crossed, the rest
+        // rests, and the answer carries an id *and* an amount.
+        let both = json!({
+            "status": "ok",
+            "response": { "type": "order", "data": { "statuses": [
+                { "filled": { "totalSz": "2.0", "avgPx": "63999.5", "oid": 9 } },
+                { "resting": { "oid": 77_665_545 } }
+            ]}},
+        });
+        assert_eq!(
+            placed(&both).expect("a part-filled order is not a failure"),
+            Placed {
+                resting: 77_665_545,
+                filled: 2.0,
+                at: 63_999.5
+            },
         );
     }
 
