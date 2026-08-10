@@ -117,6 +117,7 @@ pub(in crate::parser) fn parse_type(source: &str, line: &Line) -> Result<Type, E
         "window-level" => Type::WindowLevel,
         "window-mode" => Type::WindowMode,
         "window-attention" => Type::WindowAttention,
+        "secret" => Type::Secret,
         "widget-id" => Type::WidgetId,
         "widget-target" => Type::WidgetTarget,
         "task-handle" => Type::TaskHandle,

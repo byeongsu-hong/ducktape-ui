@@ -189,7 +189,39 @@ pub(in crate::check) fn infer_content_group(
                     format!("unknown binding `{binding}`"),
                 ));
             };
-            require_type(binding_ty, &Type::Str, span)?;
+            let secret = binding_ty == &Type::Secret;
+            if !secret {
+                require_type(binding_ty, &Type::Str, span)?;
+            }
+            if secret {
+                // Everything refused here is a way the typed text would leave
+                // the buffer. `submit=` survives because it carries no payload.
+                for (route, property) in [(&options.change, "change="), (&options.paste, "paste=")]
+                {
+                    if route.is_some() {
+                        return Err(Error::new(
+                            "E139",
+                            span,
+                            format!(
+                                "a secret input cannot route `{property}`, because that route hands the typed text to a handler"
+                            ),
+                        )
+                        .hint(format!(
+                            "ask `empty({binding})` or `len({binding})` for what the view needs, and pass `{binding}` to a `secret` extern parameter at submit"
+                        )));
+                    }
+                }
+                if options.secure.is_some() {
+                    return Err(Error::new(
+                        "E139",
+                        span,
+                        "a secret input is always masked, so `secure=` has nothing left to decide",
+                    )
+                    .hint(
+                        "drop `secure=`; it belongs on an ordinary `<-> state` input, where masking is the application's choice",
+                    ));
+                }
+            }
             if let Some(disabled) = disabled {
                 let ty = expr_type(disabled, env, document, span)?;
                 require_type(&ty, &Type::Bool, span)?;

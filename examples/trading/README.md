@@ -872,14 +872,25 @@ other paths, that it spans the dialog's content width, and that the address box
 is *missing* from the surface — because a paragraph saying "wallet first" over a
 dialog that renders address-first would pass any assertion about the prose.
 
-**ponytail: the phrase transits Ice state while it is being typed.** The
-language has no write-only input, so the field binds to state like every other
-field. What holds it down is that the life is one press, that `check_phrase`
-clears both fields the moment it has derived, and that no preset ever sets one —
-`trading_an_import_answers_the_account_and_one_press_spends_it` asserts the
-clearing, and the fixtures are what every screenshot in this repository is taken
-from. The upgrade is an input the language does not bind to state, which is
-filed as its own task rather than built here.
+**A typed phrase never enters Ice state.** Both boxes on the import door bind
+`secret` buffers the runtime holds, so there is nothing for a preset to set, a
+capture to record, or a test to name — the assertion that this step's phrase is
+unreadable is a *compile* error rather than a passing test, which is why
+`trading_an_import_answers_the_account_and_one_press_spends_it` asserts what Ice
+is allowed to know instead: that the box has 93 characters in it, that nothing
+paints them, that the field announces as a protected one, and that the buffer is
+wiped the instant the address exists. The text crosses to Rust exactly once, at
+CHECK, into `read_wallet`'s `secret` parameters, and is zeroized when that call
+returns.
+
+**ponytail: a phrase this app *made* is still ordinary state, and has to be.**
+A phrase the screen shows has to be a value to be drawn, and Ice has a secret
+input rather than a secret display. `create_phrase` therefore keeps the older
+mitigations and nothing stronger: one moment, cleared the instant the derivation
+has run, no preset ever setting it. That asymmetry is the honest one — a phrase
+on screen was never protected by what the typed one is protected by — and the
+upgrade is a display that renders from a buffer Ice cannot read, which is a
+larger feature than the input was.
 
 ### What the screen says, and what it must never blur
 

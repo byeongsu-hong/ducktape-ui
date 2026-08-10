@@ -9,7 +9,6 @@
 //! answer that often is the cost this window exists to avoid. The surrounding
 //! `lazy` owns this adapter until the row leaves its bounded parking lot.
 
-use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -32,6 +31,12 @@ const LINK_LIGHT: Color = Color::from_rgb(0.627, 0.353, 0.235);
 const LINK_DARK: Color = Color::from_rgb(0.871, 0.667, 0.502);
 const CODE_BG_LIGHT: Color = Color::from_rgb(0.953, 0.949, 0.937);
 const CODE_BG_DARK: Color = Color::from_rgb(0.149, 0.145, 0.137);
+/// The palette's `accent_fg`, which is what the `body` recipe sets a question
+/// in — mirrored here for the same reason the Markdown colours are.
+/// `leading-normal`, which is what the recipe sets it in.
+const BODY_LEADING: f64 = 1.5;
+const BODY_LIGHT: Color = Color::from_rgb(0.247, 0.243, 0.224);
+const BODY_DARK: Color = Color::from_rgb(0.847, 0.835, 0.804);
 const CODE_FG_LIGHT: Color = Color::from_rgb(0.247, 0.243, 0.224);
 const CODE_FG_DARK: Color = Color::from_rgb(0.847, 0.835, 0.804);
 /// A code block's own ground, dark under either palette — it is the one part
@@ -75,33 +80,11 @@ fn style(dark: bool) -> markdown::Style {
 /// reading as a block at all. Everything else here is iced's own default.
 pub struct Blocks {
     dark: bool,
-    /// The answer these blocks belong to, and the count that numbers them
-    /// within it. A selection is one range across the whole answer, so every
-    /// block has to know which answer it is part of and where in it it sits.
-    ///
-    /// The count is reset before each walk of the document rather than kept
-    /// between them: this viewer is asked for the same blocks again on every
-    /// call the runtime makes into the row, and a block has to come back with
-    /// the same number every time.
-    group: u64,
-    next: Cell<usize>,
-    /// How many blocks the walk produced, shared with each of them so the
-    /// first and the last can answer for a drag that has left the answer.
-    blocks: Rc<Cell<usize>>,
 }
 
 impl Blocks {
-    fn new(dark: bool, group: u64) -> Self {
-        Self {
-            dark,
-            group,
-            next: Cell::new(0),
-            blocks: Rc::new(Cell::new(0)),
-        }
-    }
-
-    fn restart(&self) {
-        self.next.set(0);
+    fn new(dark: bool) -> Self {
+        Self { dark }
     }
 
     fn selectable(&self, spans: Arc<[select::Line]>, size: Pixels) -> Element<'static, String> {
@@ -127,11 +110,7 @@ impl Blocks {
         size: Pixels,
         tight: bool,
     ) -> Element<'static, String> {
-        let block = self.next.get();
-        self.next.set(block + 1);
-        self.blocks.set(block + 1);
-
-        select::selectable(self.group, block, tight, self.blocks.clone(), spans, size)
+        select::selectable(tight, spans, size)
     }
 }
 
@@ -208,17 +187,13 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
     }
 }
 
-/// The same viewer, for one surface of the reply still being written.
-///
-/// `lane` names the surfaces apart. They are rebuilt from nothing every frame,
-/// so a selection in one is told apart from a selection in another by this and
-/// nothing else.
+/// The same viewer, for the reply still being written.
 ///
 /// Without it the live reply is drawn by iced's default and a code block
 /// changes appearance the moment its turn settles — popping onto the ground
 /// `Blocks` gives it. The answer should not move when it stops arriving.
-pub fn answer_viewer(dark: bool, lane: i64) -> Blocks {
-    Blocks::new(dark, select::live(lane))
+pub fn answer_viewer(dark: bool) -> Blocks {
+    Blocks::new(dark)
 }
 
 /// Parsed Markdown whose items live exactly as long as its owning lazy row.
@@ -238,12 +213,11 @@ impl MarkdownBody {
         Self {
             items: markdown::parse(source).collect::<Vec<_>>().into(),
             settings: settings(size, dark),
-            viewer: Blocks::new(dark, select::group()),
+            viewer: Blocks::new(dark),
         }
     }
 
     fn view(&self) -> Element<'_, String> {
-        self.viewer.restart();
         markdown::view_with(self.items.iter(), self.settings, &self.viewer)
     }
 }
@@ -356,6 +330,19 @@ fn settings(size: f64, dark: bool) -> markdown::Settings {
     settings.spacing = (size * 0.8).into();
 
     settings
+}
+
+/// One run of the transcript that is not Markdown — a question, as it was
+/// typed. It is drawn by the same widget an answer is, so a drag can run out of
+/// one and into the other; `@body` is what it is set in, mirrored here for the
+/// same reason the Markdown colours are.
+pub fn selectable_text(text: String, size: f64, dark: bool) -> Element<'static, String> {
+    select::selectable_text(
+        text,
+        size,
+        BODY_LEADING,
+        if dark { BODY_DARK } else { BODY_LIGHT },
+    )
 }
 
 /// One settled Markdown row. The message is the URL of a clicked link.

@@ -533,7 +533,16 @@ pub(in crate::codegen) fn generate_statements(
                 } else {
                     resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
                 };
-                if matches!(target.ty, Type::Combo(_)) {
+                if target.ty == Type::Secret {
+                    // The checker allows exactly one right-hand side here, the
+                    // empty literal, so this is a wipe rather than a write.
+                    writeln!(
+                        out,
+                        "{state}.{SECRET_STORE_FIELD}.clear({});",
+                        rust_string(&target.name)
+                    )
+                    .unwrap();
+                } else if matches!(target.ty, Type::Combo(_)) {
                     writeln!(
                         out,
                         "{state}.{} = ::iced::widget::combo_box::State::new({code});",

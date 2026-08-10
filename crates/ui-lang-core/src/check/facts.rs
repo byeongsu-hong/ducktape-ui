@@ -3456,6 +3456,17 @@ impl<'a> FactsBuilder<'a> {
                 &derived.span,
             )?;
         }
+        for (index, secret) in self.document.secrets.iter().enumerate() {
+            let declaration = self.declarations.secret(index);
+            self.push_value(
+                ValueScope::App,
+                secret.name.clone(),
+                Type::Secret,
+                CheckedValueRef::Secret(declaration.id),
+                declaration.origin,
+                &secret.span,
+            )?;
+        }
         for (component_index, component) in self.document.components.iter().enumerate() {
             let component_id = self.declarations.component(component_index).id;
             let scope = ValueScope::Component(component_id);
@@ -4297,14 +4308,19 @@ impl<'a> FactsBuilder<'a> {
         let checked_binding = env
             .get(binding)
             .and_then(|(root, ty)| {
-                (ty == &Type::Str)
+                matches!(ty, Type::Str | Type::Secret)
                     .then_some(match root {
                         CheckedPathRoot::Value(value) => Some(*value),
                         _ => None,
                     })
                     .flatten()
             })
-            .ok_or_else(|| self.invariant(span, "input binding lost its checked string state"))?;
+            .ok_or_else(|| {
+                self.invariant(
+                    span,
+                    "input binding lost its checked string or secret state",
+                )
+            })?;
         let style = options
             .custom_style
             .as_ref()

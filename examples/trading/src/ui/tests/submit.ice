@@ -76,12 +76,14 @@ test trading_the_confirmation_restates_the_order_and_the_network
   expect missing panel
   click review
   expect exists panel
-  // The order in one line, read off the button that would send it — which is
-  // also what somebody who cannot see the panel hears before they press it.
+  // The order in one line, painted at the head of the panel and read off the
+  // button that would send it — which is also what somebody who cannot see the
+  // panel hears before they press it. Both, because a label and its heading can
+  // disagree and the sentence is the whole of what is being agreed to.
+  expect text "Send this buy of 3 BTC on Hyperliquid, REAL MONEY" within panel
   expect a11y send name "Send this buy of 3 BTC on Hyperliquid, REAL MONEY"
   // What it costs to be wrong here, in the same two words the header uses.
-  // What it costs to be wrong here, in the same two words the header uses.
-  expect exists kind
+  expect text "REAL MONEY" within kind
   // A limit order rests at what was typed rather than at a walk of the book,
   // and every figure beside it is the one the ticket had already computed —
   // asserted against the ticket's own values so a panel that recomputed them
@@ -119,7 +121,9 @@ test trading_the_confirmation_holds_the_order_it_froze
   expect ticket_price == "58,000.00"
   expect !ticket_buy
   expect ticket_at == 58000.0
-  // And the confirmation is unmoved, because it is not reading the ticket.
+  // And the confirmation is unmoved, in ink as well as in the frozen order:
+  // the panel still says buy over a ticket that now says sell.
+  expect text "Send this buy of 3 BTC on Hyperliquid, REAL MONEY" within panel
   expect a11y send name "Send this buy of 3 BTC on Hyperliquid, REAL MONEY"
   expect confirm_price(confirm) == 64000.0
 
@@ -166,9 +170,11 @@ test trading_a_confirmed_order_still_cannot_send_without_a_key
   expect exists panel
   expect !empty(error)
   // The venue's sentence lands inside the panel the reader is looking at,
-  // rather than only in the alarm line behind it.
+  // rather than only in the alarm line behind it. Scoped, because the alarm
+  // line draws the same sentence from the same field: unscoped, this passed off
+  // the line behind the modal and proved the opposite of what it says.
   expect exists failed
-  expect text "Unlock on Settings before sending an order."
+  expect text "Unlock on Settings before sending an order." within failed
 
 // ORDER VALUE is a figure in the market's own collateral, not in dollars.
 //

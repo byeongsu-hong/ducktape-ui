@@ -254,6 +254,7 @@ impl Lowerer {
             return Err(self.invariant(span, "markdown content identity or type diverged"));
         }
         let valid_scope = match content {
+            CheckedValueRef::Secret(_) => false,
             CheckedValueRef::AppState(_) | CheckedValueRef::Derived(_) => outer_component.is_none(),
             CheckedValueRef::ComponentParam(id) => outer_component == Some(id.component),
             CheckedValueRef::ComponentState(id) => outer_component == Some(id.component),

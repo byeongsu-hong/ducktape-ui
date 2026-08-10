@@ -12,6 +12,22 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
         .as_ref()
         .map(|item| item.name.as_str());
     let check = |ty: &Type, span: &Span| check_declared_type(ty, span, &known, palette_contract);
+    // `secret` names a reading of a buffer, not a value. It is legal in
+    // exactly one place — an extern function's parameter list — because that
+    // is the only place a reading is handed over and then dropped. Anywhere it
+    // could be stored, returned, or copied is refused here.
+    let reject_secret = |ty: &Type, span: &Span, place: &str| {
+        if contains_secret(ty) {
+            Err(Error::new(
+                "E103",
+                span,
+                format!("`secret` cannot be {place}"),
+            )
+            .hint("declare `secret <name>` beside `state`, bind one `input` to it, and take it as an extern function parameter"))
+        } else {
+            Ok(())
+        }
+    };
     let reject_debug_span = |ty: &Type, span: &Span| {
         if contains_debug_span(ty) {
             Err(Error::new(
@@ -26,6 +42,7 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
 
     for item in &document.structs {
         for (_, ty) in &item.fields {
+            reject_secret(ty, &item.span, "an extern struct field")?;
             reject_debug_span(ty, &item.span)?;
             check(ty, &item.span)?;
         }
@@ -40,6 +57,7 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
                         "enum payloads support ordinary cloneable data only",
                     ));
                 }
+                reject_secret(payload, &variant.span, "an enum payload")?;
                 reject_debug_span(payload, &variant.span)?;
                 check(payload, &variant.span)?;
             }
@@ -52,17 +70,21 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
             check(ty, &item.span)?;
         }
         if let Some(progress) = &item.progress {
+            reject_secret(progress, &item.span, "extern progress")?;
             reject_debug_span(progress, &item.span)?;
             check(progress, &item.span)?;
         }
+        reject_secret(&item.output, &item.span, "an extern return type")?;
         reject_debug_span(&item.output, &item.span)?;
         check(&item.output, &item.span)?;
         if let Some(error) = &item.error {
+            reject_secret(error, &item.span, "an extern error type")?;
             reject_debug_span(error, &item.span)?;
             check(error, &item.span)?;
         }
     }
     for state in &document.states {
+        reject_secret(&state.ty, &state.span, "application state")?;
         if contains_debug_span(&state.ty) && state.ty != Type::Option(Box::new(Type::DebugSpan)) {
             return Err(Error::new(
                 "E103",
@@ -74,6 +96,7 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
     }
     for component in &document.components {
         for param in &component.params {
+            reject_secret(&param.ty, &component.span, "a component input")?;
             reject_debug_span(&param.ty, &component.span)?;
             check(&param.ty, &component.span)?;
         }
@@ -212,6 +235,20 @@ pub(in crate::check) fn contains_debug_span(ty: &Type) -> bool {
             contains_debug_span(inner)
         }
         Type::Result(output, error) => contains_debug_span(output) || contains_debug_span(error),
+        _ => false,
+    }
+}
+
+/// Whether a declared type reaches a `secret` anywhere inside it. A secret in
+/// a list or an option would be a secret a program can keep, so the nesting
+/// counts.
+pub(in crate::check) fn contains_secret(ty: &Type) -> bool {
+    match ty {
+        Type::Secret => true,
+        Type::List(inner) | Type::Option(inner) | Type::Combo(inner) | Type::Animation(inner) => {
+            contains_secret(inner)
+        }
+        Type::Result(output, error) => contains_secret(output) || contains_secret(error),
         _ => false,
     }
 }
@@ -383,6 +420,15 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
                 "E100",
                 &derived.span,
                 format!("duplicate app value `{}`", derived.name),
+            ));
+        }
+    }
+    for secret in &document.secrets {
+        if !fields.insert(&secret.name) {
+            return Err(Error::new(
+                "E100",
+                &secret.span,
+                format!("duplicate app value `{}`", secret.name),
             ));
         }
     }

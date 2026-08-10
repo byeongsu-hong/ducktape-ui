@@ -84,7 +84,7 @@ produce a deterministic AccessKit tree with these mappings:
 | --- | --- | --- |
 | `text` | `Label` | the visible text is its value |
 | `input` | `TextInput` | label, optional description, value, disabled/focus state |
-| secure `input` | `PasswordInput` | label, optional description, disabled/focus state; no value is exported |
+| secure or `secret` `input` | `PasswordInput` | label, optional description, disabled/focus state; no value is exported |
 | `button` | `Button` | label, optional description, disabled/focus state, click action |
 | `checkbox` | `CheckBox` | label, optional description, toggled/disabled/focus state, click action |
 | `toggler` | `Switch` | label, optional description, toggled/disabled/focus state, click action |
@@ -316,10 +316,11 @@ imported_file  = (use_decl | declaration)*
 use_decl       = "use" string ("as" name)?
 declaration    = extern_decl | theme_contract_decl | palette_decl
                | style_recipe_decl | font_decl
-               | enum_decl | state_decl | derived_decl | preset_decl | component_decl
+               | enum_decl | state_decl | secret_decl | derived_decl | preset_decl
+               | component_decl
                | handler_decl | subscribe_decl | view_decl | test_decl
 document       = root_decl extern_decl* theme_contract_decl palette_decl+
-                 style_recipe_decl* enum_decl* state_decl? derived_decl?
+                 style_recipe_decl* enum_decl* state_decl? secret_decl* derived_decl?
                  preset_decl* component_decl*
                  handler_decl*
                  subscribe_decl? view_decl test_decl*
@@ -384,7 +385,7 @@ field          = name ":" type
 extern_component_field_list
                = extern_component_field ("," extern_component_field)*
 extern_component_field = name ":" "&"? type
-type           = "bool" | "i64" | "f64" | "str" | "bytes" | "image"
+type           = "bool" | "i64" | "f64" | "str" | "secret" | "bytes" | "image"
                | "image-allocation" | "image-memory" | "image-error"
                | "debug-span"
                | "markdown" | "editor" | "event" | "event-status"
@@ -505,6 +506,7 @@ font_ref       = "default" | "mono" | name
 
 state_decl     = "state" INDENT state_entry+
 state_entry    = name (":" type)? "=" expr (INDENT animation_setting*)?
+secret_decl    = "secret" name
 derived_decl   = "derived" INDENT derived_entry+
 derived_entry  = name "=" expr
 enum_decl      = "enum" PascalName INDENT enum_variant+
@@ -1780,7 +1782,7 @@ tracked run is not mouse-selectable because it is a row rather than the single
 text paragraph required by the selection widget; its accessibility value is
 still the complete unsplit text.
 
-`input` keeps its required `str` binding and additionally supports checked
+`input` binds either `str` state or a declared `secret`, and additionally supports checked
 `label=`/`description=` accessibility text, bool secure mode, submit routes,
 str-payload change/paste routes, typed width/padding/text size, relative line height,
 horizontal alignment, complete font descriptors, and a complete text-input
@@ -1805,6 +1807,50 @@ input "Search" #query <-> query hint="Find anything" font=ui
 function receives `&iced::Theme`, the current `text_input::Status`, then its
 owned arguments and returns `text_input::Style`. Checked utilities apply next,
 and status lines are the final overrides.
+
+A `secret <name>` declaration creates a runtime-held text buffer instead of
+application state. Nothing constructs it, clones it, or serializes it: it is a
+field on the generated application struct that no Ice name reaches except the
+declared one, so a `preset` cannot set it, a capture manifest cannot record it,
+and a first-class test has no typed state field to read. Its buffer is
+`zeroize`-backed and wiped when it is replaced, cleared, or dropped.
+
+Ice may do exactly four things with a secret name, and the type system refuses
+everything else with `E101` naming `secret` as the type it got:
+
+- bind one `input` to it with `<-> name`, which makes that input permanently
+  masked and gives it the `PasswordInput` role;
+- ask `empty(name)` or `len(name)` — the two facts the mask already shows,
+  because it draws one bullet per character;
+- clear it with `name = ""`, the only assignment it accepts (`E140`);
+- pass it to an extern function parameter declared `secret`, which arrives in
+  Rust as a `ui_lang_runtime::Secret`: not `Clone`, `Debug`-redacted, readable
+  once through `expose`, and wiped when the receiving function returns.
+
+`secret` is legal only as an extern function parameter type. As state, an
+extern struct field, an enum payload, a component input, an extern return or
+error type it is `E103`, because each of those is a place a reading could be
+kept.
+
+A secret input refuses `change=` and `paste=` with `E139`, because both routes
+hand the typed text to a handler, and refuses `secure=` for the same code,
+because there is nothing left for it to decide. `submit=` is accepted; it
+carries no payload. There is no reveal affordance, and adding one is not a
+matter of a missing property: a reveal is a second path out of the buffer, and
+"the content leaves only into a `secret` parameter" stops being a property of
+the language the moment there is one exception to it. A recovery phrase, the
+case this exists for, is also the case where reveal is the wrong convention.
+
+One declared name is one buffer. Binding it from an `input` under `for`,
+`keyed`, or a repeated component therefore gives every row the same buffer —
+a consequence of the declaration being a name rather than a widget, not a
+defect to work around by declaring more.
+
+The typed text does cross one iced `Message` on its way in, because
+`text_input` hands back an owned `String` and there is no narrower signature to
+receive it; `update` moves it into the buffer and drops it there. What the
+feature removes is the *stored* copy, which is the one a preset, a snapshot, a
+test, and the accessibility tree could otherwise reach.
 
 `button` accepts either its compact string label or exactly one arbitrary child
 node. The compact string is its default accessible name; child content requires
@@ -3273,7 +3319,7 @@ The implemented native nodes are:
 | `text` | one `str`, `i64`, or `f64` expression with an optional ID, bounds, size/line-height, font, alignment, shaping, wrapping, checked color/weight styles, and an AccessKit `Label` role containing the visible value |
 | `rich-text` | optional ID, zero or more structured spans with rich defaults, complete span highlights and optional string link events |
 | `panes` | named pane trees backed by recursive persistent split state, structured title/full/compact controls, complete concrete state and surface styles with linear backgrounds, closed panes, list-keyed runtime templates, typed dynamic references, click, resize and drag/drop behavior |
-| `input` | required `str` binding; checked accessible label/description, `TextInput` or value-suppressing `PasswordInput` role, ID, hint, disabled/secure, submit/paste, every concrete builder setter, complete icon, all concrete status style fields, and typed native runtime style callbacks |
+| `input` | required `str` or declared `secret` binding; checked accessible label/description, `TextInput` or value-suppressing `PasswordInput` role, ID, hint, disabled/secure, submit/paste, every concrete builder setter, complete icon, all concrete status style fields, and typed native runtime style callbacks |
 | `button` | string label or one child; checked accessible label/description with an explicit label required for child content, compact-label typography utilities, `Button` role and keyboard activation, optional ID/disabled, typed size/padding/clip, eight presets, complete status styles, typed native runtime style callbacks and required route |
 | `checkbox` | string label, optional accessible label/description, `CheckBox` role and keyboard activation, bool value/route, disabled, sizing/typography/wrapping/font, custom icon, four presets and complete checked-aware status styles |
 | `toggler` | string label, optional ID, bool value/route, disabled, sizing/typography/wrapping/font/alignment and complete checked-aware status styles |

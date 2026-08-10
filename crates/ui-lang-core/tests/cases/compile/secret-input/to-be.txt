@@ -1,0 +1,9 @@
+__ice_secrets: ::ui_lang_runtime::SecretStore,
+__SecretTyped(::std::string::String, ::std::string::String),
+self.__ice_secrets.set(slot, text);
+crate::backend::read_wallet(self.__ice_secrets.read("phrase"))
+self.__ice_secrets.clear("phrase");
+(self.__ice_secrets.text("phrase")).is_empty()
+::iced::widget::text_input("", &self.__ice_secrets.text("phrase"))
+.secure(__secure)
+let __secure = true;

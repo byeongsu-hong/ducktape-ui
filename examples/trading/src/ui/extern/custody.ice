@@ -36,9 +36,9 @@ extern crate::custody
   // network rather than a key for one of them.
   //
   // `read_wallet` stores nothing and raises no sheet — it answers the address
-  // so the owner can say whether it is theirs before anything is written. The
-  // phrase reaches it as an argument and is cleared from state the moment it
-  // has; only `keep_wallet` costs a prompt.
+  // so the owner can say whether it is theirs before anything is written. Only
+  // `keep_wallet` costs a prompt.
+  //
   // A phrase this app made, and the words it will ask for back. `sync` because
   // it is a read from the OS generator and some arithmetic: there is nothing to
   // await, and a task would put invented latency between the press and the
@@ -47,8 +47,19 @@ extern crate::custody
   sync mint_wallet() -> Minted
   // What the backup step asks for, and why it has not been answered yet.
   pure backup_asks(positions:[i64]) -> str
-  pure backup_refused(phrase:str, positions:[i64], typed:str) -> str
-  read_wallet(phrase:str, passphrase:str) -> Entry ! CustodyFault
+  pure backup_label(positions:[i64], at:i64) -> str
+  pure backup_refused(phrase:str, positions:[i64], given:[str]) -> str
+  // The typed door. Both parameters are `secret`, which makes this the single
+  // place a typed phrase becomes readable anywhere in this program: what
+  // arrives is a `ui_lang_runtime::Secret` — not clonable, redacted when
+  // printed, borrowed once, and wiped when the call returns.
+  read_wallet(phrase:secret, passphrase:secret) -> Entry ! CustodyFault
+  // The same derivation over a phrase this app made rather than one somebody
+  // typed. It has to be a second door: a made phrase is `str` because the
+  // screen shows it, and `secret` is exactly the type that cannot be produced
+  // from a value. The asymmetry is the honest one — a phrase on screen was
+  // never protected by anything the typed one is protected by.
+  read_made_wallet(phrase:str) -> Entry ! CustodyFault
   pure pending_wallet() -> str
   pure forget_wallet() -> Session
   keep_wallet() -> Entry ! CustodyFault

@@ -514,6 +514,7 @@ impl Lowerer {
             return Err(self.invariant(span, "combo binding identity diverged"));
         }
         let valid_scope = match binding {
+            CheckedValueRef::Secret(_) => false,
             CheckedValueRef::AppState(_) => outer_component.is_none(),
             CheckedValueRef::ComponentParam(id) => outer_component == Some(id.component),
             CheckedValueRef::ComponentState(id) => outer_component == Some(id.component),

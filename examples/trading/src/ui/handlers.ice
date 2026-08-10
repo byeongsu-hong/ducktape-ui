@@ -741,6 +741,7 @@ on sweep_sent
 on open_import
   import_open = true
   import_note = ""
+  create_made = false
 
 // Make one, and open the step on the words. The press mints: there is no screen
 // between it and the phrase, because a step that asked "are you sure" before
@@ -753,7 +754,10 @@ on create_wallet
   import_passphrase = ""
   import_address = ""
   create_shown = false
-  create_confirm = ""
+  create_made = true
+  backup_one = ""
+  backup_two = ""
+  backup_three = ""
   let made = mint_wallet()
   create_phrase = made.phrase
   create_positions = made.positions
@@ -766,19 +770,29 @@ on backup_written
   create_shown = true
   import_note = ""
 
-on backup_typed(typed)
-  create_confirm = typed
+on backup_one_typed(typed)
+  backup_one = typed
+
+on backup_two_typed(typed)
+  backup_two = typed
+
+on backup_three_typed(typed)
+  backup_three = typed
 
 // The proof. A wrong answer is refused with a sentence and the words stay off
 // the screen: showing them again on a failed check would turn the check into a
 // prompt.
 on confirm_backup
-  import_note = backup_refused(create_phrase, create_positions, create_confirm)
+  import_note = backup_refused(create_phrase, create_positions, [backup_one, backup_two, backup_three])
   return if !empty(import_note)
-  create_confirm = ""
+  backup_one = ""
+  backup_two = ""
+  backup_three = ""
   // From here the two doors are one path: the phrase derives, the address is
-  // shown, and THIS IS MINE stores it.
-  run every read_wallet(create_phrase, "") -> phrase_read _ | custody_failed _
+  // shown, and THIS IS MINE stores it. `read_made_wallet` rather than
+  // `read_wallet` because a made phrase is a value on the screen, and the
+  // typed door's parameters take a buffer no value can be turned into.
+  run every read_made_wallet(create_phrase) -> phrase_read _ | custody_failed _
 
 // Every exit clears the phrase and the key it derived. A step that remembered
 // either would be a recovery phrase left in state for the rest of the session.
@@ -791,14 +805,11 @@ on close_import
   create_phrase = ""
   create_positions = []
   create_shown = false
-  create_confirm = ""
+  create_made = false
+  backup_one = ""
+  backup_two = ""
+  backup_three = ""
   session = forget_wallet()
-
-on import_typed(typed)
-  import_phrase = typed
-
-on import_passphrase_typed(typed)
-  import_passphrase = typed
 
 // Derive, and show the address. Nothing is stored and no sheet is raised: this
 // is the step whose whole job is letting the owner say "that is my account"
@@ -806,13 +817,16 @@ on import_passphrase_typed(typed)
 on check_phrase
   return if empty(import_phrase)
   import_note = ""
+  // The one moment the typed text is readable, and it is readable to Rust
+  // rather than to this program: `read_wallet` takes both boxes as `secret`.
   run every read_wallet(import_phrase, import_passphrase) -> phrase_read _ | custody_failed _
 
 on phrase_read(entry)
-  // Cleared here rather than on the way out: the phrase has done its work, and
-  // the shortest life it can have is the one that ends the moment it has. A
-  // made phrase goes the same way at the same moment — this is the point the
-  // two doors converge on.
+  // Wiped here rather than on the way out: the phrase has done its work, and
+  // the shortest life it can have is the one that ends the moment it has. On
+  // the typed door `= ""` zeroizes the runtime buffer, which is the only write
+  // Ice has over it; on the made door it clears ordinary state. Both doors
+  // converge here.
   import_phrase = ""
   import_passphrase = ""
   create_phrase = ""
@@ -829,6 +843,7 @@ on store_wallet
   run every keep_wallet() -> wallet_kept _ | custody_failed _
 
 on wallet_kept(entry)
+  create_made = false
   import_address = ""
   import_note = entry.note
   session = entry.session

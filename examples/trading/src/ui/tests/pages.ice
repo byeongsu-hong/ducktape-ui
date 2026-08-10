@@ -88,11 +88,12 @@ test trading_the_narrow_terminal_folds_two_panes_within_reach
 // one pane whose height the venue sets rather than the layout. Ten levels a side
 // at 18px with the spread row between them is 390px of book in a column that has
 // 316px for the book and the tape together, so a book drawn whole took the
-// height of every list under it. `deep_book` is the only fixture at that depth —
-// the rest are three levels a side, which is why no test had ever drawn a book
-// that reached the bottom of its own column.
+// height of every list under it. It runs on the ordinary terminal fixture,
+// which carries the depth both venues publish — while the fixtures were three
+// levels a side this needed a `deep_book` of its own, and a case only one
+// preset could reach is a case every other test was blind to.
 test trading_a_full_book_leaves_the_panes_under_it_their_height
-  preset deep_book
+  preset browsing
   viewport 1180 720
   target app = #app
   target terminal = app/terminal-fit/trade

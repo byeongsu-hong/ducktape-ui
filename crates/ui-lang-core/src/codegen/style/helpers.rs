@@ -115,6 +115,16 @@ pub(in crate::codegen) fn first_class_mouse_interaction_code(name: &str) -> Stri
     }
 }
 
+/// The application field holding every `secret` buffer. Private to the
+/// generated module and absent from the declared state list, so nothing in Ice
+/// — a preset, an `expect`, a snapshot — has a name for it.
+pub(in crate::codegen) const SECRET_STORE_FIELD: &str = "__ice_secrets";
+
+/// One message for every secret input, carrying the slot it belongs to. iced's
+/// text input hands back an owned `String`, so the typed text does cross a
+/// message on its way to the buffer; `update` moves it in and drops it there.
+pub(in crate::codegen) const SECRET_TYPED_VARIANT: &str = "__SecretTyped";
+
 pub(in crate::codegen) fn binding_variant(binding: &str) -> String {
     if canonical_snake(binding) {
         format!("__Bind{}", pascal(binding))

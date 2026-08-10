@@ -225,13 +225,13 @@ test trading_the_network_picker_opens_from_the_header
   expect exists panel
   // The panel is a loop over the registry, so every network added in Rust is
   // drawn here without this file or the view naming it — which is the whole of
-  // what "extensible" has to mean. Rows rather than text: `expect text` reads
-  // the primitives of the layer under the overlay and sees nothing painted in
-  // its layer, which is why the picture below is the evidence for the ink.
-  expect exists here
-  expect exists testnet
-  expect exists other
-  expect exists other_testnet
+  // what "extensible" has to mean. Each row is asserted as the ink it paints
+  // rather than as a node that resolved, because a row that draws nothing still
+  // resolves.
+  expect text "Hyperliquid" within here
+  expect text "Hyperliquid Testnet" within testnet
+  expect text "Lighter" within other
+  expect text "Lighter Testnet" within other_testnet
   // And it drops over the terminal rather than pushing it: the header is where
   // it was, and the terminal is still drawing what it was drawing.
   expect text "ORDER BOOK"
@@ -268,9 +268,12 @@ test trading_the_network_picker_says_which_one_is_being_read
   click venues
   // Every row says which kind it is before it is pressed, and says it aloud as
   // well as in ink: a labelled button's name replaces its contents, so the
-  // REAL MONEY box inside each row is painted and never spoken. The ink is in
-  // the picture `trading_the_network_picker_opens_from_the_header` captures,
-  // because `expect text` cannot read the overlay's own layer.
+  // REAL MONEY box inside each row is painted and never spoken. Both are
+  // asserted, scoped to the row, because the two can disagree and it is the one
+  // place where choosing the wrong deployment is actually done.
+  expect text "REAL MONEY" within here
+  expect text "TESTNET" within test_net
+  expect no text "REAL MONEY" within test_net
   expect a11y here name "Read Hyperliquid, real money, already reading"
   expect a11y other name "Read Lighter, real money"
   expect a11y test_net name "Read Hyperliquid Testnet, testnet"
@@ -527,15 +530,19 @@ test trading_settings_states_what_this_venue_can_and_cannot_serve
 // The gate opens over the terminal rather than replacing it, and the venue is
 // not one of the things leaving an address throws away — so the exchange the
 // next address will be read on is the one being held rather than the one the
-// app booted on. The gate names it: `capture lighter_gate` is the picture of
-// that label, which no assertion here can reach, because `within` sees nothing
-// in the overlay's layer and the header carries both venue names too.
+// app booted on. The gate names it, and the name is read off the dialog rather
+// than off the screen: the header behind it carries venue names too, so an
+// unscoped read of "Lighter" would pass for a gate that had gone back to
+// Hyperliquid. Both directions, for the same reason.
 test trading_the_gate_keeps_the_venue_the_terminal_was_reading
   preset lighter
   viewport 1660 900
+  target dialog = #gate
   dispatch reopen
   expect gate
   expect venue == Venue.lighter
+  expect text "Lighter" within dialog
+  expect no text "Hyperliquid" within dialog
   capture lighter_gate
 
 // The header is the glance surface, and a glance is only worth taking if the

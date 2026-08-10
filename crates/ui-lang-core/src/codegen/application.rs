@@ -329,6 +329,13 @@ pub(in crate::codegen) fn generate_boot(
         .unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
+    if !program.secrets().is_empty() {
+        writeln!(
+            out,
+            "{SECRET_STORE_FIELD}: ::std::default::Default::default(),"
+        )
+        .unwrap();
+    }
     for component in program
         .components()
         .iter()
@@ -855,6 +862,22 @@ pub(in crate::codegen) fn generate_update(
             )
             .unwrap();
         }
+    }
+    if !program.secrets().is_empty() {
+        // The slot name arrives as an owned `String` because the message must
+        // be `Clone`; it is matched back to the compiler-owned `&'static str`
+        // so the store is never keyed by anything a message invented.
+        let arms = program
+            .secrets()
+            .iter()
+            .map(|slot| format!("{} => Some({}),", rust_string(slot), rust_string(slot)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        writeln!(
+            out,
+            "{message}::{SECRET_TYPED_VARIANT}(slot, text) => {{ if let Some(slot) = match slot.as_str() {{ {arms} _ => None }} {{ self.{SECRET_STORE_FIELD}.set(slot, text); }} ::iced::Task::none() }}"
+        )
+        .unwrap();
     }
     for binding in program.controlled_input_bindings()? {
         let variant = binding_variant(binding);

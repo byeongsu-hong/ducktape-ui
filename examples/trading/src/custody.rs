@@ -98,6 +98,8 @@
 //! Until a person on a Mac reports those, the honest claim is that this seam's
 //! logic is tested and its platform half is compiled, reviewed and unrun.
 
+#[cfg(test)]
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
@@ -283,9 +285,44 @@ struct Vault {
     keys: Vec<(Venue, Arc<HeldKey>)>,
 }
 
+#[cfg(not(test))]
 fn vault() -> &'static Mutex<Option<Vault>> {
     static HELD: OnceLock<Mutex<Option<Vault>>> = OnceLock::new();
     HELD.get_or_init(Mutex::default)
+}
+
+#[cfg(test)]
+fn vault() -> &'static Mutex<Option<Vault>> {
+    static HELD: InstanceStores<Option<Vault>> = OnceLock::new();
+    per_instance(&HELD)
+}
+
+/// The stores one process is holding, by the application each belongs to.
+#[cfg(test)]
+type InstanceStores<T> = OnceLock<Mutex<HashMap<u64, &'static Mutex<T>>>>;
+
+/// One store per driven application, for the two stores above.
+///
+/// A machine has one keychain, so a shipped process has one of these and a
+/// `static` is the honest shape. A test binary runs one whole application per
+/// test thread against that same `static`, and they overwrite each other: every
+/// `lock_agent` takes every key with it, and it is one press away on every
+/// screen; an import waiting in `pending` is read back by whichever test asks
+/// first. This module's own tests used to take turns on a mutex for that
+/// reason. Keying beats taking turns: the tests that drive a whole application
+/// are the slow ones and there are hundreds of them.
+///
+/// The per-instance `Mutex` is leaked rather than dropped with its test. It is
+/// one pointer-sized allocation per instance in a binary that exits when the
+/// suite does, and it is what keeps the returned `&'static` honest without an
+/// `Arc` on every call site.
+#[cfg(test)]
+fn per_instance<T: Default + Send + 'static>(
+    stores: &'static InstanceStores<T>,
+) -> &'static Mutex<T> {
+    lock(stores.get_or_init(Mutex::default))
+        .entry(ui_lang_runtime::testing::app_instance())
+        .or_insert_with(|| Box::leak(Box::<Mutex<T>>::default()))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -402,9 +439,16 @@ fn wallet_item(address: &str) -> String {
 /// the *address* crosses back to the screen, which is the whole point of the
 /// confirmation — the owner reads an address they recognise before anything is
 /// written to a keychain.
+#[cfg(not(test))]
 fn pending() -> &'static Mutex<Option<MasterKey>> {
     static PENDING: OnceLock<Mutex<Option<MasterKey>>> = OnceLock::new();
     PENDING.get_or_init(Mutex::default)
+}
+
+#[cfg(test)]
+fn pending() -> &'static Mutex<Option<MasterKey>> {
+    static PENDING: InstanceStores<Option<MasterKey>> = OnceLock::new();
+    per_instance(&PENDING)
 }
 
 /// A phrase this app just made, and the words it will ask for back.
@@ -496,42 +540,89 @@ pub fn backup_asks(positions: Vec<i64>) -> String {
     }
 }
 
+/// What one of the asked-for positions is called, for the field that takes it.
+///
+/// One field per position, so the label *is* the question: nobody has to work
+/// out which of three boxes the ninth word goes in.
+pub fn backup_label(positions: Vec<i64>, at: i64) -> String {
+    usize::try_from(at)
+        .ok()
+        .and_then(|at| positions.get(at))
+        .map_or_else(String::new, |at| format!("Word {at}"))
+}
+
 /// Why the backup check has not passed, or nothing when it has.
 ///
-/// It never says *which* word was wrong. Naming the wrong one turns three
-/// unknown words into three separate one-word questions, which is a check
-/// somebody can pass by guessing at it rather than by having written the phrase
-/// down.
-pub fn backup_refused(phrase: String, positions: Vec<i64>, typed: String) -> String {
+/// It names the **fields** that do not match and never the words that would.
+/// Which positions are being asked for is on screen already — each field
+/// carries its own label — so saying which of them is wrong tells an attacker
+/// nothing they cannot read, and tells the owner the one thing they need in
+/// order to fix it. Naming the expected word would be the leak: it turns a
+/// check into a prompt, and a phrase nobody wrote down would pass on the second
+/// attempt.
+///
+/// This is a change from the single blind field it replaces, where hiding the
+/// position was right precisely because the positions were not each their own
+/// visible question.
+pub fn backup_refused(phrase: String, positions: Vec<i64>, given: Vec<String>) -> String {
     let words: Vec<&str> = phrase.split_whitespace().collect();
     if words.is_empty() || positions.is_empty() {
         return "There is no phrase waiting to be confirmed.".to_owned();
     }
-    let given: Vec<String> = typed.split_whitespace().map(str::to_lowercase).collect();
     if given.len() != positions.len() {
-        return format!(
-            "Type {}, separated by spaces.",
-            backup_asks(positions.clone()),
-        );
+        return format!("Fill in {}.", backup_asks(positions));
     }
-    let held = positions.iter().zip(&given).all(|(at, given)| {
-        usize::try_from(*at)
-            .ok()
-            .and_then(|at| at.checked_sub(1))
-            .and_then(|at| words.get(at))
-            .is_some_and(|expected| expected.eq_ignore_ascii_case(given))
-    });
-    if held {
+    let wrong: Vec<i64> = positions
+        .iter()
+        .zip(&given)
+        .filter(|(at, given)| {
+            // One word per field. Two words in a box is not the word that was
+            // asked for, however the first of them reads.
+            let mut typed = given.split_whitespace();
+            let (Some(word), None) = (typed.next(), typed.next()) else {
+                return true;
+            };
+            !usize::try_from(**at)
+                .ok()
+                .and_then(|at| at.checked_sub(1))
+                .and_then(|at| words.get(at))
+                .is_some_and(|expected| expected.eq_ignore_ascii_case(word))
+        })
+        .map(|(at, _)| *at)
+        .collect();
+    if wrong.is_empty() {
         String::new()
     } else {
-        "That does not match the phrase you were shown. Check it against your copy — nothing has \
-         been stored."
-            .to_owned()
+        format!(
+            "{} does not match what you wrote down. Check your copy — nothing has been stored.",
+            backup_asks(wrong),
+        )
     }
 }
 
-/// Derive the account a phrase names, and hold it for confirmation.
+/// Derive the account a typed phrase names, and hold it for confirmation.
 ///
+/// Both arguments arrive as `ui_lang_runtime::Secret`, which is the only
+/// reading of those buffers that exists anywhere in the program: not clonable,
+/// redacted when printed, borrowed once here, and wiped when this function
+/// returns.
+pub async fn read_wallet(
+    phrase: ui_lang_runtime::Secret,
+    passphrase: ui_lang_runtime::Secret,
+) -> Result<Entry, CustodyFault> {
+    read_phrase(phrase.expose(), passphrase.expose()).await
+}
+
+/// The same derivation over a phrase this app generated and put on the screen.
+///
+/// It takes a `String` because that is what a phrase on screen is. Keeping it
+/// separate rather than widening `read_wallet` is the point: `secret` is the
+/// type no value can be turned into, and a second entry point is what that
+/// costs. A made phrase has no passphrase — the owner never chose one.
+pub async fn read_made_wallet(phrase: String) -> Result<Entry, CustodyFault> {
+    read_phrase(&phrase, "").await
+}
+
 /// Nothing is stored and no sheet is raised: this answers an address and
 /// waits. A phrase with a bad checksum, an unknown word or a passphrase this
 /// app will not normalise is refused here, where the owner can still see what
@@ -539,12 +630,14 @@ pub fn backup_refused(phrase: String, positions: Vec<i64>, typed: String) -> Str
 ///
 /// The alternate input is a raw private key, because both venues' SDKs take one
 /// and not every owner holds a phrase — the same 32 bytes reached by a shorter
-/// road, and stored and wiped identically.
-pub async fn read_wallet(phrase: String, passphrase: String) -> Result<Entry, CustodyFault> {
-    let derived = if looks_like_a_key(&phrase) {
+/// road, and stored and wiped identically. Which of the two it is stays a
+/// question for this side: `looks_like_a_key` reads the borrow, so no fact
+/// about the text's shape ever needs a name in Ice, and the box stays one box.
+async fn read_phrase(phrase: &str, passphrase: &str) -> Result<Entry, CustodyFault> {
+    let derived = if looks_like_a_key(phrase) {
         from_raw_key(phrase.trim())
     } else {
-        crate::seed::seed_from_phrase(&phrase, &passphrase)
+        crate::seed::seed_from_phrase(phrase, passphrase)
             .and_then(|seed| crate::seed::ethereum_key(&seed))
             .map_err(|error| error.message())
             .and_then(|mut key| {
@@ -1968,13 +2061,58 @@ mod tests {
     const AGENT: &str = "0x13070cb3597c75100928720060c7acff4d22bc09";
     const HOUR: i64 = 3_600;
 
-    /// The key store is one global, and these tests write to it — so they take
-    /// a turn each rather than racing. Without this the suite would be a test
-    /// of thread scheduling: one test's `lock_agent` clears the key another has
-    /// just seeded, and which one fails moves with the machine.
-    fn one_at_a_time() -> MutexGuard<'static, ()> {
-        static TURN: Mutex<()> = Mutex::new(());
-        TURN.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Two applications in one process each keep their own keys.
+    ///
+    /// A machine has one keychain, so the store is a `static` and that is the
+    /// honest shape for a shipped process. A test binary is not that process:
+    /// it runs one whole application per test thread, and against a single
+    /// `static` one of them clears what another has just unlocked — `lock_agent`
+    /// is the transition that takes every key with it, and it is one press away
+    /// on every screen. Whole-app tests then fail on whichever pair the machine
+    /// happened to overlap, and the panel a failing test drew is one the code
+    /// would never draw.
+    ///
+    /// The barriers pin the interleaving to that one rather than leaving it to
+    /// the scheduler, so this fails every run against a shared store rather than
+    /// most of them.
+    /// Nothing is asserted on either thread: a failed assertion there would
+    /// leave the other one waiting on a barrier nobody reaches, and a test that
+    /// hangs where it should fail costs the whole suite its timeout.
+    #[test]
+    fn two_apps_in_one_process_each_keep_their_own_keys() {
+        let unlocked = std::sync::Barrier::new(2);
+        let locked = std::sync::Barrier::new(2);
+        let (seeded, kept, borrowed) = std::thread::scope(|scope| {
+            let mine = scope.spawn(|| {
+                seed_key();
+                let seeded = holding_a_key();
+                unlocked.wait();
+                locked.wait();
+                (seeded, holding_a_key())
+            });
+            let theirs = scope.spawn(|| {
+                unlocked.wait();
+                let borrowed = holding_a_key();
+                let _ = lock_agent();
+                locked.wait();
+                borrowed
+            });
+            let (seeded, kept) = mine.join().expect("the seeding app panicked");
+            (
+                seeded,
+                kept,
+                theirs.join().expect("the locking app panicked"),
+            )
+        });
+        assert!(seeded, "the seeded key never reached this app's own store");
+        assert!(
+            !borrowed,
+            "an application was handed a key it never unlocked"
+        );
+        assert!(
+            kept,
+            "another application's lock took the key this one was holding"
+        );
     }
 
     /// Put keys in the store the way an unlock would, so the retention can be
@@ -2297,7 +2435,6 @@ mod tests {
     /// key.
     #[test]
     fn a_transition_out_of_ready_drops_the_key() {
-        let _turn = one_at_a_time();
         let now = 1_786_172_634;
         let ready = ready_at(now, 30);
 
@@ -2336,7 +2473,6 @@ mod tests {
     /// is empty, which is what a preset, a capture or a fixture is.
     #[test]
     fn only_a_session_that_may_trade_reaches_the_key() {
-        let _turn = one_at_a_time();
         let now = 1_786_172_634;
         let ready = ready_at(now, 30);
 
@@ -2394,7 +2530,6 @@ mod tests {
     /// whichever handler changes an address.
     #[test]
     fn one_unlock_reaches_every_enrolled_network_and_no_others() {
-        let _turn = one_at_a_time();
         let now = 1_786_172_634;
         let ready = ready_at(now, 30);
 
@@ -2726,7 +2861,6 @@ mod tests {
     /// gate refused it.
     #[test]
     fn a_send_without_a_key_is_refused_in_the_app() {
-        let _turn = one_at_a_time();
         let now = 1_786_172_634;
         lock_agent();
         let draft = crate::venue::order_draft(
@@ -2932,7 +3066,6 @@ mod tests {
     /// not a side effect of the path.
     #[test]
     fn an_act_that_answers_locked_forgets_the_keys() {
-        let _turn = one_at_a_time();
         seed_keys(&[Venue::Hyperliquid, Venue::Lighter]);
         assert!(holding_a_key(), "the fixture put keys in the store");
 
@@ -2959,70 +3092,117 @@ mod tests {
     fn backup_refused_takes_the_words_that_were_shown_and_nothing_else() {
         let phrase: Vec<&str> = ZEROS_24.split_whitespace().collect();
         let positions = vec![2i64, 9, 24];
-        let right = format!("{} {} {}", phrase[1], phrase[8], phrase[23]);
+        let right = || {
+            vec![
+                phrase[1].to_owned(),
+                phrase[8].to_owned(),
+                phrase[23].to_owned(),
+            ]
+        };
 
         assert_eq!(
-            backup_refused(ZEROS_24.to_owned(), positions.clone(), right.clone()),
+            backup_refused(ZEROS_24.to_owned(), positions.clone(), right()),
             "",
-            "the words that were shown, in the order asked for",
+            "the words that were shown, each in its own box",
         );
-        // Case and spacing are the copier's, not the check's: somebody reading
-        // off paper types how they type.
+        // Capitals are the same word: somebody reading off paper types how they
+        // type, and surrounding space is the field's, not the answer's.
         assert_eq!(
             backup_refused(
                 ZEROS_24.to_owned(),
                 positions.clone(),
-                format!("  {}   {}\t{}  ", right.to_uppercase(), "", "")
-                    .replace("  ", " ")
-                    .trim()
-                    .to_owned(),
+                right()
+                    .into_iter()
+                    .map(|word| format!("  {}  ", word.to_uppercase()))
+                    .collect(),
             ),
-            backup_refused(ZEROS_24.to_owned(), positions.clone(), right.to_uppercase()),
-        );
-        assert_eq!(
-            backup_refused(ZEROS_24.to_owned(), positions.clone(), right.to_uppercase()),
             "",
-            "capitals are the same words",
+            "case and stray space are not wrong answers",
         );
 
-        // Wrong word, right count.
-        let wrong = format!("{} {} {}", phrase[1], phrase[8], "zoo");
-        assert!(!backup_refused(ZEROS_24.to_owned(), positions.clone(), wrong).is_empty());
-        // Right words, wrong order — a check that sorted would pass this.
-        let swapped = format!("{} {} {}", phrase[23], phrase[8], phrase[1]);
+        // One wrong box, and the refusal says which box — never what belongs
+        // in it.
+        let mut wrong = right();
+        wrong[2] = "zoo".to_owned();
+        let said = backup_refused(ZEROS_24.to_owned(), positions.clone(), wrong);
+        assert_eq!(
+            said,
+            "word 24 does not match what you wrote down. Check your copy — nothing has been stored."
+        );
+
+        // Right words, wrong boxes — a check that sorted would pass this.
+        let swapped = vec![
+            phrase[23].to_owned(),
+            phrase[8].to_owned(),
+            phrase[1].to_owned(),
+        ];
         assert!(
             !backup_refused(ZEROS_24.to_owned(), positions.clone(), swapped).is_empty(),
-            "order is part of the answer",
+            "which box a word went in is part of the answer",
         );
-        // Too few and too many.
-        for count in ["art", "art art", "art art art art"] {
-            assert!(
-                !backup_refused(ZEROS_24.to_owned(), positions.clone(), count.to_owned())
-                    .is_empty(),
-                "{count}",
-            );
-        }
+
+        // A box holding two words is not the word that was asked for, however
+        // the first of them reads.
+        let mut crowded = right();
+        crowded[0] = format!("{} {}", phrase[1], phrase[1]);
+        assert!(
+            !backup_refused(ZEROS_24.to_owned(), positions.clone(), crowded).is_empty(),
+            "one word per box",
+        );
+
+        // An empty box, and too few boxes.
+        let mut blank = right();
+        blank[1] = String::new();
+        assert!(!backup_refused(ZEROS_24.to_owned(), positions.clone(), blank).is_empty());
+        assert!(
+            !backup_refused(
+                ZEROS_24.to_owned(),
+                positions.clone(),
+                vec![phrase[1].to_owned()],
+            )
+            .is_empty(),
+        );
+
         // And nothing to check is refused rather than passed, which is the arm
         // a skipped mint would land on.
-        assert!(!backup_refused(String::new(), positions, right).is_empty());
+        assert!(!backup_refused(String::new(), positions, right()).is_empty());
     }
 
     /// What the refusal says, and what it must not say.
     ///
-    /// Naming the wrong position would turn one three-word question into three
-    /// one-word questions, which is a check somebody can walk rather than pass.
+    /// It names the box, because each box is already labelled with its own
+    /// position on screen — saying which one is wrong tells an attacker nothing
+    /// they cannot read. What it must never name is the word that belongs
+    /// there: that would turn a check into a prompt.
     #[test]
-    fn the_backup_refusal_names_no_word_and_no_position() {
+    fn the_backup_refusal_names_the_box_and_never_the_word() {
         let phrase: Vec<&str> = ZEROS_24.split_whitespace().collect();
         let said = backup_refused(
             ZEROS_24.to_owned(),
             vec![2, 9, 24],
-            format!("{} zoo zoo", phrase[1]),
+            vec![phrase[1].to_owned(), "zoo".to_owned(), "zoo".to_owned()],
         );
-        assert!(!said.is_empty());
-        for leak in [phrase[1], phrase[8], phrase[23], "2", "9", "24"] {
+        assert!(
+            said.contains("word 9") && said.contains("word 24"),
+            "{said}"
+        );
+        assert!(
+            !said.contains("word 2,") && !said.starts_with("word 2 "),
+            "{said}"
+        );
+        for leak in [phrase[8], phrase[23]] {
             assert!(!said.contains(leak), "the refusal leaked {leak:?}: {said}");
         }
+    }
+
+    /// The label each box carries, which is the question it is asking.
+    #[test]
+    fn each_box_is_labelled_with_the_position_it_takes() {
+        let positions = vec![2i64, 9, 24];
+        assert_eq!(backup_label(positions.clone(), 0), "Word 2");
+        assert_eq!(backup_label(positions.clone(), 1), "Word 9");
+        assert_eq!(backup_label(positions.clone(), 2), "Word 24");
+        assert_eq!(backup_label(positions, 3), "");
     }
 
     /// A minted wallet: the shape the panel and the check both depend on.
@@ -3065,7 +3245,11 @@ mod tests {
             .map(|at| words[usize::try_from(*at).expect("a position") - 1])
             .collect();
         assert_eq!(
-            backup_refused(made.phrase.clone(), made.positions, right.join(" ")),
+            backup_refused(
+                made.phrase.clone(),
+                made.positions,
+                right.into_iter().map(str::to_owned).collect(),
+            ),
             "",
         );
     }

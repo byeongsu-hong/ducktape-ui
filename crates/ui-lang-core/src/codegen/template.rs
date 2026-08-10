@@ -549,6 +549,12 @@ impl Builder<'_> {
 
     fn input(&mut self, id: ViewId, view: &ResolvedView) -> Result<Option<Node>, Error> {
         let input = self.program.resolved_input(id)?;
+        // A secret input is never published. The template format carries a
+        // borrowed state slot, and a secret has no state to borrow — a hot
+        // reload keeps the compiled subtree instead.
+        if input.binding.secret().is_some() {
+            return Ok(None);
+        }
         if input.disabled.is_some()
             || input.accessibility_label.is_some()
             || input.accessibility_description.is_some()

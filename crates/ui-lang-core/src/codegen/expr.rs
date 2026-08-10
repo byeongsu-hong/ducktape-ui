@@ -2385,6 +2385,21 @@ fn resolved_path_code(
                     ),
                 ));
             }
+            if let ResolvedValueRef::Secret(_) = value_ref {
+                // The two readings a secret has. Borrowed is a `&str` for
+                // `empty`/`len`; owned is the zeroizing `Secret` an extern
+                // parameter receives and drops.
+                let reader = if mode == ValueMode::Owned {
+                    "read"
+                } else {
+                    "text"
+                };
+                return Ok(format!(
+                    "{}.{reader}({})",
+                    binding.code,
+                    rust_string(&value.name)
+                ));
+            }
             (binding.code.clone(), binding.ty.clone(), binding.local)
         }
         ResolvedPathRoot::Local(id) => {

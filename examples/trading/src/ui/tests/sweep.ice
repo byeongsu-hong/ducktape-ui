@@ -27,13 +27,11 @@ test trading_cancel_all_confirms_every_order_it_froze
   expect a11y all disabled false
   expect a11y all name "Cancel 2 resting orders, one confirmation"
   // The two orders are named on the panel, one line each, because a count is
-  // not what the reader is agreeing to. Absent before the press and present
-  // after it, so the absence is an absence and not a question the driver
-  // could not reach.
+  // not what the reader is agreeing to. Absent from the whole screen before the
+  // press and present on the panel after it, so the absence is an absence.
   expect no text "BTC buy 1.5 at 63,600.00"
   click all
   expect exists panel
-  expect exists rows
   expect text "BTC buy 1.5 at 63,600.00" within rows
   expect text "BTC sell 0.8 at 64,440.00" within rows
   // The button that spends the money says what it is about to do, in the count
@@ -56,17 +54,21 @@ test trading_a_sweep_holds_the_list_it_froze
   target held = app/terminal-fit/trade/lower/positions
   target all = held/flatten-all/root
   target panel = #sweep
+  target act = panel/sweep-act
   target send = panel/sweep-send
   click all
+  expect text "Close 3 positions" within act
   expect a11y send name "Close 3 positions"
   // The account is read again, and this time it holds one position rather than
   // three — two closed somewhere else while the reader was reading.
   dispatch account_loaded(some(demo_account_at_risk()))
   expect len(positions) == 1
   // The control behind the panel now offers a different act, and the panel is
-  // unmoved: it is not reading the positions. Both are asserted, because a
-  // panel over a screen that never changed would pass the second on its own.
+  // unmoved in ink as well as in what it would send: it is not reading the
+  // positions. Both are asserted, because a panel over a screen that never
+  // changed would pass the second on its own.
   expect a11y all name "Close 1 position, one confirmation"
+  expect text "Close 3 positions" within act
   expect a11y send name "Close 3 positions"
 
 // Backing out drops the sweep and pulls nothing, and the control is offered
@@ -94,6 +96,7 @@ test trading_flatten_all_confirms_one_close_for_every_position
   target held = app/terminal-fit/trade/lower/positions
   target all = held/flatten-all/root
   target panel = #sweep
+  target act = panel/sweep-act
   target rows = panel/sweep-rows
   target send = panel/sweep-send
   expect len(positions) == 3
@@ -103,6 +106,12 @@ test trading_flatten_all_confirms_one_close_for_every_position
   click all
   expect exists panel
   expect exists rows
+  // The count is read as ink on the panel as well as off the button's name: a
+  // heading and a label are two strings and can disagree. The rows themselves
+  // are named one line each by the cancel sibling, which is the same list
+  // widget — a line here is `Close BTC long … at up to …`, and pinning three of
+  // those as literals would pin the mark and the slippage constant with them.
+  expect text "Close 3 positions" within act
   expect a11y send name "Close 3 positions"
   // Opening it closes nothing.
   expect len(positions) == 3
@@ -179,7 +188,10 @@ test trading_a_confirmed_sweep_still_cannot_send_without_a_key
   // The session reached `Ready` through the real machine, so the gate at the
   // top of the sweep lets it through; each row then fails on its own at the key
   // the app does not hold. That is the shape a partial failure has.
-  expect error == "0 of 2 cancelled. BTC buy 1.5 at 63,600.00: Unlock on Settings before sending an order. BTC sell 0.8 at 64,440.00: Unlock on Settings before sending an order."
+  //
+  // Read off the panel rather than off the field, because the alarm line behind
+  // it draws the same string: the claim above is about where it lands.
+  expect text "0 of 2 cancelled. BTC buy 1.5 at 63,600.00: Unlock on Settings before sending an order. BTC sell 0.8 at 64,440.00: Unlock on Settings before sending an order." within failed
   expect len(orders) == 2
 
 // The same loop on the other act, over three rows rather than two, and each row
@@ -192,6 +204,7 @@ test trading_a_confirmed_flatten_sends_one_close_per_position
   target all = held/flatten-all/root
   target panel = #sweep
   target send = panel/sweep-send
+  target failed = panel/sweep-error
   click all
   click send
   expect exists panel
@@ -199,6 +212,8 @@ test trading_a_confirmed_flatten_sends_one_close_per_position
   // description of the row. A flatten's rows are one market each and the ticker
   // told them apart; a ladder's are all one market, so the whole line is what
   // says which order the venue turned down — and it is the line the reader
-  // agreed to.
+  // agreed to. Read off the panel as well as off the state, which is #539's
+  // rule: a modal assertion reads the modal.
   expect error == "0 of 3 closed. Close BTC short 30 at up to 67,200.00: Unlock on Settings before sending an order. Close ETH long 40 at up to 3,363.00: Unlock on Settings before sending an order. Close SOL long 12 at up to 141.189: Unlock on Settings before sending an order."
+  expect text error within failed
   expect len(positions) == 3

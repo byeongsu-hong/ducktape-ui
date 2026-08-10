@@ -1596,6 +1596,7 @@ pub(crate) struct LoweredProgram {
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
     app_states: Vec<AppStateContract>,
+    secrets: Vec<String>,
     derived: Vec<DerivedContract>,
     components: Vec<ComponentContract>,
     handlers: Vec<ResolvedHandler>,
@@ -3470,6 +3471,13 @@ impl LoweredProgram {
         &self.app_states
     }
 
+    /// The declared `secret` slot names, in source order. Deliberately not
+    /// `app_states`: nothing here is constructed by a preset or reachable from
+    /// a checked state path.
+    pub(crate) fn secrets(&self) -> &[String] {
+        &self.secrets
+    }
+
     pub(crate) fn controlled_input_bindings(&self) -> Result<Vec<&str>, Error> {
         let mut seen = HashSet::with_capacity(self.controlled_inputs.len());
         let mut names = Vec::with_capacity(self.controlled_inputs.len());
@@ -3949,10 +3957,15 @@ impl CheckedExpressionOwnerPolicy for ViewWidgetExpressionPolicy<'_> {
             )
         })?;
         let allowed = match (self.scope, value) {
-            (CheckedViewScope::App | CheckedViewScope::Test(_), CheckedValueRef::AppState(_))
-            | (CheckedViewScope::App | CheckedViewScope::Test(_), CheckedValueRef::Derived(_)) => {
-                true
-            }
+            // A secret is app-scoped like state. The view may only ask it
+            // `empty` or `len` — the checker refuses everything else — so what
+            // reaches here is a fact about the buffer, never its content.
+            (
+                CheckedViewScope::App | CheckedViewScope::Test(_),
+                CheckedValueRef::AppState(_)
+                | CheckedValueRef::Derived(_)
+                | CheckedValueRef::Secret(_),
+            ) => true,
             (CheckedViewScope::Component(component), CheckedValueRef::ComponentParam(id)) => {
                 id.component == component
             }
@@ -4117,6 +4130,9 @@ impl CheckedExpressionOwnerPolicy for AppSettingExpressionPolicy<'_> {
                 .invariant(self.span, "app setting path references an invalid value ID")
         })?;
         match value {
+            CheckedValueRef::Secret(_) => Err(self
+                .lowerer
+                .invariant(self.span, "app setting path cannot reference a secret")),
             CheckedValueRef::AppState(_) | CheckedValueRef::Derived(_) => Ok(checked.ty.clone()),
             CheckedValueRef::ComponentParam(id) => {
                 self.lowerer
@@ -4300,7 +4316,12 @@ impl CheckedExpressionOwnerPolicy for TestExpressionPolicy<'_> {
                 .invariant(self.span, "test path references an invalid value ID")
         })?;
         match value {
-            CheckedValueRef::AppState(_) | CheckedValueRef::Derived(_) => Ok(checked.ty.clone()),
+            // A test may ask a secret the same two questions the view may.
+            // What it cannot do is name the text: `secret` has no equality and
+            // no conversion, so there is no assertion to write about content.
+            CheckedValueRef::AppState(_)
+            | CheckedValueRef::Derived(_)
+            | CheckedValueRef::Secret(_) => Ok(checked.ty.clone()),
             CheckedValueRef::ComponentParam(id) => {
                 self.lowerer
                     .declarations
@@ -4444,6 +4465,9 @@ impl CheckedExpressionOwnerPolicy for SubscriptionExpressionPolicy<'_> {
             )
         })?;
         match value {
+            CheckedValueRef::Secret(_) => Err(self
+                .lowerer
+                .invariant(self.span, "subscription path cannot reference a secret")),
             CheckedValueRef::AppState(_) => Ok(checked.ty.clone()),
             CheckedValueRef::Derived(id) => {
                 self.lowerer.declarations.try_derived(id).ok_or_else(|| {
@@ -4641,6 +4665,12 @@ impl Lowerer {
         let subscriptions = self.lower_subscriptions()?;
         let named_type_rust_paths = self.declarations.named_type_rust_paths();
         let app_states = self.lower_app_states()?;
+        let secrets = self
+            .document
+            .secrets
+            .iter()
+            .map(|secret| secret.name.clone())
+            .collect::<Vec<_>>();
         let derived = self.lower_derived()?;
         self.index_components()?;
         self.lower_handlers()?;
@@ -4811,6 +4841,7 @@ impl Lowerer {
             preset_names,
             named_type_rust_paths,
             app_states,
+            secrets,
             derived,
             components: self.components,
             handlers: self.handlers,
@@ -13074,7 +13105,7 @@ view
         assert_eq!(input.hint, "Paste token");
         assert!(matches!(
             input.binding,
-            WritableStateRef::App { ref name, .. } if name == "value"
+            ResolvedInputBinding::State(WritableStateRef::App { ref name, .. }) if name == "value"
         ));
         assert!(input.disabled.is_some());
         assert!(input.accessibility_label.is_some());

@@ -375,10 +375,10 @@ test starting_a_selection_takes_it_from_wherever_it_was
 
 // A reply being written is drawn by two surfaces — what the model is working
 // out, and what it is answering with. Both are rebuilt from nothing on every
-// frame, so neither can hold an identity of its own, and a selection in one is
-// told apart from a selection in the other by which surface it is and nothing
-// else. Sharing that made a drag over the working-out highlight the answer
-// instead, at the same offsets, in the other box entirely.
+// frame, so neither can hold an identity of its own; where they sit on the page
+// is what tells them apart, and a drag that ends inside one of them ends there.
+// Told apart by anything they carry instead, this drag highlighted the reply,
+// at the same offsets, in the other box entirely.
 test dragging_over_the_working_out_selects_it_and_not_the_reply
   preset steering
   viewport 920 800
@@ -390,3 +390,27 @@ test dragging_over_the_working_out_selects_it_and_not_the_reply
   capture working_out
   chord control "c"
   expect copied == "hecking the"
+
+// A selection belongs to the transcript, not to the row it started in. A
+// question is drawn as plain text and an answer as rendered Markdown — two
+// different widgets, sharing no numbering — so which run of text comes before
+// which is read off the page rather than counted: down it first, then across.
+//
+// The drag runs from the middle of the question to below the whole answer, and
+// what comes back is the tail of the question and every block of the answer,
+// each set apart the way it is drawn.
+test dragging_from_a_question_runs_on_into_its_answer
+  preset one_answer
+  viewport 920 400
+  target ask = #shell/app/transcript/rows/key(-30)/prompt(-30)/root/body
+  target answer = #shell/app/transcript/rows/key(-31)/answer(-31)/root
+  target copy = answer/copy
+  expect copied == ""
+
+  press ask
+  move copy
+  release
+  capture across
+
+  chord control "c"
+  expect copied == "answer grow?\n\nThe document is parsed once.\n\nHold the parsed document and extend it as it grows.\n\nThe view rebuilds one row."

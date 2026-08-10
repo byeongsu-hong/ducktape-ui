@@ -462,6 +462,7 @@ fn parse_document(
     let mut palettes = Vec::new();
     let mut fonts = Vec::new();
     let mut states = Vec::new();
+    let mut secrets = Vec::new();
     let mut derived = Vec::new();
     let mut components = Vec::new();
     let mut handlers = Vec::new();
@@ -741,6 +742,12 @@ fn parse_document(
                     .map(parse_state)
                     .collect::<Result<Vec<_>, _>>()?,
             );
+        } else if let Some(name) = line.text.strip_prefix("secret ") {
+            ensure_leaf(line)?;
+            secrets.push(SecretDecl {
+                name: identifier(name.trim(), line)?,
+                span: Span::line(line.number),
+            });
         } else if line.text == "derived" {
             if line.children.is_empty() {
                 return Err(error("E032", line, "derived cannot be empty"));
@@ -865,6 +872,7 @@ fn parse_document(
         palettes,
         fonts,
         states,
+        secrets,
         derived,
         components,
         handlers,

@@ -427,19 +427,6 @@ fn frame_panels() {
         driver.window()
     };
 
-    let mut drivers = Vec::new();
-    for (label, state) in &states {
-        let mut driver = Driver::new(
-            Trading::__program(),
-            Config::new("frame_panels").viewport(VIEWPORT.0, VIEWPORT.1),
-        );
-        *driver.state_mut() = state.clone_for_probe();
-        for _ in 0..WARMUP {
-            driver.redraw(here());
-        }
-        drivers.push((*label, driver));
-    }
-
     let mut build: Vec<Vec<u128>> = vec![Vec::with_capacity(ROUNDS); states.len()];
     let mut frame: Vec<Vec<u128>> = vec![Vec::with_capacity(ROUNDS); states.len()];
     // Paired: the full screen is remeasured immediately beside each variant,
@@ -480,17 +467,53 @@ fn frame_panels() {
             build[0].push(full);
             build[index].push(without);
             paired_build[index].push(full as i128 - without as i128);
+        }
+    }
 
-            let started = Instant::now();
-            drivers[first].1.redraw(here());
-            let first_frame = started.elapsed().as_micros();
-            let started = Instant::now();
-            drivers[second].1.redraw(here());
-            let second_frame = started.elapsed().as_micros();
+    // One pair of drivers at a time, and the full screen gets a fresh one for
+    // every variant it is compared against.
+    //
+    // Nine drivers taking turns inside one round does not measure a panel. The
+    // full screen is redrawn once per variant — eight times to each variant's
+    // one — so its widget tree, its memo caches and its layout nodes are the
+    // only ones still in cache when the clock starts, and every variant pays a
+    // cold walk the full screen never pays. That bias is worth more than a
+    // panel: it read six of the eight panels as NEGATIVE, which would mean
+    // taking rows off the screen made the frame slower, and it priced the fill
+    // rows at 412us against the 1602us the same fills cost in `frame_cost`,
+    // which pairs exactly two drivers. Two at a time, redrawn strictly one for
+    // one, is the shape that agrees with it.
+    const FRAME_PAIRS: usize = 200;
+    for index in 1..states.len() {
+        let warmed = |state: &Trading| {
+            let mut driver = Driver::new(
+                Trading::__program(),
+                Config::new("frame_panels").viewport(VIEWPORT.0, VIEWPORT.1),
+            );
+            *driver.state_mut() = state.clone_for_probe();
+            for _ in 0..WARMUP {
+                driver.redraw(here());
+            }
+            driver
+        };
+        let mut full_driver = warmed(&states[0].1);
+        let mut without_driver = warmed(&states[index].1);
+
+        for round in 0..FRAME_PAIRS {
             let (full, without) = if round % 2 == 0 {
-                (first_frame, second_frame)
+                let started = Instant::now();
+                full_driver.redraw(here());
+                let full = started.elapsed().as_micros();
+                let started = Instant::now();
+                without_driver.redraw(here());
+                (full, started.elapsed().as_micros())
             } else {
-                (second_frame, first_frame)
+                let started = Instant::now();
+                without_driver.redraw(here());
+                let without = started.elapsed().as_micros();
+                let started = Instant::now();
+                full_driver.redraw(here());
+                (started.elapsed().as_micros(), without)
             };
             frame[0].push(full);
             frame[index].push(without);
