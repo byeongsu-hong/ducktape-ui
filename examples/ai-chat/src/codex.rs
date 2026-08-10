@@ -27,6 +27,9 @@ const RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 const DEFAULT_MODEL: &str = "gpt-5.6-sol";
 const INSTRUCTIONS: &str = "You are Codex, answering inside a desktop chat window. \
      Reply in Markdown. Search the web when a fact could have changed since training.";
+/// Enough room for one small network burst; after that the reader waits for
+/// the screen instead of retaining an unbounded answer behind it.
+const CHUNK_BUFFER: usize = 8;
 /// A tool result this app cannot model is still drawn, cut to a length a card
 /// can hold rather than pasted whole.
 const DETAIL_LIMIT: usize = 400;
@@ -307,10 +310,12 @@ impl Transcript {
 
     /// Hand the list to the screen, once, because it changed.
     fn publish(&mut self) {
-        let Some(watcher) = self.watcher.clone() else {
+        let Some(watcher) = &self.watcher else {
             return;
         };
-        if watcher.send_blocking(self.snapshot()).is_err() {
+        // A row snapshot supersedes the one before it. Replacing the queued
+        // value cannot block while this transcript's mutex is held.
+        if watcher.force_send(self.snapshot()).is_err() {
             self.watcher = None;
         }
     }
@@ -594,7 +599,7 @@ pub fn set_palette(session: Session, dark: bool) -> Vec<Entry> {
 /// side through a channel — a slow first token never touches the frame loop.
 pub fn codex_turn(session: Session) -> impl iced::task::Straw<Vec<Entry>, Chunk, CodexError> {
     iced::task::sipper(move |mut sender| async move {
-        let (chunks, incoming) = smol::channel::unbounded();
+        let (chunks, incoming) = chunk_channel();
         let (outcome, settled) = smol::channel::bounded(1);
         std::thread::spawn(move || {
             let result = pump(&session, &chunks);
@@ -612,6 +617,10 @@ pub fn codex_turn(session: Session) -> impl iced::task::Straw<Vec<Entry>, Chunk,
     })
 }
 
+fn chunk_channel() -> (Sender<Chunk>, Receiver<Chunk>) {
+    smol::channel::bounded(CHUNK_BUFFER)
+}
+
 /// The same turn's row list, published only when it actually changes.
 ///
 /// This is a second channel on purpose. Tool calls and settled blocks are rare
@@ -625,7 +634,7 @@ pub fn codex_turn(session: Session) -> impl iced::task::Straw<Vec<Entry>, Chunk,
 /// The channel closes when the turn ends, so the stream reading it completes
 /// rather than idling until the next turn replaces it.
 pub fn codex_entries(session: Session) -> Receiver<Vec<Entry>> {
-    let (sender, receiver) = smol::channel::unbounded();
+    let (sender, receiver) = smol::channel::bounded(1);
     session.lock().watcher = Some(sender);
     receiver
 }
@@ -1300,6 +1309,101 @@ mod tests {
         session.lock().snapshot()
     }
 
+    #[test]
+    fn chunk_buffer_applies_lossless_backpressure() {
+        let (sender, receiver) = chunk_channel();
+        assert_eq!(receiver.capacity(), Some(CHUNK_BUFFER));
+        for index in 0..CHUNK_BUFFER {
+            sender
+                .send_blocking(Chunk::answer(index.to_string()))
+                .expect("open chunk receiver");
+        }
+
+        let (done, completed) = std::sync::mpsc::channel();
+        let blocked = std::thread::spawn(move || {
+            sender
+                .send_blocking(Chunk::answer(CHUNK_BUFFER.to_string()))
+                .expect("open chunk receiver");
+            done.send(()).expect("completion receiver");
+        });
+        assert!(
+            completed.try_recv().is_err(),
+            "a full chunk buffer must backpressure its producer"
+        );
+
+        assert_eq!(receiver.recv_blocking().expect("first chunk").answer, "0");
+        completed
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("the producer resumes when one slot opens");
+        blocked.join().expect("chunk producer");
+
+        let mut rest = Vec::new();
+        while let Ok(chunk) = receiver.recv_blocking() {
+            rest.push(chunk.answer);
+        }
+        assert_eq!(
+            rest,
+            (1..=CHUNK_BUFFER)
+                .map(|index| index.to_string())
+                .collect::<Vec<_>>(),
+            "backpressure must not replace or drop token deltas"
+        );
+    }
+
+    #[test]
+    fn row_watcher_keeps_only_the_latest_queued_snapshot() {
+        let session = empty();
+        let receiver = codex_entries(session.clone());
+        assert_eq!(receiver.capacity(), Some(1));
+
+        let mut state = session.lock();
+        state.push(Entry::new("answer", "").body("first"));
+        state.publish();
+        state.push(Entry::new("answer", "").body("second"));
+        state.publish();
+        assert_eq!(receiver.len(), 1);
+        assert!(state.watcher.is_some());
+        drop(state);
+
+        let latest = receiver.recv_blocking().expect("latest row snapshot");
+        assert_eq!(latest.len(), 2);
+        assert_eq!(latest.last().map(|row| row.body.as_str()), Some("second"));
+    }
+
+    #[test]
+    fn settling_queues_the_final_snapshot_before_closing_its_watcher() {
+        let session = empty();
+        let receiver = codex_entries(session.clone());
+        {
+            let mut state = session.lock();
+            state.push(Entry::new("answer", "").body("queued"));
+            state.publish();
+            state.push(Entry::new("usage", "").detail("final"));
+        }
+
+        let final_rows = settle(&session, "done".to_owned());
+        assert_eq!(
+            receiver.recv_blocking().expect("final row snapshot"),
+            final_rows
+        );
+        assert!(
+            receiver.recv_blocking().is_err(),
+            "the watcher closes after its final value"
+        );
+    }
+
+    #[test]
+    fn a_dropped_row_receiver_clears_its_watcher() {
+        let session = empty();
+        let receiver = codex_entries(session.clone());
+        drop(receiver);
+
+        let mut state = session.lock();
+        state.push(Entry::new("answer", "").body("nobody is listening"));
+        state.publish();
+        assert!(state.watcher.is_none());
+    }
+
     /// Streamed text must arrive as pieces and accumulate, because the screen
     /// appends them and the settled row is built from the total.
     #[test]
@@ -1467,7 +1571,7 @@ mod tests {
         let session = empty();
         push_user(session.clone(), "Which iced is newest?".to_owned());
 
-        let (chunks, incoming) = smol::channel::unbounded();
+        let (chunks, incoming) = chunk_channel();
         let worker = session.clone();
         let turn = std::thread::spawn(move || pump(&worker, &chunks));
         while incoming.recv_blocking().is_ok() {}
@@ -1526,7 +1630,7 @@ mod tests {
         eprintln!("\n>>> {question}");
         push_user(session.clone(), question);
 
-        let (chunks, incoming) = smol::channel::unbounded();
+        let (chunks, incoming) = chunk_channel();
         let worker = session.clone();
         let turn = std::thread::spawn(move || pump(&worker, &chunks));
 
