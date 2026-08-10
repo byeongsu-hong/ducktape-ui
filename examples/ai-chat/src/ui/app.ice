@@ -409,7 +409,10 @@ view
                         // One `if` per kind rather than a `match`: the kinds are
                         // disjoint, so first-match ordering buys nothing here.
                         if settled.kind == "prompt"
-                          Prompt #prompt(settled.id) body=settled.body -> copy_text _
+                          Prompt #prompt(settled.id) -> copy_text _
+                            with
+                              body=settled.body
+                              dark=settled.dark
                         if settled.kind == "reasoning"
                           Reasoning #reasoning(settled.id) -> toggle_row _
                             with
@@ -459,14 +462,14 @@ view
                             with
                               gap=6.0
                               text-size=12.5
-                              viewer=answer_viewer(dark, 0)
+                              viewer=answer_viewer(dark)
                             style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=1.0 inline-code-py=0.0 inline-code-r=4.0 link=brand
                       markdown live #live-body -> copy_text _
                         with
                           gap=10.0
                           text-size=13.5
                           code-size=12.5
-                          viewer=answer_viewer(dark, 1)
+                          viewer=answer_viewer(dark)
                         style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=1.0 inline-code-py=0.0 inline-code-r=4.0 link=brand
         Separator
         box #composer

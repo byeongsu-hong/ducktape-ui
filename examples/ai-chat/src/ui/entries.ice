@@ -42,7 +42,10 @@ component Fold(open:bool)
           @text-muted
 
 // What was asked, leaning to its own side of the column.
-component Prompt(body:str) -> str
+//
+// The question is drawn by the same widget an answer is, rather than as plain
+// text, so a drag can run out of one and into the other — see `src/select.rs`.
+component Prompt(body:str, dark:bool) -> str
   row #root w=fill gap=10.0
     space w=fill h=1.0
     box
@@ -55,7 +58,7 @@ component Prompt(body:str) -> str
         border-w=1.0
         r=14.0
       col gap=4.0
-        text body #body wrap=word @body
+        extern selectable_text(body, 13.5, dark) #body -> emit(_)
         row w=fill
           space w=fill h=1.0
           button "Copy" #copy @ghost_action -> emit(body)
