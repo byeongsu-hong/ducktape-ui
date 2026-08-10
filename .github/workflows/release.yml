@@ -279,15 +279,25 @@ jobs:
           if (-not (Test-Path $installed)) { Get-Content $log -Tail 40; throw "not installed" }
           Start-Process msiexec -ArgumentList "/x `"$msi`" /qn" -Wait -NoNewWindow
           if (Test-Path $installed) { throw "not uninstalled" }
-      - name: Checksum the artifacts
-        shell: bash
+      - name: Checksum the package
+        if: matrix.runner == 'ubuntu-24.04'
         run: |
           set -euo pipefail
           cd target/ice-bundle
-          for artifact in *.deb *.msi; do
-            [ -e "$artifact" ] || continue
-            shasum -a 256 "$artifact" > "$artifact.sha256"
+          for artifact in *.deb; do
+            sha256sum "$artifact" > "$artifact.sha256"
           done
+      # The bash Windows runners provide is Git Bash, which carries no
+      # `shasum`. This is the hash the `cargo-ice` archive job already uses.
+      - name: Checksum the installer
+        if: matrix.runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-ChildItem target/ice-bundle/*.msi | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            [IO.File]::WriteAllText("$($_.FullName).sha256", "$hash  $($_.Name)`n")
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: showcase-${{ matrix.runner }}
