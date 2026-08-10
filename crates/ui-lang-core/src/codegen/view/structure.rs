@@ -52,6 +52,23 @@ pub(in crate::codegen) fn render_structure(
             let sensor = program.resolved_sensor(node)?;
             render_resolved_sensor(sensor, program, message, env, content)
         }
+        // Neither responsive arm memoizes what its closure builds, and the
+        // blocker is the contents rather than the key. `MemoLazy` stores an
+        // `Element<'static>`; a responsive subtree may hold widgets that borrow
+        // the app, and `input` lowers to `text_input(hint, &self.field)` — the
+        // `&self` lifetime of `__view`, carried into the element. So wrapping
+        // the builder in `memo_lazy((size, palette), ..)` fails to compile
+        // before a key is ever compared ("returning this value requires that
+        // `'1` must outlive `'static`"), on a terminal whose one `responsive`
+        // spans six `input`s. It is the boundary `check_lazy_subtree` already
+        // polices with E139 — `lazy` refuses those widgets up front, and
+        // `responsive` has no such restriction for codegen to lean on.
+        //
+        // The obvious suspects are innocent, which is why this is written down:
+        // no build-time read under a responsive sees the clock (the trading
+        // view reads `clock`, a state field a tick moves), and a mounted
+        // animation reads its frame time inside `.style()`, which runs at draw
+        // — a memoized element would keep animating either way.
         ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => {
             let program = document;
             let responsive = program.resolved_responsive(node)?;
