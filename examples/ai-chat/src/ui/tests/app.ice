@@ -196,3 +196,21 @@ test a_finished_scan_says_nothing
   expect missing #shell/sidebar/scan
   expect no text "reading…"
   expect text "Which version of iced is current?"
+
+// Reading a chat off disk takes anything from milliseconds to seconds and
+// happens on another thread. Saying so is the only thing that separates a
+// window working from a window frozen, and it has to replace the chat being
+// left rather than sit above it.
+test opening_a_chat_says_it_is_opening
+  preset opening
+  viewport 1180 700
+  expect exists #shell/app/transcript/opening
+  expect text "Opening that chat…"
+  expect no text "Worked for 12s · 4 steps"
+  capture opening
+
+test a_chat_that_is_open_says_nothing_about_opening
+  preset history
+  viewport 1180 700
+  expect missing #shell/app/transcript/opening
+  expect text "Worked for 12s · 4 steps"

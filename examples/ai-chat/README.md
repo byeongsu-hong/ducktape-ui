@@ -218,9 +218,9 @@ only each file's head, and opening one streams it a line at a time and keeps a
 bounded number of rows, saying how many it left out. Measured on a machine with
 1,036 of them: the list took 210ms, and a 26MB chat opened in 247ms.
 
-| Chats already had | Still reading them |
-| --- | --- |
-| ![The sidebar](screenshots/history.png) | ![Filling as it reads](screenshots/scanning.png) |
+| Chats already had | Still reading them | Opening one |
+| --- | --- | --- |
+| ![The sidebar](screenshots/history.png) | ![Filling as it reads](screenshots/scanning.png) | ![Opening that chat](screenshots/opening.png) |
 
 ## Limits
 

@@ -153,6 +153,45 @@ preset history
     entries = sample_entries(false)
     chats = sample_chats()
 
+// A transcript the size an opened chat can reach, for measuring what drawing
+// one costs end to end.
+preset opened_chat
+  state
+    signed = true
+    account = "you@example.com"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol"]
+    effort = some("xhigh")
+    efforts = ["xhigh"]
+    chats = sample_chats()
+    entries = sample_transcript(500)
+
+preset small_chat
+  state
+    signed = true
+    account = "you@example.com"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol"]
+    effort = some("xhigh")
+    efforts = ["xhigh"]
+    chats = sample_chats()
+    entries = sample_transcript(8)
+
+// A chat being read off disk. The read happens on another thread, so this is
+// the only thing that says it is happening at all.
+preset opening
+  state
+    signed = true
+    account = "you@example.com"
+    model = some("gpt-5.6-sol")
+    models = ["gpt-5.6-sol"]
+    effort = some("xhigh")
+    efforts = ["xhigh"]
+    chats = sample_chats()
+    open_path = "/sessions/2026-08-08-ai-chat.jsonl"
+    entries = sample_entries(false)
+    loading_chat = true
+
 preset signed_out
   state
     account = ""
@@ -322,72 +361,89 @@ view
               align-x=center
             box w=fill max-w=760.0
               col w=fill gap=18.0
-                if empty(entries) && !busy
-                  Welcome #welcome -> suggest _
-                // `keyed` gives every row a stable identity and `lazy` keys its
-                // rebuild on the row itself, so a token landing in the live reply
-                // below rebuilds one row's widgets and nothing else.
-                keyed entry in entries by=entry.id #rows w=fill gap=18.0
-                  lazy entry as settled
-                    col w=fill
-                      // One `if` per kind rather than a `match`: the kinds are
-                      // disjoint, so first-match ordering buys nothing here.
-                      if settled.kind == "prompt"
-                        Prompt #prompt(settled.id) body=settled.body -> copy_text _
-                      if settled.kind == "reasoning"
-                        Reasoning #reasoning(settled.id) -> toggle_row _
-                          with
-                            row_id=settled.id
-                            title=settled.title
-                            body=settled.body
-                            open=settled.open
-                      if settled.kind == "work"
-                        Work #work(settled.id) -> toggle_row _
-                          with
-                            row_id=settled.id
-                            title=settled.title
-                            open=settled.open
-                      if settled.kind == "tool"
-                        ToolCall #tool(settled.id) -> toggle_row _
-                          with
-                            row_id=settled.id
-                            title=settled.title
-                            detail=settled.detail
-                            status=settled.status
-                            open=settled.open
-                      if settled.kind == "answer"
-                        Answer #answer(settled.id) -> copy_text _
-                          with
-                            row_id=settled.id
-                            body=settled.body
-                            dark=settled.dark
-                      if settled.kind == "usage"
-                        Usage #usage(settled.id) detail=settled.detail
-                      if settled.kind == "note"
-                        Note #note(settled.id) title=settled.title
-                if busy
-                  col #live w=fill gap=18.0
-                    box #live-work
-                      with
-                        w=fill
-                        px=15.0
-                        py=12.0
-                        bg=muted_bg
-                        border=border
-                        border-w=1.0
-                        r=10.0
-                      col w=fill gap=7.0
-                        row gap=8.0 align=center
-                          text "◌" size=12.5 @text-warning
-                          text status @field_label
-                        markdown live_thinking #live-thinking gap=6.0 text-size=12.5 -> copy_text _
-                          style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
-                    markdown live #live-body -> copy_text _
-                      with
-                        gap=10.0
-                        text-size=13.5
-                        code-size=12.5
-                      style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
+                // Reading a chat off disk takes anything from milliseconds to seconds,
+                // and it happens on another thread. Without this the window simply sits
+                // there showing the previous chat until the new one appears, which is
+                // indistinguishable from being frozen.
+                if loading_chat
+                  col #opening
+                    with
+                      w=fill
+                      py=64.0
+                      gap=10.0
+                      align=center
+                    text "◌" size=20.0 @text-muted
+                    text "Opening that chat…" @caption
+                if !loading_chat
+                  if empty(entries) && !busy
+                    Welcome #welcome -> suggest _
+                  // `keyed` gives every row a stable identity and `lazy` keys its
+                  // rebuild on the row itself, so a token landing in the live reply
+                  // below rebuilds one row's widgets and nothing else.
+                  keyed entry in entries by=entry.id #rows w=fill gap=18.0
+                    lazy entry as settled
+                      col w=fill
+                        // One `if` per kind rather than a `match`: the kinds are
+                        // disjoint, so first-match ordering buys nothing here.
+                        if settled.kind == "prompt"
+                          Prompt #prompt(settled.id) body=settled.body -> copy_text _
+                        if settled.kind == "reasoning"
+                          Reasoning #reasoning(settled.id) -> toggle_row _
+                            with
+                              row_id=settled.id
+                              title=settled.title
+                              body=settled.body
+                              open=settled.open
+                        if settled.kind == "work"
+                          Work #work(settled.id) -> toggle_row _
+                            with
+                              row_id=settled.id
+                              title=settled.title
+                              open=settled.open
+                        if settled.kind == "tool"
+                          ToolCall #tool(settled.id) -> toggle_row _
+                            with
+                              row_id=settled.id
+                              title=settled.title
+                              detail=settled.detail
+                              status=settled.status
+                              open=settled.open
+                        if settled.kind == "answer"
+                          Answer #answer(settled.id) -> copy_text _
+                            with
+                              row_id=settled.id
+                              body=settled.body
+                              dark=settled.dark
+                        if settled.kind == "usage"
+                          Usage #usage(settled.id) detail=settled.detail
+                        if settled.kind == "note"
+                          Note #note(settled.id) title=settled.title
+                  if busy
+                    col #live w=fill gap=18.0
+                      box #live-work
+                        with
+                          w=fill
+                          px=15.0
+                          py=12.0
+                          bg=muted_bg
+                          border=border
+                          border-w=1.0
+                          r=10.0
+                        col w=fill gap=7.0
+                          row gap=8.0 align=center
+                            text "◌" size=12.5 @text-warning
+                            text status @field_label
+                          markdown live_thinking #live-thinking -> copy_text _
+                            with
+                              gap=6.0
+                              text-size=12.5
+                            style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
+                      markdown live #live-body -> copy_text _
+                        with
+                          gap=10.0
+                          text-size=13.5
+                          code-size=12.5
+                        style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
         Separator
         box #composer
           with

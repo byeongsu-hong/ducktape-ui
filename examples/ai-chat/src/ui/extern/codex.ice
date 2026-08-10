@@ -68,6 +68,7 @@ extern crate::composer
 extern crate::history
   Chat(path:str, title:str, when:str, cwd:str)
   pure sample_chats() -> [Chat]
+  pure sample_transcript(rows:i64) -> [Entry]
   Scan(chats:[Chat], ratio:f64, found:i64, total:i64)
   stream scan_chats() -> Scan
   open_recent(session:Session, path:str) -> [Entry] ! CodexError

@@ -208,6 +208,19 @@ pub struct Scan {
     pub total: i64,
 }
 
+/// A transcript of `rows` rows, for measuring what drawing one costs.
+pub fn sample_transcript(rows: i64) -> Vec<Entry> {
+    let one = crate::codex::sample_entries(false);
+    (0..rows)
+        .map(|index| {
+            let mut row = one[index as usize % one.len()].clone();
+            row.id = -(index + 1000);
+            row.turn = index / 4 + 1;
+            row
+        })
+        .collect()
+}
+
 /// The chats on offer, handed over as they are found.
 ///
 /// A thousand rollouts take a fifth of a second to read the heads of, which is
@@ -683,6 +696,20 @@ mod tests {
         assert!(
             rows.iter().any(|row| row.kind == "prompt"),
             "and something was asked in it"
+        );
+    }
+
+    /// The whole reason opening a chat is allowed to take a quarter of a
+    /// second: it is supposed to happen somewhere other than the thread that
+    /// draws. If `unblock` ever stopped offloading, the window would freeze
+    /// for exactly as long as the read takes and nothing else would say so.
+    #[test]
+    fn opening_a_chat_happens_off_the_calling_thread() {
+        let caller = std::thread::current().id();
+        let worker = smol::block_on(smol::unblock(|| std::thread::current().id()));
+        assert_ne!(
+            caller, worker,
+            "the read must not run on the thread that called it"
         );
     }
 

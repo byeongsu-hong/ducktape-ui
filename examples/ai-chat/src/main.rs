@@ -225,6 +225,64 @@ mod perf {
         (append / TOKENS, redraw / TOKENS)
     }
 
+    /// What the window does the moment a chat read off disk lands in it.
+    ///
+    /// Loading runs off the frame loop, but the frame that draws the result
+    /// does not: every answer parses its Markdown the first time it is drawn,
+    /// and an opened chat delivers all of them at once.
+    #[test]
+    #[ignore = "reads the CLI's own session directory"]
+    fn opening_a_chat_does_not_stall_the_frame_that_draws_it() {
+        if cfg!(debug_assertions) {
+            eprintln!("skipped: run with --release");
+            return;
+        }
+        let scan = crate::history::scan_chats();
+        let mut chats = Vec::new();
+        while let Ok(step) = scan.recv_blocking() {
+            chats = step.chats;
+        }
+        if chats.is_empty() {
+            eprintln!("no chats on this machine");
+            return;
+        }
+
+        // The worst one, not the newest: a window freezes on the chat someone
+        // actually clicked, and that is whichever is biggest.
+        let mut worst = Duration::ZERO;
+        for chat in chats.iter().take(30) {
+            let (mut app, _boot) = AiChat::__boot();
+            let opened = Instant::now();
+            let rows = crate::history::open_chat(crate::codex::codex_session(), chat.path.clone())
+                .expect("the chat opens");
+            let read = opened.elapsed();
+            let answers = rows.iter().filter(|row| row.kind == "answer").count();
+            let prose: usize = rows.iter().map(|row| row.body.len()).sum();
+            let size = std::fs::metadata(&chat.path).map(|m| m.len()).unwrap_or(0);
+
+            let _ = app.__update(__AiChatMessage::ChatOpened(rows));
+            let start = Instant::now();
+            let _ = app.__view();
+            let first = start.elapsed();
+
+            if first > worst {
+                worst = first;
+            }
+            if first > Duration::from_millis(20) || read > Duration::from_millis(200) {
+                eprintln!(
+                    "{:>5}MB  read {read:>9?}  first frame {first:>9?}  {answers} answers, {}KB prose",
+                    size / 1024 / 1024,
+                    prose / 1024
+                );
+            }
+        }
+        eprintln!("worst first frame across 30 chats: {worst:?}");
+        assert!(
+            worst < Duration::from_millis(100),
+            "the frame that draws an opened chat took {worst:?}; the window is frozen that long"
+        );
+    }
+
     #[test]
     #[ignore = "timing evidence; run explicitly in release mode"]
     fn a_streamed_token_pays_for_the_block_it_lands_in_not_the_whole_reply() {
