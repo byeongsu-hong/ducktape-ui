@@ -1,9 +1,8 @@
 mod auth;
 mod codex;
 mod composer;
-mod history;
-mod qa;
 mod render;
+mod store;
 
 ui_lang::include_app!("src/ui/app.ice");
 
@@ -286,56 +285,45 @@ mod perf {
     /// Loading runs off the frame loop, but the frame that draws the result
     /// does not: every answer parses its Markdown the first time it is drawn,
     /// and an opened chat delivers all of them at once.
+    ///
+    /// The chat is written by this test rather than found, so what is measured
+    /// is a transcript of a stated size rather than whatever happens to be on
+    /// the machine running it.
     #[test]
-    #[ignore = "reads the CLI's own session directory"]
+    #[ignore = "timing evidence; run explicitly in release mode"]
     fn opening_a_chat_does_not_stall_the_frame_that_draws_it() {
         if cfg!(debug_assertions) {
             eprintln!("skipped: run with --release");
             return;
         }
-        let scan = crate::history::scan_chats();
-        let mut chats = Vec::new();
-        while let Ok(step) = scan.recv_blocking() {
-            chats = step.chats;
-        }
-        if chats.is_empty() {
-            eprintln!("no chats on this machine");
-            return;
-        }
+        // The cap on what one chat may put on screen. Reading further is a
+        // longer read, but the frame that follows is this size whatever the
+        // file holds, so this is the worst frame there is.
+        let rows = crate::store::sample_transcript(500);
+        let file = crate::store::new_file();
+        crate::store::save(&file, &rows, &[], "gpt-5.6-sol").expect("it saves");
+        let path = file.to_string_lossy().into_owned();
 
-        // The worst one, not the newest: a window freezes on the chat someone
-        // actually clicked, and that is whichever is biggest.
-        let mut worst = Duration::ZERO;
-        for chat in chats.iter().take(30) {
-            let (mut app, _boot) = AiChat::__boot();
-            let opened = Instant::now();
-            let rows = crate::history::open_chat(crate::codex::codex_session(), chat.path.clone())
-                .expect("the chat opens");
-            let read = opened.elapsed();
-            let answers = rows.iter().filter(|row| row.kind == "answer").count();
-            let prose: usize = rows.iter().map(|row| row.body.len()).sum();
-            let size = std::fs::metadata(&chat.path).map(|m| m.len()).unwrap_or(0);
+        let (mut app, _boot) = AiChat::__boot();
+        let opened = Instant::now();
+        let loaded =
+            crate::store::open_chat(crate::codex::codex_session(), path).expect("the chat opens");
+        let read = opened.elapsed();
+        let prose: usize = loaded.iter().map(|row| row.body.len()).sum();
 
-            let _ = app.__update(__AiChatMessage::ChatOpened(rows));
-            let start = Instant::now();
-            let _ = app.__view();
-            let first = start.elapsed();
+        let _ = app.__update(__AiChatMessage::ChatOpened(loaded));
+        let start = Instant::now();
+        let _ = app.__view();
+        let first = start.elapsed();
+        eprintln!(
+            "{} rows, {}KB prose   read {read:?}   first frame {first:?}",
+            rows.len(),
+            prose / 1024
+        );
 
-            if first > worst {
-                worst = first;
-            }
-            if first > Duration::from_millis(20) || read > Duration::from_millis(200) {
-                eprintln!(
-                    "{:>5}MB  read {read:>9?}  first frame {first:>9?}  {answers} answers, {}KB prose",
-                    size / 1024 / 1024,
-                    prose / 1024
-                );
-            }
-        }
-        eprintln!("worst first frame across 30 chats: {worst:?}");
         assert!(
-            worst < Duration::from_millis(100),
-            "the frame that draws an opened chat took {worst:?}; the window is frozen that long"
+            first < Duration::from_millis(100),
+            "the frame that draws an opened chat took {first:?}; the window is frozen that long"
         );
     }
 

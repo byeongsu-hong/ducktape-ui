@@ -136,6 +136,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "iced",
+ "serde",
  "serde_json",
  "smol",
  "ui-lang",
