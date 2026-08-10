@@ -9,14 +9,16 @@
 //! answer that often is the cost this window exists to avoid. The surrounding
 //! `lazy` owns this adapter until the row leaves its bounded parking lot.
 
+use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
 use iced::widget::{column, container, markdown, scrollable};
-use iced::{Color, Element, Event, Font, Length, Padding, Rectangle, Size, border};
+use iced::{Color, Element, Event, Font, Length, Padding, Pixels, Rectangle, Size, border};
 
-use crate::select::selectable;
+use crate::select;
 
 /// Mirrors the `code` font declared in `src/ui/app.ice`.
 const MONO: &str = "JetBrains Mono";
@@ -73,6 +75,42 @@ fn style(dark: bool) -> markdown::Style {
 /// reading as a block at all. Everything else here is iced's own default.
 pub struct Blocks {
     dark: bool,
+    /// The answer these blocks belong to, and the count that numbers them
+    /// within it. A selection is one range across the whole answer, so every
+    /// block has to know which answer it is part of and where in it it sits.
+    ///
+    /// The count is reset before each walk of the document rather than kept
+    /// between them: this viewer is asked for the same blocks again on every
+    /// call the runtime makes into the row, and a block has to come back with
+    /// the same number every time.
+    group: u64,
+    next: Cell<usize>,
+    /// How many blocks the walk produced, shared with each of them so the
+    /// first and the last can answer for a drag that has left the answer.
+    blocks: Rc<Cell<usize>>,
+}
+
+impl Blocks {
+    fn new(dark: bool, group: u64) -> Self {
+        Self {
+            dark,
+            group,
+            next: Cell::new(0),
+            blocks: Rc::new(Cell::new(0)),
+        }
+    }
+
+    fn restart(&self) {
+        self.next.set(0);
+    }
+
+    fn selectable(&self, spans: Arc<[select::Line]>, size: Pixels) -> Element<'static, String> {
+        let block = self.next.get();
+        self.next.set(block + 1);
+        self.blocks.set(block + 1);
+
+        select::selectable(self.group, block, self.blocks.clone(), spans, size)
+    }
 }
 
 impl<'a> markdown::Viewer<'a, String> for Blocks {
@@ -85,7 +123,7 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
         settings: markdown::Settings,
         text: &markdown::Text,
     ) -> Element<'a, String> {
-        selectable(text.spans(settings.style), settings.text_size)
+        self.selectable(text.spans(settings.style), settings.text_size)
     }
 
     fn heading(
@@ -104,7 +142,7 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
             markdown::HeadingLevel::H6 => settings.h6_size,
         };
 
-        container(selectable(text.spans(settings.style), size))
+        container(self.selectable(text.spans(settings.style), size))
             .padding(iced::padding::top(if index > 0 {
                 settings.text_size / 2.0
             } else {
@@ -124,7 +162,7 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
         container(
             scrollable(
                 container(column(lines.iter().map(|line| {
-                    selectable(line.spans(settings.style), settings.code_size)
+                    self.selectable(line.spans(settings.style), settings.code_size)
                 })))
                 .padding(settings.code_size),
             )
@@ -154,7 +192,7 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
 /// changes appearance the moment its turn settles — popping onto the ground
 /// `Blocks` gives it. The answer should not move when it stops arriving.
 pub fn answer_viewer(dark: bool) -> Blocks {
-    Blocks { dark }
+    Blocks::new(dark, select::live())
 }
 
 /// Parsed Markdown whose items live exactly as long as its owning lazy row.
@@ -174,11 +212,12 @@ impl MarkdownBody {
         Self {
             items: markdown::parse(source).collect::<Vec<_>>().into(),
             settings: settings(size, dark),
-            viewer: Blocks { dark },
+            viewer: Blocks::new(dark, select::group()),
         }
     }
 
     fn view(&self) -> Element<'_, String> {
+        self.viewer.restart();
         markdown::view_with(self.items.iter(), self.settings, &self.viewer)
     }
 }
