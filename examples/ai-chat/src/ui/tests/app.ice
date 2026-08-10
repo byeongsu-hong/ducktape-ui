@@ -208,9 +208,39 @@ test an_idle_composer_offers_only_send
   expect missing #shell/app/composer/field/stop
   expect missing #shell/app/composer/steer
 
-// iced draws non-editable text without selection, so there is no dragging
-// over an answer to copy it. The button is how the text leaves the window,
-// which makes it load-bearing rather than a convenience.
+// Taking part of an answer rather than all of it. A rendered Markdown document
+// is drawn as rich text, which this toolkit paints without selection, so the
+// row hands over its own source instead — text a pointer can be dragged
+// across, which is the only form of an answer that can be.
+//
+// Neither form's glyphs reach the harness: the rendering paints rich text and
+// the source paints an editor, and it reads neither. What it can see is that
+// the row is laid out as something else entirely — the rendering is a heading,
+// a code block on its own ground and a list, and the source is one column of
+// plain lines, so the two cannot be the same height.
+test asking_an_answer_for_its_text_hands_over_the_source_it_was_written_as
+  preset conversation
+  viewport 920 800
+  target answer = #shell/app/transcript/rows/key(-6)/answer(-6)/root
+  target body = answer/body
+  target select = answer/select
+  target done = answer/done
+  expect body.height < 270.0
+  expect missing done
+
+  click select
+  expect body.height > 290.0
+  expect exists done
+  expect missing select
+
+  // And back, because the rendering is what a settled answer rests in.
+  click done
+  expect body.height < 270.0
+  expect exists select
+  expect missing done
+
+// The button beside it is the whole answer in one press, which is still the
+// shorter route when the whole answer is what is wanted.
 test copying_a_message_puts_its_own_text_on_the_clipboard
   preset conversation
   viewport 920 800

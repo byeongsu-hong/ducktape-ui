@@ -6,7 +6,9 @@ app AiChat
   font "../../../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
   font "../../../../assets/fonts/IBMPlexSansKR-Bold.ttf"
   font "../../../../assets/fonts/IBMPlexSans-Italic.ttf"
-  font "../../../../assets/fonts/MonoplexKR-Regular.ttf"
+  font "../../../../assets/fonts/JetBrainsMono-Regular.ttf"
+  font "../../../../assets/fonts/JetBrainsMono-Bold.ttf"
+  font "../../../../assets/fonts/JetBrainsMono-Italic.ttf"
   text-size 14
   window
     // Wide enough that the sidebar is beside the conversation rather than
@@ -24,7 +26,7 @@ use "handlers.ice"
 use "tests/app.ice"
 
 font body family="IBM Plex Sans KR" default=true
-font code family="Monoplex KR"
+font code family="JetBrains Mono"
 
 state
   session:Session = codex_session()
@@ -418,9 +420,14 @@ view
                         if settled.kind == "answer"
                           Answer #answer(settled.id) -> copy_text _
                             with
-                              row_id=settled.id
                               body=settled.body
                               dark=settled.dark
+                              selecting=settled.open
+                            row
+                              if !settled.open
+                                button "Select" #select @ghost_action -> toggle_row(settled.id)
+                              if settled.open
+                                button "Done" #done @ghost_action -> toggle_row(settled.id)
                         if settled.kind == "usage"
                           Usage #usage(settled.id) detail=settled.detail
                         if settled.kind == "note"
@@ -444,13 +451,13 @@ view
                             with
                               gap=6.0
                               text-size=12.5
-                            style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
+                            style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=1.0 inline-code-py=0.0 inline-code-r=4.0 link=brand
                       markdown live #live-body -> copy_text _
                         with
                           gap=10.0
                           text-size=13.5
                           code-size=12.5
-                        style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=4.0 inline-code-py=1.0 inline-code-r=4.0 link=brand
+                        style inline-code-bg=accent inline-code-fg=accent_fg inline-code-font=code inline-code-px=1.0 inline-code-py=0.0 inline-code-r=4.0 link=brand
         Separator
         box #composer
           with
