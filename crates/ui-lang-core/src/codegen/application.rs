@@ -694,16 +694,27 @@ pub(in crate::codegen) fn generate_update(
         .filter(|component| component.storage != ComponentStorage::Stateless)
     {
         let field = component_state_field(&component.name);
-        let entry = |scope: &str| match component.storage {
-            ComponentStorage::Retained => {
-                format!("let __local = self.{field}.entry({scope}).or_default();")
+        let run_lanes = component_run_lanes(program, &component.handlers);
+        let owns_persistent_state = !component.states.is_empty() || !run_lanes.is_empty();
+        let entry = |scope: &str| {
+            if !owns_persistent_state {
+                // Handler scope is routing context, not retained state.
+                return format!(
+                    "let mut __local = {}::default();",
+                    component_state_type(&component.name)
+                );
             }
-            ComponentStorage::Mounted => format!(
-                "let mut __states = self.{field}.values_mut(); let __local = __states.entry({scope}).or_default();"
-            ),
-            ComponentStorage::Stateless => unreachable!(),
+            match component.storage {
+                ComponentStorage::Retained => {
+                    format!("let __local = self.{field}.entry({scope}).or_default();")
+                }
+                ComponentStorage::Mounted => format!(
+                    "let mut __states = self.{field}.values_mut(); let __local = __states.entry({scope}).or_default();"
+                ),
+                ComponentStorage::Stateless => unreachable!(),
+            }
         };
-        for (lane, kind, mode) in component_run_lanes(program, &component.handlers) {
+        for (lane, kind, mode) in run_lanes {
             let generation = run_lane_generation_field(lane.0 as usize);
             let variant = run_lane_variant(lane.0 as usize);
             let stream = kind == EffectKind::Stream && mode == DeliveryMode::Replace;
