@@ -1185,6 +1185,16 @@ pub fn order_draft(
     let size = amount(&size).abs();
     let (tp, sl) = (amount(&tp), amount(&sl));
     let minutes = amount(&minutes).max(0.0);
+    // A worked order's resting rule is the venue's rather than the reader's:
+    // Lighter's own validation takes `GOOD_TILL_TIME` and nothing else, and the
+    // ticket says so by not offering the row. But the row was offered a moment
+    // ago, on the kind before this one, and `ticket_tif` keeps what was pressed
+    // — so without this an order switched from an IOC limit to a TWAP would
+    // carry `Ioc` to a signer that refuses the pairing, and the reader would be
+    // told about a control that is not on screen. Fixed here rather than in the
+    // handler because it is a fact about the order, and here is where the order
+    // is projected.
+    let tif = if minutes > 0.0 { Tif::Gtc } else { tif };
     Draft {
         venue,
         coin: coin.clone(),
@@ -3495,6 +3505,56 @@ mod tests {
             None,
             held,
         )
+    }
+
+    /// A worked order carries the only resting rule its venue takes.
+    ///
+    /// The row that offers one was on screen a moment ago, on the kind before
+    /// this, and `ticket_tif` keeps what was pressed there. Left alone, an
+    /// order switched from an `Ioc` limit to a TWAP carries `Ioc` to a signer
+    /// whose venue takes good-till-time and nothing else — so the reader would
+    /// be refused over a control the ticket is no longer showing them, and the
+    /// refusal would be this app's own rather than anything they did.
+    ///
+    /// Asserted on the draft rather than on the panel because the panel cannot
+    /// see it: the confirmation prints `WORKED` in place of `RESTS` for any
+    /// order carrying a window, so a wrong resting rule is invisible there and
+    /// reaches the wire in silence.
+    #[test]
+    fn a_worked_order_carries_the_only_resting_rule_its_venue_takes() {
+        let draft = |minutes: &str, tif: Tif| {
+            order_draft(
+                Venue::LighterTestnet,
+                "BTC".to_owned(),
+                Some(market("BTC")),
+                true,
+                "3".to_owned(),
+                64_000.0,
+                false,
+                false,
+                false,
+                tif,
+                unpriced(),
+                String::new(),
+                String::new(),
+                minutes.to_owned(),
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+        };
+        let worked = draft("30", Tif::Ioc);
+        assert_eq!(worked.minutes, 30.0);
+        assert_eq!(
+            worked.tif,
+            Tif::Gtc,
+            "a worked order took the resting rule the kind before it was on",
+        );
+        // And it is the window that decides, not the kind alone: the same
+        // press on an order with no window is the reader's own choice and is
+        // carried untouched.
+        assert_eq!(draft("", Tif::Ioc).tif, Tif::Ioc);
+        assert_eq!(draft("", Tif::Alo).tif, Tif::Alo);
     }
 
     /// **A ladder's rungs sit on an even grid with both ends on it.**
