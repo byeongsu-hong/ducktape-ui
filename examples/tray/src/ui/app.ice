@@ -7,13 +7,21 @@ daemon Tray
     label clock(remaining)
     tooltip "Focus timer"
     menu
-      phase(running, remaining)
+      phase(running, remaining, session)
       clock(remaining)
       separator
       // A row's text is an expression like any other, so one row is both the
       // command and the readout of what pressing it will do.
       start_label(running) -> toggle
       "Reset" -> reset
+      // A row with an indented block is a submenu. It carries no route
+      // because the platform opens it rather than delivering it, and the
+      // rows it owns are ordinary rows: routed ones are commands, and their
+      // text re-evaluates like every other row's.
+      "Session length"
+        length_label(session, 900) -> short_session
+        length_label(session, 1500) -> standard_session
+        length_label(session, 3000) -> long_session
       separator
       "Quit" -> quit
 
@@ -21,12 +29,14 @@ use "theme.ice"
 
 extern crate::timer
   pure clock(seconds:i64) -> str
-  pure phase(running:bool, remaining:i64) -> str
+  pure phase(running:bool, remaining:i64, session:i64) -> str
   pure start_label(running:bool) -> str
+  pure length_label(session:i64, choice:i64) -> str
 
 state
   remaining = 1500
   running = false
+  session = 1500
 
 preset midway
   state
@@ -41,7 +51,22 @@ on tick
   running = remaining > 0
 
 on reset
+  remaining = session
+  running = false
+
+on short_session
+  session = 900
+  remaining = 900
+  running = false
+
+on standard_session
+  session = 1500
   remaining = 1500
+  running = false
+
+on long_session
+  session = 3000
+  remaining = 3000
   running = false
 
 on quit
@@ -91,3 +116,32 @@ test a_chosen_row_updates_the_rows_the_next_reader_sees
 // and with one declared icon it is what the item shows from boot.
 test the_declared_icon_is_what_the_item_shows
   expect tray icon "icon.rgba"
+
+// The claim a submenu is built on. A menu is one flat table of rows however
+// deep it is drawn, so a nested row is chosen by its text like any other and
+// reaches its own handler — not the handler of the row that happens to sit at
+// its parent's index, which is what an off-by-one in the nested walk produces.
+test choosing_a_row_inside_a_submenu_runs_its_own_handler
+  expect session == 1500
+  tray choose "50 minutes"
+  expect session == 3000
+  expect remaining == 3000
+
+// A submenu is a third thing beside a command and a stat: the platform opens
+// it rather than delivering it, so its title row is choosable by nobody while
+// the rows underneath it stay commands.
+test a_submenu_title_is_not_a_command_but_its_rows_are
+  expect tray item "Session length"
+  expect no tray command "Session length"
+  expect tray command "15 minutes"
+  expect tray command "50 minutes"
+
+// A nested row's text is re-evaluated and applied at its own index like every
+// other row's. Both sides are asserted because a sync that wrote nested rows
+// at the wrong index would still leave the marked text somewhere in the menu.
+test a_nested_row_re_reads_its_text_after_a_handler_ran
+  expect tray item "• 25 minutes"
+  expect no tray item "• 15 minutes"
+  tray choose "15 minutes"
+  expect tray item "• 15 minutes"
+  expect no tray item "• 25 minutes"

@@ -25,6 +25,10 @@ daemon Tray
       separator
       start_label(running) -> toggle
       "Reset" -> reset
+      "Session length"
+        length_label(session, 900) -> short_session
+        length_label(session, 1500) -> standard_session
+        length_label(session, 3000) -> long_session
       separator
       "Quit" -> quit
 ```
@@ -43,6 +47,21 @@ Every row is an expression, so the same rule applies inside the menu: `phase`
 and `clock` are figures you read, and the platform draws them disabled because
 they name no route. `start_label(running) -> toggle` is both — the row says
 what pressing it will do, and pressing it does that.
+
+A row with an indented block under it is a submenu. `"Session length"` names no
+route because there is nothing to route: the platform opens it rather than
+delivering it, so a handler there could never be reached. The rows it owns are
+ordinary rows — routed, so they are commands — and their text re-evaluates like
+every other row's, which is how the `•` moves to the length in use. It is one
+flat table underneath: a submenu records how many of the rows after it are its
+own rather than containing them, so a row's index means the same thing at every
+depth and `tray choose "50 minutes"` needs no path to spell.
+
+The menu's row count is fixed when the app compiles. There is no way to
+generate a row per item of a list, deliberately — a varying count would rebuild
+the native menu on every update, and not rebuilding it is what makes syncing
+after every message affordable. A figure about a collection is composed by a
+`pure` extern into a row the menu declares.
 
 ## Tests
 

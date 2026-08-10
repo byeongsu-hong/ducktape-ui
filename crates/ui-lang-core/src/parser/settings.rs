@@ -350,12 +350,18 @@ fn parse_tray_icon(value: &str, item: &Line) -> Result<TrayIcon, Error> {
     })
 }
 
+/// Parses a `menu` block, or the indented block under a submenu row, into one
+/// flat declaration-ordered vector.
+///
+/// A row that carries an indented block is a submenu: it keeps its own index
+/// and records how many of the rows after it are its own, so nesting is a
+/// property of a row rather than a different shape of storage.
 fn parse_tray_menu(line: &Line) -> Result<Vec<TrayRow>, Error> {
     let mut rows = Vec::new();
     for item in &line.children {
-        ensure_leaf(item)?;
         let span = Span::line(item.number);
         if item.text == "separator" {
+            ensure_leaf(item)?;
             rows.push(TrayRow::Separator { span });
             continue;
         }
@@ -363,11 +369,18 @@ fn parse_tray_menu(line: &Line) -> Result<Vec<TrayRow>, Error> {
             Some((text, route)) => (text, Some(identifier(route.trim(), item)?)),
             None => (item.text.as_str(), None),
         };
+        let nested = if item.children.is_empty() {
+            Vec::new()
+        } else {
+            parse_tray_menu(item)?
+        };
         rows.push(TrayRow::Item {
             text: app_expression(text.trim(), item)?,
             route,
+            nested: nested.len(),
             span,
         });
+        rows.extend(nested);
     }
     if rows.is_empty() {
         return Err(error("E015", line, "menu requires at least one row"));

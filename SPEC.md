@@ -339,7 +339,7 @@ tray_setting   = "icon-rgba" string u32 u32 ("when" expr)?
                | ("label" | "tooltip") expr
                | tray_menu
 tray_menu      = "menu" INDENT tray_row+
-tray_row       = "separator" | expr ("->" name)?
+tray_row       = "separator" | expr ("->" name)? (INDENT tray_row+)?
 window_decl    = "window" name? INDENT window_setting*
 window_setting = ("size" | "min-size" | "max-size") number number
                | "icon-rgba" string u32 u32
@@ -1504,6 +1504,28 @@ the platform draws a figure you read rather than press. The menu is the
 platform's own surface: it opens, positions itself on the right display and
 dismisses itself.
 
+A row that carries an indented block is a submenu, to any depth. It is a third
+thing beside a command and a stat: the platform opens it rather than delivering
+it, so it is drawn enabled without being choosable, and it cannot name a route
+— a handler there could never be reached. Its title is a row expression like
+every other, re-evaluated and diffed the same way, and the rows it owns are
+ordinary rows: routed ones are commands, unrouted ones are stats, and
+`separator` divides them.
+
+A menu is one flat declaration-ordered table however deep it is drawn. A
+submenu is a row that says how many of the rows after it are its own, rather
+than a row that contains them, which is why the row index means the same thing
+at every depth — it is the checked-expression id, the snapshot slot, the native
+item and the row-to-handler entry all at once, and nesting the storage would
+have made four places agree on a tree walk instead of on a number.
+
+The row count is fixed when the program compiles; only the text changes. There
+is deliberately no way to generate rows from a list. Rows whose number varies
+would make every update rebuild the native menu, since the platform has no
+cheap reordering, and that is the whole of what the diff above the platform
+seam buys. A figure about a collection is composed by a `pure` extern into the
+rows a menu declares, the way a price already is.
+
 The menu is the only surface a status item raises. A tray declares no window
 for it, so `tray` works identically under `app` and `daemon`, and a program
 with a tray carries no tray state and no tray message variants of its own. A
@@ -1536,7 +1558,19 @@ nothing.
 `tray choose` picks the command row carrying that text and runs it, the way
 the platform reports one: by row, through the generated row-to-handler table
 the live subscription maps a chosen row through. It fails on a row that is not
-there and on a stat, which is exactly what macOS refuses to let anyone press.
+there, on a stat, which is exactly what macOS refuses to let anyone press, and
+on a submenu, which macOS opens instead.
+
+A row inside a submenu is named by its text like any other, with no path to
+spell: the table is flat, so depth is not part of a row's address. What depth
+does change is how easily two rows share a word — grouping is what puts a
+`Close` under each of two coins — so a text carried by more than one row fails
+`tray choose` and `expect tray command` naming every row it matched, rather
+than silently taking the first. Running the wrong handler while the test passed
+is the failure the row-to-handler table exists to stop, and it would return
+through this door otherwise. `expect tray item` still matches any row, because
+whether a text is shown is a question two rows have the same answer to and
+whether "the" row is choosable is not.
 It is the only step that covers a menu row end to end, so a row index that
 drifts in code generation fails a test instead of going quietly dead in the
 menu bar.
@@ -5371,8 +5405,10 @@ row is one composed string rather than a tree of runs, so the assertion names
 the fragment that carries the meaning, and matching a row by text rather than
 by index makes reordering rows harmless and deleting one fatal. `icon` matches
 the declared `icon-rgba` path exactly. `command` asks whether the row carrying
-the text is one the reader can choose rather than a stat drawn disabled, and
-fails either way when no row carries the text.
+the text is one the reader can choose rather than a stat drawn disabled or a
+submenu the platform opens, and fails either way when no row carries the text.
+Rows inside a submenu are matched like every other row, and `command` fails
+when the text names more than one of them.
 
 `tray choose` runs a menu row the way the platform does — by row index,
 through the generated row-to-handler table the subscription uses — so it

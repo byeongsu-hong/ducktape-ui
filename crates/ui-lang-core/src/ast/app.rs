@@ -208,6 +208,17 @@ pub enum TrayRow {
     Item {
         text: AppExpression,
         route: Option<String>,
+        /// How many of the rows that follow this one are nested inside it.
+        ///
+        /// Zero is an ordinary row. Anything else makes the row a submenu the
+        /// platform opens, and the rows it owns are the next `nested` entries
+        /// of this same vector. A menu is one flat declaration-ordered list at
+        /// every layer below the parser for that reason: the row index is the
+        /// tray's whole identity — the checked-expression id, the snapshot
+        /// slot, the native item and the row-to-handler table are all that
+        /// index — and nesting the storage would have made four places agree
+        /// on a tree walk instead of on a number.
+        nested: usize,
         span: Span,
     },
     Separator {

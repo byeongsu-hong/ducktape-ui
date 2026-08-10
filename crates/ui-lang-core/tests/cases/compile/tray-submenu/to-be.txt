@@ -1,0 +1,9 @@
+::ui_lang_runtime::tray::TrayRow::Item { command: false, nested: 0usize },::ui_lang_runtime::tray::TrayRow::Separator,::ui_lang_runtime::tray::TrayRow::Item { command: false, nested: 4usize },::ui_lang_runtime::tray::TrayRow::Item { command: false, nested: 0usize },::ui_lang_runtime::tray::TrayRow::Item { command: true, nested: 0usize },::ui_lang_runtime::tray::TrayRow::Item { command: false, nested: 1usize },::ui_lang_runtime::tray::TrayRow::Item { command: true, nested: 0usize },::ui_lang_runtime::tray::TrayRow::Item { command: true, nested: 0usize },
+::ui_lang_runtime::tray::set_item(2usize, "Counter");
+::ui_lang_runtime::tray::set_item(4usize, "Bump");
+::ui_lang_runtime::tray::set_item(5usize, "More");
+::ui_lang_runtime::tray::set_item(6usize, "Bump twice");
+::ui_lang_runtime::tray::set_item(7usize, "Quit");
+fn __tray_row(__row: usize) -> ::std::option::Option<__TraySubmenuMessage> { match __row { 4usize => ::std::option::Option::Some(__TraySubmenuMessage::Bump),6usize => ::std::option::Option::Some(__TraySubmenuMessage::Bump),7usize => ::std::option::Option::Some(__TraySubmenuMessage::Quit), _ => ::std::option::Option::None } }
+::ui_lang_runtime::tray::set_item(0usize,
+::ui_lang_runtime::tray::set_item(3usize,

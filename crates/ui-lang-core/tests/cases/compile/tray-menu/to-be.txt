@@ -1,7 +1,7 @@
 path: "assets/alarm.rgba"
 path: "assets/stale.rgba"
 path: "assets/tray.rgba"
-::ui_lang_runtime::tray::TrayRow::Item { command: false },::ui_lang_runtime::tray::TrayRow::Separator,::ui_lang_runtime::tray::TrayRow::Item { command: true },
+::ui_lang_runtime::tray::TrayRow::Item { command: false, nested: 0usize },::ui_lang_runtime::tray::TrayRow::Separator,::ui_lang_runtime::tray::TrayRow::Item { command: true, nested: 0usize },
 ::ui_lang_runtime::tray::set_item(2usize, "Bump");
 ::ui_lang_runtime::tray::set_item(3usize, "Quit");
 ::ui_lang_runtime::tray::select_icon(&[(self.count > 3), (self.count < 0)]);

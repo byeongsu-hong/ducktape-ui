@@ -516,12 +516,22 @@ pub enum TrayField {
     Command,
 }
 
-/// The declaration index of the first row whose text carries `value`.
+/// The declaration indices of every row whose text carries `value`.
 /// Separators hold no text, so they never match.
-fn tray_row_containing(tray: &crate::tray::TraySnapshot, value: &str) -> Option<usize> {
+///
+/// Every row, at every depth: a menu is one flat table, so a row inside a
+/// submenu is named by its text exactly like a row at the top level. That is
+/// also why this returns all of them rather than the first. One text naming
+/// two rows is what grouping makes likely — two submenus can each hold a
+/// `Close` — and picking the earlier one would run the wrong handler while the
+/// test passed, which is the failure a row-to-handler table exists to stop.
+fn tray_rows_containing(tray: &crate::tray::TraySnapshot, value: &str) -> Vec<usize> {
     tray.items
         .iter()
-        .position(|item| !item.is_empty() && item.contains(value))
+        .enumerate()
+        .filter(|(_, item)| !item.is_empty() && item.contains(value))
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// A semantic accessibility property used by generated expectations.
@@ -2299,6 +2309,12 @@ where
     /// row carrying the text is one the reader can choose, and fails either
     /// way when no row carries it — a `no tray command` that passed because
     /// the text was misspelled would record nothing.
+    ///
+    /// `item` asks whether any row carries the text and `command` asks what
+    /// one particular row is, so only the second needs the text to name a
+    /// single row. Presence is still presence when two rows show it; deciding
+    /// whether "the" row is choosable is not a question two rows have one
+    /// answer to.
     #[track_caller]
     pub fn check_tray(&mut self, field: TrayField, value: &str, negated: bool, source: Location) {
         let tray = crate::tray::rendered();
@@ -2306,10 +2322,7 @@ where
             TrayField::Label => tray.label.contains(value),
             TrayField::Icon => tray.icon == Some(value),
             TrayField::Item => tray.items.iter().any(|item| item.contains(value)),
-            TrayField::Command => match tray_row_containing(&tray, value) {
-                Some(row) => crate::tray::is_command(row),
-                None => self.tray_row_missing(value, source),
-            },
+            TrayField::Command => crate::tray::is_command(self.tray_row(&tray, value, source)),
         };
         if actual == negated {
             let (selector, shown) = match field {
@@ -2335,16 +2348,37 @@ where
     #[track_caller]
     pub fn tray_command_row(&mut self, value: &str, source: Location) -> usize {
         let tray = crate::tray::rendered();
-        let Some(row) = tray_row_containing(&tray, value) else {
-            self.tray_row_missing(value, source)
-        };
+        let row = self.tray_row(&tray, value, source);
         if !crate::tray::is_command(row) {
+            let refusal = if crate::tray::is_submenu(row) {
+                "a submenu, which the platform opens rather than delivers"
+            } else {
+                "a stat, which the platform draws disabled"
+            };
             panic!(
-                "{source}: test `{}` cannot choose a tray row that is not a command\nstatement: {}\nselector: a tray row containing {value:?}\nexpected: a row routed with `-> handler`\nactual: row {row} is a stat, which the platform draws disabled",
+                "{source}: test `{}` cannot choose a tray row that is not a command\nstatement: {}\nselector: a tray row containing {value:?}\nexpected: a row routed with `-> handler`\nactual: row {row} is {refusal}",
                 self.test_name, source.statement,
             );
         }
         row
+    }
+
+    /// The one row carrying `value`, or a failure naming why there is not one.
+    #[track_caller]
+    fn tray_row(&self, tray: &crate::tray::TraySnapshot, value: &str, source: Location) -> usize {
+        match tray_rows_containing(tray, value).as_slice() {
+            [row] => *row,
+            [] => self.tray_row_missing(value, source),
+            rows => panic!(
+                "{source}: test `{}` found {} tray rows containing {value:?}\nstatement: {}\nmatched: {:?}\nexpected: text that names one row\nactual: a menu is one flat table across every submenu, so a text carried by two rows names neither",
+                self.test_name,
+                rows.len(),
+                source.statement,
+                rows.iter()
+                    .map(|row| tray.items[*row].clone())
+                    .collect::<Vec<_>>(),
+            ),
+        }
     }
 
     #[track_caller]
@@ -7599,5 +7633,37 @@ mod tests {
             );
         }
         assert!(!message.contains("quiescence"), "{message}");
+    }
+
+    /// A menu is one flat table across every submenu, so a text that names two
+    /// rows names neither. Choosing the earlier one would run the wrong
+    /// handler while the test passed, which is exactly the failure the
+    /// row-to-handler table exists to stop — and grouping is what makes two
+    /// rows share a word.
+    #[test]
+    fn a_text_carried_by_two_rows_names_every_one_of_them() {
+        let tray = crate::tray::TraySnapshot {
+            items: vec![
+                "Positions".to_owned(),
+                "BTC  Close".to_owned(),
+                String::new(),
+                "ETH  Close".to_owned(),
+            ],
+            ..crate::tray::TraySnapshot::default()
+        };
+        assert_eq!(
+            tray_rows_containing(&tray, "Close"),
+            vec![1, 3],
+            "both rows carry the text, and a caller that must pick one has to be told so"
+        );
+        assert_eq!(
+            tray_rows_containing(&tray, "BTC  Close"),
+            vec![1],
+            "the fragment that names one row still names one row"
+        );
+        assert!(
+            tray_rows_containing(&tray, "Close").len() > 1,
+            "an empty separator slot never matches, so row 2 is not among them"
+        );
     }
 }
