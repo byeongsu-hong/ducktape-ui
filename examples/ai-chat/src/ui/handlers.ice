@@ -122,9 +122,14 @@ on use_day
 
 // Everything that leaves this window leaves the same way. A clicked link is
 // copied rather than opened — which browser a developer wanted is not this
-// window's call — and so is a message, because iced draws non-editable text
-// without selection and there is no dragging over it to copy.
+// window's call — and so is a whole message, for the times the whole message
+// is what is wanted.
+//
+// An answer being dragged over reports every drag on the same route, carrying
+// nothing; there is nothing to put on a clipboard then, and the guard is what
+// keeps a drag from wiping it.
 on copy_text(text)
+  return if empty(text)
   copied = text
   task clipboard write text
 

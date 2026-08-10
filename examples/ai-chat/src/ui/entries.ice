@@ -8,6 +8,20 @@
 // Every row is a settled row. Nothing here is rebuilt while a reply is being
 // written — the caller puts each one behind `lazy`, keyed on the row itself.
 
+// The mark every fold in the transcript opens by.
+//
+// It is a fixed-width box rather than a bare glyph because ▾ and ▸ do not have
+// the same advance: drawn loose, the heading beside them steps sideways every
+// time a row is opened. The size is set against the heading's cap height —
+// these are the "small" triangles, which draw at about a third of their point
+// size, so matching 13px text takes about 20.
+component Fold(open:bool)
+  col #root w=17.0 align=center
+    if open
+      text "▾" size=20.0 @text-muted
+    if !open
+      text "▸" size=20.0 @text-muted
+
 // What was asked, leaning to its own side of the column.
 component Prompt(body:str) -> str
   row #root w=fill gap=10.0
@@ -46,7 +60,8 @@ component Reasoning(row_id:i64, title:str, body:str, open:bool) -> i64
             w=fill
             gap=8.0
             align=center
-          text "·" size=15.0 @text-muted
+          box w=17.0 align-x=center
+            text "·" size=20.0 @text-muted
           text title @field_label
       if !empty(body)
         button #toggle -> emit(row_id)
@@ -59,10 +74,7 @@ component Reasoning(row_id:i64, title:str, body:str, open:bool) -> i64
               w=fill
               gap=8.0
               align=center
-            if open
-              text "▾" size=15.0 @text-muted
-            if !open
-              text "▸" size=15.0 @text-muted
+            Fold #fold open=open
             text title @field_label
         if open
           box w=fill pb=6.0
@@ -83,10 +95,7 @@ component Work(row_id:i64, title:str, open:bool) -> i64
         p=0.0
         @ghost_action
       row gap=8.0 align=center
-        if open
-          text "▾" size=15.0 @text-muted
-        if !open
-          text "▸" size=15.0 @text-muted
+        Fold #fold open=open
         text title @meta
 
 // A tool call: what it was, and what it was given once asked. The mark on the
@@ -113,10 +122,8 @@ component ToolCall(row_id:i64, title:str, detail:str, status:str, open:bool) -> 
           if status == "failed"
             text "✕" size=12.5 @text-danger
           text title @field_label
-          if !empty(detail) && open
-            text "▾" size=14.0 @text-muted
-          if !empty(detail) && !open
-            text "▸" size=14.0 @text-muted
+          if !empty(detail)
+            Fold #fold open=open
       if open && !empty(detail)
         box w=fill pb=4.0
           text detail wrap=word @machine
@@ -124,18 +131,21 @@ component ToolCall(row_id:i64, title:str, detail:str, status:str, open:bool) -> 
 // The answer itself. `markdown_body` is a Rust adapter rather than the built-in
 // widget because a parsed document cannot live in component state; the adapter
 // owns one parse for exactly as long as this lazy row is retained or parked.
-component Answer(row_id:i64, body:str, dark:bool) -> str
+// `selecting` swaps the rendering for the answer's own source, which can be
+// dragged over the way text in a browser can — see `src/render.rs` for why a
+// rendered document cannot be. The control that asks for it comes in through
+// the slot, because whether a row is selecting belongs to the row rather than
+// to this component: a settled row is drawn behind `lazy`.
+component Answer(body:str, dark:bool, selecting:bool) -> str
   col #root
     with
       w=fill
       pt=6.0
       gap=4.0
-    extern markdown_body(body, 13.5, dark) #body -> emit(_)
-    // iced draws non-editable text without selection, so an answer cannot be
-    // dragged over and copied the way it could in a browser. Until the toolkit
-    // grows that, this is how the text leaves the window.
-    row w=fill
+    extern markdown_body(body, 13.5, dark, selecting) #body -> emit(_)
+    row w=fill gap=8.0
       space w=fill h=1.0
+      slot
       button "Copy" #copy @ghost_action -> emit(body)
 
 // What the turn cost, set quietly against the right edge.
@@ -165,8 +175,8 @@ component Chip(options:[str], selected:str?) -> str
     opened-hovered text=fg handle=fg bg=accent border=border r=7.0
     menu text=fg selected-text=fg selected-bg=accent bg=surface border=border border-w=1.0 r=10.0 shadow=shadow_popover shadow-y=6.0 shadow-blur=18.0
     handle dynamic
-      closed code="▾" size=17.0
-      open code="▴" size=17.0
+      closed code="▾" size=21.0
+      open code="▴" size=21.0
 
 // One chat that already happened, as a row to open it by.
 component PastChat(chat:Chat, open:bool) -> str

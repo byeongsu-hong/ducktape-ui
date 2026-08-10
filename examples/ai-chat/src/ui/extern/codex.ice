@@ -46,7 +46,7 @@ extern crate::codex
 // parsed document until that row leaves the runtime's bounded parking lot. The
 // route carries the URL of a clicked link.
 extern crate::render
-  component markdown_body(source:str, size:f64, dark:bool) -> str
+  component markdown_body(source:str, size:f64, dark:bool, selecting:bool) -> str
   markdown-viewer answer_viewer(dark:bool) -> str
 
 // Signing in without leaving the window: ask the host for a short code, show
