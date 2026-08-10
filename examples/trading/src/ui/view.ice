@@ -409,7 +409,14 @@ view
                                 hovered
                                   y-rail bg=panel
                                   y-scroller bg=faint r=3.0
-                                col w=fill
+                                // Hyperliquid's universe is 200 markets, which is
+                                // 6000px of rail behind a window that shows a
+                                // dozen and a half — and a row that is never
+                                // laid out never shapes the four strings it
+                                // draws. The estimate is `MarketRow`'s own 30px;
+                                // a group heading is taller and is corrected the
+                                // moment it scrolls in.
+                                col w=fill virtual-row=30.0
                                   if empty(visible) && !empty(symbols)
                                     box
                                       with
@@ -810,6 +817,18 @@ view
                                     hovered
                                       y-rail bg=panel
                                       y-scroller bg=faint r=3.0
+                                    // Not virtualized, unlike the rail and the
+                                    // tape beside it, and the reason is the
+                                    // flash. A keyed column lays out every child
+                                    // itself, so it cannot be virtualized, and
+                                    // `virtual-row=` is a plain column's
+                                    // property — but dropping the key puts
+                                    // `FillFlash` under W008, because a plain
+                                    // `for` is position-identified however the
+                                    // row ids read. Measured both ways on the
+                                    // 200-fill screen: the estimate is worth
+                                    // 301us a frame (1707 -> 1406us) and the
+                                    // warning is what it costs.
                                     col w=fill
                                       if empty(fills)
                                         box
@@ -955,7 +974,13 @@ view
                               hovered
                                 y-rail bg=panel
                                 y-scroller bg=faint r=3.0
-                              col w=fill
+                              // Sixty prints at 18px is 1080px of tape in a pane
+                              // that shows a dozen, and a beat prepends to it —
+                              // so every frame reshaped a list that is almost
+                              // entirely below the fold. The memo is on the print
+                              // rather than on the row's position, which is what
+                              // survives the prepend.
+                              col w=fill virtual-row=18.0
                                 if empty(tape_prints)
                                   box
                                     with
@@ -965,7 +990,8 @@ view
                                       align-y=center
                                     text "Waiting for a print." size=11.0 @text-faint
                                 for print in tape_prints
-                                  TradeRow print=print
+                                  lazy print as printed
+                                    TradeRow print=printed #print(printed.tid)
                             rule horizontal thickness=1.0 color=edge
                             row
                               with

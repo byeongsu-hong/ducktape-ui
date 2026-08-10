@@ -118,3 +118,35 @@ test trading_a_beat_moves_the_price_the_position_and_the_levels
   dispatch market_ticked(demo_tick_at(64500.0))
   expect text "+$508.8K" within held
   expect no text "+$553.8K"
+
+// Every print on the tape draws its own figures.
+//
+// The tape's rows sit behind a `lazy` keyed on the print they draw, and the one
+// failure a memo has is serving the row it built last time. Nothing had ever
+// asserted a figure inside this pane — `trading_a_full_book_leaves_the_panes_
+// under_it_their_height` checks that it has a height, and the render tests check
+// that a screen with a tape on it draws — so a tape that drew its first print
+// three times had a height, a heading and three rows, and looked right.
+//
+// Three prints, three sizes, and the middle one on the other side of the spread:
+// a `Hash` that does not separate them collapses the rows onto one cache entry,
+// and the figures that go missing are whichever prints lost the collision.
+test trading_every_print_on_the_tape_draws_its_own_figures
+  preset held
+  viewport 1660 820
+  target app = #app
+  target printed = app/terminal-fit/trade/book/tape-list
+  expect text "0.53" within printed
+  expect text "1.2" within printed
+  expect text "0.08" within printed
+  // The sell, which is the one print whose price differs from the other two.
+  expect text "63,999.00" within printed
+  // And the half a per-position memo can actually get wrong. A beat prepends,
+  // so afterwards every row on the tape draws a different print than it drew a
+  // frame ago — row one draws the arrival, row two draws what row one drew.
+  // A row that did not notice keeps painting the print it was built for.
+  dispatch market_ticked(demo_tick_printing(64123.0, 7.77))
+  expect text "7.77" within printed
+  expect text "64,123.00" within printed
+  // The old top print is still on the tape, one row further down.
+  expect text "0.53" within printed
