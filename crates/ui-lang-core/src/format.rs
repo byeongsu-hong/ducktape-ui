@@ -143,6 +143,14 @@ fn rewrap_node_metadata(source: &str) -> String {
                 .collect::<Vec<_>>();
             let metadata = metadata.iter().map(String::as_str).collect::<Vec<_>>();
             let merged = merge_metadata(line.trim(), &metadata);
+            if interleaved_metadata(&merged) {
+                for original in &lines[index..end] {
+                    output.push_str(original);
+                    output.push('\n');
+                }
+                index = end;
+                continue;
+            }
             if let Some((parent, metadata)) = split_metadata(&merged)
                 && indent > 0
                 && !restricted_context
@@ -227,16 +235,14 @@ fn split_metadata(source: &str) -> Option<(String, Vec<String>)> {
     let (core, utilities) = split_style_utilities(node);
     let parts = split_words(core);
     let head = parts.first()?;
-    if !wrappable_node(source) {
+    if !wrappable_node(source) || interleaved_metadata(source) {
         return None;
     }
     let component = head.chars().next().is_some_and(char::is_uppercase);
     let mut inline = vec![head.clone()];
     let mut metadata = Vec::new();
     for part in &parts[1..] {
-        if (property(part) && !(head == "keyed" && part.starts_with("by=")))
-            || (component && crate::valid_identifier(part))
-        {
+        if metadata_part(head, component, part) {
             metadata.push(part.to_string());
         } else {
             inline.push(part.to_string());
@@ -252,6 +258,35 @@ fn split_metadata(source: &str) -> Option<(String, Vec<String>)> {
         parent.push_str(route);
     }
     Some((parent, metadata))
+}
+
+fn metadata_part(head: &str, component: bool, part: &str) -> bool {
+    (property(part) && !(head == "keyed" && part.starts_with("by=")))
+        || (component && crate::valid_identifier(part))
+}
+
+/// A line whose metadata-shaped words interleave with other words — such as a
+/// parser-rejected `disabled=a || b` — cannot be rewrapped without tearing the
+/// words apart, so the formatter must preserve the region as written. Binding
+/// words like `draft<->input_draft` stay inline by design and can never
+/// continue a spaced expression, so metadata may hop over them.
+fn interleaved_metadata(source: &str) -> bool {
+    let node = split_top_marker(source, "->").map_or(source, |(node, _)| node);
+    let (core, _) = split_style_utilities(node);
+    let parts = split_words(core);
+    let Some(head) = parts.first() else {
+        return false;
+    };
+    let component = head.chars().next().is_some_and(char::is_uppercase);
+    let mut seen_metadata = false;
+    for part in &parts[1..] {
+        if metadata_part(head, component, part) {
+            seen_metadata = true;
+        } else if seen_metadata && !part.contains("<->") {
+            return true;
+        }
+    }
+    false
 }
 
 fn wrappable_node(source: &str) -> bool {

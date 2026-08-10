@@ -1,17 +1,16 @@
 mod support;
 
 use support::{assert_contains, cases};
-use ui_lang_core::{analyze, compile, format_source};
+use ui_lang_core::{analyze, compile, format_fragment, format_source};
 
 #[test]
 fn format_cases() {
     for case in cases("format") {
-        assert_eq!(
-            format_source(&case.read("as-is.ice")).unwrap(),
-            case.read("to-be.ice"),
-            "{}",
-            case.name()
-        );
+        let source = case.read("as-is.ice");
+        // The formatter also runs on sources the parser rejects and must
+        // preserve what it cannot represent.
+        let formatted = format_source(&source).unwrap_or_else(|_| format_fragment(&source));
+        assert_eq!(formatted, case.read("to-be.ice"), "{}", case.name());
     }
 }
 
