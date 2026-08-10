@@ -111,8 +111,8 @@ use crate::lighter_sign::{PrivateKey, Resting};
 /// the rules are and stays out of the app's vocabulary.
 pub use crate::session::Session;
 use crate::session::{
-    AgentKey, Event, Held, Keystore, PlatformKeystore, PlatformWrap, Secret, Unlock, account,
-    agent, can_trade, load_sealed, step, store_sealed,
+    AgentKey, Event, Guard, Held, Keystore, PlatformKeystore, PlatformWrap, Secret, Unlock,
+    account, agent, can_trade, load_sealed, step, store_sealed,
 };
 use crate::signing::{self, MasterKey, Wallet};
 use crate::venue::{Draft, Network, Signing, Sweep, venue_kind, venue_list, venue_name};
@@ -876,7 +876,10 @@ async fn enrol_one(venue: Venue, address: &str, master: &MasterKey) -> Result<()
     registration(scheme, address, &public, master).await?;
     let name = item(venue, address);
     let secret = Secret::new(bytes);
-    smol::unblock(move || PlatformKeystore.store(&name, &secret))
+    // A trading key is the secret, so the item's own guard is the whole of what
+    // protects it — unlike the sealed wallet blob, which is guarded by the key
+    // that opens it.
+    smol::unblock(move || PlatformKeystore.store(&name, &secret, Guard::UserPresence))
         .await
         .map_err(|failure| failure.message)
 }

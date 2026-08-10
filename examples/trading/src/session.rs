@@ -343,6 +343,29 @@ pub enum Held {
     Declined,
 }
 
+/// What an item needs guarding with, which is not the same question for every
+/// item this app files.
+///
+/// **The owner's decision, 2026-08-10.** A bare secret is protected by the
+/// item's own access control and by nothing else, so it carries one. A sealed
+/// blob is protected by the Secure Enclave key that opens it — which already
+/// demands biometry *per use* — so an access control on the item as well is a
+/// second lock on an empty box, and it is not free: on macOS the read that
+/// satisfies it is a sheet, and putting one in front of ciphertext costs a
+/// prompt to protect nothing an attacker wants.
+///
+/// A parameter rather than sniffing the payload for the sealed marker. The
+/// sniff would be a smaller diff and would tie *storage policy* to *payload
+/// content*, which is the kind of implicit coupling that is right until the day
+/// something else starts with the same bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Guard {
+    /// The item is the secret. Its access control is the whole protection.
+    UserPresence,
+    /// The item is ciphertext for a key that guards itself. See above.
+    Sealed,
+}
+
 /// The three things a platform has to be able to do for the app to have an
 /// unlock at all. Nothing else in this file touches the platform, which is why
 /// everything else in this file is decidable on any machine.
@@ -367,7 +390,7 @@ pub trait Keystore {
     /// Replace whatever is stored for this account. Must not lose the secret it
     /// was asked to replace when it fails — see the macOS impl for the price of
     /// that.
-    fn store(&self, account: &str, secret: &Secret) -> Result<(), KeystoreError>;
+    fn store(&self, account: &str, secret: &Secret, guard: Guard) -> Result<(), KeystoreError>;
     /// Read the secret, raising whatever prompt guards it. `Err` is the
     /// keychain itself failing and only that; a first run and a decline are
     /// `Held::Missing` and `Held::Declined`, because they are answers, not
@@ -421,13 +444,22 @@ const SEALED: &[u8] = b"ducktape-sealed-1:";
 /// replacement, preservation and access control is unchanged and still its own
 /// — this only changes what it is handed.
 ///
-/// ponytail: the item keeps its own user-presence guard, so a wallet read can
-/// cost two assertions — one for the item, one for the key that opens it. The
-/// second is the one that matters and the first is now redundant; dropping it
-/// needs `Keystore::store` to learn the difference between a sealed blob and a
-/// bare secret, which is trait surgery for a sheet. Sheet counts are on the
-/// macOS list in `custody.rs` either way, and this is the first thing to
-/// measure there.
+/// The sheet arithmetic, since this is where it is decided. A wallet read is
+/// **one** assertion: the item carries no access control of its own (see
+/// `Guard`), and the Enclave key that opens the blob demands biometry once, per
+/// use. It was briefly two, and that was a lock on an empty box.
+///
+/// ponytail: a *session* unlock still costs one assertion per enrolled network,
+/// because each trading key is its own guarded item and macOS raises a sheet
+/// per guarded read. Collapsing those needs one `LAContext` shared across the
+/// reads via `kSecUseAuthenticationContext`. `ItemSearchOptions` exposes that
+/// setter safely, but its bound is core-foundation's `TCFType` and an
+/// `LAContext` is an Objective-C object — `Retained<LAContext>` does not
+/// implement it, and every bridge across is `unsafe`, which this workspace
+/// forbids in `Cargo.toml` rather than by habit. The upgrade path is upstream:
+/// an overload on `security-framework` taking objc2's type, or the `TCFType`
+/// impl. Filed as its own task. Until then an owner answers once per network,
+/// once per session, and the common path — reading the wallet — is one.
 pub fn store_sealed(
     wrap: &impl Wrap,
     store: &impl Keystore,
@@ -436,7 +468,7 @@ pub fn store_sealed(
 ) -> Result<(), KeystoreError> {
     let mut blob = SEALED.to_vec();
     blob.extend_from_slice(&wrap.seal(account, secret)?);
-    store.store(account, &Secret::new(blob))
+    store.store(account, &Secret::new(blob), Guard::Sealed)
 }
 
 /// Read one back, and bring an item from before the envelope forward.
@@ -567,7 +599,7 @@ mod keychain {
         unlock,
     };
 
-    use super::{PlatformWrap, Wrap};
+    use super::{Guard, PlatformWrap, Wrap};
 
     use security_framework::access_control::{ProtectionMode, SecAccessControl};
     use security_framework::base::Error;
@@ -613,18 +645,23 @@ mod keychain {
     /// One item, built the way *this* code says it should be: the guard is made
     /// fresh each call because `set_access_control` consumes one, and putting a
     /// replaced secret back needs its own.
-    fn add(account: &str, secret: &Secret) -> Result<(), KeystoreError> {
-        let guard = SecAccessControl::create_with_protection(
-            Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
-            AccessControlOptions::USER_PRESENCE.bits(),
-        )
-        .map_err(|error| {
-            KeystoreError::new(describe(error.code(), "building the Touch ID guard"))
-        })?;
-
+    fn add(account: &str, secret: &Secret, guard: Guard) -> Result<(), KeystoreError> {
         let mut options = query(account);
         options.set_label(LABEL);
-        options.set_access_control(guard);
+        // A sealed blob gets no access control of its own. What opens it is a
+        // Secure Enclave key with `BIOMETRY_CURRENT_SET` on every use, so the
+        // assertion still happens — once, over the thing that matters, instead
+        // of twice with the first one standing over ciphertext.
+        if guard == Guard::UserPresence {
+            let control = SecAccessControl::create_with_protection(
+                Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
+                AccessControlOptions::USER_PRESENCE.bits(),
+            )
+            .map_err(|error| {
+                KeystoreError::new(describe(error.code(), "building the Touch ID guard"))
+            })?;
+            options.set_access_control(control);
+        }
         set_generic_password_options(secret.expose(), options)
             .map_err(|error| KeystoreError::new(describe(error.code(), "storing the secret")))
     }
@@ -702,7 +739,7 @@ mod keychain {
         /// without presence. It buys the two outcomes worth having — a decline
         /// aborts the replace with the old secret untouched, and a failed add
         /// is followed by a restore.
-        fn store(&self, account: &str, secret: &Secret) -> Result<(), KeystoreError> {
+        fn store(&self, account: &str, secret: &Secret, guard: Guard) -> Result<(), KeystoreError> {
             let previous = match read(account) {
                 Ok(bytes) => Some(Secret::new(bytes)),
                 Err(status) if refusal(status) == Refusal::Missing => None,
@@ -724,7 +761,7 @@ mod keychain {
             // real reason.
             let _ = delete_generic_password_options(query(account));
 
-            let Err(failure) = add(account, secret) else {
+            let Err(failure) = add(account, secret, guard) else {
                 return Ok(());
             };
             let Some(previous) = previous else {
@@ -733,7 +770,7 @@ mod keychain {
             // Put back exactly what was replaced. If even that fails the secret
             // really is gone, and the only thing left to do about it is say so
             // in words a caller can act on.
-            match add(account, &previous) {
+            match add(account, &previous, guard) {
                 Ok(()) => Err(KeystoreError::new(format!(
                     "{}; the secret it replaced is still there",
                     failure.message
@@ -908,7 +945,7 @@ impl Keystore for PlatformKeystore {
         Unlock::Unavailable(UNAVAILABLE.to_owned())
     }
 
-    fn store(&self, _account: &str, _secret: &Secret) -> Result<(), KeystoreError> {
+    fn store(&self, _account: &str, _secret: &Secret, _guard: Guard) -> Result<(), KeystoreError> {
         Err(KeystoreError::new(UNAVAILABLE.to_owned()))
     }
 
@@ -929,6 +966,9 @@ mod tests {
     struct Memory {
         answer: Unlock,
         held: RefCell<HashMap<String, Vec<u8>>>,
+        /// What each item was asked to be guarded with, so a test can hold the
+        /// one thing the macOS `add` does with that answer.
+        guards: RefCell<HashMap<String, Guard>>,
     }
 
     impl Memory {
@@ -936,6 +976,7 @@ mod tests {
             Self {
                 answer,
                 held: RefCell::new(HashMap::new()),
+                guards: RefCell::new(HashMap::new()),
             }
         }
     }
@@ -945,10 +986,11 @@ mod tests {
             self.answer.clone()
         }
 
-        fn store(&self, account: &str, secret: &Secret) -> Result<(), KeystoreError> {
+        fn store(&self, account: &str, secret: &Secret, guard: Guard) -> Result<(), KeystoreError> {
             self.held
                 .borrow_mut()
                 .insert(account.to_owned(), secret.expose().to_vec());
+            self.guards.borrow_mut().insert(account.to_owned(), guard);
             Ok(())
         }
 
@@ -1447,7 +1489,7 @@ mod tests {
         // wired under only some of them, which is when this should stop.
         assert_eq!(
             keystore
-                .store(ACCOUNT, &Secret::new(vec![1, 2, 3]))
+                .store(ACCOUNT, &Secret::new(vec![1, 2, 3]), Guard::UserPresence)
                 .expect_err("a build with no keychain stored a secret")
                 .message,
             UNAVAILABLE
@@ -1488,7 +1530,7 @@ mod tests {
             "a first run must read as nothing stored yet, not as a failure"
         );
         keystore
-            .store(ACCOUNT, &Secret::new(bytes.clone()))
+            .store(ACCOUNT, &Secret::new(bytes.clone()), Guard::UserPresence)
             .expect("the in-memory keychain stores");
         let Held::Secret(stored) = keystore.load(ACCOUNT).expect("stored secrets load") else {
             panic!("a stored secret is there");
@@ -1939,7 +1981,9 @@ mod tests {
         let secret = Secret::new(b"a #523 key, stored as itself....".to_vec());
 
         // The old storage form, planted by hand.
-        store.store(ACCOUNT, &secret).expect("the legacy item");
+        store
+            .store(ACCOUNT, &secret, Guard::UserPresence)
+            .expect("the legacy item");
         assert_eq!(store.held.borrow()[ACCOUNT], secret.expose());
 
         let Held::Secret(back) = load_sealed(&wrap, &store, ACCOUNT).expect("read back") else {
@@ -1984,5 +2028,44 @@ mod tests {
             Held::Missing
         ));
         assert!(wrap.opened.borrow().is_empty());
+    }
+
+    /// A sealed blob asks for no guard of its own; a bare secret still does.
+    ///
+    /// Both halves, because the change is a *removal* and a removal that went
+    /// one step too far would look exactly like this one working. What the
+    /// macOS `add` does with the answer — build an access control, or not — is
+    /// on the list of things only a Mac can show; what is decided here is which
+    /// answer each kind of item gets, and that is decidable anywhere.
+    #[test]
+    fn only_a_bare_secret_is_guarded_by_its_own_item() {
+        let store = Memory::new(Unlock::Platform);
+        let wrap = Flip::new();
+        let secret = Secret::new(b"the account's own thirty-two byte".to_vec());
+
+        // The wallet: ciphertext, and the Enclave key that opens it carries the
+        // biometry. A second sheet here would stand over bytes an attacker
+        // cannot use.
+        store_sealed(&wrap, &store, ACCOUNT, &secret).expect("sealed and filed");
+        assert_eq!(store.guards.borrow()[ACCOUNT], Guard::Sealed);
+
+        // A trading key, through the same keychain: the item *is* the secret,
+        // so the item is what has to be guarded. This half pins the seam's
+        // shape — two distinct answers, carried to the keystore rather than
+        // inferred there — and not the call site: `enrol_one` naming
+        // `Guard::UserPresence` is a constant in `custody.rs` that no Linux
+        // test can reach, because that path holds `PlatformKeystore` directly.
+        // What the macOS `add` then *does* with either answer is on the list
+        // only a Mac can settle.
+        const AGENT_ITEM: &str = "hyperliquid-mainnet:0x1025d5c2";
+        store
+            .store(AGENT_ITEM, &secret, Guard::UserPresence)
+            .expect("filed");
+        assert_eq!(store.guards.borrow()[AGENT_ITEM], Guard::UserPresence);
+        assert_ne!(
+            store.guards.borrow()[ACCOUNT],
+            store.guards.borrow()[AGENT_ITEM],
+            "the two kinds of item are not guarded the same way",
+        );
     }
 }

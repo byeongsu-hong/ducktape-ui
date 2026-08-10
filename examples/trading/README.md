@@ -739,7 +739,17 @@ that cannot leave the chip.
 | Plaintext lifetime | after a fresh biometric assertion, in this process, until the `Secret` wrapping it drops |
 
 Sealing uses the public half, so storing costs no prompt. Opening is the private
-half, and that is the assertion. `BIOMETRY_CURRENT_SET` is deliberately stricter
+half, and that is the assertion — **one** of them. The sealed item carries no
+access control of its own, because ciphertext guarded by a key that already
+demands biometry per use is a lock on an empty box, and on macOS that lock is a
+sheet. A bare secret — every trading key — still carries its guard, because
+there the item *is* the secret. `Keystore::store` takes which one rather than
+inferring it from the payload.
+
+A *session* unlock still costs one assertion per enrolled network: each trading
+key is its own guarded item and macOS raises a sheet per guarded read.
+Collapsing those needs a single `LAContext` shared across the reads. That is
+blocked, not skipped — see below. `BIOMETRY_CURRENT_SET` is deliberately stricter
 than the item's `USER_PRESENCE`: enrolling a new finger invalidates the wrapping
 key, so somebody who learns the passcode and adds their own biometry cannot then
 unwrap the account. The trade is real — an owner who re-enrols their own finger
