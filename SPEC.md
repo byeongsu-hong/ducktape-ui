@@ -909,7 +909,7 @@ keyed_property = ("w=" | "h=") length | "gap=" expr
                | ("p=" | "px=" | "py="
                  | "pt=" | "pr=" | "pb="
                  | "pl=") expr
-               | "max-w=" expr
+               | "max-w=" expr | "virtual-row=" expr
                | "align=" ("start" | "center" | "end")
 lazy_node      = "lazy" expr "as" name id? INDENT node
 markdown_view  = "markdown" name id? markdown_property* "->" route
@@ -2159,6 +2159,13 @@ native keyed-column setter: spacing, uniform/axis/per-side padding, every
 child fill factors are bounded against the rendered item count so the native
 `u16` sum cannot overflow.
 
+A keyed column also takes `virtual-row=`, described below. The key is what
+makes that combination the useful one: virtualization needs per-row state to
+survive the list changing under it, and the key is already the answer to whose
+state is whose. A key is `bool`, `i64`, or `f64`, so identity there is the
+key's 64-bit image rather than `PartialEq` — a row keyed `NaN` keeps its state
+instead of being a new row every pass, and `-0.0` is its own row.
+
 `lazy dependency as cached` rebuilds its one child subtree only when the
 dependency hash changes. The subtree also survives unmounting: when a `match`
 arm switch or a trimmed list tears the mount down, the built widget state is
@@ -3345,7 +3352,7 @@ The implemented native nodes are:
 | `theme` | one child with default/app/all built-in iced themes and checked text color plus solid/linear background |
 | `if` | includes its children when a bool expression is true |
 | `for` | iterates a list and adds one typed item binding |
-| `keyed` | repeats one child template with a bool/i64/f64 identity key and native column sizing/alignment |
+| `keyed` | repeats one child template with a bool/i64/f64 identity key and native column sizing/alignment; `virtual-row=` lays out only the visible rows while per-row state still follows the key |
 | `lazy` | caches one owned static child subtree by a checked hashable dependency |
 | `markdown` | renders owned parsed/replaced/appended content, exposes image URIs, all Settings and Style fields, str link events, and typed custom Viewer factories |
 | `table` | maps typed rows into arbitrary structured headers/cells with complete sizing, padding, separator and alignment options |
@@ -3396,6 +3403,27 @@ they stay in the tree; they are simply not measured, drawn, or offered events
 while offscreen. Mount it inside a `scroll`. The estimate only needs the right
 order of magnitude. `wrap` and `align=` are rejected on such a column (`E197`),
 because both need every child measured.
+
+`keyed item in items by=key virtual-row=<estimate>` is the same estimate on a
+keyed column, and it is what a long list of *identified* rows needs. Per-row
+state — the widget tree, the measured height, which row holds keyboard focus,
+and the memo behind a `lazy` row — then follows its key rather than its index,
+so a list that prepends does not hand every row below the new one its
+predecessor's. Without the key, an index-diffed prepend invalidates every
+memoized row on the screen, which costs more than the virtualization saves.
+`align=` is rejected here too (`E197`), for the reason it is rejected on a
+plain column.
+
+**A virtualized row is not an unmounted row.** Rows stay in the tree whether or
+not the viewport can reach them, so a component with `lifetime mounted` under a
+virtualized column keeps its state and its clock while it is scrolled out: an
+animation started when the row arrived goes on running, and scrolling back to
+the row shows it at its true age rather than restarting it. That is the honest
+reading — a row does not become newly-arrived because the reader scrolled to
+it — and it is why `lazy`'s parking lot, which exists for a mount actually torn
+down by a `match` arm switch or a trimmed list, has nothing to do here.
+Scrolling out is not a teardown, and virtualizing a list does not change how
+many rows are built; it changes how many are laid out.
 
 Measuring a row that sits above the viewport moves everything below it, which
 under a `scroll` anchored to the start shifts what the reader is looking at.

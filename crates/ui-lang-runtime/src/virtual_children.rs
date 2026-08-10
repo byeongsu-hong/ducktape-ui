@@ -50,11 +50,23 @@
 //! tech, use [`crate::virtual_list`], which owns its rows and publishes set
 //! metadata and an active descendant for them. A `virtual-row` column is for
 //! long, read-mostly content.
+//!
+//! # Rows can carry keys
+//!
+//! [`virtual_keyed_children`] is the same widget with identity: the caller
+//! hands a key beside every child and per-child state — the widget [`Tree`],
+//! the measured height, which row holds focus — follows the key instead of the
+//! index, exactly as [`iced::widget::keyed_column`] does. That is what lets a
+//! list whose newest row arrives on **top** be virtualized at all: under index
+//! diffing a prepend shifts every row's state down one, which rebuilds every
+//! memoized row and hands every measured height to its neighbour. Mounting is
+//! still a window over the viewport; keys decide only whose state is whose.
 
 use iced::advanced::widget::operation::Focusable;
 use iced::advanced::widget::{Id, Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
+use rustc_hash::FxHashMap;
 
 /// Extra rows kept live on each side of the viewport so a scroll of a row or
 /// two reveals something already measured.
@@ -77,8 +89,57 @@ pub fn virtual_children<'a, Message, Theme, Renderer>(
 ) -> VirtualChildren<'a, Message, Theme, Renderer> {
     VirtualChildren {
         children,
+        keys: Vec::new(),
         estimated_height: estimated_height.max(1.0),
         spacing: 0.0,
+    }
+}
+
+/// [`virtual_children`] with per-row identity: child state follows its key
+/// through inserts and reordering rather than its position.
+pub fn virtual_keyed_children<'a, Message, Theme, Renderer>(
+    children: Vec<(u64, Element<'a, Message, Theme, Renderer>)>,
+    estimated_height: f32,
+) -> VirtualChildren<'a, Message, Theme, Renderer> {
+    let (keys, children) = children.into_iter().unzip();
+    VirtualChildren {
+        children,
+        keys,
+        estimated_height: estimated_height.max(1.0),
+        spacing: 0.0,
+    }
+}
+
+/// An Ice keyed-column key as the 64 bits this widget identifies a row by.
+///
+/// Ice keys are `bool`, `i64`, or `f64`, and each has a lossless 64-bit image,
+/// so this is identity rather than hashing: no collisions to accept. Bit
+/// identity also settles the two values `PartialEq` — what
+/// [`iced::widget::keyed_column`] compares keys with — answers badly for. A row
+/// keyed `NaN` matches no key including its own, so under `PartialEq` it is a
+/// different row every pass and can never keep state; here it keeps it. And
+/// `-0.0` is its own row rather than `0.0`'s, which is what a list holding both
+/// needs, since it holds two items either way.
+pub trait VirtualKey: Copy {
+    /// This key's 64-bit image.
+    fn virtual_key(self) -> u64;
+}
+
+impl VirtualKey for bool {
+    fn virtual_key(self) -> u64 {
+        u64::from(self)
+    }
+}
+
+impl VirtualKey for i64 {
+    fn virtual_key(self) -> u64 {
+        self.cast_unsigned()
+    }
+}
+
+impl VirtualKey for f64 {
+    fn virtual_key(self) -> u64 {
+        self.to_bits()
     }
 }
 
@@ -86,6 +147,9 @@ pub fn virtual_children<'a, Message, Theme, Renderer>(
 /// padding, dimensions, and the rest; only per-child layout moves in here.
 pub struct VirtualChildren<'a, Message, Theme, Renderer> {
     children: Vec<Element<'a, Message, Theme, Renderer>>,
+    /// One key per child, or empty for an unkeyed column whose rows are their
+    /// own positions.
+    keys: Vec<u64>,
     estimated_height: f32,
     spacing: f32,
 }
@@ -132,6 +196,10 @@ impl Live {
 struct State {
     /// Real heights for children that have been laid out, `None` until then.
     measured: Vec<Option<f32>>,
+    /// The keys the last pass ran against, so a keyed column can carry
+    /// `measured` and `live.focused` across to whatever index a row moved to.
+    /// Empty for an unkeyed column.
+    keys: Vec<u64>,
     /// The visible region the last pass worked against.
     viewport: Rectangle,
     /// What layout actually measured, so draw and events agree with it.
@@ -228,6 +296,7 @@ where
     fn state(&self) -> tree::State {
         tree::State::new(State {
             measured: vec![None; self.children.len()],
+            keys: self.keys.clone(),
             ..State::default()
         })
     }
@@ -237,16 +306,63 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&self.children);
-        let state = tree.state.downcast_mut::<State>();
-        state.measured.resize(self.children.len(), None);
-        if state
+        if self.keys.is_empty() {
+            tree.diff_children(&self.children);
+            let state = tree.state.downcast_mut::<State>();
+            state.measured.resize(self.children.len(), None);
+            if state
+                .live
+                .focused
+                .is_some_and(|index| index >= self.children.len())
+            {
+                state.live.focused = None;
+            }
+            return;
+        }
+
+        let Tree {
+            state, children, ..
+        } = tree;
+        let state = state.downcast_mut::<State>();
+        let previous = std::mem::take(&mut state.keys);
+
+        // Verbatim `iced::widget::keyed::Column::diff`: child widget state
+        // moves to wherever its key went, so a prepend does not shift every
+        // row's memo, cursor, and hover onto its neighbour.
+        tree::diff_children_custom_with_search(
+            children,
+            &self.children,
+            |tree, child| child.as_widget().diff(tree),
+            |index| {
+                self.keys.get(index).or_else(|| self.keys.last()).copied()
+                    != previous.get(index).copied()
+            },
+            |child| Tree::new(child.as_widget()),
+        );
+
+        // Heights are the same kind of per-row state and move the same way. A
+        // list that prepends would otherwise hand every row below the new one
+        // the height of its predecessor, which is a visible jump the moment
+        // rows are not all one height.
+        let heights: FxHashMap<u64, f32> = previous
+            .iter()
+            .zip(&state.measured)
+            .filter_map(|(key, height)| height.map(|height| (*key, height)))
+            .collect();
+        state.measured = self
+            .keys
+            .iter()
+            .map(|key| heights.get(key).copied())
+            .collect();
+        // And so does the focused row: it is measured wherever it sits, and an
+        // index pointing at its neighbour instead means the focused row stops
+        // being measured, which is how focus gets lost for good.
+        state.live.focused = state
             .live
             .focused
-            .is_some_and(|index| index >= self.children.len())
-        {
-            state.live.focused = None;
-        }
+            .and_then(|index| previous.get(index))
+            .and_then(|key| self.keys.iter().position(|candidate| candidate == key));
+        state.keys.clone_from(&self.keys);
     }
 
     fn size(&self) -> Size<Length> {
@@ -730,6 +846,74 @@ mod tests {
             tree.state.downcast_ref::<State>().live.focused,
             None,
             "and once it loses focus it stops being measured"
+        );
+    }
+
+    /// Keys move per-row state to wherever the row went. The list this exists
+    /// for grows on **top**, and under index diffing a prepend hands every row
+    /// below the new one its predecessor's widget state, its measured height,
+    /// and — worst — the focus flag that decides who stays measured. Each of
+    /// those is asserted separately below, because the height remap and the
+    /// tree remap are different code answering the same question.
+    #[test]
+    fn per_row_state_follows_the_key_when_a_row_is_prepended() {
+        type Row = Element<'static, (), iced::Theme, iced_test::renderer::Renderer>;
+
+        // Distinct heights, so a height that stayed on its index is a
+        // different number rather than a coincidence.
+        fn height_of(key: u64) -> f32 {
+            key as f32 * 11.0
+        }
+
+        fn rows(keys: &[u64]) -> Vec<(u64, Row)> {
+            keys.iter()
+                .map(|key| {
+                    (
+                        *key,
+                        Element::new(FocusableRow {
+                            height: height_of(*key),
+                        }),
+                    )
+                })
+                .collect()
+        }
+
+        let renderer = headless_renderer();
+        let mut widget = virtual_keyed_children(rows(&[1, 2, 3]), 11.0);
+        let mut tree =
+            Tree::new(&widget as &dyn Widget<(), iced::Theme, iced_test::renderer::Renderer>);
+        // Tall enough that every row is measured for real.
+        let _ = widget.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(240.0, 1_000.0)),
+        );
+        // Focus the middle row the way a click does: from inside its own
+        // `update`, with the widget's own record of it set as `track_focus`
+        // would have.
+        tree.children[1].state.downcast_mut::<FocusState>().focused = true;
+        tree.state.downcast_mut::<State>().live.focused = Some(1);
+
+        // A newer row arrives on top.
+        virtual_keyed_children(rows(&[9, 1, 2, 3]), 11.0).diff(&mut tree);
+
+        assert_eq!(
+            tree.state.downcast_ref::<State>().measured,
+            vec![None, Some(11.0), Some(22.0), Some(33.0)],
+            "measured heights follow their key, and the new row has none yet"
+        );
+        assert!(
+            tree.children[2].state.downcast_ref::<FocusState>().focused,
+            "the focused row's widget state moved down with its key"
+        );
+        assert!(
+            !tree.children[1].state.downcast_ref::<FocusState>().focused,
+            "and did not stay behind on the index it used to sit at"
+        );
+        assert_eq!(
+            tree.state.downcast_ref::<State>().live.focused,
+            Some(2),
+            "so the row still measured off-window is the one actually focused"
         );
     }
 

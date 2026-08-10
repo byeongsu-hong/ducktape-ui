@@ -992,6 +992,16 @@ fn direct_call_cost() {
 /// actually built, so a redraw that rebuilds a memoized row is visible here and
 /// nowhere else. Remove the `lazy`, or give `Fill` a `Hash` that does not track
 /// what the row renders, and the counts below move.
+///
+/// The list is virtualized now (`keyed ... virtual-row=26.0`) and **these
+/// numbers did not move**: 200/0/1 before and after, which is the honest thing
+/// to record about what virtualization is. It skips *layout*, not building — a
+/// row the viewport cannot reach still has its `Element` constructed, and
+/// construction is where `fill_label` is called. So a virtualized-out row is
+/// not counted as a rebuild here for the plain reason that it is not one; it
+/// is not torn down, not unmounted, and not rebuilt when it scrolls back. What
+/// virtualization took off the frame is measured by `frame_panels` instead,
+/// where the row that moved is `fill rows`.
 #[test]
 #[ignore = "performance contract, run explicitly: counts fill rows rebuilt per redraw"]
 fn fills_stay_memoized_performance_contract() {

@@ -170,15 +170,37 @@ pub(in crate::codegen) fn render_keyed_column(
     let child_scope = format!("format!(\"{{}}/key({{}})\", {scope}, __key)");
     let child = render_node(child, document, message, &child_env, &child_scope, slot)?;
     let mut code = format!(
-        "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}.iter().cloned() {{ let __key = {key}; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }} let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>(); let __layout = ::iced::widget::keyed_column(__children)"
+        "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}.iter().cloned() {{ let __key = {key}; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }} let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>();"
     );
-    if let Some(spacing) = keyed.spacing {
+    let spacing = keyed
+        .spacing
+        .map(|spacing| resolved_expr_use_code(program, spacing, env, ValueMode::Owned))
+        .transpose()?;
+    if let Some(virtual_row) = keyed.virtual_row {
+        // Same shape a virtualized `col` takes: an ordinary column keeps
+        // padding, dimensions, and max-width, and only per-child layout moves
+        // inside, where the rows the viewport cannot reach are never laid out
+        // and so never shape their text. The keys ride along so per-row state
+        // still follows its row rather than its index. Spacing goes in with
+        // the rows, since the outer column has one child to put it between.
+        let estimate = resolved_expr_use_code(program, virtual_row, env, ValueMode::Owned)?;
+        let spacing = spacing.as_ref().map_or_else(String::new, |spacing| {
+            format!(".spacing(::ui_lang_runtime::bounded_spacing({spacing}, __child_count))")
+        });
         write!(
             code,
-            ".spacing(::ui_lang_runtime::bounded_spacing({}, __child_count))",
-            resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
+            " let __children = __children.into_iter().map(|(__key, __child)| (::ui_lang_runtime::VirtualKey::virtual_key(__key), __child)).collect::<::std::vec::Vec<_>>(); let __layout = ::iced::widget::column(::std::vec![::iced::Element::from(::ui_lang_runtime::virtual_keyed_children(__children, ({estimate}) as f32){spacing})])"
         )
         .unwrap();
+    } else {
+        code.push_str(" let __layout = ::iced::widget::keyed_column(__children)");
+        if let Some(spacing) = &spacing {
+            write!(
+                code,
+                ".spacing(::ui_lang_runtime::bounded_spacing({spacing}, __child_count))"
+            )
+            .unwrap();
+        }
     }
     if let Some(padding) = resolved_keyed_padding_code(&keyed.padding, program, env)? {
         write!(code, ".padding({padding})").unwrap();
@@ -201,6 +223,8 @@ pub(in crate::codegen) fn render_keyed_column(
         )
         .unwrap();
     }
+    // Only reachable on the `keyed_column` path: `E197` rejects `align=`
+    // beside `virtual-row=`, and a plain `Column` spells this `align_x`.
     if let Some(align) = keyed.align {
         let align = match align {
             FlexAlignment::Start => "Start",

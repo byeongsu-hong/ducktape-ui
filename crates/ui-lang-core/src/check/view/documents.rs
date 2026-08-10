@@ -128,12 +128,23 @@ pub(in crate::check) fn infer_documents_group(
                 ),
                 (&options.padding.left, CheckedViewExprRole::KeyedPaddingLeft),
                 (&options.max_width, CheckedViewExprRole::KeyedMaxWidth),
+                (&options.virtual_row, CheckedViewExprRole::KeyedVirtualRow),
             ] {
                 if let Some(value) = value {
                     let actual = retained_view_expr_type(value, env, document, span, role)?;
                     require_type(&actual, &Type::F64, span)?;
                     require_f32_literal_range(value, 0.0, None, "keyed metric", span)?;
                 }
+            }
+            // Same rule a virtualized `col` obeys, for the same reason: only
+            // the rows the viewport can reach are laid out, and cross-axis
+            // alignment needs the widest of all of them.
+            if options.virtual_row.is_some() && options.align.is_some() {
+                return Err(Error::new(
+                    "E197",
+                    span,
+                    "a virtual-row keyed column cannot set align: only mounted rows are laid out",
+                ));
             }
             infer_view(child, &child_env, document, signatures, ids)?;
         }

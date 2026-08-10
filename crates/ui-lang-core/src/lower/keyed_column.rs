@@ -37,6 +37,7 @@ pub(crate) struct ResolvedKeyedColumn {
     pub(crate) spacing: Option<CheckedExprUseId>,
     pub(crate) padding: ResolvedKeyedPadding,
     pub(crate) max_width: Option<CheckedExprUseId>,
+    pub(crate) virtual_row: Option<CheckedExprUseId>,
     pub(crate) align: Option<FlexAlignment>,
     pub(crate) origin: OriginId,
 }
@@ -145,6 +146,7 @@ impl Lowerer {
             ),
             (layout.padding.left, CheckedViewExprRole::KeyedPaddingLeft),
             (layout.max_width, CheckedViewExprRole::KeyedMaxWidth),
+            (layout.virtual_row, CheckedViewExprRole::KeyedVirtualRow),
         ] {
             if let Some(value) = value {
                 let ty = self.validate_keyed_expression(
@@ -182,6 +184,7 @@ impl Lowerer {
                 left: layout.padding.left,
             },
             max_width: layout.max_width,
+            virtual_row: layout.virtual_row,
             align: layout.align,
             origin: checked_view.origin,
         };
