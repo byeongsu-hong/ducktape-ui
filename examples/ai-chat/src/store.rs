@@ -27,6 +27,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
+use smol::channel::{Receiver, Sender};
 
 use crate::codex::{CodexError, Entry, Session};
 
@@ -220,12 +221,12 @@ fn chats_in(dir: &Path) -> Vec<Chat> {
 /// wrote, so the list usually arrives at once. It is still published as it
 /// fills rather than when it is done, because the cost is a directory that has
 /// grown, and a list that only appears when complete looks broken while it does.
-pub fn scan_chats() -> smol::channel::Receiver<Scan> {
+pub fn scan_chats() -> Receiver<Scan> {
     scan_in(sessions_dir())
 }
 
-fn scan_in(dir: PathBuf) -> smol::channel::Receiver<Scan> {
-    let (sender, receiver) = smol::channel::unbounded();
+fn scan_in(dir: PathBuf) -> Receiver<Scan> {
+    let (sender, receiver) = scan_channel();
     std::thread::spawn(move || {
         let files = files(&dir);
         let total = files.len() as i64;
@@ -247,8 +248,9 @@ fn scan_in(dir: PathBuf) -> smol::channel::Receiver<Scan> {
                     found: found.len() as i64,
                     total,
                 };
-                // A closed channel is the window having moved on.
-                if sender.send_blocking(scan).is_err() {
+                // A closed channel is the window having moved on. Each
+                // complete list supersedes the progress snapshot before it.
+                if !publish_scan(&sender, scan) {
                     return;
                 }
             }
@@ -258,15 +260,26 @@ fn scan_in(dir: PathBuf) -> smol::channel::Receiver<Scan> {
         }
         // An empty store still has to say it finished, or the bar never leaves.
         if files.is_empty() {
-            let _ = sender.send_blocking(Scan {
-                chats: Vec::new(),
-                ratio: 1.0,
-                found: 0,
-                total: 0,
-            });
+            let _ = publish_scan(
+                &sender,
+                Scan {
+                    chats: Vec::new(),
+                    ratio: 1.0,
+                    found: 0,
+                    total: 0,
+                },
+            );
         }
     });
     receiver
+}
+
+fn scan_channel() -> (Sender<Scan>, Receiver<Scan>) {
+    smol::channel::bounded(1)
+}
+
+fn publish_scan(sender: &Sender<Scan>, scan: Scan) -> bool {
+    sender.force_send(scan).is_ok()
 }
 
 /// Open a chat, off the frame loop.
@@ -444,6 +457,28 @@ mod tests {
         row.body = body.to_owned();
         row.turn = 1;
         row
+    }
+
+    #[test]
+    fn scan_buffer_keeps_latest_progress_and_stops_without_a_receiver() {
+        let step = |found: i64| Scan {
+            chats: Vec::new(),
+            ratio: found as f64 / 3.0,
+            found,
+            total: 3,
+        };
+        let (sender, receiver) = scan_channel();
+        assert_eq!(receiver.capacity(), Some(1));
+        assert!(publish_scan(&sender, step(1)));
+        assert!(publish_scan(&sender, step(2)));
+        assert_eq!(receiver.len(), 1);
+        assert_eq!(receiver.recv_blocking().expect("latest scan").found, 2);
+
+        drop(receiver);
+        assert!(
+            !publish_scan(&sender, step(3)),
+            "the scan must stop when the window stops listening"
+        );
     }
 
     /// One turn as this window records it: what was asked, what the model was
