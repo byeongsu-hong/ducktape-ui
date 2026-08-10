@@ -52,23 +52,33 @@ pub(in crate::codegen) fn render_structure(
             let sensor = program.resolved_sensor(node)?;
             render_resolved_sensor(sensor, program, message, env, content)
         }
-        // Neither responsive arm memoizes what its closure builds, and the
-        // blocker is the contents rather than the key. `MemoLazy` stores an
-        // `Element<'static>`; a responsive subtree may hold widgets that borrow
-        // the app, and `input` lowers to `text_input(hint, &self.field)` — the
-        // `&self` lifetime of `__view`, carried into the element. So wrapping
-        // the builder in `memo_lazy((size, palette), ..)` fails to compile
-        // before a key is ever compared ("returning this value requires that
-        // `'1` must outlive `'static`"), on a terminal whose one `responsive`
-        // spans six `input`s. It is the boundary `check_lazy_subtree` already
-        // polices with E139 — `lazy` refuses those widgets up front, and
-        // `responsive` has no such restriction for codegen to lean on.
+        // Neither responsive arm memoizes what its closure builds, and it
+        // stays that way for two reasons that survive each other.
         //
-        // The obvious suspects are innocent, which is why this is written down:
-        // no build-time read under a responsive sees the clock (the trading
-        // view reads `clock`, a state field a tick moves), and a mounted
-        // animation reads its frame time inside `.style()`, which runs at draw
-        // — a memoized element would keep animating either way.
+        // The compile failure first: `MemoLazy` stores an `Element<'static>`,
+        // and wrapping the builder in `memo_lazy((size, palette), ..)` fails
+        // ("returning this value requires that `'1` must outlive `'static`").
+        // The lifetime is pinned by a mounted animation's `.style()` closure
+        // reading mounted state off `&self` — NOT by the inputs: `TextInput`
+        // copies its value into an owned `Value` (iced 0.14 has no borrowed
+        // field), and a spike building exactly what codegen emits for six
+        // inputs coerced to `Element<'static>` clean. E139's own sentence
+        // still blames the input borrow; that mechanism is dead, and the
+        // checker owes it a correction.
+        //
+        // Solving the lifetime would not make the memo right. `MemoLazy`
+        // caches the *element*, so an input under a key that omits its value
+        // stops showing what was typed — the unwritten reason E139's ban is
+        // still correct — and this page's only sound key is "everything the
+        // subtree reads", which a market beat changes. Memoizing it by size
+        // is not hard; it is wrong-keyed.
+        //
+        // The obvious suspects are innocent, which is why this is written
+        // down: no build-time read under a responsive sees the clock (the
+        // trading view reads `clock`, a state field a tick moves), and a
+        // memoized element would keep animating either way — the fade
+        // interpolates at draw time; it is the animation's mounted-state
+        // READ, not its motion, that pins the lifetime.
         ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => {
             let program = document;
             let responsive = program.resolved_responsive(node)?;
