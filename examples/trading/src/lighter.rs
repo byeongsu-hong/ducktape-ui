@@ -2859,6 +2859,131 @@ mod tests {
         });
     }
 
+    /// **A whole ladder, on the venue, from the projection the panel drew.**
+    ///
+    /// The grid is arithmetic and is held offline. What no offline test can
+    /// reach is the part that only exists at the exchange: five signatures on
+    /// one key and one nonce sequence, sent one after another, all five taken —
+    /// and five orders resting at five distinct prices rather than four and a
+    /// nonce that was reused.
+    ///
+    /// The rungs come from `order_ladder` rather than from a loop written here,
+    /// because the claim is about *that* projection reaching the venue. Each is
+    /// placed the way `submit_order` places one, which is the only send path
+    /// this app has.
+    ///
+    /// The whole ladder rests a tenth under the mark, between the same two live
+    /// rules the single-order test sits between: far enough below the book that
+    /// nothing can fill, above the venue's price band (`21734`), and each rung
+    /// over the ten-dollar minimum notional (`21706`).
+    #[test]
+    #[ignore = "mints a testnet identity and places a real ladder on Lighter testnet"]
+    fn a_ladder_places_every_rung_and_cancel_all_pulls_them_on_the_test_deployment() {
+        crate::hyperliquid::open_the_wire();
+        let zone = disposable_zone();
+        let held = disposable_identity();
+
+        smol::block_on(async {
+            let markets = lighter_symbols(zone).await.expect("the testnet universe");
+            let btc = markets
+                .iter()
+                .find(|row| row.name == "BTC")
+                .expect("the test deployment lists BTC");
+            let step = market_of(zone, "BTC").await.expect("the market");
+            let tick = 10f64.powi(step.price_decimals as i32);
+            let on_tick = |price: f64| (price * tick).round() / tick;
+            let (from, to) = (on_tick(btc.price * 0.88), on_tick(btc.price * 0.92));
+
+            // The panel's own projection, asked for exactly as the ticket asks
+            // for it.
+            let ladder = crate::venue::order_ladder(
+                crate::Venue::LighterTestnet,
+                "BTC".to_owned(),
+                Some(btc.clone()),
+                true,
+                "0.05".to_owned(),
+                from.to_string(),
+                to.to_string(),
+                "5".to_owned(),
+                false,
+                false,
+                crate::Tif::Gtc,
+                crate::hyperliquid::price_ticket(
+                    (from + to) / 2.0,
+                    "0.05".to_owned(),
+                    "5".to_owned(),
+                    Some(btc.clone()),
+                    true,
+                    0.0,
+                    false,
+                    None,
+                ),
+                String::new(),
+                None,
+                0.0,
+            );
+            assert!(ladder.refusal.is_empty(), "{}", ladder.refusal);
+            assert_eq!(ladder.drafts.len(), 5);
+            eprintln!("the panel drew {}", ladder.heading);
+            for line in &ladder.rows {
+                eprintln!("  {line}");
+            }
+
+            let mut placed = Vec::new();
+            for rung in &ladder.drafts {
+                let index = lighter_place(
+                    zone,
+                    &held.key,
+                    held.account,
+                    held.slot,
+                    "BTC",
+                    Order {
+                        oid: 0,
+                        coin: "BTC".to_owned(),
+                        buy: rung.buy,
+                        price: on_tick(rung.price),
+                        size: rung.size,
+                        ts: 0,
+                    },
+                    rung.reduce_only,
+                    Resting::Deadline,
+                )
+                .await
+                .unwrap_or_else(|failure| {
+                    panic!("rung at {} was refused: {}", rung.price, failure.message)
+                });
+                eprintln!("placed {} as client order {index}", rung.price);
+                placed.push(index);
+            }
+
+            settle("every rung", || {
+                let book = resting(zone, &held, step.id);
+                placed
+                    .iter()
+                    .all(|index| book.contains(index))
+                    .then_some(())
+            });
+            eprintln!("the book lists all {} resting", placed.len());
+
+            // CANCEL ALL is this loop, and it is the loop a ladder that went
+            // wrong is undone by — so the round trip ends with the book exactly
+            // as it started.
+            for index in &placed {
+                lighter_cancel(zone, &held.key, held.account, held.slot, "BTC", *index)
+                    .await
+                    .expect("the venue takes the cancel");
+            }
+            settle("the cancellations", || {
+                let book = resting(zone, &held, step.id);
+                placed
+                    .iter()
+                    .all(|index| !book.contains(index))
+                    .then_some(())
+            });
+            eprintln!("cancelled, and the book stops listing any of them");
+        });
+    }
+
     /// The client order indices this account is resting in one market, read
     /// through the gated endpoint with a token minted for the same key.
     fn resting(zone: Zone, held: &Disposable, market: i64) -> Vec<i64> {

@@ -336,13 +336,21 @@ test trading_an_import_answers_the_account_and_one_press_spends_it
   expect empty(import_phrase)
   expect missing phrase
   // Nothing has been written. What CHECK left is a key waiting for the owner to
-  // say it is theirs, and the step says so in the derivation's own words.
-  expect !empty(pending_wallet())
+  // say it is theirs — `import_address` above *is* that key's address, assigned
+  // from the waiting slot itself — and the step says so in the derivation's own
+  // words.
   expect a11y note value "This phrase is the account 0x9858effd232b4033e47d90003d41ec34ecaeda94. If that is not the address you expect, nothing has been stored — go back and check the words."
   capture import_step
   // THIS IS MINE is the one press an import costs, and what it spends is the
   // key CHECK left waiting.
   click keep
+  // The waiting slot is a process-wide `OnceLock` in `custody.rs` — a key may
+  // not live in Ice state, which is cloned into fixtures and printed by tests —
+  // so it is shared by every generated test in this binary. This is the only
+  // test that ever *fills* it, which is what makes asserting it empty here safe
+  // and asserting it full anywhere else a coin toss: three other tests read it
+  // without ever deriving anything, and each already carried the same claim in
+  // `import_address`. They no longer read it.
   expect empty(pending_wallet())
   expect empty(import_address)
   // What came of the press is said rather than left to an empty panel. *Which*
@@ -371,7 +379,6 @@ test trading_closing_the_import_step_forgets_what_was_typed
   expect empty(import_phrase)
   expect empty(import_passphrase)
   expect empty(import_address)
-  expect empty(pending_wallet())
 
 // One sheet, and everything it authorises named before it is pressed.
 //
@@ -454,7 +461,6 @@ test trading_making_a_wallet_shows_the_words_and_stores_nothing
   // Nothing has been derived and nothing has been kept: the account does not
   // exist anywhere but on this screen until the backup is confirmed.
   expect empty(import_address)
-  expect empty(pending_wallet())
   capture create_words
   // The words come off the screen on the press that says they were copied, and
   // the check arrives in their place.
@@ -499,7 +505,6 @@ test trading_a_wallet_is_not_made_until_the_words_are_read_back
   // And nothing moved: no address, no key waiting, and the words still off the
   // screen rather than offered again as a prompt.
   expect empty(import_address)
-  expect empty(pending_wallet())
   expect create_shown
   expect missing phrase
   expect !empty(create_phrase)

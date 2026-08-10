@@ -115,8 +115,8 @@ use crate::session::{
     account, agent, can_trade, load_sealed, step, store_sealed,
 };
 use crate::signing::{self, MasterKey, Wallet};
-use crate::venue::{Draft, Network, Signing, Sweep, venue_kind, venue_list, venue_name};
-use crate::{Tif, Venue};
+use crate::venue::{Act, Draft, Network, Signing, Sweep, venue_kind, venue_list, venue_name};
+use crate::{OrderKind, Tif, Venue};
 
 /// What one act of custody produced: where the session now stands, and the
 /// sentence the panel owes about it.
@@ -1275,10 +1275,35 @@ fn load_key(scheme: Signing, bytes: &[u8]) -> Result<Loaded, String> {
 /// order: no key means no order at all, whatever is typed. What the ticket is
 /// describing comes second, because it changes with every keystroke and its
 /// sentences are already beside the controls that caused them.
-pub fn order_gate(venue: Venue, session: Session, now_s: i64, draft: Draft) -> String {
+///
+/// The kind chooses which "what the ticket is describing" that is, because a
+/// scale ticket describes a list. Both refusals arrive already worked out — the
+/// draft's own and the ladder's — so this stays the one decision it was rather
+/// than growing a second opinion about either.
+pub fn order_gate(
+    venue: Venue,
+    session: Session,
+    now_s: i64,
+    kind: OrderKind,
+    draft: Draft,
+    ladder: String,
+) -> String {
+    let describes = if kind == OrderKind::Scale {
+        ladder
+    } else {
+        draft.refusal
+    };
+    gated(venue, session, now_s, describes)
+}
+
+/// The session first, then whatever is being sent says about itself.
+///
+/// One fold shared by the button and by the send, so the order the two reasons
+/// come in cannot drift between the screen and the wire.
+fn gated(venue: Venue, session: Session, now_s: i64, refusal: String) -> String {
     match trade_refusal(venue, session, now_s) {
         locked if !locked.is_empty() => locked,
-        _ => draft.refusal,
+        _ => refusal,
     }
 }
 
@@ -1349,7 +1374,10 @@ pub async fn submit_order(
             "There is no confirmed order to send.".to_owned(),
         ));
     };
-    let refused = order_gate(venue, session.clone(), now_s, draft.clone());
+    // Asked of the order in hand rather than of the ticket's kind: everything
+    // that reaches here is one order, a ladder's rungs included, and a rung is
+    // refused for its own reasons or for none.
+    let refused = gated(venue, session.clone(), now_s, draft.refusal.clone());
     if !refused.is_empty() {
         return Err(HlError::new(refused));
     }
@@ -1505,7 +1533,7 @@ pub async fn submit_sweep(
     }
     let mut sent = 0_usize;
     let mut refusals: Vec<String> = Vec::new();
-    if sweep.cancel {
+    if sweep.act == Act::Cancel {
         for order in &sweep.orders {
             match cancel_resting(venue, session.clone(), now_s, order.coin.clone(), order.oid).await
             {
@@ -1516,19 +1544,33 @@ pub async fn submit_sweep(
             }
         }
     } else {
-        for draft in &sweep.drafts {
+        for (at, draft) in sweep.drafts.iter().enumerate() {
             match submit_order(venue, session.clone(), now_s, Some(draft.clone())).await {
                 Ok(_) => sent += 1,
-                Err(error) => refusals.push(format!("{}: {}", draft.coin, error.message)),
+                // Named by the line the panel listed rather than by a second
+                // description of the row. A flatten's rows are one market each
+                // and the ticker told them apart; a ladder's are all one
+                // market, and only the price says which rung the venue turned
+                // down. The frozen line is what the reader agreed to, so it is
+                // what the refusal is reported against.
+                Err(error) => refusals.push(format!(
+                    "{}: {}",
+                    sweep
+                        .rows
+                        .get(at)
+                        .cloned()
+                        .unwrap_or_else(|| draft.coin.clone()),
+                    error.message
+                )),
             }
         }
     }
-    let asked = if sweep.cancel {
+    let asked = if sweep.act == Act::Cancel {
         sweep.orders.len()
     } else {
         sweep.drafts.len()
     };
-    let what = if sweep.cancel { "cancelled" } else { "closed" };
+    let what = sweep.act.done();
     if refusals.is_empty() {
         return Ok(format!("{sent} of {asked} {what}."));
     }

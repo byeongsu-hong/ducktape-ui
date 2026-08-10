@@ -35,6 +35,25 @@ extern crate::venue
   // wire never saw.
   Draft(coin:str, buy:bool, size:f64, price:f64, walked:bool, reduce_only:bool, cross:bool, leverage:f64, notional:f64, margin:f64, liquidation:f64, tp:f64, sl:f64, refusal:str)
   pure order_draft(venue:Venue, coin:str, market:SymbolRow?, buy:bool, size:str, price:f64, walked:bool, reduce_only:bool, cross:bool, tif:Tif, quote:Ticket, tp:str, sl:str, reduce_refusal:str, tp_refusal:str, sl_refusal:str) -> Draft
+  // Which price the ticket's readouts are quoted from, which is not the same
+  // field on every kind: a limit's is typed, a market's is the book's, and a
+  // scale's is the average its rungs fill at. One figure so the value, the
+  // requirement and the cliff cannot each pick their own.
+  pure quoted_price(kind:OrderKind, price:str, from:str, to:str) -> str
+  // A scale ticket's ladder, projected the way one order is: the rungs the
+  // preview draws, the confirmation lists and the wire carries are one value.
+  pure order_ladder(venue:Venue, coin:str, market:SymbolRow?, buy:bool, size:str, from:str, to:str, rungs:str, reduce_only:bool, cross:bool, tif:Tif, quote:Ticket, reduce_refusal:str, account:Account?, held:f64) -> Sweep
+  pure ladder_refused(sweep:Sweep) -> str
+  // What shape the ladder is, for the ticket's own preview: how many orders,
+  // the range they landed on, what one of them carries. Read off the rungs, so
+  // a rung that missed the grid moves the summary rather than hiding behind it.
+  pure ladder_shape(sweep:Sweep) -> [Figure]
+  // What the press freezes, which is one of the two and never both. Answered
+  // as a pair in Rust because an Ice handler cannot branch, and because a kind
+  // that decided only one of them could leave the other standing from the
+  // press before it.
+  pure reviewed_draft(kind:OrderKind, draft:Draft) -> Draft?
+  pure reviewed_ladder(kind:OrderKind, ladder:Sweep) -> Sweep?
   // What pressing send would do, in one line, for the button's accessible name.
   pure order_act(draft:Draft) -> str
   // Whether a confirmation is standing over an order, which is what raises the
@@ -51,6 +70,10 @@ extern crate::venue
   // confirmation reads it through one accessor per line rather than projecting
   // it, so nothing on screen can be a field the send does not carry.
   Sweep()
+  // One figure a frozen list states about itself, already written: the panel
+  // restates and computes nothing, so a number it paints arrives formatted by
+  // whoever worked it out.
+  Figure(label:str, value:str)
   // No venue on a cancel: an order carries the handle its own venue gave it,
   // and pulling one names no network. A close builds a `Draft`, which does.
   pure sweep_orders(orders:[Order]) -> Sweep
@@ -61,6 +84,10 @@ extern crate::venue
   pure sweep_heading(sweep:Sweep?) -> str
   pure sweep_note(sweep:Sweep?) -> str
   pure sweep_rows(sweep:Sweep?) -> [str]
+  // What the list adds up to, for the one act that has figures as well as
+  // rows. Empty for a cancel, which adds up to nothing, and for a flatten,
+  // whose arithmetic is already on the panel behind the confirmation.
+  pure sweep_figures(sweep:Sweep?) -> [Figure]
   pure confirm_price(draft:Draft?) -> f64
   pure confirm_size(draft:Draft?) -> f64
   pure confirm_notional(draft:Draft?) -> f64

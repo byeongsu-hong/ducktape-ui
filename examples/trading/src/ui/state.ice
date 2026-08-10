@@ -31,9 +31,17 @@ enum Venue
 // shape: a market order has no price to type and is quoted off the book, a
 // limit order is quoted off the field, and the two answer MARGIN REQUIRED and
 // LIQUIDATION with different numbers for the same size.
+//
+// `scale` is the one that is not an order at all. Neither exchange has a scale
+// order type — both take a ladder as the orders it is made of — so it is a
+// range, a count and a size here, split into that many limit orders in front of
+// the reader and sent one after another. That is why it freezes into a list
+// rather than into a `Draft`: what is confirmed is what is sent, and what is
+// sent is five orders.
 enum OrderKind
   market
   limit
+  scale
 
 // How long a limit order lives, which is one fact about it and not three. A
 // post-only order that was also immediate-or-cancel would be an order that
@@ -81,6 +89,14 @@ state
   ticket_kind:OrderKind = OrderKind.limit
   ticket_tif:Tif = Tif.gtc
   ticket_price = ""
+  // The two ends of a scale ticket's range and how many orders it spreads over
+  // them. Three fields rather than a price, because a ladder is a shape rather
+  // than a level — and they are their own fields rather than a reuse of
+  // `ticket_price` so that switching kinds does not silently reinterpret a
+  // number somebody typed for something else.
+  ticket_from = ""
+  ticket_to = ""
+  ticket_rungs = "5"
   ticket_size = ""
   // Which unit the size is being typed in. It is a wording rather than a
   // second size: `ticket_coins` below is the order either way, and pressing
@@ -213,9 +229,17 @@ derived
   // first time a new field forgets to join the list. Derived, a field cannot
   // be set without the figures following it.
   ticket_market = ticket_kind == OrderKind.market
+  ticket_scale = ticket_kind == OrderKind.scale
+  // The price this ticket is quoted from, whichever field the kind it is on
+  // actually has. A limit's is the field; a market has none and is quoted at
+  // the book; a scale has two, and the one figure that stands for the pair is
+  // the price its rungs average out at. Spent once here so everything below —
+  // the unit, the entry, the value, the requirement and the cliff — is priced
+  // off one number rather than each finding its own way to it.
+  ticket_typed = quoted_price(ticket_kind, ticket_price, ticket_from, ticket_to)
   // What the size is denominated against when it is typed in dollars, and the
   // rate `size_note` prints so the reader can check it.
-  ticket_unit = size_price(ticket_market, ticket_price, book, focus)
+  ticket_unit = size_price(ticket_market, ticket_typed, book, focus)
   // The order's size in the instrument: the unit toggle converted, and
   // reduce-only capped at the position it promises not to exceed. This is what
   // every figure below is computed from and what a payload is built from, so
@@ -225,7 +249,7 @@ derived
   // field; a market order has no field, and is quoted at what walking the book
   // would pay — the same walk IF YOU CROSS prints, spent once here rather than
   // printed beside a typed number that contradicts it.
-  ticket_at = order_price(ticket_market, ticket_price, book, ticket_coins, ticket_buy, focus)
+  ticket_at = order_price(ticket_market, ticket_typed, book, ticket_coins, ticket_buy, focus)
   quote = price_ticket(ticket_at, ticket_coins, ticket_leverage, focus, ticket_buy, position_held(positions, coin), ticket_cross, account)
   // Why the order as typed cannot be sent, one refusal per control. Each is a
   // sentence beside the control that caused it rather than a press that
@@ -241,10 +265,16 @@ derived
   // else. The send button reads it, the confirmation freezes it, and the wire
   // is built from it — one description of one order.
   ticket_draft = order_draft(venue, coin, focus, ticket_buy, ticket_coins, ticket_at, ticket_market, ticket_reduce, ticket_cross, ticket_tif, quote, ticket_tp, ticket_sl, reduce_refusal, tp_refusal, sl_refusal)
+  // The same for a scale ticket, which is a list rather than an order: one
+  // ordinary rung per price on the grid, projected from the same fields and
+  // from nothing else. The preview reads it, the confirmation lists it, and
+  // the send spends it a rung at a time — one description of one ladder.
+  ticket_ladder = order_ladder(venue, coin, focus, ticket_buy, ticket_coins, ticket_from, ticket_to, ticket_rungs, ticket_reduce, ticket_cross, ticket_tif, quote, reduce_refusal, account, position_held(positions, coin))
   // Why the send is dead, or nothing when it is live. Both halves of the
   // question in one sentence: whether this session may sign at all, and
-  // whether the order as typed is one a venue would take.
-  send_refusal = order_gate(venue, session, clock, ticket_draft)
+  // whether the order as typed — or the ladder, on a scale ticket — is one a
+  // venue would take.
+  send_refusal = order_gate(venue, session, clock, ticket_kind, ticket_draft, ladder_refused(ticket_ladder))
   // Why CANCEL on a resting order is dead. The session half of the send's
   // refusal and nothing else: pulling an order asks nothing of the ticket, so
   // a half-typed size must not be a reason a resting order cannot be pulled.
@@ -294,6 +324,34 @@ preset ready_to_send
     live = true
     session = demo_session_ready(now_seconds())
     ticket_price = "64,000.00"
+    ticket_size = "3.00"
+
+// The same unlocked session with a scale ticket typed into it. The range is the
+// fixture book's own mid a fifth of a per cent either side, and five rungs
+// divide it into two-hundred-dollar steps — so every figure the ladder quotes
+// is arithmetic a reader can do in their head against the fixture rather than a
+// number the test had to be told.
+preset laddering
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    book = some(demo_book())
+    orders = demo_orders()
+    live = true
+    session = demo_session_ready(now_seconds())
+    ticket_kind = OrderKind.scale
+    // Selling, because the fixture account is short thirty bitcoin: a buy
+    // ladder into that position opens nothing and asks for no margin, so the
+    // one figure a scale ticket is read for would be zero for a reason that has
+    // nothing to do with the ladder.
+    ticket_buy = false
+    ticket_from = "63,600.00"
+    ticket_to = "64,400.00"
+    ticket_rungs = "5"
     ticket_size = "3.00"
 
 preset key_expired

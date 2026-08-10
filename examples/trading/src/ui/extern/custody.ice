@@ -64,7 +64,7 @@ extern crate::custody
   // the order as typed is one a venue would take — because the button has one
   // disabled state and a condition left out of an `&&` in the view is a live
   // button over an order that should never have been offered.
-  pure order_gate(venue:Venue, session:Session, now:i64, draft:Draft) -> str
+  pure order_gate(venue:Venue, session:Session, now:i64, kind:OrderKind, draft:Draft, ladder:str) -> str
   // The session half on its own, for the controls that ask nothing of the
   // ticket: a half-typed size must not be a reason a resting order cannot be
   // pulled.

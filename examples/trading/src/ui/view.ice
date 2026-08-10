@@ -1209,7 +1209,7 @@ view
                                 // type, so the field below goes and the whole
                                 // panel is quoted at what walking the book would
                                 // pay instead of at a number left in a field.
-                                row #ticket-kind gap=8.0 w=fill
+                                row #ticket-kind gap=6.0 w=fill
                                   Choice #kind-market
                                     with
                                       name="MARKET"
@@ -1221,9 +1221,16 @@ view
                                     with
                                       name="LIMIT"
                                       act="Rest at a price you choose"
-                                      on=!ticket_market
+                                      on=(ticket_kind == OrderKind.limit)
                                     events
                                       pick -> ticket_kinded(OrderKind.limit)
+                                  Choice #kind-scale
+                                    with
+                                      name="SCALE"
+                                      act="Spread the size over a range of prices"
+                                      on=ticket_scale
+                                    events
+                                      pick -> ticket_kinded(OrderKind.scale)
                                 if position_held(positions, coin) != 0.0
                                   button #close-held -> close_held
                                     with
@@ -1241,25 +1248,69 @@ view
                                         @text-muted
                                 if !ticket_market
                                   col #limit-group gap=6.0 w=fill
-                                    Label value="LIMIT PRICE"
-                                    // Enter reviews. It is the field's own
-                                    // submit rather than a key the app listens
-                                    // for, which is the strongest form of the
-                                    // rule the whole scheme follows: a widget's
-                                    // Enter cannot fire from a widget the reader
-                                    // is not in, so this can never open a
-                                    // confirmation out of the search box. It
-                                    // opens one and stops there; nothing typed
-                                    // sends.
-                                    input "" #ticket-price <-> ticket_price
-                                      with
-                                        label="Limit price"
-                                        hint="0.00"
-                                        change=ticket_priced
-                                        submit=ticket_review
-                                        text-size=12.0
-                                        font=digits
-                                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                    if !ticket_scale
+                                      Label value="LIMIT PRICE"
+                                      // Enter reviews. It is the field's own
+                                      // submit rather than a key the app listens
+                                      // for, which is the strongest form of the
+                                      // rule the whole scheme follows: a widget's
+                                      // Enter cannot fire from a widget the reader
+                                      // is not in, so this can never open a
+                                      // confirmation out of the search box. It
+                                      // opens one and stops there; nothing typed
+                                      // sends.
+                                      input "" #ticket-price <-> ticket_price
+                                        with
+                                          label="Limit price"
+                                          hint="0.00"
+                                          change=ticket_priced
+                                          submit=ticket_review
+                                          text-size=12.0
+                                          font=digits
+                                        focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                    // The ladder's shape, which is a range and a
+                                    // count rather than a price. Three fields on
+                                    // one row because they are one decision and
+                                    // the column is 252 pixels wide, and here
+                                    // rather than in a panel of their own because
+                                    // they stand exactly where the price they
+                                    // replace stood.
+                                    if ticket_scale
+                                      col #scale-group gap=6.0 w=fill
+                                        row gap=6.0 w=fill
+                                          col w=fill gap=6.0
+                                            Label value="FROM"
+                                            input "" #ticket-from <-> ticket_from
+                                              with
+                                                label="Ladder from this price"
+                                                hint="0.00"
+                                                change=ticket_from_typed
+                                                submit=ticket_review
+                                                text-size=12.0
+                                                font=digits
+                                              focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                          col w=fill gap=6.0
+                                            Label value="TO"
+                                            input "" #ticket-to <-> ticket_to
+                                              with
+                                                label="Ladder to this price"
+                                                hint="0.00"
+                                                change=ticket_to_typed
+                                                submit=ticket_review
+                                                text-size=12.0
+                                                font=digits
+                                              focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                          col w=54.0 gap=6.0
+                                            Label value="ORDERS"
+                                            input "" #ticket-rungs <-> ticket_rungs
+                                              with
+                                                label="How many orders the ladder is"
+                                                hint="5"
+                                                change=ticket_runged
+                                                submit=ticket_review
+                                                text-size=12.0
+                                                font=digits
+                                              focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                                     // How long the order lives, which is one fact
                                     // about it rather than three. Post-only and
                                     // immediate-or-cancel are two answers to the
@@ -1298,27 +1349,33 @@ view
                                           w=fill
                                           wrap=word
                                           @text-faint
-                                    button #alert-here -> add_alert_here
-                                      with
-                                        label="Watch this level"
-                                        w=fill
-                                        p=5.0
-                                        disabled=!empty(watch_refusal)
-                                      active bg=raised text=muted r=3.0
-                                      hovered bg=edge text=fg r=3.0
-                                      disabled bg=raised text=faint r=3.0
-                                      text "WATCH THIS LEVEL"
+                                    // The alert takes the price in the field, and
+                                    // a scale ticket has no such field: two ends
+                                    // of a range are not a level to watch. So it
+                                    // goes with the field it reads rather than
+                                    // standing there refusing every press.
+                                    if !ticket_scale
+                                      button #alert-here -> add_alert_here
                                         with
-                                          size=9.0
+                                          label="Watch this level"
                                           w=fill
-                                          align-x=center
-                                          tracking=1.1
+                                          p=5.0
+                                          disabled=!empty(watch_refusal)
+                                        active bg=raised text=muted r=3.0
+                                        hovered bg=edge text=fg r=3.0
+                                        disabled bg=raised text=faint r=3.0
+                                        text "WATCH THIS LEVEL"
+                                          with
+                                            size=9.0
+                                            w=fill
+                                            align-x=center
+                                            tracking=1.1
                                     // A press the list refuses reads as a press
                                     // that worked: the level is simply not there.
                                     // The button goes dead and says which refusal
                                     // it is, in the same shape the gate refuses an
                                     // address.
-                                    if !empty(watch_refusal)
+                                    if !ticket_scale && !empty(watch_refusal)
                                       text watch_refusal
                                         with
                                           size=10.0
@@ -1582,6 +1639,24 @@ view
                                       @text-faint
                             rule horizontal thickness=1.0 color=edge
                             col gap=10.0 w=fill
+                              // What the ladder actually is, above the figures
+                              // it is worth. Drawn from the same projection the
+                              // confirmation lists and the wire spends, so the
+                              // count and the range a reader agrees to are the
+                              // count and the range that go — and empty until
+                              // the range describes something, rather than
+                              // drawn around a guess.
+                              if ticket_scale && len(ladder_shape(ticket_ladder)) > 0
+                                col #ladder-preview gap=10.0 w=fill
+                                  for figure in ladder_shape(ticket_ladder)
+                                    row w=fill align=center
+                                      Label value=figure.label
+                                      space w=fill
+                                      text figure.value
+                                        with
+                                          size=12.0
+                                          font=digits
+                                          @text-muted
                               row w=fill align=center
                                 Label value="ORDER VALUE"
                                 space w=fill
@@ -3125,6 +3200,22 @@ view
                       w=fill
                       wrap=word
                       @text-muted
+                // What the list adds up to, when the act has an arithmetic at
+                // all. Every one of these was already on the ticket under the
+                // same label, formatted by the same helper — the panel restates
+                // and computes nothing, which is why a ladder cannot be
+                // confirmed at figures the wire never saw.
+                if len(sweep_figures(sweep)) > 0
+                  col #sweep-figures gap=9.0 w=fill
+                    for figure in sweep_figures(sweep)
+                      row w=fill align=center
+                        Label value=figure.label
+                        space w=fill
+                        text figure.value
+                          with
+                            size=13.0
+                            font=digits
+                            @text-fg
                 col #sweep-rows gap=4.0 w=fill
                   for row in sweep_rows(sweep)
                     text row
