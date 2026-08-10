@@ -79,6 +79,9 @@ on ticket_to_typed(typed)
 on ticket_runged(typed)
   ticket_rungs = typed
 
+on ticket_worked(typed)
+  ticket_minutes = typed
+
 on ticket_sized(typed)
   ticket_size = typed
 

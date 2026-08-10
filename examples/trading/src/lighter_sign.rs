@@ -699,15 +699,32 @@ const TX_CREATE_ORDER: u8 = 14;
 const TX_CANCEL_ORDER: u8 = 15;
 const TX_CHANGE_PUB_KEY: u8 = 8;
 
-/// The one order *type* this app places, as the venue's own tables number it: a
-/// limit order, priced by the ticket and never by a trigger.
+/// The order *types* this app places, as the venue's own tables number them.
 ///
-/// The type is fixed where the resting rule is not. A stop or a take-profit is
-/// a different type with its own validation table and its own trigger price,
-/// and this app attaches neither on this venue — `venue_attaches_levels` says
-/// so on the ticket. How long the order rests, though, is a control the reader
-/// has, so that one is carried.
-const ORDER_LIMIT: i64 = 0;
+/// Two of the seven `lighter-go` defines. A stop or a take-profit is a
+/// different type again, with its own trigger price, and this app attaches
+/// neither on this venue — `venue_attaches_levels` says so on the ticket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// Priced by the ticket, filled or rested at once.
+    Limit,
+    /// Worked over a window rather than sent at one moment: the venue slices it
+    /// into sub-orders of its own (`TWAPSubOrder`, which no API key may place)
+    /// and stops when the order's expiry arrives. So the expiry is not a
+    /// deadline here — it is the length of the working, and the venue's own
+    /// validation refuses one without it.
+    Twap,
+}
+
+impl Kind {
+    fn code(self) -> i64 {
+        match self {
+            Kind::Limit => 0,
+            Kind::Twap => 6,
+        }
+    }
+}
+
 const NO_TRIGGER: i64 = 0;
 
 /// How long a Lighter order rests, in the venue's own numbering.
@@ -766,6 +783,8 @@ pub struct NewOrder {
     pub price: u32,
     pub ask: bool,
     pub reduce_only: bool,
+    /// What the venue files this as, which decides what its expiry means.
+    pub kind: Kind,
     pub resting: Resting,
     /// When the resting order stops resting, and zero for one that never rests.
     /// `Resting::expires` is which of those this must be.
@@ -832,6 +851,13 @@ impl Transaction {
 /// transaction's own fields. Transcribed from `lighter-go`'s
 /// `L2CreateOrderTxInfo.Hash`, and pinned against digests that signer produced.
 pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignError> {
+    // The venue validates the pairing rather than ignoring it, and a rejection
+    // arrives as a code over a signature that was already made. A working order
+    // with no window is not a TWAP the sequencer will refuse — it is a size
+    // this app asked to be worked for no time at all.
+    if order.kind == Kind::Twap && (order.resting != Resting::Deadline || order.expiry_ms <= 0) {
+        return Err(SignError::Field("twap window"));
+    }
     let ask = i64::from(order.ask);
     let reduce_only = i64::from(order.reduce_only);
     let digest = digest_of(&[
@@ -846,7 +872,7 @@ pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignErr
         ("base amount", order.base_amount),
         ("price", i64::from(order.price)),
         ("side", ask),
-        ("order type", ORDER_LIMIT),
+        ("order type", order.kind.code()),
         ("time in force", order.resting.code()),
         ("reduce-only flag", reduce_only),
         ("trigger price", NO_TRIGGER),
@@ -858,7 +884,7 @@ pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignErr
         fields: format!(
             "\"AccountIndex\":{},\"ApiKeyIndex\":{},\"MarketIndex\":{},\
              \"ClientOrderIndex\":{},\"BaseAmount\":{},\"Price\":{},\"IsAsk\":{ask},\
-             \"Type\":{ORDER_LIMIT},\"TimeInForce\":{},\
+             \"Type\":{},\"TimeInForce\":{},\
              \"ReduceOnly\":{reduce_only},\"TriggerPrice\":{NO_TRIGGER},\
              \"OrderExpiry\":{},\"ExpiredAt\":{},\"Nonce\":{}",
             order.account,
@@ -867,6 +893,7 @@ pub fn create_order(zone: Zone, order: &NewOrder) -> Result<Transaction, SignErr
             order.client_index,
             order.base_amount,
             order.price,
+            order.kind.code(),
             order.resting.code(),
             order.expiry_ms,
             order.deadline_ms,
@@ -1424,6 +1451,7 @@ mod tests {
         price: 6_500_000,
         ask: false,
         reduce_only: false,
+        kind: Kind::Limit,
         resting: Resting::Deadline,
         expiry_ms: 1_786_300_000_000,
         deadline_ms: 1_786_279_157_060,
@@ -1437,6 +1465,43 @@ mod tests {
         r#""ReduceOnly":0,"TriggerPrice":0,"OrderExpiry":1786300000000,"#,
         r#""ExpiredAt":1786279157060,"Nonce":7,"Sig":"botQoZ4SpebwpsSbz1vOQGhjQwRIlJJU1einQ"#,
         r#"DhXggAf4IvvwCbOYakGncaoc4TmOuuGPRNu20s0qD9777jdbL/ZHxaOFLsvzwRhl5K4jWc=","#,
+        r#""L2TxAttributes":null}"#,
+    );
+
+    /// **A TWAP, which is this same transaction filed as a different type.**
+    ///
+    /// The venue has no separate transaction for one: `lighter-go` numbers it
+    /// `TWAPOrder = 6` on `L2CreateOrder`, and its own validation requires
+    /// `GOOD_TILL_TIME` and an `OrderExpiry` — which is what makes the expiry
+    /// the length of the working rather than a deadline. Everything else is the
+    /// limit order above, so the only field that can be wrong is the one, and
+    /// that field is inside the signature.
+    ///
+    /// Driven out of the venue's own signer the way `BUY` was, on the same key
+    /// and the same deployment, with only the type changed.
+    const WORKED: NewOrder = NewOrder {
+        account: ACCOUNT,
+        api_key: API_KEY,
+        market: 1,
+        client_index: 13,
+        base_amount: 100_000,
+        price: 6_500_000,
+        ask: false,
+        reduce_only: false,
+        kind: Kind::Twap,
+        resting: Resting::Deadline,
+        expiry_ms: 1_786_300_000_000,
+        deadline_ms: 1_786_358_248_597,
+        nonce: 7,
+    };
+    const WORKED_DIGEST: &str =
+        "302932721455a457c7aa3c84d2fc4402f8c1b3fea7bd6e801dd36b64e372acd1ece57c8df8e12f87";
+    const WORKED_BODY: &str = concat!(
+        r#"{"AccountIndex":702384,"ApiKeyIndex":3,"MarketIndex":1,"ClientOrderIndex":13,"#,
+        r#""BaseAmount":100000,"Price":6500000,"IsAsk":0,"Type":6,"TimeInForce":1,"#,
+        r#""ReduceOnly":0,"TriggerPrice":0,"OrderExpiry":1786300000000,"#,
+        r#""ExpiredAt":1786358248597,"Nonce":7,"Sig":"sj/uKdr2J9dqF54xYDFHF92Vb2XuWaei9/gX"#,
+        r#"OlkLz7lhlddtK2VMVM4WK0xMzOEn4lT6vVz0r0Pn9dMhp73rVUd30U7TlvQIbvnN6sr0tF8=","#,
         r#""L2TxAttributes":null}"#,
     );
 
@@ -1471,6 +1536,7 @@ mod tests {
         price: u32::MAX,
         ask: true,
         reduce_only: true,
+        kind: Kind::Limit,
         resting: Resting::Deadline,
         expiry_ms: 4_102_444_800_000,
         deadline_ms: 1_786_279_157_061,
@@ -1559,6 +1625,68 @@ mod tests {
             digest(cancel_order(Zone::Mainnet, &CAPPED_PULL).expect("a buildable cancel")),
             CAPPED_PULL_DIGEST,
         );
+        assert_eq!(
+            digest(create_order(Zone::Testnet, &WORKED).expect("a buildable twap")),
+            WORKED_DIGEST,
+        );
+        // And the type is inside the signature rather than beside it: the same
+        // order filed as a limit is a different digest, which is the whole
+        // reason this vector earns its place.
+        assert_ne!(
+            digest(
+                create_order(
+                    Zone::Testnet,
+                    &NewOrder {
+                        kind: Kind::Limit,
+                        ..WORKED
+                    }
+                )
+                .expect("a buildable order")
+            ),
+            WORKED_DIGEST,
+        );
+    }
+
+    /// The pairing the venue validates, refused here instead.
+    ///
+    /// A working order with no window is not a TWAP the sequencer turns down —
+    /// it is a size this app asked to be worked for no time at all, and it
+    /// would arrive as a numeric code over a signature that was already made.
+    #[test]
+    fn a_twap_with_no_window_is_refused_before_it_is_signed() {
+        for wrong in [
+            NewOrder {
+                expiry_ms: 0,
+                ..WORKED
+            },
+            NewOrder {
+                resting: Resting::Immediate,
+                ..WORKED
+            },
+            NewOrder {
+                resting: Resting::PostOnly,
+                ..WORKED
+            },
+        ] {
+            assert!(
+                create_order(Zone::Testnet, &wrong).is_err(),
+                "signed a worked order the venue would refuse: {wrong:?}"
+            );
+        }
+        // And the limit order with the same shape is still buildable, so this
+        // is a rule about TWAPs rather than about expiries.
+        assert!(
+            create_order(
+                Zone::Testnet,
+                &NewOrder {
+                    kind: Kind::Limit,
+                    resting: Resting::Immediate,
+                    expiry_ms: 0,
+                    ..WORKED
+                }
+            )
+            .is_ok()
+        );
     }
 
     /// The body beside the signature, spelled the way the sequencer's own
@@ -1589,6 +1717,10 @@ mod tests {
             (
                 body(cancel_order(Zone::Mainnet, &CAPPED_PULL).expect("a cancel")),
                 CAPPED_PULL_BODY,
+            ),
+            (
+                body(create_order(Zone::Testnet, &WORKED).expect("a twap")),
+                WORKED_BODY,
             ),
         ] {
             assert_eq!(without_signature(&built), without_signature(official));
@@ -1630,6 +1762,10 @@ mod tests {
             (
                 cancel_order(Zone::Mainnet, &CAPPED_PULL).expect("a cancel"),
                 CAPPED_PULL_BODY,
+            ),
+            (
+                create_order(Zone::Testnet, &WORKED).expect("a twap"),
+                WORKED_BODY,
             ),
         ] {
             assert!(

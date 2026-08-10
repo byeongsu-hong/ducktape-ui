@@ -38,10 +38,17 @@ enum Venue
 // the reader and sent one after another. That is why it freezes into a list
 // rather than into a `Draft`: what is confirmed is what is sent, and what is
 // sent is five orders.
+//
+// `twap` is the one that is not this app's arithmetic at all: the venue works
+// it over a window, slicing it into sub-orders no API key may place. So it goes
+// as one order and it goes only where the encoding has been held against the
+// exchange's own signer — `places_twap` on the network registry, false on
+// Hyperliquid with the sentence saying which of the two things is missing.
 enum OrderKind
   market
   limit
   scale
+  twap
 
 // How long a limit order lives, which is one fact about it and not three. A
 // post-only order that was also immediate-or-cancel would be an order that
@@ -97,6 +104,10 @@ state
   ticket_from = ""
   ticket_to = ""
   ticket_rungs = "5"
+  // How long a worked order is worked over, in minutes. The whole of what makes
+  // a TWAP one: an order carrying no window is not a TWAP of no length, it is an
+  // ordinary order.
+  ticket_minutes = "30"
   ticket_size = ""
   // Which unit the size is being typed in. It is a wording rather than a
   // second size: `ticket_coins` below is the order either way, and pressing
@@ -230,6 +241,11 @@ derived
   // be set without the figures following it.
   ticket_market = ticket_kind == OrderKind.market
   ticket_scale = ticket_kind == OrderKind.scale
+  ticket_twap = ticket_kind == OrderKind.twap
+  // The window this order carries, or nothing when its kind does not have one.
+  // Read here rather than at each use so a kind switched away from cannot leave
+  // a window on an order that is not worked.
+  ticket_window = order_window(ticket_kind, ticket_minutes)
   // The price this ticket is quoted from, whichever field the kind it is on
   // actually has. A limit's is the field; a market has none and is quoted at
   // the book; a scale has two, and the one figure that stands for the pair is
@@ -264,7 +280,7 @@ derived
   // The order as it stands, projected from the fields above and from nothing
   // else. The send button reads it, the confirmation freezes it, and the wire
   // is built from it — one description of one order.
-  ticket_draft = order_draft(venue, coin, focus, ticket_buy, ticket_coins, ticket_at, ticket_market, ticket_reduce, ticket_cross, ticket_tif, quote, ticket_tp, ticket_sl, reduce_refusal, tp_refusal, sl_refusal)
+  ticket_draft = order_draft(venue, coin, focus, ticket_buy, ticket_coins, ticket_at, ticket_market, ticket_reduce, ticket_cross, ticket_tif, quote, ticket_tp, ticket_sl, ticket_window, reduce_refusal, tp_refusal, sl_refusal)
   // The same for a scale ticket, which is a list rather than an order: one
   // ordinary rung per price on the grid, projected from the same fields and
   // from nothing else. The preview reads it, the confirmation lists it, and
@@ -353,6 +369,27 @@ preset laddering
     ticket_to = "64,400.00"
     ticket_rungs = "5"
     ticket_size = "3.00"
+
+// A worked order on the venue that takes one. The window is the fixture's own
+// half hour, and the network is Lighter because that is the only one this app
+// signs a TWAP for — a `laddering`-shaped fixture on Hyperliquid would be
+// drawing a control the ticket does not offer there.
+preset working
+  state
+    gate = false
+    venue = Venue.lighter
+    address = demo_address_lighter()
+    symbols = demo_symbols_lighter()
+    focus = symbol_row(demo_symbols_lighter(), "BTC")
+    positions = demo_positions_lighter()
+    account = some(demo_account_lighter())
+    book = some(demo_book_lighter())
+    live = true
+    session = demo_session_ready(now_seconds())
+    ticket_kind = OrderKind.twap
+    ticket_price = "64,970.00"
+    ticket_size = "3.00"
+    ticket_minutes = "30"
 
 preset key_expired
   state

@@ -33,8 +33,17 @@ extern crate::venue
   // press. The panel's readouts and the bytes that reach an exchange are the
   // same handful of numbers, so a confirmation cannot agree with a screen the
   // wire never saw.
-  Draft(coin:str, buy:bool, size:f64, price:f64, walked:bool, reduce_only:bool, cross:bool, leverage:f64, notional:f64, margin:f64, liquidation:f64, tp:f64, sl:f64, refusal:str)
-  pure order_draft(venue:Venue, coin:str, market:SymbolRow?, buy:bool, size:str, price:f64, walked:bool, reduce_only:bool, cross:bool, tif:Tif, quote:Ticket, tp:str, sl:str, reduce_refusal:str, tp_refusal:str, sl_refusal:str) -> Draft
+  Draft(coin:str, buy:bool, size:f64, price:f64, walked:bool, reduce_only:bool, cross:bool, leverage:f64, notional:f64, margin:f64, liquidation:f64, tp:f64, sl:f64, minutes:f64, refusal:str)
+  pure order_draft(venue:Venue, coin:str, market:SymbolRow?, buy:bool, size:str, price:f64, walked:bool, reduce_only:bool, cross:bool, tif:Tif, quote:Ticket, tp:str, sl:str, minutes:str, reduce_refusal:str, tp_refusal:str, sl_refusal:str) -> Draft
+  // The window an order of this kind carries, and nothing for a kind that has
+  // none — so a kind switched away from cannot leave one on an order that is
+  // not worked.
+  pure order_window(kind:OrderKind, minutes:str) -> str
+  pure venue_places_twap(venue:Venue) -> bool
+  pure venue_twap_note(venue:Venue) -> str
+  // How long the venue will be working this order, in the words the panel
+  // prints. Empty for an order that goes at one moment.
+  pure order_worked(minutes:str) -> str
   // Which price the ticket's readouts are quoted from, which is not the same
   // field on every kind: a limit's is typed, a market's is the book's, and a
   // scale's is the average its rungs fill at. One figure so the value, the

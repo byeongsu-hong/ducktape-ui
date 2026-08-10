@@ -939,9 +939,19 @@ pub async fn lighter_place(
     order: Order,
     reduce_only: bool,
     resting: Resting,
+    minutes: f64,
 ) -> Result<i64, HlError> {
     let market = market_of(zone, coin).await?;
     let now = now_ms();
+    // A window is what makes this a TWAP, so the two arrive as one number
+    // rather than as a flag beside a duration: there is no way to ask for a
+    // worked order with no window or a limit order with one.
+    let window_ms = (minutes.max(0.0) * 60_000.0).round() as i64;
+    let kind = if window_ms > 0 {
+        lighter_sign::Kind::Twap
+    } else {
+        lighter_sign::Kind::Limit
+    };
     let client_index = now;
     let built = lighter_sign::create_order(
         zone,
@@ -965,14 +975,17 @@ pub async fn lighter_place(
             )?,
             ask: !order.buy,
             reduce_only,
+            kind,
             resting,
             // The venue validates the pairing rather than ignoring it: an
             // order that does not rest must carry no expiry, and one that
-            // rests must carry one.
-            expiry_ms: if resting.expires() {
-                now + ORDER_LIFETIME_MS
-            } else {
-                0
+            // rests must carry one. A worked order's expiry is a third thing
+            // again — it is where the working stops, so it is the window the
+            // reader asked for rather than this app's own lifetime.
+            expiry_ms: match (window_ms, resting.expires()) {
+                (window, _) if window > 0 => now + window,
+                (_, true) => now + ORDER_LIFETIME_MS,
+                _ => 0,
             },
             deadline_ms: now + TX_LIFETIME_MS,
             nonce: lighter_nonce(zone, account, api_key).await?,
@@ -2617,6 +2630,7 @@ mod tests {
                 },
                 false,
                 Resting::Deadline,
+                0.0,
             )
             .await
             .expect_err("an unenrolled key cannot place an order");
@@ -2837,6 +2851,7 @@ mod tests {
                 },
                 false,
                 Resting::Deadline,
+                0.0,
             )
             .await
             .expect("the venue takes the order");
@@ -2947,6 +2962,7 @@ mod tests {
                     },
                     rung.reduce_only,
                     Resting::Deadline,
+                    0.0,
                 )
                 .await
                 .unwrap_or_else(|failure| {
@@ -2981,6 +2997,73 @@ mod tests {
                     .then_some(())
             });
             eprintln!("cancelled, and the book stops listing any of them");
+        });
+    }
+
+    /// **A worked order, at the venue that works it.**
+    ///
+    /// The bytes are pinned against the exchange's own signer in
+    /// `lighter_sign.rs`, and for a stop that would be the end of it — but "the
+    /// bytes are right" is not the claim that matters for an order somebody
+    /// else is going to slice up. What this proves is the part no vector can:
+    /// that the sequencer *takes* a `Type = 6`, that it rests as one order
+    /// under the index it was placed with, and that the ordinary cancel pulls
+    /// it. A TWAP the venue silently declined would sign perfectly and buy
+    /// nothing over half an hour.
+    ///
+    /// The window is short and the price is a tenth under the mark, so nothing
+    /// can fill and the round trip ends with the book as it started.
+    #[test]
+    #[ignore = "mints a testnet identity and places a real TWAP on Lighter testnet"]
+    fn a_worked_order_is_taken_rests_and_cancels_on_the_test_deployment() {
+        crate::hyperliquid::open_the_wire();
+        let zone = disposable_zone();
+        let held = disposable_identity();
+
+        smol::block_on(async {
+            let markets = lighter_symbols(zone).await.expect("the testnet universe");
+            let btc = markets
+                .iter()
+                .find(|row| row.name == "BTC")
+                .expect("the test deployment lists BTC");
+            let step = market_of(zone, "BTC").await.expect("the market");
+            let tick = 10f64.powi(step.price_decimals as i32);
+            let price = (btc.price * 0.9 * tick).round() / tick;
+
+            let index = lighter_place(
+                zone,
+                &held.key,
+                held.account,
+                held.slot,
+                "BTC",
+                Order {
+                    oid: 0,
+                    coin: "BTC".to_owned(),
+                    buy: true,
+                    price,
+                    size: 0.05,
+                    ts: 0,
+                },
+                false,
+                Resting::Deadline,
+                30.0,
+            )
+            .await
+            .expect("the venue takes a worked order");
+            eprintln!("placed 0.05 BTC at {price} worked over 30 minutes, as client order {index}");
+
+            settle("the worked order", || {
+                resting(zone, &held, step.id).contains(&index).then_some(())
+            });
+            eprintln!("the book lists it resting");
+
+            lighter_cancel(zone, &held.key, held.account, held.slot, "BTC", index)
+                .await
+                .expect("the venue takes the cancel");
+            settle("the cancellation", || {
+                (!resting(zone, &held, step.id).contains(&index)).then_some(())
+            });
+            eprintln!("cancelled, and the book stops listing it");
         });
     }
 

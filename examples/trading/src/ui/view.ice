@@ -1231,6 +1231,19 @@ view
                                       on=ticket_scale
                                     events
                                       pick -> ticket_kinded(OrderKind.scale)
+                                  // Offered only where this app can sign one.
+                                  // A fourth button that could only ever refuse
+                                  // is worse than three and a sentence: the
+                                  // sentence says which network takes a TWAP
+                                  // and which part of sending one is missing.
+                                  if venue_places_twap(venue)
+                                    Choice #kind-twap
+                                      with
+                                        name="TWAP"
+                                        act="Let the venue work the size over a window"
+                                        on=ticket_twap
+                                      events
+                                        pick -> ticket_kinded(OrderKind.twap)
                                 if position_held(positions, coin) != 0.0
                                   button #close-held -> close_held
                                     with
@@ -1311,44 +1324,67 @@ view
                                                 text-size=12.0
                                                 font=digits
                                               focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                                    // How long the order lives, which is one fact
-                                    // about it rather than three. Post-only and
-                                    // immediate-or-cancel are two answers to the
-                                    // same question, and an order carrying both
-                                    // would have to rest and fill at once.
-                                    row #ticket-tif gap=4.0 w=fill
-                                      Choice #tif-gtc
-                                        with
-                                          name=tif_name(venue, Tif.gtc)
-                                          act=tif_act(venue, Tif.gtc)
-                                          on=(ticket_tif == Tif.gtc)
-                                        events
-                                          pick -> ticket_timed(Tif.gtc)
-                                      Choice #tif-ioc
-                                        with
-                                          name=tif_name(venue, Tif.ioc)
-                                          act=tif_act(venue, Tif.ioc)
-                                          on=(ticket_tif == Tif.ioc)
-                                        events
-                                          pick -> ticket_timed(Tif.ioc)
-                                      Choice #tif-alo
-                                        with
-                                          name=tif_name(venue, Tif.alo)
-                                          act=tif_act(venue, Tif.alo)
-                                          on=(ticket_tif == Tif.alo)
-                                        events
-                                          pick -> ticket_timed(Tif.alo)
-                                    // Where the two venues mean different things
-                                    // by the same button. Four letters cannot
-                                    // carry a deadline the reader is about to
-                                    // sign, so the sentence does.
-                                    if !empty(venue_tif_note(venue, ticket_tif))
-                                      text venue_tif_note(venue, ticket_tif)
-                                        with
-                                          size=10.0
-                                          w=fill
-                                          wrap=word
-                                          @text-faint
+                                    // How long the venue works it over, which is
+                                    // the whole of what makes a worked order one.
+                                    // It stands where the resting rule stands
+                                    // because it answers the same question — how
+                                    // long is this order alive — and it replaces
+                                    // it because the venue fixes the other: a
+                                    // TWAP rests until its window closes, and
+                                    // nothing else is a choice the reader has.
+                                    if ticket_twap
+                                      col #twap-group gap=6.0 w=fill
+                                        row w=fill align=center
+                                          Label value="OVER"
+                                          space w=fill
+                                          text order_worked(ticket_minutes)
+                                            with
+                                              size=11.0
+                                              font=digits
+                                              @text-muted
+                                        input "" #ticket-minutes <-> ticket_minutes
+                                          with
+                                            label="Minutes to work this order over"
+                                            hint="30"
+                                            change=ticket_worked
+                                            submit=ticket_review
+                                            text-size=12.0
+                                            font=digits
+                                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                    if !ticket_twap
+                                      row #ticket-tif gap=4.0 w=fill
+                                        Choice #tif-gtc
+                                          with
+                                            name=tif_name(venue, Tif.gtc)
+                                            act=tif_act(venue, Tif.gtc)
+                                            on=(ticket_tif == Tif.gtc)
+                                          events
+                                            pick -> ticket_timed(Tif.gtc)
+                                        Choice #tif-ioc
+                                          with
+                                            name=tif_name(venue, Tif.ioc)
+                                            act=tif_act(venue, Tif.ioc)
+                                            on=(ticket_tif == Tif.ioc)
+                                          events
+                                            pick -> ticket_timed(Tif.ioc)
+                                        Choice #tif-alo
+                                          with
+                                            name=tif_name(venue, Tif.alo)
+                                            act=tif_act(venue, Tif.alo)
+                                            on=(ticket_tif == Tif.alo)
+                                          events
+                                            pick -> ticket_timed(Tif.alo)
+                                      // Where the two venues mean different
+                                      // things by the same button. Four letters
+                                      // cannot carry a deadline the reader is
+                                      // about to sign, so the sentence does.
+                                      if !empty(venue_tif_note(venue, ticket_tif))
+                                        text venue_tif_note(venue, ticket_tif)
+                                          with
+                                            size=10.0
+                                            w=fill
+                                            wrap=word
+                                            @text-faint
                                     // The alert takes the price in the field, and
                                     // a scale ticket has no such field: two ends
                                     // of a range are not a level to watch. So it
@@ -1630,6 +1666,22 @@ view
                                               w=fill
                                               wrap=word
                                               @text-down
+                                // Where the fourth kind is not. A row three wide
+                                // on one network and four on another is a
+                                // difference a reader has to be able to account
+                                // for, and the account is not "this exchange has
+                                // no TWAP" — it has one. Beside the other gap
+                                // rather than under the row it is missing from,
+                                // because the two are the same kind of sentence
+                                // and the top of a 252-pixel column is not where
+                                // three lines of small print belong.
+                                if !venue_places_twap(venue)
+                                  text venue_twap_note(venue) #twap-gap
+                                    with
+                                      size=10.0
+                                      w=fill
+                                      wrap=word
+                                      @text-faint
                                 if !venue_attaches_levels(venue)
                                   text venue_levels_note(venue)
                                     with
@@ -3075,10 +3127,20 @@ view
                             size=13.0
                             font=digits
                             @text-muted
-                      row w=fill align=center
-                        Label value="RESTS"
-                        space w=fill
-                        text tif_act(venue, ticket_tif) size=13.0 @text-muted
+                      // How long it is alive, in whichever of the two ways
+                      // this order is: a resting rule, or a window the venue
+                      // works it over. Never both — a worked order's resting
+                      // rule is the venue's and not a choice the ticket made.
+                      if draft.minutes > 0.0
+                        row w=fill align=center
+                          Label value="WORKED"
+                          space w=fill
+                          text order_worked(fmt_size(draft.minutes)) size=13.0 @text-muted
+                      if draft.minutes <= 0.0
+                        row w=fill align=center
+                          Label value="RESTS"
+                          space w=fill
+                          text tif_act(venue, ticket_tif) size=13.0 @text-muted
                       // The three promises an order can carry beyond its price
                       // and its size, drawn only when they are made: a row
                       // reading "none" three times is three rows a reader has

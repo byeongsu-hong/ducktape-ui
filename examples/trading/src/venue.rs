@@ -314,6 +314,33 @@ pub struct Network {
     /// flips it is not an encoder passing its vectors: it is an order carrying
     /// one having been seen resting at the venue.
     pub attaches_levels: bool,
+    /// Whether this app sends a TWAP here — an order the venue works over a
+    /// window rather than at one moment.
+    ///
+    /// Both exchanges have one and they are not the same kind of thing.
+    /// Lighter's is the ordinary create-order transaction filed as
+    /// `TWAPOrder = 6`, with its expiry carrying the length of the working, so
+    /// the encoding this app already signs reaches it by one field — and that
+    /// field is pinned in `lighter_sign.rs` against a vector driven out of the
+    /// venue's own signer, which is the standard every other Lighter field is
+    /// held to. Hyperliquid's is a separate `twapOrder` action carrying a
+    /// `twap` object, documented on the exchange endpoint and **absent from the
+    /// Python SDK this repository takes every Hyperliquid vector from**: that
+    /// SDK reads TWAP slice fills and signs no TWAP.
+    ///
+    /// `#529` is why the difference is decisive rather than inconvenient. The
+    /// one thing no amount of reasoning settled there was that the SDK's
+    /// *encoder* packs `isMarket` before `triggerPx` while its *type* declares
+    /// the other order — and MessagePack writes a map in the order it is handed,
+    /// so following the declaration would have signed an action that recovers a
+    /// stranger, which the exchange cannot tell from a bad key. With no encoder
+    /// to drive and no funded account for the exchange to be the oracle
+    /// instead, there is nothing on that venue to hold an encoding against.
+    ///
+    /// On the registry rather than in a match, because it is a fact about the
+    /// exchange this network deploys and a network added to that table has to
+    /// state it the way it states its chain.
+    pub places_twap: bool,
     /// Whether this network states the time it last charged funding.
     ///
     /// Both exchanges fund hourly, so both boundaries can be counted down to;
@@ -376,6 +403,7 @@ impl Network {
         name: "Hyperliquid",
         rests_forever: true,
         attaches_levels: false,
+        places_twap: false,
         stamps_funding: false,
         testnet: false,
         signing: Signing::Eip712(Chain::Mainnet),
@@ -417,6 +445,7 @@ impl Network {
         venue: Venue::HyperliquidTestnet,
         rests_forever: true,
         attaches_levels: false,
+        places_twap: false,
         stamps_funding: false,
         name: "Hyperliquid Testnet",
         testnet: true,
@@ -455,6 +484,7 @@ impl Network {
         venue: Venue::Lighter,
         rests_forever: false,
         attaches_levels: false,
+        places_twap: true,
         stamps_funding: true,
         name: "Lighter",
         testnet: false,
@@ -508,6 +538,7 @@ impl Network {
         venue: Venue::LighterTestnet,
         rests_forever: false,
         attaches_levels: false,
+        places_twap: true,
         stamps_funding: true,
         name: "Lighter Testnet",
         testnet: true,
@@ -933,6 +964,30 @@ pub fn venue_attaches_levels(venue: Venue) -> bool {
     Network::of(venue).attaches_levels
 }
 
+/// Whether this app works an order over a window here.
+pub fn venue_places_twap(venue: Venue) -> bool {
+    Network::of(venue).places_twap
+}
+
+/// Why this network is not offered a TWAP, or nothing when it is.
+///
+/// It names the *missing* thing rather than the venue, because the venue has
+/// one: what is missing is an encoder to hold this app's bytes against. A
+/// sentence reading "Hyperliquid has no TWAP" would be false, and a reader who
+/// knows the exchange would be right not to believe the rest of this panel.
+pub fn venue_twap_note(venue: Venue) -> String {
+    if venue_places_twap(venue) {
+        return String::new();
+    }
+    format!(
+        "{} has a TWAP order and this app does not send one: its published SDK signs no such \
+         action, so there is nothing to hold these bytes against, and an order signed to a shape \
+         nobody has checked is one the exchange cannot tell from a stranger's. It is offered \
+         nowhere rather than offered here.",
+        venue_name(venue)
+    )
+}
+
 pub fn venue_levels_note(venue: Venue) -> String {
     if venue_attaches_levels(venue) {
         return String::new();
@@ -1003,6 +1058,13 @@ pub struct Draft {
     pub liquidation: f64,
     pub tp: f64,
     pub sl: f64,
+    /// How long the venue is to work this order over, in minutes, and zero for
+    /// an order that goes at one moment.
+    ///
+    /// A duration rather than a flag beside one, so an order cannot be a TWAP
+    /// with no window or a limit order with one. Zero is not "a TWAP of no
+    /// length": it is the whole of what says this order is not one.
+    pub minutes: f64,
     /// Why this order cannot be sent as typed, or nothing when it can.
     ///
     /// Folded here rather than left to the view because sendability is one
@@ -1060,6 +1122,40 @@ pub fn quoted_price(kind: OrderKind, price: String, from: String, to: String) ->
     ((from + to) / 2.0).to_string()
 }
 
+/// The window an order of this kind carries, and nothing for a kind that has
+/// none.
+///
+/// Read once so a kind switched away from cannot leave a window standing on an
+/// order that is not worked. It is the same rule the level fold follows —
+/// closing it clears both fields — expressed as a projection rather than as a
+/// handler that has to remember.
+pub fn order_window(kind: OrderKind, minutes: String) -> String {
+    if kind == OrderKind::Twap {
+        return minutes;
+    }
+    String::new()
+}
+
+/// How long the venue will be working this order, in the words the panel
+/// prints, and nothing for an order that goes at one moment.
+///
+/// Minutes and hours rather than minutes alone: a window is a thing a reader
+/// chose and has to recognise, and "180 minutes" is a figure they have to
+/// convert before they can tell whether it is the one they meant.
+pub fn order_worked(minutes: String) -> String {
+    let minutes = amount(&minutes);
+    if minutes.is_nan() || minutes <= 0.0 {
+        return String::new();
+    }
+    if minutes < 60.0 || minutes % 60.0 != 0.0 {
+        let plural = if minutes == 1.0 { "" } else { "s" };
+        return format!("over {} minute{plural}", fmt_size(minutes));
+    }
+    let hours = minutes / 60.0;
+    let plural = if hours == 1.0 { "" } else { "s" };
+    format!("over {} hour{plural}", fmt_size(hours))
+}
+
 /// Project the order the ticket is describing.
 ///
 /// Every argument is a value the panel is already showing. Nothing is
@@ -1081,12 +1177,14 @@ pub fn order_draft(
     quote: Ticket,
     tp: String,
     sl: String,
+    minutes: String,
     reduce_refusal: String,
     tp_refusal: String,
     sl_refusal: String,
 ) -> Draft {
     let size = amount(&size).abs();
     let (tp, sl) = (amount(&tp), amount(&sl));
+    let minutes = amount(&minutes).max(0.0);
     Draft {
         venue,
         coin: coin.clone(),
@@ -1104,13 +1202,16 @@ pub fn order_draft(
         liquidation: quote.liquidation,
         tp,
         sl,
+        minutes,
         refusal: draft_refusal(
+            venue,
             &coin,
             market.as_ref(),
             size,
             price,
             tp,
             sl,
+            minutes,
             [
                 // Only when the promise is actually being made. The refusal is
                 // computed whether or not the box is ticked — the ticket draws
@@ -1139,12 +1240,14 @@ pub fn order_draft(
 /// something vaguer.
 #[allow(clippy::too_many_arguments)]
 fn draft_refusal(
+    venue: Venue,
     coin: &str,
     market: Option<&SymbolRow>,
     size: f64,
     price: f64,
     tp: f64,
     sl: f64,
+    minutes: f64,
     refusals: [String; 3],
 ) -> String {
     if let Some(said) = refusals.into_iter().find(|said| !said.is_empty()) {
@@ -1175,6 +1278,13 @@ fn draft_refusal(
         return "This app does not attach a target or a stop to an order yet, so it will not \
                 send one that has them."
             .to_owned();
+    }
+    // Belt beside the venue fact, exactly as the levels arm is. `places_twap`
+    // is what stops the window being offered; this is what stops an order
+    // carrying one from reaching a wire that has nowhere to put it — and, on a
+    // network that does, what stops a window nobody typed.
+    if minutes > 0.0 && !venue_places_twap(venue) {
+        return venue_twap_note(venue);
     }
     // `<=` rather than `!(_ > _)`: a size that is NaN is not a size either,
     // and both spellings refuse it — this one just says so readably.
@@ -1529,11 +1639,16 @@ pub fn order_ladder(
                 // is built here and not by `order_draft`.
                 tp: 0.0,
                 sl: 0.0,
+                // A ladder is limit orders, and a rung worked over a window
+                // would be a TWAP per rung rather than a ladder.
+                minutes: 0.0,
                 refusal: draft_refusal(
+                    venue,
                     &coin,
                     market.as_ref(),
                     per,
                     *price,
+                    0.0,
                     0.0,
                     0.0,
                     [
@@ -1789,11 +1904,14 @@ fn flatten_draft(venue: Venue, held: &Position, markets: &[SymbolRow]) -> Draft 
         liquidation: 0.0,
         tp: 0.0,
         sl: 0.0,
+        minutes: 0.0,
         refusal: draft_refusal(
+            venue,
             &held.coin,
             market.as_ref(),
             size,
             price,
+            0.0,
             0.0,
             0.0,
             [String::new(), String::new(), String::new()],
@@ -2515,6 +2633,7 @@ mod tests {
             String::new(),
             String::new(),
             String::new(),
+            String::new(),
         );
         assert_eq!(
             draft.size, 3.0,
@@ -2546,6 +2665,7 @@ mod tests {
             Tif::Ioc,
             quote,
             "70,000".to_owned(),
+            String::new(),
             String::new(),
             String::new(),
             String::new(),
@@ -2594,6 +2714,7 @@ mod tests {
                 String::new(),
                 String::new(),
                 String::new(),
+                String::new(),
             )
             .refusal
         };
@@ -2621,6 +2742,7 @@ mod tests {
                 false,
                 Tif::Gtc,
                 unpriced(),
+                String::new(),
                 String::new(),
                 String::new(),
                 "nothing to reduce".to_owned(),
@@ -2658,6 +2780,7 @@ mod tests {
                 String::new(),
                 String::new(),
                 String::new(),
+                String::new(),
             )
             .refusal
         };
@@ -2687,6 +2810,7 @@ mod tests {
             false,
             Tif::Gtc,
             unpriced(),
+            String::new(),
             String::new(),
             String::new(),
             String::new(),

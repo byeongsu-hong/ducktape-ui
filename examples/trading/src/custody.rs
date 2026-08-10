@@ -1420,6 +1420,7 @@ pub async fn submit_order(
                 order,
                 draft.reduce_only,
                 lighter_resting(draft.tif),
+                draft.minutes,
             )
             .await
             .map_err(|failure| re_enrol(venue, failure))?;
@@ -2521,6 +2522,7 @@ mod tests {
             String::new(),
             String::new(),
             String::new(),
+            String::new(),
         )
     }
 
@@ -2560,6 +2562,7 @@ mod tests {
             liquidation: 61_000.0,
             tp: 0.0,
             sl: 0.0,
+            minutes: 0.0,
             refusal: String::new(),
         };
         let (wires, grouping) = wire_orders(&draft, 7);
@@ -2613,7 +2616,19 @@ mod tests {
             // last assertion in this test.
             tp,
             sl,
+            // **Not on this venue's wire at all, and refused rather than
+            // dropped.** Hyperliquid works an order over a window with a
+            // separate `twapOrder` action carrying a `twap` object, and the
+            // SDK every Hyperliquid vector here is driven out of does not sign
+            // one — so this app has nothing to hold such bytes against and
+            // `places_twap` is false on both Hyperliquid networks. A draft
+            // carrying a window is refused by `draft_refusal` before a key is
+            // asked for, which is asserted below. On Lighter it *is* on the
+            // wire, as the order's type and its expiry together, and
+            // `lighter_sign.rs` pins that against the venue's own signer.
+            minutes,
         } = draft.clone();
+        assert_eq!(minutes, 0.0);
         assert_eq!(market.map(|row| row.asset), Some(wire.asset));
         assert_eq!((tp, sl), (0.0, 0.0));
 
@@ -2691,6 +2706,7 @@ mod tests {
             String::new(),
             String::new(),
             String::new(),
+            String::new(),
         );
         assert!(
             with_levels
@@ -2728,6 +2744,7 @@ mod tests {
             false,
             Tif::Gtc,
             quote(),
+            String::new(),
             String::new(),
             String::new(),
             String::new(),
@@ -2782,6 +2799,7 @@ mod tests {
             false,
             Tif::Gtc,
             quote(),
+            String::new(),
             String::new(),
             String::new(),
             String::new(),

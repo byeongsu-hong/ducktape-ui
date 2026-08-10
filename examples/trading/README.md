@@ -518,6 +518,28 @@ count of what did go — the ones that went are already resting, and the panel
 does not take them back. A ladder is capped at twenty rungs, because each one is
 its own signature and its own round trip.
 
+**A TWAP is the other way round from a scale, in every way that matters.** A
+ladder is this app's arithmetic and leaves as the orders it is made of; a worked
+order leaves as *one* order and the exchange slices it, into sub-orders no API
+key may place. So there is nothing to preview and everything to gate: the window
+replaces the resting rule, because the venue fixes that one — its own validation
+refuses a TWAP that is not good-till-time, and the expiry such an order carries
+is not a deadline but the length of the working. The ticket says the window back
+in the unit it means (`over 3 hours`, not `over 180 minutes`) and the
+confirmation restates it where a resting rule would have been.
+
+It is offered only where this app can sign one, and that is a fact on the
+network registry beside `rests_forever` — not a match on the venue. Lighter's
+TWAP is the ordinary create-order transaction filed as `TWAPOrder = 6`, so the
+encoding reaches it by one field, and that field is pinned against a vector
+driven out of the venue's own signer the way every other Lighter field is.
+Hyperliquid's is a separate `twapOrder` action, documented on the exchange
+endpoint and absent from the Python SDK every Hyperliquid vector here comes from
+— so there is nothing to hold those bytes against, and an order signed to a
+shape nobody has checked is one the exchange cannot tell from a stranger's. The
+button is not drawn there and a sentence says which of the two things is
+missing, because "Hyperliquid has no TWAP" would be false.
+
 **How long it rests.** `GTC`, `IOC`, `ALO` — one enum, not three booleans,
 because post-only and immediate-or-cancel are two answers to the same question
 and an order carrying both would have to rest and fill at once. Hyperliquid
