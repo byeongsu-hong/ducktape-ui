@@ -110,7 +110,14 @@ jobs:
   performance:
     name: Performance contracts
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # The longest job here, and the only one that compiles release artifacts,
+    # which the fat LTO and single codegen unit in `[profile.release]` make
+    # expensive. It also restores nothing: the repository's Actions cache sits
+    # at 9.3GB of its 10GB limit, nine ~0.8GB `rust-cache` entries hold 7.3GB
+    # of that, and a tenth is evicted before the next run reads it — every run
+    # of this job logs `No cache found`. So cold is the steady state, not the
+    # unlucky case, and 20-24m of cold work had four minutes of headroom.
+    timeout-minutes: 45
     env:
       # This job's product is wall-clock numbers, and sccache keeps a server
       # uploading to the Actions cache in the background. Measuring against a
@@ -148,6 +155,14 @@ jobs:
           cargo test --locked -p cargo-ice performance_contract -- --ignored --nocapture --test-threads=1
           cargo test --locked -p cargo-ice qualification_snapshot_cost -- --ignored --nocapture --test-threads=1
           cargo test --locked -p ui-lang-core lowering_wide_component_calls_scales -- --ignored --nocapture --test-threads=1
+      # Not a contract — a compile guard, and it belongs here because this is
+      # the only job that already holds a release build of this crate. Nothing
+      # else in CI builds the runtime's lib tests with `debug_assertions` off,
+      # and the target had already rotted: `iced_core` implements `Renderer`
+      # for `()` only under that cfg, so four tests standing a widget up
+      # against the null renderer failed the whole target with 29 errors.
+      - name: Test the runtime library in release
+        run: cargo test --release --locked -p ui-lang-runtime --lib
 
   review:
     name: Review bundles and packaging
