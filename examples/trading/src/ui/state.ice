@@ -544,20 +544,6 @@ preset browsing
     tape_prints = demo_tape()
     live = true
 
-// The same terminal with the book at the depth the socket delivers. Every
-// other fixture here is three levels a side, which fits any column ever drawn
-// and so said nothing about the one case the panel has to survive: ten levels
-// a side, which is what both venues publish.
-preset deep_book
-  state
-    gate = false
-    symbols = demo_symbols()
-    focus = symbol_row(demo_symbols(), "BTC")
-    book = some(demo_book_deep())
-    tape_prints = demo_tape()
-    orders = demo_orders()
-    live = true
-
 preset at_risk
   state
     gate = false

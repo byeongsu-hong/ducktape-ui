@@ -4457,67 +4457,50 @@ pub fn demo_book_at(mid: f64) -> Book {
 /// A book whose levels are a tick apart. The tick is the market's, not
 /// bitcoin's: a dollar between levels is the whole market on a coin worth a
 /// fraction of a cent.
+///
+/// `BOOK_DEPTH` levels a side, because that is what both venues publish and a
+/// fixture shallower than the feed is a fixture that cannot draw the case the
+/// panel has to survive. It was three a side for a long time, and three fit in
+/// any column ever drawn: the book took the height of every list under it at
+/// the window's own minimum and no test could see it, and the wide terminal
+/// drew empty panel below the bids.
+///
+/// The touch is unchanged from that fixture — 1.4 on the best bid, 1.8 on the
+/// best ask — so what crossing a small order costs is what it always cost. Each
+/// side thickens by its own step away from the touch, and the two steps differ
+/// so that a walk which took the wrong side gets a different answer rather than
+/// the right one by symmetry.
 pub fn demo_book_ticked(mid: f64, tick: f64) -> Book {
-    let level = |price: f64, size: f64, total: f64, deepest: f64| Level {
-        price,
-        size,
-        total,
-        bar: total / deepest * BOOK_BAR_WIDTH,
-    };
-    Book {
-        bids: vec![
-            level(mid - tick, 1.4, 1.4, 6.0),
-            level(mid - tick * 2.0, 2.1, 3.5, 6.0),
-            level(mid - tick * 3.0, 2.5, 6.0, 6.0),
-        ],
-        // Reversed, as the feed leaves them: the best ask sits last, against
-        // the spread, so the panel walks both lists top to bottom.
-        asks: vec![
-            level(mid + tick * 3.0, 3.0, 7.0, 7.0),
-            level(mid + tick * 2.0, 2.2, 4.0, 7.0),
-            level(mid + tick, 1.8, 1.8, 7.0),
-        ],
-        spread: tick * 2.0,
-        spread_pct: tick * 2.0 / mid * 100.0,
-        mid,
-    }
-}
-
-/// The book at the depth a socket actually delivers. Three levels a side is
-/// enough to price a crossing order, and every other fixture here carries
-/// three — which is why nothing in this app had ever drawn a book that reached
-/// the bottom of its own column. Both venues publish ten a side, and ten a
-/// side is 390px of rows the panel has to hold without spending the height the
-/// tape, the alerts and the resting orders below it need.
-pub fn demo_book_deep() -> Book {
-    let mid = 64_000.0;
-    // The deepest level's running total, which is what the widest bar is drawn
-    // against: ten sizes of 0.4 + 0.4n sum to 26.
-    let deepest = 26.0;
-    let side = |away: f64| {
+    let side = |away: f64, first: f64, step: f64| {
         let mut total = 0.0;
-        (1..=10)
-            .map(|step| {
-                let size = 0.4 + f64::from(step) * 0.4;
+        let mut levels = (1..=BOOK_DEPTH)
+            .map(|rank| {
+                let size = first + step * (rank - 1) as f64;
                 total += size;
                 Level {
-                    price: mid + away * f64::from(step),
+                    price: mid + away * tick * rank as f64,
                     size,
                     total,
-                    bar: total / deepest * BOOK_BAR_WIDTH,
+                    bar: total,
                 }
             })
-            .collect::<Vec<Level>>()
+            .collect::<Vec<Level>>();
+        // The widest bar is the deepest level's running total, which is only
+        // known once the whole side is built.
+        for level in &mut levels {
+            level.bar = level.bar / total * BOOK_BAR_WIDTH;
+        }
+        levels
     };
-    let mut asks = side(1.0);
+    let mut asks = side(1.0, 1.8, 0.4);
     // Reversed, as the feed leaves them: the best ask sits last, against the
     // spread, so the panel walks both lists top to bottom.
     asks.reverse();
     Book {
-        bids: side(-1.0),
+        bids: side(-1.0, 1.4, 0.7),
         asks,
-        spread: 2.0,
-        spread_pct: 2.0 / mid * 100.0,
+        spread: tick * 2.0,
+        spread_pct: tick * 2.0 / mid * 100.0,
         mid,
     }
 }
@@ -5820,30 +5803,48 @@ mod tests {
         }
     }
 
-    /// The book the fixture holds: bids 63,999/998/997 at 1.4/2.1/2.5 and
-    /// asks 64,001/002/003 at 1.8/2.2/3.0, around a 64,000 mid.
+    /// The best level of a side, and the one behind it. The asks arrive
+    /// reversed, so "best" is a different end of each list and reading it off
+    /// the fixture is what keeps these expectations true when the fixture
+    /// changes shape.
+    fn touch(levels: &[Level], reversed: bool) -> (&Level, &Level) {
+        match reversed {
+            true => (&levels[levels.len() - 1], &levels[levels.len() - 2]),
+            false => (&levels[0], &levels[1]),
+        }
+    }
+
     #[test]
     fn crossing_the_spread_is_priced_at_the_levels_that_are_there() {
+        let fixture = demo_book();
         let book = || Some(demo_book());
+        let (best_ask, next_ask) = touch(&fixture.asks, true);
+        let (best_bid, next_bid) = touch(&fixture.bids, false);
 
         // Inside the best ask: one level, one price, and the slippage is the
         // half spread and nothing else.
         let small = book_impact(book(), "1.0".to_owned(), true);
         assert!(small.ready && !small.short);
-        assert!((small.paid - 64_001.0).abs() < 1e-9);
+        assert!(1.0 < best_ask.size, "a 1.0 buy has to rest on one level");
+        assert!((small.paid - best_ask.price).abs() < 1e-9);
         assert!((small.filled - 1.0).abs() < 1e-9);
-        assert!((small.slippage_pct - (1.0 / 64_000.0 * 100.0)).abs() < 1e-9);
+        assert!(
+            (small.slippage_pct - ((best_ask.price - fixture.mid) / fixture.mid * 100.0)).abs()
+                < 1e-9
+        );
 
-        // Through two levels: 1.8 at 64,001 and 1.2 at 64,002.
-        let deeper = book_impact(book(), "3.0".to_owned(), true);
-        let expected = (1.8 * 64_001.0 + 1.2 * 64_002.0) / 3.0;
+        // Through two levels: the whole best ask, and the rest behind it.
+        let size = best_ask.size + 1.2;
+        let deeper = book_impact(book(), format!("{size}"), true);
+        let expected = (best_ask.size * best_ask.price + 1.2 * next_ask.price) / size;
         assert!((deeper.paid - expected).abs() < 1e-9, "{}", deeper.paid);
         assert!(deeper.paid > small.paid, "depth costs more, never less");
 
         // Selling walks the bids down, and the slippage still reads positive:
         // it is what the crossing costs, not which way the price went.
-        let sold = book_impact(book(), "2.0".to_owned(), false);
-        let expected = (1.4 * 63_999.0 + 0.6 * 63_998.0) / 2.0;
+        let size = best_bid.size + 0.6;
+        let sold = book_impact(book(), format!("{size}"), false);
+        let expected = (best_bid.size * best_bid.price + 0.6 * next_bid.price) / size;
         assert!((sold.paid - expected).abs() < 1e-9);
         assert!(sold.slippage_pct > 0.0);
     }
@@ -5853,21 +5854,33 @@ mod tests {
     /// quote the worst level in the book as the first one filled.
     #[test]
     fn a_sweep_starts_at_the_best_price_not_the_first_row() {
+        let fixture = demo_book();
+        let (best_ask, _) = touch(&fixture.asks, true);
         let impact = book_impact(Some(demo_book()), "0.5".to_owned(), true);
         assert!(
-            (impact.paid - 64_001.0).abs() < 1e-9,
+            (impact.paid - best_ask.price).abs() < 1e-9,
             "a small buy pays the best ask, not {}",
             impact.paid
         );
+        let worst = fixture.asks[0].price;
+        assert!(best_ask.price < worst, "the fixture stores the worst first");
     }
 
     #[test]
     fn a_size_the_book_cannot_fill_says_so_rather_than_inventing_depth() {
+        let fixture = demo_book();
+        let depth = fixture.asks.iter().map(|level| level.size).sum::<f64>();
+        let spent = fixture
+            .asks
+            .iter()
+            .map(|level| level.size * level.price)
+            .sum::<f64>();
         let impact = book_impact(Some(demo_book()), "100".to_owned(), true);
-        assert!(impact.short, "7.0 of asks cannot fill 100");
-        assert!((impact.filled - 7.0).abs() < 1e-9);
+        assert!(depth < 100.0, "the fixture has to be short of the ask");
+        assert!(impact.short, "{depth} of asks cannot fill 100");
+        assert!((impact.filled - depth).abs() < 1e-9);
         assert!(
-            (impact.paid - (1.8 * 64_001.0 + 2.2 * 64_002.0 + 3.0 * 64_003.0) / 7.0).abs() < 1e-9,
+            (impact.paid - spent / depth).abs() < 1e-9,
             "and it is priced over what is actually there"
         );
 

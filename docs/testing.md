@@ -54,6 +54,34 @@ timestamps but does not virtualize arbitrary `iced::time` futures. A
 task-issued window open replaces the single headless current window with fresh
 widget/focus/input state while retaining application state.
 
+## One process, many applications
+
+A shipped process runs one application, so application state that belongs to
+the whole machine is a `static` there and correct: a key store, a device
+handle, a connection pool. A test binary is not that process. It runs one whole
+application per test thread against the same `static`, and nothing says so
+until the suite is busy enough for two of them to overlap — then one test's
+press clears what another had just stored, and which test fails moves with the
+machine rather than with the code.
+
+`ui_lang_runtime::testing::app_instance()` is the key such state hangs on in a
+test build:
+
+```rust
+#[cfg(test)]
+fn vault() -> &'static Mutex<Option<Vault>> {
+    static HELD: OnceLock<Mutex<HashMap<u64, &'static Mutex<Option<Vault>>>>> = OnceLock::new();
+    per_instance(&HELD)
+}
+```
+
+The driver claims an instance before its program boots, and enrols the executor
+threads its tasks and subscriptions are polled on — so an application reaches
+its own store from wherever its work runs, not only from the test thread. A
+thread with no driver behind it, an ordinary `#[test]`, gets an instance of its
+own for the same reason; tests that once took turns on a mutex to avoid the
+collision no longer need to.
+
 Interactions replay emitted messages through generated update code and drain
 real tasks recursively before the next statement. Checked `pure`, `sync`, and
 task externs therefore call the same Rust functions used by the app. Deterministic
