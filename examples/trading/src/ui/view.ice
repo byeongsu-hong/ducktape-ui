@@ -544,6 +544,51 @@ view
                                   Label value="POSITIONS"
                                   Label value=fmt_count(len(positions))
                                   space w=fill
+                                  // When the next funding charge lands, over
+                                  // the column that says what the last ones
+                                  // cost. Funding has only ever been a rate on
+                                  // this screen — RENT PER DAY on the ticket,
+                                  // dollars charged in the column below — and a
+                                  // rate answers what holding costs without
+                                  // ever answering when the next bill is due.
+                                  //
+                                  // Once for the panel rather than once per
+                                  // row, because it is one answer for every row
+                                  // under it: both exchanges charge every
+                                  // market on one hourly boundary, read live on
+                                  // 2026-08-09 across Hyperliquid's whole
+                                  // `predictedFundings` payload and across
+                                  // eight Lighter markets, which stamped the
+                                  // same millisecond past the hour. So the
+                                  // market the terminal is showing answers for
+                                  // the account's other positions too, and a
+                                  // countdown repeated down the rows would be
+                                  // the same figure five times.
+                                  //
+                                  // It is the header rather than the strip at
+                                  // the top of the window because that strip is
+                                  // already over its width: at the 1180 minimum
+                                  // the app opens at, the session badge and the
+                                  // feed's round trip are squeezed to nothing
+                                  // there before anything is added.
+                                  //
+                                  // A plain text rather than a `Label`, for the
+                                  // reason the session badge is one: this is
+                                  // asserted, and a `Label` is a component call
+                                  // whose identity is a scope with no rendered
+                                  // box of its own to name. The typography is
+                                  // the one `Label` draws.
+                                  text "FUNDING IN" #funding-label
+                                    with
+                                      size=10.0
+                                      tracking=1.1
+                                      @text-faint
+                                  text funding_countdown(venue, focus, clock) #funding-next
+                                    with
+                                      size=11.0
+                                      w=30.0
+                                      font=digits
+                                      @text-muted
                                 // The header carries the same widths, gap and right
                                 // padding as `PositionRow`, because the two are one
                                 // table drawn in two places and there is nothing
@@ -679,6 +724,27 @@ view
                                     Label value="RECENT FILLS"
                                     space w=fill
                                     Label value=fmt_count(len(fills))
+                                    // The one way anything this app holds
+                                    // leaves it. Beside the fills rather than
+                                    // on settings, because the rows on screen
+                                    // are what it writes and a control for them
+                                    // belongs over them; disabled with none,
+                                    // because a press that can only refuse is
+                                    // worse than a control that says it has
+                                    // nothing to do.
+                                    button #export-fills -> export_fills
+                                      with
+                                        label="Export these fills to a CSV file"
+                                        disabled=empty(fills)
+                                        p=4.0
+                                      active bg=panel text=muted r=3.0
+                                      hovered bg=raised text=fg r=3.0
+                                      disabled bg=panel text=faint r=3.0
+                                      text "CSV"
+                                        with
+                                          size=9.0
+                                          tracking=1.0
+                                          @text-faint
                                   row
                                     with
                                       w=fill

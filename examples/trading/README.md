@@ -866,6 +866,61 @@ Single-letter shortcuts for the side are not here. The market search listens
 to the same keys, and the app has no notion of which surface holds focus, so
 typing `b` to find bitcoin would flip the ticket to a buy instead.
 
+## When the rent is next collected
+
+A rate answers what a position costs to hold and never when the next bill
+lands, which is the half a holder actually has to plan around. The positions
+panel says it once, over the FUNDING column the charge appears in:
+`FUNDING IN 30m`. Once for the panel rather than once per row, because it is
+one answer for every row under it — both exchanges charge every market on one
+hourly boundary, read live on 2026-08-09 across Hyperliquid's whole
+`predictedFundings` payload and across eight Lighter markets, which stamped the
+same millisecond past the hour.
+
+The two venues are asked differently, and the difference is which of them
+states a boundary at all. Lighter publishes `funding_timestamp` on its
+`market_stats` channel: the hour the charge it just took landed on, so the next
+one is an interval later, rolled forward by whole intervals so a socket that has
+been quiet still names a boundary ahead rather than one behind. Hyperliquid
+publishes none in an asset context, and the `nextFundingTime` its separate
+`predictedFundings` request carries is the boundary already gone by — at
+23:49:06Z it answered 23:00:00Z — so that network's countdown is derived from
+the clock's own hour, which is the interval the venue documents and that same
+payload restates as `fundingIntervalHours: 1`.
+
+A market whose venue has not stated a boundary reads `—` rather than borrowing
+the hour the other one keeps, which on Lighter is every market until the stats
+channel has spoken: the universe request carries no funding time. An hour
+invented on a screen a position is held against is worse than an admission.
+
+## The fills, as a file
+
+The panel drew the account's fills and there was no way to keep one. `CSV` in
+the RECENT FILLS header writes them — time, coin, side, size, price, closed
+PnL, the venue's own trade id, the network, and whether that network's money is
+worth anything — and the app names the file it wrote on the status line under
+the header.
+
+Every field is quoted, including the header and the numbers, so the day a
+symbol carries a comma it stays one field. Figures are written at full
+precision rather than through the panel's formatters: a thousands separator is
+a reader's comma inside a field, and a price rounded to what a 72-pixel column
+had room for is not the fill.
+
+The last two columns are the ones worth having. A row that says BTC, a size and
+a price is the same row on either deployment, and a testnet fill filed without
+saying so becomes a mainnet record the moment it is opened anywhere else.
+
+There is no file chooser. Iced has no such widget and Ice has no built-in that
+opens one — the workspace's one precedent, `markdown-editor`, adds `rfd` and an
+async extern for it, which is a modal over a screen holding open positions and
+a dependency for a button. So the file goes to a place the reader already has
+— their downloads folder, then their home, then the process temp directory —
+and the app says the whole path instead of leaving them to guess it. The name
+is the newest fill's own hour rather than the wall clock, so exporting the same
+fills twice rewrites one file instead of leaving a second copy under a new
+name.
+
 ## The rate belongs to the market, not the position
 
 A market capped at 40x holds every position in it to half of that cap,
