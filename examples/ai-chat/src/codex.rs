@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use smol::channel::{Receiver, Sender};
 
@@ -57,7 +58,10 @@ impl CodexError {
 /// Every row of the transcript is one of these — the prompt included — so the
 /// screen renders a single flat list and a turn's interleaving survives
 /// exactly as the model produced it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// It is serialized as it stands, because it is also the record this window
+/// keeps of the chat: a turn is written out as its rows and read back as them,
+/// so what a chat looks like reopened is what it looked like when it happened.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     pub id: i64,
     /// `prompt` · `reasoning` · `tool` · `answer` · `usage`
@@ -109,15 +113,10 @@ impl std::hash::Hash for Entry {
 }
 
 impl Entry {
-    /// A row built from something other than a live stream — a chat read back
-    /// off disk, for one.
+    /// A row built from something other than a live stream — the note a
+    /// truncated chat opens with, for one.
     pub fn of(kind: &str, title: impl Into<String>) -> Self {
         Self::new(kind, title)
-    }
-
-    /// The prose this row carries.
-    pub fn with_body(self, body: impl Into<String>) -> Self {
-        self.body(body)
     }
 
     fn new(kind: &str, title: impl Into<String>) -> Self {
@@ -228,6 +227,9 @@ struct Transcript {
     effort: String,
     /// Where the screen is listening while a turn runs, if it is.
     watcher: Option<Sender<Vec<Entry>>>,
+    /// The file this chat is kept in. Empty until the first thing is asked,
+    /// because a window opened and closed again is not a chat to keep.
+    file: Option<PathBuf>,
 }
 
 impl Transcript {
@@ -285,6 +287,21 @@ impl Transcript {
             if row.turn == turn && matches!(row.kind.as_str(), "reasoning" | "tool") {
                 row.hidden = !open;
             }
+        }
+    }
+
+    /// Write this chat out, and say so in the transcript if it could not be.
+    ///
+    /// The file is chosen the first time something is asked rather than when
+    /// the window opens, so a window opened and closed again leaves nothing
+    /// behind. Everything is written — reasoning included — because the reason
+    /// this window keeps its own record is that the CLI's does not.
+    fn keep(&mut self) {
+        let file = self.file.get_or_insert_with(crate::store::new_file).clone();
+        if let Err(error) = crate::store::save(&file, &self.entries, &self.input, &self.model) {
+            // Drawn rather than logged: a window that has quietly stopped
+            // recording looks exactly like one that is recording.
+            self.push(Entry::new("note", error.message));
         }
     }
 
@@ -436,16 +453,35 @@ pub fn set_model(session: Session, model: String) -> String {
 
 /// Take on a chat that already happened.
 ///
-/// The session becomes that chat: its rows are what is drawn and its input is
-/// what the next turn resends, so carrying on from a chat read off disk
-/// continues it rather than starting beside it.
-pub fn adopt(session: Session, rows: Vec<Entry>, input: Vec<Value>, turns: i64) -> Vec<Entry> {
+/// The session becomes that chat: its rows are what is drawn, its input is what
+/// the next turn resends, and its file is what the next turn is written to — so
+/// carrying on from a chat read off disk continues it rather than starting
+/// beside it.
+///
+/// The rows are renumbered on the way in. An id is this process's counter, and
+/// a chat saved by an earlier run holds ids the counter is about to hand out
+/// again; two rows sharing one would collide in the `keyed` list and in the
+/// parsed-Markdown cache, which is drawn as one row's prose under another.
+pub fn adopt(
+    session: Session,
+    rows: Vec<Entry>,
+    input: Vec<Value>,
+    turns: i64,
+    file: PathBuf,
+) -> Vec<Entry> {
     let mut state = session.lock();
-    state.entries = rows;
+    state.entries = rows
+        .into_iter()
+        .map(|row| Entry {
+            id: next_id(),
+            ..row
+        })
+        .collect();
     state.input = input;
     state.turn = turns;
     state.pending.clear();
     state.cancelled = false;
+    state.file = Some(file);
     state.snapshot()
 }
 
@@ -490,6 +526,9 @@ pub fn push_user(session: Session, text: String) -> Vec<Entry> {
     state.started = Some(std::time::Instant::now());
     state.cancelled = false;
     state.push(Entry::new("prompt", "").body(text));
+    // Written before the socket is opened, so a turn that never gets an answer
+    // still leaves the question behind.
+    state.keep();
     state.snapshot()
 }
 
@@ -714,8 +753,9 @@ fn pump(session: &Session, chunks: &Sender<Chunk>) -> Result<Vec<Entry>, CodexEr
     Ok(settle(session, answer))
 }
 
-/// Close the turn: keep the answer for the next request, hand the finished
-/// transcript over, and close the row channel so its stream completes.
+/// Close the turn: keep the answer for the next request, write the chat out,
+/// hand the finished transcript over, and close the row channel so its stream
+/// completes.
 fn settle(session: &Session, answer: String) -> Vec<Entry> {
     let mut state = session.lock();
     state.input.push(json!({
@@ -723,6 +763,9 @@ fn settle(session: &Session, answer: String) -> Vec<Entry> {
         "role": "assistant",
         "content": [{"type": "output_text", "text": answer}],
     }));
+    // Both endings come through here — the turn that finished and the turn
+    // that was stopped — so a stopped answer is kept as readily as a whole one.
+    state.keep();
     state.publish();
     state.watcher = None;
     state.snapshot()
@@ -1411,6 +1454,60 @@ mod tests {
         assert_ne!(
             entries[0].id, entries[1].id,
             "a shared id collapses two rows"
+        );
+    }
+
+    /// The record this window keeps is the turn, and that is the reason it
+    /// keeps one at all. The CLI's rollouts hand back questions, answers and
+    /// tool calls and nothing of what the model was doing between them; this
+    /// asserts the opposite — that a turn reopened is the turn that happened,
+    /// down to the reasoning folded away inside it.
+    #[test]
+    fn a_finished_turn_is_written_out_whole_and_comes_back_whole() {
+        let session = empty();
+        push_user(session.clone(), "Which iced is newest?".to_owned());
+
+        let (chunks, incoming) = smol::channel::unbounded();
+        let worker = session.clone();
+        let turn = std::thread::spawn(move || pump(&worker, &chunks));
+        while incoming.recv_blocking().is_ok() {}
+        let drawn = turn.join().expect("worker thread").expect("a whole turn");
+
+        let file = session.lock().file.clone().expect("the chat was kept");
+        let reopened = empty();
+        let back = crate::store::open_chat(reopened.clone(), file.to_string_lossy().into_owned())
+            .expect("it opens");
+
+        let shape = |rows: &[Entry]| {
+            rows.iter()
+                .map(|row| format!("{}:{}", row.kind, row.title))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            shape(&back),
+            shape(&drawn),
+            "a chat reopened is what was on screen when it happened"
+        );
+
+        // The working-out is folded away in both, so it takes opening the fold
+        // to see whether it survived the write at all.
+        let work = back
+            .iter()
+            .find(|row| row.kind == "work")
+            .expect("a finished turn folds under one summary");
+        let unfolded = toggle_row(reopened, work.id);
+        assert!(
+            unfolded
+                .iter()
+                .any(|row| row.kind == "reasoning" && row.title == "Planning a source search"),
+            "the reasoning came back: {:?}",
+            shape(&unfolded)
+        );
+        assert!(
+            unfolded
+                .iter()
+                .any(|row| row.kind == "tool" && row.title == "Searched the web"),
+            "and so did the search"
         );
     }
 

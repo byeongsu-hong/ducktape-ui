@@ -181,44 +181,51 @@ The worst case this screen can be handed — 24 settled turns behind a
 second, so the budget for one is 10–20 ms: that worst case is under 2% of it.
 Further tuning is not warranted, and none was kept.
 
-## Chats already had
+## Chats this window had
 
-The sidebar lists the rollouts the Codex CLI wrote under `~/.codex/sessions`,
-newest first, and opening one draws it as a transcript. It fills as it is read
-rather than when it is done, with a bar saying how far it has got: a thousand
-rollouts take long enough that nothing happening would read as nothing
-working. Neither the bar nor the list waits on the other, and neither holds up
-typing. The session becomes that chat — its own
-`input` is loaded too — so carrying on from it continues that conversation
-rather than starting beside it.
+The sidebar lists the chats had here, newest first, and opening one draws it as
+a transcript and carries on from it: the session becomes that chat, so the next
+turn resends its own history and writes back to its own file.
 
-Two streams run through a rollout: the raw `response_item` records, which are
-what was resent to the API, and the `event_msg` records, which are what the CLI
-drew. Both are read — the drawn one for what to show, the raw one for what a
-next turn would resend, and either for the question, which different sessions
-record in different places.
+It keeps its own record rather than reading the CLI's, because the CLI's does
+not keep the interesting half. **A rollout gives back questions, answers and
+tool calls, and nothing of what the model was doing between them** — the raw
+reasoning record is encrypted, and the drawn record's `summary_text` and
+`raw_content` are both empty in all 14,319 reasoning items across the 1,037
+rollouts on the machine this was measured on. What this window draws is already
+the whole turn, so what it writes out is the whole turn.
 
-The drawn stream is what brings back the things this window cannot itself
-produce: shell commands with their output, web searches, file changes, MCP
-calls, sub-agent hand-offs, and where the context was compacted. A chat is
-being read back, not re-run.
+One file per chat under `~/.config/ducktape-ai-chat/sessions`, JSONL, meta
+first:
 
-Not every rollout is a chat. The CLI writes one for exec runs and for each
-sub-agent's own session, and it opens every session by injecting context —
-`<environment_context>`, the project's AGENTS.md — as a message in the same
-shape as a typed one. A rollout with nothing a person actually asked in it is
-not listed, and injected text is never drawn as a question or used as a name.
+```text
+{"title":"Which iced is current?","when":"2026-08-10","model":"gpt-5.6-sol","turns":2}
+{"row":{"id":1,"kind":"prompt","body":"Which iced is current?",…}}
+{"row":{"id":2,"kind":"reasoning","title":"Checking the crate",…}}
+{"input":{"type":"message","role":"user",…}}
+```
 
-`src/qa.rs` audits this against the rollouts on the machine it runs on:
-`AI_CHAT_QA_FROM`/`AI_CHAT_QA_TO` bound the slice, and it reports what came out
-badly. It is what found both of the above.
+The rows are what was drawn, folds included, so a chat reopened looks like the
+chat that happened. The `input` records are what the API was sent, which is what
+the next turn has to resend. Meta comes first so that listing a chat reads one
+line rather than a whole file, and the list still fills as it is read rather
+than when it is done — a store that has grown should show something while it is
+being counted. `AI_CHAT_HOME` moves the lot.
 
-These files are large: a median of 2MB and a tail past 90MB. The listing reads
-only each file's head, and opening one streams it a line at a time and keeps a
-bounded number of rows, saying how many it left out. Measured on a machine with
-1,036 of them: the list took 210ms, and a 26MB chat opened in 247ms.
+A turn is written twice: once when the question is asked, so a turn that never
+gets an answer still leaves the question behind, and once when it ends —
+whether it finished or was stopped. Each write goes to a temporary file and is
+renamed into place, because truncating the real one and failing part way turns
+a chat into half a chat. A write that fails is drawn as a row in the transcript
+rather than logged, since a window that has quietly stopped recording looks
+exactly like one that is recording.
 
-| Chats already had | Still reading them | Opening one |
+Opening one is off the frame loop, but the frame that draws the result is not:
+every answer parses its Markdown the first time it is drawn, and an opened chat
+delivers all of them at once. At the cap of 500 rows — 57KB of prose — the read
+takes 954µs and the frame that follows takes 465µs.
+
+| Chats this window had | Still reading them | Opening one |
 | --- | --- | --- |
 | ![The sidebar](screenshots/history.png) | ![Filling as it reads](screenshots/scanning.png) | ![Opening that chat](screenshots/opening.png) |
 
@@ -227,17 +234,11 @@ bounded number of rows, saying how many it left out. Measured on a machine with
 - An overlay's contents are outside the tree the test harness scans, so a
   menu's appearance is reviewed from a capture rather than asserted. The test
   that produces it says so.
-- **Past reasoning does not come back at all.** The raw record is encrypted,
-  and the drawn record's `summary_text` and `raw_content` are both empty —
-  in all 14,319 reasoning items across the 1,037 rollouts on this machine.
-  The parser reads either field if a future version fills one, and the audit
-  in `src/qa.rs` watches for exactly that; today a chat read back shows its
-  questions, answers and tools, and nothing of what the model was thinking.
+- Chats had before this window existed are not listed. It reads only what it
+  wrote, and the CLI's rollouts do not carry what this draws.
 - There is no blur on a widget in this toolkit — only a window compositing
   flag and shadow blur — so the list being read is shown filling rather than
   frosted over. Hiding it would hide the part that is worth watching.
-- A chat whose question sits past the first 256KB of its rollout is listed as
-  `Untitled chat` rather than read through for a name.
 - **The sign-in is not fully verified.** Minting a code and telling waiting from
   refused are both checked against the live host; the half past approval — what
   the host returns once a code is typed, and the token exchange — is read off
@@ -246,6 +247,7 @@ bounded number of rows, saying how many it left out. Measured on a machine with
 - Codex's own shell and patch tools would need this window to execute them,
   which is a different program. The hosted `web_search` tool is served by the
   backend, so a real tool call still reaches the screen.
-- A turn cannot be stopped once it starts.
+- Stopping a turn takes effect between events, so a turn waiting on a slow
+  first token stops when that token arrives rather than immediately.
 - The Markdown cache is never emptied: clearing a chat orphans its entries for
   the life of the process.

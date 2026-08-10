@@ -191,7 +191,7 @@ component PastChat(chat:Chat, open:bool) -> str
           text chat.title wrap=word @field_label
           row gap=7.0 align=center
             text chat.when @meta
-            text chat.cwd @machine
+            text chat.model @machine
 
 // A row saying what was left out, so a truncated transcript says so rather
 // than quietly beginning in the middle.

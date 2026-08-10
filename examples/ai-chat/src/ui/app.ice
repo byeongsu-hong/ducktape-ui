@@ -125,9 +125,8 @@ preset steering
     live_thinking = markdown("**Checking the append path**")
     live = markdown("Yes — hold the parsed document and extend it.")
 
-// The list of chats already had, as the panel that offers them.
-// Part way through reading the machine's rollouts: some chats are already
-// listed and the bar says how far it has got.
+// Part way through reading the store: some chats are already listed and the
+// bar says how far it has got.
 preset scanning
   state
     signed = true
@@ -139,11 +138,12 @@ preset scanning
     entries = sample_entries(false)
     chats = sample_chats()
     scan_ratio = 0.38
-    scan_total = 1036
+    scan_total = 420
 
+// The chats this window has had, as the panel that offers them.
 preset history
   state
-    open_path = "/sessions/2026-08-10-ducktape-ui.jsonl"
+    open_path = "/sessions/4.jsonl"
     signed = true
     account = "you@example.com"
     model = some("gpt-5.6-sol")
@@ -188,7 +188,7 @@ preset opening
     effort = some("xhigh")
     efforts = ["xhigh"]
     chats = sample_chats()
-    open_path = "/sessions/2026-08-08-ai-chat.jsonl"
+    open_path = "/sessions/2.jsonl"
     entries = sample_entries(false)
     loading_chat = true
 
