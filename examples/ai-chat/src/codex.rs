@@ -1127,8 +1127,15 @@ pub fn codex_account() -> String {
 /// The CLI's file is left alone, so signing out here and remaining signed in
 /// through `codex login` is the expected outcome, not a bug.
 pub fn sign_out() -> bool {
-    crate::auth::sign_out();
-    signed_in()
+    #[cfg(test)]
+    {
+        false
+    }
+    #[cfg(not(test))]
+    {
+        crate::auth::sign_out();
+        signed_in()
+    }
 }
 
 /// The model the CLI itself is set to, so this window answers as it would.

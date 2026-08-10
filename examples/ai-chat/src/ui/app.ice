@@ -253,7 +253,11 @@ view
           h=fill
           p=10.0
           gap=8.0
-        button "New chat" #new-chat w=fill @outline_action -> reset
+        button "New chat" #new-chat -> reset
+          with
+            w=fill
+            disabled=(busy || loading_chat)
+            @outline_action
         row
           with
             w=fill
@@ -304,7 +308,7 @@ view
             button "Night" #theme-night @ghost_action -> use_night
           if signed
             if signed
-            button "Sign out" #sign-out @ghost_action -> forget
+            button "Sign out" #sign-out disabled=(busy || loading_chat) @ghost_action -> forget
       Separator
       if !empty(error)
         box
