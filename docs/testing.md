@@ -613,6 +613,14 @@ the memo boundaries absorb it exactly as designed: 40 redraws with 200 rows
 mid-fade cost **2309us** against **2343us** once settled, and rebuild **0** rows
 either way. Scrolling during a fade rebuilds 0 rows as well.
 
+**Nor does a beat over-invalidate.** The third suspicion was that a feed merge
+dirties more than the rows it moved. Counted: one `market_ticked` rebuilds
+**200 market rows and 0 fill rows**, and the same beat replayed with identical
+numbers rebuilds **0 and 0**. The 200 are the data genuinely moving — `allMids`
+republishes the whole universe — and nothing leaks into the panel beside it.
+That is the invalidation rule working, and it is why the note above holds: only
+mounting fewer rows moves the beat frame, not a narrower dependency.
+
 **And the derived reads inside `responsive` are noise.** `responsive
 #terminal-fit` wraps the whole terminal page, and every derived read inside a
 responsive closure is tagged `ESCAPING_DERIVED_READ`, which vetoes the
