@@ -1194,23 +1194,31 @@ pub fn sample_entries(dark: bool) -> Vec<Entry> {
         .collect()
 }
 
-/// One answer of three short paragraphs, and nothing else.
+/// One short turn: a question, and an answer of three one-line paragraphs.
 ///
 /// Three, each one line: a drag has to start inside a line of text, and an odd
 /// number of blocks of the same height puts the middle of the row in the middle
 /// of the middle one rather than in a gap between two. Dragging from there to
 /// below the answer crosses a block boundary, which is what a selection has to
-/// survive.
+/// survive. The question is there because a prompt is plain text and an answer
+/// is not, and the window may only ever be showing one selection.
 pub fn sample_answer() -> Vec<Entry> {
-    vec![Entry {
-        id: -31,
-        turn: 1,
-        ..Entry::of("answer", "").body(
-            "The document is parsed once.\n\n\
+    vec![
+        Entry {
+            id: -30,
+            turn: 1,
+            ..Entry::of("prompt", "").body("How does an answer grow?")
+        },
+        Entry {
+            id: -31,
+            turn: 1,
+            ..Entry::of("answer", "").body(
+                "The document is parsed once.\n\n\
              Hold the parsed document and extend it as it grows.\n\n\
              The view rebuilds one row.",
-        )
-    }]
+            )
+        },
+    ]
 }
 
 /// A turn caught in the middle: one step done and closed, one still running.

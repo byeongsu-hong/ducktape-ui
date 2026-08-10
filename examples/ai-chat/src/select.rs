@@ -19,6 +19,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use ui_lang_runtime::selection;
+
 use iced::advanced::text::{Hit, LineHeight, Paragraph, Shaping, Span, Wrapping};
 use iced::advanced::widget::{Tree, text as widget_text, tree};
 use iced::advanced::{
@@ -36,8 +38,10 @@ use iced::{Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Vector,
 // one selection across several of them. Each block reads this to find its own
 // share of it, and only the block under the pointer writes to it.
 //
-// One at a time, everywhere: a press anywhere replaces it, so every other
-// block goes quiet without having to be told.
+// One at a time, everywhere — including outside these blocks. Plain text in
+// this window is selectable too, and it and this agree on nothing except the
+// runtime's token: whoever claimed last has the selection, and the other goes
+// quiet without having to be told.
 thread_local! {
     static SELECTION: RefCell<Option<Selection>> = const { RefCell::new(None) };
     /// What each block contributed to the copy being assembled. Cleared by the
@@ -61,6 +65,9 @@ struct Place {
 
 #[derive(Debug)]
 struct Selection {
+    /// What holds the window's one selection. Plain text takes the same kind
+    /// of token, so a drag over a prompt puts this one out.
+    token: u64,
     group: u64,
     anchor: Place,
     focus: Place,
@@ -75,7 +82,7 @@ impl Selection {
     /// This block's share of the selection: all of it in the middle, part of it
     /// at either end, and nothing at all outside.
     fn within(&self, group: u64, block: usize, len: usize) -> Option<Range<usize>> {
-        if self.group != group {
+        if self.group != group || !selection::holds(self.token) {
             return None;
         }
 
@@ -173,10 +180,9 @@ impl Selectable {
     /// Whether the answer this block belongs to is the one holding the
     /// selection — true for every block of it, selected or not.
     fn holds_selection(&self) -> bool {
-        SELECTION.with_borrow(|selection| {
-            selection
-                .as_ref()
-                .is_some_and(|selection| selection.group == self.group)
+        SELECTION.with_borrow(|held| {
+            held.as_ref()
+                .is_some_and(|held| held.group == self.group && selection::holds(held.token))
         })
     }
 
@@ -317,6 +323,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                     offset,
                 };
                 SELECTION.replace(Some(Selection {
+                    token: selection::claim(),
                     group: self.group,
                     anchor: at,
                     focus: at,
@@ -454,6 +461,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                 key: keyboard::Key::Named(keyboard::key::Named::Escape),
                 ..
             }) if self.holds_selection() => {
+                selection::clear();
                 SELECTION.replace(None);
                 shell.request_redraw();
             }
@@ -701,8 +709,11 @@ mod tests {
         );
     }
 
-    fn across(anchor: (usize, usize), focus: (usize, usize)) -> Selection {
+    /// Both ends of one selection, under a token the caller already holds:
+    /// taking a fresh one here would put out the selection built beside it.
+    fn across(token: u64, anchor: (usize, usize), focus: (usize, usize)) -> Selection {
         Selection {
+            token,
             group: 7,
             anchor: Place {
                 block: anchor.0,
@@ -722,7 +733,7 @@ mod tests {
     /// that stops at the first paragraph — which is what it used to do.
     #[test]
     fn a_selection_across_blocks_gives_each_one_its_own_share() {
-        let selection = across((1, 4), (3, 2));
+        let selection = across(selection::claim(), (1, 4), (3, 2));
 
         assert_eq!(selection.within(7, 0, 10), None, "above it, nothing");
         assert_eq!(
@@ -740,8 +751,9 @@ mod tests {
     /// anchor is not something the highlight can see.
     #[test]
     fn a_selection_dragged_upwards_covers_what_one_dragged_down_would() {
-        let down = across((1, 4), (3, 2));
-        let up = across((3, 2), (1, 4));
+        let token = selection::claim();
+        let down = across(token, (1, 4), (3, 2));
+        let up = across(token, (3, 2), (1, 4));
 
         for block in 0..5 {
             assert_eq!(

@@ -336,3 +336,39 @@ test dragging_across_an_answer_selects_past_the_block_it_started_in
   // And the button beside it still takes the whole of the answer.
   click copy
   expect copied == "The document is parsed once.\n\nHold the parsed document and extend it as it grows.\n\nThe view rebuilds one row."
+
+// A window shows one selection. A prompt is plain text, which the runtime
+// makes selectable; an answer is rendered Markdown, which `src/select.rs` does.
+// They keep their own anchors and cursors and agree on nothing except which of
+// them holds it — so starting a drag in either has to put the other out.
+//
+// Copying is what makes that observable: an answer's selection leaves by the
+// clipboard handler, so the answer answering a key it should have gone quiet
+// for shows up as `copied` changing when it must not.
+test starting_a_selection_takes_it_from_wherever_it_was
+  preset one_answer
+  viewport 920 400
+  target ask = #shell/app/transcript/rows/key(-30)/prompt(-30)/root/body
+  target ask_copy = #shell/app/transcript/rows/key(-30)/prompt(-30)/root/copy
+  target answer = #shell/app/transcript/rows/key(-31)/answer(-31)/root
+  target body = answer/body
+  target copy = answer/copy
+
+  // The answer takes the selection, and answers for it.
+  press body
+  move copy
+  release
+  chord control "c"
+  expect copied == "nd extend it as it grows.\n\nThe view rebuilds one row."
+
+  // Something else on the clipboard, so the answer answering again would show.
+  click ask_copy
+  expect copied == "How does an answer grow?"
+
+  // The prompt takes it away, and the answer is quiet.
+  press ask
+  move ask_copy
+  release
+  capture moved
+  chord control "c"
+  expect copied == "How does an answer grow?"
