@@ -299,15 +299,20 @@ pub struct Network {
     /// than in a match on the venue, because it is a fact about the exchange
     /// this network deploys and a new entry has to state it.
     pub rests_forever: bool,
-    /// Whether a take-profit and a stop-loss can ride on the order that opens
-    /// the position.
+    /// Whether this app rides a take-profit and a stop-loss on the order that
+    /// opens the position, here.
     ///
-    /// Hyperliquid takes them on the same action, as a `trigger` order grouped
-    /// with the entry. Lighter's public API has none: its SDK exposes
-    /// `create_tp_order` and `create_sl_order` as whole independent orders and
-    /// nothing anywhere in it names a parent, so offering the two fields there
-    /// would be a promise the app cannot keep — the entry would go and the
-    /// protection would not.
+    /// Both exchanges take them and neither is sent, so this is false
+    /// everywhere: Hyperliquid on the same order action under a grouping, and
+    /// Lighter as a separate grouped transaction this app does not sign.
+    /// Offering the two fields over a wire that carries neither would be a
+    /// promise the app cannot keep — the entry would go and the protection
+    /// would not.
+    ///
+    /// On the registry rather than in a match on the venue, because a network
+    /// added to that table has to state it the way it states its chain. What
+    /// flips it is not an encoder passing its vectors: it is an order carrying
+    /// one having been seen resting at the venue.
     pub attaches_levels: bool,
     /// Whether this network states the time it last charged funding.
     ///
@@ -910,15 +915,20 @@ pub fn venue_tif_note(venue: Venue, tif: Tif) -> String {
     )
 }
 
-/// Whether this venue takes a take-profit and a stop-loss attached to the
-/// order that opens the position, and what it does instead when it does not.
+/// Whether **this app** attaches a take-profit and a stop-loss to the order
+/// that opens the position, on this network.
 ///
-/// Hyperliquid takes them on the same action: a `trigger` order carrying
-/// `triggerPx` and `tpsl`, grouped with the entry. Lighter's public API has no
-/// such grouping — its SDK exposes `create_tp_order` and `create_sl_order` as
-/// whole independent orders, and nothing anywhere in it names a parent. So on
-/// Lighter these two fields would be a promise the app cannot keep: the entry
-/// would go, and the protection would be a second order nobody placed.
+/// Both exchanges take them; neither is sent. Hyperliquid takes them on the
+/// same order action — a `trigger` leg carrying `triggerPx` and `tpsl`, under
+/// `grouping: "normalTpsl"` — which `signing.rs` now builds and pins against
+/// the venue's own SDK vector, and which nothing flips on because the bytes
+/// being right is not the claim that matters for a stop. Lighter takes them
+/// as a separate grouped transaction (`SignCreateGroupedOrders`), which this
+/// app does not sign at all.
+///
+/// So this stays false on every network until an order carrying one has been
+/// seen resting at the venue. Until then the two fields would be a promise the
+/// app cannot keep: the entry would go, and the protection would not.
 pub fn venue_attaches_levels(venue: Venue) -> bool {
     Network::of(venue).attaches_levels
 }
@@ -927,23 +937,23 @@ pub fn venue_levels_note(venue: Venue) -> String {
     if venue_attaches_levels(venue) {
         return String::new();
     }
-    // Two different reasons, and a reader deserves the one true of the exchange
-    // in front of them: one venue has nothing to attach, the other has it and
-    // this app has not built it.
-    match Network::of(venue).signing {
-        Signing::ApiKey(_) => format!(
-            "{} attaches no levels to an entry. Its API takes them as separate orders once the \
-             position exists, which this app does not place.",
-            venue_name(venue)
-        ),
-        Signing::Eip712(_) => format!(
-            "{} does take a target and a stop on the entry, and this app does not send them \
-             yet. They are offered nowhere rather than offered here: a field promising a \
-             position is protected, over an order that carries no protection, is the one \
-             mistake this panel must never make.",
-            venue_name(venue)
-        ),
-    }
+    // Both venues take levels on an entry, and neither is sent — so what
+    // differs is only what this app would have to send, and a reader deserves
+    // the one true of the exchange in front of them: a grouping on an order
+    // action this app already signs, against a whole transaction type it does
+    // not. One sentence with that clause in it rather than two sentences,
+    // because the half that is the same for both is the half that matters and
+    // it must not drift between them.
+    let missing = match Network::of(venue).signing {
+        Signing::ApiKey(_) => "as a grouped transaction this app does not sign",
+        Signing::Eip712(_) => "and this app does not send them yet",
+    };
+    format!(
+        "{} does take a target and a stop on the entry, {missing}. They are offered nowhere \
+         rather than offered here: a field promising a position is protected, over an order \
+         that carries no protection, is the one mistake this panel must never make.",
+        venue_name(venue)
+    )
 }
 
 /// The order the ticket is describing, frozen.

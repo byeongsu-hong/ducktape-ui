@@ -1223,7 +1223,8 @@ pub async fn submit_order(
                 .market
                 .clone()
                 .ok_or_else(|| HlError::new("This market is not loaded here.".to_owned()))?;
-            let done = hl_place(chain, wallet, &market, wire_order(&draft, market.asset))
+            let (wires, grouping) = wire_orders(&draft, market.asset);
+            let done = hl_place(chain, wallet, &market, &wires, grouping)
                 .await
                 .map_err(|failure| re_enrol(venue, failure))?;
             Ok(receipt(&draft, done))
@@ -1402,21 +1403,79 @@ pub async fn submit_sweep(
     )))
 }
 
-/// The order the wire carries, from the order that was confirmed.
+/// The orders the wire carries, from the order that was confirmed.
 ///
 /// The whole of the mapping, in one place, so a test can hold what the exchange
 /// receives against what the panel said — and so that adding a field to `Draft`
 /// without deciding whether it reaches the wire is a thing somebody has to do
 /// on purpose rather than by omission.
-fn wire_order(draft: &Draft, asset: u32) -> signing::Order {
-    signing::Order {
+///
+/// **A confirmation with levels on it is more than one order.** The entry is
+/// the first leg; a target and a stop are legs of their own, each the opposite
+/// side of the entry and reduce-only, and the grouping is what makes the
+/// exchange hold them together instead of resting them immediately. So this
+/// answers a batch and the grouping that batch is to be read under, and a
+/// caller cannot send one without the other.
+///
+/// Levels are unreachable while `attaches_levels` is false on every network —
+/// `draft_refusal` refuses a draft carrying one before a key is asked for — so
+/// today this always answers one leg under `Na`. It is written whole anyway
+/// because the alternative is a gate that hides untested code: the day the fact
+/// flips, what is behind it has already been held against the exchange's own
+/// signer.
+fn wire_orders(draft: &Draft, asset: u32) -> (Vec<signing::Order>, signing::Grouping) {
+    let entry = signing::Order {
         asset,
         buy: draft.buy,
         price: draft.price,
         size: draft.size,
         reduce_only: draft.reduce_only,
-        tif: hl_tif(draft.tif),
+        kind: signing::Kind::Limit(hl_tif(draft.tif)),
+    };
+    let mut wires = vec![entry];
+    for (level, tpsl) in [(draft.tp, signing::Tpsl::Tp), (draft.sl, signing::Tpsl::Sl)] {
+        // Zero is the ticket's "no level typed", not a level at zero — the two
+        // fields are empty strings until somebody fills them and `amount`
+        // reads an empty field as nothing.
+        if level > 0.0 {
+            wires.push(signing::Order {
+                asset,
+                // A level closes the position the entry opens, so it runs the
+                // other way and may only ever shrink what is held. Neither is
+                // a setting: a level on the entry's own side would add to the
+                // position it was supposed to protect.
+                buy: !draft.buy,
+                // A trigger order still carries a limit price, and for a
+                // market trigger the exchange reads it as the worst fill it
+                // may take. The level's own price is the honest bound: it is
+                // the number on screen, and it is the number the reader agreed
+                // to.
+                price: level,
+                size: draft.size,
+                reduce_only: true,
+                kind: signing::Kind::Trigger {
+                    px: level,
+                    // Market, and deliberately not offered as a choice. A
+                    // stop-limit that does not fill is a stop that did not
+                    // stop, and a panel with one price field on it has not
+                    // asked the reader which of the two they meant. The field
+                    // says "stop at 90"; a market trigger is the only reading
+                    // of that which keeps the promise.
+                    market: true,
+                    tpsl,
+                },
+            });
+        }
     }
+    let grouping = if wires.len() > 1 {
+        // The levels ride on an entry that is in this same batch, so they wait
+        // for it to fill. `PositionTpsl` is the other case — levels onto a
+        // position that already exists — and nothing builds that draft yet.
+        signing::Grouping::NormalTpsl
+    } else {
+        signing::Grouping::Na
+    };
+    (wires, grouping)
 }
 
 /// Whether a venue's refusal is it saying this app's key is not one of its
@@ -2318,15 +2377,21 @@ mod tests {
             sl: 0.0,
             refusal: String::new(),
         };
-        let wire = wire_order(&draft, 7);
+        let (wires, grouping) = wire_orders(&draft, 7);
+
+        // An order with no levels on it is one order, and grouping one order
+        // with nothing is `Na`.
+        assert_eq!(wires.len(), 1);
+        assert_eq!(grouping, signing::Grouping::Na);
 
         // Every figure the panel showed, on the wire unchanged.
+        let wire = wires[0];
         assert_eq!(wire.asset, 7);
         assert_eq!(wire.buy, draft.buy);
         assert_eq!(wire.price, draft.price);
         assert_eq!(wire.size, draft.size);
         assert_eq!(wire.reduce_only, draft.reduce_only);
-        assert_eq!(wire.tif, signing::Tif::Ioc);
+        assert_eq!(wire.kind, signing::Kind::Limit(signing::Tif::Ioc));
 
         // And the accounting, field by field. Anything not on the wire is
         // named here with the reason it is not, so "the panel says it" and
@@ -2357,8 +2422,10 @@ mod tests {
             // `margin_estimate_note` under the figures it worked out from them.
             cross: _,
             leverage: _,
-            // Not on the wire and refused before it can be: no venue attaches
-            // levels here, and a draft carrying one cannot be sent at all.
+            // On the wire, as a leg each — asserted below against a draft that
+            // carries them, because this one does not. Still refused before a
+            // key is asked for while no venue attaches levels, which is the
+            // last assertion in this test.
             tp,
             sl,
         } = draft.clone();
@@ -2370,8 +2437,58 @@ mod tests {
         assert!(note.contains("Neither is sent"), "{note}");
         assert!(note.contains("per market on your account"), "{note}");
 
-        // And the two the refusal covers: a draft carrying either is refused
-        // before a key is ever asked for.
+        // **Every level the confirmation showed leaves as its own leg.**
+        //
+        // Derived from the draft rather than counted out by hand, because the
+        // defect this is here for is a leg that is quietly *not* built: a
+        // batch missing its stop is a position with no protection on it, it
+        // signs and recovers perfectly, and the exchange has nothing to
+        // complain about. So the expectation is "one leg per level that is
+        // set", read off the same draft the panel drew.
+        let levelled = Draft {
+            tp: 70_000.0,
+            sl: 61_500.0,
+            ..draft.clone()
+        };
+        let (legs, grouping) = wire_orders(&levelled, 7);
+        let levels = [
+            (levelled.tp, signing::Tpsl::Tp),
+            (levelled.sl, signing::Tpsl::Sl),
+        ];
+        assert_eq!(
+            legs.len(),
+            1 + levels.iter().filter(|(level, _)| *level > 0.0).count(),
+            "one leg for the entry and one for each level the panel showed: {legs:?}",
+        );
+        // And the grouping that makes them wait for the entry rather than rest
+        // on their own. Under `Na` these same three legs are three unrelated
+        // orders and the stop is live before there is anything to stop.
+        assert_eq!(grouping, signing::Grouping::NormalTpsl);
+
+        for (level, tpsl) in levels {
+            let leg = legs
+                .iter()
+                .find(|leg| {
+                    leg.kind
+                        == signing::Kind::Trigger {
+                            px: level,
+                            market: true,
+                            tpsl,
+                        }
+                })
+                .unwrap_or_else(|| panic!("{tpsl:?} at {level} never reached the wire: {legs:?}"));
+            // It closes rather than adds: the other side of the entry, only
+            // ever shrinking, and for the size the entry opened.
+            assert_eq!(leg.buy, !levelled.buy, "{tpsl:?} runs the entry's way");
+            assert!(leg.reduce_only, "{tpsl:?} could add to the position");
+            assert_eq!(leg.size, levelled.size);
+            assert_eq!(leg.asset, wire.asset);
+        }
+
+        // And what the reader is told today: no venue attaches levels, so a
+        // draft carrying either is refused before a key is ever asked for.
+        // The legs above are what the gate is holding back, not what it lets
+        // through.
         let with_levels = crate::venue::order_draft(
             Venue::HyperliquidTestnet,
             "BTC".to_owned(),
@@ -2396,6 +2513,11 @@ mod tests {
                 .contains("does not attach a target or a stop"),
             "{}",
             with_levels.refusal,
+        );
+        assert!(
+            !crate::venue::venue_attaches_levels(Venue::HyperliquidTestnet),
+            "the refusal above is the gate, and it is only the gate while the \
+             venue fact says the app does not attach levels",
         );
     }
 

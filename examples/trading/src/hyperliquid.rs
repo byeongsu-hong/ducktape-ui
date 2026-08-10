@@ -2000,6 +2000,16 @@ fn placed(answer: &Value) -> Result<Placed, HlError> {
         ));
     }
     let mut done = Placed::default();
+    // ponytail: one `Placed` for the whole batch, which reads a bracket's three
+    // statuses as one order — `resting` ends up whichever leg answered last,
+    // and `receipt` would name a stop's id as the order that rested. Correct
+    // for every batch this app can currently send, because `attaches_levels` is
+    // false everywhere and `wire_orders` therefore always builds exactly one
+    // leg. Upgrade path: answer a `Placed` per leg and let `receipt` say what
+    // happened to the entry and what is now guarding it. Deliberately not built
+    // here — what the venue actually returns for each leg of a `normalTpsl`
+    // group is the thing no offline test can establish, and guessing it is how
+    // a receipt starts lying about protection that never rested.
     for status in statuses {
         // One refusal among several is still a refusal, and the venue's own
         // sentence is the only useful thing to say about it.
@@ -2032,17 +2042,31 @@ async fn acted(
 }
 
 #[allow(dead_code)]
-/// Place one limit order, and answer the id it rests under.
+/// Place one order, or a batch the exchange is to read as one thing, and answer
+/// the id it rests under.
 ///
 /// The market is named by its index, which is what the wire carries — see
 /// `SymbolRow::asset`. A market whose margin lives in a clearinghouse this app
 /// cannot read is refused here as well as on the ticket, because an order is
 /// the one place where being wrong about which account backs it costs money.
+///
+/// A slice and a grouping rather than one order, because the two are the same
+/// argument: legs sent under `Grouping::Na` are unrelated orders however they
+/// were meant, and a grouping over one leg groups nothing. Sending them apart
+/// would let a caller pair an entry with a stop that was never attached to it,
+/// which is exactly the failure the whole gate exists to prevent.
+///
+/// **An empty batch is refused rather than sent.** The exchange takes an empty
+/// `orders` array happily and does nothing with it, which would come back
+/// through `placed` as "accepted and reported nothing" — a sentence the reader
+/// would have to read as a venue problem rather than as this app having
+/// dropped every leg it was given.
 pub async fn hl_place(
     chain: Chain,
     wallet: &Wallet,
     market: &SymbolRow,
-    wire: signing::Order,
+    wires: &[signing::Order],
+    grouping: signing::Grouping,
 ) -> Result<Placed, HlError> {
     if market.name.contains(':') {
         return Err(HlError::new(format!(
@@ -2051,7 +2075,12 @@ pub async fn hl_place(
             market.name,
         )));
     }
-    let action = signing::order(chain, &[wire], now_ms() as u64)?;
+    if wires.is_empty() {
+        return Err(HlError::new(
+            "There is nothing in this order to send.".to_owned(),
+        ));
+    }
+    let action = signing::order(chain, wires, grouping, now_ms() as u64)?;
     acted(chain, wallet, &action).await
 }
 
@@ -4821,14 +4850,15 @@ mod tests {
                 Chain::Testnet,
                 &wallet,
                 &market,
-                signing::Order {
+                &[signing::Order {
                     asset: market.asset,
                     buy: true,
                     price: (market.price / 10.0).round(),
                     size: 0.001,
                     reduce_only: false,
-                    tif: signing::Tif::Gtc,
-                },
+                    kind: signing::Kind::Limit(signing::Tif::Gtc),
+                }],
+                signing::Grouping::Na,
             )
             .await
             .expect("the order is accepted");

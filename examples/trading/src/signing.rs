@@ -782,11 +782,44 @@ impl Tif {
     }
 }
 
-/// One limit order. `asset` is the market's index in `meta.universe`, not its
-/// name — the wire carries the index, and the name never reaches the exchange.
+/// Which end of a position a trigger is watching for.
 ///
-/// Trigger (stop/take-profit) orders use a different `t` payload and are not
-/// built here; nothing in this app places one.
+/// The exchange reads this rather than working it out from the price, and it is
+/// what decides whether a touch takes a profit or cuts a loss. The two are not
+/// interchangeable even at the same price: a stop is a promise to get out, and
+/// a target is a promise to stop being in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tpsl {
+    Tp,
+    Sl,
+}
+
+impl Tpsl {
+    fn name(self) -> &'static str {
+        match self {
+            Tpsl::Tp => "tp",
+            Tpsl::Sl => "sl",
+        }
+    }
+}
+
+/// What makes an order live.
+///
+/// A limit order is live the moment the exchange takes it. A trigger order is
+/// not: it sleeps off the book until the mark reaches `px`, and only then
+/// becomes an order — a market one when `market`, otherwise a limit at the
+/// order's own `price`. That is the whole of the `t` payload, and the exchange
+/// reads the two under different keys, so this is one enum rather than a limit
+/// order with trigger fields hanging off it that mean nothing three times out
+/// of four.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Kind {
+    Limit(Tif),
+    Trigger { px: f64, market: bool, tpsl: Tpsl },
+}
+
+/// One order. `asset` is the market's index in `meta.universe`, not its name —
+/// the wire carries the index, and the name never reaches the exchange.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Order {
     pub asset: u32,
@@ -794,10 +827,45 @@ pub struct Order {
     pub price: f64,
     pub size: f64,
     pub reduce_only: bool,
-    pub tif: Tif,
+    pub kind: Kind,
 }
 
-pub fn order(chain: Chain, orders: &[Order], nonce_ms: u64) -> Result<Action<Trading>, HlError> {
+/// How the exchange reads a batch of orders: as unrelated orders, or as one
+/// thing whose parts depend on each other.
+///
+/// **This is the field that makes a trigger attach.** The same three legs sent
+/// under `Na` are three independent orders — the stop rests at once, and
+/// cancelling the entry leaves it behind guarding a position that was never
+/// opened — while under `NormalTpsl` the two levels wait on the entry and are
+/// pulled with it. `PositionTpsl` says the levels belong to a position that
+/// already exists, so there is no entry in the batch for them to wait on.
+///
+/// The spellings are the exchange's own, and they are *inside the signature*: a
+/// misspelling is not a rejected field, it is a different digest signed by a
+/// stranger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grouping {
+    Na,
+    NormalTpsl,
+    PositionTpsl,
+}
+
+impl Grouping {
+    fn name(self) -> &'static str {
+        match self {
+            Grouping::Na => "na",
+            Grouping::NormalTpsl => "normalTpsl",
+            Grouping::PositionTpsl => "positionTpsl",
+        }
+    }
+}
+
+pub fn order(
+    chain: Chain,
+    orders: &[Order],
+    grouping: Grouping,
+    nonce_ms: u64,
+) -> Result<Action<Trading>, HlError> {
     let wires = orders
         .iter()
         .map(|order| {
@@ -807,13 +875,7 @@ pub fn order(chain: Chain, orders: &[Order], nonce_ms: u64) -> Result<Action<Tra
                 ("p", Val::Str(wire_num(order.price)?)),
                 ("s", Val::Str(wire_num(order.size)?)),
                 ("r", Val::Bool(order.reduce_only)),
-                (
-                    "t",
-                    Val::Map(vec![(
-                        "limit",
-                        Val::Map(vec![("tif", Val::Str(order.tif.name().into()))]),
-                    )]),
-                ),
+                ("t", kind_wire(order.kind)?),
             ]))
         })
         .collect::<Result<Vec<_>, HlError>>()?;
@@ -823,11 +885,35 @@ pub fn order(chain: Chain, orders: &[Order], nonce_ms: u64) -> Result<Action<Tra
         body: Val::Map(vec![
             ("type", Val::Str("order".into())),
             ("orders", Val::Arr(wires)),
-            // Only relevant to bracket orders, and required regardless.
-            ("grouping", Val::Str("na".into())),
+            ("grouping", Val::Str(grouping.name().into())),
         ]),
         scheme: Scheme::L1,
         signs: PhantomData,
+    })
+}
+
+/// The `t` payload, in the exchange's own field order.
+///
+/// `isMarket`, then `triggerPx`, then `tpsl` — which is *not* the order the
+/// reference SDK declares the type in, and is the order its encoder emits.
+/// MessagePack writes a map in the order it is handed, so these three sit
+/// inside the hash in this sequence. Following the declaration, or
+/// alphabetising, signs a different action and the exchange recovers somebody
+/// else. The vector test below is what holds this down.
+fn kind_wire(kind: Kind) -> Result<Val, HlError> {
+    Ok(match kind {
+        Kind::Limit(tif) => Val::Map(vec![(
+            "limit",
+            Val::Map(vec![("tif", Val::Str(tif.name().into()))]),
+        )]),
+        Kind::Trigger { px, market, tpsl } => Val::Map(vec![(
+            "trigger",
+            Val::Map(vec![
+                ("isMarket", Val::Bool(market)),
+                ("triggerPx", Val::Str(wire_num(px)?)),
+                ("tpsl", Val::Str(tpsl.name().into())),
+            ]),
+        )]),
     })
 }
 
@@ -928,7 +1014,24 @@ mod tests {
             price,
             size,
             reduce_only: false,
-            tif,
+            kind: Kind::Limit(tif),
+        }
+    }
+
+    /// One level, the shape every trigger leg below has: the opposite side of
+    /// the entry, reduce-only, and closing at the market once it is touched.
+    fn level(asset: u32, price: f64, trigger: f64, market: bool, tpsl: Tpsl) -> Order {
+        Order {
+            asset,
+            buy: false,
+            price,
+            size: 100.0,
+            reduce_only: true,
+            kind: Kind::Trigger {
+                px: trigger,
+                market,
+                tpsl,
+            },
         }
     }
 
@@ -953,6 +1056,7 @@ mod tests {
         let action = order(
             Chain::Mainnet,
             &[eth_order(4, 1670.1, 0.0147, Tif::Ioc)],
+            Grouping::Na,
             1_677_777_606_040,
         )
         .expect("the vector's price and size fit the wire");
@@ -969,8 +1073,13 @@ mod tests {
     #[test]
     fn an_l1_signature_matches_the_sdk_vectors() {
         let wallet = vector_wallet();
-        let mainnet = order(Chain::Mainnet, &[eth_order(1, 100.0, 100.0, Tif::Gtc)], 0)
-            .expect("a round price and size fit the wire");
+        let mainnet = order(
+            Chain::Mainnet,
+            &[eth_order(1, 100.0, 100.0, Tif::Gtc)],
+            Grouping::Na,
+            0,
+        )
+        .expect("a round price and size fit the wire");
         assert_eq!(
             signed(&wallet, mainnet.digest()),
             (
@@ -980,13 +1089,172 @@ mod tests {
             )
         );
 
-        let testnet = order(Chain::Testnet, &[eth_order(1, 100.0, 100.0, Tif::Gtc)], 0)
-            .expect("a round price and size fit the wire");
+        let testnet = order(
+            Chain::Testnet,
+            &[eth_order(1, 100.0, 100.0, Tif::Gtc)],
+            Grouping::Na,
+            0,
+        )
+        .expect("a round price and size fit the wire");
         assert_eq!(
             signed(&wallet, testnet.digest()),
             (
                 padded("0x82b2ba28e76b3d761093aaded1b1cdad4960b3af30212b343fb2e6cdfa4e3d54"),
                 padded("0x6b53878fc99d26047f4d7e8c90eb98955a109f44209163f52d8dc4278cbbd9f5"),
+                27,
+            )
+        );
+    }
+
+    /// **A trigger order, against the exchange's own published vector.**
+    ///
+    /// `test_l1_action_signing_tpsl_order_matches` in the Hyperliquid Python
+    /// SDK, on the same key every other vector in this file uses. It is the one
+    /// thing that says the `t` payload is right, and it says it about the part
+    /// no reasoning could settle: `isMarket` is packed *before* `triggerPx`,
+    /// which is the order that SDK's encoder emits and not the order its type
+    /// declares. Both chains, and the action hash as well as the signature, so
+    /// a drift in the MessagePack is named as a MessagePack failure instead of
+    /// as a wrong key.
+    #[test]
+    fn a_trigger_order_matches_the_exchanges_own_tpsl_vector() {
+        let stop = Order {
+            asset: 1,
+            buy: true,
+            price: 100.0,
+            size: 100.0,
+            reduce_only: false,
+            kind: Kind::Trigger {
+                px: 103.0,
+                market: true,
+                tpsl: Tpsl::Sl,
+            },
+        };
+        let mainnet =
+            order(Chain::Mainnet, &[stop], Grouping::Na, 0).expect("the vector's figures fit");
+        assert_eq!(
+            hex32(mainnet.connection_id()),
+            "0x430a86fb9876e901920d931f5bb20c9d011f6389bd179f39a73c09e6219adcad"
+        );
+        assert_eq!(
+            signed(&vector_wallet(), mainnet.digest()),
+            (
+                padded("0x98343f2b5ae8e26bb2587daad3863bc70d8792b09af1841b6fdd530a2065a3f9"),
+                padded("0x6b5bb6bb0633b710aa22b721dd9dee6d083646a5f8e581a20b545be6c1feb405"),
+                27,
+            )
+        );
+
+        let testnet =
+            order(Chain::Testnet, &[stop], Grouping::Na, 0).expect("the vector's figures fit");
+        assert_eq!(
+            signed(&vector_wallet(), testnet.digest()),
+            (
+                padded("0x971c554d917c44e0e1b6cc45d8f9404f32172a9d3b3566262347d0302896a2e4"),
+                padded("0x206257b104788f80450f8e786c329daa589aa0b32ba96948201ae556d5637eac"),
+                28,
+            )
+        );
+    }
+
+    /// **The grouping name, and a batch of legs, against the same signer.**
+    ///
+    /// The SDK publishes no vector for either grouping, so these were made the
+    /// way the Lighter vectors in `lighter_sign.rs` were: by driving the
+    /// reference implementation rather than by reasoning about it. They were
+    /// produced by their code, not by ours.
+    ///
+    /// To reproduce: `pip install hyperliquid-python-sdk`, then from
+    /// `hyperliquid.utils.signing` import `order_request_to_order_wire`,
+    /// `order_wires_to_order_action`, `action_hash` and `sign_l1_action`.
+    /// Build each leg with `order_request_to_order_wire(request, asset)` and
+    /// the action with `order_wires_to_order_action(wires, None, grouping)`,
+    /// then read `action_hash(action, None, nonce, None)` and
+    /// `sign_l1_action(wallet, action, None, nonce, None, is_mainnet)` on the
+    /// `VECTOR_KEY` wallet. **Reproduce
+    /// `test_l1_action_signing_tpsl_order_matches` with the same driver first**
+    /// — that is what says it is calling the reference the way the reference's
+    /// own test suite does, and an unchecked driver is an encoder checked
+    /// against itself with extra steps. The payloads below are the legs the
+    /// `level` helper builds, `nonce` 0.
+    ///
+    /// Two groupings and two batch sizes, because the failures they catch are
+    /// different: a misspelled grouping signs a batch the exchange reads as
+    /// unrelated orders, and a leg dropped between the confirmation and the
+    /// pack signs a position with no stop on it. Both recover a valid signer,
+    /// so neither has a symptom the exchange could report.
+    #[test]
+    fn a_grouping_is_signed_under_the_name_the_exchange_reads() {
+        let wallet = vector_wallet();
+        let entry = eth_order(1, 100.0, 100.0, Tif::Gtc);
+        let take = level(1, 110.0, 110.0, true, Tpsl::Tp);
+        let stop = level(1, 90.0, 90.0, true, Tpsl::Sl);
+
+        // An entry with both levels riding on it.
+        let bracket = order(
+            Chain::Mainnet,
+            &[entry, take, stop],
+            Grouping::NormalTpsl,
+            0,
+        )
+        .expect("the bracket's figures fit");
+        assert_eq!(
+            hex32(bracket.connection_id()),
+            "0xa4dfdcaa5b64c026eac21d06bd12b1cb21d42a8872ad6b3a22e7859df1dab672"
+        );
+        assert_eq!(
+            signed(&wallet, bracket.digest()),
+            (
+                padded("0x8bbe0e3d0bdb2f3ed830a69a1c90e5c314d2667da677e036756785e7dd8d90c"),
+                padded("0x43b0b5270fae97295688fd0fb2a7adef82dd8a8ee2c8b26a76ddd70aa09edf1b"),
+                28,
+            )
+        );
+
+        // The same two levels against a position that already exists, which is
+        // the other grouping and one fewer leg.
+        let onto_position =
+            order(Chain::Mainnet, &[take, stop], Grouping::PositionTpsl, 0).expect("the pair fits");
+        assert_eq!(
+            hex32(onto_position.connection_id()),
+            "0x9c9b870887c42cdca701c07c645763053275a668d39cd99c09bf0deaeedf431b"
+        );
+        assert_eq!(
+            signed(&wallet, onto_position.digest()),
+            (
+                padded("0x84760cdcf25f0dd7d0979cd51953bf54712bf204b6431f8fd00fbe84709d31c8"),
+                padded("0x36d2962ca248a6db91c1897d3fce7002694e6533c7a9714e34a5b058ea51d51c"),
+                28,
+            )
+        );
+    }
+
+    /// **A stop on its own**, which is a trigger order with nothing to pair
+    /// with: no entry in the batch, so no grouping, and `isMarket` false
+    /// because a stop-limit is the variant a market trigger would hide. From
+    /// the same driven reference as the two above.
+    ///
+    /// The `false` matters on its own: `isMarket` is one MessagePack byte
+    /// (`0xc2` against `0xc3`), and a stop that silently became a market order
+    /// is a different promise at the same price.
+    #[test]
+    fn a_standalone_stop_is_signed_as_a_trigger_with_no_grouping() {
+        let action = order(
+            Chain::Mainnet,
+            &[level(1, 89.5, 90.0, false, Tpsl::Sl)],
+            Grouping::Na,
+            0,
+        )
+        .expect("the stop's figures fit");
+        assert_eq!(
+            hex32(action.connection_id()),
+            "0x57842ff245e40d5a2dc06c68730bd49607efdaeb62bd1b3387c81a37721f80a3"
+        );
+        assert_eq!(
+            signed(&vector_wallet(), action.digest()),
+            (
+                padded("0xcc5f87d7630af660ab01e6abedc657b159298b02ddaa585fa765dc64897ff7f0"),
+                padded("0x6028954f47b9e2a943014ac9160cac1165a94759188c5425ce7596223c34f943"),
                 27,
             )
         );
@@ -1170,8 +1438,9 @@ mod tests {
                 price: 1.0,
                 size: 0.001,
                 reduce_only: false,
-                tif: Tif::Gtc,
+                kind: Kind::Limit(Tif::Gtc),
             }],
+            Grouping::Na,
             now_ms(),
         )
         .expect("a dollar and a millibitcoin both fit the wire");
