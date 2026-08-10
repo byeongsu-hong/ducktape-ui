@@ -51,7 +51,9 @@ extern crate::venue
   // confirmation reads it through one accessor per line rather than projecting
   // it, so nothing on screen can be a field the send does not carry.
   Sweep()
-  pure sweep_orders(venue:Venue, orders:[Order]) -> Sweep
+  // No venue on a cancel: an order carries the handle its own venue gave it,
+  // and pulling one names no network. A close builds a `Draft`, which does.
+  pure sweep_orders(orders:[Order]) -> Sweep
   pure sweep_positions(venue:Venue, positions:[Position], markets:[SymbolRow]) -> Sweep
   pure sweep_refused(locked:str, count:i64, cancel:bool) -> str
   pure sweep_label(count:i64, cancel:bool, refusal:str) -> str

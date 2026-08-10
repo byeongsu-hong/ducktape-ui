@@ -212,10 +212,11 @@ derived
   // in it is a second, wrong reason.
   cancel_all_refusal = sweep_refused(cancel_refusal, len(orders), true)
   flatten_all_refusal = sweep_refused(cancel_refusal, len(positions), false)
-  // Whether anything is standing on the app's one modal surface. Two things
-  // can: the gate before an address is connected, and the confirmation before
-  // an order goes. Neither may be reachable past the other, which is what one
-  // backdrop guarantees and two stacked ones would not.
+  // Whether anything is standing on the app's one modal surface. Three things
+  // can: the gate before an address is connected, the confirmation before an
+  // order goes, and the same confirmation over a whole panel's worth. None may
+  // be reachable past another, which is what one backdrop guarantees and three
+  // stacked ones would not.
   modal = gate || order_pending(confirm) || sweep_pending(sweep)
 
 // The custody panel in each state it can be drawn in. `clock` is the same

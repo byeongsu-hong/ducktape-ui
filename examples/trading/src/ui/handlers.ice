@@ -86,7 +86,7 @@ on search_key(event)
 // every mapping answers "unchanged" for a key it does not own — so a press that
 // belongs to one of them moves that one thing and leaves the other two where
 // they were. Written as branches this would be one handler and one subscription
-// per key, all four of them woken by every keystroke.
+// per key, every one of them woken by every keystroke.
 //
 // Nothing here sends, and nothing here can: the subscription is off while a
 // confirmation is standing, and the only key that opens one is `submit=` on the
@@ -636,6 +636,7 @@ on ticket_review
 // Backing out. The order is dropped rather than remembered, because a
 // confirmation the reader declined is not a draft to offer again — the ticket
 // still holds every field they typed.
+//
 // It clears both because there is one modal surface and one way off it: the
 // backdrop hands every click outside the panel here, whichever of the two is
 // standing on it. Only one ever is — each is opened from a control the other
@@ -688,7 +689,7 @@ on cancel_order(coin_of, oid)
 // safeties, it is a reader pressing through five sheets.
 on cancel_all
   return if !empty(cancel_all_refusal)
-  sweep = some(sweep_orders(venue, orders))
+  sweep = some(sweep_orders(orders))
 
 on flatten_all
   return if !empty(flatten_all_refusal)

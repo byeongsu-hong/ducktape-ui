@@ -1263,7 +1263,6 @@ const FLATTEN_SLIPPAGE: f64 = 0.05;
 /// the rows that go.
 #[derive(Clone, PartialEq)]
 pub struct Sweep {
-    pub venue: Venue,
     /// Which act this is: pull every resting order, or flatten every position.
     /// One field rather than two lists that could both be full.
     pub cancel: bool,
@@ -1296,10 +1295,9 @@ impl fmt::Debug for Sweep {
 }
 
 /// Pull every resting order, frozen.
-pub fn sweep_orders(venue: Venue, orders: Vec<Order>) -> Sweep {
+pub fn sweep_orders(orders: Vec<Order>) -> Sweep {
     let rows = orders.iter().cloned().map(order_label).collect();
     Sweep {
-        venue,
         cancel: true,
         act: sweep_act(orders.len(), true),
         note: "Every order below stops resting. Nothing is bought or sold: a cancelled order \
@@ -1325,7 +1323,6 @@ pub fn sweep_positions(venue: Venue, positions: Vec<Position>, markets: Vec<Symb
         .collect();
     let rows = drafts.iter().map(flatten_line).collect();
     Sweep {
-        venue,
         cancel: false,
         act: sweep_act(positions.len(), false),
         note: format!(
@@ -2956,7 +2953,7 @@ mod tests {
     /// listed them.
     #[test]
     fn a_cancel_all_names_every_resting_order() {
-        let act = sweep_orders(Venue::Hyperliquid, demo_orders());
+        let act = sweep_orders(demo_orders());
         assert!(act.cancel);
         assert!(act.drafts.is_empty(), "a cancel places nothing");
         assert_eq!(act.act, "Cancel 2 resting orders");
@@ -2967,10 +2964,7 @@ mod tests {
                 "BTC sell 0.8 at 64,440.00".to_owned(),
             ]
         );
-        assert_eq!(
-            sweep_orders(Venue::Hyperliquid, Vec::new()).act,
-            "Cancel 0 resting orders"
-        );
+        assert_eq!(sweep_orders(Vec::new()).act, "Cancel 0 resting orders");
     }
 
     /// Why a panel-wide control is dead, and in which order the two reasons are
