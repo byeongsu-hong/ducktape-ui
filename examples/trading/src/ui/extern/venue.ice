@@ -4,6 +4,8 @@
 // and hands over the venue it is holding. Duplicating each handler per venue
 // would put the choice in every one of them instead of in one table.
 extern crate::venue
+  // Where a written export landed, or why it did not.
+  Export(note:str, error:str)
   pure venue_name(venue:Venue) -> str
   pure venue_label(venue:Venue, shown:bool) -> str
   // What the header's venue block says it is. It is the control that opens the
@@ -35,6 +37,11 @@ extern crate::venue
   // dash on a network that has not stated a boundary rather than an hour the
   // app made up.
   pure funding_countdown(venue:Venue, market:SymbolRow?, now:i64) -> str
+  // Writes the fills the app is holding and answers with the path. `sync`
+  // because the write is immediate and local: there is no dialog to await, and
+  // an async extern would put a round trip between a press and a file that is
+  // already on disk.
+  sync write_fills_csv(venue:Venue, fills:[Fill]) -> Export
   venue_symbols(venue:Venue) -> [SymbolRow] ! HlError
   venue_candles(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError
   venue_history(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError

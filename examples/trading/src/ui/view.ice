@@ -724,6 +724,27 @@ view
                                     Label value="RECENT FILLS"
                                     space w=fill
                                     Label value=fmt_count(len(fills))
+                                    // The one way anything this app holds
+                                    // leaves it. Beside the fills rather than
+                                    // on settings, because the rows on screen
+                                    // are what it writes and a control for them
+                                    // belongs over them; disabled with none,
+                                    // because a press that can only refuse is
+                                    // worse than a control that says it has
+                                    // nothing to do.
+                                    button #export-fills -> export_fills
+                                      with
+                                        label="Export these fills to a CSV file"
+                                        disabled=empty(fills)
+                                        p=4.0
+                                      active bg=panel text=muted r=3.0
+                                      hovered bg=raised text=fg r=3.0
+                                      disabled bg=panel text=faint r=3.0
+                                      text "CSV"
+                                        with
+                                          size=9.0
+                                          tracking=1.0
+                                          @text-faint
                                   row
                                     with
                                       w=fill

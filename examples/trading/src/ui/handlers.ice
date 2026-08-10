@@ -21,6 +21,19 @@ on toggle_rail
 on toggle_fills
   fills_open = !fills_open
 
+// The fills on screen, written where a spreadsheet can reach them. The app
+// draws them and has never let a reader keep one, so the whole of this is a
+// file and the sentence that says where it went.
+//
+// The write is `sync` and the answer lands in the two lines the app already
+// keeps for "what just happened" and "what broke", rather than in a third field
+// of its own: a path belongs beside the reads that report themselves there, and
+// a refusal belongs beside the ones that fail there.
+on export_fills
+  let written = write_fills_csv(venue, fills)
+  status = written.note
+  error = written.error
+
 on connect
   return if !valid_address(draft)
   address = trim(draft)

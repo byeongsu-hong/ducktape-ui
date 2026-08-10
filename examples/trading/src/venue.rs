@@ -28,6 +28,7 @@
 #![allow(dead_code)]
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 
 use smol::channel::Receiver;
@@ -691,6 +692,169 @@ pub fn venue_fills_note(venue: Venue, watching: bool, failure: String) -> String
     }
 }
 
+/// Where a written export landed, or why it did not.
+///
+/// Two fields rather than one string, for the reason the three read failures in
+/// `state.ice` are three fields: a path and a refusal are drawn in different
+/// places — the app's own status line and its alarm line — and a single string
+/// would have to be parsed by the view to tell them apart.
+#[derive(Clone, Default, PartialEq)]
+pub struct Export {
+    /// What the app says it did, naming the file. Empty when nothing was
+    /// written.
+    pub note: String,
+    /// Why nothing was written. Empty when something was.
+    pub error: String,
+}
+
+/// The fills on screen as a spreadsheet reads them.
+///
+/// Every column a fill row draws plus the two it does not: which network the
+/// account was read from, and whether that network trades money worth anything.
+/// A testnet fill exported without saying so is a mainnet record the moment it
+/// is opened somewhere else, and neither the venue nor the deployment is
+/// recoverable from a coin and a price.
+///
+/// Every field is quoted, including the header and the numbers. Nothing this
+/// app holds carries a comma today, and quoting is four characters against a
+/// symbol that carries one tomorrow.
+///
+/// Figures are written at full precision rather than through the panel's
+/// formatters: a thousands separator is a reader's comma inside a field, and a
+/// price rounded to what a 72-pixel column had room for is not the fill.
+pub fn fills_csv(venue: Venue, fills: &[Fill]) -> String {
+    let network = Network::of(venue);
+    let deployment = if network.testnet {
+        "testnet"
+    } else {
+        "mainnet"
+    };
+    let mut out = String::new();
+    out.push_str(
+        "\"time\",\"coin\",\"side\",\"size\",\"price\",\"closed_pnl\",\"trade_id\",\"venue\",\
+         \"network\"\n",
+    );
+    for fill in fills {
+        let row = [
+            iso_utc(fill.ts),
+            fill.coin.clone(),
+            if fill.buy { "buy" } else { "sell" }.to_owned(),
+            fill.size.to_string(),
+            fill.price.to_string(),
+            fill.closed_pnl.to_string(),
+            fill.tid.to_string(),
+            network.name.to_owned(),
+            deployment.to_owned(),
+        ];
+        for (index, field) in row.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            out.push('"');
+            out.push_str(&field.replace('"', "\"\""));
+            out.push('"');
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Writes those fills where a reader can find them, and answers with the path.
+///
+/// There is no file chooser here. Iced has no such widget and Ice has no
+/// built-in that opens one; the repository's one precedent adds `rfd` and an
+/// async extern for it, which is a modal over a screen holding open positions
+/// and a dependency for a button. So the file goes to a place the reader
+/// already has — their downloads folder, or their home, or the process temp
+/// directory — and the app says the whole path rather than leaving them to
+/// guess it.
+///
+/// The name is the newest fill's own hour and not the wall clock, so exporting
+/// the same fills twice writes the same file rather than a second copy under a
+/// new name.
+pub fn write_fills_csv(venue: Venue, fills: Vec<Fill>) -> Export {
+    if fills.is_empty() {
+        return Export {
+            note: String::new(),
+            error: "No fills to export.".to_owned(),
+        };
+    }
+    let newest = fills.iter().map(|fill| fill.ts).max().unwrap_or_default();
+    let slug = venue_name(venue).to_lowercase().replace(' ', "-");
+    let stamp = iso_utc(newest).replace(['-', ':'], "").replace('Z', "");
+    let path = export_dir().join(format!("fills-{slug}-{stamp}.csv"));
+    match std::fs::write(&path, fills_csv(venue, &fills)) {
+        Ok(()) => Export {
+            note: format!("Wrote {} fills to {}", fills.len(), path.display()),
+            error: String::new(),
+        },
+        Err(cause) => Export {
+            note: String::new(),
+            error: format!("Could not write {}: {cause}", path.display()),
+        },
+    }
+}
+
+/// The folder an export lands in.
+///
+/// Downloads is where a browser puts a file a reader asked for and the first
+/// place they look for one; home is where a machine without it still has
+/// somewhere they own; the temp directory is the last resort rather than the
+/// habit, because a file there is one the system may delete.
+fn export_dir() -> PathBuf {
+    // A suite run must not leave files in the reader's own folders, and the
+    // spec puts deterministic extern behaviour behind `cfg(test)`.
+    if cfg!(test) {
+        return std::env::temp_dir();
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+    let Some(home) = home else {
+        return std::env::temp_dir();
+    };
+    let downloads = home.join("Downloads");
+    if downloads.is_dir() { downloads } else { home }
+}
+
+/// Epoch seconds as a calendar instant in UTC.
+///
+/// A spreadsheet column of `64970`-shaped integers is a column nobody reads,
+/// and the panel's own `fmt_time` is a wall clock with no date on it — fine
+/// against a list printed today and useless in a file opened next quarter.
+fn iso_utc(ts: i64) -> String {
+    let (year, month, day) = civil_from_days(ts.div_euclid(86_400));
+    let seconds = ts.rem_euclid(86_400);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        seconds / 3600,
+        (seconds % 3600) / 60,
+        seconds % 60
+    )
+}
+
+/// Howard Hinnant's `civil_from_days`, which is the whole of what turns a day
+/// count into a date and is exact over every year this app can be handed.
+/// Vendored as arithmetic rather than as a dependency: a calendar crate is a
+/// tree of them for nine lines.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
 /// What a venue calls the three ways an order can rest, in the four
 /// characters the segmented row has for it.
 ///
@@ -938,7 +1102,7 @@ pub fn previous_close(price: f64, change_pct: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hyperliquid::{hl_symbols, tape_new};
+    use crate::hyperliquid::{demo_fills, hl_symbols, tape_new};
     // The book is not on `Reads` — the app never asks a venue for one — so the
     // live seam test reaches the adapter's own read directly.
     use crate::lighter::{demo_symbols_lighter, lighter_book};
@@ -1852,5 +2016,101 @@ mod tests {
             demo_symbols_lighter().iter().all(|row| row.funding_at == 0),
             "orderBookDetails states no funding time"
         );
+    }
+
+    /// A fill written for a spreadsheet, field for field.
+    ///
+    /// The two columns worth the test are the last two. A row that says BTC,
+    /// a size and a price is the same row on either deployment, and a testnet
+    /// fill filed without saying so becomes a mainnet record the moment it is
+    /// opened anywhere else — so the file names the network it was read from
+    /// and whether that network's money is worth anything.
+    ///
+    /// Pinned whole rather than by `contains`, because the failure this guards
+    /// is a column quietly dropped and every remaining column still reading
+    /// correctly.
+    #[test]
+    fn an_exported_fill_states_the_network_it_was_read_from() {
+        assert_eq!(
+            fills_csv(Venue::HyperliquidTestnet, &demo_fills()),
+            concat!(
+                "\"time\",\"coin\",\"side\",\"size\",\"price\",\"closed_pnl\",\"trade_id\",",
+                "\"venue\",\"network\"\n",
+                "\"2026-08-07T15:10:00Z\",\"BTC\",\"sell\",\"0.25\",\"64010\",\"1240\",\"1\",",
+                "\"Hyperliquid Testnet\",\"testnet\"\n",
+                "\"2026-08-07T14:55:00Z\",\"BTC\",\"buy\",\"0.5\",\"63940\",\"0\",\"2\",",
+                "\"Hyperliquid Testnet\",\"testnet\"\n",
+                "\"2026-08-07T14:40:00Z\",\"BTC\",\"buy\",\"0.75\",\"63880\",\"0\",\"3\",",
+                "\"Hyperliquid Testnet\",\"testnet\"\n",
+            )
+        );
+        // The same fills off the live deployment are the same rows with the
+        // two columns that matter reading differently.
+        let real = fills_csv(Venue::Hyperliquid, &demo_fills());
+        assert!(real.contains("\"Hyperliquid\",\"mainnet\""), "{real}");
+        assert!(!real.contains("testnet"), "{real}");
+    }
+
+    /// A comma in a field must not become a column. Nothing either venue lists
+    /// carries one today, which is exactly why this is a test rather than a
+    /// wait: the day a symbol does, a file that split on it would file every
+    /// row afterwards under the wrong heading.
+    #[test]
+    fn a_symbol_carrying_a_comma_or_a_quote_stays_one_field() {
+        let awkward = vec![Fill {
+            coin: "A,B\"C".to_owned(),
+            ts: 0,
+            price: 1.0,
+            size: 1.0,
+            buy: true,
+            closed_pnl: 0.0,
+            hot: false,
+            tid: 9,
+        }];
+        let written = fills_csv(Venue::Hyperliquid, &awkward);
+        assert!(
+            written.contains("\"1970-01-01T00:00:00Z\",\"A,B\"\"C\",\"buy\""),
+            "{written}"
+        );
+        // Nine columns in the header and nine in the row, whatever the coin
+        // spells.
+        let row = written.lines().nth(1).expect("one row");
+        assert_eq!(row.matches('"').count() % 2, 0, "{row}");
+    }
+
+    /// The write itself, read back. `export_dir` answers the process temp
+    /// directory under test, so a suite run leaves nothing in the reader's own
+    /// folders.
+    ///
+    /// The testnet rather than the live network, and not for symmetry: the name
+    /// is the venue's and the newest fill's hour, so the live network over
+    /// `demo_fills` is the exact path the Ice test's press writes — two threads
+    /// of one suite truncating and reading one file. The deployment in the name
+    /// is what keeps them apart.
+    #[test]
+    fn writing_fills_names_the_file_it_wrote() {
+        let written = write_fills_csv(Venue::HyperliquidTestnet, demo_fills());
+        assert!(written.error.is_empty(), "{}", written.error);
+        let path = std::env::temp_dir().join("fills-hyperliquid-testnet-20260807T151000.csv");
+        assert_eq!(
+            written.note,
+            format!("Wrote 3 fills to {}", path.display()),
+            "the app has to say where it went"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("the file the note names"),
+            fills_csv(Venue::HyperliquidTestnet, &demo_fills())
+        );
+        std::fs::remove_file(&path).expect("the file this test wrote");
+    }
+
+    /// Nothing to write is a refusal rather than an empty file. A header-only
+    /// CSV in a downloads folder is indistinguishable from an export that
+    /// silently lost its rows.
+    #[test]
+    fn no_fills_writes_nothing() {
+        let refused = write_fills_csv(Venue::Hyperliquid, Vec::new());
+        assert!(refused.note.is_empty());
+        assert_eq!(refused.error, "No fills to export.");
     }
 }
