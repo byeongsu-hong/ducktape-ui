@@ -25,13 +25,29 @@ enum DevTarget<'a> {
     Source(&'a str),
 }
 
+/// Ice analysis recurses over the source graph, and a Windows main thread gets
+/// one megabyte where Linux and macOS give eight. Measured against the
+/// showcase graph, analysis needs more than one and less than two, so every
+/// analysis command aborted on Windows with `STATUS_STACK_OVERFLOW` while
+/// passing everywhere else. Running the command on a thread that asks for the
+/// same eight megabytes makes the three platforms fail, if ever, together.
+const ANALYSIS_STACK_SIZE: usize = 8 * 1024 * 1024;
+
 fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
+    let worker = std::thread::Builder::new()
+        .name("cargo-ice".to_owned())
+        .stack_size(ANALYSIS_STACK_SIZE)
+        .spawn(run)
+        .expect("spawn the cargo-ice worker thread");
+    match worker.join() {
+        Ok(Ok(())) => ExitCode::SUCCESS,
+        Ok(Err(error)) => {
             eprintln!("{error}");
             ExitCode::FAILURE
         }
+        // The worker's own hook already reported the panic; re-raising keeps
+        // the process exit that a panicking `main` would have produced.
+        Err(payload) => std::panic::resume_unwind(payload),
     }
 }
 
