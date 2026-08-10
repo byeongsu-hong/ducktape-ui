@@ -2023,7 +2023,11 @@ fn placed(answer: &Value) -> Result<Placed, HlError> {
 
 #[allow(dead_code)]
 /// Send a signed action and read what the venue made of it.
-async fn acted(chain: Chain, wallet: &Wallet, action: &Action) -> Result<Placed, HlError> {
+async fn acted(
+    chain: Chain,
+    wallet: &Wallet,
+    action: &Action<signing::Trading>,
+) -> Result<Placed, HlError> {
     placed(&exchange(chain, action.request(wallet)).await?)
 }
 
