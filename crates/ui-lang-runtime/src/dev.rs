@@ -389,8 +389,13 @@ mod tests {
         assert!(required_draw_completed(None));
     }
 
+    // iced's null renderer — the `()` this stands a widget up against — is
+    // `#[cfg(debug_assertions)]` in `iced_core`. Without the same gate the
+    // whole lib test target stops compiling under `--release`.
+    #[cfg(debug_assertions)]
     struct DrawRecorder(Arc<AtomicU8>);
 
+    #[cfg(debug_assertions)]
     impl Widget<(), (), ()> for DrawRecorder {
         fn size(&self) -> Size<Length> {
             Size::new(Length::Shrink, Length::Shrink)
@@ -421,6 +426,7 @@ mod tests {
         }
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn wrapper_publishes_only_after_the_child_draw_returns() {
         let phase = Arc::new(AtomicU8::new(0));

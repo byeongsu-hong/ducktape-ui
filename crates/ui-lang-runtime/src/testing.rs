@@ -5819,6 +5819,11 @@ mod tests {
         })
     }
 
+    // `()` is iced's null renderer, and `iced_core` only implements the
+    // renderer traits for it under `debug_assertions`. The custom-renderer
+    // diagnostics below are the only tests that stand a driver up against one,
+    // so they carry the same gate the implementation does.
+    #[cfg(debug_assertions)]
     fn null_view(_state: &State) -> Element<'_, Message, iced::Theme, ()> {
         container(iced::widget::Space::new()).id("Null/root").into()
     }
@@ -7425,6 +7430,7 @@ mod tests {
         }
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn reports_custom_renderer_paint_and_text_as_unavailable() {
         let mut driver = Driver::new(
