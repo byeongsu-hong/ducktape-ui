@@ -9,8 +9,11 @@ app AiChat
   font "../../../../assets/fonts/MonoplexKR-Regular.ttf"
   text-size 14
   window
-    size 920 800
-    min-size 560 480
+    // Wide enough that the sidebar is beside the conversation rather than
+    // taking from it: 252 for the list, and the rest leaves the transcript its
+    // full 760-wide column with margins instead of squeezing it to 620.
+    size 1180 800
+    min-size 760 480
     position centered
 
 use "../../../../crates/ui/src/ice/default.ice"
