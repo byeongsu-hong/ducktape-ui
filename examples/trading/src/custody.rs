@@ -78,7 +78,11 @@
 //!    secret when the add fails.** `session.rs` reads the old bytes back before
 //!    it deletes them precisely so a failed replace is survivable, and that
 //!    read is a guarded read — so expect a sheet on re-enrolment, none on a
-//!    first run, and the previous key still loading afterwards.
+//!    first run, and the previous key still loading afterwards. The other half
+//!    of that survivability is `enrol_one`'s ordering — the venue is asked
+//!    before anything is filed — and it needs a Mac for the same reason: point
+//!    a build at an unreachable endpoint, press ENROL ALL over a live
+//!    enrolment, and the previous key should still unlock.
 //! 5. **THIS IS MINE stores the account key and says so.** One sheet, an item
 //!    at `wallet:0x…`, and the panel's sentence naming the address it kept —
 //!    which is the arm a build with no keychain answers with the platform's
@@ -132,17 +136,34 @@ pub struct Entry {
 impl Entry {
     fn plain(session: Session) -> Self {
         Self {
-            session,
+            session: agreeing(session),
             note: String::new(),
         }
     }
 
     fn saying(session: Session, note: &str) -> Self {
         Self {
-            session,
+            session: agreeing(session),
             note: note.to_owned(),
         }
     }
+}
+
+/// The store, brought into agreement with the session about to be drawn.
+///
+/// `advance` drops every key whenever a transition lands anywhere but `Ready`,
+/// and this is that same rule for the acts that are not transitions. Importing
+/// a wallet and enrolling a network have no `Event` — they answer a session
+/// directly — and a screen drawing READ ONLY over a store that still holds
+/// keys is exactly the disagreement `advance` exists to make impossible.
+///
+/// It sits on the constructors rather than on their eleven call sites so that
+/// the next act added here cannot forget it.
+fn agreeing(session: Session) -> Session {
+    if !matches!(session, Session::Ready { .. }) {
+        drop(lock(vault()).take());
+    }
+    session
 }
 
 /// A custody act that could not be completed for a reason that is neither the
@@ -703,17 +724,40 @@ fn enrolment_outcome(landed: &[String], refused: &[String]) -> String {
 async fn enrol_one(venue: Venue, address: &str, master: &MasterKey) -> Result<(), String> {
     let scheme = Network::of(venue).signing;
     let (bytes, public) = generate(scheme)?;
-    let stored = {
-        let name = item(venue, address);
-        let secret = Secret::new(bytes);
-        smol::unblock(move || PlatformKeystore.store(&name, &secret)).await
-    };
-    stored.map_err(|failure| failure.message)?;
+    // Registered first and filed second, which is the order that survives a
+    // venue saying no. `store` replaces whatever is under this network's item
+    // and puts the old bytes back only when the *add* fails — it cannot know a
+    // request is still to come. Filed first, an exchange that was unreachable,
+    // or an address with no account on that deployment yet, would have taken a
+    // working key with it and left an item that unlocks into "approve this
+    // address from your wallet" when what the owner actually has to do is press
+    // this button again. Filed last, a refused registration leaves the previous
+    // key exactly where it was.
+    //
+    // What this order costs instead is the other way round: a keychain that
+    // refuses after the venue agreed leaves a key registered and unusable, and
+    // the next unlock reads `Missing` and says to enrol — which is the true
+    // sentence, and the same press fixes it.
+    registration(scheme, address, &public, master).await?;
+    let name = item(venue, address);
+    let secret = Secret::new(bytes);
+    smol::unblock(move || PlatformKeystore.store(&name, &secret))
+        .await
+        .map_err(|failure| failure.message)
+}
 
+/// The half of an enrolment the venue performs, which is the half that can be
+/// refused. Split out so the store above is unambiguously after it.
+async fn registration(
+    scheme: Signing,
+    address: &str,
+    public: &str,
+    master: &MasterKey,
+) -> Result<(), String> {
     match scheme {
         Signing::Eip712(chain) => {
             let agent =
-                crate::signing::Address::parse(&public).map_err(|failure| failure.message)?;
+                crate::signing::Address::parse(public).map_err(|failure| failure.message)?;
             let action = crate::signing::approve_agent(chain, agent, "ducktape", now_ms() as u64);
             crate::hyperliquid::exchange(chain, action.request(master))
                 .await
@@ -730,7 +774,7 @@ async fn enrol_one(venue: Venue, address: &str, master: &MasterKey) -> Result<()
                 })
         }
         Signing::ApiKey(zone) => {
-            let key = crate::lighter_sign::PrivateKey::from_hex(&public)
+            let key = crate::lighter_sign::PrivateKey::from_hex(public)
                 .map_err(|error| error.to_string())?;
             let account = crate::lighter::lighter_account_index(zone, address.to_owned())
                 .await
@@ -2548,5 +2592,38 @@ mod tests {
                 ordinary,
             );
         }
+    }
+
+    /// A custody act that answers anything but `Ready` leaves the store empty.
+    ///
+    /// `advance` holds this for every transition, and importing and enrolling
+    /// are not transitions — they answer a session directly. Before `agreeing`
+    /// sat on the constructors, pressing CHECK or ENROL ALL from an unlocked
+    /// session drew READ ONLY over a vault that still held every network's key.
+    ///
+    /// The act driven here is the one that touches nothing else on its way to
+    /// the answer: an enrolment with no address reaches neither the keychain
+    /// nor the waiting wallet, so what it proves is the constructor's rule and
+    /// not a side effect of the path.
+    #[test]
+    fn an_act_that_answers_locked_forgets_the_keys() {
+        let _turn = one_at_a_time();
+        seed_keys(&[Venue::Hyperliquid, Venue::Lighter]);
+        assert!(holding_a_key(), "the fixture put keys in the store");
+
+        let entry = smol::block_on(enrol_all(String::new())).expect("an answer, not a fault");
+        assert!(
+            matches!(entry.session, Session::Locked),
+            "{:?}",
+            entry.session
+        );
+        assert!(
+            !entry.note.is_empty(),
+            "an act that refuses says why: {entry:?}"
+        );
+        assert!(
+            !holding_a_key(),
+            "a session drawn as locked must not leave a signable key behind"
+        );
     }
 }

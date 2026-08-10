@@ -42,11 +42,19 @@
 //! ## What is not defended against
 //!
 //! The bytes live in this process while a phrase is being imported, and Rust
-//! cannot promise where the optimiser put a copy. Every buffer this module
-//! *names* is wiped; see `Drop` on `PrivateKey` in `lighter_sign.rs` for the
-//! same statement made at greater length. The mitigation that actually holds is
-//! upstream of this file: the phrase is asked for once, converted, and handed
-//! to the platform keychain, and the app never asks for it again.
+//! cannot promise where the optimiser put a copy. Every buffer of *derived*
+//! material this module names is wiped — the seed, the entropy, the HMAC
+//! output, every intermediate key — and see `Drop` on `PrivateKey` in
+//! `lighter_sign.rs` for the same statement made at greater length.
+//!
+//! The one buffer that is not is the split phrase itself, a `Vec<String>`:
+//! zeroing a `String`'s bytes needs `as_mut_vec`, and the workspace forbids
+//! `unsafe`. It is also the buffer where wiping would buy least — the same
+//! words are in Ice state while they are being typed, which is the ceiling
+//! `state.ice` records, so a scrubbed heap copy beside an unscrubbed one is
+//! theatre rather than defence. The mitigation that actually holds is upstream
+//! of this file: the phrase is asked for once, converted, cleared from state
+//! the instant it has derived, and never asked for again.
 
 // Complete and held to its oracles, and pointed at by nothing until the
 // custody panel can take a phrase — the shape `signing.rs`, `lighter_sign.rs`
@@ -185,6 +193,9 @@ fn check_phrase(words: &[String]) -> Result<(), SeedError> {
     if !matches!(words.len(), 12 | 15 | 18 | 21 | 24) {
         return Err(SeedError::WordCount);
     }
+    // The phrase in bits, which is the entropy before it is bytes. Wiped below
+    // on the path that reaches the end; an unknown word leaves it, and an
+    // unknown word means no complete phrase was ever spelled into it.
     let mut bits: Vec<bool> = Vec::with_capacity(words.len() * 11);
     for (at, word) in words.iter().enumerate() {
         let index = index_of(word).ok_or(SeedError::UnknownWord(at))?;
@@ -208,7 +219,8 @@ fn check_phrase(words: &[String]) -> Result<(), SeedError> {
         .enumerate()
         .all(|(at, bit)| (digest[at / 8] >> (7 - at % 8) & 1 == 1) == *bit);
     entropy.fill(0);
-    std::hint::black_box(&mut entropy);
+    bits.fill(false);
+    std::hint::black_box((&mut entropy, &mut bits));
     held.then_some(()).ok_or(SeedError::Checksum)
 }
 
@@ -312,9 +324,12 @@ fn child(key: &[u8; 32], chain: &[u8; 32], index: u32) -> Result<([u8; 32], [u8;
     let offset = k256::SecretKey::from_slice(&wide[..32]).map_err(|_| SeedError::Derivation)?;
     // The child key is the parent plus the HMAC's left half, in the scalar
     // field — and a sum that lands on zero is the one case the spec says to
-    // refuse rather than use.
+    // refuse rather than use. `SecretKey::new` would take it: it is a struct
+    // literal with no validation in it, so the refusal has to be this
+    // `NonZeroScalar` rather than the constructor below.
     let sum = *offset.to_nonzero_scalar().as_ref() + parent.to_nonzero_scalar().as_ref();
-    let child = k256::SecretKey::new(sum.into())
+    let child: [u8; 32] = Option::<k256::NonZeroScalar>::from(k256::NonZeroScalar::new(sum))
+        .ok_or(SeedError::Derivation)?
         .to_bytes()
         .as_slice()
         .try_into()

@@ -911,7 +911,9 @@ enrolled finger to answer it with. The nine experiments `session.rs` lists on
 its `impl Keystore` are still owed, and `custody.rs` adds seven that only exist
 now that something calls it — one sheet per unlock rather than two, a cancelled
 sheet leaving a live button, the full enrol-approve-unlock round trip, a
-re-enrolment keeping the secret it replaces when the add fails, THIS IS MINE
+re-enrolment keeping the secret it replaces when the add fails — and with it
+`enrol_one`'s ordering, which asks the venue before it files anything so a
+refused registration leaves the previous key where it was — THIS IS MINE
 storing the account key under `wallet:0x…` and saying so, ENROL ALL costing one
 sheet for four networks rather than four, and a cancelled enrolment sheet
 leaving nothing registered. Until a person on a Mac reports those, the honest
