@@ -109,6 +109,17 @@ impl std::hash::Hash for Entry {
 }
 
 impl Entry {
+    /// A row built from something other than a live stream — a chat read back
+    /// off disk, for one.
+    pub fn of(kind: &str, title: impl Into<String>) -> Self {
+        Self::new(kind, title)
+    }
+
+    /// The prose this row carries.
+    pub fn with_body(self, body: impl Into<String>) -> Self {
+        self.body(body)
+    }
+
     fn new(kind: &str, title: impl Into<String>) -> Self {
         Self {
             id: next_id(),
@@ -421,6 +432,21 @@ pub fn set_model(session: Session, model: String) -> String {
             .unwrap_or_else(|| "medium".to_owned());
     }
     model
+}
+
+/// Take on a chat that already happened.
+///
+/// The session becomes that chat: its rows are what is drawn and its input is
+/// what the next turn resends, so carrying on from a chat read off disk
+/// continues it rather than starting beside it.
+pub fn adopt(session: Session, rows: Vec<Entry>, input: Vec<Value>, turns: i64) -> Vec<Entry> {
+    let mut state = session.lock();
+    state.entries = rows;
+    state.input = input;
+    state.turn = turns;
+    state.pending.clear();
+    state.cancelled = false;
+    state.snapshot()
 }
 
 /// A fresh chat that keeps the model and effort the last one was using.
@@ -887,7 +913,7 @@ fn search_action(action: &Value) -> (String, String) {
 /// A reasoning summary states its own subject on a bold first line. That line
 /// is the row's heading, so the fold shows what was being thought about rather
 /// than a generic label, and the body underneath is left as plain prose.
-fn headed(summary: &str) -> (String, String) {
+pub fn headed(summary: &str) -> (String, String) {
     let (first, rest) = summary.split_once('\n').unwrap_or((summary, ""));
     let heading = first.trim().trim_matches('*').trim();
     if heading.is_empty() || !first.trim().starts_with("**") {
@@ -953,7 +979,7 @@ fn tokens(usage: &Value) -> String {
 
 /// Thousands grouped, because a turn's input runs to five figures and an
 /// ungrouped one has to be counted rather than read.
-fn grouped(count: i64) -> String {
+pub fn grouped(count: i64) -> String {
     let digits = count.abs().to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     if count < 0 {
