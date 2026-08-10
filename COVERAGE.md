@@ -232,6 +232,12 @@ through `msiexec`, and publishes attested, checksummed artifacts, notarized and
 stapled once the signing secrets exist. This is distribution evidence over the
 existing Core contract, not a new syntax or LSP capability.
 
+Every `cargo ice` command runs its analysis on a thread that asks for eight
+megabytes, because a Windows main thread carries one and the showcase graph
+needs more than that. A Linux contract reproduces that budget with `ulimit -s`
+and proves the analysis survives it, so the platform-specific abort cannot
+return unnoticed.
+
 `cargo ice dev` exercises that same ahead-of-time path. `-p PACKAGE` discovers
 the package's unique Ice app or daemon root. Content stamps cover the selected
 Ice import graph, embedded fonts, icons, and media files,
