@@ -23,19 +23,34 @@ cargo run -p trading-example
 cargo test -p trading-example
 ```
 
-The app opens on an address prompt, prefilled with a well-known account so
-there is something to look at on the first run. Press **Connect** to read it,
-type your own, or **Browse markets** to use market data only; the terminal's
-positions panel offers the prompt again if you change your mind, and so does
-the settings page. Browsing without one, every panel that needs an account
-says so rather than reporting that the account has nothing in it.
+The app opens on a gate that leads with **Import a wallet** — see [where
+onboarding starts](#where-onboarding-starts). One press behind it, **Watch an
+address** takes an address read-only, prefilled with a well-known account so
+there is something to look at on the first run, and **Browse markets** uses
+market data only; the terminal's positions panel offers the gate again if you
+change your mind, and so does the settings page. Browsing without an address,
+every panel that needs an account says so rather than reporting that the
+account has nothing in it.
 
 An address is checked before it is sent, because the exchange answers a
 malformed one with a plain-text parser complaint rather than JSON — so without
 the check, a typo reads as "Hyperliquid sent bad JSON", the one error that
 blames the exchange for something you just typed.
 
-![Trading](screenshots/trading.png)
+One screen at 1660×820, drawn from the `held` fixtures so every figure on it is
+one the tests assert: the markets rail; the chart, with this account's fills
+marked on the candles they landed in and its resting buy ruled across at the
+size still waiting; the book, the tape, the alerts and the open orders beside
+it; the order ticket, from side and market-or-limit down to what crossing
+would cost; and the positions — with the countdown to their next funding —
+over the recent fills.
+
+```bash
+ICE_TEST_ARTIFACT_DIR=target/trading-evidence \
+  cargo test -p trading-example __ice_tests::trading_the_whole_terminal_renders_from_fixtures -- --exact --nocapture
+```
+
+![The terminal](screenshots/trading.png)
 
 ## The menu bar mini status
 
