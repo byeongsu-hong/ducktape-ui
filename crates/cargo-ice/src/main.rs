@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 mod api;
+mod bundle;
 mod cargo_config;
 mod compat;
 mod dev;
@@ -62,9 +63,10 @@ fn run() -> Result<(), String> {
         "diff" => return inspection::diff(&root_for_command()?, trailing),
         "api" => return api::run(&root_for_command()?, trailing),
         "review" => return review::review(&root_for_command()?, trailing),
+        "bundle" => return bundle::run(&root_for_command()?, trailing),
         "help" | "--help" | "-h" => {
             println!(
-                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...] | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | review <file.ice> [options] | schema | lsp>"
+                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...] | bundle -p <package> [--target <triple>]... | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | review <file.ice> [options] | schema | lsp>"
             );
             return Ok(());
         }
@@ -162,7 +164,7 @@ fn valid_command_args(command: &str, trailing: &[String]) -> bool {
         "fmt" => trailing.is_empty() || trailing == ["--check"],
         "expand" => trailing.len() == 1,
         "dev" => dev_arguments(trailing).is_some(),
-        "test" | "inspect" | "diff" | "api" | "review" => true,
+        "test" | "inspect" | "diff" | "api" | "review" | "bundle" => true,
         "schema" | "lsp" | "help" | "--help" | "-h" | "check" | "clippy" | "compat" => {
             trailing.is_empty()
         }

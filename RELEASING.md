@@ -77,6 +77,52 @@ JSON diff before publishing. Because the package version participates in the
 fingerprint payload, an intentional release version bump must regenerate and
 review the baseline too.
 
+## Desktop applications
+
+A tag publishes the showcase application for all three desktop platforms:
+
+| Job | Artifact | Verified by |
+| --- | --- | --- |
+| `Showcase disk image` | universal `.dmg` | both architectures present, `codesign --verify --strict`, and when notarized, `stapler validate` plus `spctl --assess` |
+| `Showcase package` | `.deb` | `apt install ./file.deb`, `desktop-file-validate`, installed binary and icon present, then removal |
+| `Showcase installer` | `.msi` | `msiexec /i /qn`, installed executable present, then `msiexec /x /qn` |
+
+Each runs `cargo ice bundle -p showcase`; the macOS job adds
+`--target aarch64-apple-darwin --target x86_64-apple-darwin` so one disk image
+covers both architectures. Every artifact is checksummed and joins the attested
+release assets. `docs/tooling.md` documents the command itself, including how
+another package declares its own bundle.
+
+The jobs also run on `workflow_dispatch`, which is how a packaging change gets
+exercised on a branch instead of debugged on a tag.
+
+## Signing secrets
+
+Signing is driven entirely by repository secrets, so every job is runnable
+before they exist — an unset secret arrives as an empty string, which is read
+as "not configured". macOS then signs ad hoc and skips notarization, and
+Windows leaves the installer unsigned.
+
+| Secret | Contents |
+| --- | --- |
+| `MACOS_CERTIFICATE` | base64 of the Developer ID Application `.p12` |
+| `MACOS_CERTIFICATE_PASSWORD` | that `.p12`'s export password |
+| `MACOS_SIGNING_IDENTITY` | `Developer ID Application: NAME (TEAMID)` |
+| `MACOS_NOTARY_KEY` | base64 of the App Store Connect API `.p8` |
+| `MACOS_NOTARY_KEY_ID` | that key's ID |
+| `MACOS_NOTARY_ISSUER` | the issuer UUID for that key |
+
+Certificates expire. A signature made before expiry stays valid because it
+carries a trusted timestamp, but the next release fails at `codesign` — renew
+the Developer ID certificate and replace the first three secrets.
+
+Windows signing reads `ICE_WINDOWS_CERTIFICATE` and
+`ICE_WINDOWS_CERTIFICATE_PASSWORD`; the release job does not map secrets onto
+them yet, because an Authenticode certificate issued today requires either
+hardware token access or a cloud signing service, and which one to use is a
+decision this repository has not made. A `.deb` is authenticated by the
+repository serving it, so Linux needs no signing secret.
+
 ## Registry order
 
 The first crates.io publication must respect this dependency graph:

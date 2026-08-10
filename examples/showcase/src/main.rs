@@ -1,3 +1,8 @@
+// A Rust binary is a console program by default, so an installed release build
+// would open a terminal behind the window. Debug builds keep the console,
+// which is where `cargo run` prints.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod adapters;
 #[cfg(test)]
 mod frame_probe;

@@ -25,6 +25,103 @@ package selection. `cargo ice diff BASE.json CURRENT.json` writes
 changed-pixel ratio exceeds explicit `--pixel-threshold`,
 `--max-changed-ratio`, or `--value-tolerance` settings.
 
+## bundle
+
+`cargo ice bundle -p PACKAGE` turns one Ice application into something a person
+can install, in the format the host platform knows how to install:
+
+| Host | Artifact | Installs as |
+| --- | --- | --- |
+| macOS | `Name.app` and `Name-VERSION-ARCH.dmg` | drag to `/Applications` |
+| Linux | `package_VERSION_ARCH.deb` | `apt install ./file.deb` |
+| Windows | `Name-VERSION-ARCH.msi` | per-user, no elevation prompt |
+
+Everything lands under `target/ice-bundle/`. The command analyzes the package's
+single Ice root first, so a graph that does not check never reaches a release
+build, then builds `--release --locked` and packages the result. On macOS,
+repeating `--target TRIPLE` builds several architectures and joins them with
+`lipo`; the disk image is then named `universal` rather than one architecture.
+
+### Identity
+
+Nothing is restated to get a package. The Ice app declaration names the
+application — `app Showcase` becomes `Showcase.app`, the `.desktop` entry name,
+and the installer product name, and its `id` becomes the macOS bundle
+identifier, the Linux desktop-entry and icon name, and the Windows registry
+key. The Cargo manifest supplies the rest:
+
+```toml
+[package]
+version = "0.1.0"                       # every version string
+description = "..."                     # desktop entry comment, Debian synopsis
+authors = ["Name <name@example.com>"]   # Debian maintainer, Windows manufacturer
+homepage = "https://example.com"        # Debian Homepage field
+```
+
+Only what neither can express lives in the bundle table:
+
+```toml
+[package.metadata.ice.bundle]
+icon = "../../assets/icons/ice.svg"
+category = "public.app-category.developer-tools"
+copyright = "Copyright © 2026 ducktape-ui contributors. MIT licensed."
+# name, identifier, executable, and minimum-system-version are also accepted;
+# an unknown key is an error rather than a silently ignored line.
+```
+
+### Icon
+
+One SVG becomes every raster the three platforms ask for: the `.icns` entries
+macOS reads at 32 through 1024 including the 2x pairs, the `.ico` sizes Windows
+picks between for a title bar and a desktop, and the freedesktop `hicolor`
+theme plus the original SVG as the scalable entry. There are no exported
+rasters to keep in sync. The renderer carries no fonts, so an icon still
+holding a `<text>` element is refused rather than drawn with a hole in it;
+convert lettering to paths, which is what an icon export does anyway.
+
+### Signing
+
+Every credential is read from the environment, which is how a CI secret reaches
+one. An unset variable — including the empty string a workflow produces for a
+missing secret — means "not configured", not "fail".
+
+On macOS, `ICE_CODESIGN_IDENTITY` names a Developer ID identity in the
+keychain; without it the bundle is signed ad hoc, which is the minimum Apple
+silicon needs to launch a local build at all. Setting `ICE_NOTARY_KEY` (an App
+Store Connect `.p8` path), `ICE_NOTARY_KEY_ID`, and `ICE_NOTARY_ISSUER` submits
+the disk image to `notarytool`, waits, and staples the ticket. Notary
+credentials without a signing identity are refused before the upload rather
+than after it.
+
+On Windows, `ICE_WINDOWS_CERTIFICATE` (a `.pfx` path) and
+`ICE_WINDOWS_CERTIFICATE_PASSWORD` sign both the executable and the installer
+through `signtool`, countersigned by `ICE_WINDOWS_TIMESTAMP_URL` so the
+signature outlives the certificate. Without a certificate both are left
+unsigned and SmartScreen warns on first run.
+
+Linux packages are not signed by this command; a `.deb` is authenticated by the
+repository that serves it, and a direct download is verified by the checksum
+published beside it.
+
+### Platform requirements
+
+The packagers use each platform's own tools, so each runs only on its own host:
+`codesign`, `ditto`, `hdiutil`, and `xcrun` on macOS; `dpkg-shlibdeps` and
+`dpkg-deb` on Linux; the [WiX toolset](https://wixtoolset.org) (`dotnet tool
+install --global wix`) and optionally `signtool` on Windows.
+
+Two demands are checked before anything is built, because both are invisible
+until someone installs the result. A Windows bundle requires the crate root to
+set `windows_subsystem`, without which the installed application opens a
+console window behind itself:
+
+```rust
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+```
+
+A Debian package requires the Cargo package name to be a valid Debian package
+name — lower-case letters, digits, and `+-.`, at least two characters.
+
 ## review
 
 `cargo ice review ROOT.ice` runs every declared Ice test in the root graph, or

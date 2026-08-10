@@ -27,6 +27,10 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
+pub(crate) fn metadata(root: &Path) -> Result<serde_json::Value, String> {
+    self::inputs::cargo_metadata(root, &[])
+}
+
 pub(super) fn package_ice_source(
     root: &Path,
     package_name: &str,

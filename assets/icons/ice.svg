@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Drawn on the macOS 1024pt grid: the mark lives inside the 824pt rounded
+       square centred on the canvas, so the surrounding 100pt keeps its optical
+       size in line with system icons. -->
+  <defs>
+    <linearGradient id="ground" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#7DD3FC"/>
+      <stop offset="0.5" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#075985"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.28"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#ground)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sheen)"/>
+
+  <!-- One block of ice, read as three faces of a cube. The lit top face carries
+       the silhouette at 16pt; the two darker faces only appear once the icon is
+       large enough for them to mean anything. -->
+  <path d="M512 296 L714 412 L512 528 L310 412 Z" fill="#FFFFFF"/>
+  <path d="M714 412 L714 644 L512 760 L512 528 Z" fill="#FFFFFF" fill-opacity="0.58"/>
+  <path d="M310 412 L310 644 L512 760 L512 528 Z" fill="#FFFFFF" fill-opacity="0.80"/>
+
+  <rect x="112" y="112" width="800" height="800" rx="174" fill="none"
+        stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="3"/>
+</svg>

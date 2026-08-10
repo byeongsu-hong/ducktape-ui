@@ -199,6 +199,39 @@ The release packages job independently regenerates the artifact and requires
 byte equality plus a zero JSON diff before a tag can publish. This is tooling
 evidence over the existing Core contract, not a new syntax or LSP capability.
 
+`cargo ice bundle` turns a checked app into an installable artifact in the
+format its host platform knows: a signed, notarized `.app` and `.dmg` on macOS,
+a `.deb` carrying a desktop entry and hicolor icon theme on Linux, and a
+per-user `.msi` with a Start menu shortcut on Windows. Identity is not restated
+to get one: the `app` name becomes the product name, its `id` becomes the
+bundle identifier, desktop-entry name, and registry key, and the Cargo manifest
+supplies the version, description, authors, and homepage each packager needs.
+Only icon, category, copyright, and minimum system version are declared in
+`[package.metadata.ice.bundle]`, where an unknown key fails instead of doing
+nothing. One SVG becomes every raster the three ask for — the `.icns` entry
+table, the `.ico` directory, and the hicolor sizes — and because the renderer
+carries no fonts, an icon still holding a `<text>` element is refused rather
+than drawn with a hole in it. Host-independent contracts cover those three icon
+containers, the `Info.plist` keys Gatekeeper reads, the desktop entry and
+Debian control stanza, the Windows Installer authoring including its stable
+upgrade code and the versions it cannot compare, the layout a rebuild leaves
+behind, request parsing, per-target binary paths, and the refusal to notarize
+an ad-hoc signature before the upload rather than after it. Two demands are
+checked before a build starts because both are invisible until installation: a
+Windows crate root must set `windows_subsystem`, or the installed application
+opens a console window behind itself, and a Debian package name must be one
+dpkg accepts. One contract resolves the real showcase manifest and Ice root
+into a complete identity for all three platforms, so a renamed icon, a dropped
+`id`, or a missing manifest field fails in ordinary CI rather than on a release
+tag. Linux and macOS CI additionally drive the real packaging tools —
+`dpkg-shlibdeps` and `dpkg-deb`, `codesign`, `ditto`, and `hdiutil` — and
+verify the resulting package and disk image. A tag builds both Apple
+architectures and joins them with `lipo`, installs and removes the `.deb`
+through `apt` and validates its desktop entry, installs and removes the `.msi`
+through `msiexec`, and publishes attested, checksummed artifacts, notarized and
+stapled once the signing secrets exist. This is distribution evidence over the
+existing Core contract, not a new syntax or LSP capability.
+
 `cargo ice dev` exercises that same ahead-of-time path. `-p PACKAGE` discovers
 the package's unique Ice app or daemon root. Content stamps cover the selected
 Ice import graph, embedded fonts, icons, and media files,

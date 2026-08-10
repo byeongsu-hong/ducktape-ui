@@ -3,6 +3,19 @@ name = "showcase"
 version = "0.1.0"
 edition.workspace = true
 publish = false
+# `cargo ice bundle` reads these: the description becomes the desktop entry's
+# comment and the Debian synopsis, and the first author becomes the Debian
+# maintainer and the Windows Installer manufacturer.
+authors = ["byeongsu-hong <byeongsu-hong@users.noreply.github.com>"]
+description = "The complete ducktape-ui component catalog, built with Ice."
+homepage.workspace = true
+
+# The bundle name and identifier come from the Ice app declaration; only what
+# no standard Cargo or Ice field can express lives here.
+[package.metadata.ice.bundle]
+icon = "../../assets/icons/ice.svg"
+category = "public.app-category.developer-tools"
+copyright = "Copyright © 2026 ducktape-ui contributors. MIT licensed."
 
 [dependencies]
 ducktape-ui = { workspace = true, features = ["full"] }

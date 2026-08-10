@@ -840,7 +840,10 @@ pub(super) fn package_ice_source(
     }
 }
 
-fn cargo_metadata(root: &Path, cargo_args: &[String]) -> Result<serde_json::Value, String> {
+pub(super) fn cargo_metadata(
+    root: &Path,
+    cargo_args: &[String],
+) -> Result<serde_json::Value, String> {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let output = Command::new(cargo)
         .arg("metadata")

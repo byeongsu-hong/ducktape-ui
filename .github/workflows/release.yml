@@ -18,12 +18,18 @@ on:
       - crates/ui-lang-template/**
   push:
     tags: ["v*"]
+  # Lets a maintainer exercise the signing and notarization path once, on a
+  # branch, instead of finding out what it does on a release tag.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  # apt bounds and retries its own downloads with these; without them a
+  # stalled mirror holds the runner until the job's timeout.
+  APT: -o Acquire::Retries=3 -o Acquire::http::Timeout=15
 
 jobs:
   packages:
@@ -118,10 +124,184 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  app:
+    name: Showcase disk image
+    # A tag publishes it; a manual run is how the signing path gets exercised
+    # first. Pull requests skip it — the macOS bundling steps are covered by
+    # `Workspace (macos-latest)` in CI, without two release builds.
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    # Two architectures through the release profile's fat LTO and single
+    # codegen unit, with no compiler cache, is the whole cost of this job.
+    timeout-minutes: 120
+    env:
+      # An unset secret arrives as the empty string, which `cargo ice bundle`
+      # reads as absent: the disk image is then signed ad hoc and not sent to
+      # Apple, so the pipeline stays runnable before the secrets exist.
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+      ICE_CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      ICE_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      ICE_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Import the Developer ID certificate
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/ice-signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # Without this, codesign prompts for keychain access and the job
+          # hangs until its timeout instead of signing.
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          security find-identity -v -p codesigning "$keychain"
+      - name: Stage the notary key
+        if: env.MACOS_NOTARY_KEY != ''
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/notary-key.p8"
+          printf '%s' "$MACOS_NOTARY_KEY" | base64 --decode > "$key"
+          echo "ICE_NOTARY_KEY=$key" >> "$GITHUB_ENV"
+      - name: Build the signed disk image
+        run: |
+          cargo ice bundle -p showcase \
+            --target aarch64-apple-darwin --target x86_64-apple-darwin
+      - name: Verify the bundle Gatekeeper will see
+        run: |
+          set -euo pipefail
+          app=target/ice-bundle/Showcase.app
+          test -f "$app/Contents/Resources/Showcase.icns"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist"
+          archs="$(lipo -archs "$app/Contents/MacOS/showcase")"
+          echo "architectures: $archs"
+          case " $archs " in
+            *" arm64 "*) ;;
+            *) echo "::error::the universal binary is missing arm64"; exit 1 ;;
+          esac
+          case " $archs " in
+            *" x86_64 "*) ;;
+            *) echo "::error::the universal binary is missing x86_64"; exit 1 ;;
+          esac
+          codesign --verify --strict --verbose=2 "$app"
+      - name: Checksum the disk image
+        run: |
+          set -euo pipefail
+          cd target/ice-bundle
+          for image in *.dmg; do
+            # A stapled ticket is what lets a first launch pass Gatekeeper on a
+            # machine that cannot reach Apple, so it is checked, not assumed.
+            if [ -n "${ICE_NOTARY_KEY:-}" ]; then
+              xcrun stapler validate "$image"
+              spctl --assess --type open --context context:primary-signature --verbose=2 "$image"
+            fi
+            shasum -a 256 "$image" > "$image.sha256"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: showcase-macos
+          path: |
+            target/ice-bundle/*.dmg
+            target/ice-bundle/*.dmg.sha256
+          compression-level: 0
+          retention-days: 7
+
+  package:
+    name: Showcase ${{ matrix.format }}
+    # A tag publishes these; a manual run is how a packaging change gets
+    # exercised first. Pull requests skip them — the staging layout and the
+    # authoring are covered by unit contracts in CI on every commit.
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    # One release build of an iced application through the release profile's
+    # fat LTO and single codegen unit, with no compiler cache.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            format: package
+          - runner: windows-latest
+            format: installer
+    steps:
+      - uses: actions/checkout@v7
+      # `dpkg-shlibdeps` and `dpkg-deb` are already on the runner; only the
+      # validator the verification step runs has to be installed.
+      - name: Install the desktop entry validator
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          set -euo pipefail
+          sudo apt-get $APT update
+          sudo apt-get $APT install --yes --no-install-recommends desktop-file-utils
+      - name: Install the WiX toolset
+        if: matrix.runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet tool install --global wix --version 6.0.2
+          # The global tool directory is not always on PATH for later steps.
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Build the package
+        run: cargo ice bundle -p showcase
+      - name: Verify the Debian package
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          set -euo pipefail
+          deb="$(ls target/ice-bundle/*.deb)"
+          dpkg-deb --info "$deb"
+          # `apt install` is what a user runs, and it is the step that fails if
+          # a declared dependency cannot be satisfied on a clean machine.
+          sudo apt-get install -y ${{ env.APT }} "$PWD/$deb"
+          test -x /usr/bin/showcase
+          desktop-file-validate /usr/share/applications/dev.ducktape.ui.showcase.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/dev.ducktape.ui.showcase.png
+          sudo apt-get remove -y showcase
+      - name: Verify the Windows installer
+        if: matrix.runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Get-ChildItem target/ice-bundle/*.msi)[0].FullName
+          # A silent install and uninstall is the only check that proves the
+          # authoring is valid rather than merely well-formed XML.
+          $log = "$env:RUNNER_TEMP/install.log"
+          Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /l*v `"$log`"" -Wait -NoNewWindow
+          $installed = "$env:LOCALAPPDATA/Showcase/showcase.exe"
+          if (-not (Test-Path $installed)) { Get-Content $log -Tail 40; throw "not installed" }
+          Start-Process msiexec -ArgumentList "/x `"$msi`" /qn" -Wait -NoNewWindow
+          if (Test-Path $installed) { throw "not uninstalled" }
+      - name: Checksum the artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target/ice-bundle
+          for artifact in *.deb *.msi; do
+            [ -e "$artifact" ] || continue
+            shasum -a 256 "$artifact" > "$artifact.sha256"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: showcase-${{ matrix.runner }}
+          path: |
+            target/ice-bundle/*.deb
+            target/ice-bundle/*.msi
+            target/ice-bundle/*.sha256
+          compression-level: 0
+          retention-days: 7
+
   publish:
     name: Publish GitHub release
     if: github.event_name == 'push'
-    needs: [build, packages]
+    needs: [app, build, package, packages]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -138,6 +318,9 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.dmg
+            dist/*.deb
+            dist/*.msi
       - name: Publish release
         env:
           GH_REPO: ${{ github.repository }}
