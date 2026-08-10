@@ -6,11 +6,8 @@
 // count it froze, that the count does not move when the screen behind it does,
 // and that pressing DO IT is still behind the same confirmation one order is.
 //
-// The rows the panel lists are asserted in Rust rather than here, and that is a
-// limit of this driver rather than a choice: text drawn on the modal layer is
-// not in the visible-text index `expect text` reads, and a `text` widget
-// carries no accessible name to ask instead. What *is* asked here is the send
-// button's own name, which the panel builds from the same frozen sweep.
+// The rows the panel lists are read off the modal layer itself, alongside the
+// send button's own name, which the panel builds from the same frozen sweep.
 //
 // Nothing reaches an exchange. The wire is closed under test, so the sentences
 // are the app's own rather than a venue's.
@@ -29,9 +26,16 @@ test trading_cancel_all_confirms_every_order_it_froze
   expect missing panel
   expect a11y all disabled false
   expect a11y all name "Cancel 2 resting orders, one confirmation"
+  // The two orders are named on the panel, one line each, because a count is
+  // not what the reader is agreeing to. Absent before the press and present
+  // after it, so the absence is an absence and not a question the driver
+  // could not reach.
+  expect no text "BTC buy 1.5 at 63,600.00"
   click all
   expect exists panel
   expect exists rows
+  expect text "BTC buy 1.5 at 63,600.00" within rows
+  expect text "BTC sell 0.8 at 64,440.00" within rows
   // The button that spends the money says what it is about to do, in the count
   // the press froze rather than in the count the panel behind it now holds.
   expect a11y send name "Cancel 2 resting orders"

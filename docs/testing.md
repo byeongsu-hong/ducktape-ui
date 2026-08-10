@@ -134,11 +134,21 @@ row of them. No primitive holds the whole string. The query rebuilds those
 runs: consecutive single-grapheme primitives sharing a baseline and a style
 and evenly spaced, with a gap about one space wider than the run's own read as
 a space, because a space paints nothing and arrives as a hole. Even spacing is
-what keeps two tracked labels along the same row from merging.
+what keeps two tracked labels along the same row from merging. A run one
+grapheme long — a count beside a heading — has only the gap crossing to the
+next label to learn its spacing from, so it reads the gap after that one too:
+tracking is the tightest spacing on a row, and a first gap wider than the one
+following it is a label boundary.
 
-This matters most for the negative form. Before the runs were rebuilt,
-`expect no text` passed for any tracked label — an assertion that could not
-fail, on text that was plainly on screen.
+`expect text` also reads what is drawn on a `layer`. An open `overlay` draws
+its panel through iced's overlay rather than in place, so the query lays that
+overlay out before asking; a target inside a modal can be scoped with `within`
+exactly like one on the base screen.
+
+Both matter most for the negative form. Before the runs were rebuilt,
+`expect no text` passed for any tracked label; before layers were laid out, it
+passed for anything on a modal — assertions that could not fail, on text that
+was plainly on screen.
 
 ## Captures and evidence
 
