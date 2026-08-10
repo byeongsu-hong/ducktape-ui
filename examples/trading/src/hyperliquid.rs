@@ -420,6 +420,11 @@ pub struct Account {
 
 /// One print on the public tape: somebody else's trade, which is every
 /// trade rather than only this account's.
+///
+/// `Hash` is hand-written for the same reason `Fill`'s is: the tape is a
+/// `lazy` boundary keyed on the print it draws, and the money on a print is
+/// `f64`. A row's cache is invalidated by any change to that print, which is
+/// exactly what the row renders.
 #[derive(Clone, PartialEq)]
 pub struct Trade {
     pub ts: i64,
@@ -433,6 +438,18 @@ pub struct Trade {
     pub sweep: i64,
     /// The exchange's trade id, which is how a repeated message is recognised.
     pub(crate) tid: i64,
+}
+
+impl Hash for Trade {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.ts.hash(state);
+        self.buy.hash(state);
+        self.sweep.hash(state);
+        self.tid.hash(state);
+        for value in [self.price, self.size] {
+            hash_f64(value, state);
+        }
+    }
 }
 
 /// One executed trade, which is what the chart marks.
@@ -4191,6 +4208,25 @@ pub fn demo_tick_at(btc: f64) -> MarketTick {
         book: Some(demo_book()),
         latency: 42,
         context: None,
+    }
+}
+
+/// A beat that carries a print, which `demo_tick_at` does not.
+///
+/// The tape is the one panel a beat *prepends* to, so every row on it draws a
+/// different print afterwards than it drew before — and that is the only way a
+/// memoized row can go stale. Driving that needs a tick with a trade on it.
+pub fn demo_tick_printing(price: f64, size: f64) -> MarketTick {
+    MarketTick {
+        trades: vec![Trade {
+            ts: 1_786_117_900,
+            price,
+            size,
+            buy: true,
+            sweep: 1,
+            tid: 900,
+        }],
+        ..demo_tick_at(price)
     }
 }
 
