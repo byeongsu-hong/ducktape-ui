@@ -52,6 +52,33 @@ pub(in crate::codegen) fn render_structure(
             let sensor = program.resolved_sensor(node)?;
             render_resolved_sensor(sensor, program, message, env, content)
         }
+        // Neither responsive arm memoizes what its closure builds, and it
+        // stays that way for two reasons that survive each other.
+        //
+        // The compile failure first: `MemoLazy` stores an `Element<'static>`,
+        // and wrapping the builder in `memo_lazy((size, palette), ..)` fails
+        // ("returning this value requires that `'1` must outlive `'static`").
+        // The lifetime is pinned by a mounted animation's `.style()` closure
+        // reading mounted state off `&self` — NOT by the inputs: `TextInput`
+        // copies its value into an owned `Value` (iced 0.14 has no borrowed
+        // field), and a spike building exactly what codegen emits for six
+        // inputs coerced to `Element<'static>` clean. E139's own sentence
+        // still blames the input borrow; that mechanism is dead, and the
+        // checker owes it a correction.
+        //
+        // Solving the lifetime would not make the memo right. `MemoLazy`
+        // caches the *element*, so an input under a key that omits its value
+        // stops showing what was typed — the unwritten reason E139's ban is
+        // still correct — and this page's only sound key is "everything the
+        // subtree reads", which a market beat changes. Memoizing it by size
+        // is not hard; it is wrong-keyed.
+        //
+        // The obvious suspects are innocent, which is why this is written
+        // down: no build-time read under a responsive sees the clock (the
+        // trading view reads `clock`, a state field a tick moves), and a
+        // memoized element would keep animating either way — the fade
+        // interpolates at draw time; it is the animation's mounted-state
+        // READ, not its motion, that pins the lifetime.
         ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => {
             let program = document;
             let responsive = program.resolved_responsive(node)?;
