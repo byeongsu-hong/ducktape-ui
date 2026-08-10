@@ -62,14 +62,14 @@ pub(in crate::codegen) fn render_structure(
         // reading mounted state off `&self` — NOT by the inputs: `TextInput`
         // copies its value into an owned `Value` (iced 0.14 has no borrowed
         // field), and a spike building exactly what codegen emits for six
-        // inputs coerced to `Element<'static>` clean. E139's own sentence
-        // still blames the input borrow; that mechanism is dead, and the
-        // checker owes it a correction.
+        // inputs coerced to `Element<'static>` clean. E139's sentence now
+        // states the surviving reason instead: the cached element freezes
+        // the typed text.
         //
         // Solving the lifetime would not make the memo right. `MemoLazy`
         // caches the *element*, so an input under a key that omits its value
-        // stops showing what was typed — the unwritten reason E139's ban is
-        // still correct — and this page's only sound key is "everything the
+        // stops showing what was typed — the reason E139's ban is still
+        // correct — and this page's only sound key is "everything the
         // subtree reads", which a market beat changes. Memoizing it by size
         // is not hard; it is wrong-keyed.
         //

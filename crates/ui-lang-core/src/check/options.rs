@@ -10,7 +10,7 @@ pub(in crate::check) fn check_lazy_subtree(
         ViewNode::Input { span, .. } => Err(Error::new(
             "E139",
             span,
-            "input cannot live in lazy because iced text input borrows app state",
+            "input cannot live in lazy because the cached element freezes the typed text",
         )),
         ViewNode::ComboBox { span, .. } => Err(Error::new(
             "E139",

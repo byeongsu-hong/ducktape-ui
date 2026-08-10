@@ -925,7 +925,7 @@ view
     let error =
         analyze(&source.replace("text len(cached)", "input \"Edit\" <-> cached")).unwrap_err();
     assert_eq!(error.code, "E139");
-    assert!(error.message.contains("borrows app state"));
+    assert!(error.message.contains("freezes the typed text"));
 
     let component_source = source.replace(
             "view\n  lazy title as cached\n    col\n      text cached\n      text len(cached)",
@@ -933,7 +933,7 @@ view
         );
     let error = analyze(&component_source).unwrap_err();
     assert_eq!(error.code, "E139");
-    assert!(error.message.contains("borrows app state"));
+    assert!(error.message.contains("freezes the typed text"));
 }
 
 #[test]
