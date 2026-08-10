@@ -866,6 +866,33 @@ Single-letter shortcuts for the side are not here. The market search listens
 to the same keys, and the app has no notion of which surface holds focus, so
 typing `b` to find bitcoin would flip the ticket to a buy instead.
 
+## When the rent is next collected
+
+A rate answers what a position costs to hold and never when the next bill
+lands, which is the half a holder actually has to plan around. The positions
+panel says it once, over the FUNDING column the charge appears in:
+`FUNDING IN 30m`. Once for the panel rather than once per row, because it is
+one answer for every row under it — both exchanges charge every market on one
+hourly boundary, read live on 2026-08-09 across Hyperliquid's whole
+`predictedFundings` payload and across eight Lighter markets, which stamped the
+same millisecond past the hour.
+
+The two venues are asked differently, and the difference is which of them
+states a boundary at all. Lighter publishes `funding_timestamp` on its
+`market_stats` channel: the hour the charge it just took landed on, so the next
+one is an interval later, rolled forward by whole intervals so a socket that has
+been quiet still names a boundary ahead rather than one behind. Hyperliquid
+publishes none in an asset context, and the `nextFundingTime` its separate
+`predictedFundings` request carries is the boundary already gone by — at
+23:49:06Z it answered 23:00:00Z — so that network's countdown is derived from
+the clock's own hour, which is the interval the venue documents and that same
+payload restates as `fundingIntervalHours: 1`.
+
+A market whose venue has not stated a boundary reads `—` rather than borrowing
+the hour the other one keeps, which on Lighter is every market until the stats
+channel has spoken: the universe request carries no funding time. An hour
+invented on a screen a position is held against is worse than an admission.
+
 ## The rate belongs to the market, not the position
 
 A market capped at 40x holds every position in it to half of that cap,

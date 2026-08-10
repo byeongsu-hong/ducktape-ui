@@ -30,6 +30,11 @@ extern crate::venue
   pure venue_attaches_levels(venue:Venue) -> bool
   pure venue_levels_note(venue:Venue) -> str
   pure venue_fills_note(venue:Venue, watching:bool, failure:str) -> str
+  // When this venue charges funding again. A rate says what holding a position
+  // costs and never when the bill lands; this is the other half, and it is a
+  // dash on a network that has not stated a boundary rather than an hour the
+  // app made up.
+  pure funding_countdown(venue:Venue, market:SymbolRow?, now:i64) -> str
   venue_symbols(venue:Venue) -> [SymbolRow] ! HlError
   venue_candles(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError
   venue_history(venue:Venue, tape:Tape, coin:str, interval:str) -> i64 ! HlError

@@ -306,6 +306,20 @@ pub struct Network {
     /// would be a promise the app cannot keep — the entry would go and the
     /// protection would not.
     pub attaches_levels: bool,
+    /// Whether this network states the time it last charged funding.
+    ///
+    /// Both exchanges fund hourly, so both boundaries can be counted down to;
+    /// what differs is whether the app is told or has to work it out. Lighter
+    /// publishes `funding_timestamp` on its `market_stats` channel and the
+    /// countdown anchors on it. Hyperliquid publishes none in an asset context,
+    /// and the `nextFundingTime` its separate `predictedFundings` request
+    /// carries is the boundary already gone by — read at 23:49:06Z on
+    /// 2026-08-09 it answered 23:00:00Z — so that network's countdown is
+    /// derived from the clock's own hour instead.
+    ///
+    /// On the registry rather than in a match, because it is a fact about the
+    /// exchange this network deploys and a new entry has to state it.
+    pub stamps_funding: bool,
     /// This account's realised history over a window, or the sentence saying
     /// why the network will not serve one.
     pub portfolio: fn(String) -> Fetch<PortfolioHistory>,
@@ -354,6 +368,7 @@ impl Network {
         name: "Hyperliquid",
         rests_forever: true,
         attaches_levels: true,
+        stamps_funding: false,
         testnet: false,
         signing: Signing::Eip712(Chain::Mainnet),
         gap: "",
@@ -394,6 +409,7 @@ impl Network {
         venue: Venue::HyperliquidTestnet,
         rests_forever: true,
         attaches_levels: true,
+        stamps_funding: false,
         name: "Hyperliquid Testnet",
         testnet: true,
         signing: Signing::Eip712(Chain::Testnet),
@@ -431,6 +447,7 @@ impl Network {
         venue: Venue::Lighter,
         rests_forever: false,
         attaches_levels: false,
+        stamps_funding: true,
         name: "Lighter",
         testnet: false,
         // An L2 transaction signed by an API key the account registers, which
@@ -483,6 +500,7 @@ impl Network {
         venue: Venue::LighterTestnet,
         rests_forever: false,
         attaches_levels: false,
+        stamps_funding: true,
         name: "Lighter Testnet",
         testnet: true,
         signing: Signing::ApiKey(Zone::Testnet),
@@ -750,6 +768,50 @@ pub fn venue_levels_note(venue: Venue) -> String {
     )
 }
 
+/// How long until this market is funded again, as the positions panel
+/// prints it.
+///
+/// The app has always shown funding as a rate and never as a schedule, which
+/// answers what a position costs to hold and not when the next bill lands. Both
+/// exchanges charge hourly, so the boundary is an interval past an anchor: the
+/// network's own stamp of the charge it last took where it publishes one, and
+/// the clock's own hour where it does not. The stamp is rolled forward by whole
+/// intervals rather than simply incremented, so a socket that has been quiet
+/// for three hours still names a boundary in the future instead of counting
+/// down into the past.
+///
+/// A dash where it is not known, which on Lighter is every market until the
+/// stats channel has spoken: an invented hour on a screen a position is held
+/// against is worse than a screen that says it does not know.
+pub fn funding_countdown(venue: Venue, market: Option<SymbolRow>, now: i64) -> String {
+    let unknown = || "—".to_owned();
+    let (Some(market), true) = (market, now > 0) else {
+        return unknown();
+    };
+    let anchor = if Network::of(venue).stamps_funding {
+        if market.funding_at <= 0 {
+            return unknown();
+        }
+        market.funding_at
+    } else {
+        0
+    };
+    let next = anchor + FUNDING_INTERVAL * ((now - anchor).div_euclid(FUNDING_INTERVAL) + 1);
+    match next - now {
+        remaining if remaining < 60 => "now".to_owned(),
+        remaining => format!("{}m", remaining / 60),
+    }
+}
+
+/// How often either exchange charges funding, in seconds.
+///
+/// Hourly at both, and settled against each rather than assumed: Hyperliquid's
+/// `predictedFundings` states `fundingIntervalHours: 1` for its own perps, and
+/// Lighter's `market_stats` stamps whole hours (23:00:00.002Z live on
+/// 2026-08-09, 11:00:00.002Z in the captured fixture) while quoting a rate the
+/// parser already reads as hourly.
+const FUNDING_INTERVAL: i64 = 3_600;
+
 /// What a market's margin engine holds a position to.
 ///
 /// The one figure in the ticket's arithmetic that is a venue's rule rather
@@ -879,7 +941,7 @@ mod tests {
     use crate::hyperliquid::{hl_symbols, tape_new};
     // The book is not on `Reads` — the app never asks a venue for one — so the
     // live seam test reaches the adapter's own read directly.
-    use crate::lighter::lighter_book;
+    use crate::lighter::{demo_symbols_lighter, lighter_book};
 
     /// The account `lighter.rs` established its own units against, so a
     /// failure here is the seam rather than the address.
@@ -1686,5 +1748,109 @@ mod tests {
                     .is_some_and(|account| account.value > 0.0)
             );
         });
+    }
+
+    /// Half past the hour on 2026-08-09, which every countdown assertion below
+    /// is measured from. A literal rather than the clock, because a countdown
+    /// read against `now` asserts nothing: the answer would be right by
+    /// construction whatever the arithmetic did.
+    const HALF_PAST: i64 = 1_786_318_200;
+
+    /// A market whose venue has stamped the funding it last took, at `at`.
+    fn stamped(at: i64) -> Option<SymbolRow> {
+        Some(SymbolRow {
+            name: "BTC".to_owned(),
+            funding_at: at,
+            ..SymbolRow::default()
+        })
+    }
+
+    /// Hyperliquid states no funding time anywhere the app reads, so its
+    /// boundary is the clock's own hour — the interval the venue documents and
+    /// its `predictedFundings` restates as `fundingIntervalHours: 1`.
+    ///
+    /// The oracle is the remainder rather than a shape: at 23:30 the answer is
+    /// 30 minutes and at 23:59:50 it is the last one, so a countdown reading
+    /// the hour that has passed rather than the one coming, or flooring where
+    /// it should ceil, is a different string rather than a differently
+    /// formatted one.
+    #[test]
+    fn hyperliquid_counts_down_to_the_hour_the_clock_is_in() {
+        assert_eq!(
+            funding_countdown(Venue::Hyperliquid, stamped(0), HALF_PAST),
+            "30m"
+        );
+        assert_eq!(
+            funding_countdown(Venue::HyperliquidTestnet, stamped(0), HALF_PAST),
+            "30m"
+        );
+        // Under a minute is "now" rather than "0m", which would sit there for
+        // a whole minute reading as an hour away.
+        assert_eq!(
+            funding_countdown(Venue::Hyperliquid, stamped(0), 1_786_319_990),
+            "now"
+        );
+        // And the boundary itself is the next one, not this one at zero.
+        assert_eq!(
+            funding_countdown(Venue::Hyperliquid, stamped(0), 1_786_320_000),
+            "60m"
+        );
+    }
+
+    /// Lighter publishes the stamp, so the countdown is measured from what the
+    /// venue said and not from the clock's hour.
+    ///
+    /// The fixture stamp is deliberately off the hour. Both exchanges happen to
+    /// fund on it today, so a stamp landing on :00 would let a countdown that
+    /// ignored the stamp entirely pass every assertion — the two answers would
+    /// be the same number. Anchored at 22:35 they are five minutes and thirty
+    /// minutes, and only one of them is the venue's.
+    #[test]
+    fn lighter_counts_down_from_the_stamp_it_published() {
+        let stamp = 1_786_314_900;
+        assert_eq!(
+            funding_countdown(Venue::Lighter, stamped(stamp), HALF_PAST),
+            "5m"
+        );
+        assert_eq!(
+            funding_countdown(Venue::LighterTestnet, stamped(stamp), HALF_PAST),
+            "5m"
+        );
+        assert_ne!(
+            funding_countdown(Venue::Lighter, stamped(stamp), HALF_PAST),
+            funding_countdown(Venue::Hyperliquid, stamped(stamp), HALF_PAST),
+            "the stamp is the anchor on one venue and ignored on the other"
+        );
+        // A socket quiet for three hours leaves a stamp three intervals old,
+        // and the boundary it names is still ahead: rolled forward by whole
+        // intervals rather than incremented once into the past.
+        assert_eq!(
+            funding_countdown(Venue::Lighter, stamped(stamp - 3 * 3_600), HALF_PAST),
+            "5m"
+        );
+    }
+
+    /// The honest half. Lighter serves the stamp on one channel and nowhere
+    /// else, so every market it lists has no boundary until that channel has
+    /// spoken — and a screen a position is held against says it does not know
+    /// rather than drawing the hour the other venue happens to be on.
+    #[test]
+    fn a_venue_that_has_not_said_shows_no_countdown() {
+        assert_eq!(
+            funding_countdown(Venue::Lighter, stamped(0), HALF_PAST),
+            "—"
+        );
+        assert_eq!(funding_countdown(Venue::Lighter, None, HALF_PAST), "—");
+        assert_eq!(
+            funding_countdown(Venue::Hyperliquid, None, HALF_PAST),
+            "—",
+            "no market is no market on either venue"
+        );
+        // And a market read over REST is exactly that market: the universe
+        // request carries no funding time at all.
+        assert!(
+            demo_symbols_lighter().iter().all(|row| row.funding_at == 0),
+            "orderBookDetails states no funding time"
+        );
     }
 }
