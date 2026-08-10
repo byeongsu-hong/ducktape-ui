@@ -107,6 +107,7 @@ fn rust_type_code_with_named(
         Type::WindowLevel => "::iced::window::Level".into(),
         Type::WindowMode => "::iced::window::Mode".into(),
         Type::WindowAttention => "::iced::window::UserAttention".into(),
+        Type::Secret => "::ui_lang_runtime::Secret".into(),
         Type::WidgetId => "::iced::widget::Id".into(),
         Type::WidgetTarget => "__IceWidgetTarget".into(),
         Type::TestTarget => "::ui_lang_runtime::testing::Target".into(),

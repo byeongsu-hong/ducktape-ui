@@ -29,6 +29,8 @@ mod rotation;
 #[cfg(test)]
 mod scroll_delta;
 #[cfg(test)]
+mod secret_input;
+#[cfg(test)]
 mod shadow;
 #[cfg(test)]
 mod text_values;

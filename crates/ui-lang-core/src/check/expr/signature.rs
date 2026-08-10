@@ -68,7 +68,12 @@ impl ContextualBuiltin {
                     Type::List(inner) => Type::List(Box::new(resolve_erased_type(inner))),
                     Type::Str => Type::Str,
                     Type::Bytes => Type::Bytes,
-                    _ => return Err("collection query input is not a list, string, or bytes"),
+                    Type::Secret => Type::Secret,
+                    _ => {
+                        return Err(
+                            "collection query input is not a list, string, bytes, or secret",
+                        );
+                    }
                 };
                 vec![value(Some(input))]
             }

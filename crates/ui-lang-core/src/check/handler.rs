@@ -59,6 +59,31 @@ fn check_handler_statements(
                 at,
                 span,
             } => {
+                if document.secrets.iter().any(|secret| secret.name == *target) {
+                    // The one write Ice has over a secret. `= ""` reads as
+                    // what it does — the buffer is wiped — and every other
+                    // right-hand side would be a program deciding what is in a
+                    // field only the person at the keyboard should decide.
+                    if !matches!(value, Expr::Str(text) if text.is_empty()) {
+                        return Err(Error::new(
+                            "E140",
+                            span,
+                            format!("`{target}` is a secret, so the only assignment it takes is `{target} = \"\"`, which clears it"),
+                        )
+                        .hint("a secret's content is typed into its input and read once, by an extern parameter declared `secret`"));
+                    }
+                    if at.is_some() {
+                        return Err(Error::new(
+                            "E140",
+                            span,
+                            "`at` is only valid when assigning animation state",
+                        ));
+                    }
+                    // Still analyzed: the empty literal is an ordinary checked
+                    // expression, and the facts layer expects one per operand.
+                    expr_type(value, &env, document, span)?;
+                    continue;
+                }
                 let expected = states.get(target).ok_or_else(|| {
                     Error::new("E140", span, format!("`{target}` is not writable state"))
                 })?;

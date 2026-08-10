@@ -511,6 +511,7 @@ pub(crate) fn lazy_hashable(ty: &Type) -> bool {
         Type::List(inner) | Type::Option(inner) => lazy_hashable(inner),
         Type::Result(output, error) => lazy_hashable(output) && lazy_hashable(error),
         Type::F64
+        | Type::Secret
         | Type::Combo(_)
         | Type::Animation(_)
         | Type::Markdown

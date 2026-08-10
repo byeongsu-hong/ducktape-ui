@@ -110,6 +110,15 @@ fn check(
     })?;
     let mut app_values = states.clone();
     app_values.extend(derived);
+    // Secrets join the expression environment but never `states`: the checked
+    // state list is what presets construct and what a test's `expect` reads a
+    // typed field from, and a secret has no field there to read.
+    app_values.extend(
+        document
+            .secrets
+            .iter()
+            .map(|secret| (secret.name.clone(), Type::Secret)),
+    );
     let preset_handlers = document
         .presets
         .iter()

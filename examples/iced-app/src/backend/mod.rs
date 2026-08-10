@@ -12,10 +12,14 @@ pub struct AppError {
 
 #[cfg(test)]
 mod fixtures;
+#[cfg(test)]
+mod secret;
 mod shader;
 mod tasks;
 
 #[cfg(test)]
 pub use fixtures::*;
+#[cfg(test)]
+pub use secret::*;
 pub use shader::*;
 pub use tasks::*;

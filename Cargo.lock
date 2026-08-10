@@ -6232,6 +6232,7 @@ dependencies = [
  "tray-icon",
  "ui-lang-template",
  "unicode-segmentation",
+ "zeroize",
 ]
 
 [[package]]

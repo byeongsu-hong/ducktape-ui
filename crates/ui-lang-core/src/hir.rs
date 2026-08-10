@@ -47,6 +47,7 @@ macro_rules! arena_id {
 arena_id!(ComponentId);
 arena_id!(AppStateId);
 arena_id!(DerivedId);
+arena_id!(SecretId);
 arena_id!(TestId);
 arena_id!(StructId);
 arena_id!(EnumId);
@@ -70,6 +71,9 @@ arena_id!(LocalId);
 pub(crate) enum ValueRef {
     AppState(AppStateId),
     Derived(DerivedId),
+    /// A runtime-held secret buffer. It is a *value reference* only so a name
+    /// can resolve to it; nothing downstream may read it as data.
+    Secret(SecretId),
     ComponentParam(ComponentParamId),
     ComponentState(ComponentStateId),
 }
@@ -419,6 +423,7 @@ pub(crate) struct DeclarationIndex {
     app_setting_expressions: HashMap<AppSettingExprId, Declaration<AppSettingExprId>>,
     app_states: Vec<Declaration<AppStateId>>,
     derived: Vec<Declaration<DerivedId>>,
+    secrets: Vec<Declaration<SecretId>>,
     components: Vec<ComponentDeclarations>,
     components_by_name: HashMap<String, ComponentId>,
     structs: Vec<StructDeclaration>,
@@ -580,6 +585,10 @@ impl DeclarationIndex {
 
     pub(crate) fn derived(&self, index: usize) -> Declaration<DerivedId> {
         self.derived[index]
+    }
+
+    pub(crate) fn secret(&self, index: usize) -> Declaration<SecretId> {
+        self.secrets[index]
     }
 
     pub(crate) fn try_derived(&self, id: DerivedId) -> Option<Declaration<DerivedId>> {

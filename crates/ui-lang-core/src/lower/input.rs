@@ -50,12 +50,36 @@ pub(crate) struct ResolvedInputStyleSet {
     pub(crate) disabled: Option<ResolvedInputStatusStyle>,
 }
 
+/// Where a rendered input's text goes: ordinary writable state, or a runtime
+/// secret buffer no expression can read.
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedInputBinding {
+    State(WritableStateRef),
+    Secret { name: String },
+}
+
+impl ResolvedInputBinding {
+    pub(crate) fn name(&self) -> &str {
+        match self {
+            Self::State(state) => state.name(),
+            Self::Secret { name, .. } => name,
+        }
+    }
+
+    pub(crate) fn secret(&self) -> Option<&str> {
+        match self {
+            Self::State(_) => None,
+            Self::Secret { name, .. } => Some(name),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedInput {
     pub(crate) id: ViewId,
     pub(crate) label: String,
     pub(crate) hint: String,
-    pub(crate) binding: WritableStateRef,
+    pub(crate) binding: ResolvedInputBinding,
     pub(crate) disabled: Option<CheckedExprUseId>,
     pub(crate) accessibility_label: Option<CheckedExprUseId>,
     pub(crate) accessibility_description: Option<CheckedExprUseId>,
@@ -316,40 +340,51 @@ impl Lowerer {
         expected_name: &str,
         outer_component: Option<ComponentId>,
         span: &Span,
-    ) -> Result<WritableStateRef, Error> {
+    ) -> Result<ResolvedInputBinding, Error> {
         let value = self
             .facts
             .try_value_by_ref(binding)
             .ok_or_else(|| self.invariant(span, "input binding value ID is invalid"))?;
-        if value.ty != Type::Str || value.name != expected_name {
+        if !matches!(value.ty, Type::Str | Type::Secret) || value.name != expected_name {
             return Err(self.invariant(span, "input binding identity diverged"));
         }
-        match binding {
-            CheckedValueRef::AppState(id) if outer_component.is_none() => {
-                Ok(WritableStateRef::App {
-                    id,
-                    name: value.name.clone(),
-                })
+        if let CheckedValueRef::Secret(_) = binding {
+            if value.ty != Type::Secret || outer_component.is_some() {
+                return Err(self.invariant(span, "input secret binding is not app-scoped"));
             }
+            return Ok(ResolvedInputBinding::Secret {
+                name: value.name.clone(),
+            });
+        }
+        if value.ty != Type::Str {
+            return Err(self.invariant(span, "input binding identity diverged"));
+        }
+        Ok(ResolvedInputBinding::State(match binding {
+            CheckedValueRef::AppState(id) if outer_component.is_none() => WritableStateRef::App {
+                id,
+                name: value.name.clone(),
+            },
             CheckedValueRef::ComponentParam(id)
                 if outer_component == Some(id.component)
                     && self.components[id.component.0 as usize].params[id.index as usize]
                         .capability
                         == ParamCapability::Bind =>
             {
-                Ok(WritableStateRef::ComponentParam {
+                WritableStateRef::ComponentParam {
                     id,
                     name: value.name.clone(),
-                })
+                }
             }
             CheckedValueRef::ComponentState(id) if outer_component == Some(id.component) => {
-                Ok(WritableStateRef::ComponentState {
+                WritableStateRef::ComponentState {
                     id,
                     name: value.name.clone(),
-                })
+                }
             }
-            _ => Err(self.invariant(span, "input binding is not writable in this scope")),
-        }
+            _ => {
+                return Err(self.invariant(span, "input binding is not writable in this scope"));
+            }
+        }))
     }
 
     fn resolve_input_icon(

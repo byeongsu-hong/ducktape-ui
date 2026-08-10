@@ -9,6 +9,19 @@ pub struct State {
     pub span: Span,
 }
 
+/// A runtime-held text buffer an `input` may write and nothing may read.
+///
+/// Deliberately not a `State`: a secret has no type to declare, no initial
+/// value to write down, and no field on the application struct that a preset,
+/// a snapshot, or an `expect` could reach. What Ice may do with the name is
+/// bind one `input` to it, ask it `empty` or `len`, clear it with `= ""`, and
+/// pass it to an extern parameter declared `secret`.
+#[derive(Clone, Debug)]
+pub struct SecretDecl {
+    pub name: String,
+    pub span: Span,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AnimationOptions {
     pub easing: Option<String>,
