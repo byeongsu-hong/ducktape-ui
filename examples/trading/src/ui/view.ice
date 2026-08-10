@@ -2706,18 +2706,70 @@ view
               col gap=16.0 w=fill
                 col gap=6.0 w=fill
                   Label value="THIS MACHINE"
-                  text "Import a wallet" size=22.0 @text-fg
-                  text "Twelve to twenty-four words, or a private key. It is turned into the one key this app signs enrolments with, kept behind Touch ID, and never sent anywhere."
-                    with
-                      size=11.0
-                      w=fill
-                      wrap=word
-                      @text-muted
+                  if empty(create_phrase)
+                    text "Import a wallet" size=22.0 @text-fg
+                  if !empty(create_phrase)
+                    text "Make a wallet" size=22.0 @text-fg
+                  if empty(create_phrase)
+                    text "Twelve to twenty-four words, or a private key. It is turned into the one key this app signs enrolments with, kept behind Touch ID, and never sent anywhere."
+                      with
+                        size=11.0
+                        w=fill
+                        wrap=word
+                        @text-muted
+                  if !empty(create_phrase)
+                    text "Twenty-four words, made on this machine from the system's own randomness. They are the account: this app keeps what they derive, sealed to this Mac, and it will not show the words again."
+                      with
+                        size=11.0
+                        w=fill
+                        wrap=word
+                        @text-muted
                 rule horizontal thickness=1.0 color=edge
+                // The words, once. Shown until the owner says they have copied
+                // them and never after — the press below is the only way past
+                // this, and the check on the far side is what it is for.
+                if !empty(create_phrase) && !create_shown
+                  col gap=10.0 w=fill
+                    Label value="WRITE THIS DOWN"
+                    text create_phrase #create-phrase
+                      with
+                        size=14.0
+                        w=fill
+                        wrap=word
+                        font=digits
+                        @text-fg
+                    text "On paper. Not in a screenshot, not in a password manager's note field, not in a message to yourself. Anyone who reads these words owns this account, and nobody can take it back."
+                      with
+                        size=11.0
+                        w=fill
+                        wrap=word
+                        @text-faint
+                if !empty(create_phrase) && create_shown
+                  col gap=10.0 w=fill
+                    Label value="CHECK YOUR COPY"
+                    text backup_asks(create_positions) #backup-asks
+                      with
+                        size=14.0
+                        w=fill
+                        wrap=word
+                        @text-fg
+                    text "Type those words, in that order, separated by spaces. The phrase is off the screen on purpose: this is the step that finds out whether it reached paper."
+                      with
+                        size=11.0
+                        w=fill
+                        wrap=word
+                        @text-muted
+                    input "" #backup-input <-> create_confirm
+                      with
+                        label="The words you were asked for"
+                        hint="three words"
+                        change=backup_typed
+                        text-size=12.0
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                 // Before the address is derived: the words. After it: the
                 // address and nothing else, because the phrase has done its
                 // work and the shortest life it can have is that one.
-                if empty(import_address)
+                if empty(import_address) && empty(create_phrase)
                   col gap=10.0 w=fill
                     input "" #import-phrase <-> import_phrase
                       with
@@ -2772,7 +2824,25 @@ view
                     hovered bg=edge text=fg r=4.0
                     text "CLOSE" size=11.0 tracking=1.1
                   space w=fill
-                  if empty(import_address)
+                  if !empty(create_phrase) && !create_shown
+                    button #backup-written -> backup_written
+                      with
+                        label="I have written the words down"
+                        p=11.0
+                      active bg=fg text=fg_invert r=4.0
+                      hovered bg=fg text=fg_invert r=4.0
+                      text "I'VE WRITTEN IT DOWN" size=11.0 tracking=1.1
+                  if !empty(create_phrase) && create_shown
+                    button #backup-confirm -> confirm_backup
+                      with
+                        label="Confirm the words you wrote down"
+                        p=11.0
+                        disabled=empty(create_confirm)
+                      active bg=fg text=fg_invert r=4.0
+                      hovered bg=fg text=fg_invert r=4.0
+                      disabled bg=raised text=faint r=4.0
+                      text "CONFIRM" size=11.0 tracking=1.1
+                  if empty(import_address) && empty(create_phrase)
                     button #import-check -> check_phrase
                       with
                         label="Show the account these words derive"
@@ -3116,14 +3186,26 @@ view
                 // typing one you already own is work the derivation exists to
                 // remove, and a typo in it is an account that is not yours read
                 // back with no sign that anything went wrong.
-                button #gate-import -> open_import
-                  with
-                    p=12.0
-                    w=fill
-                    label="Import a wallet, and trade this account from this Mac"
-                  active bg=fg text=fg_invert r=4.0
-                  hovered bg=fg text=fg_invert r=4.0
-                  text "IMPORT A WALLET" size=12.0 tracking=1.1
+                row #gate-primary gap=10.0 w=fill
+                  // Making one first: somebody arriving at this screen with no
+                  // wallet is the ordinary case, and somebody who already has a
+                  // phrase knows which button they want.
+                  button #gate-create -> create_wallet
+                    with
+                      p=12.0
+                      w=fill
+                      label="Create a wallet, and trade this new account from this Mac"
+                    active bg=fg text=fg_invert r=4.0
+                    hovered bg=fg text=fg_invert r=4.0
+                    text "CREATE A WALLET" size=12.0 tracking=1.1
+                  button #gate-import -> open_import
+                    with
+                      p=12.0
+                      w=fill
+                      label="Import a wallet, and trade this account from this Mac"
+                    active bg=panel text=fg r=4.0 border-w=1.0 border=muted
+                    hovered bg=raised text=fg r=4.0 border-w=1.0 border=fg
+                    text "IMPORT A WALLET" size=12.0 tracking=1.1
                 rule horizontal thickness=1.0 color=edge
                 // The read-only path, named for what it is for rather than
                 // offered as the way in. Watching is an honest act — an account

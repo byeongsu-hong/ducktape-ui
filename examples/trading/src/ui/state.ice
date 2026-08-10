@@ -168,8 +168,28 @@ state
   // has no write-only input. It is held for one press — `check_phrase` clears
   // both fields the instant it has derived — no preset ever sets it, and the
   // upgrade is an input the language does not bind to state.
+  //
+  // Making a wallet makes that ceiling worse rather than better, and it is
+  // worth saying so plainly: a phrase the app *shows* has to be in state to be
+  // drawn, so `create_phrase` below is the same exposure with a longer life —
+  // as long as it takes somebody to write twenty-four words down. Every
+  // mitigation still holds (one moment, cleared the instant it has derived, no
+  // preset ever sets one) and none of them is the fix. The fix is the
+  // write-only input the language does not have, and this is the second feature
+  // asking for it.
   import_phrase = ""
   import_passphrase = ""
+  // A phrase this app just made, held only while the owner writes it down, and
+  // the positions it will ask them to read back. Both go the moment the backup
+  // is confirmed and the derivation has run.
+  create_phrase = ""
+  create_positions:[i64] = []
+  // Whether the words have been dismissed. Two moments rather than one: a
+  // confirmation typed while the phrase is still on screen is a copy exercise
+  // rather than a check, and the whole point is to find out whether it was
+  // written down somewhere this app cannot see.
+  create_shown = false
+  create_confirm = ""
   // The address the phrase derived, which is the whole of what the owner
   // confirms. Nothing is stored until they do.
   import_address = ""

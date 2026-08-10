@@ -39,6 +39,15 @@ extern crate::custody
   // so the owner can say whether it is theirs before anything is written. The
   // phrase reaches it as an argument and is cleared from state the moment it
   // has; only `keep_wallet` costs a prompt.
+  // A phrase this app made, and the words it will ask for back. `sync` because
+  // it is a read from the OS generator and some arithmetic: there is nothing to
+  // await, and a task would put invented latency between the press and the
+  // words.
+  Minted(phrase:str, positions:[i64], error:str)
+  sync mint_wallet() -> Minted
+  // What the backup step asks for, and why it has not been answered yet.
+  pure backup_asks(positions:[i64]) -> str
+  pure backup_refused(phrase:str, positions:[i64], typed:str) -> str
   read_wallet(phrase:str, passphrase:str) -> Entry ! CustodyFault
   pure pending_wallet() -> str
   pure forget_wallet() -> Session

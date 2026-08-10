@@ -111,8 +111,8 @@ use crate::lighter_sign::{PrivateKey, Resting};
 /// the rules are and stays out of the app's vocabulary.
 pub use crate::session::Session;
 use crate::session::{
-    AgentKey, Event, Held, Keystore, PlatformKeystore, Secret, Unlock, account, agent, can_trade,
-    step,
+    AgentKey, Event, Guard, Held, Keystore, PlatformKeystore, PlatformWrap, Secret, Unlock,
+    account, agent, can_trade, load_sealed, step, store_sealed,
 };
 use crate::signing::{self, MasterKey, Wallet};
 use crate::venue::{Draft, Network, Signing, Sweep, venue_kind, venue_list, venue_name};
@@ -407,6 +407,129 @@ fn pending() -> &'static Mutex<Option<MasterKey>> {
     PENDING.get_or_init(Mutex::default)
 }
 
+/// A phrase this app just made, and the words it will ask for back.
+///
+/// The phrase crosses to the screen because the owner has to write it down —
+/// that is the whole of this step, and the ceiling `state.ice` records covers
+/// it. `positions` is what makes the confirmation a check rather than a
+/// formality: they are chosen here, from the same generator the phrase came
+/// from, so neither the view nor the owner picks which words are asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Minted {
+    pub phrase: String,
+    pub positions: Vec<i64>,
+    pub error: String,
+}
+
+/// How many words the backup check asks for.
+///
+/// Three. Zero is negligent — a phrase nobody copied is an account nobody can
+/// recover, and the app cannot tell the difference until it is too late to fix.
+/// Twenty-four is hostile: re-typing the whole phrase is a five-minute chore
+/// that trains people to paste it from wherever they saved it, which is exactly
+/// the habit this step exists to discourage. Three sampled positions cannot be
+/// answered by somebody who did not copy the phrase and can be answered in
+/// seconds by somebody who did, which is the only distinction a backup check is
+/// trying to draw.
+const BACKUP_WORDS: usize = 3;
+
+/// Make one, and choose what to ask about it.
+///
+/// `sync` rather than a task: this is a read from the OS generator and some
+/// arithmetic, with nothing to await, and putting a round trip between the
+/// press and the words would be inventing latency.
+pub fn mint_wallet() -> Minted {
+    let refused = |error: String| Minted {
+        phrase: String::new(),
+        positions: Vec::new(),
+        error,
+    };
+    let phrase = match crate::seed::new_phrase() {
+        Ok(phrase) => phrase,
+        Err(error) => return refused(error.message()),
+    };
+    let words = phrase.split_whitespace().count();
+    let Ok(count) = u8::try_from(words) else {
+        return refused("that phrase is too long to check".to_owned());
+    };
+    let mut positions: Vec<i64> = Vec::new();
+    // Rejection rather than a modulo, because a byte does not divide evenly by
+    // twenty-four. The bias would not matter — this only picks which words are
+    // asked about — but the unbiased version is one comparison, and a biased
+    // draw in a file about key material is a thing somebody has to read twice
+    // to be sure of.
+    let ceiling = (u8::MAX / count) * count;
+    for _ in 0..256 {
+        if positions.len() == BACKUP_WORDS.min(words) {
+            break;
+        }
+        let mut byte = [0u8; 1];
+        if getrandom::fill(&mut byte).is_err() {
+            return refused(crate::seed::SeedError::Entropy.message());
+        }
+        if byte[0] >= ceiling {
+            continue;
+        }
+        let at = i64::from(byte[0] % count) + 1;
+        if !positions.contains(&at) {
+            positions.push(at);
+        }
+    }
+    if positions.len() < BACKUP_WORDS.min(words) {
+        return refused("could not choose the words to check".to_owned());
+    }
+    positions.sort_unstable();
+    Minted {
+        phrase,
+        positions,
+        error: String::new(),
+    }
+}
+
+/// What the panel asks for, in the owner's numbering.
+pub fn backup_asks(positions: Vec<i64>) -> String {
+    let named: Vec<String> = positions.iter().map(|at| format!("word {at}")).collect();
+    match named.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// Why the backup check has not passed, or nothing when it has.
+///
+/// It never says *which* word was wrong. Naming the wrong one turns three
+/// unknown words into three separate one-word questions, which is a check
+/// somebody can pass by guessing at it rather than by having written the phrase
+/// down.
+pub fn backup_refused(phrase: String, positions: Vec<i64>, typed: String) -> String {
+    let words: Vec<&str> = phrase.split_whitespace().collect();
+    if words.is_empty() || positions.is_empty() {
+        return "There is no phrase waiting to be confirmed.".to_owned();
+    }
+    let given: Vec<String> = typed.split_whitespace().map(str::to_lowercase).collect();
+    if given.len() != positions.len() {
+        return format!(
+            "Type {}, separated by spaces.",
+            backup_asks(positions.clone()),
+        );
+    }
+    let held = positions.iter().zip(&given).all(|(at, given)| {
+        usize::try_from(*at)
+            .ok()
+            .and_then(|at| at.checked_sub(1))
+            .and_then(|at| words.get(at))
+            .is_some_and(|expected| expected.eq_ignore_ascii_case(given))
+    });
+    if held {
+        String::new()
+    } else {
+        "That does not match the phrase you were shown. Check it against your copy — nothing has \
+         been stored."
+            .to_owned()
+    }
+}
+
 /// Derive the account a phrase names, and hold it for confirmation.
 ///
 /// Nothing is stored and no sheet is raised: this answers an address and
@@ -497,7 +620,15 @@ pub async fn keep_wallet() -> Result<Entry, CustodyFault> {
     };
     let address = master.address().to_string();
     smol::unblock(move || {
-        match PlatformKeystore.store(&wallet_item(&address), &Secret::new(master.secret())) {
+        // Sealed on the way in. What lands in the keychain is ciphertext only
+        // this machine's Secure Enclave can open, and the item's own guard sits
+        // over that — see `Wrap` in `session.rs` for why both.
+        match store_sealed(
+            &PlatformWrap,
+            &PlatformKeystore,
+            &wallet_item(&address),
+            &Secret::new(master.secret()),
+        ) {
             // Said on the step as well as held in the session, because the step
             // is the only thing the owner is looking at: the address leaves the
             // panel either way, and without a sentence a build with nowhere to
@@ -637,7 +768,11 @@ pub async fn enrol_all(address: String) -> Result<Entry, CustodyFault> {
     // The one sheet. Everything after it is arithmetic and requests.
     let opened = {
         let address = address.clone();
-        smol::unblock(move || PlatformKeystore.load(&wallet_item(&address))).await
+        // The one sheet, and the assertion that opens the envelope behind it.
+        // An item written before the envelope existed is re-sealed here rather
+        // than refused, once, on the read that finds it.
+        smol::unblock(move || load_sealed(&PlatformWrap, &PlatformKeystore, &wallet_item(&address)))
+            .await
     };
     let master = match opened {
         Ok(Held::Missing) => {
@@ -741,7 +876,10 @@ async fn enrol_one(venue: Venue, address: &str, master: &MasterKey) -> Result<()
     registration(scheme, address, &public, master).await?;
     let name = item(venue, address);
     let secret = Secret::new(bytes);
-    smol::unblock(move || PlatformKeystore.store(&name, &secret))
+    // A trading key is the secret, so the item's own guard is the whole of what
+    // protects it — unlike the sealed wallet blob, which is guarded by the key
+    // that opens it.
+    smol::unblock(move || PlatformKeystore.store(&name, &secret, Guard::UserPresence))
         .await
         .map_err(|failure| failure.message)
 }
@@ -1779,6 +1917,11 @@ mod tests {
     use crate::signing::Chain;
 
     const ACCOUNT: &str = "0x1025d5c2057058ffd8acf57109c5f649c11bdc11";
+    /// The BIP-39 zero phrase at 24 words — public, worthless, and the same
+    /// vector `seed.rs` pins the generator against.
+    const ZEROS_24: &str = "abandon abandon abandon abandon abandon abandon abandon abandon \
+                            abandon abandon abandon abandon abandon abandon abandon abandon \
+                            abandon abandon abandon abandon abandon abandon abandon art";
     const AGENT: &str = "0x13070cb3597c75100928720060c7acff4d22bc09";
     const HOUR: i64 = 3_600;
 
@@ -2747,5 +2890,131 @@ mod tests {
             !holding_a_key(),
             "a session drawn as locked must not leave a signable key behind"
         );
+    }
+
+    /// The backup check, driven from both sides against a phrase this test
+    /// chose — which is the half the Ice test cannot reach, because a made
+    /// phrase is random and no driver step can compute a word of it.
+    #[test]
+    fn backup_refused_takes_the_words_that_were_shown_and_nothing_else() {
+        let phrase: Vec<&str> = ZEROS_24.split_whitespace().collect();
+        let positions = vec![2i64, 9, 24];
+        let right = format!("{} {} {}", phrase[1], phrase[8], phrase[23]);
+
+        assert_eq!(
+            backup_refused(ZEROS_24.to_owned(), positions.clone(), right.clone()),
+            "",
+            "the words that were shown, in the order asked for",
+        );
+        // Case and spacing are the copier's, not the check's: somebody reading
+        // off paper types how they type.
+        assert_eq!(
+            backup_refused(
+                ZEROS_24.to_owned(),
+                positions.clone(),
+                format!("  {}   {}\t{}  ", right.to_uppercase(), "", "")
+                    .replace("  ", " ")
+                    .trim()
+                    .to_owned(),
+            ),
+            backup_refused(ZEROS_24.to_owned(), positions.clone(), right.to_uppercase()),
+        );
+        assert_eq!(
+            backup_refused(ZEROS_24.to_owned(), positions.clone(), right.to_uppercase()),
+            "",
+            "capitals are the same words",
+        );
+
+        // Wrong word, right count.
+        let wrong = format!("{} {} {}", phrase[1], phrase[8], "zoo");
+        assert!(!backup_refused(ZEROS_24.to_owned(), positions.clone(), wrong).is_empty());
+        // Right words, wrong order — a check that sorted would pass this.
+        let swapped = format!("{} {} {}", phrase[23], phrase[8], phrase[1]);
+        assert!(
+            !backup_refused(ZEROS_24.to_owned(), positions.clone(), swapped).is_empty(),
+            "order is part of the answer",
+        );
+        // Too few and too many.
+        for count in ["art", "art art", "art art art art"] {
+            assert!(
+                !backup_refused(ZEROS_24.to_owned(), positions.clone(), count.to_owned())
+                    .is_empty(),
+                "{count}",
+            );
+        }
+        // And nothing to check is refused rather than passed, which is the arm
+        // a skipped mint would land on.
+        assert!(!backup_refused(String::new(), positions, right).is_empty());
+    }
+
+    /// What the refusal says, and what it must not say.
+    ///
+    /// Naming the wrong position would turn one three-word question into three
+    /// one-word questions, which is a check somebody can walk rather than pass.
+    #[test]
+    fn the_backup_refusal_names_no_word_and_no_position() {
+        let phrase: Vec<&str> = ZEROS_24.split_whitespace().collect();
+        let said = backup_refused(
+            ZEROS_24.to_owned(),
+            vec![2, 9, 24],
+            format!("{} zoo zoo", phrase[1]),
+        );
+        assert!(!said.is_empty());
+        for leak in [phrase[1], phrase[8], phrase[23], "2", "9", "24"] {
+            assert!(!said.contains(leak), "the refusal leaked {leak:?}: {said}");
+        }
+    }
+
+    /// A minted wallet: the shape the panel and the check both depend on.
+    ///
+    /// Minted many times rather than once, because "three distinct positions"
+    /// is a claim one draw cannot test: three positions taken from twenty-four
+    /// collide about one time in eight, so a generator that had stopped
+    /// rejecting repeats would pass a single mint seven times out of eight and
+    /// fail this suite at random afterwards. Two hundred draws make the same
+    /// generator fail here every time.
+    #[test]
+    fn minting_answers_a_phrase_and_the_positions_it_will_ask_for() {
+        for _ in 0..200 {
+            let made = mint_wallet();
+            assert_eq!(made.error, "");
+            assert_eq!(made.phrase.split_whitespace().count(), 24);
+            assert_eq!(made.positions.len(), 3);
+
+            let mut sorted = made.positions.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(
+                sorted, made.positions,
+                "positions are distinct and in order"
+            );
+            assert!(
+                made.positions.iter().all(|at| (1..=24).contains(at)),
+                "{:?}",
+                made.positions,
+            );
+        }
+        let made = mint_wallet();
+
+        // The phrase it answered is one the check accepts back, which is the
+        // seam between minting and confirming.
+        let words: Vec<&str> = made.phrase.split_whitespace().collect();
+        let right: Vec<&str> = made
+            .positions
+            .iter()
+            .map(|at| words[usize::try_from(*at).expect("a position") - 1])
+            .collect();
+        assert_eq!(
+            backup_refused(made.phrase.clone(), made.positions, right.join(" ")),
+            "",
+        );
+    }
+
+    /// What the panel asks for, in words rather than in a list.
+    #[test]
+    fn the_backup_asks_for_its_positions_in_a_sentence() {
+        assert_eq!(backup_asks(vec![2, 9, 24]), "word 2, word 9 and word 24");
+        assert_eq!(backup_asks(vec![7]), "word 7");
+        assert_eq!(backup_asks(Vec::new()), "");
     }
 }

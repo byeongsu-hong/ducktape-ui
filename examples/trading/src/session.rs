@@ -343,6 +343,29 @@ pub enum Held {
     Declined,
 }
 
+/// What an item needs guarding with, which is not the same question for every
+/// item this app files.
+///
+/// **The owner's decision, 2026-08-10.** A bare secret is protected by the
+/// item's own access control and by nothing else, so it carries one. A sealed
+/// blob is protected by the Secure Enclave key that opens it — which already
+/// demands biometry *per use* — so an access control on the item as well is a
+/// second lock on an empty box, and it is not free: on macOS the read that
+/// satisfies it is a sheet, and putting one in front of ciphertext costs a
+/// prompt to protect nothing an attacker wants.
+///
+/// A parameter rather than sniffing the payload for the sealed marker. The
+/// sniff would be a smaller diff and would tie *storage policy* to *payload
+/// content*, which is the kind of implicit coupling that is right until the day
+/// something else starts with the same bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Guard {
+    /// The item is the secret. Its access control is the whole protection.
+    UserPresence,
+    /// The item is ciphertext for a key that guards itself. See above.
+    Sealed,
+}
+
 /// The three things a platform has to be able to do for the app to have an
 /// unlock at all. Nothing else in this file touches the platform, which is why
 /// everything else in this file is decidable on any machine.
@@ -367,7 +390,7 @@ pub trait Keystore {
     /// Replace whatever is stored for this account. Must not lose the secret it
     /// was asked to replace when it fails — see the macOS impl for the price of
     /// that.
-    fn store(&self, account: &str, secret: &Secret) -> Result<(), KeystoreError>;
+    fn store(&self, account: &str, secret: &Secret, guard: Guard) -> Result<(), KeystoreError>;
     /// Read the secret, raising whatever prompt guards it. `Err` is the
     /// keychain itself failing and only that; a first run and a decline are
     /// `Held::Missing` and `Held::Declined`, because they are answers, not
@@ -378,6 +401,108 @@ pub trait Keystore {
 /// Whichever keystore this build actually has. The app names this one type;
 /// which implementation answers is the platform's business.
 pub struct PlatformKeystore;
+
+/// What turns a secret into the bytes that are allowed to sit in a keychain,
+/// and back again.
+///
+/// **The owner's requirement, 2026-08-10: the stored form is ciphertext.** The
+/// keychain already encrypts what it holds — a data-protection item is sealed
+/// at rest under a class key the Secure Enclave protects — so this is not the
+/// first layer of encryption over the account's key. It is the second, and it
+/// exists because the first one is the *platform's* judgement about who may
+/// read the item. Anything that gets past that judgement — an entitlement that
+/// widens an access group, an access control that did not take, a future path
+/// in this app that reads without the guard — comes away with bytes that still
+/// need a separate assertion against a key that cannot leave the chip.
+///
+/// Sealing takes only the public half, so writing costs no prompt. Opening is
+/// the private half, which is the assertion.
+pub trait Wrap {
+    /// Seal a secret for this account. No prompt: the public half is enough.
+    fn seal(&self, account: &str, plain: &Secret) -> Result<Vec<u8>, KeystoreError>;
+    /// Open one, which is what raises the biometric assertion. Answers `Held`
+    /// for the reason `load` does — a decline is not a fault.
+    fn open(&self, account: &str, sealed: &[u8]) -> Result<Held, KeystoreError>;
+}
+
+/// Whichever wrapper this build has, on the pattern `PlatformKeystore` already
+/// sets: one name, and the platform decides what answers.
+pub struct PlatformWrap;
+
+/// What marks a keychain item as *this* scheme's ciphertext.
+///
+/// Present, and the rest is a sealed blob. Absent, and the item predates the
+/// envelope and holds a bare secret — see `load_sealed`. The version digit is
+/// here so a second scheme can be told from this one by looking rather than by
+/// guessing from length.
+const SEALED: &[u8] = b"ducktape-sealed-1:";
+
+/// Store a secret as ciphertext.
+///
+/// Two steps and no cleverness: seal, then hand the sealed bytes to the same
+/// keychain path an unsealed secret took. Everything the keychain does about
+/// replacement, preservation and access control is unchanged and still its own
+/// — this only changes what it is handed.
+///
+/// The sheet arithmetic, since this is where it is decided. A wallet read is
+/// **one** assertion: the item carries no access control of its own (see
+/// `Guard`), and the Enclave key that opens the blob demands biometry once, per
+/// use. It was briefly two, and that was a lock on an empty box.
+///
+/// ponytail: a *session* unlock still costs one assertion per enrolled network,
+/// because each trading key is its own guarded item and macOS raises a sheet
+/// per guarded read. Collapsing those needs one `LAContext` shared across the
+/// reads via `kSecUseAuthenticationContext`. `ItemSearchOptions` exposes that
+/// setter safely, but its bound is core-foundation's `TCFType` and an
+/// `LAContext` is an Objective-C object — `Retained<LAContext>` does not
+/// implement it, and every bridge across is `unsafe`, which this workspace
+/// forbids in `Cargo.toml` rather than by habit. The upgrade path is upstream:
+/// an overload on `security-framework` taking objc2's type, or the `TCFType`
+/// impl. Filed as its own task. Until then an owner answers once per network,
+/// once per session, and the common path — reading the wallet — is one.
+pub fn store_sealed(
+    wrap: &impl Wrap,
+    store: &impl Keystore,
+    account: &str,
+    secret: &Secret,
+) -> Result<(), KeystoreError> {
+    let mut blob = SEALED.to_vec();
+    blob.extend_from_slice(&wrap.seal(account, secret)?);
+    store.store(account, &Secret::new(blob), Guard::Sealed)
+}
+
+/// Read one back, and bring an item from before the envelope forward.
+///
+/// **The migration, and it is one moment rather than a fallback.** #523 stored
+/// the account key as itself. An item without the marker is one of those, so it
+/// is re-sealed on the spot and the plaintext form is gone the moment the
+/// replacement lands — `store` replaces rather than adds, so there is nothing
+/// left to delete afterwards and nothing left for a later read to find.
+///
+/// The arm can be deleted once no machine holds a #523 item. It is dated rather
+/// than permanent on purpose: a branch that reads keychain bytes as a bare key
+/// is exactly the thing this change exists to stop, and leaving it forever
+/// would mean the scheme's own escape hatch never closes.
+pub fn load_sealed(
+    wrap: &impl Wrap,
+    store: &impl Keystore,
+    account: &str,
+) -> Result<Held, KeystoreError> {
+    let stored = match store.load(account)? {
+        Held::Secret(stored) => stored,
+        // A first run and a decline are answers rather than ciphertext, and
+        // they travel unchanged.
+        other => return Ok(other),
+    };
+    let Some(sealed) = stored.expose().strip_prefix(SEALED) else {
+        // Pre-envelope, 2026-08-10. Re-sealed here, handed back once, and the
+        // bare form replaced in the same breath.
+        let plain = Secret::new(stored.expose().to_vec());
+        store_sealed(wrap, store, account, &plain)?;
+        return Ok(Held::Secret(plain));
+    };
+    wrap.open(account, sealed)
+}
 
 /// Why a keychain call came back with nothing, in the only three flavours the
 /// app can act on differently. Sorting a status code into one of these is the
@@ -474,8 +599,14 @@ mod keychain {
         unlock,
     };
 
+    use super::{Guard, PlatformWrap, Wrap};
+
     use security_framework::access_control::{ProtectionMode, SecAccessControl};
     use security_framework::base::Error;
+    use security_framework::item::{
+        ItemClass, ItemSearchOptions, KeyClass, Location, Reference, SearchResult,
+    };
+    use security_framework::key::{Algorithm, GenerateKeyOptions, KeyType, SecKey, Token};
     use security_framework::passwords::{
         AccessControlOptions, PasswordOptions, delete_generic_password_options, generic_password,
         set_generic_password_options,
@@ -514,18 +645,23 @@ mod keychain {
     /// One item, built the way *this* code says it should be: the guard is made
     /// fresh each call because `set_access_control` consumes one, and putting a
     /// replaced secret back needs its own.
-    fn add(account: &str, secret: &Secret) -> Result<(), KeystoreError> {
-        let guard = SecAccessControl::create_with_protection(
-            Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
-            AccessControlOptions::USER_PRESENCE.bits(),
-        )
-        .map_err(|error| {
-            KeystoreError::new(describe(error.code(), "building the Touch ID guard"))
-        })?;
-
+    fn add(account: &str, secret: &Secret, guard: Guard) -> Result<(), KeystoreError> {
         let mut options = query(account);
         options.set_label(LABEL);
-        options.set_access_control(guard);
+        // A sealed blob gets no access control of its own. What opens it is a
+        // Secure Enclave key with `BIOMETRY_CURRENT_SET` on every use, so the
+        // assertion still happens — once, over the thing that matters, instead
+        // of twice with the first one standing over ciphertext.
+        if guard == Guard::UserPresence {
+            let control = SecAccessControl::create_with_protection(
+                Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
+                AccessControlOptions::USER_PRESENCE.bits(),
+            )
+            .map_err(|error| {
+                KeystoreError::new(describe(error.code(), "building the Touch ID guard"))
+            })?;
+            options.set_access_control(control);
+        }
         set_generic_password_options(secret.expose(), options)
             .map_err(|error| KeystoreError::new(describe(error.code(), "storing the secret")))
     }
@@ -603,7 +739,7 @@ mod keychain {
         /// without presence. It buys the two outcomes worth having — a decline
         /// aborts the replace with the old secret untouched, and a failed add
         /// is followed by a restore.
-        fn store(&self, account: &str, secret: &Secret) -> Result<(), KeystoreError> {
+        fn store(&self, account: &str, secret: &Secret, guard: Guard) -> Result<(), KeystoreError> {
             let previous = match read(account) {
                 Ok(bytes) => Some(Secret::new(bytes)),
                 Err(status) if refusal(status) == Refusal::Missing => None,
@@ -625,7 +761,7 @@ mod keychain {
             // real reason.
             let _ = delete_generic_password_options(query(account));
 
-            let Err(failure) = add(account, secret) else {
+            let Err(failure) = add(account, secret, guard) else {
                 return Ok(());
             };
             let Some(previous) = previous else {
@@ -634,7 +770,7 @@ mod keychain {
             // Put back exactly what was replaced. If even that fails the secret
             // really is gone, and the only thing left to do about it is say so
             // in words a caller can act on.
-            match add(account, &previous) {
+            match add(account, &previous, guard) {
                 Ok(()) => Err(KeystoreError::new(format!(
                     "{}; the secret it replaced is still there",
                     failure.message
@@ -655,6 +791,129 @@ mod keychain {
             }
         }
     }
+
+    /// What the wrapping key is filed under. One key per account, so forgetting
+    /// an account is deleting its key and its item and nothing else.
+    fn wrap_label(account: &str) -> String {
+        format!("{SERVICE}.wrap:{}", account.trim().to_lowercase())
+    }
+
+    /// The guard on the wrapping key, which is the whole of what protects the
+    /// account's own key on this machine.
+    ///
+    /// `PRIVATE_KEY_USAGE` is what makes the flags apply to *using* the key
+    /// rather than to reading an item. `BIOMETRY_CURRENT_SET` is deliberately
+    /// stricter than the item's `USER_PRESENCE`: enrolling a new finger
+    /// invalidates the key, so somebody who learns the passcode and adds their
+    /// own biometry cannot then unwrap the account. That is a real trade — a
+    /// user who re-enrols their own finger loses the wrapping key and has to
+    /// import the phrase again — and it is the right way round for a key that
+    /// signs enrolments. The phrase is written down; the convenience is not
+    /// worth the other outcome.
+    fn wrap_guard() -> Result<SecAccessControl, KeystoreError> {
+        SecAccessControl::create_with_protection(
+            Some(ProtectionMode::AccessibleWhenPasscodeSetThisDeviceOnly),
+            (AccessControlOptions::PRIVATE_KEY_USAGE | AccessControlOptions::BIOMETRY_CURRENT_SET)
+                .bits(),
+        )
+        .map_err(|error| {
+            KeystoreError::new(describe(error.code(), "building the wrapping key's guard"))
+        })
+    }
+
+    /// The wrapping key for this account, or nothing when none has been made.
+    ///
+    /// A search rather than a handle kept somewhere: the key outlives the
+    /// process, and a reference cached across an unlock is a reference that
+    /// survives a lock.
+    fn wrap_key(account: &str) -> Result<Option<SecKey>, KeystoreError> {
+        let found = ItemSearchOptions::new()
+            .class(ItemClass::key())
+            .key_class(KeyClass::private())
+            .label(&wrap_label(account))
+            .load_refs(true)
+            .limit(1)
+            .search();
+        match found {
+            Ok(results) => Ok(results.into_iter().find_map(|result| match result {
+                SearchResult::Ref(Reference::Key(key)) => Some(key),
+                _ => None,
+            })),
+            Err(error) if refusal(error.code()) == Refusal::Missing => Ok(None),
+            Err(error) => Err(KeystoreError::new(describe(
+                error.code(),
+                "looking for the wrapping key",
+            ))),
+        }
+    }
+
+    /// Mint one, in the Secure Enclave, permanently.
+    ///
+    /// P-256 because it is the only curve the Enclave generates, and the
+    /// data-protection keychain because a Secure Enclave key cannot live in the
+    /// other one. `is_permanent` is not a setter: `security-framework` derives
+    /// it from the location, which is why the location is set even though
+    /// nothing here reads it back by hand.
+    fn make_wrap_key(account: &str) -> Result<SecKey, KeystoreError> {
+        let mut options = GenerateKeyOptions::default();
+        options
+            .set_key_type(KeyType::ec_sec_prime_random())
+            .set_size_in_bits(256)
+            .set_token(Token::SecureEnclave)
+            .set_location(Location::DataProtectionKeychain)
+            .set_label(wrap_label(account))
+            .set_access_control(wrap_guard()?);
+        SecKey::new(&options).map_err(|error| {
+            KeystoreError::new(format!(
+                "making the wrapping key in the Secure Enclave: {error}"
+            ))
+        })
+    }
+
+    /// ECIES over the Enclave's P-256 key: an ephemeral key agreement, X9.63
+    /// KDF, AES-GCM. The sender's half is generated per call and thrown away,
+    /// so the same secret sealed twice gives different bytes and neither can be
+    /// opened by anything but the key in the chip.
+    const ENVELOPE: Algorithm = Algorithm::ECIESEncryptionCofactorX963SHA256AESGCM;
+
+    /// Written on Linux, type-checked for `aarch64-apple-darwin`, never once
+    /// run — the same standing as everything else in this module. What a Mac
+    /// still has to demonstrate is in `custody.rs`'s list.
+    impl Wrap for PlatformWrap {
+        fn seal(&self, account: &str, plain: &Secret) -> Result<Vec<u8>, KeystoreError> {
+            let key = match wrap_key(account)? {
+                Some(key) => key,
+                None => make_wrap_key(account)?,
+            };
+            // The public half, which is not guarded: sealing raises no sheet,
+            // and an owner storing a wallet is already past the one prompt an
+            // import costs.
+            let public = key.public_key().ok_or_else(|| {
+                KeystoreError::new("the wrapping key has no public half".to_owned())
+            })?;
+            public
+                .encrypt_data(ENVELOPE, plain.expose())
+                .map_err(|error| KeystoreError::new(format!("sealing the secret: {error}")))
+        }
+
+        fn open(&self, account: &str, sealed: &[u8]) -> Result<Held, KeystoreError> {
+            // No key means nothing this app sealed, which is the same answer as
+            // an empty keychain rather than a fault: the fix is to store one.
+            let Some(key) = wrap_key(account)? else {
+                return Ok(Held::Missing);
+            };
+            match key.decrypt_data(ENVELOPE, sealed) {
+                Ok(plain) => Ok(Held::Secret(Secret::new(plain))),
+                // Using the key is what raised the sheet, so a decline arrives
+                // here and is an answer. `CFError` carries the same `OSStatus`
+                // space the keychain does, so `refusal` sorts it.
+                Err(error) => held(
+                    refusal(error.code() as i32),
+                    format!("opening the sealed secret: {error}"),
+                ),
+            }
+        }
+    }
 }
 
 /// Everywhere else: there is no keychain to ask, and pretending otherwise would
@@ -667,13 +926,26 @@ mod keychain {
 #[cfg(not(target_os = "macos"))]
 const UNAVAILABLE: &str = "no platform keychain on this build";
 
+/// No Secure Enclave here either, and the same honest refusal: a build with
+/// nowhere to keep a key has nowhere to keep the key that would wrap it.
+#[cfg(not(target_os = "macos"))]
+impl Wrap for PlatformWrap {
+    fn seal(&self, _account: &str, _plain: &Secret) -> Result<Vec<u8>, KeystoreError> {
+        Err(KeystoreError::new(UNAVAILABLE.to_owned()))
+    }
+
+    fn open(&self, _account: &str, _sealed: &[u8]) -> Result<Held, KeystoreError> {
+        Err(KeystoreError::new(UNAVAILABLE.to_owned()))
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 impl Keystore for PlatformKeystore {
     fn prompt(&self, _account: &str, _reason: &str) -> Unlock {
         Unlock::Unavailable(UNAVAILABLE.to_owned())
     }
 
-    fn store(&self, _account: &str, _secret: &Secret) -> Result<(), KeystoreError> {
+    fn store(&self, _account: &str, _secret: &Secret, _guard: Guard) -> Result<(), KeystoreError> {
         Err(KeystoreError::new(UNAVAILABLE.to_owned()))
     }
 
@@ -694,6 +966,9 @@ mod tests {
     struct Memory {
         answer: Unlock,
         held: RefCell<HashMap<String, Vec<u8>>>,
+        /// What each item was asked to be guarded with, so a test can hold the
+        /// one thing the macOS `add` does with that answer.
+        guards: RefCell<HashMap<String, Guard>>,
     }
 
     impl Memory {
@@ -701,6 +976,7 @@ mod tests {
             Self {
                 answer,
                 held: RefCell::new(HashMap::new()),
+                guards: RefCell::new(HashMap::new()),
             }
         }
     }
@@ -710,10 +986,11 @@ mod tests {
             self.answer.clone()
         }
 
-        fn store(&self, account: &str, secret: &Secret) -> Result<(), KeystoreError> {
+        fn store(&self, account: &str, secret: &Secret, guard: Guard) -> Result<(), KeystoreError> {
             self.held
                 .borrow_mut()
                 .insert(account.to_owned(), secret.expose().to_vec());
+            self.guards.borrow_mut().insert(account.to_owned(), guard);
             Ok(())
         }
 
@@ -1212,7 +1489,7 @@ mod tests {
         // wired under only some of them, which is when this should stop.
         assert_eq!(
             keystore
-                .store(ACCOUNT, &Secret::new(vec![1, 2, 3]))
+                .store(ACCOUNT, &Secret::new(vec![1, 2, 3]), Guard::UserPresence)
                 .expect_err("a build with no keychain stored a secret")
                 .message,
             UNAVAILABLE
@@ -1253,7 +1530,7 @@ mod tests {
             "a first run must read as nothing stored yet, not as a failure"
         );
         keystore
-            .store(ACCOUNT, &Secret::new(bytes.clone()))
+            .store(ACCOUNT, &Secret::new(bytes.clone()), Guard::UserPresence)
             .expect("the in-memory keychain stores");
         let Held::Secret(stored) = keystore.load(ACCOUNT).expect("stored secrets load") else {
             panic!("a stored secret is there");
@@ -1617,5 +1894,178 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A stand-in for the Secure Enclave, and emphatically not a cipher.
+    ///
+    /// It exists to answer one question the Enclave cannot be asked on this
+    /// machine: does the envelope *plumbing* seal what it stores and open what
+    /// it reads, or does a bare secret reach the keychain? A reversible byte
+    /// flip is enough to decide that and is obviously not encryption — the real
+    /// wrapper is ECIES over a P-256 key that never leaves the chip, and its
+    /// strength is the platform's rather than this file's.
+    ///
+    /// It also records what it was asked to open, so a test can tell "opened
+    /// the ciphertext" from "never called".
+    struct Flip {
+        opened: RefCell<Vec<Vec<u8>>>,
+    }
+
+    impl Flip {
+        fn new() -> Self {
+            Self {
+                opened: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Wrap for Flip {
+        fn seal(&self, _account: &str, plain: &Secret) -> Result<Vec<u8>, KeystoreError> {
+            Ok(plain.expose().iter().map(|byte| byte ^ 0xa5).collect())
+        }
+
+        fn open(&self, _account: &str, sealed: &[u8]) -> Result<Held, KeystoreError> {
+            self.opened.borrow_mut().push(sealed.to_vec());
+            Ok(Held::Secret(Secret::new(
+                sealed.iter().map(|byte| byte ^ 0xa5).collect::<Vec<u8>>(),
+            )))
+        }
+    }
+
+    /// What reaches the keychain is not the secret, and what comes back is.
+    ///
+    /// The first half is the claim the owner asked for and the one a keychain
+    /// dump would test: the bytes filed under the account contain the secret
+    /// nowhere, in whole or in part. The second half is what keeps the first
+    /// from being satisfied by simply losing the key.
+    #[test]
+    fn a_stored_secret_is_ciphertext_and_still_comes_back() {
+        let store = Memory::new(Unlock::Platform);
+        let wrap = Flip::new();
+        let secret = Secret::new(b"the account's own thirty-two byte".to_vec());
+
+        store_sealed(&wrap, &store, ACCOUNT, &secret).expect("sealed and filed");
+
+        let filed = store.held.borrow().get(ACCOUNT).cloned().expect("an item");
+        assert_ne!(filed, secret.expose(), "the plaintext reached the keychain");
+        assert!(
+            !filed
+                .windows(secret.expose().len())
+                .any(|window| window == secret.expose()),
+            "the plaintext is in the item somewhere",
+        );
+        // And it is marked as this scheme's, which is what tells a later read
+        // it is looking at ciphertext rather than at a #523 item.
+        assert!(filed.starts_with(SEALED), "no marker: {filed:?}");
+
+        let Held::Secret(back) = load_sealed(&wrap, &store, ACCOUNT).expect("read back") else {
+            panic!("a sealed item reads back as a secret");
+        };
+        assert_eq!(back.expose(), secret.expose());
+        // Opened rather than passed through: the marker was stripped and the
+        // wrapper saw only the sealed half.
+        assert_eq!(wrap.opened.borrow().len(), 1);
+        assert_eq!(wrap.opened.borrow()[0], filed[SEALED.len()..]);
+    }
+
+    /// An item from before the envelope is brought forward on the read that
+    /// finds it, and the bare form does not survive that read.
+    ///
+    /// The plant is deliberate: this is exactly the shape #523 wrote — the
+    /// secret, as itself, under the account — and the only way to be sure the
+    /// migration works is to write one and then read it.
+    #[test]
+    fn a_secret_from_before_the_envelope_is_resealed_on_the_way_out() {
+        let store = Memory::new(Unlock::Platform);
+        let wrap = Flip::new();
+        let secret = Secret::new(b"a #523 key, stored as itself....".to_vec());
+
+        // The old storage form, planted by hand.
+        store
+            .store(ACCOUNT, &secret, Guard::UserPresence)
+            .expect("the legacy item");
+        assert_eq!(store.held.borrow()[ACCOUNT], secret.expose());
+
+        let Held::Secret(back) = load_sealed(&wrap, &store, ACCOUNT).expect("read back") else {
+            panic!("a legacy item still answers with its secret");
+        };
+        assert_eq!(
+            back.expose(),
+            secret.expose(),
+            "migrating must not change what the account is",
+        );
+
+        // And the bare form is gone: what sits there now is sealed, and a
+        // second read goes through the wrapper rather than the migration.
+        let filed = store.held.borrow().get(ACCOUNT).cloned().expect("an item");
+        assert!(filed.starts_with(SEALED), "not re-sealed: {filed:?}");
+        assert_ne!(filed, secret.expose());
+        assert!(
+            wrap.opened.borrow().is_empty(),
+            "the migration did not unwrap"
+        );
+
+        let Held::Secret(again) = load_sealed(&wrap, &store, ACCOUNT).expect("read back twice")
+        else {
+            panic!("still a secret");
+        };
+        assert_eq!(again.expose(), secret.expose());
+        assert_eq!(
+            wrap.opened.borrow().len(),
+            1,
+            "the second read is an ordinary sealed read",
+        );
+    }
+
+    /// A first run and a decline are answers, and they travel through the
+    /// envelope unchanged rather than being mistaken for ciphertext.
+    #[test]
+    fn nothing_stored_stays_nothing_stored_through_the_envelope() {
+        let store = Memory::new(Unlock::Platform);
+        let wrap = Flip::new();
+        assert!(matches!(
+            load_sealed(&wrap, &store, ACCOUNT).expect("an answer"),
+            Held::Missing
+        ));
+        assert!(wrap.opened.borrow().is_empty());
+    }
+
+    /// A sealed blob asks for no guard of its own; a bare secret still does.
+    ///
+    /// Both halves, because the change is a *removal* and a removal that went
+    /// one step too far would look exactly like this one working. What the
+    /// macOS `add` does with the answer — build an access control, or not — is
+    /// on the list of things only a Mac can show; what is decided here is which
+    /// answer each kind of item gets, and that is decidable anywhere.
+    #[test]
+    fn only_a_bare_secret_is_guarded_by_its_own_item() {
+        let store = Memory::new(Unlock::Platform);
+        let wrap = Flip::new();
+        let secret = Secret::new(b"the account's own thirty-two byte".to_vec());
+
+        // The wallet: ciphertext, and the Enclave key that opens it carries the
+        // biometry. A second sheet here would stand over bytes an attacker
+        // cannot use.
+        store_sealed(&wrap, &store, ACCOUNT, &secret).expect("sealed and filed");
+        assert_eq!(store.guards.borrow()[ACCOUNT], Guard::Sealed);
+
+        // A trading key, through the same keychain: the item *is* the secret,
+        // so the item is what has to be guarded. This half pins the seam's
+        // shape — two distinct answers, carried to the keystore rather than
+        // inferred there — and not the call site: `enrol_one` naming
+        // `Guard::UserPresence` is a constant in `custody.rs` that no Linux
+        // test can reach, because that path holds `PlatformKeystore` directly.
+        // What the macOS `add` then *does* with either answer is on the list
+        // only a Mac can settle.
+        const AGENT_ITEM: &str = "hyperliquid-mainnet:0x1025d5c2";
+        store
+            .store(AGENT_ITEM, &secret, Guard::UserPresence)
+            .expect("filed");
+        assert_eq!(store.guards.borrow()[AGENT_ITEM], Guard::UserPresence);
+        assert_ne!(
+            store.guards.borrow()[ACCOUNT],
+            store.guards.borrow()[AGENT_ITEM],
+            "the two kinds of item are not guarded the same way",
+        );
     }
 }

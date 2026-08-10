@@ -259,7 +259,7 @@ test trading_the_gate_opens_the_import_step_in_front_of_itself
   preset gate
   viewport 1440 900
   target dialog = #gate
-  target door = dialog/gate-import
+  target door = dialog/gate-primary/gate-import
   target step = #import
   expect exists dialog
   expect missing step
@@ -427,3 +427,79 @@ test trading_settings_says_what_this_app_now_does_with_a_key
   // sign, rather than a promise about how carefully it is used.
   expect no text "What it will never do: hold the key that owns the account, move collateral, or withdraw. An agent key cannot do any of those, which is the whole reason it is the only key here."
   expect text "Importing a wallet does put the account's own key on this Mac, behind Touch ID. It signs enrolments and nothing else — the app cannot spend it on an order even by mistake, because an order is a different type of thing and this key has no method that takes one. It never moves collateral and never withdraws."
+
+// Making a wallet: the words, once, and nothing stored for them.
+//
+// The phrase is random, so no assertion here can name it — what is held is that
+// it exists, that it is twenty-four words, that it is on screen, and that
+// nothing has been derived or written while it is. The words themselves are
+// `seed.rs`'s business and are pinned there against the BIP-39 vectors.
+test trading_making_a_wallet_shows_the_words_and_stores_nothing
+  preset gate
+  viewport 1440 900
+  target dialog = #gate
+  target create_door = dialog/gate-primary/gate-create
+  target step = #import
+  target phrase = step/create-phrase
+  target written = step/backup-written
+  target asks = step/backup-asks
+  expect missing step
+  click create_door
+  expect exists step
+  // Twenty-four words, made here, with three of them chosen to be read back.
+  expect !empty(create_phrase)
+  expect len(create_positions) == 3
+  expect exists phrase
+  expect !create_shown
+  // Nothing has been derived and nothing has been kept: the account does not
+  // exist anywhere but on this screen until the backup is confirmed.
+  expect empty(import_address)
+  expect empty(pending_wallet())
+  capture create_words
+  // The words come off the screen on the press that says they were copied, and
+  // the check arrives in their place.
+  click written
+  expect create_shown
+  expect missing phrase
+  expect exists asks
+  capture create_backup
+
+// The backup check is a gate, not a formality.
+//
+// A wrong answer is refused with a sentence, the words stay off the screen, and
+// — the assertion this test exists for — nothing is derived. The right answer
+// cannot be typed here, because the phrase is random and no step in this driver
+// can compute one word of it; `custody::tests::backup_refused_*` owns that half
+// against phrases it chose.
+test trading_a_wallet_is_not_made_until_the_words_are_read_back
+  preset gate
+  viewport 1440 900
+  target dialog = #gate
+  target create_door = dialog/gate-primary/gate-create
+  target step = #import
+  target phrase = step/create-phrase
+  target written = step/backup-written
+  target answer = step/backup-input
+  target prove = step/backup-confirm
+  target note = step/import-note
+  click create_door
+  click written
+  // Dead until something is typed, which is the rule every other control on
+  // this screen follows.
+  expect a11y prove disabled true
+  focus answer
+  replace "abandon abandon abandon"
+  expect create_confirm == "abandon abandon abandon"
+  expect a11y prove disabled false
+  click prove
+  // Refused, and said. The odds that three words drawn from a random phrase are
+  // these three are about one in 2048 cubed, so this is a wrong answer.
+  expect !empty(import_note)
+  expect exists note
+  // And nothing moved: no address, no key waiting, and the words still off the
+  // screen rather than offered again as a prompt.
+  expect empty(import_address)
+  expect empty(pending_wallet())
+  expect create_shown
+  expect missing phrase
+  expect !empty(create_phrase)

@@ -100,6 +100,10 @@ pub enum SeedError {
     /// unlikely and not ignorable: the spec says to skip to the next index, and
     /// pretending it cannot happen is how a wrong key gets derived.
     Derivation,
+    /// The machine would not produce randomness. A phrase made from anything
+    /// weaker than the OS generator is an account somebody else can also
+    /// derive, so this refuses rather than falling back to a second source.
+    Entropy,
 }
 
 impl SeedError {
@@ -117,6 +121,9 @@ impl SeedError {
             SeedError::Derivation => {
                 "That phrase does not derive a usable key on this path.".to_owned()
             }
+            SeedError::Entropy => "This machine would not produce randomness for a new phrase, \
+                                   so none was made."
+                .to_owned(),
         }
     }
 }
@@ -151,6 +158,69 @@ impl Seed {
     fn bytes(&self) -> &[u8; 64] {
         &self.0
     }
+}
+
+/// How many words a phrase this app makes has.
+///
+/// Twenty-four, which is 256 bits of entropy. Twelve would already be 128 bits
+/// and would already match what secp256k1 itself offers, so this is not chosen
+/// for a security margin that exists: it is chosen because a phrase is written
+/// down exactly once and kept for years, and the cost of the longer one is paid
+/// in that single sitting while the cost of wishing it were longer cannot be
+/// paid at all. An owner importing a 12-word phrase from another wallet is
+/// unaffected — `check_phrase` takes every legal length.
+const NEW_PHRASE_WORDS: usize = 24;
+
+/// A phrase this app made, from the platform's own randomness.
+///
+/// `getrandom::fill` is the OS generator — `getentropy` on macOS, `getrandom(2)`
+/// on Linux — and it is the same call `signing.rs` mints a trading key with and
+/// the same one `custody.rs` generates an enrolment key with. It is not seeded
+/// by this process, cannot be replayed by it, and fails loudly rather than
+/// returning something weaker: a phrase made from a fallback source is an
+/// account whose owner is whoever else can reach that source.
+pub fn new_phrase() -> Result<String, SeedError> {
+    // 11 bits a word, of which one in every 33 is checksum, so the entropy is
+    // words * 32 / 3 bits — 256 for 24 words.
+    let mut entropy = vec![0u8; NEW_PHRASE_WORDS * 4 / 3];
+    if getrandom::fill(&mut entropy).is_err() {
+        return Err(SeedError::Entropy);
+    }
+    let phrase = phrase_from_entropy(&entropy);
+    entropy.fill(0);
+    std::hint::black_box(&mut entropy);
+    Ok(phrase)
+}
+
+/// Entropy spelled as words: the exact inverse of what `check_phrase` reads.
+///
+/// Eleven bits a word, most significant first, with the first `len/4` bits of
+/// the entropy's SHA-256 appended so the phrase carries the checksum a wallet
+/// will hold it to. Written as its own function rather than inside `new_phrase`
+/// so the known-answer vectors can drive it with fixed entropy — a generator
+/// that can only be called with real randomness is a generator with no oracle.
+fn phrase_from_entropy(entropy: &[u8]) -> String {
+    let digest = Sha256::digest(entropy);
+    let bits = entropy.len() * 8;
+    let at = |index: usize| -> bool {
+        let (byte, offset) = if index < bits {
+            (entropy[index / 8], index % 8)
+        } else {
+            let index = index - bits;
+            (digest[index / 8], index % 8)
+        };
+        byte >> (7 - offset) & 1 == 1
+    };
+    let words: Vec<&str> = WORDLIST.lines().collect();
+    (0..(bits + bits / 32) / 11)
+        .map(|word| {
+            let index = (0..11).fold(0usize, |sofar, shift| {
+                sofar << 1 | usize::from(at(word * 11 + shift))
+            });
+            words[index]
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Stretch a recovery phrase into its seed.
@@ -658,5 +728,79 @@ mod tests {
         (0..text.len() / 2)
             .map(|at| u8::from_str_radix(&text[at * 2..at * 2 + 2], 16).expect("hex"))
             .collect()
+    }
+
+    /// Entropy spelled as words, against the vectors that already pin the other
+    /// direction.
+    ///
+    /// These two are the ends of the Trezor set: all-zero and all-one entropy,
+    /// at both lengths this file cares about. They are the strongest oracle
+    /// available for a generator, because a phrase made from real randomness
+    /// can only be checked for *shape* — and a generator that emitted the
+    /// wordlist in order, or dropped the checksum, or read the bits the wrong
+    /// way round, would pass every shape test there is.
+    #[test]
+    fn entropy_is_spelled_as_the_words_the_vectors_give_it() {
+        for (entropy, expected) in [
+            (vec![0x00u8; 16], ZEROS),
+            (
+                vec![0xffu8; 16],
+                "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",
+            ),
+            (
+                vec![0x00u8; 32],
+                "abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+                 abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+                 abandon abandon abandon abandon abandon art",
+            ),
+            (
+                vec![0xffu8; 32],
+                "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo \
+                 zoo zoo zoo zoo vote",
+            ),
+        ] {
+            let spelled = phrase_from_entropy(&entropy);
+            assert_eq!(
+                spelled.split_whitespace().collect::<Vec<_>>(),
+                expected.split_whitespace().collect::<Vec<_>>(),
+                "{} bytes of entropy",
+                entropy.len(),
+            );
+            // And the phrase it spelled is one this module will take back,
+            // which is the round trip that matters: a checksum written wrongly
+            // would still look like words.
+            seed_from_phrase(&spelled, "").expect("a phrase this module made is one it accepts");
+        }
+    }
+
+    /// What a fresh phrase is, beyond being twenty-four words.
+    ///
+    /// The shape, then the two things a broken generator would get wrong that
+    /// shape alone would not catch: a phrase that is the same every time, and a
+    /// phrase whose checksum does not hold.
+    #[test]
+    fn a_new_phrase_is_twenty_four_words_that_check_out_and_differ_each_time() {
+        let first = new_phrase().expect("this machine has an OS generator");
+        let second = new_phrase().expect("this machine has an OS generator");
+
+        assert_eq!(first.split_whitespace().count(), 24);
+        seed_from_phrase(&first, "").expect("a phrase this app made is one it accepts");
+        assert_ne!(first, second, "a phrase that repeats is not a phrase");
+
+        // Every word is a real one, in the list this file pins by digest.
+        for word in first.split_whitespace() {
+            assert!(index_of(word).is_some(), "not a wordlist word: {word}");
+        }
+    }
+
+    /// A phrase this app made derives an account, through the same path an
+    /// imported one takes. The two doors converge here rather than in the view.
+    #[test]
+    fn a_made_phrase_derives_an_account_like_an_imported_one() {
+        let phrase = new_phrase().expect("this machine has an OS generator");
+        let key = ethereum_key(&seed(&phrase, "")).expect("a derivable account");
+        let wallet = Wallet::from_secret(&key).expect("a usable secp256k1 key");
+        assert!(wallet.address().to_string().starts_with("0x"));
+        assert_eq!(wallet.address().to_string().len(), 42);
     }
 }
