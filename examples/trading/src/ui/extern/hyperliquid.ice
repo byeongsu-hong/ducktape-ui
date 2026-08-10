@@ -28,7 +28,17 @@ extern crate::hyperliquid
   pure symbol_row(rows:[SymbolRow], coin:str) -> SymbolRow?
   pure listed_coin(rows:[SymbolRow], coin:str) -> str
   pure ticket_seed(book:Book?, focus:SymbolRow?) -> str
-  pure tray_status(coin:str, focus:SymbolRow?, live:bool) -> str
+  // The menu bar's own strings. Every row is one composed `str` because a
+  // menu row is one, and each decides its own absence: a menu is read without
+  // the header beside it to qualify anything.
+  pure tray_status(coin:str, focus:SymbolRow?, live:bool, venue:Venue) -> str
+  pure tray_alerts(alerts:[Alert]) -> str
+  pure tray_account(account:Account?, live:bool) -> str
+  pure tray_equity(account:Account?) -> str
+  pure tray_pnl(account:Account?) -> str
+  pure tray_positions(positions:[Position]) -> str
+  pure tray_venue(venue:Venue) -> str
+  pure tray_feed(millis:i64, live:bool) -> str
   pure impact_price(book:Book?, size:str, buy:bool) -> str
   pure impact_slippage(book:Book?, size:str, buy:bool) -> str
   pure impact_short(book:Book?, size:str, buy:bool) -> bool
