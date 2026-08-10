@@ -12,7 +12,10 @@
 //! same span highlights and links, plus an anchor, a cursor, and the platform's
 //! copy and select-all.
 
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell, RefCell};
+use std::collections::BTreeMap;
+use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -25,17 +28,81 @@ use iced::alignment;
 use iced::widget::markdown;
 use iced::{Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Vector, keyboard};
 
-/// Which selection the window is currently showing.
-///
-/// One at a time, as everywhere else: starting a drag anywhere takes the
-/// highlight away from wherever it was, and every other block goes quiet
-/// without having to be told.
-static NEXT_SELECTION: AtomicU64 = AtomicU64::new(1);
-static ACTIVE_SELECTION: AtomicU64 = AtomicU64::new(0);
+// The one selection the window is showing, wherever it is.
+//
+// It has to live outside the widgets because it does not live inside one: an
+// answer is drawn as a column of blocks, each its own widget with its own
+// paragraph, and dragging from a sentence through a code block into a list is
+// one selection across several of them. Each block reads this to find its own
+// share of it, and only the block under the pointer writes to it.
+//
+// One at a time, everywhere: a press anywhere replaces it, so every other
+// block goes quiet without having to be told.
+thread_local! {
+    static SELECTION: RefCell<Option<Selection>> = const { RefCell::new(None) };
+    /// What each block contributed to the copy being assembled. Cleared by the
+    /// block that finishes it.
+    static PARTS: RefCell<BTreeMap<usize, String>> = const {
+        RefCell::new(BTreeMap::new())
+    };
+}
+
+/// Groups are handed out per answer. `LIVE` is the reply still being written,
+/// which is rebuilt from nothing on every frame and so cannot be given one.
+const LIVE: u64 = 0;
+static NEXT_GROUP: AtomicU64 = AtomicU64::new(1);
+
+/// Where one end of a selection sits: which block, and how far into it.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct Place {
+    block: usize,
+    offset: usize,
+}
+
+#[derive(Debug)]
+struct Selection {
+    group: u64,
+    anchor: Place,
+    focus: Place,
+    dragging: bool,
+}
+
+impl Selection {
+    fn ends(&self) -> (Place, Place) {
+        (self.anchor.min(self.focus), self.anchor.max(self.focus))
+    }
+
+    /// This block's share of the selection: all of it in the middle, part of it
+    /// at either end, and nothing at all outside.
+    fn within(&self, group: u64, block: usize, len: usize) -> Option<Range<usize>> {
+        if self.group != group {
+            return None;
+        }
+
+        let (start, end) = self.ends();
+        if block < start.block || block > end.block {
+            return None;
+        }
+
+        let from = if block == start.block {
+            start.offset
+        } else {
+            0
+        };
+        let to = if block == end.block { end.offset } else { len };
+        (from < to && to <= len).then_some(from..to)
+    }
+}
+
+/// Read this block's share of whatever is selected.
+fn selected(group: u64, block: usize, len: usize) -> Option<Range<usize>> {
+    SELECTION.with_borrow(|selection| selection.as_ref()?.within(group, block, len))
+}
 
 type Renderer = iced::Renderer;
 type Para = <Renderer as text::Renderer>::Paragraph;
-type Line = Span<'static, markdown::Uri, Font>;
+/// One styled run of an answer, as `iced`'s Markdown hands it over.
+pub type Line = Span<'static, markdown::Uri, Font>;
 
 /// How much of the text colour the highlight keeps. Enough to see under either
 /// palette, little enough to read the words through.
@@ -43,6 +110,14 @@ const HIGHLIGHT_ALPHA: f32 = 0.28;
 
 /// One block of an answer: its spans, drawn and selectable.
 pub struct Selectable {
+    /// Which answer this block belongs to, and where it sits in it. A selection
+    /// is one range across the group, so a block needs both to know its share.
+    group: u64,
+    block: usize,
+    /// How many blocks the answer has, shared with every one of them. Only the
+    /// first and the last need it, to answer for a drag that has left the
+    /// answer at the top or the bottom.
+    blocks: Rc<Cell<usize>>,
     spans: Arc<[Line]>,
     /// The block as one string, for the clipboard and for the byte offsets a
     /// selection is kept in. Built on demand: this widget is constructed again
@@ -53,44 +128,68 @@ pub struct Selectable {
 }
 
 /// One block of rendered Markdown, as an element that can be dragged across.
-pub fn selectable(spans: Arc<[Line]>, size: Pixels) -> Element<'static, String> {
+pub fn selectable(
+    group: u64,
+    block: usize,
+    blocks: Rc<Cell<usize>>,
+    spans: Arc<[Line]>,
+    size: Pixels,
+) -> Element<'static, String> {
     Element::new(Selectable {
+        group,
+        block,
+        blocks,
         spans,
         plain: OnceCell::new(),
         size,
     })
 }
 
+/// A fresh group, for an answer that will be drawn again as it stands.
+pub fn group() -> u64 {
+    NEXT_GROUP.fetch_add(1, Ordering::Relaxed)
+}
+
+/// The group of the reply still being written. It is rebuilt from nothing every
+/// frame, so it cannot hold an identity of its own — but there is only ever one
+/// of it, which is identity enough.
+pub fn live() -> u64 {
+    LIVE
+}
+
 struct State {
     paragraph: Para,
     shaped: Vec<Line>,
-    token: u64,
-    anchor: usize,
-    cursor: usize,
-    dragging: bool,
     hovered_link: Option<usize>,
     pressed_link: Option<usize>,
 }
 
-impl State {
-    fn is_active(&self) -> bool {
-        self.token != 0 && ACTIVE_SELECTION.load(Ordering::Relaxed) == self.token
-    }
-
-    /// The selected byte range, or nothing when this block is not the one
-    /// holding the window's selection.
-    fn range(&self, text: &str) -> Option<std::ops::Range<usize>> {
-        if !self.is_active() {
-            return None;
-        }
-
-        let start = self.anchor.min(self.cursor);
-        let end = self.anchor.max(self.cursor);
-        (start != end && text.get(start..end).is_some()).then_some(start..end)
-    }
-}
-
 impl Selectable {
+    /// This block's share of the selection.
+    fn selected(&self) -> Option<Range<usize>> {
+        selected(self.group, self.block, self.plain().len())
+    }
+
+    /// Whether the answer this block belongs to is the one holding the
+    /// selection — true for every block of it, selected or not.
+    fn holds_selection(&self) -> bool {
+        SELECTION.with_borrow(|selection| {
+            selection
+                .as_ref()
+                .is_some_and(|selection| selection.group == self.group)
+        })
+    }
+
+    /// Whether this is the last block the selection reaches, and so the one
+    /// that sends an assembled copy.
+    fn last_of_selection(&self) -> bool {
+        SELECTION.with_borrow(|selection| {
+            selection
+                .as_ref()
+                .is_some_and(|selection| selection.ends().1.block == self.block)
+        })
+    }
+
     fn plain(&self) -> &str {
         self.plain
             .get_or_init(|| self.spans.iter().map(|span| span.text.as_ref()).collect())
@@ -128,10 +227,6 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
         tree::State::new(State {
             paragraph: Para::default(),
             shaped: Vec::new(),
-            token: 0,
-            anchor: 0,
-            cursor: 0,
-            dragging: false,
             hovered_link: None,
             pressed_link: None,
         })
@@ -217,29 +312,80 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                 let Some(offset) = hit(&state.paragraph, position, false) else {
                     return;
                 };
-                state.token = NEXT_SELECTION.fetch_add(1, Ordering::Relaxed);
-                ACTIVE_SELECTION.store(state.token, Ordering::Relaxed);
-                state.anchor = offset;
-                state.cursor = offset;
-                state.dragging = true;
+                let at = Place {
+                    block: self.block,
+                    offset,
+                };
+                SELECTION.replace(Some(Selection {
+                    group: self.group,
+                    anchor: at,
+                    focus: at,
+                    dragging: true,
+                }));
                 shell.request_redraw();
             }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
-                let Some(position) = cursor.position_from(layout.position()) else {
+            // Every block of the answer sees the drag, and the one the pointer
+            // is level with claims it — by row rather than by bounds, because a
+            // block is only as wide as its own text and a drag down the margin
+            // beside it is still a drag through it.
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let Some(position) = cursor.position() else {
                     return;
                 };
-                if let Some(offset) = hit(&state.paragraph, position, true)
-                    && state.cursor != offset
-                {
+                let bounds = layout.bounds();
+                // Above the answer belongs to its first block and below it to
+                // its last, so a drag that overshoots the whole answer still
+                // takes it to the end rather than stopping where the pointer
+                // left the words.
+                let above = position.y < bounds.y;
+                let below = position.y >= bounds.y + bounds.height;
+                let mine = (!above && !below)
+                    || (above && self.block == 0)
+                    || (below && self.block + 1 == self.blocks.get());
+
+                let moved = SELECTION.with_borrow_mut(|selection| {
+                    let Some(selection) = selection.as_mut() else {
+                        return false;
+                    };
+                    if !selection.dragging || selection.group != self.group || !mine {
+                        return false;
+                    }
+
+                    let offset = if above {
+                        0
+                    } else if below {
+                        self.plain().len()
+                    } else {
+                        let inside = position - (layout.position() - Point::ORIGIN);
+                        let Some(offset) =
+                            hit(&state.paragraph, Point::new(inside.x, inside.y), true)
+                        else {
+                            return false;
+                        };
+                        offset
+                    };
+                    let at = Place {
+                        block: self.block,
+                        offset,
+                    };
+                    (selection.focus != at)
+                        .then(|| selection.focus = at)
+                        .is_some()
+                });
+
+                if moved {
                     // A drag is a selection, not a click on whatever it started
                     // over.
                     state.pressed_link = None;
-                    state.cursor = offset;
                     shell.request_redraw();
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                state.dragging = false;
+                SELECTION.with_borrow_mut(|selection| {
+                    if let Some(selection) = selection.as_mut() {
+                        selection.dragging = false;
+                    }
+                });
 
                 if let Some(span) = state.pressed_link.take()
                     && Some(span) == state.hovered_link
@@ -254,21 +400,52 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                 physical_key,
                 modifiers,
                 ..
-            }) if state.is_active() && modifiers.command() => match key.to_latin(*physical_key) {
-                Some('a') => {
-                    state.anchor = 0;
-                    state.cursor = self.plain().len();
+            }) if modifiers.command() => match key.to_latin(*physical_key) {
+                // Every block extends the selection to itself, so the last one
+                // of the answer to be handed the key leaves it covering all of
+                // them. Only the group already holding a selection answers, so
+                // this reaches the answer being read rather than the transcript.
+                Some('a') if self.holds_selection() => {
+                    SELECTION.with_borrow_mut(|selection| {
+                        if let Some(selection) = selection.as_mut() {
+                            selection.anchor = Place {
+                                block: 0,
+                                offset: 0,
+                            };
+                            selection.focus = Place {
+                                block: self.block,
+                                offset: self.plain().len(),
+                            };
+                        }
+                    });
                     shell.capture_event();
                     shell.request_redraw();
                 }
+                // A copy is assembled the same way: each block leaves its own
+                // share behind, and the last block of the selection — reached
+                // last, because a column hands its children the event in the
+                // order it draws them — sends the whole of it.
+                //
                 // Out through the app rather than straight to the clipboard,
                 // because this window has one route for text leaving it: the
                 // same handler a clicked link and a Copy button use, which is
                 // also what puts "Copied" under the composer.
                 Some('c') => {
-                    if let Some(range) = state.range(self.plain()) {
-                        shell.publish(self.plain()[range].to_owned());
-                        shell.capture_event();
+                    let Some(range) = self.selected() else {
+                        return;
+                    };
+                    PARTS.with_borrow_mut(|parts| {
+                        parts.insert(self.block, self.plain()[range].to_owned());
+                    });
+                    shell.capture_event();
+
+                    if self.last_of_selection() {
+                        let whole = PARTS.with_borrow_mut(|parts| {
+                            let whole = parts.values().cloned().collect::<Vec<_>>().join("\n\n");
+                            parts.clear();
+                            whole
+                        });
+                        shell.publish(whole);
                     }
                 }
                 _ => {}
@@ -276,9 +453,8 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(keyboard::key::Named::Escape),
                 ..
-            }) if state.is_active() => {
-                ACTIVE_SELECTION.store(0, Ordering::Relaxed);
-                state.dragging = false;
+            }) if self.holds_selection() => {
+                SELECTION.replace(None);
                 shell.request_redraw();
             }
             _ => {}
@@ -395,7 +571,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
         // of the range and shaped from the same inputs, because a span's bounds
         // are the only geometry a paragraph will give up — there is no asking
         // one where a byte landed.
-        if let Some(range) = state.range(self.plain()) {
+        if let Some(range) = self.selected() {
             let font = text::Renderer::default_font(renderer);
             let (split, selected) = split(&self.spans, range);
             let paragraph = Para::with_spans(self.text(&split, state.paragraph.bounds(), font));
@@ -523,6 +699,57 @@ mod tests {
             inside, " parsed d",
             "the pieces inside are the range itself"
         );
+    }
+
+    fn across(anchor: (usize, usize), focus: (usize, usize)) -> Selection {
+        Selection {
+            group: 7,
+            anchor: Place {
+                block: anchor.0,
+                offset: anchor.1,
+            },
+            focus: Place {
+                block: focus.0,
+                offset: focus.1,
+            },
+            dragging: false,
+        }
+    }
+
+    /// A selection belongs to the answer, not to the block it started in: the
+    /// block it started in keeps its tail, the blocks between are taken whole,
+    /// and the block it ended in keeps its head. Getting this wrong is a drag
+    /// that stops at the first paragraph — which is what it used to do.
+    #[test]
+    fn a_selection_across_blocks_gives_each_one_its_own_share() {
+        let selection = across((1, 4), (3, 2));
+
+        assert_eq!(selection.within(7, 0, 10), None, "above it, nothing");
+        assert_eq!(
+            selection.within(7, 1, 10),
+            Some(4..10),
+            "from where it began"
+        );
+        assert_eq!(selection.within(7, 2, 10), Some(0..10), "then whole blocks");
+        assert_eq!(selection.within(7, 3, 10), Some(0..2), "to where it ended");
+        assert_eq!(selection.within(7, 4, 10), None, "below it, nothing");
+        assert_eq!(selection.within(8, 2, 10), None, "and never another answer");
+    }
+
+    /// Dragged upwards it is the same selection, because which end is the
+    /// anchor is not something the highlight can see.
+    #[test]
+    fn a_selection_dragged_upwards_covers_what_one_dragged_down_would() {
+        let down = across((1, 4), (3, 2));
+        let up = across((3, 2), (1, 4));
+
+        for block in 0..5 {
+            assert_eq!(
+                up.within(7, block, 10),
+                down.within(7, block, 10),
+                "block {block} is the same either way round"
+            );
+        }
     }
 
     /// The cut keeps everything about a span except its text, because the

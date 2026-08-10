@@ -302,15 +302,18 @@ test a_chat_that_is_open_says_nothing_about_opening
   expect missing #shell/app/transcript/opening
   expect text "Worked for 12s · 4 steps"
 
-// Dragging across an answer selects it where it stands. The rendering is rich
-// text, which this toolkit paints without selection until something owns the
-// paragraph — `src/select.rs` is that, and this is the drag reaching it.
+// Dragging across an answer selects it where it stands, and keeps going when
+// it leaves the paragraph it started in. The rendering is rich text, which this
+// toolkit paints without selection until something owns the paragraph —
+// `src/select.rs` is that, and a selection there belongs to the answer rather
+// than to any one block of it.
 //
-// The drag runs from the middle of the sentence down past its end, so what is
-// selected is the tail of the answer — and copying it is what says so exactly,
-// because a selection leaves this window by the same route a clicked link and
-// the Copy button use. The highlight itself is in the capture.
-test dragging_across_an_answer_selects_it_rather_than_clicking_through_it
+// The drag runs from the middle of the middle paragraph to below the whole
+// answer, so what is selected is the tail of one block and the whole of the
+// next. Copying it is what says so exactly, because a selection leaves this
+// window by the same route a clicked link and the Copy button use. The
+// highlight itself is in the capture.
+test dragging_across_an_answer_selects_past_the_block_it_started_in
   preset one_answer
   viewport 920 400
   target answer = #shell/app/transcript/rows/key(-31)/answer(-31)/root
@@ -325,10 +328,11 @@ test dragging_across_an_answer_selects_it_rather_than_clicking_through_it
   // A drag is not a click on what either end landed on.
   expect copied == ""
 
-  // The middle of the row lands mid-word, so the tail starts a letter in.
+  // The middle of the row lands mid-word, so the tail starts a letter in — and
+  // the blank line is the block boundary the drag crossed.
   chord control "c"
-  expect copied == "nd extend it as it grows."
+  expect copied == "nd extend it as it grows.\n\nThe view rebuilds one row."
 
   // And the button beside it still takes the whole of the answer.
   click copy
-  expect copied == "Hold the parsed document and extend it as it grows."
+  expect copied == "The document is parsed once.\n\nHold the parsed document and extend it as it grows.\n\nThe view rebuilds one row."
