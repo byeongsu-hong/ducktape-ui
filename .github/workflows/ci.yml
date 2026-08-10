@@ -38,11 +38,6 @@ jobs:
         with:
           fetch-depth: 0
       - uses: mozilla-actions/sccache-action@v0.0.11
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: workspace
-          # Without this the job id joins the key and the shared one is moot.
-          add-job-id-key: false
       - run: cargo ice fmt --check
       - name: Check complete Iced coverage ledger
         run: |
@@ -112,11 +107,12 @@ jobs:
     runs-on: ubuntu-24.04
     # The longest job here, and the only one that compiles release artifacts,
     # which the fat LTO and single codegen unit in `[profile.release]` make
-    # expensive. It also restores nothing: the repository's Actions cache sits
-    # at 9.3GB of its 10GB limit, nine ~0.8GB `rust-cache` entries hold 7.3GB
-    # of that, and a tenth is evicted before the next run reads it — every run
-    # of this job logs `No cache found`. So cold is the steady state, not the
-    # unlucky case, and 20-24m of cold work had four minutes of headroom.
+    # expensive. It is also the only job that keeps `rust-cache`: when every
+    # sccache job carried one too, nine ~0.8GB entries held 7.3GB of the 10GB
+    # Actions cache and this job's entry was evicted before the next run read
+    # it — every run logged `No cache found`, so 20-24m of cold work had four
+    # minutes of headroom. The sccache jobs now rely on sccache alone, which
+    # cached the same work in ~2GB, leaving room for this entry to survive.
     timeout-minutes: 45
     env:
       # This job's product is wall-clock numbers, and sccache keeps a server
@@ -171,16 +167,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: workspace
-          # Without this the job id joins the key and the shared one is moot.
-          add-job-id-key: false
       - name: Verify full and selected review bundles
         run: |
-          # A restored target cache can still hold the previous run's bundles,
-          # and the baseline copies below refuse to write over them.
-          rm -rf target/ci-review
           cargo ice review examples/showcase/src/ui/app.ice \
             --package showcase \
             --output target/ci-review/full
@@ -303,10 +291,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
       - run: rustup toolchain install 1.88.0 --profile minimal
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # This job builds with a pinned toolchain, not the runner's default.
-          key: "1.88.0"
       - run: cargo +1.88.0 check --workspace --locked
 
   platforms:
@@ -320,7 +304,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
-      - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --locked
       - name: Test development runner discovery
         if: matrix.runner == 'macos-latest'
@@ -357,7 +340,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
-      - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: |
           sudo apt-get $APT update
@@ -406,7 +388,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
-      - uses: Swatinem/rust-cache@v2
       - name: Install Linux display and Vulkan dependencies
         if: matrix.label == 'Linux'
         run: |
