@@ -29,6 +29,19 @@ use crate::venue::venue_name;
 pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
+/// Items waiting between a websocket thread and Ice.
+///
+/// The handoff is lossless: a full buffer stops the socket thread instead of
+/// dropping a tick or fill delta. That can delay reads and heartbeats while
+/// the UI is stalled; if the venue closes the quiet socket, the existing retry
+/// loop reconnects after the UI drains the backlog. Dropping the receiver
+/// wakes a blocked send and ends the thread.
+pub(crate) const FEED_BUFFER_CAPACITY: usize = 16;
+
+pub(crate) fn feed_channel<T>() -> (Sender<T>, Receiver<T>) {
+    smol::channel::bounded(FEED_BUFFER_CAPACITY)
+}
+
 /// Candles fetched when a market is opened, and when the chart is panned back
 /// past the oldest one it holds.
 const BACKFILL_BARS: i64 = 500;
@@ -2028,7 +2041,7 @@ where
     S: FnMut() -> Vec<Value> + Send + 'static,
     R: FnMut(Event<'_>) -> Option<T> + Send + 'static,
 {
-    let (sender, receiver) = smol::channel::unbounded();
+    let (sender, receiver) = feed_channel();
     std::thread::spawn(move || {
         while !sender.is_closed() {
             let Err(error) = pump(chain, &mut subscribe, &mut read, &sender) else {
@@ -4462,6 +4475,50 @@ pub(crate) mod probe {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hyperliquid_market_feed_has_a_finite_handoff() {
+        let receiver = hl_market_feed(Chain::Mainnet, tape_new());
+        assert_eq!(receiver.capacity(), Some(FEED_BUFFER_CAPACITY));
+    }
+
+    #[test]
+    fn hyperliquid_fill_feed_has_a_finite_handoff() {
+        let receiver = hl_fill_feed(Chain::Mainnet, String::new());
+        assert_eq!(receiver.capacity(), Some(FEED_BUFFER_CAPACITY));
+    }
+
+    #[test]
+    fn a_full_feed_buffer_blocks_until_the_receiver_is_dropped() {
+        let (sender, receiver) = feed_channel();
+        for item in 0..FEED_BUFFER_CAPACITY {
+            sender.send_blocking(item).expect("receiver is open");
+        }
+        assert!(sender.is_full());
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let worker_barrier = barrier.clone();
+        let (done, blocked) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            worker_barrier.wait();
+            done.send(sender.send_blocking(FEED_BUFFER_CAPACITY).is_err())
+                .expect("test is listening");
+        });
+        barrier.wait();
+
+        assert_eq!(
+            blocked.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout),
+            "the full buffer must backpressure its producer"
+        );
+        drop(receiver);
+        assert_eq!(
+            blocked.recv_timeout(Duration::from_secs(1)),
+            Ok(true),
+            "dropping the UI receiver must wake the blocked producer"
+        );
+        worker.join().expect("producer exits");
+    }
 
     /// The whole order path against the live test deployment: place, see it
     /// resting, cancel it, see it gone.
