@@ -291,6 +291,47 @@ test trading_a_close_is_the_reduce_only_order_it_says_it_is
   expect text "Closes your short"
   expect quote.margin ~= 0.0
 
+// The share row is a share of two different things, and which one it is, is
+// what CLOSE POSITION decided.
+//
+// Sized off the buying power, "50%" beside a reduce-only order was a number
+// about neither the account nor the position: `order_size` capped it at the
+// position, so on this fixture every share filled in the whole 30 and the row
+// silently stopped being a partial close at all. The percentages are asserted
+// against the fixture's own position rather than against typed-in figures, so
+// a fixture that changes size changes what this expects.
+test trading_a_partial_close_is_a_share_of_the_position
+  preset held
+  viewport 1660 900
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
+  target close = ticket/close-held
+  target half = ticket/share-50/root
+  target most = ticket/share-max/root
+  // Opening, and the same press is a share of what the account could put on.
+  // Both halves are asserted because a row that always sized off the position
+  // would pass the second half of this on its own.
+  expect !ticket_reduce
+  expect a11y half name "Set the size to 50% of your buying power"
+  click half
+  expect !empty(ticket_size)
+  expect ticket_size != fmt_size(position_held(positions, coin) * 0.5)
+  // Closing, and the row is now describing the position.
+  click close
+  expect ticket_reduce
+  expect a11y half name "Set the size to 50% of this position"
+  click half
+  expect ticket_size == fmt_size(position_held(positions, coin) * 0.5)
+  expect ticket_coins == fmt_size(position_held(positions, coin) * 0.5)
+  // Half of it is half of it: the order the panel prices is the half, not the
+  // whole capped back by `order_size`.
+  expect ticket_coins != fmt_size(position_held(positions, coin))
+  // MAX closes the position rather than the position floored to the step,
+  // because a close that leaves dust behind has not closed anything.
+  expect a11y most name "Set the size to all of this position"
+  click most
+  expect ticket_size == fmt_size(position_held(positions, coin))
+
 // An isolated position stands on the margin posted behind it and its cliff
 // falls out of its own entry and leverage. A cross position stands on the
 // whole account and dies when the account does. Quoting the isolated formula

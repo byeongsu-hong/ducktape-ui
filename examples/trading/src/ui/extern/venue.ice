@@ -43,6 +43,22 @@ extern crate::venue
   // here, for a mode and a leverage the order does not carry.
   pure margin_estimate_note() -> str
   pure order_pending(draft:Draft?) -> bool
+  // One act over every row of a panel, frozen on the press the same way one
+  // order is. The payload — the orders, or one closing draft per position —
+  // stays in Rust.
+  //
+  // Opaque, the way `Draft` is opaque to the panel that restates it: the
+  // confirmation reads it through one accessor per line rather than projecting
+  // it, so nothing on screen can be a field the send does not carry.
+  Sweep()
+  pure sweep_orders(venue:Venue, orders:[Order]) -> Sweep
+  pure sweep_positions(venue:Venue, positions:[Position], markets:[SymbolRow]) -> Sweep
+  pure sweep_refused(locked:str, count:i64, cancel:bool) -> str
+  pure sweep_label(count:i64, cancel:bool, refusal:str) -> str
+  pure sweep_pending(sweep:Sweep?) -> bool
+  pure sweep_heading(sweep:Sweep?) -> str
+  pure sweep_note(sweep:Sweep?) -> str
+  pure sweep_rows(sweep:Sweep?) -> [str]
   pure confirm_price(draft:Draft?) -> f64
   pure confirm_size(draft:Draft?) -> f64
   pure confirm_notional(draft:Draft?) -> f64

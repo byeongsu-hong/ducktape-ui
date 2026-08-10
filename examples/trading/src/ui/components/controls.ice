@@ -1,9 +1,12 @@
-component Share(label:str, share:f64)
+// A fraction on the face and the thing it is a fraction of in the name, because
+// the same face means the buying power on an opening ticket and the position on
+// a reduce-only one.
+component Share(label:str, share:f64, reduce:bool)
   emits
     pick(f64)
   button #root -> emit(pick, share)
     with
-      label=label
+      label=share_act(share, reduce)
       w=fill
       p=5.0
     active bg=raised text=muted r=3.0
@@ -15,6 +18,26 @@ component Share(label:str, share:f64)
         align-x=center
         font=digits
         @text-muted
+
+// The control that acts on every row of the panel it heads.
+//
+// Dead rather than absent when there is nothing to act on or no key to act
+// with, which is the rule the row-level CANCEL already follows: a control that
+// disappears is one a reader has to work out the absence of. The reason travels
+// in the name because a header row has no width for a sentence, and a control
+// dead for a reason nobody can read is what this app refuses to ship elsewhere.
+component Sweeper(name:str, count:i64, cancel:bool, refusal:str)
+  emits
+    pick
+  button #root -> emit(pick)
+    with
+      label=sweep_label(count, cancel, refusal)
+      p=5.0
+      disabled=!empty(refusal)
+    active bg=panel text=faint r=3.0
+    hovered bg=edge text=down r=3.0
+    disabled bg=panel text=edge r=3.0
+    text name size=9.0 tracking=0.9
 
 // One answer in a segmented row: the taken one lit, the rest offered.
 //

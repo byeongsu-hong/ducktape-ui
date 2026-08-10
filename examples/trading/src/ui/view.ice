@@ -595,6 +595,18 @@ view
                                       w=30.0
                                       font=digits
                                       @text-muted
+                                  // CLOSE POSITION, run down the list. It heads
+                                  // the panel it acts on for the same reason
+                                  // CANCEL ALL heads the orders: the rows it
+                                  // closes are the rows underneath it.
+                                  Sweeper #flatten-all
+                                    with
+                                      name="FLATTEN ALL"
+                                      count=len(positions)
+                                      cancel=false
+                                      refusal=flatten_all_refusal
+                                    events
+                                      pick -> flatten_all
                                 // The header carries the same widths, gap and right
                                 // padding as `PositionRow`, because the two are one
                                 // table drawn in two places and there is nothing
@@ -1002,6 +1014,18 @@ view
                               Label value="OPEN ORDERS"
                               space w=fill
                               Label value=fmt_count(len(orders))
+                              // Every row's own CANCEL, run down the list. It
+                              // heads the panel it acts on rather than sitting
+                              // in the ticket, because the rows it pulls are
+                              // the rows underneath it.
+                              Sweeper #cancel-all
+                                with
+                                  name="CANCEL ALL"
+                                  count=len(orders)
+                                  cancel=true
+                                  refusal=cancel_all_refusal
+                                events
+                                  pick -> cancel_all
                             rule horizontal thickness=1.0 color=edge
                             scroll #order-list
                               with
@@ -1038,7 +1062,7 @@ view
                                       now=clock
                                       refusal=cancel_refusal
                                     events
-                                      pick -> pick_symbol _
+                                      pick -> pick_resting _
                                       cancel -> cancel_order _ _
                         rule vertical thickness=1.0 color=edge
                         box #ticket-panel
@@ -1327,16 +1351,32 @@ view
                                         wrap=word
                                         @text-faint
                                 row gap=4.0 w=fill
-                                  Share label="25%" share=0.25
+                                  Share #share-25
+                                    with
+                                      label="25%"
+                                      share=0.25
+                                      reduce=ticket_reduce
                                     events
                                       pick -> size_share _
-                                  Share label="50%" share=0.5
+                                  Share #share-50
+                                    with
+                                      label="50%"
+                                      share=0.5
+                                      reduce=ticket_reduce
                                     events
                                       pick -> size_share _
-                                  Share label="75%" share=0.75
+                                  Share #share-75
+                                    with
+                                      label="75%"
+                                      share=0.75
+                                      reduce=ticket_reduce
                                     events
                                       pick -> size_share _
-                                  Share label="MAX" share=1.0
+                                  Share #share-max
+                                    with
+                                      label="MAX"
+                                      share=1.0
+                                      reduce=ticket_reduce
                                     events
                                       pick -> size_share _
                                 col gap=6.0 w=fill
@@ -2406,6 +2446,7 @@ view
                                     wrap=word
                                     @text-muted
                             rule horizontal thickness=1.0 color=edge
+                            rule horizontal thickness=1.0 color=edge
                             col gap=10.0 w=fill
                               Label value="FEED"
                               Stat name="ROUND TRIP" value=fmt_latency(latency)
@@ -2750,6 +2791,90 @@ view
                         text "SEND IT" size=11.0 tracking=1.1
                     none
                       space w=0.0
+          // The same confirmation, for an act with a list instead of a price.
+          // It lists the rows it froze rather than summarising them, because
+          // "7 orders" is a count and the reader is agreeing to seven
+          // particular orders — and the list is what makes a row that arrived
+          // between opening the panel and reading it visible as absent.
+          if sweep_pending(sweep)
+            box #sweep
+              with
+                w=460.0
+                p=24.0
+                r=8.0
+                border-w=1.0
+                bg=panel
+                border=edge
+              col gap=18.0 w=fill
+                col gap=8.0 w=fill
+                  row
+                    with
+                      w=fill
+                      gap=8.0
+                      align=center
+                    Label value=venue_name(venue)
+                    space w=fill
+                    box #sweep-kind
+                      with
+                        p=4.0
+                        r=3.0
+                        border-w=1.0
+                        border=edge
+                      text venue_kind(venue)
+                        with
+                          size=9.0
+                          tracking=1.0
+                          @text-fg
+                  text sweep_heading(sweep) #sweep-act
+                    with
+                      size=15.0
+                      @text-fg
+                      @font-bold
+                  text sweep_note(sweep) #sweep-note
+                    with
+                      size=11.0
+                      w=fill
+                      wrap=word
+                      @text-muted
+                col #sweep-rows gap=4.0 w=fill
+                  for row in sweep_rows(sweep)
+                    text row
+                      with
+                        size=11.0
+                        w=fill
+                        font=digits
+                        @text-muted
+                if !empty(error)
+                  text error #sweep-error
+                    with
+                      size=11.0
+                      w=fill
+                      wrap=word
+                      @text-down
+                row
+                  with
+                    gap=8.0
+                    w=fill
+                    align=center
+                  button #sweep-back -> confirm_dismissed
+                    with
+                      label="Go back without sending"
+                      p=11.0
+                      disabled=sending
+                    active bg=raised text=muted r=4.0
+                    hovered bg=edge text=fg r=4.0
+                    disabled bg=raised text=faint r=4.0
+                    text "GO BACK" size=11.0 tracking=1.1
+                  space w=fill
+                  button #sweep-send -> sweep_sent
+                    with
+                      label=sweep_heading(sweep)
+                      p=11.0
+                      disabled=sending
+                    active bg=fg text=fg_invert r=4.0
+                    hovered bg=fg text=fg_invert r=4.0
+                    disabled bg=raised text=faint r=4.0
+                    text "DO IT" size=11.0 tracking=1.1
           if gate
             box #gate
               with

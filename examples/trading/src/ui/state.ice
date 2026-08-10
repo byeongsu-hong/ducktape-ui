@@ -143,6 +143,11 @@ state
   // the reader would have agreed to neither. What is confirmed is what is
   // sent.
   confirm:Draft? = none
+  // The panel-wide act a confirmation is standing over, or nothing when none
+  // is. Frozen on the press for the reason `confirm` is: an order can fill and
+  // a position can move while the reader is reading the list, and a list
+  // re-read between the press and the send is a different list.
+  sweep:Sweep? = none
   // Whether the send is in flight, so the confirmation cannot be pressed twice
   // into two orders.
   sending = false
@@ -201,11 +206,17 @@ derived
   // refusal and nothing else: pulling an order asks nothing of the ticket, so
   // a half-typed size must not be a reason a resting order cannot be pulled.
   cancel_refusal = trade_refusal(venue, session, clock)
+  // Why the two panel-wide controls are dead, or nothing when they are live.
+  // The session's refusal outranks the panel's: a locked session cannot cancel
+  // one order or seven, and "no orders to cancel" said over a list with seven
+  // in it is a second, wrong reason.
+  cancel_all_refusal = sweep_refused(cancel_refusal, len(orders), true)
+  flatten_all_refusal = sweep_refused(cancel_refusal, len(positions), false)
   // Whether anything is standing on the app's one modal surface. Two things
   // can: the gate before an address is connected, and the confirmation before
   // an order goes. Neither may be reachable past the other, which is what one
   // backdrop guarantees and two stacked ones would not.
-  modal = gate || order_pending(confirm)
+  modal = gate || order_pending(confirm) || sweep_pending(sweep)
 
 // The custody panel in each state it can be drawn in. `clock` is the same
 // reading the view asks `session_can_trade` with, so a fixture is live or

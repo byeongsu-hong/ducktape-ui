@@ -44,6 +44,7 @@ extern crate::hyperliquid
   pure tp_refused(entry:f64, price:str, buy:bool) -> str
   pure sl_refused(entry:f64, price:str, buy:bool, liquidation:f64) -> str
   pure level_label(name:str, pnl:f64) -> str
+  pure share_act(share:f64, reduce:bool) -> str
   pure choice_label(act:str, shown:bool) -> str
   pure margin_note(cross:bool) -> str
   pure liquidation_gap(market:SymbolRow?, loaded:bool, cross:bool, banked:bool) -> str
@@ -88,13 +89,14 @@ extern crate::hyperliquid
   pure check_alerts(alerts:[Alert], tick:MarketTick) -> [Alert]
   pure waiting_alerts(alerts:[Alert]) -> i64
   pure drop_alert(alerts:[Alert], coin:str, price:f64) -> [Alert]
-  pure ticket_afford(account:Account?, price:f64, market:SymbolRow?, leverage:f64, share:f64, usd:bool) -> str
+  pure share_size(account:Account?, price:f64, market:SymbolRow?, leverage:f64, share:f64, usd:bool, reduce:bool, held:f64) -> str
   pure ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
   pure order_load(account:Account?, coin:str, size:str, buy:bool, market:SymbolRow?) -> str
   pure funding_day(market:SymbolRow?, price:f64, size:str, buy:bool) -> str
   pure market_label(market:SymbolRow) -> str
   pure group_note(market:SymbolRow) -> str
   pure order_label(order:Order) -> str
+  pure order_pick_label(order:Order) -> str
   pure order_cancel_label(order:Order) -> str
   pure fill_label(fill:Fill) -> str
   pure book_label(price:f64, buy:bool) -> str

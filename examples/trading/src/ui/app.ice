@@ -49,6 +49,7 @@ use "tests/reads.ice"
 use "tests/venues.ice"
 use "tests/custody.ice"
 use "tests/submit.ice"
+use "tests/sweep.ice"
 use "tests/render.ice"
 use "tests/export.ice"
 

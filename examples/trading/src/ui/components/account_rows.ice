@@ -224,20 +224,21 @@ component FillRow(fill:Fill)
 
 component OrderRow(order:Order, now:i64, refusal:str)
   emits
-    pick(str)
+    pick(Order)
     cancel(str, i64)
   // Two controls rather than one, because the row does two things and a reader
   // has to be able to reach the second without triggering the first. The wide
-  // one moves the terminal to this market; the narrow one pulls the order, and
-  // it is the only place in this app that names a resting order to an exchange.
+  // one moves the terminal to this market and loads the order back into the
+  // ticket; the narrow one pulls the order, and it is the only place in this
+  // app that names a resting order to an exchange.
   row #root
     with
       w=fill
       h=26.0
       align=center
-    button #row -> emit(pick, order.coin)
+    button #row -> emit(pick, order)
       with
-        label=order_label(order)
+        label=order_pick_label(order)
         w=fill
         p=0.0
       active bg=panel r=0.0
