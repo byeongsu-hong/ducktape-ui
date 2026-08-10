@@ -530,6 +530,9 @@ const ITEM_NOT_FOUND: i32 = -25300;
 const USER_CANCELED: i32 = -128;
 const AUTH_FAILED: i32 = -25293;
 const INTERACTION_NOT_ALLOWED: i32 = -25308;
+/// `errSecMissingEntitlement`. Reported by the owner's Mac, 2026-08-10, on the
+/// first real run of the envelope — see `described`.
+const MISSING_ENTITLEMENT: i32 = -34018;
 
 fn refusal(status: i32) -> Refusal {
     match status {
@@ -568,6 +571,39 @@ fn held(refusal: Refusal, failure: String) -> Result<Held, KeystoreError> {
     }
 }
 
+/// What `-34018` is actually about, which is not the call that got it.
+///
+/// **Reported from the owner's Mac, 2026-08-10, and the first thing a real Mac
+/// taught this seam.** The Secure Enclave and the data-protection keychain
+/// serve code that is signed and carries the keychain entitlements; a binary
+/// `cargo run` built and nobody signed has neither, so the Enclave declines to
+/// make it a key. The system's own words for that status are
+/// "missing entitlement", and `SecKey`'s failure prints the key it was asked
+/// for — a page of curve parameters and coordinates in front of a reader whose
+/// actual problem is one build step.
+///
+/// So this status alone gets a sentence about the *binary* rather than about
+/// the call. Everything else keeps the platform's own wording, because for
+/// everything else the platform's wording is the true one.
+const UNSIGNED: &str = "This build is not code-signed, and the Secure Enclave will not make a key \
+                        for an unsigned binary. Nothing has been stored. Build, sign and run in \
+                        one step with `scripts/sign-dev.sh -p trading-example`.";
+
+/// The sentence a failed platform call is owed.
+///
+/// It sits out here beside `refusal`, `unlock` and `held` for their reason: it
+/// is a judgement about a status code, it is what a person reads when the
+/// platform says no, and every arm of it has to be checkable on a machine with
+/// no Keychain to produce one. The system's own words arrive as a parameter
+/// rather than being looked up here, which is the whole of what keeps this
+/// function portable.
+fn described(status: i32, doing: &str, system: &str) -> String {
+    if status == MISSING_ENTITLEMENT {
+        return UNSIGNED.to_owned();
+    }
+    format!("{doing}: {system} ({status})")
+}
+
 /// macOS: one generic-password item per account, in the data-protection
 /// keychain, guarded so that reading it costs a Touch ID and so that the item
 /// never leaves this Mac.
@@ -595,8 +631,8 @@ fn held(refusal: Refusal, failure: String) -> Result<Held, KeystoreError> {
 #[cfg(target_os = "macos")]
 mod keychain {
     use super::{
-        Held, Keystore, KeystoreError, PlatformKeystore, Refusal, Secret, Unlock, held, refusal,
-        unlock,
+        Held, Keystore, KeystoreError, PlatformKeystore, Refusal, Secret, Unlock, described, held,
+        refusal, unlock,
     };
 
     use super::{Guard, PlatformWrap, Wrap};
@@ -638,8 +674,13 @@ mod keychain {
 
     /// The system's own wording for a status, next to what we were doing when
     /// it came back. A bare `-25308` in a log is a puzzle; the pair is a cause.
+    ///
+    /// The pairing itself is `described`, one level up and outside this `cfg`,
+    /// because one status is owed a different sentence and that judgement has
+    /// to be testable on a machine with no Keychain. This is the half only a
+    /// Mac can supply: the system's own words for the code.
     fn describe(status: i32, doing: &str) -> String {
-        format!("{doing}: {} ({status})", Error::from_code(status))
+        described(status, doing, &Error::from_code(status).to_string())
     }
 
     /// One item, built the way *this* code says it should be: the guard is made
@@ -670,6 +711,12 @@ mod keychain {
     /// run. Everything below is a claim about a machine this was not built on,
     /// so it lives here rather than in a pull request nobody reads twice.
     ///
+    /// **None of it is reachable from `cargo run`, which is what the first real
+    /// Mac reported.** Item 8 was the guess, and it was right: an unsigned
+    /// binary gets `-34018` from the data-protection keychain and from the
+    /// Enclave alike, so the list below is owed a *signed* build to run
+    /// against. `scripts/sign-dev.sh` is what makes one.
+    ///
     /// A macOS machine still has to demonstrate all of this:
     ///
     /// 1. The sheet appears at all, and it is Touch ID with a passcode fallback
@@ -699,12 +746,16 @@ mod keychain {
     ///    secret, then store again with the keychain made to refuse — and check
     ///    the previous secret still loads and the error says it was put back.
     ///    This is the one claim in `store` that no Linux test can reach.
-    /// 8. The entitlement question. The data-protection keychain expects a
-    ///    signed binary carrying `keychain-access-groups`; an unsigned
-    ///    `cargo run` may get `-34018` (`errSecMissingEntitlement`), which this
-    ///    file reports as a plain keychain failure. If that is what an ordinary
-    ///    `cargo run` hits, the fix belongs in the bundle's entitlements, not
-    ///    here.
+    /// 8. **Answered, 2026-08-10, by the owner's Mac.** An unsigned `cargo run`
+    ///    gets `-34018`, `errSecMissingEntitlement`, at the first Enclave key
+    ///    it asks for. The fix was never in this file: Apple's TN3137 makes
+    ///    Enclave access a data-protection keychain feature, and TN3125 makes
+    ///    `keychain-access-groups` a restricted entitlement no ad-hoc signature
+    ///    can carry — so what is missing is a `.app`, a provisioning profile
+    ///    and a real identity. `scripts/sign-dev.sh` assembles the three. What
+    ///    this file owed was the sentence, and `described` is it. What is still
+    ///    unknown: whether a *free* Apple ID's Personal Team may authorize the
+    ///    entitlement at all, which Apple does not document either way.
     /// 9. The item does not appear on a second Mac signed into the same iCloud
     ///    account, and does not survive Migration Assistant.
     impl Keystore for PlatformKeystore {
@@ -863,9 +914,14 @@ mod keychain {
             .set_location(Location::DataProtectionKeychain)
             .set_label(wrap_label(account))
             .set_access_control(wrap_guard()?);
+        // Through `describe` rather than printing the error: `SecKey`'s own
+        // `Display` renders the key it was asked to make — curve, coordinates
+        // and all — which is a page of noise in front of the one status that
+        // matters. This is the call the owner's Mac refused with `-34018`.
         SecKey::new(&options).map_err(|error| {
-            KeystoreError::new(format!(
-                "making the wrapping key in the Secure Enclave: {error}"
+            KeystoreError::new(describe(
+                error.code() as i32,
+                "making the wrapping key in the Secure Enclave",
             ))
         })
     }
@@ -893,7 +949,9 @@ mod keychain {
             })?;
             public
                 .encrypt_data(ENVELOPE, plain.expose())
-                .map_err(|error| KeystoreError::new(format!("sealing the secret: {error}")))
+                .map_err(|error| {
+                    KeystoreError::new(describe(error.code() as i32, "sealing the secret"))
+                })
         }
 
         fn open(&self, account: &str, sealed: &[u8]) -> Result<Held, KeystoreError> {
@@ -909,7 +967,7 @@ mod keychain {
                 // space the keychain does, so `refusal` sorts it.
                 Err(error) => held(
                     refusal(error.code() as i32),
-                    format!("opening the sealed secret: {error}"),
+                    describe(error.code() as i32, "opening the sealed secret"),
                 ),
             }
         }
@@ -2066,6 +2124,110 @@ mod tests {
             store.guards.borrow()[ACCOUNT],
             store.guards.borrow()[AGENT_ITEM],
             "the two kinds of item are not guarded the same way",
+        );
+    }
+
+    /// The system's own words for `-34018` are true and useless, so this one
+    /// status gets a sentence about the binary instead.
+    ///
+    /// **This is the first thing a real Mac taught this file**, 2026-08-10: the
+    /// owner pressed THIS IS MINE and read `OSStatus error -34018` followed by
+    /// a `SecKeyRef` dump — curve name, x and y coordinates — over a problem
+    /// whose entire fix is a build step. The dump is what the assertions rule
+    /// out; the command is what makes the sentence actionable rather than
+    /// merely honest.
+    ///
+    /// Every other status keeps the platform's wording, and the loop is the
+    /// half that keeps this fix from becoming a habit of rewriting the
+    /// platform: for everything else, the platform's words are the true ones.
+    #[test]
+    fn the_one_status_a_reader_can_fix_says_what_to_do_instead_of_naming_a_key() {
+        // The system's own wording for `-34018`, from `SecBase.h`.
+        const APPLES_WORDS: &str = "A required entitlement isn't present.";
+        let said = described(
+            MISSING_ENTITLEMENT,
+            "making the wrapping key in the Secure Enclave",
+            APPLES_WORDS,
+        );
+        assert!(
+            said.contains("not code-signed"),
+            "the reason the Enclave refused is not in the sentence: {said}",
+        );
+        assert!(
+            said.contains("scripts/sign-dev.sh -p trading-example"),
+            "the one command that fixes it is not in the sentence: {said}",
+        );
+        assert!(
+            said.contains("Nothing has been stored"),
+            "a refusal that does not say what became of the secret: {said}",
+        );
+        assert!(
+            !said.contains("-34018") && !said.contains(APPLES_WORDS),
+            "the raw status is back, which is the surfacing this replaced: {said}",
+        );
+
+        for status in [
+            ITEM_NOT_FOUND,
+            USER_CANCELED,
+            AUTH_FAILED,
+            INTERACTION_NOT_ALLOWED,
+            -25291,
+            -36,
+        ] {
+            assert_eq!(
+                described(status, "reading the secret", "the system's own words"),
+                format!("reading the secret: the system's own words ({status})"),
+                "status {status} lost the platform's wording, which was the true one",
+            );
+        }
+    }
+
+    /// A build that cannot seal files nothing at all.
+    ///
+    /// **The decision, and it is the whole point of the envelope surviving a
+    /// deployment gap**: an unsigned build has no Enclave key, and the answer
+    /// to that is a refusal naming the fix — never a wallet stored in the clear
+    /// because the machine could not manage the ciphertext. `store_sealed`
+    /// seals before it files, so the refusal is structural rather than a rule
+    /// somebody remembers; this pins it, because the shape that would undo it
+    /// is a one-line "seal if you can" and it would look like a kindness.
+    #[test]
+    fn a_build_that_cannot_seal_files_nothing_and_names_the_fix() {
+        /// The owner's Mac, 2026-08-10: `cargo run`, no signature, and an
+        /// Enclave that will not make a key for it.
+        struct Unsigned;
+
+        impl Wrap for Unsigned {
+            fn seal(&self, _account: &str, _plain: &Secret) -> Result<Vec<u8>, KeystoreError> {
+                Err(KeystoreError::new(described(
+                    MISSING_ENTITLEMENT,
+                    "making the wrapping key in the Secure Enclave",
+                    "A required entitlement isn't present.",
+                )))
+            }
+
+            fn open(&self, _account: &str, _sealed: &[u8]) -> Result<Held, KeystoreError> {
+                unreachable!("nothing was ever sealed, so nothing can be opened")
+            }
+        }
+
+        let store = Memory::new(Unlock::Platform);
+        let secret = Secret::new(b"the account's own thirty-two byte".to_vec());
+
+        let refused = store_sealed(&Unsigned, &store, ACCOUNT, &secret)
+            .expect_err("an unsealable build must not report a stored wallet");
+
+        assert!(
+            store.held.borrow().is_empty(),
+            "the wallet reached the keychain unsealed: {:?}",
+            store.held.borrow(),
+        );
+        assert!(
+            refused
+                .message
+                .contains("scripts/sign-dev.sh -p trading-example"),
+            "the refusal does not name the fix: {}",
+            refused.message,
         );
     }
 }

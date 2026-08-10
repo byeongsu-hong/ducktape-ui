@@ -97,6 +97,34 @@
 //!
 //! Until a person on a Mac reports those, the honest claim is that this seam's
 //! logic is tested and its platform half is compiled, reviewed and unrun.
+//!
+//! # What the first real Mac reported, 2026-08-10
+//!
+//! None of the sixteen. The owner pressed THIS IS MINE on a `cargo run` build
+//! and the app answered with `-34018` — `errSecMissingEntitlement` — from the
+//! Enclave, before a sheet ever had cause to appear. **That is the first yield
+//! of this list, and it is a deployment answer rather than a defect**: the
+//! Enclave and the data-protection keychain serve signed code, an unsigned
+//! binary is not signed code, and no arrangement of this file changes that.
+//!
+//! Three things came of it, and each is somewhere:
+//!
+//! - **The sentence.** `described` in `session.rs` turns that one status into
+//!   what a reader can act on, and every keychain and Enclave call in this app
+//!   composes its message there — the entitlement is not specific to the
+//!   wrapping key, so neither is the fix.
+//! - **The build.** `scripts/sign-dev.sh` wraps the binary in a `.app` with an
+//!   embedded provisioning profile and signs it. Apple documents why nothing
+//!   cheaper works: `keychain-access-groups` is a restricted entitlement, and
+//!   a restricted entitlement is honoured only when a profile authorizes it,
+//!   which an ad-hoc signature cannot arrange.
+//! - **The refusal.** An import on a build that cannot seal stores nothing —
+//!   `store_sealed` seals before it files, so there is no path that writes an
+//!   unsealed wallet — and says so with the command that fixes it. Held by
+//!   `a_build_that_cannot_seal_files_nothing_and_names_the_fix`.
+//!
+//! So the sixteen above are not merely unrun; they are owed a signed build to
+//! be run against, and every one of them is still open.
 
 #[cfg(test)]
 use std::collections::HashMap;

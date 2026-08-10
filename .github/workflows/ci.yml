@@ -360,6 +360,11 @@ jobs:
           rustup target add x86_64-pc-windows-gnu
       - run: scripts/a11y-smoke.sh
       - run: scripts/a11y-windows-check.sh
+      # The macOS signing helper only signs on a Mac, but the two judgements it
+      # makes — which certificate is a development identity, and what bundle
+      # identifier an App ID names — are string work, and getting either wrong
+      # costs a round trip through Apple's portal to find out.
+      - run: scripts/sign-dev.sh --self-test
 
   native-wgpu:
     name: Native WGPU (${{ matrix.label }})
