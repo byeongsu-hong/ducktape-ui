@@ -600,8 +600,29 @@ pub fn backup_refused(phrase: String, positions: Vec<i64>, given: Vec<String>) -
     }
 }
 
-/// Derive the account a phrase names, and hold it for confirmation.
+/// Derive the account a typed phrase names, and hold it for confirmation.
 ///
+/// Both arguments arrive as `ui_lang_runtime::Secret`, which is the only
+/// reading of those buffers that exists anywhere in the program: not clonable,
+/// redacted when printed, borrowed once here, and wiped when this function
+/// returns.
+pub async fn read_wallet(
+    phrase: ui_lang_runtime::Secret,
+    passphrase: ui_lang_runtime::Secret,
+) -> Result<Entry, CustodyFault> {
+    read_phrase(phrase.expose(), passphrase.expose()).await
+}
+
+/// The same derivation over a phrase this app generated and put on the screen.
+///
+/// It takes a `String` because that is what a phrase on screen is. Keeping it
+/// separate rather than widening `read_wallet` is the point: `secret` is the
+/// type no value can be turned into, and a second entry point is what that
+/// costs. A made phrase has no passphrase — the owner never chose one.
+pub async fn read_made_wallet(phrase: String) -> Result<Entry, CustodyFault> {
+    read_phrase(&phrase, "").await
+}
+
 /// Nothing is stored and no sheet is raised: this answers an address and
 /// waits. A phrase with a bad checksum, an unknown word or a passphrase this
 /// app will not normalise is refused here, where the owner can still see what
@@ -609,12 +630,14 @@ pub fn backup_refused(phrase: String, positions: Vec<i64>, given: Vec<String>) -
 ///
 /// The alternate input is a raw private key, because both venues' SDKs take one
 /// and not every owner holds a phrase — the same 32 bytes reached by a shorter
-/// road, and stored and wiped identically.
-pub async fn read_wallet(phrase: String, passphrase: String) -> Result<Entry, CustodyFault> {
-    let derived = if looks_like_a_key(&phrase) {
+/// road, and stored and wiped identically. Which of the two it is stays a
+/// question for this side: `looks_like_a_key` reads the borrow, so no fact
+/// about the text's shape ever needs a name in Ice, and the box stays one box.
+async fn read_phrase(phrase: &str, passphrase: &str) -> Result<Entry, CustodyFault> {
+    let derived = if looks_like_a_key(phrase) {
         from_raw_key(phrase.trim())
     } else {
-        crate::seed::seed_from_phrase(&phrase, &passphrase)
+        crate::seed::seed_from_phrase(phrase, passphrase)
             .and_then(|seed| crate::seed::ethereum_key(&seed))
             .map_err(|error| error.message())
             .and_then(|mut key| {

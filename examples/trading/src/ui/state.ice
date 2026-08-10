@@ -164,24 +164,18 @@ state
   // Keeping the phrase's field away from the address field is structural
   // rather than careful: there is no box to paste it into by mistake.
   import_open = false
-  // ponytail: the phrase transits state while it is being typed, because Ice
-  // has no write-only input. It is held for one press — `check_phrase` clears
-  // both fields the instant it has derived — no preset ever sets it, and the
-  // upgrade is an input the language does not bind to state.
-  //
-  // Making a wallet makes that ceiling worse rather than better, and it is
-  // worth saying so plainly: a phrase the app *shows* has to be in state to be
-  // drawn, so `create_phrase` below is the same exposure with a longer life —
-  // as long as it takes somebody to write twenty-four words down. Every
-  // mitigation still holds (one moment, cleared the instant it has derived, no
-  // preset ever sets one) and none of them is the fix. The fix is the
-  // write-only input the language does not have, and this is the second feature
-  // asking for it.
-  import_phrase = ""
-  import_passphrase = ""
   // A phrase this app just made, held only while the owner writes it down, and
   // the positions it will ask them to read back. Both go the moment the backup
   // is confirmed and the derivation has run.
+  //
+  // ponytail: this one is still state, and it has to be. A phrase the app
+  // *shows* has to be a value to be drawn, and Ice has a secret input, not a
+  // secret display. The typed half of this step no longer transits state at all
+  // — see `secret import_phrase` below — but nothing about that reaches here.
+  // What holds this down is what always held it down: one moment, cleared the
+  // instant the derivation has run, and no preset ever sets it. The upgrade is
+  // a display that renders from a buffer Ice cannot read, which is a larger
+  // feature than the input was and is not filed as a blocker on anything.
   create_phrase = ""
   create_positions:[i64] = []
   // Whether the words have been dismissed. Two moments rather than one: a
@@ -210,6 +204,21 @@ state
   // without this the panel draws the same thing for "you cancelled" and "you
   // have not asked".
   unlock_note = ""
+
+// What the owner types on the import door, held by the runtime rather than by
+// this app. These are not state and cannot become state: nothing here can be
+// read, cloned, set by a preset, written into a capture, or named by a test's
+// `expect`. The two questions the screen needs — is the box empty, how long is
+// it — are the two questions the language allows, and both are already drawn on
+// the field as one bullet per character. The text itself crosses to Rust once,
+// at CHECK, into `read_wallet`'s `secret` parameters, and is wiped when that
+// call returns.
+//
+// One box takes either a recovery phrase or a raw private key. Which it is
+// stays a question for Rust: `read_wallet` shapes-detects it on the borrow it
+// was handed, so no fact about the shape ever needs a name on this side.
+secret import_phrase
+secret import_passphrase
 
 derived
   visible = filter_symbols(symbols, query, coin)

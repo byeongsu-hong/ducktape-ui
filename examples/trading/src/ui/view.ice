@@ -2834,14 +2834,12 @@ view
                       with
                         label="Recovery phrase, or a private key"
                         hint="abandon abandon abandon…"
-                        change=import_typed
                         text-size=12.0
                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                     input "" #import-passphrase <-> import_passphrase
                       with
                         label="Passphrase, if the wallet has one"
                         hint="usually empty"
-                        change=import_passphrase_typed
                         text-size=12.0
                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                     text "A passphrase makes different words into a different account. If your wallet asked for one, it belongs here."
