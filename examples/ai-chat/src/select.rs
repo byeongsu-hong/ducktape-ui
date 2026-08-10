@@ -13,9 +13,8 @@
 //! copy and select-all.
 
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -28,46 +27,90 @@ use iced::advanced::{
 };
 use iced::alignment;
 use iced::widget::markdown;
-use iced::{Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Vector, keyboard};
+use iced::{Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Vector, keyboard};
 
 // The one selection the window is showing, wherever it is.
 //
-// It has to live outside the widgets because it does not live inside one: an
-// answer is drawn as a column of blocks, each its own widget with its own
-// paragraph, and dragging from a sentence through a code block into a list is
-// one selection across several of them. Each block reads this to find its own
-// share of it, and only the block under the pointer writes to it.
+// It has to live outside the widgets because it does not live inside one. A
+// transcript is a column of them — a question, then the blocks an answer is
+// drawn as — and dragging from the question into the answer is one selection
+// across several. Each reads this to find its own share of it, and only the one
+// under the pointer writes to it.
 //
-// One at a time, everywhere — including outside these blocks. Plain text in
-// this window is selectable too, and it and this agree on nothing except the
+// One at a time, everywhere — including outside these. Plain text in this
+// window is selectable too, and it and this agree on nothing except the
 // runtime's token: whoever claimed last has the selection, and the other goes
 // quiet without having to be told.
 thread_local! {
     static SELECTION: RefCell<Option<Selection>> = const { RefCell::new(None) };
-    /// What each block contributed to the copy being assembled. Cleared by the
-    /// block that finishes it.
-    static PARTS: RefCell<BTreeMap<usize, Part>> = const {
+    /// Where each of them was last drawn. Kept only while there is a selection
+    /// to order — an idle transcript pays nothing for this.
+    static PLACED: RefCell<HashMap<u64, Rectangle>> = RefCell::new(HashMap::new());
+    /// The topmost and bottommost of those, so a drag that leaves the
+    /// transcript knows which of them it left by. Recomputed after a layout
+    /// moves anything rather than scanned by every widget that asks.
+    static EDGES: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
+    /// What each contributed to the copy being assembled, in the order they are
+    /// drawn. Cleared by the one that finishes it.
+    static PARTS: RefCell<BTreeMap<Reading, Part>> = const {
         RefCell::new(BTreeMap::new())
     };
 }
 
-/// Groups are handed out per answer. The lowest few are reserved for the reply
-/// still being written, which is rebuilt from nothing on every frame and so
-/// cannot be given one.
-const LANES: u64 = 8;
-static NEXT_GROUP: AtomicU64 = AtomicU64::new(LANES);
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// One block's share of a copy, and how it follows the block before it.
+/// Where something sits on the page, to a sixty-fourth of a pixel: down the
+/// page first, then across it. Reading order, which is the order a selection
+/// runs in and the order a copy is put back together in.
+type Reading = (i64, i64);
+
+fn reading(rect: Rectangle) -> Reading {
+    ((rect.y * 64.0) as i64, (rect.x * 64.0) as i64)
+}
+
+/// Note where this one is, and forget the edges it may have moved.
+fn place(id: u64, rect: Rectangle) {
+    let moved = PLACED.with_borrow_mut(|placed| placed.insert(id, rect) != Some(rect));
+    if moved {
+        EDGES.set(None);
+    }
+}
+
+fn placed(id: u64) -> Option<Rectangle> {
+    PLACED.with_borrow(|placed| placed.get(&id).copied())
+}
+
+/// The top of the topmost and the bottom of the bottommost, so a drag above or
+/// below everything can be claimed by the one it left by.
+fn edges() -> Option<(f32, f32)> {
+    if let Some(edges) = EDGES.get() {
+        return Some(edges);
+    }
+    let edges = PLACED.with_borrow(|placed| {
+        placed
+            .values()
+            .fold(None, |edges: Option<(f32, f32)>, rect| {
+                Some(match edges {
+                    None => (rect.y, rect.y + rect.height),
+                    Some((top, bottom)) => (top.min(rect.y), bottom.max(rect.y + rect.height)),
+                })
+            })
+    });
+    EDGES.set(edges);
+    edges
+}
+
+/// One share of a copy, and how it follows the one before it.
 #[derive(Debug, PartialEq, Eq)]
 struct Part {
     text: String,
     /// A line of a code block, which follows the line above it by a newline.
-    /// Everything else is a block of the document and follows by a blank line.
+    /// Everything else follows by a blank line.
     tight: bool,
 }
 
-/// The blocks of a copy, in the order they are drawn.
-fn assemble(parts: &BTreeMap<usize, Part>) -> String {
+/// The shares of a copy, in the order they are drawn.
+fn assemble(parts: &BTreeMap<Reading, Part>) -> String {
     let mut whole = String::new();
     for part in parts.values() {
         if !whole.is_empty() {
@@ -81,54 +124,64 @@ fn assemble(parts: &BTreeMap<usize, Part>) -> String {
     whole
 }
 
-/// Where one end of a selection sits: which block, and how far into it.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+/// Where one end of a selection sits: in which of them, and how far into it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Place {
-    block: usize,
+    id: u64,
     offset: usize,
+}
+
+impl Place {
+    /// Where this end falls in reading order. Nothing, when what it names is no
+    /// longer drawn.
+    fn at(&self) -> Option<(Reading, usize)> {
+        Some((reading(placed(self.id)?), self.offset))
+    }
 }
 
 #[derive(Debug)]
 struct Selection {
     /// What holds the window's one selection. Plain text takes the same kind
-    /// of token, so a drag over a prompt puts this one out.
+    /// of token, so a drag over one puts this one out.
     token: u64,
-    group: u64,
     anchor: Place,
     focus: Place,
     dragging: bool,
 }
 
 impl Selection {
-    fn ends(&self) -> (Place, Place) {
-        (self.anchor.min(self.focus), self.anchor.max(self.focus))
+    /// The two ends in reading order, or nothing while either is undrawn.
+    fn ends(&self) -> Option<(Place, Place)> {
+        let (anchor, focus) = (self.anchor.at()?, self.focus.at()?);
+        Some(if anchor <= focus {
+            (self.anchor, self.focus)
+        } else {
+            (self.focus, self.anchor)
+        })
     }
 
-    /// This block's share of the selection: all of it in the middle, part of it
+    /// This one's share of the selection: all of it in the middle, part of it
     /// at either end, and nothing at all outside.
-    fn within(&self, group: u64, block: usize, len: usize) -> Option<Range<usize>> {
-        if self.group != group || !selection::holds(self.token) {
+    fn within(&self, id: u64, len: usize) -> Option<Range<usize>> {
+        if !selection::holds(self.token) {
             return None;
         }
 
-        let (start, end) = self.ends();
-        if block < start.block || block > end.block {
+        let (start, end) = self.ends()?;
+        let mine = reading(placed(id)?);
+        if mine < reading(placed(start.id)?) || mine > reading(placed(end.id)?) {
             return None;
         }
 
-        let from = if block == start.block {
-            start.offset
-        } else {
-            0
-        };
-        let to = if block == end.block { end.offset } else { len };
+        let from = if id == start.id { start.offset } else { 0 };
+        let to = if id == end.id { end.offset } else { len };
         (from < to && to <= len).then_some(from..to)
     }
 }
 
-/// Read this block's share of whatever is selected.
-fn selected(group: u64, block: usize, len: usize) -> Option<Range<usize>> {
-    SELECTION.with_borrow(|selection| selection.as_ref()?.within(group, block, len))
+/// Read this one's share of whatever is selected.
+fn selected(id: u64, len: usize) -> Option<Range<usize>> {
+    SELECTION.with_borrow(|selection| selection.as_ref()?.within(id, len))
 }
 
 type Renderer = iced::Renderer;
@@ -142,65 +195,57 @@ const HIGHLIGHT_ALPHA: f32 = 0.28;
 
 /// One block of an answer: its spans, drawn and selectable.
 pub struct Selectable {
-    /// Which answer this block belongs to, and where it sits in it. A selection
-    /// is one range across the group, so a block needs both to know its share.
-    group: u64,
-    block: usize,
-    /// A line of a code block rather than a block of the document. It changes
-    /// nothing about how it is drawn or selected — only how a copy that crosses
-    /// it is put back together.
+    /// A line of a code block rather than a block of prose. It changes nothing
+    /// about how it is drawn or selected — only how a copy that crosses it is
+    /// put back together.
     tight: bool,
-    /// How many blocks the answer has, shared with every one of them. Only the
-    /// first and the last need it, to answer for a drag that has left the
-    /// answer at the top or the bottom.
-    blocks: Rc<Cell<usize>>,
     spans: Arc<[Line]>,
-    /// The block as one string, for the clipboard and for the byte offsets a
-    /// selection is kept in. Built on demand: this widget is constructed again
-    /// for every call the runtime makes into the row, and all but the few that
-    /// touch a live selection never need it.
+    /// The whole of it as one string, for the clipboard and for the byte
+    /// offsets a selection is kept in. Built on demand: this widget is
+    /// constructed again for every call the runtime makes into the row, and all
+    /// but the few that touch a live selection never need it.
     plain: OnceCell<String>,
     size: Pixels,
+    leading: LineHeight,
 }
 
-/// One block of rendered Markdown, as an element that can be dragged across.
-pub fn selectable(
-    group: u64,
-    block: usize,
-    tight: bool,
-    blocks: Rc<Cell<usize>>,
-    spans: Arc<[Line]>,
-    size: Pixels,
-) -> Element<'static, String> {
+/// One run of text a pointer can be dragged across, and out of into the next.
+pub fn selectable(tight: bool, spans: Arc<[Line]>, size: Pixels) -> Element<'static, String> {
     Element::new(Selectable {
-        group,
-        block,
         tight,
-        blocks,
         spans,
         plain: OnceCell::new(),
         size,
+        // What iced's own rich text sets a Markdown document in.
+        leading: LineHeight::default(),
     })
 }
 
-/// A fresh group, for an answer that will be drawn again as it stands.
-pub fn group() -> u64 {
-    NEXT_GROUP.fetch_add(1, Ordering::Relaxed)
-}
-
-/// The group of one surface of the reply still being written.
+/// One run of plain text, for the parts of a transcript that are not Markdown.
 ///
-/// A live reply is drawn by more than one surface — what the model is working
-/// out, and what it is answering with — and each is rebuilt from nothing every
-/// frame, so none can hold an identity of its own. The lane names them apart
-/// instead: there is only ever one of each, so its number is identity enough.
-/// Two surfaces sharing a lane share a selection, and a drag in one lands in
-/// the other.
-pub fn live(lane: i64) -> u64 {
-    lane.rem_euclid(LANES as i64) as u64
+/// `leading` is asked for rather than assumed, because this stands where an Ice
+/// `text` node stood and a line taller or shorter than that one moves every row
+/// under it.
+pub fn selectable_text(
+    text: String,
+    size: f64,
+    leading: f64,
+    color: Color,
+) -> Element<'static, String> {
+    Element::new(Selectable {
+        tight: false,
+        spans: vec![Span::new(text).color(color)].into(),
+        plain: OnceCell::new(),
+        size: Pixels(size as f32),
+        leading: LineHeight::Relative(leading as f32),
+    })
 }
 
 struct State {
+    /// What names this one in a selection. Minted when the runtime first makes
+    /// room for it and kept for as long as it has a place in the tree, so the
+    /// end of a drag still names the same words a frame later.
+    id: u64,
     paragraph: Para,
     shaped: Vec<Line>,
     hovered_link: Option<usize>,
@@ -208,27 +253,27 @@ struct State {
 }
 
 impl Selectable {
-    /// This block's share of the selection.
-    fn selected(&self) -> Option<Range<usize>> {
-        selected(self.group, self.block, self.plain().len())
+    /// This one's share of the selection.
+    fn selected(&self, id: u64) -> Option<Range<usize>> {
+        selected(id, self.plain().len())
     }
 
-    /// Whether the answer this block belongs to is the one holding the
-    /// selection — true for every block of it, selected or not.
-    fn holds_selection(&self) -> bool {
+    /// Whether there is a selection at all, anywhere this can reach.
+    fn holds_selection() -> bool {
         SELECTION.with_borrow(|held| {
             held.as_ref()
-                .is_some_and(|held| held.group == self.group && selection::holds(held.token))
+                .is_some_and(|held| selection::holds(held.token))
         })
     }
 
-    /// Whether this is the last block the selection reaches, and so the one
-    /// that sends an assembled copy.
-    fn last_of_selection(&self) -> bool {
+    /// Whether this is where the selection ends, and so the one that sends an
+    /// assembled copy.
+    fn last_of_selection(id: u64) -> bool {
         SELECTION.with_borrow(|selection| {
             selection
                 .as_ref()
-                .is_some_and(|selection| selection.ends().1.block == self.block)
+                .and_then(Selection::ends)
+                .is_some_and(|(_, end)| end.id == id)
         })
     }
 
@@ -250,7 +295,7 @@ impl Selectable {
             content: spans,
             bounds,
             size: self.size,
-            line_height: LineHeight::default(),
+            line_height: self.leading,
             font,
             align_x: text::Alignment::Default,
             align_y: alignment::Vertical::Top,
@@ -267,6 +312,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
 
     fn state(&self) -> tree::State {
         tree::State::new(State {
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             paragraph: Para::default(),
             shaped: Vec::new(),
             hovered_link: None,
@@ -331,6 +377,10 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
         _viewport: &Rectangle,
     ) {
         let state: &mut State = tree.state.downcast_mut();
+        let id = state.id;
+        // Where this one is, so the ends of a selection can be told apart by
+        // where they sit rather than by a number nobody outside an answer has.
+        place(id, layout.bounds());
 
         let hovered = cursor.position_in(layout.bounds()).and_then(|position| {
             let span = state.paragraph.hit_span(position)?;
@@ -354,13 +404,9 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                 let Some(offset) = hit(&state.paragraph, position, false) else {
                     return;
                 };
-                let at = Place {
-                    block: self.block,
-                    offset,
-                };
+                let at = Place { id, offset };
                 SELECTION.replace(Some(Selection {
                     token: selection::claim(),
-                    group: self.group,
                     anchor: at,
                     focus: at,
                     dragging: true,
@@ -376,21 +422,22 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                     return;
                 };
                 let bounds = layout.bounds();
-                // Above the answer belongs to its first block and below it to
-                // its last, so a drag that overshoots the whole answer still
+                // Above everything belongs to the topmost and below it to the
+                // bottommost, so a drag that overshoots the transcript still
                 // takes it to the end rather than stopping where the pointer
                 // left the words.
                 let above = position.y < bounds.y;
                 let below = position.y >= bounds.y + bounds.height;
+                let (top, bottom) = edges().unwrap_or((bounds.y, bounds.y + bounds.height));
                 let mine = (!above && !below)
-                    || (above && self.block == 0)
-                    || (below && self.block + 1 == self.blocks.get());
+                    || (above && bounds.y <= top)
+                    || (below && bounds.y + bounds.height >= bottom);
 
                 let moved = SELECTION.with_borrow_mut(|selection| {
                     let Some(selection) = selection.as_mut() else {
                         return false;
                     };
-                    if !selection.dragging || selection.group != self.group || !mine {
+                    if !selection.dragging || !mine {
                         return false;
                     }
 
@@ -407,10 +454,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                         };
                         offset
                     };
-                    let at = Place {
-                        block: self.block,
-                        offset,
-                    };
+                    let at = Place { id, offset };
                     (selection.focus != at)
                         .then(|| selection.focus = at)
                         .is_some()
@@ -448,15 +492,17 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                 // of the answer to be handed the key leaves it covering all of
                 // them. Only the group already holding a selection answers, so
                 // this reaches the answer being read rather than the transcript.
-                Some('a') if self.holds_selection() => {
+                Some('a') if Self::holds_selection() => {
                     SELECTION.with_borrow_mut(|selection| {
-                        if let Some(selection) = selection.as_mut() {
+                        if let Some(selection) = selection.as_mut()
+                            && let Some((start, _)) = selection.ends()
+                        {
                             selection.anchor = Place {
-                                block: 0,
+                                id: start.id,
                                 offset: 0,
                             };
                             selection.focus = Place {
-                                block: self.block,
+                                id,
                                 offset: self.plain().len(),
                             };
                         }
@@ -475,12 +521,12 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                 // same handler a clicked link and a Copy button use, which is
                 // also what puts "Copied" under the composer.
                 Some('c') => {
-                    let Some(range) = self.selected() else {
+                    let Some(range) = self.selected(id) else {
                         return;
                     };
                     PARTS.with_borrow_mut(|parts| {
                         parts.insert(
-                            self.block,
+                            reading(layout.bounds()),
                             Part {
                                 text: self.plain()[range].to_owned(),
                                 tight: self.tight,
@@ -489,7 +535,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                     });
                     shell.capture_event();
 
-                    if self.last_of_selection() {
+                    if Self::last_of_selection(id) {
                         let whole = PARTS.with_borrow_mut(|parts| {
                             let whole = assemble(parts);
                             parts.clear();
@@ -503,7 +549,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(keyboard::key::Named::Escape),
                 ..
-            }) if self.holds_selection() => {
+            }) if Self::holds_selection() => {
                 selection::clear();
                 SELECTION.replace(None);
                 shell.request_redraw();
@@ -622,7 +668,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
         // of the range and shaped from the same inputs, because a span's bounds
         // are the only geometry a paragraph will give up — there is no asking
         // one where a byte landed.
-        if let Some(range) = self.selected() {
+        if let Some(range) = self.selected(state.id) {
             let font = text::Renderer::default_font(renderer);
             let (split, selected) = split(&self.spans, range);
             let paragraph = Para::with_spans(self.text(&split, state.paragraph.bounds(), font));
@@ -752,18 +798,33 @@ mod tests {
         );
     }
 
+    /// One run of text drawn down the page, in the order they are read.
+    fn down_the_page(ids: [u64; 5]) -> [u64; 5] {
+        for (row, id) in ids.iter().enumerate() {
+            place(
+                *id,
+                Rectangle {
+                    x: 0.0,
+                    y: row as f32 * 20.0,
+                    width: 100.0,
+                    height: 10.0,
+                },
+            );
+        }
+        ids
+    }
+
     /// Both ends of one selection, under a token the caller already holds:
     /// taking a fresh one here would put out the selection built beside it.
-    fn across(token: u64, anchor: (usize, usize), focus: (usize, usize)) -> Selection {
+    fn across(token: u64, anchor: (u64, usize), focus: (u64, usize)) -> Selection {
         Selection {
             token,
-            group: 7,
             anchor: Place {
-                block: anchor.0,
+                id: anchor.0,
                 offset: anchor.1,
             },
             focus: Place {
-                block: focus.0,
+                id: focus.0,
                 offset: focus.1,
             },
             dragging: false,
@@ -787,10 +848,10 @@ mod tests {
     #[test]
     fn a_copy_joins_prose_by_a_blank_line_and_code_by_a_new_one() {
         let parts = BTreeMap::from([
-            (0, part("a paragraph", false)),
-            (1, part("let a = 1;", false)),
-            (2, part("let b = 2;", true)),
-            (3, part("and prose again", false)),
+            ((0, 0), part("a paragraph", false)),
+            ((20, 0), part("let a = 1;", false)),
+            ((40, 0), part("let b = 2;", true)),
+            ((60, 0), part("and prose again", false)),
         ]);
 
         assert_eq!(
@@ -802,44 +863,42 @@ mod tests {
     /// One block is itself, with nothing joined to it.
     #[test]
     fn a_copy_of_one_block_is_that_block() {
-        let parts = BTreeMap::from([(2, part("just this", true))]);
+        let parts = BTreeMap::from([((40, 0), part("just this", true))]);
 
         assert_eq!(assemble(&parts), "just this");
     }
 
-    /// A selection belongs to the answer, not to the block it started in: the
-    /// block it started in keeps its tail, the blocks between are taken whole,
-    /// and the block it ended in keeps its head. Getting this wrong is a drag
-    /// that stops at the first paragraph — which is what it used to do.
+    /// A selection belongs to the transcript, not to the run of text it started
+    /// in: that run keeps its tail, the runs between are taken whole, and the
+    /// run it ended in keeps its head. Which run is which is read off the page
+    /// — down it first, then across — because a question and an answer are
+    /// drawn by different things and share no numbering between them.
     #[test]
-    fn a_selection_across_blocks_gives_each_one_its_own_share() {
-        let selection = across(selection::claim(), (1, 4), (3, 2));
+    fn a_selection_across_runs_gives_each_one_its_own_share() {
+        let [a, b, c, d, e] = down_the_page([11, 12, 13, 14, 15]);
+        let selection = across(selection::claim(), (b, 4), (d, 2));
 
-        assert_eq!(selection.within(7, 0, 10), None, "above it, nothing");
-        assert_eq!(
-            selection.within(7, 1, 10),
-            Some(4..10),
-            "from where it began"
-        );
-        assert_eq!(selection.within(7, 2, 10), Some(0..10), "then whole blocks");
-        assert_eq!(selection.within(7, 3, 10), Some(0..2), "to where it ended");
-        assert_eq!(selection.within(7, 4, 10), None, "below it, nothing");
-        assert_eq!(selection.within(8, 2, 10), None, "and never another answer");
+        assert_eq!(selection.within(a, 10), None, "above it, nothing");
+        assert_eq!(selection.within(b, 10), Some(4..10), "from where it began");
+        assert_eq!(selection.within(c, 10), Some(0..10), "then whole runs");
+        assert_eq!(selection.within(d, 10), Some(0..2), "to where it ended");
+        assert_eq!(selection.within(e, 10), None, "below it, nothing");
     }
 
     /// Dragged upwards it is the same selection, because which end is the
     /// anchor is not something the highlight can see.
     #[test]
     fn a_selection_dragged_upwards_covers_what_one_dragged_down_would() {
+        let [a, b, c, d, e] = down_the_page([21, 22, 23, 24, 25]);
         let token = selection::claim();
-        let down = across(token, (1, 4), (3, 2));
-        let up = across(token, (3, 2), (1, 4));
+        let down = across(token, (b, 4), (d, 2));
+        let up = across(token, (d, 2), (b, 4));
 
-        for block in 0..5 {
+        for run in [a, b, c, d, e] {
             assert_eq!(
-                up.within(7, block, 10),
-                down.within(7, block, 10),
-                "block {block} is the same either way round"
+                up.within(run, 10),
+                down.within(run, 10),
+                "run {run} is the same either way round"
             );
         }
     }
