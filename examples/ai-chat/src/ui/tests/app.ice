@@ -336,3 +336,57 @@ test dragging_across_an_answer_selects_past_the_block_it_started_in
   // And the button beside it still takes the whole of the answer.
   click copy
   expect copied == "The document is parsed once.\n\nHold the parsed document and extend it as it grows.\n\nThe view rebuilds one row."
+
+// A window shows one selection. A prompt is plain text, which the runtime
+// makes selectable; an answer is rendered Markdown, which `src/select.rs` does.
+// They keep their own anchors and cursors and agree on nothing except which of
+// them holds it — so starting a drag in either has to put the other out.
+//
+// Copying is what makes that observable: an answer's selection leaves by the
+// clipboard handler, so the answer answering a key it should have gone quiet
+// for shows up as `copied` changing when it must not.
+test starting_a_selection_takes_it_from_wherever_it_was
+  preset one_answer
+  viewport 920 400
+  target ask = #shell/app/transcript/rows/key(-30)/prompt(-30)/root/body
+  target ask_copy = #shell/app/transcript/rows/key(-30)/prompt(-30)/root/copy
+  target answer = #shell/app/transcript/rows/key(-31)/answer(-31)/root
+  target body = answer/body
+  target copy = answer/copy
+
+  // The answer takes the selection, and answers for it.
+  press body
+  move copy
+  release
+  chord control "c"
+  expect copied == "nd extend it as it grows.\n\nThe view rebuilds one row."
+
+  // Something else on the clipboard, so the answer answering again would show.
+  click ask_copy
+  expect copied == "How does an answer grow?"
+
+  // The prompt takes it away, and the answer is quiet.
+  press ask
+  move ask_copy
+  release
+  capture moved
+  chord control "c"
+  expect copied == "How does an answer grow?"
+
+// A reply being written is drawn by two surfaces — what the model is working
+// out, and what it is answering with. Both are rebuilt from nothing on every
+// frame, so neither can hold an identity of its own, and a selection in one is
+// told apart from a selection in the other by which surface it is and nothing
+// else. Sharing that made a drag over the working-out highlight the answer
+// instead, at the same offsets, in the other box entirely.
+test dragging_over_the_working_out_selects_it_and_not_the_reply
+  preset steering
+  viewport 920 800
+  target thinking = #shell/app/transcript/live/live-work/live-thinking
+
+  press thinking
+  move 300.0 330.0
+  release
+  capture working_out
+  chord control "c"
+  expect copied == "hecking the"

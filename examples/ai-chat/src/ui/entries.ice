@@ -55,7 +55,7 @@ component Prompt(body:str) -> str
         border-w=1.0
         r=14.0
       col gap=4.0
-        text body wrap=word @body
+        text body #body wrap=word @body
         row w=fill
           space w=fill h=1.0
           button "Copy" #copy @ghost_action -> emit(body)

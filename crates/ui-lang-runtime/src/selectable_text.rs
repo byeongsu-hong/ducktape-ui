@@ -9,10 +9,8 @@ use iced::keyboard;
 use iced::widget::{Text, text};
 use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
 use std::ops::Range;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-static NEXT_SELECTION: AtomicU64 = AtomicU64::new(1);
-static ACTIVE_SELECTION: AtomicU64 = AtomicU64::new(0);
+use crate::selection;
 
 /// Wraps plain text with native drag selection and clipboard shortcuts.
 pub fn selectable_text<'a, Theme, Renderer>(
@@ -44,7 +42,7 @@ struct State {
 
 impl State {
     fn is_active(&self) -> bool {
-        self.token != 0 && ACTIVE_SELECTION.load(Ordering::Relaxed) == self.token
+        selection::holds(self.token)
     }
 
     fn range(&self, content: &str) -> Option<Range<usize>> {
@@ -146,8 +144,7 @@ where
                     return;
                 };
 
-                state.token = NEXT_SELECTION.fetch_add(1, Ordering::Relaxed);
-                ACTIVE_SELECTION.store(state.token, Ordering::Relaxed);
+                state.token = selection::claim();
                 state.anchor = offset;
                 state.cursor = offset;
                 state.dragging = true;
@@ -191,7 +188,7 @@ where
                 key: keyboard::Key::Named(keyboard::key::Named::Escape),
                 ..
             }) if state.is_active() => {
-                ACTIVE_SELECTION.store(0, Ordering::Relaxed);
+                selection::clear();
                 state.dragging = false;
                 shell.request_redraw();
             }
@@ -315,8 +312,7 @@ mod tests {
 
     #[test]
     fn selection_can_cross_lines_in_either_direction() {
-        let token = NEXT_SELECTION.fetch_add(1, Ordering::Relaxed);
-        ACTIVE_SELECTION.store(token, Ordering::Relaxed);
+        let token = selection::claim();
         let content = "first\nsecond";
         let mut state = State {
             token,

@@ -105,11 +105,33 @@ impl Blocks {
     }
 
     fn selectable(&self, spans: Arc<[select::Line]>, size: Pixels) -> Element<'static, String> {
+        self.block(spans, size, false)
+    }
+
+    /// One line of a code block. It is its own block like any other, and only a
+    /// copy that crosses it can tell: a line follows the line above it by a
+    /// newline rather than by the blank line every other kind of block takes.
+    /// The first line is not one of those — what is above it is prose.
+    fn line(
+        &self,
+        spans: Arc<[select::Line]>,
+        size: Pixels,
+        after_a_line: bool,
+    ) -> Element<'static, String> {
+        self.block(spans, size, after_a_line)
+    }
+
+    fn block(
+        &self,
+        spans: Arc<[select::Line]>,
+        size: Pixels,
+        tight: bool,
+    ) -> Element<'static, String> {
         let block = self.next.get();
         self.next.set(block + 1);
         self.blocks.set(block + 1);
 
-        select::selectable(self.group, block, self.blocks.clone(), spans, size)
+        select::selectable(self.group, block, tight, self.blocks.clone(), spans, size)
     }
 }
 
@@ -161,8 +183,8 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
         let dark = self.dark;
         container(
             scrollable(
-                container(column(lines.iter().map(|line| {
-                    self.selectable(line.spans(settings.style), settings.code_size)
+                container(column(lines.iter().enumerate().map(|(index, line)| {
+                    self.line(line.spans(settings.style), settings.code_size, index > 0)
                 })))
                 .padding(settings.code_size),
             )
@@ -186,13 +208,17 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
     }
 }
 
-/// The same viewer, for the reply still being written.
+/// The same viewer, for one surface of the reply still being written.
+///
+/// `lane` names the surfaces apart. They are rebuilt from nothing every frame,
+/// so a selection in one is told apart from a selection in another by this and
+/// nothing else.
 ///
 /// Without it the live reply is drawn by iced's default and a code block
 /// changes appearance the moment its turn settles — popping onto the ground
 /// `Blocks` gives it. The answer should not move when it stops arriving.
-pub fn answer_viewer(dark: bool) -> Blocks {
-    Blocks::new(dark, select::live())
+pub fn answer_viewer(dark: bool, lane: i64) -> Blocks {
+    Blocks::new(dark, select::live(lane))
 }
 
 /// Parsed Markdown whose items live exactly as long as its owning lazy row.

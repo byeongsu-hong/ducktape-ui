@@ -19,6 +19,7 @@ mod resize_handle;
 pub mod rich_text_editor;
 mod scroll_anchor;
 mod selectable_text;
+pub mod selection;
 mod stack_relief;
 pub mod template;
 #[doc(hidden)]

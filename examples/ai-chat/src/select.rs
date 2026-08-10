@@ -19,6 +19,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use ui_lang_runtime::selection;
+
 use iced::advanced::text::{Hit, LineHeight, Paragraph, Shaping, Span, Wrapping};
 use iced::advanced::widget::{Tree, text as widget_text, tree};
 use iced::advanced::{
@@ -36,21 +38,48 @@ use iced::{Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Vector,
 // one selection across several of them. Each block reads this to find its own
 // share of it, and only the block under the pointer writes to it.
 //
-// One at a time, everywhere: a press anywhere replaces it, so every other
-// block goes quiet without having to be told.
+// One at a time, everywhere — including outside these blocks. Plain text in
+// this window is selectable too, and it and this agree on nothing except the
+// runtime's token: whoever claimed last has the selection, and the other goes
+// quiet without having to be told.
 thread_local! {
     static SELECTION: RefCell<Option<Selection>> = const { RefCell::new(None) };
     /// What each block contributed to the copy being assembled. Cleared by the
     /// block that finishes it.
-    static PARTS: RefCell<BTreeMap<usize, String>> = const {
+    static PARTS: RefCell<BTreeMap<usize, Part>> = const {
         RefCell::new(BTreeMap::new())
     };
 }
 
-/// Groups are handed out per answer. `LIVE` is the reply still being written,
-/// which is rebuilt from nothing on every frame and so cannot be given one.
-const LIVE: u64 = 0;
-static NEXT_GROUP: AtomicU64 = AtomicU64::new(1);
+/// Groups are handed out per answer. The lowest few are reserved for the reply
+/// still being written, which is rebuilt from nothing on every frame and so
+/// cannot be given one.
+const LANES: u64 = 8;
+static NEXT_GROUP: AtomicU64 = AtomicU64::new(LANES);
+
+/// One block's share of a copy, and how it follows the block before it.
+#[derive(Debug, PartialEq, Eq)]
+struct Part {
+    text: String,
+    /// A line of a code block, which follows the line above it by a newline.
+    /// Everything else is a block of the document and follows by a blank line.
+    tight: bool,
+}
+
+/// The blocks of a copy, in the order they are drawn.
+fn assemble(parts: &BTreeMap<usize, Part>) -> String {
+    let mut whole = String::new();
+    for part in parts.values() {
+        if !whole.is_empty() {
+            whole.push('\n');
+            if !part.tight {
+                whole.push('\n');
+            }
+        }
+        whole.push_str(&part.text);
+    }
+    whole
+}
 
 /// Where one end of a selection sits: which block, and how far into it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -61,6 +90,9 @@ struct Place {
 
 #[derive(Debug)]
 struct Selection {
+    /// What holds the window's one selection. Plain text takes the same kind
+    /// of token, so a drag over a prompt puts this one out.
+    token: u64,
     group: u64,
     anchor: Place,
     focus: Place,
@@ -75,7 +107,7 @@ impl Selection {
     /// This block's share of the selection: all of it in the middle, part of it
     /// at either end, and nothing at all outside.
     fn within(&self, group: u64, block: usize, len: usize) -> Option<Range<usize>> {
-        if self.group != group {
+        if self.group != group || !selection::holds(self.token) {
             return None;
         }
 
@@ -114,6 +146,10 @@ pub struct Selectable {
     /// is one range across the group, so a block needs both to know its share.
     group: u64,
     block: usize,
+    /// A line of a code block rather than a block of the document. It changes
+    /// nothing about how it is drawn or selected — only how a copy that crosses
+    /// it is put back together.
+    tight: bool,
     /// How many blocks the answer has, shared with every one of them. Only the
     /// first and the last need it, to answer for a drag that has left the
     /// answer at the top or the bottom.
@@ -131,6 +167,7 @@ pub struct Selectable {
 pub fn selectable(
     group: u64,
     block: usize,
+    tight: bool,
     blocks: Rc<Cell<usize>>,
     spans: Arc<[Line]>,
     size: Pixels,
@@ -138,6 +175,7 @@ pub fn selectable(
     Element::new(Selectable {
         group,
         block,
+        tight,
         blocks,
         spans,
         plain: OnceCell::new(),
@@ -150,11 +188,16 @@ pub fn group() -> u64 {
     NEXT_GROUP.fetch_add(1, Ordering::Relaxed)
 }
 
-/// The group of the reply still being written. It is rebuilt from nothing every
-/// frame, so it cannot hold an identity of its own — but there is only ever one
-/// of it, which is identity enough.
-pub fn live() -> u64 {
-    LIVE
+/// The group of one surface of the reply still being written.
+///
+/// A live reply is drawn by more than one surface — what the model is working
+/// out, and what it is answering with — and each is rebuilt from nothing every
+/// frame, so none can hold an identity of its own. The lane names them apart
+/// instead: there is only ever one of each, so its number is identity enough.
+/// Two surfaces sharing a lane share a selection, and a drag in one lands in
+/// the other.
+pub fn live(lane: i64) -> u64 {
+    lane.rem_euclid(LANES as i64) as u64
 }
 
 struct State {
@@ -173,10 +216,9 @@ impl Selectable {
     /// Whether the answer this block belongs to is the one holding the
     /// selection — true for every block of it, selected or not.
     fn holds_selection(&self) -> bool {
-        SELECTION.with_borrow(|selection| {
-            selection
-                .as_ref()
-                .is_some_and(|selection| selection.group == self.group)
+        SELECTION.with_borrow(|held| {
+            held.as_ref()
+                .is_some_and(|held| held.group == self.group && selection::holds(held.token))
         })
     }
 
@@ -317,6 +359,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                     offset,
                 };
                 SELECTION.replace(Some(Selection {
+                    token: selection::claim(),
                     group: self.group,
                     anchor: at,
                     focus: at,
@@ -424,7 +467,8 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                 // A copy is assembled the same way: each block leaves its own
                 // share behind, and the last block of the selection — reached
                 // last, because a column hands its children the event in the
-                // order it draws them — sends the whole of it.
+                // order it draws them — sends the whole of it, put back
+                // together the way it is drawn.
                 //
                 // Out through the app rather than straight to the clipboard,
                 // because this window has one route for text leaving it: the
@@ -435,13 +479,19 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                         return;
                     };
                     PARTS.with_borrow_mut(|parts| {
-                        parts.insert(self.block, self.plain()[range].to_owned());
+                        parts.insert(
+                            self.block,
+                            Part {
+                                text: self.plain()[range].to_owned(),
+                                tight: self.tight,
+                            },
+                        );
                     });
                     shell.capture_event();
 
                     if self.last_of_selection() {
                         let whole = PARTS.with_borrow_mut(|parts| {
-                            let whole = parts.values().cloned().collect::<Vec<_>>().join("\n\n");
+                            let whole = assemble(parts);
                             parts.clear();
                             whole
                         });
@@ -454,6 +504,7 @@ impl Widget<String, iced::Theme, Renderer> for Selectable {
                 key: keyboard::Key::Named(keyboard::key::Named::Escape),
                 ..
             }) if self.holds_selection() => {
+                selection::clear();
                 SELECTION.replace(None);
                 shell.request_redraw();
             }
@@ -701,8 +752,11 @@ mod tests {
         );
     }
 
-    fn across(anchor: (usize, usize), focus: (usize, usize)) -> Selection {
+    /// Both ends of one selection, under a token the caller already holds:
+    /// taking a fresh one here would put out the selection built beside it.
+    fn across(token: u64, anchor: (usize, usize), focus: (usize, usize)) -> Selection {
         Selection {
+            token,
             group: 7,
             anchor: Place {
                 block: anchor.0,
@@ -716,13 +770,50 @@ mod tests {
         }
     }
 
+    fn part(text: &str, tight: bool) -> Part {
+        Part {
+            text: text.to_owned(),
+            tight,
+        }
+    }
+
+    /// A copy is put back together the way the answer is drawn. Prose blocks
+    /// are set apart by a blank line and lines of code by nothing but a new
+    /// one — joining code the way prose is joined doubles every line break in
+    /// it, which is a copied code block nobody can paste.
+    ///
+    /// A code block's first line is not one of those: what is above it is
+    /// prose, and it takes the blank line prose takes.
+    #[test]
+    fn a_copy_joins_prose_by_a_blank_line_and_code_by_a_new_one() {
+        let parts = BTreeMap::from([
+            (0, part("a paragraph", false)),
+            (1, part("let a = 1;", false)),
+            (2, part("let b = 2;", true)),
+            (3, part("and prose again", false)),
+        ]);
+
+        assert_eq!(
+            assemble(&parts),
+            "a paragraph\n\nlet a = 1;\nlet b = 2;\n\nand prose again"
+        );
+    }
+
+    /// One block is itself, with nothing joined to it.
+    #[test]
+    fn a_copy_of_one_block_is_that_block() {
+        let parts = BTreeMap::from([(2, part("just this", true))]);
+
+        assert_eq!(assemble(&parts), "just this");
+    }
+
     /// A selection belongs to the answer, not to the block it started in: the
     /// block it started in keeps its tail, the blocks between are taken whole,
     /// and the block it ended in keeps its head. Getting this wrong is a drag
     /// that stops at the first paragraph — which is what it used to do.
     #[test]
     fn a_selection_across_blocks_gives_each_one_its_own_share() {
-        let selection = across((1, 4), (3, 2));
+        let selection = across(selection::claim(), (1, 4), (3, 2));
 
         assert_eq!(selection.within(7, 0, 10), None, "above it, nothing");
         assert_eq!(
@@ -740,8 +831,9 @@ mod tests {
     /// anchor is not something the highlight can see.
     #[test]
     fn a_selection_dragged_upwards_covers_what_one_dragged_down_would() {
-        let down = across((1, 4), (3, 2));
-        let up = across((3, 2), (1, 4));
+        let token = selection::claim();
+        let down = across(token, (1, 4), (3, 2));
+        let up = across(token, (3, 2), (1, 4));
 
         for block in 0..5 {
             assert_eq!(
