@@ -2591,15 +2591,18 @@ view
                                   hovered bg=fg text=fg_invert r=4.0
                                   disabled bg=raised text=faint r=4.0
                                   text "UNLOCK" size=11.0 tracking=1.1
-                                button #enrol -> enrol
+                                // One press, one sheet, every network. What it
+                                // authorises is named above the button rather
+                                // than discovered afterwards.
+                                button #enrol -> enrol_networks
                                   with
-                                    label="Make a new agent key"
+                                    label="Register a trading key on every network, with one Touch ID"
                                     p=9.0
-                                    disabled=!empty(session_refusal(session))
+                                    disabled=empty(address)
                                   active bg=raised text=muted r=4.0
                                   hovered bg=edge text=fg r=4.0
                                   disabled bg=raised text=faint r=4.0
-                                  text "NEW KEY" size=11.0 tracking=1.1
+                                  text "ENROL ALL" size=11.0 tracking=1.1
                                 space w=fill
                                 button #lock label="Lock and forget the key" p=9.0 -> lock
                                   active bg=panel text=muted r=4.0
@@ -2612,13 +2615,41 @@ view
                                     w=fill
                                     wrap=word
                                     @text-faint
-                            text "It still sends nothing. Unlocking decides what may be signed; the ticket has nothing wired to it yet, and until it does this app reads the network beside this and prices orders against that margin engine's own arithmetic."
+                              // What ENROL ALL is about to sign for, network by
+                              // network, each with what it costs to be wrong on
+                              // it. The naming is the rule rather than the
+                              // sheet count: one prompt that says which four is
+                              // more explicit than four that each say "a key".
+                              if !empty(enrolment_plan(address))
+                                text enrolment_plan(address) #enrol-plan
+                                  with
+                                    size=10.0
+                                    w=fill
+                                    wrap=word
+                                    @text-faint
+                              // The door to the other act of custody, which
+                              // lives behind its own step rather than in this
+                              // panel: a phrase wants a screen with nothing
+                              // else on it.
+                              row
+                                with
+                                  gap=8.0
+                                  w=fill
+                                  align=center
+                                button #open-import -> open_import
+                                  with
+                                    label="Import a wallet from a recovery phrase"
+                                    p=9.0
+                                  active bg=panel text=muted r=4.0
+                                  hovered bg=raised text=fg r=4.0
+                                  text "IMPORT A WALLET" size=11.0 tracking=1.1
+                            text "Unlocking is what lets the ticket send. Every order still passes a confirmation that restates it and names the network it is going to, and the trading key it signs with can place and cancel orders and nothing else."
                               with
                                 size=12.0
                                 w=fill
                                 wrap=word
                                 @text-muted
-                            text "What it will never do: hold the key that owns the account, move collateral, or withdraw. An agent key cannot do any of those, which is the whole reason it is the only key here."
+                            text "Importing a wallet does put the account's own key on this Mac, behind Touch ID. It signs enrolments and nothing else — the app cannot spend it on an order even by mistake, because an order is a different type of thing and this key has no method that takes one. It never moves collateral and never withdraws."
                               with
                                 size=12.0
                                 w=fill
@@ -2660,6 +2691,105 @@ view
                     @text-muted
       layer
         col
+          // The import step, over everything including the gate: typing a
+          // recovery phrase is the one act on this screen with nothing else
+          // safely happening behind it.
+          if import_open
+            box #import
+              with
+                w=520.0
+                p=24.0
+                r=8.0
+                border-w=1.0
+                bg=panel
+                border=edge
+              col gap=16.0 w=fill
+                col gap=6.0 w=fill
+                  Label value="THIS MACHINE"
+                  text "Import a wallet" size=22.0 @text-fg
+                  text "Twelve to twenty-four words, or a private key. It is turned into the one key this app signs enrolments with, kept behind Touch ID, and never sent anywhere."
+                    with
+                      size=11.0
+                      w=fill
+                      wrap=word
+                      @text-muted
+                rule horizontal thickness=1.0 color=edge
+                // Before the address is derived: the words. After it: the
+                // address and nothing else, because the phrase has done its
+                // work and the shortest life it can have is that one.
+                if empty(import_address)
+                  col gap=10.0 w=fill
+                    input "" #import-phrase <-> import_phrase
+                      with
+                        label="Recovery phrase, or a private key"
+                        hint="abandon abandon abandon…"
+                        change=import_typed
+                        text-size=12.0
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                    input "" #import-passphrase <-> import_passphrase
+                      with
+                        label="Passphrase, if the wallet has one"
+                        hint="usually empty"
+                        change=import_passphrase_typed
+                        text-size=12.0
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                    text "A passphrase makes different words into a different account. If your wallet asked for one, it belongs here."
+                      with
+                        size=10.0
+                        w=fill
+                        wrap=word
+                        @text-faint
+                if !empty(import_address)
+                  col gap=8.0 w=fill
+                    Label value="THIS PHRASE IS THE ACCOUNT"
+                    text import_address #import-address
+                      with
+                        size=15.0
+                        w=fill
+                        wrap=word
+                        font=digits
+                        @text-fg
+                    text "Nothing has been stored. If that is not the address you expect, go back and check the words."
+                      with
+                        size=11.0
+                        w=fill
+                        wrap=word
+                        @text-muted
+                if !empty(import_note)
+                  text import_note #import-note
+                    with
+                      size=11.0
+                      w=fill
+                      wrap=word
+                      @text-muted
+                row
+                  with
+                    gap=8.0
+                    w=fill
+                    align=center
+                  button #import-close label="Close without importing" p=11.0 -> close_import
+                    active bg=raised text=muted r=4.0
+                    hovered bg=edge text=fg r=4.0
+                    text "CLOSE" size=11.0 tracking=1.1
+                  space w=fill
+                  if empty(import_address)
+                    button #import-check -> check_phrase
+                      with
+                        label="Show the account these words derive"
+                        p=11.0
+                        disabled=empty(import_phrase)
+                      active bg=fg text=fg_invert r=4.0
+                      hovered bg=fg text=fg_invert r=4.0
+                      disabled bg=raised text=faint r=4.0
+                      text "CHECK" size=11.0 tracking=1.1
+                  if !empty(import_address)
+                    button #import-keep -> store_wallet
+                      with
+                        label="Keep this wallet on this Mac, behind Touch ID"
+                        p=11.0
+                      active bg=fg text=fg_invert r=4.0
+                      hovered bg=fg text=fg_invert r=4.0
+                      text "THIS IS MINE" size=11.0 tracking=1.1
           if order_pending(confirm)
             // Everything below is a restatement. Not one figure here is
             // computed: each is the value the ticket already showed, frozen on
@@ -2938,7 +3068,7 @@ view
                     hovered bg=fg text=fg_invert r=4.0
                     disabled bg=raised text=faint r=4.0
                     text "DO IT" size=11.0 tracking=1.1
-          if gate
+          if gate && !import_open
             box #gate
               with
                 w=460.0

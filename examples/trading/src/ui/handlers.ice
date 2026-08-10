@@ -705,14 +705,67 @@ on sweep_sent
   status = "Sending"
   run every submit_sweep(venue, session, clock, sweep) -> order_sent _ | order_refused _
 
+// The import step, opened from the gate before an address is connected and from
+// Settings after — one door, reachable from both, rather than two panels that
+// would drift.
+on open_import
+  import_open = true
+  import_note = ""
+
+// Every exit clears the phrase and the key it derived. A step that remembered
+// either would be a recovery phrase left in state for the rest of the session.
+on close_import
+  import_open = false
+  import_phrase = ""
+  import_passphrase = ""
+  import_address = ""
+  import_note = ""
+  session = forget_wallet()
+
+on import_typed(typed)
+  import_phrase = typed
+
+on import_passphrase_typed(typed)
+  import_passphrase = typed
+
+// Derive, and show the address. Nothing is stored and no sheet is raised: this
+// is the step whose whole job is letting the owner say "that is my account"
+// before anything is written.
+on check_phrase
+  return if empty(import_phrase)
+  import_note = ""
+  run every read_wallet(import_phrase, import_passphrase) -> phrase_read _ | custody_failed _
+
+on phrase_read(entry)
+  // Cleared here rather than on the way out: the phrase has done its work, and
+  // the shortest life it can have is the one that ends the moment it has.
+  import_phrase = ""
+  import_passphrase = ""
+  import_address = pending_wallet()
+  import_note = entry.note
+  session = entry.session
+
+// The one prompt an import costs.
+on store_wallet
+  return if empty(import_address)
+  import_note = ""
+  run every keep_wallet() -> wallet_kept _ | custody_failed _
+
+on wallet_kept(entry)
+  import_address = ""
+  import_note = entry.note
+  session = entry.session
+
+// One Touch ID, every network the registry lists, each named on the panel
+// before it is pressed.
+on enrol_networks
+  unlock_note = ""
+  run every enrol_all(address) -> custody_answered _ | custody_failed _
+
 on unlock
   return if !session_unlockable(session)
   unlock_note = ""
   run every unlock_agent(venue, address) -> custody_answered _ | custody_failed _
-
-on enrol
-  unlock_note = ""
-  run every enrol_agent(venue, address) -> custody_answered _ | custody_failed _
 
 // Both acts land here because both answer the same question. A declined sheet,
 // a first run, a build with no keychain and an approval nobody has made are

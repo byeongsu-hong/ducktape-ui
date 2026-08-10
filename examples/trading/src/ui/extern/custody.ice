@@ -31,8 +31,25 @@ extern crate::custody
   pure session_window(session:Session, now:i64) -> str
   pure session_unlockable(session:Session) -> bool
   pure session_refusal(session:Session) -> str
+  // The account's own key: typed once, confirmed by the address it derives,
+  // and stored under the address alone because it is the account on every
+  // network rather than a key for one of them.
+  //
+  // `read_wallet` stores nothing and raises no sheet — it answers the address
+  // so the owner can say whether it is theirs before anything is written. The
+  // phrase reaches it as an argument and is cleared from state the moment it
+  // has; only `keep_wallet` costs a prompt.
+  read_wallet(phrase:str, passphrase:str) -> Entry ! CustodyFault
+  pure pending_wallet() -> str
+  pure forget_wallet() -> Session
+  keep_wallet() -> Entry ! CustodyFault
+  // What one enrolment sheet authorises, every network named with its kind.
+  // The owner's rule is that a master signature never happens without a sheet
+  // just answered and a naming of everything it covers; one prompt for four
+  // networks is one explicit act, four prompts saying "approve a key" is not.
+  pure enrolment_plan(address:str) -> str
+  enrol_all(address:str) -> Entry ! CustodyFault
   unlock_agent(venue:Venue, address:str) -> Entry ! CustodyFault
-  enrol_agent(venue:Venue, address:str) -> Entry ! CustodyFault
   // Why the send is dead, or nothing when it is live. One sentence over both
   // halves of the question — whether this session may sign at all, and whether
   // the order as typed is one a venue would take — because the button has one

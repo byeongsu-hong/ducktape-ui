@@ -249,35 +249,67 @@ fn address_of(key: &VerifyingKey) -> Address {
 /// It holds a `Wallet` because the arithmetic is identical — the same curve,
 /// the same address derivation — and wrapping rather than re-implementing keeps
 /// one copy of the parts that are easy to get wrong.
-pub struct MasterKey(Wallet);
+pub struct MasterKey {
+    wallet: Wallet,
+    /// Kept because this key, alone among the app's keys, has somewhere to go:
+    /// the platform keychain. `Wallet` publishes no way out of itself on
+    /// purpose — an agent key's only destination is the signer — and an account
+    /// key needs exactly one more, which is `secret` below.
+    secret: [u8; 32],
+}
+
+impl Drop for MasterKey {
+    fn drop(&mut self) {
+        self.secret.fill(0);
+        std::hint::black_box(&mut self.secret);
+    }
+}
 
 impl MasterKey {
     pub fn from_secret(bytes: &[u8; 32]) -> Result<Self, HlError> {
-        Wallet::from_secret(bytes).map(Self)
+        Wallet::from_secret(bytes).map(|wallet| Self {
+            wallet,
+            secret: *bytes,
+        })
+    }
+
+    /// The bytes, for the keychain and for nothing else.
+    ///
+    /// The one road out of this type, and it exists because storing the key is
+    /// the point: an owner types a phrase once and the app keeps what it
+    /// derived. The copy goes straight into a `Secret`, which wipes itself.
+    pub fn secret(&self) -> Vec<u8> {
+        self.secret.to_vec()
     }
 
     /// A fresh one, for the tests that need an account nobody owns.
     #[cfg(test)]
     fn generate() -> Self {
-        Self(Wallet::generate())
+        loop {
+            let mut bytes = [0u8; 32];
+            getrandom::fill(&mut bytes).expect("no OS entropy to make a key from");
+            if let Ok(master) = Self::from_secret(&bytes) {
+                return master;
+            }
+        }
     }
 
     /// The address an owner recognises, and the one every venue knows the
     /// account by.
     pub fn address(&self) -> Address {
-        self.0.address()
+        self.wallet.address()
     }
 
     /// Authorise an enrolment. The only signing this type does.
     pub fn sign(&self, action: &Action<Enrolment>) -> Signature {
-        self.0.sign_digest(action.digest())
+        self.wallet.sign_digest(action.digest())
     }
 
     /// The other shape an enrolment takes: a venue that asks the account's
     /// wallet to sign a sentence rather than a struct. Lighter's API-key
     /// registration is the one this app builds.
     pub fn personal_sign(&self, message: &str) -> Signature {
-        self.0.personal_sign(message)
+        self.wallet.personal_sign(message)
     }
 }
 

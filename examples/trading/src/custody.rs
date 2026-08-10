@@ -100,8 +100,8 @@ use crate::session::{
     AgentKey, Event, Held, Keystore, PlatformKeystore, Secret, Unlock, account, agent, can_trade,
     step,
 };
-use crate::signing::{self, Wallet};
-use crate::venue::{Draft, Network, Signing, Sweep, venue_list, venue_name};
+use crate::signing::{self, MasterKey, Wallet};
+use crate::venue::{Draft, Network, Signing, Sweep, venue_kind, venue_list, venue_name};
 use crate::{Tif, Venue};
 
 /// What one act of custody produced: where the session now stands, and the
@@ -352,6 +352,136 @@ fn item(venue: Venue, address: &str) -> String {
     )
 }
 
+/// What the keychain files an account's **own** key under.
+///
+/// The address alone, with no venue in it, and that is the difference between
+/// this and `item`. A venue key is approved on one deployment of one exchange
+/// and is unknown on the others; the account's key is the account — the same
+/// twelve words, the same address, on every network there is. One item, so an
+/// owner types a phrase once rather than once per venue, and so there is one
+/// thing to delete when they are done with this machine.
+fn wallet_item(address: &str) -> String {
+    format!("wallet:{}", address.trim().to_lowercase())
+}
+
+/// The account key an import derived, waiting for the owner to say it is theirs.
+///
+/// It sits here between the two halves of an import rather than in Ice state,
+/// for the reason the vault does: state is cloned, captured and printed. Only
+/// the *address* crosses back to the screen, which is the whole point of the
+/// confirmation — the owner reads an address they recognise before anything is
+/// written to a keychain.
+fn pending() -> &'static Mutex<Option<MasterKey>> {
+    static PENDING: OnceLock<Mutex<Option<MasterKey>>> = OnceLock::new();
+    PENDING.get_or_init(Mutex::default)
+}
+
+/// Derive the account a phrase names, and hold it for confirmation.
+///
+/// Nothing is stored and no sheet is raised: this answers an address and
+/// waits. A phrase with a bad checksum, an unknown word or a passphrase this
+/// app will not normalise is refused here, where the owner can still see what
+/// they typed.
+///
+/// The alternate input is a raw private key, because both venues' SDKs take one
+/// and not every owner holds a phrase — the same 32 bytes reached by a shorter
+/// road, and stored and wiped identically.
+pub async fn read_wallet(phrase: String, passphrase: String) -> Result<Entry, CustodyFault> {
+    let derived = if looks_like_a_key(&phrase) {
+        from_raw_key(phrase.trim())
+    } else {
+        crate::seed::seed_from_phrase(&phrase, &passphrase)
+            .and_then(|seed| crate::seed::ethereum_key(&seed))
+            .map_err(|error| error.message())
+            .and_then(|mut key| {
+                let made = MasterKey::from_secret(&key).map_err(|failure| failure.message);
+                key.fill(0);
+                std::hint::black_box(&mut key);
+                made
+            })
+    };
+    Ok(match derived {
+        Err(reason) => Entry::saying(Session::Locked, &reason),
+        Ok(master) => {
+            let address = master.address().to_string();
+            *lock(pending()) = Some(master);
+            Entry::saying(
+                Session::Locked,
+                &format!(
+                    "This phrase is the account {address}. If that is not the address you expect, \
+                     nothing has been stored — go back and check the words.",
+                ),
+            )
+        }
+    })
+}
+
+/// 64 hex characters, with or without the prefix, is somebody pasting a private
+/// key rather than a phrase. Distinguished by shape rather than by a second
+/// field: a recovery phrase is words and a key is hex, and no phrase is either.
+fn looks_like_a_key(typed: &str) -> bool {
+    let text = typed.trim().strip_prefix("0x").unwrap_or(typed.trim());
+    text.len() == 64 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn from_raw_key(typed: &str) -> Result<MasterKey, String> {
+    let text = typed.strip_prefix("0x").unwrap_or(typed);
+    let mut bytes: [u8; 32] = hex::decode(text)
+        .ok()
+        .and_then(|raw| raw.try_into().ok())
+        .ok_or_else(|| "That is not 32 bytes of hex.".to_owned())?;
+    let made = MasterKey::from_secret(&bytes).map_err(|failure| failure.message);
+    bytes.fill(0);
+    std::hint::black_box(&mut bytes);
+    made
+}
+
+/// The address the phrase just derived, or nothing when none is waiting.
+pub fn pending_wallet() -> String {
+    lock(pending())
+        .as_ref()
+        .map_or_else(String::new, |master| master.address().to_string())
+}
+
+/// Forget it unstored. What every exit from the import step does.
+///
+/// Answers a session so a handler can assign it, the shape `lock_agent` already
+/// has: closing the import step is also a moment nothing may be signed from.
+pub fn forget_wallet() -> Session {
+    drop(lock(pending()).take());
+    lock_agent()
+}
+
+/// Store the account key the owner just confirmed.
+///
+/// The one sheet an import costs. Past here the phrase is not needed again on
+/// this machine: what is kept is the 32 bytes it derives, which is all an
+/// enrolment signature needs and rather less than the phrase can do.
+pub async fn keep_wallet() -> Result<Entry, CustodyFault> {
+    let Some(master) = lock(pending()).take() else {
+        return Ok(Entry::saying(
+            Session::Locked,
+            "There is no wallet waiting to be stored.",
+        ));
+    };
+    let address = master.address().to_string();
+    smol::unblock(move || {
+        match PlatformKeystore.store(&wallet_item(&address), &Secret::new(master.secret())) {
+            Err(failure) => Ok(Entry::plain(Session::Unavailable {
+                reason: failure.message,
+            })),
+            Ok(()) => Ok(Entry::saying(
+                Session::Locked,
+                &format!(
+                    "{address} is on this Mac now, behind Touch ID. Enrol the networks you want \
+                     to trade and this app can sign for itself.",
+                ),
+            )),
+        }
+    })
+    .await
+}
+
 /// How long this app holds a Lighter key before asking for it again.
 ///
 /// Hyperliquid's window is the exchange's: `extraAgents` reports a
@@ -399,8 +529,12 @@ fn generate(scheme: Signing) -> Result<(Vec<u8>, String), String> {
                 }
             }
             Signing::ApiKey(_) => {
-                if let Ok(key) = PrivateKey::from_hex(&hex::encode(&bytes)) {
-                    return Ok((bytes, hex::encode(key.public_key())));
+                if PrivateKey::from_hex(&hex::encode(&bytes)).is_ok() {
+                    // The *secret* in hex, because the Lighter arm has to sign
+                    // the registration with the key it is registering. The
+                    // Hyperliquid arm answers an address, which is public.
+                    let secret = hex::encode(&bytes);
+                    return Ok((bytes, secret));
                 }
             }
         }
@@ -408,72 +542,209 @@ fn generate(scheme: Signing) -> Result<(Vec<u8>, String), String> {
     Err("could not generate a usable key".to_owned())
 }
 
-/// What the reader has to do with the public half, which is the one step of
-/// enrolment this app cannot perform.
+/// What one enrolment sheet is about to authorise, named network by network.
 ///
-/// Different words per scheme because they are different acts at different
-/// places: Hyperliquid approves an *address* as an API wallet, Lighter
-/// registers a *public key* at an api-key slot. Naming the act wrongly sends
-/// somebody to the wrong screen with the right string.
-fn enrolment_note(venue: Venue, scheme: Signing, public: &str) -> String {
-    let network = venue_name(venue);
-    match scheme {
-        Signing::Eip712(_) => format!(
-            "Approve {public} as an API wallet on {network} from the wallet that owns this \
-             account, then unlock. This app cannot approve it: that signature is the account's \
-             own key, which is the one key it will never hold.",
-        ),
-        Signing::ApiKey(_) => format!(
-            "Register this public key as an API key for this account on {network}, from the \
-             wallet that owns it, then unlock — the app finds which slot you used. This app \
-             cannot register it: that signature is the account's own key. {public}",
-        ),
+/// **The owner's rule, 2026-08-10: a master signature never happens without a
+/// sheet the user just answered, and the sheet — or the confirmation in front
+/// of it — names everything that signature authorises.** The application of it,
+/// mine: explicitness is about *naming*, not about counting sheets, so one
+/// prompt may authorise four enrolments as long as the confirmation lists all
+/// four. Four sheets that each said "approve a key" would be less explicit than
+/// one that says which four networks, and on which of them being wrong costs
+/// money.
+///
+/// Sits beside the retention decision above because they are the same kind of
+/// thing: a rule about what a reader has agreed to before a key is used. The
+/// same rule governs an eviction — one incident names every network it covers,
+/// and never rides along on another action's sheet.
+pub fn enrolment_plan(address: String) -> String {
+    let address = address.trim().to_lowercase();
+    if address.is_empty() {
+        return String::new();
     }
+    let lines: Vec<String> = venue_list()
+        .into_iter()
+        .map(|venue| format!("{} — {}", venue_name(venue), venue_kind(venue)))
+        .collect();
+    format!(
+        "One Touch ID, and this app registers a key of its own on every one of these for \
+         {address}:\n{}\nThat signature is your account's. It approves trading keys and cannot \
+         withdraw.",
+        lines.join("\n"),
+    )
 }
 
-/// Generate a key, hand its secret to the platform keychain, and report the
-/// public half the account's owner now has to register.
+/// Enrol every network at once, on one sheet.
 ///
-/// The key is generated here and never leaves: what goes to the keychain is the
-/// secret, what goes to the screen is the public half, and the account that
-/// owns it registers that elsewhere. Replacing an existing enrolment is the
-/// keystore's problem and it solves it by preserving what it replaces — see
-/// `session.rs`, which reads the old bytes back before it deletes them.
-pub async fn enrol_agent(venue: Venue, address: String) -> Result<Entry, CustodyFault> {
-    let scheme = Network::of(venue).signing;
+/// The account key is read exactly once and then used for each network in turn:
+/// a fresh trading key generated and filed under that network's own item, and
+/// the enrolment that registers it signed by the account. The alternative — a
+/// sheet per network — is not more explicit, it is the same act asked about
+/// four times, and `enrolment_plan` is what makes the one act explicit.
+///
+/// A network that fails is reported and the rest continue: an exchange being
+/// unreachable is not a reason to leave the other three unenrolled, and the
+/// sentence says which of them landed.
+pub async fn enrol_all(address: String) -> Result<Entry, CustodyFault> {
     let address = address.trim().to_owned();
     if address.is_empty() {
         return Ok(Entry::saying(
             Session::Locked,
-            "A key belongs to one account, so connect an address before making one.",
+            "A key belongs to one account, so connect an address before enrolling.",
         ));
     }
 
-    smol::unblock(move || {
-        // Neither signer publishes a way to read its scalar back out, so the
-        // only two places these bytes are ever seen are the keychain and this
-        // frame. What crosses back to the screen is the public half.
-        let (bytes, public) = match generate(scheme) {
-            Ok(made) => made,
-            Err(reason) => return Ok(Entry::plain(Session::Unavailable { reason })),
-        };
-        match PlatformKeystore.store(&item(venue, &address), &Secret::new(bytes)) {
-            // A keystore that cannot hold a secret is not a thing to ask again:
-            // either this build has none, or the one this machine has failed
-            // for a reason no sheet the user answers will change. `session.rs`
-            // has a state that says exactly that and that no event but `Lock`
-            // leaves.
-            Err(failure) => Ok(Entry::plain(Session::Unavailable {
-                reason: failure.message,
-            })),
-            Ok(()) => Ok(Entry::saying(
+    // The one sheet. Everything after it is arithmetic and requests.
+    let opened = {
+        let address = address.clone();
+        smol::unblock(move || PlatformKeystore.load(&wallet_item(&address))).await
+    };
+    let master = match opened {
+        Ok(Held::Missing) => {
+            return Ok(Entry::saying(
                 Session::Locked,
-                &enrolment_note(venue, scheme, &public),
-            )),
+                "No wallet on this Mac for this address yet. Import one first.",
+            ));
         }
-    })
-    .await
+        Ok(Held::Declined) => {
+            return Ok(Entry::saying(
+                Session::Locked,
+                "Touch ID was cancelled, so nothing was signed and nothing was registered.",
+            ));
+        }
+        Err(failure) => {
+            return Ok(Entry::plain(Session::Unavailable {
+                reason: failure.message,
+            }));
+        }
+        Ok(Held::Secret(secret)) => {
+            let bytes: Result<[u8; 32], _> = secret.expose().try_into();
+            let Ok(made) = bytes.map(|bytes| MasterKey::from_secret(&bytes)) else {
+                return Ok(Entry::plain(Session::Unavailable {
+                    reason: "the stored wallet is not an account key; import one again".to_owned(),
+                }));
+            };
+            match made {
+                Ok(master) => master,
+                Err(failure) => {
+                    return Ok(Entry::plain(Session::Unavailable {
+                        reason: failure.message,
+                    }));
+                }
+            }
+        }
+    };
+
+    let mut landed: Vec<String> = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
+    for venue in venue_list() {
+        match enrol_one(venue, &address, &master).await {
+            Ok(()) => landed.push(venue_name(venue)),
+            Err(reason) => refused.push(format!("{}: {reason}", venue_name(venue))),
+        }
+    }
+    Ok(Entry::saying(
+        Session::Locked,
+        &enrolment_outcome(&landed, &refused),
+    ))
 }
+
+/// What came of the one act, in the order a reader needs it: what did not work
+/// first, because that is the part with something to do about it.
+fn enrolment_outcome(landed: &[String], refused: &[String]) -> String {
+    match (landed.is_empty(), refused.is_empty()) {
+        (true, false) => format!("Nothing was registered. {}", refused.join("; ")),
+        (false, false) => format!(
+            "{} did not take: {}. Registered on {}. Unlock to trade there.",
+            if refused.len() == 1 {
+                "One network"
+            } else {
+                "Some networks"
+            },
+            refused.join("; "),
+            landed.join(", "),
+        ),
+        (true, true) => "There are no networks to enrol on.".to_owned(),
+        (false, true) => format!(
+            "Registered on {}. Unlock and this app can sign for itself.",
+            landed.join(", "),
+        ),
+    }
+}
+
+/// One network's half of the act: a trading key made and filed, and the
+/// enrolment that registers it signed by the account and sent.
+///
+/// Both venues take the same shape and differ only in what a registration *is*.
+/// Hyperliquid approves an address as an API wallet, signed as typed data;
+/// Lighter registers a public key at a slot, authorised by a signature over a
+/// sentence. Neither can be signed by the key being registered, which is the
+/// property the whole design exists for and the reason `MasterKey` is a
+/// separate type.
+async fn enrol_one(venue: Venue, address: &str, master: &MasterKey) -> Result<(), String> {
+    let scheme = Network::of(venue).signing;
+    let (bytes, public) = generate(scheme)?;
+    let stored = {
+        let name = item(venue, address);
+        let secret = Secret::new(bytes);
+        smol::unblock(move || PlatformKeystore.store(&name, &secret)).await
+    };
+    stored.map_err(|failure| failure.message)?;
+
+    match scheme {
+        Signing::Eip712(chain) => {
+            let agent =
+                crate::signing::Address::parse(&public).map_err(|failure| failure.message)?;
+            let action = crate::signing::approve_agent(chain, agent, "ducktape", now_ms() as u64);
+            crate::hyperliquid::exchange(chain, action.request(master))
+                .await
+                .map_err(|failure| failure.message)
+                .and_then(|answer| {
+                    // The venue answers a refusal with HTTP 200 and a sentence
+                    // where the payload would be, which is the trap the order
+                    // path already holds: reading the status alone reports a
+                    // refused approval as a registration.
+                    match answer.get("status").and_then(serde_json::Value::as_str) {
+                        Some("ok") => Ok(()),
+                        _ => Err(format!("{answer}")),
+                    }
+                })
+        }
+        Signing::ApiKey(zone) => {
+            let key = crate::lighter_sign::PrivateKey::from_hex(&public)
+                .map_err(|error| error.to_string())?;
+            let account = crate::lighter::lighter_account_index(zone, address.to_owned())
+                .await
+                .map_err(|failure| failure.message)?
+                .ok_or_else(|| "this address has no account here yet".to_owned())?;
+            let registration = crate::lighter_sign::Registration {
+                account,
+                api_key: LIGHTER_SLOT,
+                public_key: key.public_key(),
+                deadline_ms: now_ms() + 10 * 60 * 1_000,
+                nonce: crate::lighter::lighter_nonce(zone, account, LIGHTER_SLOT)
+                    .await
+                    .map_err(|failure| failure.message)?,
+            };
+            let l1 = master
+                .personal_sign(&crate::lighter_sign::registration_body(&registration))
+                .hex();
+            let built = crate::lighter_sign::change_pub_key(zone, &registration, &l1)
+                .map_err(|error| error.to_string())?;
+            crate::lighter::send_tx(zone, &built, &key)
+                .await
+                .map(|_| ())
+                .map_err(|failure| failure.message)
+        }
+    }
+}
+
+/// The api-key slot this app registers under.
+///
+/// One slot, named once. An owner may hold keys at other slots for other tools
+/// and this app neither reads nor replaces them; unlock finds ours by its public
+/// key rather than by where it sits, so this is only where a *new* one goes.
+const LIGHTER_SLOT: u8 = 2;
 
 /// Raise the platform's prompt, and on the far side of it ask the venue whether
 /// the key it released may sign for this account.
@@ -889,7 +1160,9 @@ pub async fn submit_order(
                 .market
                 .clone()
                 .ok_or_else(|| HlError::new("This market is not loaded here.".to_owned()))?;
-            let done = hl_place(chain, wallet, &market, wire_order(&draft, market.asset)).await?;
+            let done = hl_place(chain, wallet, &market, wire_order(&draft, market.asset))
+                .await
+                .map_err(|failure| re_enrol(venue, failure))?;
             Ok(receipt(&draft, done))
         }
         (
@@ -918,7 +1191,8 @@ pub async fn submit_order(
                 draft.reduce_only,
                 lighter_resting(draft.tif),
             )
-            .await?;
+            .await
+            .map_err(|failure| re_enrol(venue, failure))?;
             // Deliberately *not* "resting". This venue answers a submission
             // with a transaction hash and a predicted execution time — a
             // receipt that the sequencer took it, which is not the book having
@@ -937,6 +1211,15 @@ pub async fn submit_order(
             "The key this session holds is not for this network.".to_owned(),
         )),
     }
+}
+
+/// An eviction reaches the reader as the thing to do about it, and everything
+/// else reaches them unchanged.
+fn re_enrol(venue: Venue, failure: HlError) -> HlError {
+    if evicted(&failure.message) {
+        return HlError::new(eviction_note(venue));
+    }
+    failure
 }
 
 /// Pull one resting order, by the id the row carries.
@@ -962,7 +1245,9 @@ pub async fn cancel_resting(
                 name: coin.clone(),
                 ..SymbolRow::default()
             };
-            hl_cancel(chain, wallet, &market, oid).await?;
+            hl_cancel(chain, wallet, &market, oid)
+                .await
+                .map_err(|failure| re_enrol(venue, failure))?;
             Ok(format!("Order {oid} on {coin} is cancelled."))
         }
         (
@@ -973,7 +1258,9 @@ pub async fn cancel_resting(
                 index,
             },
         ) => {
-            lighter_cancel(zone, key, *account, *index, &coin, oid).await?;
+            lighter_cancel(zone, key, *account, *index, &coin, oid)
+                .await
+                .map_err(|failure| re_enrol(venue, failure))?;
             Ok(format!("Order {oid} on {coin} was sent for cancellation."))
         }
         _ => Err(HlError::new(
@@ -1067,6 +1354,37 @@ fn wire_order(draft: &Draft, asset: u32) -> signing::Order {
         reduce_only: draft.reduce_only,
         tif: hl_tif(draft.tif),
     }
+}
+
+/// Whether a venue's refusal is it saying this app's key is not one of its
+/// keys any more.
+///
+/// The two sentences are the two venues' own, read live while the order paths
+/// were written. They matter because they are the *only* way an eviction
+/// surfaces between unlocks: a key can be revoked from the exchange's own
+/// interface at any moment, and this app finds out when it next tries to use
+/// it. Drawn as an ordinary failure it reads as the exchange being down, and
+/// the reader waits for something that will never come back.
+///
+/// Matched on the venue's words rather than on a code, because Hyperliquid has
+/// no code — it answers HTTP 200 with a sentence. `21109` is Lighter's, and
+/// both are quoted here rather than paraphrased.
+pub fn evicted(message: &str) -> bool {
+    message.contains("does not exist") || message.contains("21109")
+}
+
+/// What to do about it, named for the account and every network at once.
+///
+/// The same rule the enrolment sheet follows: one incident, one sentence, every
+/// network it covers named. An eviction is not per-order news and re-enrolling
+/// is not per-order work, so folding it into the receipt of whichever order
+/// happened to hit it would be the silent version of both.
+pub fn eviction_note(venue: Venue) -> String {
+    format!(
+        "{} no longer recognises this app's trading key. Nothing was sent. Import is unaffected \
+         — enrol again from Settings and the account's own key will register a fresh one.",
+        venue_name(venue),
+    )
 }
 
 /// What the venue did, in the venue's own numbers.

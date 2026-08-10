@@ -219,6 +219,8 @@ test trading_portfolio_range_changes_without_leaving_the_dashboard
 test trading_settings_stays_separate
   preset held
   viewport 1660 820
+  target app = #app
+  target settings_page = app/settings
   dispatch navigate(Page.settings)
   expect page == Page.settings
   // The custody column, which is the app's own facts about what it may do. The
@@ -227,7 +229,10 @@ test trading_settings_stays_separate
   // wired, so both are asserted rather than either standing for the other.
   expect text "CUSTODY"
   expect text "The wallet key is never here."
-  expect text "It still sends nothing. Unlocking decides what may be signed; the ticket has nothing wired to it yet, and until it does this app reads the network beside this and prices orders against that margin engine's own arithmetic."
+  // The column grew a plan and a door to the import step, so what used to sit
+  // above the fold is now under it — the same scroll a reader makes.
+  scroll-to settings_page 0.0 700.0
+  expect text "Unlocking is what lets the ticket send. Every order still passes a confirmation that restates it and names the network it is going to, and the trading key it signs with can place and cancel orders and nothing else."
   expect text "Connect a different address"
   expect text "ROUND TRIP"
   expect text "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
