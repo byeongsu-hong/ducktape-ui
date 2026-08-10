@@ -817,18 +817,6 @@ view
                                     hovered
                                       y-rail bg=panel
                                       y-scroller bg=faint r=3.0
-                                    // Not virtualized, unlike the rail and the
-                                    // tape beside it, and the reason is the
-                                    // flash. A keyed column lays out every child
-                                    // itself, so it cannot be virtualized, and
-                                    // `virtual-row=` is a plain column's
-                                    // property — but dropping the key puts
-                                    // `FillFlash` under W008, because a plain
-                                    // `for` is position-identified however the
-                                    // row ids read. Measured both ways on the
-                                    // 200-fill screen: the estimate is worth
-                                    // 301us a frame (1707 -> 1406us) and the
-                                    // warning is what it costs.
                                     col w=fill
                                       if empty(fills)
                                         box
@@ -845,7 +833,15 @@ view
                                               align-x=center
                                               wrap=word
                                               @text-faint
-                                      keyed fill in fills by=fill.tid
+                                      // Virtualized, and keyed, and it has to be
+                                      // both. The estimate is the row height
+                                      // below, exact because every fill row is
+                                      // one line. The key is what keeps the
+                                      // `lazy` memo and the flash's clock on
+                                      // their own row when a fill prints on top
+                                      // of them; without it a prepend would
+                                      // rebuild all 200.
+                                      keyed fill in fills by=fill.tid virtual-row=26.0
                                         stack w=fill h=26.0
                                           lazy fill as printed
                                             FillRow fill=printed #fill(printed.tid)

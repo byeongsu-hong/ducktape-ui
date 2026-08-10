@@ -1,0 +1,2 @@
+E197
+a virtual-row keyed column cannot set align: only mounted rows are laid out

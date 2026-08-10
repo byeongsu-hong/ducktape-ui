@@ -321,6 +321,7 @@ pub(crate) struct CheckedKeyedLayout {
     pub(crate) spacing: Option<CheckedExprUseId>,
     pub(crate) padding: CheckedKeyedPadding,
     pub(crate) max_width: Option<CheckedExprUseId>,
+    pub(crate) virtual_row: Option<CheckedExprUseId>,
     pub(crate) align: Option<FlexAlignment>,
 }
 
@@ -659,6 +660,7 @@ pub(crate) enum CheckedViewExprRole {
     KeyedPaddingBottom,
     KeyedPaddingLeft,
     KeyedMaxWidth,
+    KeyedVirtualRow,
     LazyDependency,
     TableRows,
     TableWidth,
@@ -9848,6 +9850,14 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
+                let virtual_row = self.lower_keyed_metric(
+                    view,
+                    &options.virtual_row,
+                    CheckedViewExprRole::KeyedVirtualRow,
+                    env,
+                    span,
+                    origin,
+                )?;
                 self.lower_view_expression_tree(child, &scoped)?;
                 CheckedViewFlow::Keyed {
                     items: items_use,
@@ -9860,6 +9870,7 @@ impl<'a> FactsBuilder<'a> {
                         spacing,
                         padding,
                         max_width,
+                        virtual_row,
                         align: options.align,
                     },
                 }

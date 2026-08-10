@@ -619,6 +619,64 @@ frame, that walk is 78-89% of the cost, and it does not shrink with the
 viewport, with warm-up, or with anything the code generator emits. Only a
 boundary the walk can stop at moves it.
 
+### Not laying the rows out at all
+
+The boundary the walk can stop at is the viewport, and the fills list now uses
+it: `keyed fill in fills by=fill.tid virtual-row=26.0`. Both halves are load
+bearing, and the reason the list went unvirtualized for so long was that only
+one of them existed. `virtual-row=` was a plain column's property, and dropping
+the key to get it costs more than it saves — every row's `lazy` memo is matched
+by tree position, so a fill printing on top of an index-diffed column
+invalidates all 200 — besides putting `FillFlash` under `W008`.
+
+Two binaries built from `origin/main` and this branch, run alternately A, B, A,
+B, four rounds each, `frame_panels` at 200 fills / 200 markets / 1760x940,
+release. Medians of the four rounds:
+
+| | keyed | keyed + `virtual-row=` |
+|---|---|---|
+| **fill rows, paired ablation** | **550us [529..570]** | **236us [225..253]** |
+| all rows, paired ablation | 1344us | 1034us |
+| idle redraw, full screen | 2093us [2010..2154] | 1705us [1653..1743] |
+| `__view` build, full screen | 39us | 39us |
+| rows rebuilt: cold / unchanged / one fill moved | 200 / 0 / 1 | 200 / 0 / 1 |
+
+**The fill rows cost 550us and now cost 236us**, and the whole-list ablation
+moves by 310us against the fills' own 314us, which is the same answer from the
+other side. The frame is 2093us -> 1705us.
+
+Both binaries were built after `cargo clean -p trading-example`, and each
+generated view was grepped for `virtual_keyed_children` before it was run. That
+is not ceremony. A first attempt at this table used a shared target directory
+without the clean, and `ui-lang-build` served a generated view from a build
+hours earlier — the compiler changed, the `.ice` sources did not, and nothing
+in the fingerprint notices the first without the second. The debug build of the
+same edit ran a whole 478-test suite green against a view that did not contain
+the feature. See "An environment variable that no fingerprint tracks" below:
+the trap is the same one, and the compiler is a build input like any other.
+
+Three things that table says, none of them optional to say:
+
+- **The build column did not move, and neither did the memo counts.** A
+  virtualized-out row is still *built*; it is not laid out. Text is shaped in
+  `layout`, which is where the 314us was. Any account of this change that
+  claims fewer rebuilds is wrong, and `fills_stay_memoized_performance_contract`
+  is the receipt: 200/0/1 on both binaries.
+- **236us remains and is not a rounding error.** The visible rows are really
+  laid out, 200 memo boundaries still hash their `Fill` every pass, 200 children
+  are still diffed, and the `FillFlash` beside each `lazy` is outside the memo
+  by design. Virtualization takes the shaping, not the list.
+- **Offscreen rows leave the accessibility tree**, and `.ice` tests read that
+  same snapshot — `trading_a_long_fills_list_lays_out_only_the_rows_it_can_show`
+  asserts exactly that, in both directions, and is the test that fails on a
+  build where the property is silently ignored. A read-mostly log of fills is
+  what that trade is acceptable for; a collection that has to read correctly to
+  assistive tech needs `virtual_list`, which owns its rows.
+
+The earlier decline of this change priced it at 301us from `frame_panels`
+before that probe was corrected, and rejected it on the two language gaps
+above. The gaps were real; the number was not the reason.
+
 ### Two reported symptoms, and which of them was a frame
 
 The terminal's owner reported list scrolling that "bounces" and a chart/positions
