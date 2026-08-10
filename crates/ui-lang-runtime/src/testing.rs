@@ -32,8 +32,8 @@ use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -108,6 +108,29 @@ pub fn app_instance() -> u64 {
 /// Enrols this thread into a driver's application instance.
 fn adopt_app_instance(id: u64) {
     APP_INSTANCE.with(|instance| instance.set(Some(id)));
+}
+
+/// Every live driver's logical clock, keyed by application instance.
+///
+/// [`every`] reads it once, as its stream starts, to phase its first tick from
+/// the driver's current logical time instead of from the wall clock. Entries
+/// are one `Instant` per driven application in a binary that exits with the
+/// suite, so, like the instance ids they hang off, they are never reclaimed.
+static LOGICAL_CLOCKS: LazyLock<Mutex<HashMap<u64, Instant>>> = LazyLock::new(Mutex::default);
+
+fn publish_logical_time(instance: u64, time: Instant) {
+    LOGICAL_CLOCKS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(instance, time);
+}
+
+fn published_logical_time(instance: u64) -> Option<Instant> {
+    LOGICAL_CLOCKS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&instance)
+        .copied()
 }
 
 /// Carries the driver's application instance onto whichever executor thread
@@ -1959,6 +1982,72 @@ impl<Message: Send + 'static> subscription::Recipe for PanicRecipe<Message> {
     }
 }
 
+/// A test build's `every Ns`: an interval that ticks off the driving test's
+/// logical clock — which the driver broadcasts to every subscription as
+/// `RedrawRequested` — instead of off the executor's wall-clock timers.
+///
+/// Wall time is what made `every` flake: under a loaded suite a test's wall
+/// duration stretches across periods the test never scripted, and a reload
+/// lands mid-assertion. Logical time moves only when the test says so —
+/// `advance` moves it without waiting, `wait` moves it by exactly the waited
+/// duration — so a tick count is a property of the script, not of the machine.
+/// One redraw that crosses several periods delivers every crossed tick, the
+/// way a wall-clock interval that fell behind would catch up.
+pub fn every(period: Duration) -> iced::Subscription<Instant> {
+    assert!(
+        !period.is_zero(),
+        "`every` requires a positive period, like the wall-clock interval it stands in for"
+    );
+    iced::advanced::subscription::from_recipe(LogicalEvery { period })
+}
+
+struct LogicalEvery {
+    period: Duration,
+}
+
+impl subscription::Recipe for LogicalEvery {
+    type Output = Instant;
+
+    fn hash(&self, state: &mut subscription::Hasher) {
+        use std::hash::Hash as _;
+        TypeId::of::<Self>().hash(state);
+        self.period.hash(state);
+    }
+
+    fn stream(
+        self: Box<Self>,
+        input: subscription::EventStream,
+    ) -> iced_test::futures::BoxStream<Self::Output> {
+        // Tracked from the driver's own thread, so the thread's instance is
+        // the driver's and the published clock is that driver's logical time.
+        // A stream started with no driver behind it phases from the wall
+        // clock and then never fires, because only a driver broadcasts
+        // redraws.
+        let period = self.period;
+        let mut next_due = published_logical_time(app_instance())
+            .unwrap_or_else(Instant::now)
+            .checked_add(period);
+        input
+            .flat_map(move |event| {
+                let mut ticks = Vec::new();
+                if let subscription::Event::Interaction {
+                    event: iced::Event::Window(window::Event::RedrawRequested(at)),
+                    ..
+                } = event
+                {
+                    while let Some(due) = next_due
+                        && due <= at
+                    {
+                        ticks.push(due);
+                        next_due = due.checked_add(period);
+                    }
+                }
+                iced_test::futures::futures::stream::iter(ticks)
+            })
+            .boxed()
+    }
+}
+
 type HeadlessRuntime<P> = Runtime<
     <P as Program>::Executor,
     mpsc::Sender<DriverEvent<<P as Program>::Message>>,
@@ -2155,6 +2244,11 @@ where
             None => program.boot(),
         };
 
+        // Published before `resubscribe` streams the first recipe: an `every`
+        // phases its ticks from this clock the moment its stream starts.
+        let logical_time = Instant::now();
+        publish_logical_time(instance, logical_time);
+
         let mut driver = Self {
             program,
             state,
@@ -2183,7 +2277,7 @@ where
             locale: config.locale,
             platform: config.platform,
             reduced_motion: config.reduced_motion,
-            logical_time: Instant::now(),
+            logical_time,
             artifact_dir: config.artifact_dir.unwrap_or_else(|| {
                 std::env::var_os("ICE_TEST_ARTIFACT_DIR")
                     .filter(|path| !path.is_empty())
@@ -3274,15 +3368,19 @@ where
         );
     }
 
-    /// Waits for real executor time, then redraws and settles. This does not virtualize timers.
+    /// Waits for real executor time, then advances the logical clock by the
+    /// waited duration, redraws, and settles.
+    ///
+    /// The sleep is real because tasks and streams run real futures; the
+    /// logical step is the *requested* duration rather than the measured one,
+    /// so an `every` — which ticks off the logical clock — fires the same
+    /// count on a loaded machine as on an idle one.
     pub fn wait(&mut self, duration: Duration, source: Location) {
         if duration.is_zero() {
             self.invalid_action("wait", "a positive duration", "0ns".to_owned(), source);
         }
-        let started_at = Instant::now();
         std::thread::sleep(duration);
-        let elapsed = started_at.elapsed();
-        self.logical_time = self.logical_time.checked_add(elapsed).unwrap_or_else(|| {
+        let time = self.logical_time.checked_add(duration).unwrap_or_else(|| {
             self.invalid_action(
                 "wait",
                 "a duration within the platform Instant range",
@@ -3290,7 +3388,7 @@ where
                 source,
             )
         });
-        self.logical_time = self.logical_time.max(Instant::now());
+        self.set_logical_time(time);
         self.redraw_at(self.logical_time, source);
     }
 
@@ -3299,7 +3397,7 @@ where
         if duration.is_zero() {
             self.invalid_action("advance", "a positive duration", "0ns".to_owned(), source);
         }
-        self.logical_time = self.logical_time.checked_add(duration).unwrap_or_else(|| {
+        let time = self.logical_time.checked_add(duration).unwrap_or_else(|| {
             self.invalid_action(
                 "advance",
                 "a duration within the platform Instant range",
@@ -3307,7 +3405,17 @@ where
                 source,
             )
         });
+        self.set_logical_time(time);
         self.redraw_at(self.logical_time, source);
+    }
+
+    /// Moves the logical clock, for this driver and for the `every` streams
+    /// that phase themselves from its published copy. Nothing else moves it:
+    /// the wall clock a loaded machine spends on reading the screen must not
+    /// leak into the application's time.
+    fn set_logical_time(&mut self, time: Instant) {
+        self.logical_time = time;
+        publish_logical_time(self.instance, time);
     }
 
     pub fn idle(&mut self, source: Location) {
@@ -3602,7 +3710,6 @@ where
         let id = id.to_owned();
         let test_name = self.test_name;
         let paint = if paint {
-            self.logical_time = self.logical_time.max(Instant::now());
             let cursor = self.cursor;
             let theme = self.theme();
             let style = self.program.style(&self.state, &theme);
@@ -3685,7 +3792,6 @@ where
     }
 
     pub fn redraw(&mut self, source: Location) {
-        self.logical_time = self.logical_time.max(Instant::now());
         self.redraw_at(self.logical_time, source);
     }
 
@@ -5883,6 +5989,10 @@ mod tests {
         })
     }
 
+    fn every_subscription(_state: &State) -> iced::Subscription<Message> {
+        every(Duration::from_millis(250)).map(|_| Message::Incremented)
+    }
+
     fn panicking_subscription(_state: &State) -> iced::Subscription<Message> {
         iced::Subscription::run(|| {
             iced_test::futures::futures::stream::once(async {
@@ -7352,6 +7462,40 @@ mod tests {
         assert_eq!(driver.state().count, 5);
         driver.key(Key::named(keyboard::key::Named::Escape), HERE);
         assert_eq!(driver.state().count, 15);
+    }
+
+    /// An `every` belongs to the test's logical clock, not to the machine's.
+    /// Wall time passing without a scripted `advance`/`wait` must deliver no
+    /// tick — that load-dependent tick mid-assertion is exactly the flake —
+    /// and a scripted step must deliver exactly the periods it crosses.
+    #[test]
+    fn every_ticks_off_the_logical_clock_not_the_wall_clock() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view)
+                .subscription(every_subscription),
+            Config::new("every_logical_clock").viewport(320.0, 240.0),
+        );
+        assert_eq!(driver.state().count, 0);
+
+        // Real time crosses the 250ms period twice over; reading the screen
+        // afterwards still delivers no tick, because neither the sleep nor the
+        // redraw moves the logical clock.
+        std::thread::sleep(Duration::from_millis(600));
+        driver.redraw(HERE);
+        assert_eq!(driver.state().count, 0);
+
+        driver.advance(Duration::from_millis(250), HERE);
+        assert_eq!(driver.state().count, 1);
+
+        // One step across four periods catches up with all four ticks.
+        driver.advance(Duration::from_secs(1), HERE);
+        assert_eq!(driver.state().count, 5);
+
+        // `wait` sleeps real time but steps the logical clock by exactly the
+        // requested duration: 1250ms → 1550ms crosses the 250ms grid once,
+        // however long the sleep really took.
+        driver.wait(Duration::from_millis(300), HERE);
+        assert_eq!(driver.state().count, 6);
     }
 
     #[test]

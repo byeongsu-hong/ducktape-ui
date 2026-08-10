@@ -4298,7 +4298,11 @@ item directly to `iced::time::repeat`. A fallible extern produces
 `result[T,E]` values instead of splitting the subscription into success/error
 routes. Durations must be positive whole numbers using `ms` or `s`. `every`
 requires iced's `tokio` or `smol` Cargo feature; `repeat` requires `tokio`,
-which the reference app uses.
+which the reference app uses. In a generated test build `every` ticks off the
+test driver's logical clock rather than a wall-clock timer, so its ticks are
+scripted by `advance`/`wait` and a loaded machine cannot fire a period a test
+never asked for; `repeat` and timer futures inside tasks and streams remain on
+real time.
 
 Native keyboard subscriptions infer structured payloads. Press events expose
 `key:key`, `modified_key:key`, `physical_key:physical-key`,
@@ -5354,12 +5358,15 @@ event/subscription path. `close-request` asks the application to close; it does
 not bypass the application's close-request handler.
 
 `idle` drains work that is already ready, including task results and
-subscription handoffs. `wait` permits the stated amount of real elapsed time
-and then settles. `advance` deterministically advances the driver's redraw
-timestamp and emits `RedrawRequested`; it deliberately does not virtualize
-arbitrary `iced::time` futures. `capture` records the current window as
-in-memory RGBA and writes a PNG plus a structured JSON frame manifest. The
-default directory is `target/ice-test-artifacts/<sanitized-test-name>/`.
+subscription handoffs. `wait` permits the stated amount of real elapsed time,
+advances the logical clock by exactly the stated duration, and then settles.
+`advance` deterministically advances the driver's logical clock without
+waiting and emits `RedrawRequested`. The logical clock moves only through
+these two statements; `every` subscriptions tick off it, while arbitrary
+`iced::time` futures inside tasks and streams deliberately stay on real time.
+`capture` records the current window as in-memory RGBA and writes a PNG plus
+a structured JSON frame manifest. The default directory is
+`target/ice-test-artifacts/<sanitized-test-name>/`.
 `ICE_TEST_ARTIFACT_DIR` replaces the root while retaining the per-test
 directory; a Rust harness may instead set `Config::artifact_dir` to the exact
 per-test directory. The manifest records its schema version, capture/PNG
@@ -5442,9 +5449,9 @@ receive the same simulated interaction/window events. The timeout protects boot
 and finite-task settling from non-quiescent work. Long-lived timer, I/O, and
 worker subscriptions are sampled around boot and simulated events; they are not
 awaited to global quiescence, because an active subscription may intentionally
-be infinite. `wait` is the bounded real-time escape hatch and `advance` controls
-only the redraw timestamp; neither turns an infinite subscription into finite
-work.
+be infinite. `wait` is the bounded real-time escape hatch and, with `advance`,
+the only mover of the logical clock `every` ticks off; neither turns an
+infinite subscription into finite work.
 
 Checked `pure`, `sync`, future, task, stream, and subscription externs call their real
 Rust implementations. Their panics and errors are not hidden. Deterministic

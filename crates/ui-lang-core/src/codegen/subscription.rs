@@ -146,7 +146,10 @@ pub(in crate::codegen) fn generate_subscription(
         }
         match &subscription.source {
             ResolvedSubscriptionSource::Every { milliseconds } => {
-                writeln!(out, "::iced::time::every(::std::time::Duration::from_millis({milliseconds})){transforms}.map(move |__value| {route}),").unwrap();
+                // A test build ticks `every` off the test driver's logical
+                // clock: on a loaded machine a wall-clock interval fires
+                // periods the test never scripted, mid-assertion.
+                writeln!(out, "{{ #[cfg(test)] let __ice_every = ::ui_lang_runtime::testing::every(::std::time::Duration::from_millis({milliseconds})); #[cfg(not(test))] let __ice_every = ::iced::time::every(::std::time::Duration::from_millis({milliseconds})); __ice_every }}{transforms}.map(move |__value| {route}),").unwrap();
             }
             ResolvedSubscriptionSource::Repeat {
                 function,

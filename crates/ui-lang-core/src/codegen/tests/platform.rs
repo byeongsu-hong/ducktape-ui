@@ -137,6 +137,11 @@ fn lowers_native_timer_subscription() {
     let source = example!("timer.ice");
     let generated = compile(source, "timer.ice").unwrap();
     assert!(generated.contains("::iced::time::every(::std::time::Duration::from_millis(250))"));
+    assert!(
+        generated
+            .contains("::ui_lang_runtime::testing::every(::std::time::Duration::from_millis(250))"),
+        "a test build ticks `every` off the driver's logical clock"
+    );
     assert!(generated.contains("::iced::Subscription::batch(["));
     assert!(generated.contains("::iced::time::now().map"));
     assert!(generated.contains("__TimerEventsMessage::Tick(__value)"));
