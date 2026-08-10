@@ -18,11 +18,17 @@ test trading_gate_refuses_a_malformed_address
   // so reaching it is a press. What it refuses is unchanged.
   click watch_path
   focus field
+  expect no text "An address is 0x and forty hexadecimal digits." within dialog
   replace "0xnope"
   expect draft == "0xnope"
   expect a11y connect disabled true
+  // A dead button says nothing about what is wrong. The dialog draws the rule,
+  // and this is the assertion that reads it — absent before the refusal and
+  // absent again after it, so the absence is an absence.
+  expect text "An address is 0x and forty hexadecimal digits." within dialog
   replace "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
   expect a11y connect disabled false
+  expect no text "An address is 0x and forty hexadecimal digits." within dialog
 
 // The first thing this app asks for is the key, not somebody else's address.
 //
@@ -104,6 +110,8 @@ test trading_the_gate_says_what_being_wrong_here_costs
   viewport 1440 900
   target dialog = #gate
   target kind = dialog/gate-kind
+  expect text "REAL MONEY" within kind
+  expect no text "TESTNET" within dialog
   expect a11y kind value "REAL MONEY"
 
 test trading_the_gate_says_when_being_wrong_here_costs_nothing
@@ -111,6 +119,8 @@ test trading_the_gate_says_when_being_wrong_here_costs_nothing
   viewport 1440 900
   target dialog = #gate
   target kind = dialog/gate-kind
+  expect text "TESTNET" within kind
+  expect no text "REAL MONEY" within dialog
   expect a11y kind value "TESTNET"
   expect venue_testnet(venue)
   capture gate_testnet
