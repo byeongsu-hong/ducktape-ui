@@ -332,7 +332,9 @@ pub fn events() -> iced::Subscription<usize> {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use std::cell::{Cell, RefCell};
+    #[cfg(test)]
+    use std::cell::Cell;
+    use std::cell::RefCell;
 
     use tray_icon::menu::{
         IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
@@ -494,11 +496,17 @@ mod platform {
     // status item exists and the native call below never executes there;
     // recording the intent first is what lets the tests check the template
     // flag on a real macOS runner instead of only on a developer's desk.
+    //
+    // Compiled only for tests, because only a test ever reads it. Built into
+    // the program as well, it was a `never used` warning on every macOS build
+    // that was not a test one — which is every build anyone ships or runs.
+    #[cfg(test)]
     thread_local! {
         static INSTALLED: Cell<Option<(&'static str, bool)>> = const { Cell::new(None) };
     }
 
     /// The icon path and template flag of the last swap this module performed.
+    #[cfg(test)]
     pub(super) fn last_install() -> Option<(&'static str, bool)> {
         INSTALLED.with(Cell::get)
     }
@@ -514,6 +522,7 @@ mod platform {
     /// by `template` having no other use; the flag's VALUE is what the test
     /// pins.
     pub fn set_icon(icon: TrayIcon, template: bool) {
+        #[cfg(test)]
         INSTALLED.with(|slot| slot.set(Some((icon.path, template))));
         TRAY.with_borrow(|slot| {
             let Some(state) = slot.as_ref() else {
