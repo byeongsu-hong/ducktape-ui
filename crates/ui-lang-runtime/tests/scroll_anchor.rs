@@ -1,8 +1,16 @@
 //! What `scroll_anchor` promises, held against a plain scrollable in the same
-//! run: rows arriving above the viewport move the offset with them, and
-//! nothing else does.
+//! run: a list that grew carries the reader's offset with it, and nothing else
+//! moves them.
 //!
-//! The control is the point. Both halves of every assertion below are built,
+//! Growth is the whole of the input, because it is the whole of what a wrapper
+//! around a scrollable can see — which end the rows landed on is not something
+//! a box of pixels with a height can report. So these fixtures grow a column
+//! and assert the offset arithmetic; the case that matters, rows landing
+//! *above* a reader, is driven end to end against the real terminal by
+//! `examples/trading/src/ui/tests/scrolling.ice`, where `push_fills` really
+//! does put the new rows on top.
+//!
+//! The control is the point. Both halves of the first assertion are built,
 //! laid out and read in one process against one renderer, so a passing
 //! anchored number is only meaningful beside the unanchored one that does not
 //! move — which is exactly the reported symptom.
@@ -111,11 +119,11 @@ fn after_growth(anchored: bool, rows: usize, start: f32, grown: usize) -> f32 {
 }
 
 /// The reported symptom and its fix, side by side. A reader 60px into a list
-/// has four rows land above them: unanchored the offset holds and the rows
-/// they were reading slide 80px down the screen; anchored the offset follows
+/// has it grow by four 20px rows: unanchored the offset holds, so rows
+/// inserted above them slide 80px down the screen; anchored the offset follows
 /// the growth and the same rows stay under their eye.
 #[test]
-fn rows_landing_above_the_viewport_move_the_offset_with_them() {
+fn a_grown_list_carries_a_scrolled_readers_offset_with_it() {
     let plain = after_growth(false, 20, 60.0, 4);
     let anchored = after_growth(true, 20, 60.0, 4);
 
@@ -125,7 +133,7 @@ fn rows_landing_above_the_viewport_move_the_offset_with_them() {
     );
     assert!(
         (anchored - (60.0 + 4.0 * ROW)).abs() < 0.5,
-        "four rows of {ROW}px above the viewport must carry the offset with them: \
+        "four rows of {ROW}px of growth must carry the offset with them: \
          expected {}, got {anchored}",
         60.0 + 4.0 * ROW
     );
@@ -133,7 +141,7 @@ fn rows_landing_above_the_viewport_move_the_offset_with_them() {
 
 /// A reader who has not scrolled is reading the newest row, and following the
 /// content is what they want. Anchoring must leave them there — the fix must
-/// not turn "pinned to the top" into "drifting down the list".
+/// not turn "resting on the newest row" into "drifting down the list".
 #[test]
 fn a_reader_at_the_top_is_left_on_the_newest_row() {
     let anchored = after_growth(true, 20, 0.0, 4);
