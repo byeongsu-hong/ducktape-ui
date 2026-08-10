@@ -319,12 +319,22 @@ test trading_an_import_answers_the_account_and_one_press_spends_it
   // control on this screen follows.
   expect a11y check disabled true
   expect missing shown
-  // The words are in state while they are being typed. That is the ceiling this
-  // step is built around, and asserting it here is what keeps the clearing
-  // below from being a negative about something that was never there.
+  // The words never enter state at all — this test could not name them if it
+  // wanted to, because `expect import_phrase == "abandon …"` is a type error
+  // against a `secret`, and the compile-time half of that claim is the
+  // `secret-read-as-text` fixture in Core. What is left to assert here is the
+  // whole of what Ice is allowed to know about the box, which is that something
+  // is in it and how much: eleven `abandon` at seven each, `about` at five, and
+  // eleven separators, which is the 93 bullets the field is drawing. That is a
+  // positive about the typing, so the emptiness below is still a change rather
+  // than a fact about nothing.
   focus phrase
   replace "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-  expect import_phrase == "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+  expect !empty(import_phrase)
+  expect len(import_phrase) == 11 * 7 + 5 + 11
+  // And nothing anywhere is drawing them.
+  expect no text "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+  expect a11y phrase role "password-input"
   expect a11y check disabled false
   click check
   // The account those words derive, on screen, which is the whole of what the
@@ -332,8 +342,9 @@ test trading_an_import_answers_the_account_and_one_press_spends_it
   expect import_address == "0x9858effd232b4033e47d90003d41ec34ecaeda94"
   expect exists shown
   expect a11y shown value "0x9858effd232b4033e47d90003d41ec34ecaeda94"
-  // And the words are gone the instant the address exists.
+  // And the buffer is wiped the instant the address exists.
   expect empty(import_phrase)
+  expect len(import_phrase) == 0
   expect missing phrase
   // Nothing has been written. What CHECK left is a key waiting for the owner to
   // say it is theirs, and the step says so in the derivation's own words.
@@ -352,9 +363,11 @@ test trading_an_import_answers_the_account_and_one_press_spends_it
   expect !empty(import_note)
   expect import_note != "This phrase is the account 0x9858effd232b4033e47d90003d41ec34ecaeda94. If that is not the address you expect, nothing has been stored — go back and check the words."
 
-// Leaving takes the phrase, the address and the key with it. A step that
-// remembered any of them would be a recovery phrase left in state for the rest
-// of the session, which is what its one-press life exists to prevent.
+// Leaving wipes the phrase and forgets the address and the key. A step that
+// remembered any of them would be a recovery phrase left in the process for the
+// rest of the session, which is what its one-press life exists to prevent —
+// and `= ""` on a secret is a zeroizing wipe rather than a rebinding, so what
+// leaving costs is the bytes as well as the name.
 test trading_closing_the_import_step_forgets_what_was_typed
   preset held
   viewport 1660 900

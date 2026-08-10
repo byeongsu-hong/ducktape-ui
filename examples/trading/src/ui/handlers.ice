@@ -770,8 +770,10 @@ on confirm_backup
   backup_two = ""
   backup_three = ""
   // From here the two doors are one path: the phrase derives, the address is
-  // shown, and THIS IS MINE stores it.
-  run every read_wallet(create_phrase, "") -> phrase_read _ | custody_failed _
+  // shown, and THIS IS MINE stores it. `read_made_wallet` rather than
+  // `read_wallet` because a made phrase is a value on the screen, and the
+  // typed door's parameters take a buffer no value can be turned into.
+  run every read_made_wallet(create_phrase) -> phrase_read _ | custody_failed _
 
 // Every exit clears the phrase and the key it derived. A step that remembered
 // either would be a recovery phrase left in state for the rest of the session.
@@ -790,25 +792,22 @@ on close_import
   backup_three = ""
   session = forget_wallet()
 
-on import_typed(typed)
-  import_phrase = typed
-
-on import_passphrase_typed(typed)
-  import_passphrase = typed
-
 // Derive, and show the address. Nothing is stored and no sheet is raised: this
 // is the step whose whole job is letting the owner say "that is my account"
 // before anything is written.
 on check_phrase
   return if empty(import_phrase)
   import_note = ""
+  // The one moment the typed text is readable, and it is readable to Rust
+  // rather than to this program: `read_wallet` takes both boxes as `secret`.
   run every read_wallet(import_phrase, import_passphrase) -> phrase_read _ | custody_failed _
 
 on phrase_read(entry)
-  // Cleared here rather than on the way out: the phrase has done its work, and
-  // the shortest life it can have is the one that ends the moment it has. A
-  // made phrase goes the same way at the same moment — this is the point the
-  // two doors converge on.
+  // Wiped here rather than on the way out: the phrase has done its work, and
+  // the shortest life it can have is the one that ends the moment it has. On
+  // the typed door `= ""` zeroizes the runtime buffer, which is the only write
+  // Ice has over it; on the made door it clears ordinary state. Both doors
+  // converge here.
   import_phrase = ""
   import_passphrase = ""
   create_phrase = ""
