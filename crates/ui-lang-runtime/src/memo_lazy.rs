@@ -7,8 +7,15 @@
 //! keystroke anywhere in the window re-laid a 150-row stream for ~23ms while
 //! `view` itself cost ~1ms. This fork memoizes the layout node beside the
 //! cached element: while the dependency hash AND the incoming `Limits` are
-//! unchanged, `layout()` returns a clone of the stored node without touching
-//! the subtree.
+//! unchanged, `layout()` answers without touching the subtree.
+//!
+//! The memoized node never leaves this widget. `layout()` hands the parent one
+//! childless node — this widget's own box — and every later phase re-roots the
+//! stored subtree at wherever the parent put that box, which is the same
+//! `Layout` the subtree would have produced had it been returned. Handing back
+//! a copy instead cost a deep clone of every node under the boundary on every
+//! frame, ~42ns a node, which on a dense screen was most of what the memo had
+//! just saved.
 //!
 //! Both caches used to die with the widget tree: a `match` arm switch tears
 //! down the inactive screen, and re-entering rebuilt and re-shaped every lazy
@@ -58,18 +65,19 @@ struct Parked<Message: 'static, Theme: 'static, Renderer: 'static> {
 }
 
 struct Parking {
-    entries: FxHashMap<(u64, u64), (u64, Box<dyn Any>)>,
-    clock: u64,
+    entries: FxHashMap<(u64, u64), Box<dyn Any>>,
+    /// Park order, oldest first, so eviction is a `pop_front` rather than a
+    /// scan of the whole lot. A key reclaimed before it was ever evicted stays
+    /// behind here as a stale entry; [`park`] drops those off the front.
+    order: std::collections::VecDeque<(u64, u64)>,
 }
 
-// ponytail: flat cap + O(n) oldest scan on insert; revisit if parking churn
-// ever shows in profiles.
 const PARKING_CAP: usize = 1024;
 
 thread_local! {
     static PARKING: RefCell<Parking> = RefCell::new(Parking {
         entries: FxHashMap::default(),
-        clock: 0,
+        order: std::collections::VecDeque::new(),
     });
 }
 
@@ -81,24 +89,29 @@ fn reclaim(site: u64, hash: u64) -> Option<Box<dyn Any>> {
         .try_with(|parking| parking.borrow_mut().entries.remove(&(site, hash)))
         .ok()
         .flatten()
-        .map(|(_, subtree)| subtree)
 }
 
 fn park(site: u64, hash: u64, subtree: Box<dyn Any>) {
     let displaced = PARKING
         .try_with(|parking| {
             let mut parking = parking.borrow_mut();
-            parking.clock += 1;
-            let stamp = parking.clock;
-            let evicted = if parking.entries.len() >= PARKING_CAP
-                && !parking.entries.contains_key(&(site, hash))
+            let Parking { entries, order } = &mut *parking;
+            let key = (site, hash);
+            // Keys reclaimed since the last park are still queued; drop them
+            // before reading the front, so the oldest LIVE entry is what an
+            // eviction takes and the queue does not grow with the churn.
+            // ponytail: draining only from the front means one long-parked key
+            // can hold stale ones behind it, so `order` can outgrow `entries`
+            // by 16 bytes a reclaim; a `retain` past 2 * PARKING_CAP is the
+            // cure if that ever shows up anywhere.
+            while order
+                .front()
+                .is_some_and(|front| !entries.contains_key(front))
             {
-                let oldest = parking
-                    .entries
-                    .iter()
-                    .min_by_key(|(_, (stamp, _))| *stamp)
-                    .map(|(key, _)| *key);
-                oldest.and_then(|key| parking.entries.remove(&key))
+                let _ = order.pop_front();
+            }
+            let evicted = if entries.len() >= PARKING_CAP && !entries.contains_key(&key) {
+                order.pop_front().and_then(|oldest| entries.remove(&oldest))
             } else {
                 None
             };
@@ -106,7 +119,10 @@ fn park(site: u64, hash: u64, subtree: Box<dyn Any>) {
             // distinct parks them all under one hash — and the loser of that
             // race is dropped here. Carried out with the evicted one rather
             // than dropped in place, because either drop re-enters the lot.
-            let replaced = parking.entries.insert((site, hash), (stamp, subtree));
+            let replaced = entries.insert(key, subtree);
+            if replaced.is_none() {
+                order.push_back(key);
+            }
             (evicted, replaced)
         })
         .ok();
@@ -195,6 +211,32 @@ struct Internal<Message: 'static, Theme: 'static, Renderer: 'static> {
     /// The child's widget state. Owned here — not in `Tree::children` — so an
     /// unmount can park it wholesale and a remount can bring it back.
     tree: Tree,
+}
+
+/// What the parent is handed: this widget's own box, with nothing under it.
+/// The subtree stays in the memo and is lent out by [`child_layout`], which is
+/// what makes a cache hit cost one node instead of a deep clone of every node
+/// under this `lazy` — and spares the parent freeing them all again.
+fn shallow(node: &layout::Node) -> layout::Node {
+    layout::Node::new(node.size()).move_to(node.bounds().position())
+}
+
+/// The memoized subtree, rooted where the parent put the box [`shallow`] gave
+/// it. Every phase after `layout` receives the parent's `Layout`, which
+/// describes only that box; the child needs its own nodes, positioned exactly
+/// as if they had been returned along with it.
+fn child_layout<'a>(
+    memo: &'a Option<(layout::Limits, layout::Node)>,
+    layout: Layout<'_>,
+) -> Layout<'a> {
+    let node = &memo
+        .as_ref()
+        .expect("`layout` runs before any phase that walks the tree")
+        .1;
+    let root = node.bounds();
+    let position = layout.position();
+
+    Layout::with_offset(Vector::new(position.x - root.x, position.y - root.y), node)
 }
 
 impl<Message, Theme, Renderer> Drop for Internal<Message, Theme, Renderer> {
@@ -329,7 +371,7 @@ where
         if let Some((cached_limits, node)) = &state.layout
             && cached_limits == limits
         {
-            return node.clone();
+            return shallow(node);
         }
 
         let node = self.with_element_mut(|element| {
@@ -337,8 +379,9 @@ where
                 .as_widget_mut()
                 .layout(&mut state.tree, renderer, limits)
         });
-        state.layout = Some((*limits, node.clone()));
-        node
+        let handed_up = shallow(&node);
+        state.layout = Some((*limits, node));
+        handed_up
     }
 
     fn operate(
@@ -348,13 +391,18 @@ where
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        let state = tree
+        let Internal {
+            layout: memo,
+            tree: child,
+            ..
+        } = tree
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
+        let layout = child_layout(memo, layout);
         self.with_element_mut(|element| {
             element
                 .as_widget_mut()
-                .operate(&mut state.tree, layout, renderer, operation);
+                .operate(child, layout, renderer, operation);
         });
     }
 
@@ -369,19 +417,17 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let state = tree
+        let Internal {
+            layout: memo,
+            tree: child,
+            ..
+        } = tree
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
+        let layout = child_layout(memo, layout);
         self.with_element_mut(|element| {
             element.as_widget_mut().update(
-                &mut state.tree,
-                event,
-                layout,
-                cursor,
-                renderer,
-                clipboard,
-                shell,
-                viewport,
+                child, event, layout, cursor, renderer, clipboard, shell, viewport,
             );
         });
     }
@@ -394,13 +440,18 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        let state = tree
+        let Internal {
+            layout: memo,
+            tree: child,
+            ..
+        } = tree
             .state
             .downcast_ref::<Internal<Message, Theme, Renderer>>();
+        let layout = child_layout(memo, layout);
         self.with_element(|element| {
             element
                 .as_widget()
-                .mouse_interaction(&state.tree, layout, cursor, viewport, renderer)
+                .mouse_interaction(child, layout, cursor, viewport, renderer)
         })
     }
 
@@ -414,19 +465,18 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        let state = tree
+        let Internal {
+            layout: memo,
+            tree: child,
+            ..
+        } = tree
             .state
             .downcast_ref::<Internal<Message, Theme, Renderer>>();
+        let layout = child_layout(memo, layout);
         self.with_element(|element| {
-            element.as_widget().draw(
-                &state.tree,
-                renderer,
-                theme,
-                style,
-                layout,
-                cursor,
-                viewport,
-            );
+            element
+                .as_widget()
+                .draw(child, renderer, theme, style, layout, cursor, viewport);
         });
     }
 
@@ -438,9 +488,14 @@ where
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        let state = tree
+        let Internal {
+            layout: memo,
+            tree: child,
+            ..
+        } = tree
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
+        let layout = child_layout(memo, layout);
         let overlay = InnerBuilder {
             cell: self.element.borrow().as_ref().unwrap().clone(),
             element: self
@@ -451,7 +506,7 @@ where
                 .borrow_mut()
                 .take()
                 .unwrap(),
-            tree: &mut state.tree,
+            tree: child,
             layout,
             overlay_builder: |element, tree, layout| {
                 element
@@ -757,6 +812,56 @@ mod tests {
         drop(second);
     }
 
+    /// Past the cap the lot drops the park that has been waiting longest, so
+    /// the rows a user just left keep their place while the screen they left
+    /// two screens ago loses its.
+    #[test]
+    fn parking_past_the_cap_evicts_the_oldest_park() {
+        let builds = Rc::new(Cell::new(0));
+
+        // The two oldest parks, in order.
+        for value in 0..2 {
+            let row = counting_widget(value, 930, builds.clone());
+            drop(Tree::new(
+                &row as &dyn Widget<(), iced::Theme, iced::Renderer>,
+            ));
+        }
+        // Fill the lot to the brim behind them.
+        for value in 2..(PARKING_CAP as i32) {
+            let filler = widget(value, 930);
+            drop(Tree::new(
+                &filler as &dyn Widget<(), iced::Theme, iced::Renderer>,
+            ));
+        }
+        assert_eq!(builds.get(), 2);
+
+        // One park too many, which is one eviction.
+        let overflow = widget(-1, 930);
+        drop(Tree::new(
+            &overflow as &dyn Widget<(), iced::Theme, iced::Renderer>,
+        ));
+
+        let second = counting_widget(1, 930, builds.clone());
+        drop(Tree::new(
+            &second as &dyn Widget<(), iced::Theme, iced::Renderer>,
+        ));
+        assert_eq!(
+            builds.get(),
+            2,
+            "the second-oldest park was not the one evicted, so it reclaims"
+        );
+
+        let first = counting_widget(0, 930, builds.clone());
+        drop(Tree::new(
+            &first as &dyn Widget<(), iced::Theme, iced::Renderer>,
+        ));
+        assert_eq!(
+            builds.get(),
+            3,
+            "the oldest park is the one the cap dropped, so it cold-builds"
+        );
+    }
+
     /// The lot holds one entry per distinct `(site, dependency)` that has
     /// unmounted — so a list of rows that are not distinct parks a fraction of
     /// itself, and the rest is thrown away.
@@ -775,6 +880,131 @@ mod tests {
             parked_subtrees() - before,
             3,
             "twenty rows over three distinct values park three subtrees, not twenty"
+        );
+    }
+
+    /// The memoized subtree never travels back to the parent, so the `Layout`
+    /// the later phases build over it has to land exactly where a returned
+    /// subtree would have: a row the parent placed at (37, 11) draws its cells
+    /// there, each still offset by its own place inside the row.
+    #[test]
+    fn a_cache_hit_lays_the_memoized_subtree_over_the_box_the_parent_placed() {
+        use iced::advanced::renderer::Headless as _;
+
+        type Probed = MemoLazy<
+            'static,
+            (),
+            iced::Theme,
+            iced_test::renderer::Renderer,
+            i32,
+            Element<'static, (), iced::Theme, iced_test::renderer::Renderer>,
+        >;
+
+        /// A fixed-size cell that records the bounds it is handed to draw in.
+        struct Drawn {
+            size: Size,
+            seen: Rc<RefCell<Vec<Rectangle>>>,
+        }
+
+        impl Widget<(), iced::Theme, iced_test::renderer::Renderer> for Drawn {
+            fn size(&self) -> Size<Length> {
+                Size::new(
+                    Length::Fixed(self.size.width),
+                    Length::Fixed(self.size.height),
+                )
+            }
+
+            fn layout(
+                &mut self,
+                _tree: &mut Tree,
+                _renderer: &iced_test::renderer::Renderer,
+                _limits: &layout::Limits,
+            ) -> layout::Node {
+                layout::Node::new(self.size)
+            }
+
+            fn draw(
+                &self,
+                _tree: &Tree,
+                _renderer: &mut iced_test::renderer::Renderer,
+                _theme: &iced::Theme,
+                _style: &renderer::Style,
+                layout: Layout<'_>,
+                _cursor: mouse::Cursor,
+                _viewport: &Rectangle,
+            ) {
+                self.seen.borrow_mut().push(layout.bounds());
+            }
+        }
+
+        let seen: Rc<RefCell<Vec<Rectangle>>> = Rc::new(RefCell::new(Vec::new()));
+        let cells = seen.clone();
+        let mut lazy: Probed = memo_lazy(
+            1,
+            move |_: &i32| {
+                Element::from(iced::widget::Column::with_children(vec![
+                    Element::new(Drawn {
+                        size: Size::new(40.0, 10.0),
+                        seen: cells.clone(),
+                    }),
+                    Element::new(Drawn {
+                        size: Size::new(40.0, 12.0),
+                        seen: cells.clone(),
+                    }),
+                ]))
+            },
+            940,
+        );
+
+        let mut renderer = iced_test::futures::futures::executor::block_on(
+            iced_test::renderer::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0), None),
+        )
+        .expect("headless renderer");
+        let mut tree =
+            Tree::new(&lazy as &dyn Widget<(), iced::Theme, iced_test::renderer::Renderer>);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(200.0, 200.0));
+
+        let cold = lazy.layout(&mut tree, &renderer, &limits);
+        assert!(
+            cold.children().is_empty(),
+            "the parent is handed this widget's box, never the subtree under it"
+        );
+
+        // The same limits again is the memo hit — the path that used to answer
+        // with a deep clone of the subtree.
+        let hit = lazy.layout(&mut tree, &renderer, &limits);
+        assert_eq!(hit.size(), cold.size(), "a hit measures what a miss did");
+
+        let placed = hit.move_to(iced::Point::new(37.0, 11.0));
+        lazy.draw(
+            &tree,
+            &mut renderer,
+            &iced::Theme::Dark,
+            &renderer::Style {
+                text_color: iced::Color::BLACK,
+            },
+            Layout::new(&placed),
+            mouse::Cursor::Unavailable,
+            &Rectangle::with_size(Size::new(200.0, 200.0)),
+        );
+
+        assert_eq!(
+            *seen.borrow(),
+            vec![
+                Rectangle {
+                    x: 37.0,
+                    y: 11.0,
+                    width: 40.0,
+                    height: 10.0,
+                },
+                Rectangle {
+                    x: 37.0,
+                    y: 21.0,
+                    width: 40.0,
+                    height: 12.0,
+                },
+            ],
+            "every cell draws where the parent put the row, plus its own offset"
         );
     }
 }
