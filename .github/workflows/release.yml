@@ -178,8 +178,16 @@ jobs:
           app=target/ice-bundle/Showcase.app
           test -f "$app/Contents/Resources/Showcase.icns"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist"
-          lipo -archs "$app/Contents/MacOS/showcase" | tee /dev/stderr | grep -q x86_64
-          lipo -archs "$app/Contents/MacOS/showcase" | grep -q arm64
+          archs="$(lipo -archs "$app/Contents/MacOS/showcase")"
+          echo "architectures: $archs"
+          case " $archs " in
+            *" arm64 "*) ;;
+            *) echo "::error::the universal binary is missing arm64"; exit 1 ;;
+          esac
+          case " $archs " in
+            *" x86_64 "*) ;;
+            *) echo "::error::the universal binary is missing x86_64"; exit 1 ;;
+          esac
           codesign --verify --strict --verbose=2 "$app"
       - name: Checksum the disk image
         run: |
