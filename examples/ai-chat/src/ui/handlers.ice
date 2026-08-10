@@ -125,13 +125,9 @@ on use_day
 // Everything that leaves this window leaves the same way. A clicked link is
 // copied rather than opened — which browser a developer wanted is not this
 // window's call — and so is a whole message, for the times the whole message
-// is what is wanted.
-//
-// An answer being dragged over reports every drag on the same route, carrying
-// nothing; there is nothing to put on a clipboard then, and the guard is what
-// keeps a drag from wiping it.
+// is what is wanted. Part of one leaves by being dragged over instead, which
+// the text itself answers for and no handler sees.
 on copy_text(text)
-  return if empty(text)
   copied = text
   task clipboard write text
 

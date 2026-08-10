@@ -1194,6 +1194,21 @@ pub fn sample_entries(dark: bool) -> Vec<Entry> {
         .collect()
 }
 
+/// One answer and nothing else.
+///
+/// A drag has to start inside a line of text, and the middle of a whole turn is
+/// the gap between two of its blocks. One short line puts the middle of the row
+/// in the middle of a sentence — long enough that the middle is a word, short
+/// enough that it does not wrap into a second line the middle would fall past
+/// the end of.
+pub fn sample_answer() -> Vec<Entry> {
+    vec![Entry {
+        id: -31,
+        turn: 1,
+        ..Entry::of("answer", "").body("Hold the parsed document and extend it as it grows.")
+    }]
+}
+
 /// A turn caught in the middle: one step done and closed, one still running.
 pub fn sample_running(dark: bool) -> Vec<Entry> {
     let row = |id: i64, open: bool, entry: Entry| Entry {
