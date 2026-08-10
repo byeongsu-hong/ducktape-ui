@@ -107,12 +107,12 @@ jobs:
     runs-on: ubuntu-24.04
     # The longest job here, and the only one that compiles release artifacts,
     # which the fat LTO and single codegen unit in `[profile.release]` make
-    # expensive. It is also the only job that keeps `rust-cache`: when every
-    # sccache job carried one too, nine ~0.8GB entries held 7.3GB of the 10GB
-    # Actions cache and this job's entry was evicted before the next run read
-    # it — every run logged `No cache found`, so 20-24m of cold work had four
-    # minutes of headroom. The sccache jobs now rely on sccache alone, which
-    # cached the same work in ~2GB, leaving room for this entry to survive.
+    # expensive. It also keeps `rust-cache` (alongside only the platforms
+    # job): when every sccache job carried one, nine ~0.8GB entries held
+    # 7.3GB of the 10GB Actions cache and this job's entry was evicted before
+    # the next run read it — every run logged `No cache found`, so 20-24m of
+    # cold work had four minutes of headroom. The Linux sccache jobs now rely
+    # on sccache alone, leaving room for this entry to survive.
     timeout-minutes: 45
     env:
       # This job's product is wall-clock numbers, and sccache keeps a server
@@ -304,6 +304,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
+      # Measured exception to the sccache-only rule: this job builds many dev
+      # test targets, where a restored `target/` lets cargo fingerprint-skip
+      # compilation and linking outright. Without it the macOS leg ran 9-26m
+      # against a 3.5m baseline (PR #551 runs 1-2); warm sccache still pays
+      # the graph walk and every link.
+      - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --locked
       - name: Test development runner discovery
         if: matrix.runner == 'macos-latest'
