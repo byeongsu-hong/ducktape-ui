@@ -247,5 +247,5 @@ bounded number of rows, saying how many it left out. Measured on a machine with
   which is a different program. The hosted `web_search` tool is served by the
   backend, so a real tool call still reaches the screen.
 - A turn cannot be stopped once it starts.
-- The Markdown cache is never emptied: clearing a chat orphans its entries for
-  the life of the process.
+- Settled answers share the runtime's lazy-row parking policy: up to 1,024
+  unmounted rows stay parsed for a cheap remount, and eviction releases them.

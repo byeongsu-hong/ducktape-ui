@@ -1,20 +1,21 @@
-//! Settled Markdown, parsed once and kept.
+//! Settled Markdown, parsed once per lazy row and owned by that row.
 //!
 //! Ice holds only cloneable values in component state, and a parsed Markdown
 //! document is not one — so a per-row document cannot live in the language,
 //! and this is the typed adapter that answers for it.
 //!
-//! Keeping it is the point. A transcript redraws on every frame and on every
-//! token of the reply still being written; reparsing each settled answer that
-//! often is the cost this window exists to avoid. Parsed once, a settled row
-//! costs a borrow.
+//! Keeping it with the row is the point. A transcript redraws on every frame
+//! and on every token of the reply still being written; reparsing each settled
+//! answer that often is the cost this window exists to avoid. The surrounding
+//! `lazy` owns this adapter until the row leaves its bounded parking lot.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::rc::Rc;
 
+use iced::advanced::widget::{Operation, Tree, tree};
+use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
 use iced::widget::markdown;
 use iced::widget::{column, container, rich_text, scrollable};
-use iced::{Color, Element, Font, Length, Padding, border};
+use iced::{Color, Element, Event, Font, Length, Padding, Rectangle, Size, border};
 
 /// Mirrors the `code` font declared in `src/ui/app.ice`.
 const MONO: &str = "Monoplex KR";
@@ -39,30 +40,6 @@ const BLOCK_BG_LIGHT: Color = Color::from_rgb(0.149, 0.145, 0.122);
 const BLOCK_BG_DARK: Color = Color::from_rgb(0.047, 0.043, 0.039);
 const BLOCK_FG: Color = Color::from_rgb(0.953, 0.949, 0.937);
 const BLOCK_EDGE: Color = Color::from_rgb(0.227, 0.216, 0.200);
-
-// Parsed answers, keyed by the id of the row that owns them.
-//
-// `markdown::view` borrows its items for as long as the element lives, and a
-// generated extern component hands back a `'static` element — so a parse is
-// interned for the life of the process. The map is thread-local because a
-// parsed item caches its own layout in a `Cell` and is therefore not `Sync`;
-// drawing happens on one thread, and this belongs to it.
-//
-// The ceiling is one parsed copy per answer ever drawn in this window: clearing
-// a chat orphans its entries rather than freeing them. Row ids are unique per
-// process rather than per chat, so an orphan is never handed to a later answer.
-thread_local! {
-    static CACHE: RefCell<HashMap<i64, &'static [markdown::Item]>> = RefCell::default();
-}
-
-fn items(id: i64, source: &str) -> &'static [markdown::Item] {
-    CACHE.with_borrow_mut(|cache| {
-        *cache.entry(id).or_insert_with(|| {
-            let parsed: Vec<markdown::Item> = markdown::parse(source).collect();
-            Box::leak(parsed.into_boxed_slice())
-        })
-    })
-}
 
 fn style(dark: bool) -> markdown::Style {
     let mono = Font::with_name(MONO);
@@ -145,8 +122,124 @@ pub fn answer_viewer(dark: bool) -> Blocks {
     Blocks { dark }
 }
 
-/// One settled Markdown row. The message is the URL of a clicked link.
-pub fn markdown_body(id: i64, source: String, size: f64, dark: bool) -> Element<'static, String> {
+/// Parsed Markdown whose items live exactly as long as its owning lazy row.
+///
+/// iced's Markdown view borrows its parsed items. This transparent widget owns
+/// those items and creates the borrowed native view only for each widget call,
+/// so the generated extern can still return a `'static` element without
+/// leaking the parse behind it.
+struct MarkdownBody {
+    items: Rc<[markdown::Item]>,
+    settings: markdown::Settings,
+    viewer: Blocks,
+}
+
+impl MarkdownBody {
+    fn new(source: &str, size: f64, dark: bool) -> Self {
+        Self {
+            items: markdown::parse(source).collect::<Vec<_>>().into(),
+            settings: settings(size, dark),
+            viewer: Blocks { dark },
+        }
+    }
+
+    fn view(&self) -> Element<'_, String> {
+        markdown::view_with(self.items.iter(), self.settings, &self.viewer)
+    }
+}
+
+impl Widget<String, iced::Theme, iced::Renderer> for MarkdownBody {
+    fn tag(&self) -> tree::Tag {
+        self.view().as_widget().tag()
+    }
+
+    fn state(&self) -> tree::State {
+        self.view().as_widget().state()
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        self.view().as_widget().children()
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        self.view().as_widget().diff(tree);
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.view().as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.view().as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.view().as_widget_mut().layout(tree, renderer, limits)
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.view()
+            .as_widget_mut()
+            .operate(tree, layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, String>,
+        viewport: &Rectangle,
+    ) {
+        self.view().as_widget_mut().update(
+            tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.view()
+            .as_widget()
+            .mouse_interaction(tree, layout, cursor, viewport, renderer)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.view()
+            .as_widget()
+            .draw(tree, renderer, theme, style, layout, cursor, viewport);
+    }
+}
+
+fn settings(size: f64, dark: bool) -> markdown::Settings {
     let size = size as f32;
     let mut settings = markdown::Settings::with_text_size(size, style(dark));
     // The ladder `with_text_size` derives is built for a document: a level-one
@@ -162,32 +255,79 @@ pub fn markdown_body(id: i64, source: String, size: f64, dark: bool) -> Element<
     settings.code_size = (size * 0.9).into();
     settings.spacing = (size * 0.8).into();
 
-    markdown::view_with(items(id, &source), settings, &Blocks { dark })
+    settings
+}
+
+/// One settled Markdown row. The message is the URL of a clicked link.
+pub fn markdown_body(source: String, size: f64, dark: bool) -> Element<'static, String> {
+    Element::new(MarkdownBody::new(&source, size, dark))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Weak;
 
-    /// The cache is the whole point: a second draw of the same row must reuse
-    /// the first parse, or every frame pays for the answer again.
-    #[test]
-    fn the_same_row_is_parsed_once() {
-        let first = items(-1, "# One");
-        let second = items(-1, "# One");
-        assert!(
-            std::ptr::eq(first, second),
-            "a second draw must reuse the interned parse"
-        );
+    type Lazy = ui_lang_runtime::MemoLazy<
+        'static,
+        String,
+        iced::Theme,
+        iced::Renderer,
+        u16,
+        Element<'static, String>,
+    >;
+
+    fn filler(dependency: u16) -> Lazy {
+        ui_lang_runtime::memo_lazy(
+            dependency,
+            |value: &u16| Element::from(iced::widget::text(value.to_string())),
+            u64::MAX - 1,
+        )
     }
 
-    /// Ids are process-unique so that a cleared chat cannot hand its layout to
-    /// a later answer. This is the property that makes interning safe.
+    /// A removed lazy row may stay in the runtime's bounded parking lot for a
+    /// cheap remount. Once that lot evicts the row, nothing else may keep its
+    /// parsed Markdown alive.
     #[test]
-    fn different_rows_keep_different_parses() {
-        let one = items(-2, "# One");
-        let two = items(-3, "# Two\n\n- and a list");
-        assert!(!std::ptr::eq(one, two));
-        assert_ne!(one.len(), two.len(), "each row keeps its own document");
+    fn evicting_a_lazy_row_reclaims_its_parsed_markdown() {
+        let observed = Rc::new(RefCell::new(None::<Weak<[markdown::Item]>>));
+        let probe = observed.clone();
+        let row: Lazy = ui_lang_runtime::memo_lazy(
+            0,
+            move |_: &u16| {
+                let body = MarkdownBody::new("# One\n\n- and a list", 13.5, false);
+                *probe.borrow_mut() = Some(Rc::downgrade(&body.items));
+                Element::new(body)
+            },
+            u64::MAX,
+        );
+        let tree = Tree::new(&row as &dyn Widget<String, iced::Theme, iced::Renderer>);
+        let parsed = observed
+            .borrow()
+            .clone()
+            .expect("the lazy row built its Markdown body");
+        assert!(parsed.upgrade().is_some(), "the mounted row owns its parse");
+
+        drop(tree);
+        assert!(
+            parsed.upgrade().is_some(),
+            "an unmounted row stays available in the bounded parking lot"
+        );
+
+        // The parking lot holds 1024 entries. More distinct rows force this
+        // oldest one out; the assertion observes the owned parsed allocation,
+        // not just a cache key disappearing.
+        for dependency in 0..1100 {
+            let row = filler(dependency);
+            drop(Tree::new(
+                &row as &dyn Widget<String, iced::Theme, iced::Renderer>,
+            ));
+        }
+
+        assert!(
+            parsed.upgrade().is_none(),
+            "eviction must drop the parsed Markdown with its row"
+        );
     }
 }
