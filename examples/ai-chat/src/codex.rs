@@ -31,8 +31,8 @@ const INSTRUCTIONS: &str = "You are Codex, answering inside a desktop chat windo
 const DETAIL_LIMIT: usize = 400;
 
 /// Ids are unique for the life of the process, not the life of a chat, because
-/// the parsed-Markdown cache in `render` is keyed on them and a chat cleared
-/// mid-session must not hand a new answer an old answer's layout.
+/// they key both the visible list and its bounded lazy-row parking lot. A chat
+/// cleared mid-session must not reclaim a later answer under an old identity.
 static NEXT_ID: AtomicI64 = AtomicI64::new(1);
 
 fn next_id() -> i64 {
@@ -1175,8 +1175,8 @@ pub fn sample_running(dark: bool) -> Vec<Entry> {
 /// tucked under its summary, which is the state a transcript is read in.
 fn sample_rows(dark: bool) -> Vec<Entry> {
     // Fixed, negative ids. Live rows count up from one, so a sample row can
-    // never collide with a real one — in the Markdown cache or in a widget
-    // path — and a test can name a row by hand.
+    // never collide with a real one — in lazy-row parking or in a widget path
+    // — and a test can name a row by hand.
     let row = |id: i64, hidden: bool, entry: Entry| Entry {
         id,
         turn: 1,
