@@ -224,14 +224,16 @@ test trading_no_venue_offers_a_target_and_a_stop_and_each_says_why
   // rather than a control: every control the ticket has is on screen already.
   scroll-to ticket 0.0 400.0
   expect text "Hyperliquid does take a target and a stop on the entry, and this app does not send them yet. They are offered nowhere rather than offered here: a field promising a position is protected, over an order that carries no protection, is the one mistake this panel must never make."
-  // The other venue is refused for its own reason, which is the venue's rather
-  // than this app's — so the two sentences must not become one sentence.
+  // The other venue takes them too, and is refused for its own reason: a
+  // grouping on an order action this app already signs, against a whole
+  // transaction type it does not — so the two sentences must not become one
+  // sentence.
   dispatch switch_venue(Venue.lighter)
   dispatch symbols_loaded(demo_symbols_lighter())
   expect !venue_attaches_levels(venue)
   expect missing attach
   scroll-to ticket 0.0 400.0
-  expect text "Lighter attaches no levels to an entry. Its API takes them as separate orders once the position exists, which this app does not place."
+  expect text "Lighter does take a target and a stop on the entry, as a grouped transaction this app does not sign. They are offered nowhere rather than offered here: a field promising a position is protected, over an order that carries no protection, is the one mistake this panel must never make."
   expect no text "this app does not send them yet"
 
 // Reduce-only is a promise to the venue that the order only moves the position

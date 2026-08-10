@@ -542,24 +542,34 @@ screen at all, so the cross cliff declines there for the same reason
 by any of that.
 
 **A take-profit and a stop-loss** — offered on no venue, and each says why in
-its own words. Lighter has nothing to attach: its SDK exposes the two only as
-whole independent orders, with nothing anywhere naming a parent. Hyperliquid
-*does* take them, as a `trigger` order carrying `triggerPx` and `tpsl` grouped
-with the entry under `grouping: "normalTpsl"` where this app's wire hardcodes
-`"na"` — and this app does not send them yet.
+its own words. **Both venues take them**, and this app sends neither.
+Hyperliquid takes them on the same order action, as `trigger` legs carrying
+`triggerPx`, `isMarket` and `tpsl`, grouped with the entry under
+`grouping: "normalTpsl"`. Lighter takes them too, as a separate grouped
+transaction (`SignCreateGroupedOrders`) this app does not sign at all.
 
 They were offered on Hyperliquid until the order path landed, over an order
 that carried neither. That is the one mistake this panel must never make: a
 field promising a position is protected, above a wire with no protection in it.
 Two fields the app would have to drop are worse than no fields.
 
-What is left to do is small and the standard is set: the venue's own SDK
-carries a signing vector for a trigger order
-(`test_l1_action_signing_tpsl_order_matches`, on the same key `signing.rs`
-already pins its other vectors against), so the encoding is pinnable offline.
-What is not pinnable without a funded test account is that the grouping
-*attaches* — and for a stop-loss, "the bytes are right" is not the claim that
-matters. So it waits for an order carrying one to be seen resting.
+The Hyperliquid encoding is now built and pinned, and the gate did not move.
+`signing.rs` carries `Kind::Trigger` and `Grouping`, and four vector tests hold
+them to the venue's own signer: the SDK's published
+`test_l1_action_signing_tpsl_order_matches` for the trigger payload — which is
+what settles that `isMarket` packs *before* `triggerPx`, the one thing no
+amount of reasoning could — and three more for the two grouping names and a
+standalone stop, produced by driving that same SDK's `sign_l1_action` after
+checking the driver reproduces the published vector byte for byte.
+`custody::wire_orders` projects a confirmed draft into those legs.
+
+What none of that proves is that the grouping *attaches*: that the two legs
+wait for the entry, that cancelling the entry takes them with it, and that a
+stop rests where it was put. For a stop-loss, "the bytes are right" is not the
+claim that matters. So `attaches_levels` stays false on all four networks, the
+ticket still refuses a draft carrying a level, and the encoding waits behind
+the gate for an order carrying one to be seen resting on a funded test
+account.
 
 The arithmetic behind the two fields is unchanged and still tested: a level on
 the wrong side of the entry, and a stop past the liquidation, are both refused
@@ -1489,7 +1499,7 @@ still carries is on screen at the minimum size, and the page tests run there.
 | Liquidation prints on the tape | yes | **no** — see below |
 | Resting rules the ticket offers | `Gtc`, `Ioc`, `Alo` | `GOOD_TILL_TIME`, `IMMEDIATE_OR_CANCEL`, `POST_ONLY` — no rest-until-cancelled |
 | Reduce-only on the order | yes (`r`) | yes (`reduce_only`) |
-| Take-profit and stop-loss attached to the entry | the venue takes a grouped `trigger` order; **this app does not send one yet** | **no** — separate orders only |
+| Take-profit and stop-loss attached to the entry | the venue takes grouped `trigger` legs on the order action — encoded and vector-pinned here, **still gated off** | the venue takes them as a separate grouped transaction; **this app does not sign one** |
 | Cross and isolated margin | per asset, on the account — **not carried by the order** | per market, on the account — same |
 
 The gaps are stated on screen rather than left as empty panels, because an
@@ -1501,11 +1511,23 @@ empty list reads as *nothing has happened* and on Lighter nothing *can* happen:
   all this app asks a reader for. Both panels say so where their rows would be,
   and the settings page says it once more beside the venue's name. Connecting
   an address would not change it, so the sentence does not offer that.
-- **Attached levels.** Lighter's SDK exposes `create_tp_order` and
-  `create_sl_order` as whole independent orders taking their own trigger price,
-  price and size; no parent-order, OTOCO or position-TPSL field appears
-  anywhere in it or in the docs. So the ticket does not offer the two fields
-  there, and says why where they would have been.
+- **Attached levels.** This entry used to say Lighter had nothing to attach —
+  that its SDK exposed `create_tp_order` and `create_sl_order` as whole
+  independent orders with nothing naming a parent. That was wrong, and the
+  Hyperliquid trigger work is what found it. Alongside those four standalone
+  helpers the SDK has `create_grouped_orders`, with
+  `GROUPING_TYPE_ONE_TRIGGERS_A_ONE_CANCELS_THE_OTHER` for levels riding on an
+  entry and `ONE_CANCELS_THE_OTHER` for levels on a position that already
+  exists — the same two cases Hyperliquid spells `normalTpsl` and
+  `positionTpsl`. The reason the ticket does not offer the two fields here is
+  now the same as everywhere else, said in this venue's own terms: a grouped
+  order is a **different transaction type** (`SignCreateGroupedOrders`, not the
+  `TX_CREATE_ORDER` = 14 that `lighter_sign.rs` builds), with its own digest
+  layout this app has never signed. The standalone stop is closer — the
+  create-order digest already carries `order type` and `trigger price` at
+  elements 12 and 15, where this app writes the constants `ORDER_LIMIT` and
+  `NO_TRIGGER` — so that half is a data change wanting fresh vectors from the
+  venue's own signer, not a schema change.
 - **Liquidation prints.** Lighter carries them in a second array on the trade
   channel, keyed to merge by trade id, and the copy that arrives with the
   subscription is hours stale — so including them would put old prints on screen
