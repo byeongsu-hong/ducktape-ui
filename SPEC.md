@@ -993,7 +993,8 @@ scroll_property = "dir=" ("vertical" | "horizontal" | "both")
                 | "bar=" ("visible" | "hidden")
                 | ("bar-w=" | "bar-m=" | "scroller-w="
                   | "bar-gap=") expr
-                | ("anchor-x=" | "anchor-y=") ("start" | "end")
+                | "anchor-x=" ("start" | "end")
+                | "anchor-y=" ("start" | "end" | "keep")
                 | "auto=" expr | ("scroll=" | "viewport=") route
                 | "style=" call
 scroll_status  = ("active" | "hovered" | "dragged")
@@ -3358,6 +3359,17 @@ end-anchored scroll stores its offset as a distance from the bottom, so
 content growing above the viewport carries the offset with it and the visible
 rows stay put. Scrolling forward is unaffected either way, because rows enter
 from the end and correct only what is already below.
+
+`anchor-y=keep` is the third answer, for the list `end` cannot serve: one whose
+newest row is on **top**. Such a list rests where `start` rests — offset zero
+is the newest row — but grows at the end nobody is watching, and a start
+anchor's absolute offset means every row a beat prepends slides the reader's
+rows down the screen by its own height. `keep` is `start`'s resting place with
+`end`'s correction: content arriving above the viewport carries the offset with
+it, while a reader who has not scrolled is left on the newest row. It is
+vertical only, and it corrects **growth** — a list that has reached a cap and
+is sliding rows off its far end has a constant height and no growth to read, so
+a reader scrolled into one still watches it slide.
 
 Whichever child holds keyboard focus keeps being laid out wherever it drifts
 to, so it still answers key presses and still moves focus correctly when the

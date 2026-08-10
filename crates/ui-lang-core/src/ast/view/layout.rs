@@ -912,4 +912,9 @@ pub enum ScrollDirection {
 pub enum ScrollAnchor {
     Start,
     End,
+    /// Rests where `Start` rests and corrects like `End`: the offset is an
+    /// absolute distance from the top, and content arriving *above* the
+    /// viewport moves the offset with it so the visible rows hold still.
+    /// Vertical only — the wrapper implementing it watches one axis.
+    Keep,
 }

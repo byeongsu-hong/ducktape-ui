@@ -788,6 +788,7 @@ view
                                   scroll #fill-list
                                     with
                                       h=fill
+                                      anchor-y=keep
                                       bar-w=6.0
                                       bar-m=2.0
                                       scroller-w=6.0
@@ -932,6 +933,7 @@ view
                             scroll #tape-list
                               with
                                 h=fill
+                                anchor-y=keep
                                 bar-w=6.0
                                 bar-m=2.0
                                 scroller-w=6.0

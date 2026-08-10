@@ -581,6 +581,81 @@ frame, that walk is 78-89% of the cost, and it does not shrink with the
 viewport, with warm-up, or with anything the code generator emits. Only a
 boundary the walk can stop at moves it.
 
+### Two reported symptoms, and which of them was a frame
+
+The terminal's owner reported list scrolling that "bounces" and a chart/positions
+splitter that "sometimes lags". They read like one complaint about frame cost.
+Only one of them was.
+
+**The splitter is not a dependency bug.** `on lower_resized(_dx, dy)` fires once
+per `CursorMoved` while dragging, and the suspicion was that `lower_height` had
+leaked into something a row memo depends on. Counted rather than clocked — the
+same `FILL_LABELS`/`MARKET_ROWS` counters the memo contracts use — 40 drag steps
+on the 200-fill/200-market screen rebuild **0 fill rows and 0 market rows**, and
+a drag step plus redraw costs what an idle redraw costs:
+
+| 200 fills, 200 markets, 1760x940 | release (fat LTO) | debug |
+|---|---|---|
+| idle redraw | 3322us | 8987us |
+| drag step + redraw | 3306us | 9058us |
+| rows rebuilt over 40 drag steps | 0 | 0 |
+
+So a drag costs exactly one frame, and the whole of the symptom is what a frame
+costs. `cargo run -p trading-example` is a **debug** build, where that is 9ms of
+build and layout before any paint — the only reading here that leaves no
+headroom at 60Hz. Nothing was changed for this; the finding is that there is no
+invalidation defect to narrow.
+
+**The row fade is not it either.** #490's `window::frames()` subscription is
+global — while any `FillFlash` is animating, the whole app rebuilds at refresh
+rate — but the fade is mounted *beside* the `lazy` rather than inside it, and
+the memo boundaries absorb it exactly as designed: 40 redraws with 200 rows
+mid-fade cost **2309us** against **2343us** once settled, and rebuild **0** rows
+either way. Scrolling during a fade rebuilds 0 rows as well.
+
+**And the derived reads inside `responsive` are noise.** `responsive
+#terminal-fit` wraps the whole terminal page, and every derived read inside a
+responsive closure is tagged `ESCAPING_DERIVED_READ`, which vetoes the
+`__IceDerivedSnapshot` cache for the whole view — trading's generated view
+contains no snapshot struct at all and calls `__ice_derived_quote()` 8 times per
+build, each recomputing a chain that walks the book. Priced with `bench`, that
+whole waste is **34.7us against 10.2us** if each were computed once: **~25us of
+a 3300us frame**. Reading this table before writing the codegen fix is what
+stopped it being written. It belongs beside the 984 redundant scope clones worth
+19us.
+
+**The scrolling report was a different kind of bug, and it reproduced.**
+`push_fills` and `push_trades` both put a beat's rows in front of the ones
+already listed, so those two panels grow at the top. iced keeps a scroll offset
+as an absolute distance from the top of the content and `Scrollable::diff`
+touches nothing but the child tree, so the offset is never revised when content
+is inserted above it. A reader 120px into the recent fills, one beat of four
+fills later:
+
+| | before | after |
+|---|---|---|
+| fills content height | 1040 | 1144 |
+| fills `scroll_y` | 120 | 120 |
+| the watched row's `y` | 1024 | **1128** |
+
+The row they were reading moved 104px down the screen while the offset held.
+That is the "bounce", and it is not a frame at all — no amount of frame budget
+fixes it.
+
+`anchor-y=keep` is the fix: `Anchor::Start`'s resting place with `Anchor::End`'s
+correction, applied by `ui_lang_runtime::scroll_anchor` from inside `layout()`,
+where the growth becomes visible and the offset is still read as a translation
+at draw time. `End` alone cannot serve these lists — it stores the offset from
+the bottom, so a list whose newest row is on top would open on its oldest.
+
+What it does not cover is worth stating so nobody re-measures it: it reads
+**growth**, which is all a wrapper around a scrollable can know. The tape caps
+at 60 rows within seconds of a live market, and a capped list slides rather than
+grows — constant height, no growth to read, and the rows still move. Covering
+that needs row identity, which is where `virtual_list` already keeps its own
+anchor (`RowsMeasured`, the `anchor`/`anchor_gap` pair). The fills list, which
+is the one a human actually reads, sits below its 200 cap for a whole session.
+
 ### Why an edit costs what it costs
 
 The `edit` number is not a fixed price. It tracks the size of the generated

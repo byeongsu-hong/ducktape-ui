@@ -292,9 +292,9 @@ pub(in crate::parser) fn parse_layout_options(
             } else if let Some(value) = part.strip_prefix("bar-gap=") {
                 scroll.bar_spacing = Some(parse_expr(strip_wrapping_parens(value), line)?);
             } else if let Some(value) = part.strip_prefix("anchor-x=") {
-                scroll.anchor_x = parse_scroll_anchor(value, line)?;
+                scroll.anchor_x = parse_scroll_anchor(value, line, ScrollAxis::Horizontal)?;
             } else if let Some(value) = part.strip_prefix("anchor-y=") {
-                scroll.anchor_y = parse_scroll_anchor(value, line)?;
+                scroll.anchor_y = parse_scroll_anchor(value, line, ScrollAxis::Vertical)?;
             } else if let Some(value) = part.strip_prefix("auto=") {
                 scroll.auto_scroll = Some(parse_expr(strip_wrapping_parens(value), line)?);
             } else if let Some(value) = part.strip_prefix("scroll=") {
@@ -664,13 +664,31 @@ pub(in crate::parser) fn parse_flex_item_alignment(
     }
 }
 
+/// Which axis an anchor was written for. `keep` watches content height, so it
+/// is offered on the vertical axis and refused on the horizontal one rather
+/// than accepted and silently ignored.
+#[derive(Clone, Copy)]
+pub(in crate::parser) enum ScrollAxis {
+    Horizontal,
+    Vertical,
+}
+
 pub(in crate::parser) fn parse_scroll_anchor(
     source: &str,
     line: &Line,
+    axis: ScrollAxis,
 ) -> Result<ScrollAnchor, Error> {
-    match source {
-        "start" => Ok(ScrollAnchor::Start),
-        "end" => Ok(ScrollAnchor::End),
-        _ => Err(error("E074", line, "scroll anchor must be start or end")),
+    match (source, axis) {
+        ("start", _) => Ok(ScrollAnchor::Start),
+        ("end", _) => Ok(ScrollAnchor::End),
+        ("keep", ScrollAxis::Vertical) => Ok(ScrollAnchor::Keep),
+        (_, ScrollAxis::Vertical) => Err(error(
+            "E074",
+            line,
+            "scroll anchor must be start, end, or keep",
+        )),
+        (_, ScrollAxis::Horizontal) => {
+            Err(error("E074", line, "scroll anchor must be start or end"))
+        }
     }
 }

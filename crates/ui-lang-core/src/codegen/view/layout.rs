@@ -586,8 +586,10 @@ fn render_resolved_scroll(
         )
         .unwrap();
     }
+    // `keep` is iced's `Start` anchor — the resting place is the same — with
+    // the correction supplied by the wrapper applied below.
     let anchor = |anchor| match anchor {
-        ResolvedScrollAnchor::Start => "Start",
+        ResolvedScrollAnchor::Start | ResolvedScrollAnchor::Keep => "Start",
         ResolvedScrollAnchor::End => "End",
     };
     write!(
@@ -674,6 +676,12 @@ fn render_resolved_scroll(
     code.push_str(&resolved_scroll_style_code(scroll, program, env)?);
     append_size(&mut code, &layout.utility_style);
     append_resolved_layout_dimensions(&mut code, [&scroll.width, &scroll.height], program, env)?;
+    // `anchor-y=keep` wraps the scrollable — and only the scrollable, so the
+    // wrapper's operation walk reaches it first and a nested list keeps its
+    // own offset. The accessibility wrapper stays outside, where the id is.
+    if scroll.anchor_y == ResolvedScrollAnchor::Keep {
+        code = format!("::ui_lang_runtime::scroll_anchor({code})");
+    }
     Ok(format!(
         "{{ let __a11y_key = {accessibility_key}; let __scroll_content: __IceElement<'_, {message}> = {child}; let __layout = {code}; ::ui_lang_runtime::accessible(__layout, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
     ))
