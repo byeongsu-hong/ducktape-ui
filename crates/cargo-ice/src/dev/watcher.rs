@@ -5,12 +5,17 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 const FULL_RESCAN_INTERVAL: Duration = Duration::from_secs(30);
 const POLLING_INTERVAL: Duration = Duration::from_millis(750);
+/// Hold a routine native save burst; sustained overflow falls back to the
+/// complete content-stamp snapshot instead of retaining paths without a bound.
+const NATIVE_EVENT_BUFFER_CAPACITY: usize = 64;
 const POLLING_FALLBACK_MESSAGE: &str =
     "native notifications unavailable; using polling safety mode";
 
@@ -35,6 +40,7 @@ enum WatchBackend {
 struct NativeWatcher {
     watcher: RecommendedWatcher,
     events: Receiver<notify::Result<Event>>,
+    overflowed: Arc<AtomicBool>,
 }
 
 struct MetadataPoller {
@@ -173,8 +179,19 @@ impl NativeWatcher {
         let first = self.events.recv_timeout(wait)?;
         let mut paths = BTreeSet::new();
         let mut full_rescan = self.collect_change(first, excluded_roots, &mut paths);
-        while let Ok(result) = self.events.try_recv() {
+        for _ in 1..NATIVE_EVENT_BUFFER_CAPACITY {
+            let Ok(result) = self.events.try_recv() else {
+                break;
+            };
             full_rescan |= self.collect_change(result, excluded_roots, &mut paths);
+        }
+        if self.overflowed.swap(false, AtomicOrdering::Relaxed) {
+            for _ in 0..NATIVE_EVENT_BUFFER_CAPACITY {
+                if self.events.try_recv().is_err() {
+                    break;
+                }
+            }
+            return Ok(Some(DevChange::FullRescan));
         }
         if full_rescan {
             Ok(Some(DevChange::FullRescan))
@@ -342,7 +359,9 @@ fn create_native_watcher(
     roots: &[WatchRoot],
     excluded_roots: &[PathBuf],
 ) -> Result<NativeWatcher, String> {
-    let (sender, events) = mpsc::channel();
+    let (sender, events) = mpsc::sync_channel(NATIVE_EVENT_BUFFER_CAPACITY);
+    let overflowed = Arc::new(AtomicBool::new(false));
+    let callback_overflowed = Arc::clone(&overflowed);
     let ignored = excluded_roots.to_vec();
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
         let forward = match &result {
@@ -350,7 +369,7 @@ fn create_native_watcher(
             Err(_) => true,
         };
         if forward {
-            let _ = sender.send(result);
+            forward_native_event(&sender, &callback_overflowed, result);
         }
     })
     .map_err(|error| format!("ice dev: cannot start filesystem notifications: {error}"))?;
@@ -374,7 +393,32 @@ fn create_native_watcher(
     for excluded in excluded_roots.iter().filter(|path| path.is_dir()) {
         let _ = watcher.unwatch(excluded);
     }
-    Ok(NativeWatcher { watcher, events })
+    Ok(NativeWatcher {
+        watcher,
+        events,
+        overflowed,
+    })
+}
+
+fn forward_native_event(
+    sender: &SyncSender<notify::Result<Event>>,
+    overflowed: &AtomicBool,
+    result: notify::Result<Event>,
+) {
+    match sender.try_send(result) {
+        Ok(()) => {}
+        Err(TrySendError::Full(result)) => record_native_overflow(sender, overflowed, result),
+        Err(TrySendError::Disconnected(_)) => {}
+    }
+}
+
+fn record_native_overflow(
+    sender: &SyncSender<notify::Result<Event>>,
+    overflowed: &AtomicBool,
+    result: notify::Result<Event>,
+) {
+    overflowed.store(true, AtomicOrdering::Relaxed);
+    let _ = sender.try_send(result);
 }
 
 fn event_may_change_inputs(event: &Event, excluded_roots: &[PathBuf]) -> bool {
@@ -661,6 +705,130 @@ mod tests {
             0,
             "native watcher waits must not perform content-stamp reads"
         );
+    }
+
+    #[test]
+    fn native_notification_overflow_requests_one_complete_rescan() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        fs::create_dir(root.join("src")).unwrap();
+
+        let event = |name: &str| {
+            Ok(Event {
+                kind: EventKind::Modify(ModifyKind::Any),
+                paths: vec![root.join("src").join(name)],
+                attrs: Default::default(),
+            })
+        };
+        let (race_sender, race_events) = mpsc::sync_channel(1);
+        race_sender.try_send(event("queued.rs")).unwrap();
+        let late = match race_sender.try_send(event("late.rs")) {
+            Err(TrySendError::Full(result)) => result,
+            result => panic!("expected a full native event queue, got {result:?}"),
+        };
+        let _ = race_events.try_recv().unwrap();
+        let race_overflowed = AtomicBool::new(false);
+        record_native_overflow(&race_sender, &race_overflowed, late);
+        assert!(race_overflowed.load(AtomicOrdering::Relaxed));
+        assert_eq!(
+            race_events.try_recv().unwrap().unwrap().paths,
+            vec![root.join("src/late.rs")],
+            "an event that overflows just before the queue drains must wake the consumer"
+        );
+
+        let graph = CargoInputGraph::workspace(root);
+        let mut watcher = DevWatcher::new(&[], &[], &graph);
+        expect_full_rescan(&mut watcher);
+
+        let (sender, events) = mpsc::sync_channel(NATIVE_EVENT_BUFFER_CAPACITY);
+        let overflowed = Arc::new(AtomicBool::new(false));
+        let WatchBackend::Native(native) = &mut watcher.backend else {
+            panic!("native watcher unexpectedly unavailable in native-path test");
+        };
+        native.events = events;
+        native.overflowed = Arc::clone(&overflowed);
+
+        for index in 0..=NATIVE_EVENT_BUFFER_CAPACITY {
+            forward_native_event(
+                &sender,
+                &overflowed,
+                Ok(Event {
+                    kind: EventKind::Modify(ModifyKind::Any),
+                    paths: vec![root.join("src").join(format!("{index}.rs"))],
+                    attrs: Default::default(),
+                }),
+            );
+        }
+
+        assert_eq!(
+            watcher.wait_for_change(Duration::from_millis(50)),
+            Some(DevChange::FullRescan),
+            "a dropped detail event must fall back to the complete content snapshot"
+        );
+        assert_eq!(
+            watcher.wait_for_change(Duration::ZERO),
+            None,
+            "the overflow marker and queued detail must be consumed together"
+        );
+    }
+
+    #[test]
+    fn native_notification_batches_have_fixed_work_budgets() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        fs::create_dir(root.join("src")).unwrap();
+        let graph = CargoInputGraph::workspace(root);
+        let mut watcher = DevWatcher::new(&[], &[], &graph);
+        expect_full_rescan(&mut watcher);
+
+        let event = |index: usize| {
+            Ok(Event {
+                kind: EventKind::Modify(ModifyKind::Any),
+                paths: vec![root.join("src").join(format!("{index}.rs"))],
+                attrs: Default::default(),
+            })
+        };
+        let (sender, events) = mpsc::sync_channel(NATIVE_EVENT_BUFFER_CAPACITY + 1);
+        for index in 0..=NATIVE_EVENT_BUFFER_CAPACITY {
+            sender.try_send(event(index)).unwrap();
+        }
+        let WatchBackend::Native(native) = &mut watcher.backend else {
+            panic!("native watcher unexpectedly unavailable in native-path test");
+        };
+        native.events = events;
+        native.overflowed.store(false, AtomicOrdering::Relaxed);
+
+        let Some(DevChange::Paths(first)) = watcher.wait_for_change(Duration::from_millis(50))
+        else {
+            panic!("the first fixed native batch must preserve path detail");
+        };
+        assert_eq!(first.len(), NATIVE_EVENT_BUFFER_CAPACITY);
+        let Some(DevChange::Paths(second)) = watcher.wait_for_change(Duration::from_millis(50))
+        else {
+            panic!("the event beyond the first batch must remain for the next wait");
+        };
+        assert_eq!(second.len(), 1);
+
+        let queued = NATIVE_EVENT_BUFFER_CAPACITY * 2 + 1;
+        let (overflow_sender, overflow_events) = mpsc::sync_channel(queued);
+        for index in 0..queued {
+            overflow_sender.try_send(event(index)).unwrap();
+        }
+        let WatchBackend::Native(native) = &mut watcher.backend else {
+            panic!("native watcher unexpectedly unavailable in native-path test");
+        };
+        native.events = overflow_events;
+        native.overflowed.store(true, AtomicOrdering::Relaxed);
+
+        assert_eq!(
+            watcher.wait_for_change(Duration::from_millis(50)),
+            Some(DevChange::FullRescan)
+        );
+        let Some(DevChange::Paths(remaining)) = watcher.wait_for_change(Duration::from_millis(50))
+        else {
+            panic!("overflow cleanup must leave work beyond its fixed discard budget queued");
+        };
+        assert_eq!(remaining.len(), 1);
     }
 
     #[test]
