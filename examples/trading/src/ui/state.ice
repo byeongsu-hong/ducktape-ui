@@ -151,6 +151,29 @@ state
   // Whether the send is in flight, so the confirmation cannot be pressed twice
   // into two orders.
   sending = false
+  // Whether the gate's read-only path is unfolded. The gate leads with the
+  // wallet — an app that can trade should not open by asking for somebody
+  // else's address — so watching is a second surface behind one press, and the
+  // address field lives on it rather than on the first thing a reader sees.
+  // A flag rather than a page: there is no history to walk and nothing the
+  // second surface holds that this state does not.
+  gate_watch = false
+  // The import step: its own door rather than a settings row, because typing a
+  // recovery phrase is a different act from every other thing on that page and
+  // the address it derives has to be confirmed before anything is stored.
+  // Keeping the phrase's field away from the address field is structural
+  // rather than careful: there is no box to paste it into by mistake.
+  import_open = false
+  // ponytail: the phrase transits state while it is being typed, because Ice
+  // has no write-only input. It is held for one press — `check_phrase` clears
+  // both fields the instant it has derived — no preset ever sets it, and the
+  // upgrade is an input the language does not bind to state.
+  import_phrase = ""
+  import_passphrase = ""
+  // The address the phrase derived, which is the whole of what the owner
+  // confirms. Nothing is stored until they do.
+  import_address = ""
+  import_note = ""
   // Why the session is where it is, when the state alone cannot say. A
   // declined sheet and never having pressed the button are both `Locked`, so
   // without this the panel draws the same thing for "you cancelled" and "you
@@ -212,12 +235,12 @@ derived
   // in it is a second, wrong reason.
   cancel_all_refusal = sweep_refused(cancel_refusal, len(orders), true)
   flatten_all_refusal = sweep_refused(cancel_refusal, len(positions), false)
-  // Whether anything is standing on the app's one modal surface. Three things
+  // Whether anything is standing on the app's one modal surface. Four things
   // can: the gate before an address is connected, the confirmation before an
-  // order goes, and the same confirmation over a whole panel's worth. None may
-  // be reachable past another, which is what one backdrop guarantees and three
-  // stacked ones would not.
-  modal = gate || order_pending(confirm) || sweep_pending(sweep)
+  // order goes, the same confirmation over a whole panel's worth, and the
+  // import step. None may be reachable past another, which is what one backdrop
+  // guarantees and four stacked ones would not.
+  modal = gate || order_pending(confirm) || sweep_pending(sweep) || import_open
 
 // The custody panel in each state it can be drawn in. `clock` is the same
 // reading the view asks `session_can_trade` with, so a fixture is live or
@@ -302,6 +325,21 @@ preset funding
     clock = 1786318200
 
 preset gate
+
+// The same first surface on a network where being wrong costs nothing. Nothing
+// here differs but the kind beside the name, which is the point: a first-run
+// reader is about to hand over a phrase, and the one fact they must not have to
+// go looking for is which world they are handing it to.
+preset gate_testnet
+  state
+    venue = Venue.hyperliquid_testnet
+
+// The gate with its read-only path already unfolded, which is where `reopen`
+// leaves a reader who was watching an address and asked for another. A preset
+// rather than a press, so the surface can be drawn and captured on its own.
+preset gate_watching
+  state
+    gate_watch = true
 
 preset terminal
   state

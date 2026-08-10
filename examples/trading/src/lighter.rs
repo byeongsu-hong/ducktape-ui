@@ -817,7 +817,11 @@ pub async fn lighter_nonce(zone: Zone, account: i64, api_key: u8) -> Result<i64,
 /// Behind the same `wire_is_open` gate every read passes, and for the reason
 /// that gate exists at all: a test drives the real program, so a path that
 /// spends money must not be the one path a test can reach.
-async fn send_tx(zone: Zone, tx: &Transaction, key: &PrivateKey) -> Result<String, HlError> {
+pub(crate) async fn send_tx(
+    zone: Zone,
+    tx: &Transaction,
+    key: &PrivateKey,
+) -> Result<String, HlError> {
     if !wire_is_open() {
         return Err(fail("Lighter unreachable: no wire under test".to_owned()));
     }

@@ -52,6 +52,7 @@
 #![allow(dead_code)]
 
 use std::fmt;
+use std::marker::PhantomData;
 
 use k256::ecdsa::{RecoveryId, Signature as Ecdsa, SigningKey, VerifyingKey};
 use serde_json::{Value, json};
@@ -167,7 +168,11 @@ impl Wallet {
     /// RFC 6979 deterministic ECDSA with the low-`s` normalisation Ethereum
     /// requires, both of which `k256` does here; the recovery id it hands back
     /// is what turns an (r, s) into an address the exchange can recover.
-    pub fn sign(&self, action: &Action) -> Signature {
+    /// Sign a trade. There is deliberately no counterpart taking an
+    /// `Action<Enrolment>`: an agent key may not approve itself, and an
+    /// approval signed by one would be refused by the venue anyway — being
+    /// refused by the compiler is cheaper and happens at the right time.
+    pub fn sign(&self, action: &Action<Trading>) -> Signature {
         self.sign_digest(action.digest())
     }
 
@@ -230,6 +235,88 @@ fn address_of(key: &VerifyingKey) -> Address {
     let mut bytes = [0u8; 20];
     bytes.copy_from_slice(&hash[12..]);
     Address(bytes)
+}
+
+/// The account's own key — what a recovery phrase derives, and the only key
+/// that can authorise an enrolment.
+///
+/// A separate type from `Wallet` rather than a flag on it, because the
+/// difference is not a property to check: it is which signatures exist. This
+/// one signs `Action<Enrolment>` and the sentence a Lighter registration is
+/// authorised by, and there is no method on it that will sign a trade. The
+/// agent key `Wallet` is the mirror image.
+///
+/// It holds a `Wallet` because the arithmetic is identical — the same curve,
+/// the same address derivation — and wrapping rather than re-implementing keeps
+/// one copy of the parts that are easy to get wrong.
+pub struct MasterKey {
+    wallet: Wallet,
+    /// Kept because this key, alone among the app's keys, has somewhere to go:
+    /// the platform keychain. `Wallet` publishes no way out of itself on
+    /// purpose — an agent key's only destination is the signer — and an account
+    /// key needs exactly one more, which is `secret` below.
+    secret: [u8; 32],
+}
+
+impl Drop for MasterKey {
+    fn drop(&mut self) {
+        self.secret.fill(0);
+        std::hint::black_box(&mut self.secret);
+    }
+}
+
+impl MasterKey {
+    pub fn from_secret(bytes: &[u8; 32]) -> Result<Self, HlError> {
+        Wallet::from_secret(bytes).map(|wallet| Self {
+            wallet,
+            secret: *bytes,
+        })
+    }
+
+    /// The bytes, for the keychain and for nothing else.
+    ///
+    /// The one road out of this type, and it exists because storing the key is
+    /// the point: an owner types a phrase once and the app keeps what it
+    /// derived. The copy goes straight into a `Secret`, which wipes itself.
+    pub fn secret(&self) -> Vec<u8> {
+        self.secret.to_vec()
+    }
+
+    /// A fresh one, for the tests that need an account nobody owns.
+    #[cfg(test)]
+    fn generate() -> Self {
+        loop {
+            let mut bytes = [0u8; 32];
+            getrandom::fill(&mut bytes).expect("no OS entropy to make a key from");
+            if let Ok(master) = Self::from_secret(&bytes) {
+                return master;
+            }
+        }
+    }
+
+    /// The address an owner recognises, and the one every venue knows the
+    /// account by.
+    pub fn address(&self) -> Address {
+        self.wallet.address()
+    }
+
+    /// Authorise an enrolment. The only signing this type does.
+    pub fn sign(&self, action: &Action<Enrolment>) -> Signature {
+        self.wallet.sign_digest(action.digest())
+    }
+
+    /// The other shape an enrolment takes: a venue that asks the account's
+    /// wallet to sign a sentence rather than a struct. Lighter's API-key
+    /// registration is the one this app builds.
+    pub fn personal_sign(&self, message: &str) -> Signature {
+        self.wallet.personal_sign(message)
+    }
+}
+
+impl fmt::Debug for MasterKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "MasterKey({})", self.address())
+    }
 }
 
 /// What the exchange wants beside the action.
@@ -533,19 +620,42 @@ enum Scheme {
     User { struct_hash: [u8; 32] },
 }
 
+/// Which key an action is for. Markers, carried by the compiler rather than by
+/// a convention somebody has to keep.
+///
+/// This is the property the whole master-key design rests on: **the account's
+/// own key signs enrolments and nothing else.** It is the key an owner cannot
+/// replace, it lives in this process only while a phrase is being imported, and
+/// the one thing that must never become possible is signing a trade with it —
+/// not because a trade would be refused, but because the blast radius of a
+/// mistake made with that key is the account rather than a session.
+///
+/// So it is not a rule in a comment. `order` and `cancel` build an
+/// `Action<Trading>`, `approve_agent` builds an `Action<Enrolment>`, and each
+/// signer implements exactly one of them. A master key handed an order does not
+/// typecheck; neither does an agent key handed an approval.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Trading;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Enrolment;
+
 /// A built, unsigned action: the body that goes on the wire, the nonce that is
 /// signed with it, and the chain both are pinned to. Everything a signature
 /// depends on is in here, so [`Action::digest`] takes no arguments and cannot
 /// be handed a chain or nonce that disagrees with the body.
+///
+/// `Signs` says which key may sign it and is present at no runtime cost.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Action {
+pub struct Action<Signs> {
     chain: Chain,
     nonce: u64,
     body: Val,
     scheme: Scheme,
+    signs: PhantomData<Signs>,
 }
 
-impl Action {
+impl<Signs> Action<Signs> {
     pub fn chain(&self) -> Chain {
         self.chain
     }
@@ -582,23 +692,45 @@ impl Action {
         keccak(&packed)
     }
 
-    /// The complete POST body for `/exchange`. Nothing in this module sends it.
-    pub fn request(&self, wallet: &Wallet) -> Value {
+    /// Everything but the signature, which is the half that does not depend on
+    /// who signs.
+    fn envelope(&self, signature: Signature) -> Value {
         json!({
             "action": self.body.json(),
             "nonce": self.nonce,
-            "signature": wallet.sign(self).json(),
+            "signature": signature.json(),
         })
     }
 }
 
-/// Approve an agent wallet. Signed by the **master** wallet, not by the agent:
-/// this is the one action in this file the app cannot sign for itself, which is
-/// the entire point of an agent key.
+impl Action<Trading> {
+    /// The complete POST body for `/exchange`, signed by the agent key.
+    /// Nothing in this module sends it.
+    pub fn request(&self, wallet: &Wallet) -> Value {
+        self.envelope(wallet.sign(self))
+    }
+}
+
+impl Action<Enrolment> {
+    /// The same, signed by the account's own key. A separate impl rather than a
+    /// generic one, because the two take different signers and that is the
+    /// whole point.
+    pub fn request(&self, master: &MasterKey) -> Value {
+        self.envelope(master.sign(self))
+    }
+}
+
+/// Approve an agent wallet. Signed by the **master** wallet, not by the agent —
+/// an agent key that could approve its own successor would be an agent key with
+/// no ceiling on it, which is the entire point of having one.
+///
+/// The app can sign this itself once a wallet has been imported, and only then;
+/// with no wallet on the machine it is still somebody else's signature, made
+/// somewhere that is not this process.
 ///
 /// There is no expiry argument because the action has no field for one — the
 /// exchange picks the window and reports it back through `extraAgents`.
-pub fn approve_agent(chain: Chain, agent: Address, name: &str, nonce_ms: u64) -> Action {
+pub fn approve_agent(chain: Chain, agent: Address, name: &str, nonce_ms: u64) -> Action<Enrolment> {
     let body = Val::Map(vec![
         ("type", Val::Str("approveAgent".into())),
         ("hyperliquidChain", Val::Str(chain.name().into())),
@@ -627,6 +759,7 @@ pub fn approve_agent(chain: Chain, agent: Address, name: &str, nonce_ms: u64) ->
         nonce: nonce_ms,
         body,
         scheme: Scheme::User { struct_hash },
+        signs: PhantomData,
     }
 }
 
@@ -664,7 +797,7 @@ pub struct Order {
     pub tif: Tif,
 }
 
-pub fn order(chain: Chain, orders: &[Order], nonce_ms: u64) -> Result<Action, HlError> {
+pub fn order(chain: Chain, orders: &[Order], nonce_ms: u64) -> Result<Action<Trading>, HlError> {
     let wires = orders
         .iter()
         .map(|order| {
@@ -694,6 +827,7 @@ pub fn order(chain: Chain, orders: &[Order], nonce_ms: u64) -> Result<Action, Hl
             ("grouping", Val::Str("na".into())),
         ]),
         scheme: Scheme::L1,
+        signs: PhantomData,
     })
 }
 
@@ -704,7 +838,7 @@ pub struct Cancel {
     pub oid: u64,
 }
 
-pub fn cancel(chain: Chain, cancels: &[Cancel], nonce_ms: u64) -> Action {
+pub fn cancel(chain: Chain, cancels: &[Cancel], nonce_ms: u64) -> Action<Trading> {
     let wires = cancels
         .iter()
         .map(|cancel| {
@@ -722,6 +856,7 @@ pub fn cancel(chain: Chain, cancels: &[Cancel], nonce_ms: u64) -> Action {
             ("cancels", Val::Arr(wires)),
         ]),
         scheme: Scheme::L1,
+        signs: PhantomData,
     }
 }
 
@@ -781,8 +916,8 @@ mod tests {
         format!("0x{}", hex::encode(word))
     }
 
-    fn signed(wallet: &Wallet, action: &Action) -> (String, String, u8) {
-        let signature = wallet.sign(action);
+    fn signed(wallet: &Wallet, digest: [u8; 32]) -> (String, String, u8) {
+        let signature = wallet.sign_digest(digest);
         (hex32(signature.r), hex32(signature.s), signature.v)
     }
 
@@ -837,7 +972,7 @@ mod tests {
         let mainnet = order(Chain::Mainnet, &[eth_order(1, 100.0, 100.0, Tif::Gtc)], 0)
             .expect("a round price and size fit the wire");
         assert_eq!(
-            signed(&wallet, &mainnet),
+            signed(&wallet, mainnet.digest()),
             (
                 padded("0xd65369825a9df5d80099e513cce430311d7d26ddf477f5b3a33d2806b100d78e"),
                 padded("0x2b54116ff64054968aa237c20ca9ff68000f977c93289157748a3162b6ea940e"),
@@ -848,7 +983,7 @@ mod tests {
         let testnet = order(Chain::Testnet, &[eth_order(1, 100.0, 100.0, Tif::Gtc)], 0)
             .expect("a round price and size fit the wire");
         assert_eq!(
-            signed(&wallet, &testnet),
+            signed(&wallet, testnet.digest()),
             (
                 padded("0x82b2ba28e76b3d761093aaded1b1cdad4960b3af30212b343fb2e6cdfa4e3d54"),
                 padded("0x6b53878fc99d26047f4d7e8c90eb98955a109f44209163f52d8dc4278cbbd9f5"),
@@ -867,7 +1002,7 @@ mod tests {
             .expect("a 20-byte address");
         let action = approve_agent(Chain::Testnet, agent, "", 1_687_816_341_423);
         assert_eq!(
-            signed(&vector_wallet(), &action),
+            signed(&vector_wallet(), action.digest()),
             (
                 padded("0x92835c1d0e54bafee2cf6134d1d04a6023778a0a5eabac00c464f040912041b0"),
                 padded("0x3bc7e66258ccd3aaf0e37f91fe0ca669a5b310bbe8d45612d4a21f83b453470f"),
@@ -984,13 +1119,13 @@ mod tests {
     /// Every rejection this file cares about is on the far side of
     /// deserialization: it names an address, which the exchange can only have
     /// got by recovering ours.
-    fn assert_blames_the_signer(answer: &str, wallet: &Wallet, complaint: &str) {
+    fn assert_blames_the_signer(answer: &str, signer: Address, complaint: &str) {
         assert!(
             answer.contains("HTTP 200"),
             "a 4xx means the shape was wrong, not the signer: {answer}"
         );
         assert!(
-            answer.contains(&wallet.address().to_string()),
+            answer.contains(&signer.to_string()),
             "the exchange recovered somebody else, so our hashing differs from \
              theirs: {answer}"
         );
@@ -1005,7 +1140,7 @@ mod tests {
     fn live_approve_agent_is_refused_for_the_signer_not_the_shape() {
         // Stands in for the master wallet, which this app never holds. It has
         // never deposited, so the approval cannot be granted.
-        let master = Wallet::generate();
+        let master = MasterKey::generate();
         let action = approve_agent(
             Chain::Mainnet,
             Wallet::generate().address(),
@@ -1013,7 +1148,11 @@ mod tests {
             now_ms(),
         );
         let answer = post(action.chain(), &action.request(&master));
-        assert_blames_the_signer(&answer, &master, "Must deposit before performing actions");
+        assert_blames_the_signer(
+            &answer,
+            master.address(),
+            "Must deposit before performing actions",
+        );
     }
 
     #[test]
@@ -1037,7 +1176,7 @@ mod tests {
         )
         .expect("a dollar and a millibitcoin both fit the wire");
         let answer = post(action.chain(), &action.request(&agent));
-        assert_blames_the_signer(&answer, &agent, "does not exist");
+        assert_blames_the_signer(&answer, agent.address(), "does not exist");
     }
 
     #[test]
@@ -1046,7 +1185,7 @@ mod tests {
         let agent = Wallet::generate();
         let action = cancel(Chain::Mainnet, &[Cancel { asset: 0, oid: 1 }], now_ms());
         let answer = post(action.chain(), &action.request(&agent));
-        assert_blames_the_signer(&answer, &agent, "does not exist");
+        assert_blames_the_signer(&answer, agent.address(), "does not exist");
     }
 
     /// `agentName` is not in the required set, but it *is* in the signed type
@@ -1057,7 +1196,7 @@ mod tests {
     #[test]
     #[ignore = "hits the live Hyperliquid API"]
     fn live_an_absent_agent_name_is_hashed_as_the_empty_string() {
-        let master = Wallet::generate();
+        let master = MasterKey::generate();
         let action = approve_agent(Chain::Mainnet, Wallet::generate().address(), "", now_ms());
         let mut request = action.request(&master);
         request["action"]
@@ -1066,7 +1205,11 @@ mod tests {
             .remove("agentName");
 
         let answer = post(action.chain(), &request);
-        assert_blames_the_signer(&answer, &master, "Must deposit before performing actions");
+        assert_blames_the_signer(
+            &answer,
+            master.address(),
+            "Must deposit before performing actions",
+        );
     }
 
     /// The shape half of the same claim: drop a required field and the
@@ -1075,14 +1218,14 @@ mod tests {
     #[test]
     #[ignore = "hits the live Hyperliquid API"]
     fn live_a_missing_field_is_refused_before_any_signer_is_recovered() {
-        let wallet = Wallet::generate();
+        let master = MasterKey::generate();
         let action = approve_agent(
             Chain::Mainnet,
             Wallet::generate().address(),
             "ducktape",
             now_ms(),
         );
-        let mut request = action.request(&wallet);
+        let mut request = action.request(&master);
         request["action"]
             .as_object_mut()
             .expect("the action is an object")
@@ -1094,7 +1237,7 @@ mod tests {
             "a missing field must not reach signature recovery: {answer}"
         );
         assert!(
-            !answer.contains(&wallet.address().to_string()),
+            !answer.contains(&master.address().to_string()),
             "nothing was recovered, so nothing should be named: {answer}"
         );
     }

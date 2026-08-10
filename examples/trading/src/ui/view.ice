@@ -2529,20 +2529,20 @@ view
                                     @text-muted
                           col gap=12.0 w=480.0
                             Label value="CUSTODY"
-                            text "The wallet key is never here."
+                            text "Two keys, and only one of them can trade."
                               with
                                 size=16.0
                                 w=fill
                                 wrap=word
                                 @text-fg
                                 @font-bold
-                            text "What this app can hold is an agent key: a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance."
+                            text "The trading key is a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance, and it is the only key an order is ever signed with."
                               with
                                 size=12.0
                                 w=fill
                                 wrap=word
                                 @text-muted
-                            text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session below says rather than something this paragraph decides. Locking forgets it; so does changing network or address, because a key is approved for one account on one deployment."
+                            text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session below says rather than something this paragraph decides. Locking forgets it, and so does connecting a different address. Switching network does not: one unlock releases every network this address has enrolled, and each of them still holds a key of its own."
                               with
                                 size=12.0
                                 w=fill
@@ -2591,15 +2591,18 @@ view
                                   hovered bg=fg text=fg_invert r=4.0
                                   disabled bg=raised text=faint r=4.0
                                   text "UNLOCK" size=11.0 tracking=1.1
-                                button #enrol -> enrol
+                                // One press, one sheet, every network. What it
+                                // authorises is named above the button rather
+                                // than discovered afterwards.
+                                button #enrol -> enrol_networks
                                   with
-                                    label="Make a new agent key"
+                                    label="Register a trading key on every network, with one Touch ID"
                                     p=9.0
-                                    disabled=!empty(session_refusal(session))
+                                    disabled=empty(address)
                                   active bg=raised text=muted r=4.0
                                   hovered bg=edge text=fg r=4.0
                                   disabled bg=raised text=faint r=4.0
-                                  text "NEW KEY" size=11.0 tracking=1.1
+                                  text "ENROL ALL" size=11.0 tracking=1.1
                                 space w=fill
                                 button #lock label="Lock and forget the key" p=9.0 -> lock
                                   active bg=panel text=muted r=4.0
@@ -2612,13 +2615,41 @@ view
                                     w=fill
                                     wrap=word
                                     @text-faint
-                            text "It still sends nothing. Unlocking decides what may be signed; the ticket has nothing wired to it yet, and until it does this app reads the network beside this and prices orders against that margin engine's own arithmetic."
+                              // What ENROL ALL is about to sign for, network by
+                              // network, each with what it costs to be wrong on
+                              // it. The naming is the rule rather than the
+                              // sheet count: one prompt that says which four is
+                              // more explicit than four that each say "a key".
+                              if !empty(enrolment_plan(address))
+                                text enrolment_plan(address) #enrol-plan
+                                  with
+                                    size=10.0
+                                    w=fill
+                                    wrap=word
+                                    @text-faint
+                              // The door to the other act of custody, which
+                              // lives behind its own step rather than in this
+                              // panel: a phrase wants a screen with nothing
+                              // else on it.
+                              row
+                                with
+                                  gap=8.0
+                                  w=fill
+                                  align=center
+                                button #open-import -> open_import
+                                  with
+                                    label="Import a wallet from a recovery phrase"
+                                    p=9.0
+                                  active bg=panel text=muted r=4.0
+                                  hovered bg=raised text=fg r=4.0
+                                  text "IMPORT A WALLET" size=11.0 tracking=1.1
+                            text "Unlocking is what lets the ticket send. Every order still passes a confirmation that restates it and names the network it is going to, and the trading key it signs with can place and cancel orders and nothing else."
                               with
                                 size=12.0
                                 w=fill
                                 wrap=word
                                 @text-muted
-                            text "What it will never do: hold the key that owns the account, move collateral, or withdraw. An agent key cannot do any of those, which is the whole reason it is the only key here."
+                            text "Importing a wallet does put the account's own key on this Mac, behind Touch ID. It signs enrolments and nothing else — the app cannot spend it on an order even by mistake, because an order is a different type of thing and this key has no method that takes one. It never moves collateral and never withdraws."
                               with
                                 size=12.0
                                 w=fill
@@ -2660,6 +2691,105 @@ view
                     @text-muted
       layer
         col
+          // The import step, over everything including the gate: typing a
+          // recovery phrase is the one act on this screen with nothing else
+          // safely happening behind it.
+          if import_open
+            box #import
+              with
+                w=520.0
+                p=24.0
+                r=8.0
+                border-w=1.0
+                bg=panel
+                border=edge
+              col gap=16.0 w=fill
+                col gap=6.0 w=fill
+                  Label value="THIS MACHINE"
+                  text "Import a wallet" size=22.0 @text-fg
+                  text "Twelve to twenty-four words, or a private key. It is turned into the one key this app signs enrolments with, kept behind Touch ID, and never sent anywhere."
+                    with
+                      size=11.0
+                      w=fill
+                      wrap=word
+                      @text-muted
+                rule horizontal thickness=1.0 color=edge
+                // Before the address is derived: the words. After it: the
+                // address and nothing else, because the phrase has done its
+                // work and the shortest life it can have is that one.
+                if empty(import_address)
+                  col gap=10.0 w=fill
+                    input "" #import-phrase <-> import_phrase
+                      with
+                        label="Recovery phrase, or a private key"
+                        hint="abandon abandon abandon…"
+                        change=import_typed
+                        text-size=12.0
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                    input "" #import-passphrase <-> import_passphrase
+                      with
+                        label="Passphrase, if the wallet has one"
+                        hint="usually empty"
+                        change=import_passphrase_typed
+                        text-size=12.0
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                    text "A passphrase makes different words into a different account. If your wallet asked for one, it belongs here."
+                      with
+                        size=10.0
+                        w=fill
+                        wrap=word
+                        @text-faint
+                if !empty(import_address)
+                  col gap=8.0 w=fill
+                    Label value="THIS PHRASE IS THE ACCOUNT"
+                    text import_address #import-address
+                      with
+                        size=15.0
+                        w=fill
+                        wrap=word
+                        font=digits
+                        @text-fg
+                    text "Nothing has been stored. If that is not the address you expect, go back and check the words."
+                      with
+                        size=11.0
+                        w=fill
+                        wrap=word
+                        @text-muted
+                if !empty(import_note)
+                  text import_note #import-note
+                    with
+                      size=11.0
+                      w=fill
+                      wrap=word
+                      @text-muted
+                row
+                  with
+                    gap=8.0
+                    w=fill
+                    align=center
+                  button #import-close label="Close without importing" p=11.0 -> close_import
+                    active bg=raised text=muted r=4.0
+                    hovered bg=edge text=fg r=4.0
+                    text "CLOSE" size=11.0 tracking=1.1
+                  space w=fill
+                  if empty(import_address)
+                    button #import-check -> check_phrase
+                      with
+                        label="Show the account these words derive"
+                        p=11.0
+                        disabled=empty(import_phrase)
+                      active bg=fg text=fg_invert r=4.0
+                      hovered bg=fg text=fg_invert r=4.0
+                      disabled bg=raised text=faint r=4.0
+                      text "CHECK" size=11.0 tracking=1.1
+                  if !empty(import_address)
+                    button #import-keep -> store_wallet
+                      with
+                        label="Keep this wallet on this Mac, behind Touch ID"
+                        p=11.0
+                      active bg=fg text=fg_invert r=4.0
+                      hovered bg=fg text=fg_invert r=4.0
+                      text "THIS IS MINE" size=11.0 tracking=1.1
           if order_pending(confirm)
             // Everything below is a restatement. Not one figure here is
             // computed: each is the value the ticket already showed, frozen on
@@ -2938,7 +3068,7 @@ view
                     hovered bg=fg text=fg_invert r=4.0
                     disabled bg=raised text=faint r=4.0
                     text "DO IT" size=11.0 tracking=1.1
-          if gate
+          if gate && !import_open
             box #gate
               with
                 w=460.0
@@ -2947,54 +3077,105 @@ view
                 border-w=1.0
                 bg=panel
                 border=edge
-              col gap=20.0 w=fill
+              col gap=18.0 w=fill
                 col gap=8.0 w=fill
-                  // The venue survives a trip back to the gate, so the exchange
-                  // this address is about to be read on is the one the terminal
-                  // is holding rather than the one it booted on.
-                  Label value=venue_name(venue)
-                  text "Read an account"
+                  // Which world this is, before a single character is typed.
+                  // The venue survives a trip back to the gate, so this is the
+                  // exchange the terminal is holding rather than the one the app
+                  // booted on — and the kind is beside the name rather than
+                  // discovered on the terminal afterwards, because the next
+                  // thing this screen asks for is a recovery phrase and nobody
+                  // should have to go looking for whether that costs money.
+                  row gap=8.0 align=center
+                    Label value=venue_name(venue)
+                    box
+                      with
+                        p=4.0
+                        r=3.0
+                        border-w=1.0
+                        border=edge
+                      text venue_kind(venue) #gate-kind
+                        with
+                          size=9.0
+                          tracking=1.0
+                          @text-fg
+                  text "Trade from this Mac"
                     with
                       size=22.0
                       @text-fg
                       @font-bold
-                  text "Enter an address to see its open positions, resting orders, and every fill marked on the chart. Skip to browse markets only."
+                  text "Import the wallet that owns the account and this app derives its address, registers a trading key on every network, and can place orders. The key is kept behind Touch ID on this machine and is never sent anywhere."
                     with
                       size=12.0
                       w=fill
                       wrap=word
                       @text-muted
-                input "Address" #address-input <-> draft
+                // The first control on the screen and the only full-width one.
+                // An app that can trade should not open by asking for somebody
+                // else's address, and on this path the address is *derived*:
+                // typing one you already own is work the derivation exists to
+                // remove, and a typo in it is an account that is not yours read
+                // back with no sign that anything went wrong.
+                button #gate-import -> open_import
                   with
-                    hint="0x0000000000000000000000000000000000000000"
-                    submit=connect
-                    text-size=12.0
-                    font=digits
-                  active bg=raised border=edge r=4.0 placeholder=faint value=fg
-                  hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
-                  focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                if !empty(trim(draft)) && !valid_address(draft)
-                  text "An address is 0x and forty hexadecimal digits."
-                    with
-                      size=11.0
-                      w=fill
-                      wrap=word
-                      @text-faint
-                row
-                  with
-                    gap=10.0
+                    p=12.0
                     w=fill
-                    align=center
-                  button #connect -> connect
+                    label="Import a wallet, and trade this account from this Mac"
+                  active bg=fg text=fg_invert r=4.0
+                  hovered bg=fg text=fg_invert r=4.0
+                  text "IMPORT A WALLET" size=12.0 tracking=1.1
+                rule horizontal thickness=1.0 color=edge
+                // The read-only path, named for what it is for rather than
+                // offered as the way in. Watching is an honest act — an account
+                // whose key you do not have is one you can only watch — and the
+                // address field belongs here with it rather than on the surface
+                // above, where it would ask an owner to type what the app can
+                // derive.
+                if !gate_watch
+                  button #gate-watch -> watch_address
                     with
-                      p=11.0
-                      label="Connect"
-                      disabled=!valid_address(draft)
-                    active bg=fg text=fg_invert r=4.0
-                    hovered bg=fg text=fg_invert r=4.0
-                    disabled bg=raised text=faint r=4.0
-                    text "Connect" size=12.0
-                  button #browse p=11.0 label="Browse markets" -> browse
+                      p=10.0
+                      label="Watch an address, read-only, without holding its key"
                     active bg=panel text=muted r=4.0
                     hovered bg=raised text=fg r=4.0
-                    text "Browse markets" size=12.0
+                    text "Watch an address" size=12.0
+                if gate_watch
+                  col gap=10.0 w=fill
+                    text "Watch an address" size=13.0 @text-fg
+                    text "Open positions, resting orders, and every fill marked on the chart, for any address on this network. Nothing on this path can sign, because watching an account is not owning one."
+                      with
+                        size=11.0
+                        w=fill
+                        wrap=word
+                        @text-muted
+                    input "Address" #address-input <-> draft
+                      with
+                        hint="0x0000000000000000000000000000000000000000"
+                        submit=connect
+                        text-size=12.0
+                        font=digits
+                      active bg=raised border=edge r=4.0 placeholder=faint value=fg
+                      hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                    if !empty(trim(draft)) && !valid_address(draft)
+                      text "An address is 0x and forty hexadecimal digits."
+                        with
+                          size=11.0
+                          w=fill
+                          wrap=word
+                          @text-faint
+                    button #connect -> connect
+                      with
+                        p=11.0
+                        label="Watch this address, read-only"
+                        disabled=!valid_address(draft)
+                      active bg=fg text=fg_invert r=4.0
+                      hovered bg=fg text=fg_invert r=4.0
+                      disabled bg=raised text=faint r=4.0
+                      text "Watch this address" size=12.0
+                // Neither an account nor a key: the markets, and nothing that
+                // needs an address to draw.
+                button #browse p=10.0 label="Browse markets only, with no account at all" -> browse
+                  active bg=panel text=muted r=4.0
+                  hovered bg=raised text=fg r=4.0
+                  text "Browse markets" size=12.0
