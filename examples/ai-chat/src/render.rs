@@ -186,13 +186,17 @@ impl<'a> markdown::Viewer<'a, String> for Blocks {
     }
 }
 
-/// The same viewer, for the reply still being written.
+/// The same viewer, for one surface of the reply still being written.
+///
+/// `lane` names the surfaces apart. They are rebuilt from nothing every frame,
+/// so a selection in one is told apart from a selection in another by this and
+/// nothing else.
 ///
 /// Without it the live reply is drawn by iced's default and a code block
 /// changes appearance the moment its turn settles — popping onto the ground
 /// `Blocks` gives it. The answer should not move when it stops arriving.
-pub fn answer_viewer(dark: bool) -> Blocks {
-    Blocks::new(dark, select::live())
+pub fn answer_viewer(dark: bool, lane: i64) -> Blocks {
+    Blocks::new(dark, select::live(lane))
 }
 
 /// Parsed Markdown whose items live exactly as long as its owning lazy row.

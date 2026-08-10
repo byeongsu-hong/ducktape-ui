@@ -51,10 +51,11 @@ thread_local! {
     };
 }
 
-/// Groups are handed out per answer. `LIVE` is the reply still being written,
-/// which is rebuilt from nothing on every frame and so cannot be given one.
-const LIVE: u64 = 0;
-static NEXT_GROUP: AtomicU64 = AtomicU64::new(1);
+/// Groups are handed out per answer. The lowest few are reserved for the reply
+/// still being written, which is rebuilt from nothing on every frame and so
+/// cannot be given one.
+const LANES: u64 = 8;
+static NEXT_GROUP: AtomicU64 = AtomicU64::new(LANES);
 
 /// Where one end of a selection sits: which block, and how far into it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -157,11 +158,16 @@ pub fn group() -> u64 {
     NEXT_GROUP.fetch_add(1, Ordering::Relaxed)
 }
 
-/// The group of the reply still being written. It is rebuilt from nothing every
-/// frame, so it cannot hold an identity of its own — but there is only ever one
-/// of it, which is identity enough.
-pub fn live() -> u64 {
-    LIVE
+/// The group of one surface of the reply still being written.
+///
+/// A live reply is drawn by more than one surface — what the model is working
+/// out, and what it is answering with — and each is rebuilt from nothing every
+/// frame, so none can hold an identity of its own. The lane names them apart
+/// instead: there is only ever one of each, so its number is identity enough.
+/// Two surfaces sharing a lane share a selection, and a drag in one lands in
+/// the other.
+pub fn live(lane: i64) -> u64 {
+    lane.rem_euclid(LANES as i64) as u64
 }
 
 struct State {

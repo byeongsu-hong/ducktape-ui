@@ -372,3 +372,21 @@ test starting_a_selection_takes_it_from_wherever_it_was
   capture moved
   chord control "c"
   expect copied == "How does an answer grow?"
+
+// A reply being written is drawn by two surfaces — what the model is working
+// out, and what it is answering with. Both are rebuilt from nothing on every
+// frame, so neither can hold an identity of its own, and a selection in one is
+// told apart from a selection in the other by which surface it is and nothing
+// else. Sharing that made a drag over the working-out highlight the answer
+// instead, at the same offsets, in the other box entirely.
+test dragging_over_the_working_out_selects_it_and_not_the_reply
+  preset steering
+  viewport 920 800
+  target thinking = #shell/app/transcript/live/live-work/live-thinking
+
+  press thinking
+  move 300.0 330.0
+  release
+  capture working_out
+  chord control "c"
+  expect copied == "hecking the"
