@@ -98,6 +98,8 @@
 //! Until a person on a Mac reports those, the honest claim is that this seam's
 //! logic is tested and its platform half is compiled, reviewed and unrun.
 
+#[cfg(test)]
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
@@ -283,9 +285,44 @@ struct Vault {
     keys: Vec<(Venue, Arc<HeldKey>)>,
 }
 
+#[cfg(not(test))]
 fn vault() -> &'static Mutex<Option<Vault>> {
     static HELD: OnceLock<Mutex<Option<Vault>>> = OnceLock::new();
     HELD.get_or_init(Mutex::default)
+}
+
+#[cfg(test)]
+fn vault() -> &'static Mutex<Option<Vault>> {
+    static HELD: InstanceStores<Option<Vault>> = OnceLock::new();
+    per_instance(&HELD)
+}
+
+/// The stores one process is holding, by the application each belongs to.
+#[cfg(test)]
+type InstanceStores<T> = OnceLock<Mutex<HashMap<u64, &'static Mutex<T>>>>;
+
+/// One store per driven application, for the two stores above.
+///
+/// A machine has one keychain, so a shipped process has one of these and a
+/// `static` is the honest shape. A test binary runs one whole application per
+/// test thread against that same `static`, and they overwrite each other: every
+/// `lock_agent` takes every key with it, and it is one press away on every
+/// screen; an import waiting in `pending` is read back by whichever test asks
+/// first. This module's own tests used to take turns on a mutex for that
+/// reason. Keying beats taking turns: the tests that drive a whole application
+/// are the slow ones and there are hundreds of them.
+///
+/// The per-instance `Mutex` is leaked rather than dropped with its test. It is
+/// one pointer-sized allocation per instance in a binary that exits when the
+/// suite does, and it is what keeps the returned `&'static` honest without an
+/// `Arc` on every call site.
+#[cfg(test)]
+fn per_instance<T: Default + Send + 'static>(
+    stores: &'static InstanceStores<T>,
+) -> &'static Mutex<T> {
+    lock(stores.get_or_init(Mutex::default))
+        .entry(ui_lang_runtime::testing::app_instance())
+        .or_insert_with(|| Box::leak(Box::<Mutex<T>>::default()))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -402,9 +439,16 @@ fn wallet_item(address: &str) -> String {
 /// the *address* crosses back to the screen, which is the whole point of the
 /// confirmation — the owner reads an address they recognise before anything is
 /// written to a keychain.
+#[cfg(not(test))]
 fn pending() -> &'static Mutex<Option<MasterKey>> {
     static PENDING: OnceLock<Mutex<Option<MasterKey>>> = OnceLock::new();
     PENDING.get_or_init(Mutex::default)
+}
+
+#[cfg(test)]
+fn pending() -> &'static Mutex<Option<MasterKey>> {
+    static PENDING: InstanceStores<Option<MasterKey>> = OnceLock::new();
+    per_instance(&PENDING)
 }
 
 /// A phrase this app just made, and the words it will ask for back.
@@ -1925,13 +1969,58 @@ mod tests {
     const AGENT: &str = "0x13070cb3597c75100928720060c7acff4d22bc09";
     const HOUR: i64 = 3_600;
 
-    /// The key store is one global, and these tests write to it — so they take
-    /// a turn each rather than racing. Without this the suite would be a test
-    /// of thread scheduling: one test's `lock_agent` clears the key another has
-    /// just seeded, and which one fails moves with the machine.
-    fn one_at_a_time() -> MutexGuard<'static, ()> {
-        static TURN: Mutex<()> = Mutex::new(());
-        TURN.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Two applications in one process each keep their own keys.
+    ///
+    /// A machine has one keychain, so the store is a `static` and that is the
+    /// honest shape for a shipped process. A test binary is not that process:
+    /// it runs one whole application per test thread, and against a single
+    /// `static` one of them clears what another has just unlocked — `lock_agent`
+    /// is the transition that takes every key with it, and it is one press away
+    /// on every screen. Whole-app tests then fail on whichever pair the machine
+    /// happened to overlap, and the panel a failing test drew is one the code
+    /// would never draw.
+    ///
+    /// The barriers pin the interleaving to that one rather than leaving it to
+    /// the scheduler, so this fails every run against a shared store rather than
+    /// most of them.
+    /// Nothing is asserted on either thread: a failed assertion there would
+    /// leave the other one waiting on a barrier nobody reaches, and a test that
+    /// hangs where it should fail costs the whole suite its timeout.
+    #[test]
+    fn two_apps_in_one_process_each_keep_their_own_keys() {
+        let unlocked = std::sync::Barrier::new(2);
+        let locked = std::sync::Barrier::new(2);
+        let (seeded, kept, borrowed) = std::thread::scope(|scope| {
+            let mine = scope.spawn(|| {
+                seed_key();
+                let seeded = holding_a_key();
+                unlocked.wait();
+                locked.wait();
+                (seeded, holding_a_key())
+            });
+            let theirs = scope.spawn(|| {
+                unlocked.wait();
+                let borrowed = holding_a_key();
+                let _ = lock_agent();
+                locked.wait();
+                borrowed
+            });
+            let (seeded, kept) = mine.join().expect("the seeding app panicked");
+            (
+                seeded,
+                kept,
+                theirs.join().expect("the locking app panicked"),
+            )
+        });
+        assert!(seeded, "the seeded key never reached this app's own store");
+        assert!(
+            !borrowed,
+            "an application was handed a key it never unlocked"
+        );
+        assert!(
+            kept,
+            "another application's lock took the key this one was holding"
+        );
     }
 
     /// Put keys in the store the way an unlock would, so the retention can be
@@ -2254,7 +2343,6 @@ mod tests {
     /// key.
     #[test]
     fn a_transition_out_of_ready_drops_the_key() {
-        let _turn = one_at_a_time();
         let now = 1_786_172_634;
         let ready = ready_at(now, 30);
 
@@ -2293,7 +2381,6 @@ mod tests {
     /// is empty, which is what a preset, a capture or a fixture is.
     #[test]
     fn only_a_session_that_may_trade_reaches_the_key() {
-        let _turn = one_at_a_time();
         let now = 1_786_172_634;
         let ready = ready_at(now, 30);
 
@@ -2351,7 +2438,6 @@ mod tests {
     /// whichever handler changes an address.
     #[test]
     fn one_unlock_reaches_every_enrolled_network_and_no_others() {
-        let _turn = one_at_a_time();
         let now = 1_786_172_634;
         let ready = ready_at(now, 30);
 
@@ -2668,7 +2754,6 @@ mod tests {
     /// gate refused it.
     #[test]
     fn a_send_without_a_key_is_refused_in_the_app() {
-        let _turn = one_at_a_time();
         let now = 1_786_172_634;
         lock_agent();
         let draft = crate::venue::order_draft(
@@ -2872,7 +2957,6 @@ mod tests {
     /// not a side effect of the path.
     #[test]
     fn an_act_that_answers_locked_forgets_the_keys() {
-        let _turn = one_at_a_time();
         seed_keys(&[Venue::Hyperliquid, Venue::Lighter]);
         assert!(holding_a_key(), "the fixture put keys in the store");
 

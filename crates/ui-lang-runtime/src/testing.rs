@@ -24,7 +24,7 @@ use iced_test::runtime::user_interface::{self, UserInterface};
 use iced_test::runtime::{self, Task};
 use iced_test::selector::{Candidate, Selector};
 use std::any::{Any, TypeId};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hasher as _;
@@ -33,7 +33,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -73,6 +73,60 @@ impl fmt::Display for Location {
 thread_local! {
     static RENDER_SOURCE_STACK: RefCell<Vec<Location>> = const { RefCell::new(Vec::new()) };
     static RENDER_SOURCES: RefCell<HashMap<String, Vec<Location>>> = RefCell::new(HashMap::new());
+    static APP_INSTANCE: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+static NEXT_APP_INSTANCE: AtomicU64 = AtomicU64::new(1);
+
+/// Which driven application this thread is doing work for.
+///
+/// A shipped process runs one application, so state that belongs to the whole
+/// machine — a key store, a device handle, a connection pool — is a `static` in
+/// production and correct there. A test binary runs one application per test
+/// thread against that same `static`, and the sharing is invisible until the
+/// suite is busy enough for two of them to overlap: one test's boot clears the
+/// keys another had just unlocked, one test's import is read back by another,
+/// and which test fails moves with the machine rather than with the code.
+///
+/// So application state that is global in production is keyed on this in test
+/// builds. Every thread that reaches an instance's state answers with that
+/// instance: the driver's own thread, and the executor threads its tasks and
+/// subscriptions are polled on, which the driver enrols as it hands work to
+/// them. A thread with no driver behind it — a plain `#[test]` — gets an
+/// instance of its own, which is the same isolation for the same reason.
+pub fn app_instance() -> u64 {
+    APP_INSTANCE.with(|instance| match instance.get() {
+        Some(id) => id,
+        None => {
+            let id = NEXT_APP_INSTANCE.fetch_add(1, Ordering::Relaxed);
+            instance.set(Some(id));
+            id
+        }
+    })
+}
+
+/// Enrols this thread into a driver's application instance.
+fn adopt_app_instance(id: u64) {
+    APP_INSTANCE.with(|instance| instance.set(Some(id)));
+}
+
+/// Carries the driver's application instance onto whichever executor thread
+/// polls this stream, so a task or subscription reaches the same process-global
+/// state its own application does.
+struct Instanced<S> {
+    inner: S,
+    instance: u64,
+}
+
+impl<S: iced_test::futures::futures::Stream + Unpin> iced_test::futures::futures::Stream
+    for Instanced<S>
+{
+    type Item = S::Item;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        adopt_app_instance(self.instance);
+        Pin::new(&mut self.inner).poll_next(context)
+    }
 }
 
 /// Restores the previous rendered-node source when generated view construction exits.
@@ -1783,6 +1837,7 @@ impl Drop for SubscriptionInput {
 struct PanicRecipe<Message> {
     inner: Box<dyn subscription::Recipe<Output = DriverEvent<Message>>>,
     state: Arc<SubscriptionState>,
+    instance: u64,
 }
 
 struct SubscriptionStream<Message> {
@@ -1871,7 +1926,11 @@ impl<Message: Send + 'static> subscription::Recipe for PanicRecipe<Message> {
         self: Box<Self>,
         input: subscription::EventStream,
     ) -> iced_test::futures::BoxStream<Self::Output> {
-        let PanicRecipe { inner, state } = *self;
+        let PanicRecipe {
+            inner,
+            state,
+            instance,
+        } = *self;
         let input = SubscriptionInput::new(input, Arc::clone(&state)).boxed();
         let stream =
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inner.stream(input))) {
@@ -1883,15 +1942,18 @@ impl<Message: Send + 'static> subscription::Recipe for PanicRecipe<Message> {
                     .boxed();
                 }
             };
-        SubscriptionStream {
-            inner: stream,
-            state,
-            acknowledged: 0,
-            started: false,
-            pending_start: false,
-            pending_events: 0,
-            pending_stop: false,
-            terminal: false,
+        Instanced {
+            inner: SubscriptionStream {
+                inner: stream,
+                state,
+                acknowledged: 0,
+                started: false,
+                pending_start: false,
+                pending_events: 0,
+                pending_stop: false,
+                terminal: false,
+            },
+            instance,
         }
         .boxed()
     }
@@ -1967,6 +2029,7 @@ where
     artifact_dir: PathBuf,
     timeout: Duration,
     test_name: &'static str,
+    instance: u64,
     pending_tasks: usize,
     subscriptions: HashMap<u64, Arc<SubscriptionState>>,
     next_subscription_generation: u64,
@@ -1988,6 +2051,9 @@ where
     }
 
     fn new_inner(program: P, config: Config) -> Self {
+        // Claimed before the program boots, because a boot preset is already
+        // application code and may already reach state this instance owns.
+        let instance = app_instance();
         let boot_origin = || failure_origin(config.name, config.source);
         if !valid_dimension(config.viewport.width) || !valid_dimension(config.viewport.height) {
             panic!(
@@ -2127,6 +2193,7 @@ where
             }),
             timeout: config.timeout,
             test_name: config.name,
+            instance,
             pending_tasks: 0,
             subscriptions: HashMap::new(),
             next_subscription_generation: 0,
@@ -3974,6 +4041,7 @@ where
                 Box::new(PanicRecipe {
                     inner,
                     state: Arc::clone(&self.subscriptions[&id]),
+                    instance: self.instance,
                 })
                     as Box<dyn subscription::Recipe<Output = DriverEvent<P::Message>>>
             });
@@ -4000,16 +4068,20 @@ where
         };
         self.pending_tasks += 1;
         self.runtime.run(
-            std::panic::AssertUnwindSafe(stream)
-                .catch_unwind()
-                .map(|result| match result {
-                    Ok(action) => DriverEvent::Action(action),
-                    Err(payload) => DriverEvent::Panicked(payload),
-                })
-                .chain(iced_test::futures::futures::stream::once(async {
-                    DriverEvent::Finished
-                }))
-                .boxed(),
+            Instanced {
+                inner: std::panic::AssertUnwindSafe(stream)
+                    .catch_unwind()
+                    .map(|result| match result {
+                        Ok(action) => DriverEvent::Action(action),
+                        Err(payload) => DriverEvent::Panicked(payload),
+                    })
+                    .chain(iced_test::futures::futures::stream::once(async {
+                        DriverEvent::Finished
+                    }))
+                    .boxed(),
+                instance: self.instance,
+            }
+            .boxed(),
         );
     }
 
