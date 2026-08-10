@@ -1527,7 +1527,7 @@ where
 #[derive(Clone)]
 struct ActionSubscription {
     id: u64,
-    receiver: Arc<Mutex<Option<iced::futures::channel::mpsc::UnboundedReceiver<ActionRequest>>>>,
+    receiver: Arc<Mutex<Option<iced::futures::channel::mpsc::Receiver<ActionRequest>>>>,
 }
 
 impl PartialEq for ActionSubscription {
@@ -1546,19 +1546,24 @@ impl Hash for ActionSubscription {
 
 fn action_stream(
     subscription: &ActionSubscription,
-) -> iced::futures::channel::mpsc::UnboundedReceiver<ActionRequest> {
+) -> iced::futures::channel::mpsc::Receiver<ActionRequest> {
     subscription
         .receiver
         .lock()
         .expect("accessibility action receiver lock")
         .take()
         .unwrap_or_else(|| {
-            let (_sender, receiver) = iced::futures::channel::mpsc::unbounded();
+            let (_sender, receiver) =
+                iced::futures::channel::mpsc::channel(ACCESSIBILITY_ACTION_BUFFER);
             receiver
         })
 }
 
 static NEXT_BRIDGE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+// Keep this configured buffer aligned with iced_winit::Proxy::MAX_SIZE.
+// `futures` reserves one additional slot for the sole sender.
+const ACCESSIBILITY_ACTION_BUFFER: usize = 100;
 
 /// Whether any platform assistive technology has activated the accessibility
 /// tree in this process. Flipped by the adapters' activation/deactivation
@@ -1607,14 +1612,14 @@ pub fn native_window(id: iced::window::Id) -> Task<NativeWindow> {
 pub struct Bridge<Message> {
     id: u64,
     snapshot: Option<Snapshot<Message>>,
-    receiver: Arc<Mutex<Option<iced::futures::channel::mpsc::UnboundedReceiver<ActionRequest>>>>,
+    receiver: Arc<Mutex<Option<iced::futures::channel::mpsc::Receiver<ActionRequest>>>>,
     latest_tree: Arc<Mutex<Option<TreeUpdate>>>,
     #[cfg(target_os = "linux")]
     adapter: Option<accesskit_unix::Adapter>,
     #[cfg(target_os = "windows")]
     adapter: Option<accesskit_windows::SubclassingAdapter>,
     #[cfg(target_os = "windows")]
-    sender: Option<iced::futures::channel::mpsc::UnboundedSender<ActionRequest>>,
+    sender: Option<iced::futures::channel::mpsc::Sender<ActionRequest>>,
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     window: Option<iced::window::Id>,
 }
@@ -1646,13 +1651,15 @@ impl accesskit::ActivationHandler for Activation {
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 struct Actions {
-    sender: iced::futures::channel::mpsc::UnboundedSender<ActionRequest>,
+    sender: iced::futures::channel::mpsc::Sender<ActionRequest>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 impl accesskit::ActionHandler for Actions {
     fn do_action(&mut self, request: ActionRequest) {
-        let _ = self.sender.unbounded_send(request);
+        // A native callback cannot await without risking an event-loop cycle.
+        // Preserve the bounded backlog and drop only overload or disconnects.
+        let _ = self.sender.try_send(request);
     }
 }
 
@@ -1681,7 +1688,7 @@ impl<Message> Bridge<Message> {
 
     fn with_native_adapter(native: bool) -> Self {
         let id = NEXT_BRIDGE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let (sender, receiver) = iced::futures::channel::mpsc::unbounded();
+        let (sender, receiver) = iced::futures::channel::mpsc::channel(ACCESSIBILITY_ACTION_BUFFER);
         let receiver = Arc::new(Mutex::new(Some(receiver)));
         let latest_tree = Arc::new(Mutex::new(None));
         #[cfg(target_os = "linux")]
@@ -3159,7 +3166,8 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn native_adapter_action_handler_routes_requests_to_iced() {
-        let (sender, mut receiver) = iced::futures::channel::mpsc::unbounded();
+        let (sender, mut receiver) =
+            iced::futures::channel::mpsc::channel(ACCESSIBILITY_ACTION_BUFFER);
         let mut handler = Actions { sender };
         let request = ActionRequest {
             action: Action::Click,
@@ -3172,6 +3180,53 @@ mod tests {
 
         let routed = iced_test::futures::futures::executor::block_on(receiver.next());
         assert_eq!(routed, Some(request));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn native_adapter_action_handler_bounds_pending_requests() {
+        let (sender, mut receiver) =
+            iced::futures::channel::mpsc::channel(ACCESSIBILITY_ACTION_BUFFER);
+        let mut handler = Actions { sender };
+
+        for node in 1..=ACCESSIBILITY_ACTION_BUFFER + 2 {
+            accesskit::ActionHandler::do_action(
+                &mut handler,
+                ActionRequest {
+                    action: Action::Click,
+                    target_tree: TreeId::ROOT,
+                    target_node: NodeId(node as u64),
+                    data: None,
+                },
+            );
+        }
+
+        let routed = (0..=ACCESSIBILITY_ACTION_BUFFER)
+            .map(|_| receiver.try_recv().expect("buffered accessibility action"))
+            .map(|request| request.target_node)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            routed,
+            (1..=ACCESSIBILITY_ACTION_BUFFER + 1)
+                .map(|node| NodeId(node as u64))
+                .collect::<Vec<_>>(),
+            "accepted accessibility actions must keep FIFO order"
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "the native callback must not retain more than the configured buffer plus its sender slot"
+        );
+
+        drop(receiver);
+        accesskit::ActionHandler::do_action(
+            &mut handler,
+            ActionRequest {
+                action: Action::Click,
+                target_tree: TreeId::ROOT,
+                target_node: NodeId(u64::MAX),
+                data: None,
+            },
+        );
     }
 
     #[cfg(target_os = "windows")]
