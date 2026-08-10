@@ -4020,7 +4020,10 @@ Only one non-empty `with` block is allowed. The formatter owns its canonical
 shape: at most two short metadata entries stay inline; longer metadata moves
 to the first block, one property or utility per line, followed by `events`,
 `forward`, slots/statuses, and content. Positional arguments and bindings stay
-on the node's first line.
+on the node's first line. A line whose metadata-shaped words interleave with
+other words — such as a parser-rejected spaced `disabled=a || b` — is
+preserved as written apart from indentation; the formatter never rewraps
+source it cannot represent.
 
 Components may expose one typed output. Route that output at every call site;
 inside the component view, `emit` forwards the value:
