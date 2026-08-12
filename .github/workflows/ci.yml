@@ -129,12 +129,13 @@ jobs:
           # Without this the job id joins the key and the shared one is moot.
           add-job-id-key: false
           # A warm restore measured 16.5m against 22.9m cold (runs 31550383286
-          # vs 31554043656), and the ~12m that remain are this workspace's own
-          # release artifacts — trading-example and ui-lang-runtime under fat
-          # LTO — which the default save prunes. Cache them too; only members
-          # whose source changed recompile. Experiment per backlog #29:
-          # compare the next few main runs before trusting the shape.
-          cache-workspace-crates: true
+          # vs 31554043656). `cache-workspace-crates: true` was tried on top
+          # (#565) and reverted: with the enriched entry restored, a run whose
+          # diff touched neither `crates/` nor `examples/trading` still took
+          # 17m48s (run 31565394757) — the ~12m floor is `.ice` build-script
+          # codegen plus fat-LTO test binaries, which a restored `target/`
+          # does not let cargo skip here. The dependency-only entry is the
+          # whole win; do not re-try the workspace-crates shape.
       - name: Run RichTextEditor performance contracts
         run: scripts/editor-performance-contracts.sh target/performance/rich-text-editor.jsonl
       - name: Upload RichTextEditor performance evidence
