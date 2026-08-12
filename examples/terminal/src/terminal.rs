@@ -1725,20 +1725,18 @@ mod tests {
             std::env::current_dir().unwrap(),
         )
         .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // Wedged-detector backstop, not a tuned budget: every event below is
+        // waited on, never polled for, so this only fires when the PTY is
+        // stuck outright. The old 2s wall-clock deadline lost the race to a
+        // loaded CI runner's shell spawn.
+        let backstop = Duration::from_secs(60);
+        let deadline = Instant::now() + backstop;
+        let waiter = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
 
-        while Instant::now() < deadline {
-            let events = {
-                let mut receiver = terminal.events.try_lock().unwrap();
-                let mut events = Vec::new();
-                while let Ok(event) = receiver.try_recv() {
-                    events.push(event);
-                }
-                events
-            };
-            if !events.is_empty() {
-                terminal.handle_events(events);
-            }
+        loop {
             let visible = terminal
                 .frame
                 .text
@@ -1748,9 +1746,28 @@ mod tests {
             if visible.contains("ICE_RENDER_PIPELINE") {
                 return;
             }
-            std::thread::sleep(Duration::from_millis(10));
-        }
 
-        panic!("PTY output never reached the visible terminal frame");
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let batch = waiter.block_on(async {
+                let mut receiver = terminal.events.lock().await;
+                match tokio::time::timeout(remaining, receiver.recv()).await {
+                    Ok(Some(first)) => {
+                        let mut batch = vec![first];
+                        while let Ok(event) = receiver.try_recv() {
+                            batch.push(event);
+                        }
+                        batch
+                    }
+                    Ok(None) => {
+                        panic!("the PTY event channel closed before its output became visible")
+                    }
+                    Err(_) => panic!(
+                        "PTY output never reached the visible terminal frame within the \
+                         {backstop:?} wedged-detector backstop"
+                    ),
+                }
+            });
+            terminal.handle_events(batch);
+        }
     }
 }
