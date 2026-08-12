@@ -409,9 +409,12 @@ test trading_the_range_picker_announces_a_span_not_a_page
   target ever = ranges/range-all/off
   dispatch navigate(Page.portfolio)
   expect portfolio_range == "month"
-  expect a11y drawn name "Show account value over the last month, already showing"
+  expect a11y drawn name "Show account value over the last month"
   expect a11y aweek name "Show account value over the last week"
   expect a11y ever name "Show account value over its whole history"
+  expect a11y drawn checked true
+  expect a11y aweek checked false
+  expect a11y ever checked false
 
 // A position row is seven columns and a button, and a button's label replaces
 // every one of them. Named "BTC short 30" it asked a reader who cannot see the
