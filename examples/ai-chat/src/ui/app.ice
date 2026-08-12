@@ -561,8 +561,16 @@ view
                     w=fill
                     gap=6.0
                     align=center
-                  Chip #model options=models selected=model -> choose_model _
-                  Chip #effort options=efforts selected=effort -> choose_effort _
+                  Chip #model -> choose_model _
+                    with
+                      options=models
+                      selected=model
+                      hint="Model"
+                  Chip #effort -> choose_effort _
+                    with
+                      options=efforts
+                      selected=effort
+                      hint="Reasoning effort"
                   space w=fill
                   if can_steer
                     button "Steer" #steer @outline_action -> steer
