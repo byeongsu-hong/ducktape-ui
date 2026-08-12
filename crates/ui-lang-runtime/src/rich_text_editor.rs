@@ -842,12 +842,34 @@ where
         // the validated region has to re-open a pass — nothing else would,
         // once the content and geometry have settled.
         const HIGHLIGHT_OVERSCAN_LINES: usize = 32;
+        // An edit is followed by `reveal` below, which snaps the viewport to
+        // the caret before anything is drawn — so the pass must cover the
+        // viewport the reveal produces, not the one the previous frame left.
+        // A scroll parked far from the caret would otherwise extend the pass
+        // over every line between the edit and a region this frame never
+        // shows. Predicted from pre-pass line tops, which any equal-line-count
+        // edit preserves; the overscan absorbs the residual error, and a line
+        // left beyond the mark re-opens a pass on the frame that shows it.
+        // Composition is display-only, so the prediction skips preedit frames
+        // and leaves their reveal target to the shaped composition.
+        let scroll_for_highlight = if source_changed && state.preedit.is_none() {
+            let caret = state.document.caret(cursor.position);
+            let mut scroll = state.scroll;
+            if caret.y < scroll {
+                scroll = caret.y;
+            } else if caret.y + caret.height > scroll + viewport_height {
+                scroll = caret.y + caret.height - viewport_height;
+            }
+            scroll.clamp(0.0, (state.content_height - viewport_height).max(0.0))
+        } else {
+            state.scroll
+        };
         // Clamped to the document: the validated mark can never exceed the
         // line count, so an unclamped window would read as "past validated"
         // forever on any document shorter than the overscan.
         let highlight_until = state
             .document
-            .lines_above(state.scroll + viewport_height)
+            .lines_above(scroll_for_highlight + viewport_height)
             .saturating_add(HIGHLIGHT_OVERSCAN_LINES)
             .min(state.source_line_map.len());
         let needs_shape = source_changed

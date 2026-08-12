@@ -606,13 +606,14 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
     assert_eq!(state.metrics.full_text_materializations, 1);
     assert_eq!(state.metrics.materialized_source_bytes, source.len() + 1);
     assert_eq!(state.metrics.mapping_line_comparisons, 0);
-    // The caret sits on line 50_000 but no layout ran after it moved there,
-    // so the viewport is still parked ~47k lines below, where the caret loop
-    // left it. A stateful highlighter cannot skip ahead, so it must run from
-    // the edit down to the visible region — inherent, not waste. When the
-    // viewport follows the caret, as it does while actually typing, this is
-    // bounded by the viewport instead (see the format-key contract).
-    assert_eq!(state.metrics.styled_signature_comparisons, 46_936);
+    // The caret loop parked the viewport ~47k lines below the edit, but the
+    // reveal in this same layout call snaps it back to the caret before
+    // anything is drawn — so the pass covers the viewport the reveal
+    // produces plus overscan, never the stale scroll's region: 29 visible
+    // lines and 32 of overscan. The lines in between stay beyond the
+    // validated mark, and the frame that scrolls back down re-opens a pass
+    // for them, exactly as any scroll past the mark does.
+    assert_eq!(state.metrics.styled_signature_comparisons, 61);
     assert_eq!(state.metrics.newly_owned_styled_texts, 1);
     assert_eq!(
         state.metrics.newly_owned_styled_text_bytes,
@@ -623,7 +624,7 @@ fn performance_contract_100k_caret_and_one_char_insertion() {
     assert_eq!(state.metrics.line_vector_slots_prepared, 0);
     assert_eq!(state.metrics.rebuilt_lines, 1);
     assert_eq!(state.metrics.shaped_paragraphs, 1);
-    assert_eq!(state.metrics.highlighted_lines, 46_936);
+    assert_eq!(state.metrics.highlighted_lines, 61);
     assert_eq!(state.metrics.accepted_change_hints, 1);
     assert_eq!(state.document.lines[50_000].signature.text, "linex 50000");
     budget_failures.extend(record_performance_metrics(
