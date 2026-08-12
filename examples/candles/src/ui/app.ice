@@ -79,6 +79,7 @@ view
                   with
                     p=6.0
                     disabled=(symbol == "DUCK-USD")
+                    checked=(symbol == "DUCK-USD")
                   active bg=surface text=fg r=6.0
                   hovered bg=border text=fg r=6.0
                   disabled bg=primary text=primary_fg r=6.0
@@ -86,6 +87,7 @@ view
                   with
                     p=6.0
                     disabled=(symbol == "TAPE-KRW")
+                    checked=(symbol == "TAPE-KRW")
                   active bg=surface text=fg r=6.0
                   hovered bg=border text=fg r=6.0
                   disabled bg=primary text=primary_fg r=6.0
@@ -121,12 +123,16 @@ test symbol_selection_moves_after_click
   expect a11y tape role "button"
   expect a11y duck disabled true
   expect a11y tape disabled false
+  expect a11y duck checked true
+  expect a11y tape checked false
   expect duck.background == background.color(color.rgb8(108, 192, 111))
   expect tape.background == background.color(color.rgb8(35, 34, 25))
   click tape
   expect symbol == "TAPE-KRW"
   expect a11y duck disabled false
   expect a11y tape disabled true
+  expect a11y duck checked false
+  expect a11y tape checked true
   expect duck.background == background.color(color.rgb8(35, 34, 25))
   expect tape.background == background.color(color.rgb8(108, 192, 111))
   capture tape_selected

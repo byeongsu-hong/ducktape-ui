@@ -13739,7 +13739,7 @@ state
   disabled = false
 on pressed
 view
-  button "Save" #save label="Save action" description="Writes changes" disabled=disabled w=240.0 h=48.0 p=8.0 clip=false style=first_style(disabled) @action -> pressed
+  button "Save" #save label="Save action" description="Writes changes" disabled=disabled checked=disabled w=240.0 h=48.0 p=8.0 clip=false style=first_style(disabled) @action -> pressed
     active bg=linear(1.57, primary@0.0, bg@1.0) text=fg border=primary border-w=1.0 r=4.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=4.0 px-snap=true
     hovered bg=fg text=bg r=6.0
     pressed bg=primary text=white r=8.0
@@ -13751,6 +13751,7 @@ view
         assert_eq!(button.id, ViewId(0));
         assert_eq!(button.content, ResolvedButtonContent::Label("Save".into()));
         assert!(button.disabled.is_some());
+        assert!(button.checked.is_some());
         assert!(button.accessibility_label.is_some());
         assert!(button.accessibility_description.is_some());
         assert!(matches!(
