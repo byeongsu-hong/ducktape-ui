@@ -927,10 +927,12 @@ mod keychain {
     }
 
     /// ECIES over the Enclave's P-256 key: an ephemeral key agreement, X9.63
-    /// KDF, AES-GCM. The sender's half is generated per call and thrown away,
-    /// so the same secret sealed twice gives different bytes and neither can be
-    /// opened by anything but the key in the chip.
-    const ENVELOPE: Algorithm = Algorithm::ECIESEncryptionCofactorX963SHA256AESGCM;
+    /// KDF, AES-GCM with its IV drawn from the KDF output — the variant
+    /// `SecKey.h` directs new code to; the fixed-IV one is documented legacy.
+    /// The sender's half is generated per call and thrown away, so the same
+    /// secret sealed twice gives different bytes and neither can be opened by
+    /// anything but the key in the chip.
+    const ENVELOPE: Algorithm = Algorithm::ECIESEncryptionCofactorVariableIVX963SHA256AESGCM;
 
     /// Written on Linux, type-checked for `aarch64-apple-darwin`, never once
     /// run — the same standing as everything else in this module. What a Mac
