@@ -1137,69 +1137,34 @@ view
                                         size=18.0
                                         @text-muted
                                         @font-bold
-                                // Which side the ticket is on was the fill colour
-                                // and nothing else. accesskit carries a toggled
-                                // state for a checkbox and a switch, not for a
-                                // button, so the chosen side says so in its name by
-                                // the rule the tabs follow — and getting this wrong
-                                // costs a reader the opposite trade.
+                                // The two sides are one mutually exclusive choice,
+                                // so radio semantics carry the selected state to
+                                // both sighted and assistive-technology users.
                                 row gap=8.0 w=fill
                                   col #side-buy w=fill
-                                    if ticket_buy
-                                      button #buy-on -> ticket_side(true)
-                                        with
-                                          label="Buy, already selected"
-                                          w=fill
-                                          p=9.0
-                                        active bg=up text=fg_invert r=4.0
-                                        hovered bg=up text=fg_invert r=4.0
-                                        text "BUY / LONG"
-                                          with
-                                            size=11.0
-                                            w=fill
-                                            align-x=center
-                                    if !ticket_buy
-                                      button #buy-off -> ticket_side(true)
-                                        with
-                                          label="Buy"
-                                          w=fill
-                                          p=9.0
-                                        active bg=raised text=muted r=4.0
-                                        hovered bg=edge text=fg r=4.0
-                                        text "BUY / LONG"
-                                          with
-                                            size=11.0
-                                            w=fill
-                                            align-x=center
-                                            @text-muted
+                                    radio "BUY / LONG" #buy-on -> ticket_side _
+                                      with
+                                        value=true
+                                        selected=ticket_buy
+                                        w=fill
+                                        text-size=11.0
+                                        gap=8.0
+                                      active selected bg=up dot=fg_invert border=up text=fg_invert
+                                      active unselected bg=raised dot=muted border=edge text=muted
+                                      hovered selected bg=up dot=fg_invert border=up text=fg_invert
+                                      hovered unselected bg=edge dot=fg border=fg text=fg
                                   col #side-sell w=fill
-                                    if !ticket_buy
-                                      button #sell-on -> ticket_side(false)
-                                        with
-                                          label="Sell, already selected"
-                                          w=fill
-                                          p=9.0
-                                        active bg=down text=fg_invert r=4.0
-                                        hovered bg=down text=fg_invert r=4.0
-                                        text "SELL / SHORT"
-                                          with
-                                            size=11.0
-                                            w=fill
-                                            align-x=center
-                                    if ticket_buy
-                                      button #sell-off -> ticket_side(false)
-                                        with
-                                          label="Sell"
-                                          w=fill
-                                          p=9.0
-                                        active bg=raised text=muted r=4.0
-                                        hovered bg=edge text=fg r=4.0
-                                        text "SELL / SHORT"
-                                          with
-                                            size=11.0
-                                            w=fill
-                                            align-x=center
-                                            @text-muted
+                                    radio "SELL / SHORT" #sell-off -> ticket_side _
+                                      with
+                                        value=false
+                                        selected=(!ticket_buy)
+                                        w=fill
+                                        text-size=11.0
+                                        gap=8.0
+                                      active selected bg=down dot=fg_invert border=down text=fg_invert
+                                      active unselected bg=raised dot=muted border=edge text=muted
+                                      hovered selected bg=down dot=fg_invert border=down text=fg_invert
+                                      hovered unselected bg=edge dot=fg border=fg text=fg
                                 // Market or limit, which is not a filter over one
                                 // order shape. A market order has no price to
                                 // type, so the field below goes and the whole
