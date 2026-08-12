@@ -81,10 +81,8 @@ test trading_a_scale_ticket_that_is_not_a_ladder_refuses_to_be_sent
   expect text "Both ends of the range are the same price, so there is nothing to spread over."
 
 // The kind row says which of the three is selected, in the name rather than
-// only in the ink. accesskit carries no toggled state for a plain button, so
-// the highlight is the whole answer to a reader who can see it and no answer at
-// all to one who cannot — and picking the wrong one here is the difference
-// between one order and twenty.
+// only in the ink. The button exposes checked state separately, so picking the
+// wrong one is not silent for a reader who cannot see the highlight.
 test trading_the_order_kinds_say_which_is_selected
   preset held
   viewport 1660 820
@@ -95,12 +93,16 @@ test trading_the_order_kinds_say_which_is_selected
   target scale_off = kinds/kind-scale/root/off
   target scale_on = kinds/kind-scale/root/on
   target limit_off = kinds/kind-limit/root/off
-  expect a11y limit_on name "Rest at a price you choose, already selected"
+  expect a11y limit_on name "Rest at a price you choose"
   expect a11y scale_off name "Spread the size over a range of prices"
+  expect a11y limit_on checked true
+  expect a11y scale_off checked false
   click scale_off
   expect ticket_scale
-  expect a11y scale_on name "Spread the size over a range of prices, already selected"
+  expect a11y scale_on name "Spread the size over a range of prices"
   expect a11y limit_off name "Rest at a price you choose"
+  expect a11y scale_on checked true
+  expect a11y limit_off checked false
 
 // The confirmation lists the rungs it froze, one line each, and restates the
 // shape and the money in the ticket's own words. A count is not what the reader

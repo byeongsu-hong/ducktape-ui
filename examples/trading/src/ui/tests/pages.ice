@@ -280,9 +280,12 @@ test trading_header_offers_exactly_the_three_surfaces
   target here = tabs/page-terminal/root/tab-on
   target portfolio = tabs/page-portfolio/root/tab-off
   target settings = tabs/page-settings/root/tab-off
-  expect a11y here name "Show the terminal page, already showing"
+  expect a11y here name "Show the terminal page"
   expect a11y portfolio name "Show the portfolio page"
   expect a11y settings name "Show the settings page"
+  expect a11y here checked true
+  expect a11y portfolio checked false
+  expect a11y settings checked false
   expect no text "MARKETS" within tabs
 
 // The dashboard reads the account rather than relisting the terminal's panes.

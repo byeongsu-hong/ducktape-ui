@@ -3565,11 +3565,6 @@ pub fn share_act(share: f64, reduce: bool) -> String {
     format!("Set the size to {}% of {of}", (share * 100.0).round())
 }
 
-pub fn choice_label(act: String, shown: bool) -> String {
-    let state = if shown { ", already selected" } else { "" };
-    format!("{act}{state}")
-}
-
 /// What the requirement above it is standing on, which is the whole of the
 /// difference between the two margin modes. The figure is the same either way
 /// — the venue takes notional over leverage to open, whichever pocket it comes
@@ -3641,13 +3636,9 @@ pub fn size_note(
 }
 
 /// A tab is named by what pressing it does, like every other control here, so
-/// all six say `Show`. Which one the chart is already drawing is a state
-/// rather than a different act — and a button carries no state a reader can
-/// hear — so it is said after that name rather than in place of it: the
-/// answer used to live in the highlight colour and nowhere else.
-pub fn interval_label(interval: String, shown: bool) -> String {
-    let state = if shown { ", already showing" } else { "" };
-    format!("Show {interval} candles{state}")
+/// all six say `Show`; the selected state is exposed separately on the button.
+pub fn interval_label(interval: String) -> String {
+    format!("Show {interval} candles")
 }
 
 /// The widths the chart offers, coarsest first, which is the order it opens
@@ -3696,11 +3687,10 @@ pub fn pane_label(pane: String, open: bool) -> String {
 }
 
 /// A page tab by the same rule. The tab draws its page's name in capitals
-/// because it is a heading for the surface it opens; the name a reader hears
-/// is the act, in the sentence the tab would be if it had room for one.
-pub fn page_label(page: String, shown: bool) -> String {
-    let state = if shown { ", already showing" } else { "" };
-    format!("Show the {} page{state}", page.to_lowercase())
+/// because it is a heading for the surface it opens; the selected state is
+/// exposed separately on the button.
+pub fn page_label(page: String) -> String {
+    format!("Show the {} page", page.to_lowercase())
 }
 
 /// A hovered candle's figures, one per cell of the crosshair readout. The demo
@@ -6611,17 +6601,9 @@ mod tests {
             "the size reads unsigned; the word carries the side"
         );
 
-        // A page tab draws a heading and is heard as the act, and the page
-        // already on screen is a button like the other three: which one that
-        // is has to be in the name, because nothing else about a button is.
-        assert_eq!(
-            page_label("PORTFOLIO".into(), false),
-            "Show the portfolio page"
-        );
-        assert_eq!(
-            page_label("PORTFOLIO".into(), true),
-            "Show the portfolio page, already showing"
-        );
+        // A page tab draws a heading and is heard as the act; its selected
+        // state is exposed separately on the button.
+        assert_eq!(page_label("PORTFOLIO".into()), "Show the portfolio page");
     }
 
     #[test]

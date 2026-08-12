@@ -75,8 +75,10 @@ test trading_interval_tabs_name_the_selected_width
   target tabs = bar/intervals
   target showing = tabs/interval-1m/root/tab-on
   target offered = tabs/interval-5m/root/tab-off
-  expect a11y showing name "Show 1m candles, already showing"
+  expect a11y showing name "Show 1m candles"
   expect a11y offered name "Show 5m candles"
+  expect a11y showing checked true
+  expect a11y offered checked false
 
 test trading_a_new_market_opens_at_its_own_price
   preset held

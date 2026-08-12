@@ -66,8 +66,10 @@ test trading_a_thin_market_opens_on_a_width_that_has_bars
   expect interval == "1h"
   // And the lit tab is the width that was landed on rather than the one the
   // chart set out from.
-  expect a11y showing name "Show 1h candles, already showing"
+  expect a11y showing name "Show 1h candles"
   expect a11y offered name "Show 1d candles"
+  expect a11y showing checked true
+  expect a11y offered checked false
 
 // The walk has a bottom. A market with three bars at every width it is asked
 // for arrives at the finest one and draws its three, rather than asking the

@@ -55,7 +55,6 @@ extern crate::hyperliquid
   pure sl_refused(entry:f64, price:str, buy:bool, liquidation:f64) -> str
   pure level_label(name:str, pnl:f64) -> str
   pure share_act(share:f64, reduce:bool) -> str
-  pure choice_label(act:str, shown:bool) -> str
   pure margin_note(cross:bool) -> str
   pure liquidation_gap(market:SymbolRow?, loaded:bool, cross:bool, banked:bool) -> str
   pure push_trades(tape:[Trade], tick:MarketTick, limit:i64) -> [Trade]
@@ -111,9 +110,9 @@ extern crate::hyperliquid
   pure fill_label(fill:Fill) -> str
   pure book_label(price:f64, buy:bool) -> str
   pure position_label(held:Position) -> str
-  pure interval_label(interval:str, shown:bool) -> str
+  pure interval_label(interval:str) -> str
   pure finer_interval(interval:str, bars:i64) -> str
-  pure page_label(page:str, shown:bool) -> str
+  pure page_label(page:str) -> str
   pure pane_label(pane:str, open:bool) -> str
   pure hit_open(hit:CandleHit) -> f64
   pure hit_high(hit:CandleHit) -> f64
