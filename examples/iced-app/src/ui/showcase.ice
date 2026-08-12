@@ -516,6 +516,20 @@ test showcase_behavior
   dispatch native_move(120.0, 48.0)
   expect pointer_y == 48.0
 
+test image_examples_are_named
+  viewport 960 720
+  target checker = #checker-image
+  target encoded = #encoded-image
+  target memory = #memory-image
+  target memory_viewer = #memory-viewer
+  target ice_logo = #ice-logo
+  expect a11y checker role "image"
+  expect a11y checker name "Checker image"
+  expect a11y encoded name "Encoded image"
+  expect a11y memory name "Rotated cropped memory image"
+  expect a11y memory_viewer name "Memory image viewer"
+  expect a11y ice_logo name "Ice logo"
+
 view
   col
     with
@@ -808,21 +822,24 @@ view
             clip=false
             wrap-gap=8.0
             wrap-align=start
-          image "../../assets/checker.ppm"
+          image "../../assets/checker.ppm" #checker-image
             with
+              label="Checker image"
               w=48.0
               h=48.0
               fit=cover
               filter=nearest
               r=8.0
-          image encoded_image
+          image encoded_image #encoded-image
             with
+              label="Encoded image"
               w=24.0
               h=48.0
               fit=cover
               filter=nearest
-          image memory_image
+          image memory_image #memory-image
             with
+              label="Rotated cropped memory image"
               w=48.0
               h=48.0
               fit=cover
@@ -832,8 +849,9 @@ view
               r-tl=2.0
               r-br=2.0
               crop=(0, 0, 1, 2)
-          viewer memory_image
+          viewer memory_image #memory-viewer
             with
+              label="Memory image viewer"
               w=160.0
               h=96.0
               fit=contain
@@ -842,8 +860,9 @@ view
               min-scale=0.5
               max-scale=8.0
               scale-step=0.25
-          svg "../../assets/ice.svg"
+          svg "../../assets/ice.svg" #ice-logo
             with
+              label="Ice logo"
               w=48.0
               h=48.0
               fit=contain
