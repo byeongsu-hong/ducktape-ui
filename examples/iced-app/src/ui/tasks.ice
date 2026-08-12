@@ -72,12 +72,15 @@ test narrow_toolbar_controls_fit
   target about_toggle = #about-toggle
   target about_button = #about-button
   target new_window = #new-window
+  target workspace = #workspace
   expect raw_id.width >= 80.0
   expect capture.width >= 120.0
   expect inspect.width >= 100.0
   expect about_toggle.right <= about_button.x
   expect about_button.width >= 60.0
   expect new_window.width >= 100.0
+  expect workspace.height >= 120.0
+  expect workspace.bottom <= 360.0
   capture narrow_toolbar_fixed
 
 test default_toolbar_controls_fit
@@ -88,12 +91,15 @@ test default_toolbar_controls_fit
   target about_toggle = #about-toggle
   target about_button = #about-button
   target new_window = #new-window
+  target workspace = #workspace
   expect raw_id.width >= 80.0
   expect capture.width >= 120.0
   expect inspect.width >= 100.0
   expect about_toggle.right <= about_button.x
   expect about_button.width >= 60.0
   expect new_window.width >= 100.0
+  expect workspace.height >= 120.0
+  expect workspace.bottom <= 720.0
   capture default_toolbar_fixed
 
 view
@@ -108,8 +114,8 @@ view
     content
       col
         with
-          gap=24.0
-          p=24.0
+          gap=4.0
+          p=8.0
           @w-full
           @h-full
           @bg-bg
@@ -117,7 +123,7 @@ view
           with
             w=fill
             wrap=wrap
-            gap=12.0
+            gap=8.0
             justify=space-between
             items=center
           text "Tasks"
@@ -147,7 +153,7 @@ view
 
         flex
           with
-            gap=12.0
+            gap=8.0
             wrap=wrap
             items=center
             @w-full
