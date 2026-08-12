@@ -5,9 +5,10 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-iced = { version = "=0.14.0", default-features = false, features = ["advanced", "canvas", "tokio", "wgpu", "x11"] }
-iced_term = "=0.8.0"
+alacritty_terminal = { version = "=0.25.1", default-features = false }
+iced = { version = "=0.14.0", default-features = false, features = ["advanced", "tokio", "wgpu", "x11"] }
 shell-words = "=1.1.1"
+tokio = { version = "=1.53.0", features = ["sync", "time"] }
 ui-lang.workspace = true
 ui-lang-runtime.workspace = true
 which = "=8.0.5"

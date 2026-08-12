@@ -15,14 +15,21 @@ either `user@host` or a quoted command such as
 shell. Claude Code and Codex inherit the parent process environment, so their
 normal authentication and configuration continue to apply.
 
-The launcher keeps its terminal palette for native form controls even when the
-system theme is light:
+The launcher uses the same warm graphite palette for native form controls even
+when the system theme is light. Once a session starts, the launcher disappears
+and the terminal owns the complete surface below the compact session bar:
 
 ![Terminal launcher controls](screenshots/launcher_controls_light.png)
 
-The Ice layer owns the launcher form and session status. `src/terminal.rs`
-owns process creation and wraps `iced_term` as an `extern component` plus an
-`extern subscription`; no PTY handles or terminal protocol bytes cross into
-Ice state. Each new session also receives a fresh terminal view state, so PTY
-dimensions propagate correctly when switching between shell, SSH, Claude Code,
-and Codex.
+The Ice layer owns the launcher, session bar, and session status.
+`src/terminal.rs` uses `alacritty_terminal` directly for the PTY, VT parser,
+grid, terminal modes, and selection, then exposes a native renderer and an
+event subscription through Ice's typed extern boundary. No PTY handles or
+terminal protocol bytes cross into Ice state.
+
+The renderer snapshots only the visible grid, batches adjacent cells into text
+and color runs, and coalesces PTY wakeups to one update per frame. Resize
+notifications are sent only when the computed row, column, or cell dimensions
+actually change. This avoids redraw/resize feedback in bursty alternate-screen
+clients such as Claude Code while keeping shell, SSH, tmux, and Codex behavior
+on the same terminal core.
