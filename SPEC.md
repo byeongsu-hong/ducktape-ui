@@ -88,6 +88,7 @@ produce a deterministic AccessKit tree with these mappings:
 | `button` | `Button` | label, optional description, disabled/focus state, click action |
 | `checkbox` | `CheckBox` | label, optional description, toggled/disabled/focus state, click action |
 | `toggler` | `Switch` | label, optional description, toggled/disabled/focus state, click action |
+| `radio` | `RadioButton` | label, optional description, selected/checked state, disabled/focus state, click action |
 | `slider` | `Slider` | default `Slider` label, current value, focus state |
 | `progress` | `ProgressIndicator` | default `Progress` label and current value |
 | `pick` | `ComboBox` | placeholder/default label, selected value, focus state |

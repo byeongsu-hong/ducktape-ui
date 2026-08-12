@@ -94,16 +94,19 @@ test trading_the_ticket_side_says_which_side_is_selected
   target app = #app
   target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
   target buying = ticket/side-buy/buy-on
-  target buy_offered = ticket/side-buy/buy-off
-  target selling = ticket/side-sell/sell-on
-  target sell_offered = ticket/side-sell/sell-off
+  target selling = ticket/side-sell/sell-off
   expect ticket_buy
-  expect a11y buying name "Buy, already selected"
-  expect a11y sell_offered name "Sell"
-  click sell_offered
+  expect a11y buying name "BUY / LONG"
+  expect a11y selling name "SELL / SHORT"
+  expect a11y buying checked true
+  expect a11y selling checked false
+  click selling
   expect !ticket_buy
-  expect a11y selling name "Sell, already selected"
-  expect a11y buy_offered name "Buy"
+  expect a11y selling name "SELL / SHORT"
+  expect a11y buying name "BUY / LONG"
+  expect a11y selling checked true
+  expect a11y buying checked false
+  capture ticket_side_a11y
 
 // A market order has no price to type, and the panel quoted one anyway:
 // whatever was left in the limit field, from whatever order was being written

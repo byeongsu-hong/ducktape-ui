@@ -408,7 +408,12 @@ view
     assert!(generated.contains("::iced::gradient::Linear::new(1.57 as f32)"));
     assert!(generated.contains("::iced::gradient::Linear::new(0.0 as f32)"));
     assert!(generated.contains("__style.border.radius"));
-    assert!(generated.contains("::iced::widget::radio(\"First\".to_owned(), true"));
+    assert!(generated.contains("let __label = \"First\".to_owned();"));
+    assert!(generated.contains("::iced::widget::radio(__label.clone(), true"));
+    assert!(generated.contains("::ui_lang_runtime::Role::RadioButton"));
+    assert!(generated.contains(".checked(__checked).selected(__checked)"));
+    assert!(generated.contains(".logical_id(__a11y_key.clone())"));
+    assert!(generated.contains(".on_activate_maybe(Some(__activate))"));
     assert!(generated.contains("move |_| __ControlsMessage::ChoiceChanged(\"first\".to_owned())"));
     assert!(generated.contains(
         ".size(::ui_lang_runtime::bounded_table_metric(20.0, 1)).spacing(::ui_lang_runtime::bounded_table_metric(8.0, 1))"
