@@ -350,3 +350,38 @@ pub fn virtual_nums(count: i64) -> Vec<i64> {
 pub fn virtual_label(n: i64) -> String {
     format!("row {n}")
 }
+
+#[cfg(test)]
+use crate::backend::Task;
+
+#[cfg(test)]
+pub fn seeded_tasks() -> Vec<Task> {
+    vec![
+        Task {
+            id: 1,
+            title: "Seeded one".into(),
+            done: false,
+        },
+        Task {
+            id: 2,
+            title: "Seeded two".into(),
+            done: false,
+        },
+    ]
+}
+
+#[cfg(test)]
+pub fn retitled(mut tasks: Vec<Task>, id: i64, title: String) -> Vec<Task> {
+    if let Some(task) = tasks.iter_mut().find(|task| task.id == id) {
+        task.title = title;
+    }
+    tasks
+}
+
+#[cfg(test)]
+pub fn toggled(mut tasks: Vec<Task>, id: i64) -> Vec<Task> {
+    if let Some(task) = tasks.iter_mut().find(|task| task.id == id) {
+        task.done = !task.done;
+    }
+    tasks
+}

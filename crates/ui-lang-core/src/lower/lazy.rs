@@ -11,6 +11,9 @@ pub(crate) struct ResolvedLazyBinding {
 pub(crate) struct ResolvedLazy {
     pub(crate) id: ViewId,
     pub(crate) dependency: CheckedExprUseId,
+    /// `lazy value by key, key as name`: the cheap projections that stand in
+    /// for the value in the memo dependency tuple. Empty for the plain form.
+    pub(crate) keys: Vec<CheckedExprUseId>,
     pub(crate) binding: ResolvedLazyBinding,
     pub(crate) origin: OriginId,
 }
@@ -30,6 +33,7 @@ impl Lowerer {
         let checked_view = self.facts.view(id).clone();
         let CheckedViewFlow::Lazy {
             dependency,
+            keys,
             binding: local,
         } = checked_view.flow
         else {
@@ -97,10 +101,49 @@ impl Lowerer {
         if source != expression.source {
             return Err(self.invariant(span, "lazy dependency expression root type diverged"));
         }
+        for (index, key) in keys.iter().enumerate() {
+            let owner = CheckedExprOwner::View {
+                view: id,
+                role: CheckedViewExprRole::LazyKey(index as u32),
+            };
+            if self.facts.expression_use_by_owner(owner) != Some(*key) {
+                return Err(self.invariant(span, "lazy key owner mapping diverged"));
+            }
+            let expression = self.facts.try_expression_use(*key).ok_or_else(|| {
+                self.invariant(span, "lazy key expression-use ID is outside its arena")
+            })?;
+            if expression.owner != owner || expression.coercion != CheckedInitializerCoercion::None
+            {
+                return Err(self.invariant(span, "lazy key contract diverged"));
+            }
+            let policy = ViewWidgetExpressionPolicy {
+                lowerer: self,
+                view: id,
+                scope: checked_view.scope,
+                use_id: *key,
+                span,
+                canvas_locals: false,
+                own_view_locals: false,
+                allowed_own_view_locals: None,
+                family: "lazy",
+            };
+            let mut graph = CheckedExpressionGraph::default();
+            let root_scope = graph.root_scope();
+            let source = self.validate_checked_expression_node(
+                expression.root,
+                &policy,
+                &mut graph,
+                root_scope,
+            )?;
+            if source != expression.source {
+                return Err(self.invariant(span, "lazy key expression root type diverged"));
+            }
+        }
 
         let resolved = ResolvedLazy {
             id,
             dependency,
+            keys,
             binding: ResolvedLazyBinding {
                 local,
                 name: checked_local.name.clone(),

@@ -477,7 +477,10 @@ view
     let generated = compile(source, "repeated.ice").unwrap();
 
     assert_eq!(generated.matches("let __for_scope = format!").count(), 2);
-    assert_eq!(generated.matches(".iter().cloned().enumerate()").count(), 2);
+    // Non-Copy rows iterate by reference; use sites clone only where they
+    // need ownership, so no `for` loop deep-clones its rows up front.
+    assert_eq!(generated.matches(".iter().enumerate()").count(), 2);
+    assert_eq!(generated.matches(".iter().cloned().enumerate()").count(), 0);
     assert!(generated.contains("format!(\"{}/@for:"));
     assert!(generated.contains("/frame({})"));
     assert!(generated.contains("/slotted({})"));

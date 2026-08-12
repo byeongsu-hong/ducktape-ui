@@ -317,6 +317,7 @@ fn collect_widget_ids(
             }
             ViewNode::Lazy {
                 dependency,
+                keys: _,
                 binding,
                 id,
                 child,

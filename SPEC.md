@@ -915,7 +915,8 @@ keyed_property = ("w=" | "h=") length | "gap=" expr
                  | "pl=") expr
                | "max-w=" expr | "virtual-row=" expr
                | "align=" ("start" | "center" | "end")
-lazy_node      = "lazy" expr "as" name id? INDENT node
+lazy_node      = "lazy" expr ("by" expr ("," expr)*)? "as" name id?
+                 INDENT node
 markdown_view  = "markdown" name id? markdown_property* "->" route
                  (INDENT markdown_style)?
 markdown_property = ("text-size=" | "h1-size=" | "h2-size="
@@ -2197,6 +2198,28 @@ owned callback, so every call-site route for it — through any `forward` or
 `emit` chain — accepts only `_` payloads; an expression there would freeze a
 stale value or borrow view state.
 
+`lazy value by key, key as cached` keys the memo off cheap projections instead
+of the value: the keys — each `bool`, `i64`, or `str` — replace the value in
+the dependency tuple, and the value is captured by reference and cloned into
+the owned `cached` alias only when a key changes. An unchanged frame therefore
+deep-clones nothing, which is the point: a `for` over non-Copy rows already
+iterates by reference, so a row list whose every row is a keyed `lazy` builds
+its frame without cloning a single row. The keys are the author's contract
+that they move whenever the value's rendered content moves — `lazy message by
+message.rev, message.seq as row` — and content that changes without moving a
+key keeps showing the cached subtree. The keyed value itself is never hashed,
+so it needs Clone rather than Hash: `f64` — and an extern type or list/optional
+carrying one — is a legal keyed value where the plain form's dependency must
+hash. Because the captured reference must
+outlive the view, the keyed form's value must be a place rooted in app or
+component state: a state field path, or a `for` row over such a place,
+recursively; a Copy-typed `for` row is captured by value and ends that chain,
+but only a `for` row — every other binding (a match payload, a keyed-column
+item, a table row) reaches the builder as a reference even when Copy-typed and
+is rejected. Every
+other rule of the plain form — the alias-only subtree scope, unmount parking,
+preserved component routing — applies unchanged.
+
 Markdown content is parsed into owned iced state instead of being reparsed by
 the view. A literal initializes it directly, `markdown(source)` replaces it,
 `markdown state append source` incrementally extends it, and
@@ -3357,7 +3380,7 @@ The implemented native nodes are:
 | `if` | includes its children when a bool expression is true |
 | `for` | iterates a list and adds one typed item binding |
 | `keyed` | repeats one child template with a bool/i64/f64 identity key and native column sizing/alignment; `virtual-row=` lays out only the visible rows while per-row state still follows the key |
-| `lazy` | caches one owned static child subtree by a checked hashable dependency |
+| `lazy` | caches one owned static child subtree by a checked hashable dependency, or by cheap `by` key projections of a state-rooted value |
 | `markdown` | renders owned parsed/replaced/appended content, exposes image URIs, all Settings and Style fields, str link events, and typed custom Viewer factories |
 | `table` | maps typed rows into arbitrary structured headers/cells with complete sizing, padding, separator and alignment options |
 | `editor` | binds owned multi-line content to generated iced actions with sizing, typography, wrapping, built-in highlighting and every concrete status style field |

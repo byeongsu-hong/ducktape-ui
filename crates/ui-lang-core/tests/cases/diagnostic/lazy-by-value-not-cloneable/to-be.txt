@@ -1,0 +1,2 @@
+E139
+keyed lazy value type `editor` cannot be cached

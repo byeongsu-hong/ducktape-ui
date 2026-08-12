@@ -194,6 +194,10 @@ pub enum ViewNode {
     },
     Lazy {
         dependency: Expr,
+        /// Cheap projections that replace the value in the memo dependency
+        /// tuple: `lazy value by key, key as name`. Empty for the plain form,
+        /// whose dependency is the value itself.
+        keys: Vec<Expr>,
         binding: String,
         id: Option<Id>,
         child: Box<ViewNode>,
