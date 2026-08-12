@@ -87,7 +87,6 @@ pub(crate) struct ResolvedMedia {
     pub(crate) source_type: Type,
     pub(crate) options: ResolvedMediaOptions,
     pub(crate) origin: OriginId,
-    pub(crate) reconciliation_line: usize,
 }
 
 impl Lowerer {
@@ -364,7 +363,6 @@ impl Lowerer {
                 scale_step,
             },
             origin: checked_view.origin,
-            reconciliation_line: span.line,
         };
         if self.media.insert(id, resolved).is_some() {
             return Err(self.invariant(span, "media was lowered more than once"));

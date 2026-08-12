@@ -14,7 +14,7 @@ pub(in crate::codegen) fn render_media(
     let rendered = match &view.kind {
         ResolvedViewKind::Media => {
             let resolved = document.resolved_media(node)?;
-            render_resolved_media(resolved, document, env, scope)
+            render_resolved_media(resolved, identity, document, env, scope)
         }
         ResolvedViewKind::Tooltip { content, tip } => {
             let content = render_node(*content, document, message, env, &child_scope, slot)?;
@@ -450,6 +450,7 @@ fn resolved_tooltip_radius(
 
 fn render_resolved_media(
     media: &ResolvedMedia,
+    identity: Option<&ResolvedViewIdentity>,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
     scope: &str,
@@ -632,16 +633,8 @@ fn render_resolved_media(
         .unwrap();
     }
     if let Some(label) = options.accessibility_label {
-        let origin = program.origin(media.origin);
-        let span = Span {
-            line: media.reconciliation_line,
-            column: origin.column,
-        };
-        let reconciliation_scope = borrowed_scope(reconciliation_scope(scope, env));
-        let accessibility_key = format!(
-            "format!(\"{{}}/@media:{}\", {reconciliation_scope})",
-            span.line
-        );
+        let accessibility_key =
+            resolved_accessibility_key_code(identity, "media", media.origin, scope, env, program)?;
         let label = resolved_expr_use_code(program, label, env, ValueMode::Owned)?;
         let description = options
             .accessibility_description

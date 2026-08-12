@@ -1290,4 +1290,6 @@ view
         generated.matches("::ui_lang_runtime::accessible(").count(),
         generated.matches(".logical_id(__a11y_key.clone())").count()
     );
+    assert_eq!(generated.matches("/image").count(), 2);
+    assert!(!generated.contains("/@media:"));
 }
