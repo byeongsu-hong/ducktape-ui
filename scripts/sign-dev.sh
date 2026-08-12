@@ -198,7 +198,7 @@ make one; Apple issues it. Once, from developer.apple.com/account:
      Keychain Sharing capability enabled.
   2. Create a macOS *Development* provisioning profile for that App ID and
      this Mac, and download it.
-  3. export ICE_PROVISION_PROFILE=~/Downloads/<name>.provisionprofile
+  3. export ICE_PROVISION_PROFILE=/path/to/<name>.provisionprofile
 
 Xcode's Signing & Capabilities tab does all three for a throwaway project and
 leaves the profile in ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles.

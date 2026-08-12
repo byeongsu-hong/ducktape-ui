@@ -23,7 +23,7 @@ cargo run -p trading-example
 cargo test -p trading-example
 
 # On macOS, to import a wallet and trade: build, sign and run in one step.
-export ICE_PROVISION_PROFILE=~/Downloads/ducktape.provisionprofile
+export ICE_PROVISION_PROFILE=/path/to/ducktape.provisionprofile
 scripts/sign-dev.sh -p trading-example
 ```
 
