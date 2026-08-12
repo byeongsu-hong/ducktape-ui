@@ -597,7 +597,7 @@ on toggle(value)
 view
   col
     input "Name" #name label="Full name" description="Profile name" <-> name
-    button "Save" #save description="Save changes" -> press
+    button "Save" #save description="Save changes" checked=checked -> press
     checkbox "Ready" #ready label="Ready state" description="Current readiness" checked=checked -> toggle _
     toggler "Online" #online label="Online state" description="Current availability" checked=checked -> toggle _
     image "photo.ppm" label="Portrait" description="Profile portrait"
@@ -615,6 +615,7 @@ view
     let ViewNode::Button { options, .. } = &children[1] else {
         panic!("expected button");
     };
+    assert!(options.checked.is_some());
     assert!(options.accessibility.description.is_some());
     let ViewNode::Checkbox { options, .. } = &children[2] else {
         panic!("expected checkbox");

@@ -131,6 +131,8 @@ pub(in crate::parser) fn parse_button(
         } else if parse_accessibility_option(part, &mut options.accessibility, line)? {
         } else if let Some(value) = part.strip_prefix("disabled=") {
             disabled = Some(parse_expr(strip_wrapping_parens(value), line)?);
+        } else if let Some(value) = part.strip_prefix("checked=") {
+            options.checked = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("w=") {
             options.width = Some(parse_length(value, line)?);
         } else if let Some(value) = part.strip_prefix("h=") {

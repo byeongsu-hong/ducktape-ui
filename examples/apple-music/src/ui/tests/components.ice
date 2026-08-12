@@ -57,6 +57,8 @@ test component_sidebar_contract
   expect text "Music" within drag_zone
   expect search_input.y ~= header.bottom + 6.0
   expect selected_home.kind == "button"
+  expect a11y selected_home checked true
+  expect a11y new_item checked false
   expect selected_home.background == background.color(color.rgb8(247, 232, 237))
   expect selected_home.border.width ~= 0.0
   expect selected_home.shadow.blur ~= 0.0
@@ -70,6 +72,7 @@ test component_sidebar_contract
   expect !queue_open
   expect missing new_item
   expect exists selected_new
+  expect a11y selected_new checked true
   dispatch seek(57.0)
   dispatch toggle_playback
   click mini_player
@@ -413,12 +416,15 @@ test component_player_and_queue_contract
   target unmute_button = #stage/player/root/surface/layout/utilities/unmute
   target volume_slider = #stage/player/root/surface/layout/utilities/volume
   target lyrics_button = #stage/player/root/surface/layout/utilities/lyrics/lyrics-inactive
+  target lyrics_active_button = #stage/player/root/surface/layout/utilities/lyrics/lyrics-active
   target queue_button = #stage/player/root/surface/layout/utilities/queue/queue-inactive
+  target queue_active_button = #stage/player/root/surface/layout/utilities/queue/queue-active
   target queue_panel = #stage/lower/queue-panel/root
   target queue_surface = #stage/lower/queue-panel/root/surface
   target queue_close = #stage/lower/queue-panel/root/surface/header/close
   target queue_current = #stage/lower/queue-panel/root/surface/current
   target queued_song = #stage/lower/queue-panel/root/surface/list/row(1)/root
+  target selected_song = #stage/lower/queue-panel/root/surface/list/row(2)/root
   expect player.height ~= 88.0
   expect player_surface.border.radius == radius(22.0)
   expect metadata.x ~= player_surface.x + 10.0
@@ -437,6 +443,10 @@ test component_player_and_queue_contract
   expect queue_surface.border.radius == radius(22.0)
   expect queue_current.width ~= queue_surface.width - 36.0
   expect queued_song.kind == "button"
+  expect a11y queued_song checked false
+  expect a11y selected_song checked true
+  expect a11y lyrics_button checked false
+  expect a11y queue_button checked false
   click pause_button
   expect !playing
   expect missing pause_button
@@ -466,11 +476,17 @@ test component_player_and_queue_contract
   click lyrics_button
   expect lyrics_open
   expect !queue_open
+  expect a11y lyrics_active_button checked true
+  expect a11y queue_button checked false
   click queue_button
   expect queue_open
   expect !lyrics_open
+  expect a11y queue_active_button checked true
+  expect a11y lyrics_button checked false
   click queued_song
   expect current_title == "Velvet Sun"
+  expect a11y queued_song checked true
+  expect a11y selected_song checked false
   click queue_close
   expect !queue_open
 

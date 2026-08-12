@@ -985,6 +985,7 @@ pub(crate) fn rich_text_semantic_key(
 #[derive(Clone, Debug, Default)]
 pub struct ButtonOptions {
     pub accessibility: AccessibilityOptions,
+    pub checked: Option<Expr>,
     pub width: Option<LengthValue>,
     pub height: Option<LengthValue>,
     pub padding: Option<Expr>,
@@ -1027,6 +1028,7 @@ pub(crate) fn button_expression_roots<'a>(
 ) -> Vec<&'a Expr> {
     let mut roots = Vec::new();
     roots.extend(disabled);
+    roots.extend(options.checked.as_ref());
     roots.extend(options.accessibility.label.as_ref());
     roots.extend(options.accessibility.description.as_ref());
     push_input_length_root(&mut roots, &options.width);
@@ -1117,9 +1119,10 @@ pub(crate) fn button_semantic_key(
         })
         .collect::<String>();
     format!(
-        "button|label={label:?}|child={}|disabled={}|a11y={}:{}|bounds={}:{}|padding={}|clip={}|preset={:?}|custom={custom}|statuses={statuses}|route={}:{}",
+        "button|label={label:?}|child={}|disabled={}|checked={}|a11y={}:{}|bounds={}:{}|padding={}|clip={}|preset={:?}|custom={custom}|statuses={statuses}|route={}:{}",
         content.is_some(),
         disabled.is_some(),
+        options.checked.is_some(),
         options.accessibility.label.is_some(),
         options.accessibility.description.is_some(),
         text_length_semantic_key(&options.width),

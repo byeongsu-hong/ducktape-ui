@@ -34,6 +34,12 @@ pub(in crate::codegen) fn render_button(
         .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?
         .unwrap_or_else(|| "false".into());
+    let checked = button
+        .checked
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
+        .transpose()?
+        .map(|value| format!(".checked({value})"))
+        .unwrap_or_default();
     let activate = resolved_interaction_route_code(&button.route, &[], env, program, message)?;
     let mut content = match (&button.content, child) {
         (ResolvedButtonContent::Label(label), None) => {
@@ -114,7 +120,7 @@ pub(in crate::codegen) fn render_button(
     code.push_str(".on_press_maybe(if __disabled { None } else { Some(__activate.clone()) })");
     code.push_str(&resolved_button_style_code(button, program, env)?);
     Ok(format!(
-        "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
+        "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}){checked}.disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
     ))
 }
 

@@ -25,6 +25,9 @@ pub(in crate::check) fn infer_controls_group(
                 let ty = expr_type(disabled, env, document, span)?;
                 require_type(&ty, &Type::Bool, span)?;
             }
+            if let Some(checked) = &options.checked {
+                require_type(&expr_type(checked, env, document, span)?, &Type::Bool, span)?;
+            }
             check_accessibility_options(&options.accessibility, env, document, span)?;
             if label.is_none() && options.accessibility.label.is_none() {
                 return Err(Error::new(

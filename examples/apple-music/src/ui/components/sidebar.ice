@@ -44,6 +44,7 @@ component NavItem(icon:str, label:str, target:MusicSection, selected:bool=false)
       button #selected-control -> emit(navigate, target)
         with
           label=label
+          checked=true
           w=fill
           h=37.0
           p=8.0
@@ -63,6 +64,7 @@ component NavItem(icon:str, label:str, target:MusicSection, selected:bool=false)
       button #control -> emit(navigate, target)
         with
           label=label
+          checked=false
           w=fill
           h=37.0
           p=8.0

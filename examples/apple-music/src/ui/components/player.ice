@@ -4,6 +4,7 @@ component QueueRow(album:Album, selected:bool)
   button #root -> emit(play, album.title, album.artist, album.cover)
     with
       label=album.title
+      checked=selected
       w=fill
       h=60.0
       p=7.0
@@ -407,25 +408,27 @@ component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64,
               dragged rail-start=primary handle=circle(5.0) handle-color=primary
             col #lyrics
               if lyrics_active
-                button label="Hide lyrics" #lyrics-active @music::icon_action -> emit(lyrics)
+                button label="Hide lyrics" #lyrics-active checked=true @music::icon_action -> emit(lyrics)
                   LyricsIcon active=true
                   active bg=accent text=primary r=9.0
               if !lyrics_active
                 button #lyrics-inactive -> emit(lyrics)
                   with
                     label="Show lyrics"
+                    checked=false
                     style=text
                     @music::icon_action
                   LyricsIcon active=false
             col #queue
               if queue_active
-                button label="Hide Playing Next" #queue-active @music::icon_action -> emit(queue)
+                button label="Hide Playing Next" #queue-active checked=true @music::icon_action -> emit(queue)
                   QueueIcon active=true
                   active bg=accent text=primary r=9.0
               if !queue_active
                 button #queue-inactive -> emit(queue)
                   with
                     label="Show Playing Next"
+                    checked=false
                     style=text
                     @music::icon_action
                   QueueIcon active=false

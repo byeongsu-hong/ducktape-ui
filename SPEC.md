@@ -85,7 +85,7 @@ produce a deterministic AccessKit tree with these mappings:
 | `text` | `Label` | the visible text is its value |
 | `input` | `TextInput` | label, optional description, value, disabled/focus state |
 | secure or `secret` `input` | `PasswordInput` | label, optional description, disabled/focus state; no value is exported |
-| `button` | `Button` | label, optional description, disabled/focus state, click action |
+| `button` | `Button` | label, optional description and toggled state, disabled/focus state, click action |
 | `checkbox` | `CheckBox` | label, optional description, toggled/disabled/focus state, click action |
 | `toggler` | `Switch` | label, optional description, toggled/disabled/focus state, click action |
 | `radio` | `RadioButton` | label, optional description, selected/checked state, disabled/focus state, click action |
@@ -101,6 +101,8 @@ label, compact button string, and visible checkbox or toggler label are default
 accessible names; an explicit `label=` overrides them. Pick and combo controls
 use their placeholder, while editors use their placeholder or `Editor` when it
 is absent. Slider and progress use the stable defaults `Slider` and `Progress`.
+A button's optional `checked=` expression is checked as `bool` and publishes an
+AccessKit toggled state without changing its click route or visual styling.
 A button whose content is a child node requires `label=` (`E105`). An image
 without `label=` is decorative and is omitted from the semantic tree; media
 `description=` without `label=` is also `E105`. Secure inputs use
@@ -1052,7 +1054,7 @@ input_style_property
 input_icon     = "icon" combo_icon_property+
 button         = "button" (string | INDENT node) id? button_property*
                  styles? "->" route (INDENT button_status_style*)?
-button_property = accessibility_property | "disabled=" expr
+button_property = accessibility_property | ("disabled=" | "checked=") expr
                 | ("w=" | "h=") length
                 | ("p=" | "clip=") expr
                 | "style=" (("primary" | "secondary" | "success" | "warning"
@@ -3328,7 +3330,7 @@ The implemented native nodes are:
 | `rich-text` | optional ID, zero or more structured spans with rich defaults, complete span highlights and optional string link events |
 | `panes` | named pane trees backed by recursive persistent split state, structured title/full/compact controls, complete concrete state and surface styles with linear backgrounds, closed panes, list-keyed runtime templates, typed dynamic references, click, resize and drag/drop behavior |
 | `input` | required `str` or declared `secret` binding; checked accessible label/description, `TextInput` or value-suppressing `PasswordInput` role, ID, hint, disabled/secure, submit/paste, every concrete builder setter, complete icon, all concrete status style fields, and typed native runtime style callbacks |
-| `button` | string label or one child; checked accessible label/description with an explicit label required for child content, compact-label typography utilities, `Button` role and keyboard activation, optional ID/disabled, typed size/padding/clip, eight presets, complete status styles, typed native runtime style callbacks and required route |
+| `button` | string label or one child; checked accessible label/description and optional toggled state with an explicit label required for child content, compact-label typography utilities, `Button` role and keyboard activation, optional ID/disabled, typed size/padding/clip, eight presets, complete status styles, typed native runtime style callbacks and required route |
 | `checkbox` | string label, optional accessible label/description, `CheckBox` role and keyboard activation, bool value/route, disabled, sizing/typography/wrapping/font, custom icon, four presets and complete checked-aware status styles |
 | `toggler` | string label, optional ID, bool value/route, disabled, sizing/typography/wrapping/font/alignment and complete checked-aware status styles |
 | `slider` | optional ID, `f64` or typed extern numeric value/range/default/normal+shift steps, direction-aware sizing, change/release routes and nested status styles |
