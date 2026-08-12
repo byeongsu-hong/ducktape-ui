@@ -105,6 +105,8 @@ test trading_picking_the_market_already_on_screen_changes_nothing
   target listed = trade/markets/market-list
   target bitcoin = listed/market("BTC")/row
   target ether = listed/market("ETH")/row
+  expect a11y bitcoin checked true
+  expect a11y ether checked false
   expect coin == "BTC"
   dispatch ticket_sized("1.5")
   expect ticket_size == "1.5"
@@ -120,6 +122,8 @@ test trading_picking_the_market_already_on_screen_changes_nothing
   expect empty(status)
   // The row beside it still is one.
   click ether
+  expect a11y bitcoin checked false
+  expect a11y ether checked true
   expect coin == "ETH"
   expect empty(ticket_size)
   expect status == "Loading candles"
