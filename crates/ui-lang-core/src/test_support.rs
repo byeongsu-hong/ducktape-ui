@@ -1,7 +1,7 @@
 pub(crate) fn load_example(file: &str) -> String {
     crate::source::load_test_source(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/iced-app/src/ui")
+            .join("../../examples/showcase/tests/cases/ui")
             .join(file),
     )
     .unwrap()

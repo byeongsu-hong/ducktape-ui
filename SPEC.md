@@ -6141,8 +6141,8 @@ native window handle     -> typed Rust window callback
 
 ## 14. Reference application
 
-The readable multi-file task app starts at
-[`examples/iced-app/src/ui/tasks.ice`](examples/iced-app/src/ui/tasks.ice).
-[`showcase.ice`](examples/iced-app/src/ui/showcase.ice) and focused sibling
-fixtures compile-test the extended surface recorded in
-[`COVERAGE.md`](COVERAGE.md).
+The reference component catalog starts at
+[`examples/showcase/src/ui/app.ice`](examples/showcase/src/ui/app.ice).
+Focused fixtures under
+[`examples/showcase/tests/cases/ui/`](examples/showcase/tests/cases/ui/)
+compile-test the extended surface recorded in [`COVERAGE.md`](COVERAGE.md).

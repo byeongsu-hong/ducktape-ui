@@ -2462,19 +2462,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iced-app"
-version = "0.1.0"
-dependencies = [
- "iced",
- "iced_runtime",
- "iced_test",
- "image",
- "ui-lang",
- "ui-lang-build",
- "ui-lang-runtime",
-]
-
-[[package]]
 name = "iced_core"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5315,6 +5302,9 @@ version = "0.1.0"
 dependencies = [
  "ducktape-ui",
  "iced",
+ "iced_runtime",
+ "iced_test",
+ "image",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-runtime",

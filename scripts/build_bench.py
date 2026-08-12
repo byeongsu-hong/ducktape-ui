@@ -44,10 +44,6 @@ PACKAGES = {
         "anchor": 'title "ducktape-ui · Ice"',
         "handler": ("examples/showcase/src/ui/handlers/app.ice", '"cancelled"'),
     },
-    "iced-app": {
-        "root": "examples/iced-app/src/ui/tasks.ice",
-        "anchor": 'id "dev.ducktape.ice.tasks"',
-    },
     "trading-example": {"root": "examples/trading/src/ui/app.ice"},
     "music-example": {
         "root": "examples/apple-music/src/ui/app.ice",
@@ -169,7 +165,7 @@ def measure(package: str, runs: int) -> dict[str, float]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--packages", nargs="+", default=["showcase", "iced-app"])
+    parser.add_argument("--packages", nargs="+", default=["showcase"])
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--json", type=Path, help="write results here")
     parser.add_argument("--compare", type=Path, help="read a baseline to diff against")

@@ -13,9 +13,9 @@ cd "$(dirname -- "$script_dir")"
 
 cargo check --locked --target "$target" \
   -p ui-lang-runtime \
-  -p iced-app
+  -p showcase
 
 cargo check --locked --target "$target" --tests \
   -p ui-lang-runtime \
   -p ui-lang-core \
-  -p iced-app
+  -p showcase

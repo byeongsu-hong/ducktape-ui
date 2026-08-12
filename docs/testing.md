@@ -105,7 +105,7 @@ that handler would have produced with a `preset` instead, and dispatch only the
 handlers whose tasks finish. A preset is also the only way to set state no
 handler can construct from Ice — an extern error payload, say, whose type has
 no Ice constructor. See the layout and interaction contracts in
-[`component_state.ice`](../examples/iced-app/src/ui/component_state.ice).
+[`component_state.ice`](../examples/showcase/tests/cases/ui/component_state.ice).
 
 ## Targets and assertions
 
@@ -242,9 +242,9 @@ by a phase that was not the obvious suspect.
 ### The edit → run loop
 
 ```sh
-scripts/build_bench.py --packages showcase iced-app --runs 5 --json before.json
+scripts/build_bench.py --packages showcase trading-example --runs 5 --json before.json
 # change something
-scripts/build_bench.py --packages showcase iced-app --runs 5 --compare before.json
+scripts/build_bench.py --packages showcase trading-example --runs 5 --compare before.json
 ```
 
 Three medians per package: `noop` (cargo's own overhead), `script` (the package
@@ -826,7 +826,7 @@ not fire here: a component use whose slot content is present renders inline
 
 Removing that condition outright takes showcase's worst edit from **6.5s to
 3.3s** and leaves total generated lines flat (15,506 -> 15,632), but it is
-**unsound** — `iced-app`'s `render_surface` stops compiling with `cannot find
+**unsound** — the native `render_surface` fixture stops compiling with `cannot find
 value 'item'`, because slot content snapshots the call-site environment and can
 interpolate a loop variable that an outlined method has no binding for.
 
@@ -904,7 +904,8 @@ inside an outlined method. That was measured on a build that had *already*
 lifted the slot gate, so it described a consequence of the experiment rather
 than the state of the tree. There is no free-identifier judgement to make.
 
-Lifting the gate outright breaks exactly one thing, in `iced-app`:
+Lifting the gate outright breaks exactly one thing, in the native
+`render_surface` fixture:
 `error[E0425]: cannot find value 'item'`. Slot content is snapshotted at the
 call site and rendered from inside the callee, so a call-site loop item it
 reads is not in scope in the method the body was moved to. The recorder never
@@ -933,10 +934,9 @@ both directions on one warm target directory.
 | showcase | 5.91s | 3.49s |
 | music-example | 2.42s | 2.45s |
 | trading-example | 2.89s | 2.90s |
-| iced-app | 2.15s | 2.16s |
 
 Only showcase moves, and that is the expected shape rather than a
-disappointment: the other three already sit at the link-dominated floor
+disappointment: the other two already sit at the link-dominated floor
 measured above, where the type check is not what the wall clock is waiting on.
 Outlining buys nothing there, and showcase lands close to that same floor.
 
@@ -1129,7 +1129,6 @@ Per `scripts/build_bench.py`, three runs each, on one warm target directory:
 | --- | --- | --- | --- | --- |
 | showcase | 0.18s | 0.30s | 2.44s | 2.41s |
 | trading-example | 0.21s | 0.27s | 2.81s | — |
-| iced-app | 0.25s | 0.46s | 2.19s | — |
 | music-example | 0.21s | 0.28s | 2.00s | 2.04s |
 | markdown-example | 0.20s | 0.27s | 1.75s | 1.79s |
 | terminal-example | 0.19s | 0.02s | 1.33s | — |

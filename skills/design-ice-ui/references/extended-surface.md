@@ -168,8 +168,8 @@ on inspect_workspace
 
 Additional operations cover adjacent lookup, move, resize, drop, and dynamic
 pane targets. Copy the exact syntax from
-`examples/iced-app/src/ui/resizable_panes.ice` or `tasks.ice`; operation payloads
-and edge names are checked.
+`examples/showcase/tests/cases/ui/resizable_panes.ice`; operation payloads and
+edge names are checked.
 
 ## Canvas
 
@@ -212,7 +212,7 @@ Rules:
 - Use `redraw ... after=<duration>` carefully to avoid unnecessary frame loops.
 
 Read the canvas grammar and
-`examples/iced-app/src/ui/canvas_events.ice` before editing.
+`examples/showcase/tests/cases/ui/canvas_events.ice` before editing.
 
 ## Native task operations
 
@@ -324,7 +324,7 @@ values; borrowed custom widgets introduce real lifetime constraints.
 ## How to verify an advanced construct
 
 1. Search `SPEC.md` for the construct's grammar and semantic section.
-2. Search `examples/iced-app/src/ui/` for the exact spelling.
+2. Search `examples/showcase/tests/cases/ui/` for the exact spelling.
 3. Search `crates/ui-lang-core/src/check/tests/` and
    `crates/ui-lang-core/src/codegen/tests/` for edge behavior.
 4. Inspect `COVERAGE.md` to distinguish implemented reachability from a future
