@@ -3,37 +3,35 @@ theme contract AppTheme
   surface
   raised
   terminal
-  terminal_border
   fg
   muted
   subtle
   border
-  hover
-  pressed
+  accent
+  accent_hover
+  accent_soft
   primary
-  primary_hover
   success
   danger
 
 palette terminal for AppTheme
-  bg              #0b0d10
-  surface         #12151a
-  raised          #181c22
-  terminal        #090b0e
-  terminal_border #2a3039
-  fg              #e7eaf0
-  muted           #9aa3b2
-  subtle          #697386
-  border          #2a3039
-  hover           #222832
-  pressed         #2c3440
-  primary         #7c9cff
-  primary_hover   #92adff
-  success         #6fdc8c
-  danger          #ff7b86
+  bg           #12110f
+  surface      #191713
+  raised       #201e1a
+  terminal     #100f0d
+  fg           #ebe5da
+  muted        #a39c90
+  subtle       #756f65
+  border       #343028
+  accent       #e8b15d
+  accent_hover #f0c174
+  accent_soft  #2d261b
+  primary      #e8b15d
+  success      #7eb576
+  danger       #e07065
 
 recipe primary_action for button
-  @text-12.5px font-semibold px-16px py-10px bg-primary text-black rounded-8px hover:bg-primary/90 pressed:bg-primary/75 disabled:opacity-50
+  @text-12.5px font-semibold px-18px py-10px bg-accent text-black rounded-8px hover:bg-accent_hover pressed:bg-accent/82 disabled:opacity-50
 
-recipe secondary_action for button
-  @text-12.5px font-semibold px-16px py-10px bg-raised text-fg border border-border rounded-8px hover:bg-hover pressed:bg-pressed disabled:opacity-50
+recipe stop_action for button
+  @text-11px font-semibold px-11px py-6px bg-raised text-muted border border-border rounded-6px hover:bg-danger/12 pressed:bg-danger/20

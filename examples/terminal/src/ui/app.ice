@@ -1,12 +1,12 @@
 app TerminalWorkspace
-  title "Ice Terminal"
+  title "Terminal"
   palette AppTheme.terminal
   id "dev.ducktape.ice.terminal"
   text-size 14
   antialiasing true
   window
-    size 1180 760
-    min-size 760 520
+    size 1100 720
+    min-size 820 460
     position centered
 
 use "theme.ice"
@@ -37,6 +37,12 @@ derived
 preset test
   state
     directory = "/workspace/ice-terminal"
+
+preset active_test
+  state
+    directory = "/workspace/ice-terminal"
+    title = "Claude Code"
+    running = true
 
 on mount
   environment = detect_environment()
@@ -85,215 +91,214 @@ component SessionChoice(label:str, value:str, selected:bool) -> str
       value=value
       selected=selected
       w=fill
-      size=16.0
+      size=15.0
       gap=8.0
-      text-size=13.0
-    active selected bg=raised dot=primary border=primary border-w=2.0 text=fg
+      text-size=12.5
+    active selected bg=accent_soft dot=accent border=accent border-w=2.0 text=fg
     active unselected bg=surface dot=muted border=border border-w=1.0 text=fg
-    hovered selected bg=hover dot=primary border=primary_hover border-w=2.0 text=fg
-    hovered unselected bg=raised dot=primary border=muted border-w=1.0 text=fg
+    hovered selected bg=accent_soft dot=accent_hover border=accent_hover border-w=2.0 text=fg
+    hovered unselected bg=raised dot=accent border=muted border-w=1.0 text=fg
 
 view
-  box
-    with
-      w=fill
-      h=fill
-      bg=bg
-    col
+  stack #app-root w=fill h=fill
+    box
       with
         w=fill
         h=fill
-        gap=0.0
-      box
-        with
-          w=fill
-          bg=surface
-          border=border
-          border-w=1.0
-          px=24.0
-          py=16.0
-        row
-          with
-            w=fill
-            gap=12.0
-            align=center
-          col w=fill gap=3.0
-            text "Ice Terminal"
-              with
-                size=20.0
-                font=strong
-                @text-fg
-            text "Local shell, SSH, Claude Code, and Codex in a native PTY" size=12.0 @text-muted
-          if running
-            text "● Running" size=12.0 @text-success
-          if !running
-            text "● Idle" size=12.0 @text-subtle
-      row
+        bg=bg
+      space w=fill h=fill
+    if running
+      col
         with
           w=fill
           h=fill
-          gap=16.0
-          p=16.0
-        box
+          gap=0.0
+        box #terminal-toolbar
           with
-            w=300.0
-            h=fill
+            w=fill
+            h=42.0
             bg=surface
             border=border
             border-w=1.0
-            r=12.0
-            p=18.0
-          col w=fill gap=18.0
-            col w=fill gap=9.0
-              text "Session"
-                with
-                  size=15.0
-                  font=strong
-                  @text-fg
-              SessionChoice #shell-choice -> kind_changed _
-                with
-                  label="Shell"
-                  value="shell"
-                  selected=(kind == "shell")
-              SessionChoice #ssh-choice -> kind_changed _
-                with
-                  label="SSH"
-                  value="ssh"
-                  selected=(kind == "ssh")
-              SessionChoice #claude-choice -> kind_changed _
-                with
-                  label="Claude Code"
-                  value="claude"
-                  selected=(kind == "claude")
-              SessionChoice #codex-choice -> kind_changed _
-                with
-                  label="Codex"
-                  value="codex"
-                  selected=(kind == "codex")
-            col w=fill gap=6.0
-              text "Availability" size=12.0 @text-muted
-              row gap=10.0 wrap
-                if environment.ssh_available
-                  text "SSH ready" size=11.0 @text-success
-                if !environment.ssh_available
-                  text "SSH missing" size=11.0 @text-danger
-                if environment.claude_available
-                  text "Claude ready" size=11.0 @text-success
-                if !environment.claude_available
-                  text "Claude missing" size=11.0 @text-subtle
-                if environment.codex_available
-                  text "Codex ready" size=11.0 @text-success
-                if !environment.codex_available
-                  text "Codex missing" size=11.0 @text-subtle
-            if kind == "ssh"
-              col w=fill gap=6.0
-                text "SSH destination" size=12.0 @text-muted
-                input "" #target-field <-> target
-                  with
-                    label="SSH destination"
-                    hint="ssh user@host or ssh -p 2222 user@host"
-                    w=fill
-                    p=9.0
-                    text-size=13.0
-                  active bg=raised border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
-                  hovered bg=raised border=muted border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
-                  focused bg=raised border=primary border-w=2.0 r=8.0 placeholder=muted value=fg selection=primary
-                  focused-hovered bg=raised border=primary_hover border-w=2.0 r=8.0 placeholder=muted value=fg selection=primary
-                  disabled bg=surface border=border border-w=1.0 r=8.0 placeholder=subtle value=subtle selection=primary
-            col w=fill gap=6.0
-              text "Local working directory" size=12.0 @text-muted
-              input "" #directory-field <-> directory
-                with
-                  label="Local working directory"
-                  hint="Directory path or ~"
-                  w=fill
-                  p=9.0
-                  text-size=13.0
-                active bg=raised border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
-                hovered bg=raised border=muted border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
-                focused bg=raised border=primary border-w=2.0 r=8.0 placeholder=muted value=fg selection=primary
-                focused-hovered bg=raised border=primary_hover border-w=2.0 r=8.0 placeholder=muted value=fg selection=primary
-                disabled bg=surface border=border border-w=1.0 r=8.0 placeholder=subtle value=subtle selection=primary
-            if !tool_available
-              text "The selected command is not available on PATH."
-                with
-                  size=12.0
-                  wrap=word
-                  @text-danger
-            if has_error
-              box
-                with
-                  w=fill
-                  bg=danger/10
-                  border=danger/35
-                  border-w=1.0
-                  r=8.0
-                  p=10.0
-                text error
-                  with
-                    size=12.0
-                    wrap=word
-                    @text-danger
-            row w=fill gap=8.0
-              button "Start session" disabled=!can_start @primary_action -> start
-              button "Stop" disabled=!running @secondary_action -> stop
-            col w=fill gap=3.0
-              text "Shell" size=11.0 @text-subtle
-              text environment.shell
-                with
-                  size=11.0
-                  font=code
-                  wrap=glyph
-                  @text-muted
-        col
-          with
-            w=fill
-            h=fill
-            gap=8.0
+            px=12.0
           row
             with
               w=fill
-              gap=8.0
+              h=fill
+              gap=10.0
               align=center
-            if empty(title)
-              text "No active session"
+            row gap=7.0 align=center
+              box
                 with
-                  size=13.0
-                  font=strong
-                  @text-fg
-            if !empty(title)
-              text title
+                  w=7.0
+                  h=7.0
+                  r=4.0
+                  bg=success
+                space w=fill h=fill
+              text "LIVE"
                 with
-                  size=13.0
-                  font=strong
-                  @text-fg
+                  size=10.0
+                  font=code
+                  @text-success
+            text title
+              with
+                size=12.5
+                font=strong
+                @text-fg
             space w=fill
-            if running
-              text "Ready for input · use your platform copy/paste shortcuts" size=11.0 @text-subtle
+            text "Ctrl+Shift+C / V"
+              with
+                size=10.5
+                font=code
+                @text-subtle
+            button "End" @stop_action -> stop
+        box #terminal-panel
+          with
+            w=fill
+            h=fill
+            bg=terminal
+            clip=true
+          extern terminal_surface(session) #terminal-surface
+    if !running
+      box
+        with
+          w=fill
+          h=fill
+          align-x=center
+          align-y=center
+          p=28.0
+        col w=760.0 gap=18.0
+          col gap=6.0
+            row
+              with
+                w=fill
+                gap=8.0
+                align=center
+              text "DUCKTAPE"
+                with
+                  size=10.5
+                  font=code
+                  @text-accent
+              text "/"
+                with
+                  size=10.5
+                  font=code
+                  @text-subtle
+              text "TERMINAL"
+                with
+                  size=10.5
+                  font=code
+                  @text-muted
+            text "New terminal"
+              with
+                size=29.0
+                font=strong
+                @text-fg
+            text "Pick a runtime and start in the directory you are already working in."
+              with
+                size=12.5
+                @text-muted
           box
             with
               w=fill
-              h=fill
-              bg=terminal
-              border=terminal_border
+              bg=surface
+              border=border
               border-w=1.0
-              r=12.0
-              clip=true
-            stack w=fill h=fill
-              if running
-                extern terminal_surface(session)
-              if !running
+              r=14.0
+              p=20.0
+              shadow=black/24
+              shadow-y=8.0
+              shadow-blur=24.0
+            col w=fill gap=18.0
+              col w=fill gap=9.0
+                text "SESSION"
+                  with
+                    size=10.5
+                    font=code
+                    @text-subtle
+                row w=fill gap=12.0
+                  SessionChoice #shell-choice -> kind_changed _
+                    with
+                      label="Shell"
+                      value="shell"
+                      selected=(kind == "shell")
+                  SessionChoice #ssh-choice -> kind_changed _
+                    with
+                      label="SSH"
+                      value="ssh"
+                      selected=(kind == "ssh")
+                  SessionChoice #claude-choice -> kind_changed _
+                    with
+                      label="Claude"
+                      value="claude"
+                      selected=(kind == "claude")
+                  SessionChoice #codex-choice -> kind_changed _
+                    with
+                      label="Codex"
+                      value="codex"
+                      selected=(kind == "codex")
+              col w=fill gap=7.0
+                text "WORKING DIRECTORY"
+                  with
+                    size=10.5
+                    font=code
+                    @text-subtle
+                input "" #directory-field <-> directory
+                  with
+                    label="Local working directory"
+                    hint="Directory path or ~"
+                    w=fill
+                    p=10.0
+                    text-size=13.0
+                  active bg=raised border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=accent
+                  hovered bg=raised border=muted border-w=1.0 r=8.0 placeholder=muted value=fg selection=accent
+                  focused bg=raised border=accent border-w=2.0 r=8.0 placeholder=muted value=fg selection=accent
+                  focused-hovered bg=raised border=accent_hover border-w=2.0 r=8.0 placeholder=muted value=fg selection=accent
+                  disabled bg=surface border=border border-w=1.0 r=8.0 placeholder=subtle value=subtle selection=accent
+              if kind == "ssh"
+                col w=fill gap=7.0
+                  text "SSH DESTINATION"
+                    with
+                      size=10.5
+                      font=code
+                      @text-subtle
+                  input "" #target-field <-> target
+                    with
+                      label="SSH destination"
+                      hint="user@host or -p 2222 user@host"
+                      w=fill
+                      p=10.0
+                      text-size=13.0
+                    active bg=raised border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=accent
+                    hovered bg=raised border=muted border-w=1.0 r=8.0 placeholder=muted value=fg selection=accent
+                    focused bg=raised border=accent border-w=2.0 r=8.0 placeholder=muted value=fg selection=accent
+                    focused-hovered bg=raised border=accent_hover border-w=2.0 r=8.0 placeholder=muted value=fg selection=accent
+                    disabled bg=surface border=border border-w=1.0 r=8.0 placeholder=subtle value=subtle selection=accent
+              if !tool_available
+                text "The selected command is not available on PATH." size=12.0 @text-danger
+              if has_error
                 box
                   with
                     w=fill
-                    h=fill
-                    align-x=center
-                    align-y=center
-                    p=24.0
-                  col gap=8.0 align=center
-                    text ">_"
-                      with
-                        size=32.0
-                        font=code
-                        @text-subtle
-                    text "Choose a session and start it." @text-muted
+                    bg=danger/10
+                    border=danger/35
+                    border-w=1.0
+                    r=8.0
+                    p=10.0
+                  text error
+                    with
+                      size=12.0
+                      wrap=word
+                      @text-danger
+              row
+                with
+                  w=fill
+                  gap=12.0
+                  align=center
+                button "Start terminal" disabled=!can_start @primary_action -> start
+                text environment.shell
+                  with
+                    size=10.5
+                    font=code
+                    wrap=glyph
+                    @text-subtle
