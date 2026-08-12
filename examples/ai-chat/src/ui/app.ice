@@ -294,6 +294,15 @@ view
               bar=primary
         scroll #chat-list w=fill h=fill
           col w=fill gap=2.0
+            if empty(chats) && !scanning
+              col
+                with
+                  w=fill
+                  py=24.0
+                  gap=6.0
+                  align=center
+                text "No recent chats" @field_label
+                text "Start a new chat to see it here." @caption
             for chat in chats
               PastChat #chat(chat.path) chat=chat open=(chat.path == open_path) -> pick_chat _
     rule vertical thickness=1.0 color=border

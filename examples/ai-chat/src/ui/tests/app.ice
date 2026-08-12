@@ -265,6 +265,16 @@ test the_sidebar_lists_chats_already_had
   expect a11y first name "Which version of iced is current?"
   capture history
 
+// An empty history is still a state, not a blank panel that looks unfinished.
+test an_empty_recent_sidebar_explains_itself
+  preset signed_in
+  viewport 760 480
+  target list = #shell/sidebar/chat-list
+  expect exists list
+  expect text "No recent chats" within list
+  expect text "Start a new chat to see it here." within list
+  capture empty_recent
+
 // A thousand rollouts take long enough to read that nothing happening reads as
 // nothing working. The list fills as it is found and says how far it has got,
 // and both of those go away when there is nothing left to say.

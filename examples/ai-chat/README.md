@@ -24,6 +24,11 @@ when it expires.
 
 ![A settled turn: the prompt, a folded reasoning summary, two searches, the answer, and what it cost](screenshots/chat.png)
 
+Before the first saved chat, the Recent list names its empty state and explains
+how it will fill instead of leaving an unfinished-looking blank panel.
+
+![The empty Recent list beside a new chat](screenshots/empty_recent.png)
+
 ## What it draws
 
 A turn is not one answer, and the screen does not pretend otherwise. The
