@@ -64,6 +64,46 @@ test workspace_pane_operations
   expect app_text == "#abcdef"
   expect ui_scale == 1.5
 
+test narrow_toolbar_controls_fit
+  viewport 480 360
+  target raw_id = #read-raw-id
+  target capture = #capture-window
+  target inspect = #inspect-handle
+  target about_toggle = #about-toggle
+  target about_button = #about-button
+  target new_window = #new-window
+  target workspace = #workspace
+  target task_list = workspace/tasks/task-list
+  expect raw_id.width >= 80.0
+  expect capture.width >= 120.0
+  expect inspect.width >= 100.0
+  expect about_toggle.right <= about_button.x
+  expect about_button.width >= 60.0
+  expect new_window.width >= 100.0
+  expect workspace.height >= 120.0
+  expect workspace.bottom <= 360.0
+  expect task_list.visible
+  capture narrow_toolbar_fixed
+
+test default_toolbar_controls_fit
+  viewport 960 720
+  target raw_id = #read-raw-id
+  target capture = #capture-window
+  target inspect = #inspect-handle
+  target about_toggle = #about-toggle
+  target about_button = #about-button
+  target new_window = #new-window
+  target workspace = #workspace
+  expect raw_id.width >= 80.0
+  expect capture.width >= 120.0
+  expect inspect.width >= 100.0
+  expect about_toggle.right <= about_button.x
+  expect about_button.width >= 60.0
+  expect new_window.width >= 100.0
+  expect workspace.height >= 120.0
+  expect workspace.bottom <= 720.0
+  capture default_toolbar_fixed
+
 view
   overlay
     with
@@ -76,15 +116,16 @@ view
     content
       col
         with
-          gap=24.0
-          p=24.0
+          gap=4.0
+          p=12.0
           @w-full
           @h-full
           @bg-bg
         flex
           with
             w=fill
-            gap=12.0
+            wrap=wrap
+            gap=8.0
             justify=space-between
             items=center
           text "Tasks"
@@ -93,7 +134,7 @@ view
               @font-bold
               @text-fg
           text len(tasks) size=14.0 @text-muted
-          toggler "About" -> about_toggled _
+          toggler "About" #about-toggle -> about_toggled _
             with
               checked=about_open
               disabled=loading
@@ -105,22 +146,23 @@ view
             hovered unchecked bg=bg fg=primary text=fg
             disabled checked bg=surface fg=muted text=muted
             disabled unchecked bg=bg fg=muted text=muted
-          button "About" style=text -> open_about
-          button "New window" style=secondary -> open_child
+          button "About" #about-button style=text -> open_about
+          button "New window" #new-window style=secondary -> open_child
           text "Child:" size=14.0 @text-muted
           text child_width size=14.0 @text-muted
           text "×" size=14.0 @text-muted
           text child_height size=14.0 @text-muted
 
-        row
+        flex
           with
-            gap=12.0
-            align=center
+            gap=8.0
+            wrap=wrap
+            items=center
             @w-full
-          button "Capture window" style=secondary -> capture_window
+          button "Capture window" #capture-window style=secondary -> capture_window
           button "Change icon" style=subtle -> set_window_icon
-          button "Inspect handle" style=subtle -> inspect_window_handle
-          button "Read raw ID" style=subtle -> read_raw_window_id
+          button "Inspect handle" #inspect-handle style=subtle -> inspect_window_handle
+          button "Read raw ID" #read-raw-id style=subtle -> read_raw_window_id
           text raw_window_id size=14.0 @text-muted
           if snapshot_ready
             image window_snapshot
@@ -183,9 +225,6 @@ view
             if busy
               text "Working..." size=14.0 @text-muted
 
-        if empty(tasks) && !loading
-          text "No tasks yet." size=14.0 @text-muted
-
         panes #workspace w=fill h=fill gap=8.0 min-size=120.0 resize=8.0 drag click=pane_clicked(_)
           style
             hovered-region bg=linear(0.785, primary/10@0.0, primary/40@1.0) border=primary border-w=2.0 r=8.0
@@ -208,10 +247,13 @@ view
                   dir=vertical
                   w=fill
                   h=fill
-                keyed task in tasks by=task.id w=fill gap=8.0
-                  TaskRow task=task loading=loading
-                    events
-                      toggle -> toggle _ _
+                col w=fill
+                  if empty(tasks) && !loading
+                    text "No tasks yet." size=14.0 @text-muted
+                  keyed task in tasks by=task.id w=fill gap=8.0
+                    TaskRow task=task loading=loading
+                      events
+                        toggle -> toggle _ _
             pane details border-w=1.0 r=10.0 @bg-surface border-border
               title p=12.0 always-controls border-w=1.0 @bg-bg border-border
                 text "Details"
