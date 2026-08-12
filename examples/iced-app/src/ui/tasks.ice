@@ -64,6 +64,26 @@ test workspace_pane_operations
   expect app_text == "#abcdef"
   expect ui_scale == 1.5
 
+test narrow_toolbar_controls_fit
+  viewport 480 360
+  target raw_id = #read-raw-id
+  target capture = #capture-window
+  target inspect = #inspect-handle
+  expect raw_id.width >= 80.0
+  expect capture.width >= 120.0
+  expect inspect.width >= 100.0
+  capture narrow_toolbar_fixed
+
+test default_toolbar_controls_fit
+  viewport 960 720
+  target raw_id = #read-raw-id
+  target capture = #capture-window
+  target inspect = #inspect-handle
+  expect raw_id.width >= 80.0
+  expect capture.width >= 120.0
+  expect inspect.width >= 100.0
+  capture default_toolbar_fixed
+
 view
   overlay
     with
@@ -84,6 +104,7 @@ view
         flex
           with
             w=fill
+            wrap=wrap
             gap=12.0
             justify=space-between
             items=center
@@ -112,15 +133,16 @@ view
           text "×" size=14.0 @text-muted
           text child_height size=14.0 @text-muted
 
-        row
+        flex
           with
             gap=12.0
-            align=center
+            wrap=wrap
+            items=center
             @w-full
-          button "Capture window" style=secondary -> capture_window
+          button "Capture window" #capture-window style=secondary -> capture_window
           button "Change icon" style=subtle -> set_window_icon
-          button "Inspect handle" style=subtle -> inspect_window_handle
-          button "Read raw ID" style=subtle -> read_raw_window_id
+          button "Inspect handle" #inspect-handle style=subtle -> inspect_window_handle
+          button "Read raw ID" #read-raw-id style=subtle -> read_raw_window_id
           text raw_window_id size=14.0 @text-muted
           if snapshot_ready
             image window_snapshot
