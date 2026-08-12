@@ -42,7 +42,7 @@ component Toolbar(name:str, dirty:bool, blocked:bool, undo_available:bool, redo_
           row gap=1.0 align=center
             button "New" #new disabled=blocked @toolbar_action -> emit(new_document)
             button "Open" #open disabled=blocked @toolbar_action -> emit(open_document)
-            button "Save" #save disabled=blocked @primary_action -> emit(save_document)
+            button "Save" #save disabled=(blocked || !dirty) @primary_action -> emit(save_document)
             button "Save As" #save-as disabled=blocked @toolbar_action -> emit(save_document_as)
         box #document-meta
           with
