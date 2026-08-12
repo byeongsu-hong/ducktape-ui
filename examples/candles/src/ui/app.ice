@@ -75,12 +75,20 @@ view
                 text fmt_volume(h.volume) size=12.0 @text-fg
             none
               row gap=8.0 align=center
-                button "DUCK-USD" #pick-duck p=6.0 -> pick_symbol("DUCK-USD")
+                button "DUCK-USD" #pick-duck -> pick_symbol("DUCK-USD")
+                  with
+                    p=6.0
+                    disabled=(symbol == "DUCK-USD")
                   active bg=surface text=fg r=6.0
                   hovered bg=border text=fg r=6.0
-                button "TAPE-KRW" #pick-tape p=6.0 -> pick_symbol("TAPE-KRW")
+                  disabled bg=primary text=primary_fg r=6.0
+                button "TAPE-KRW" #pick-tape -> pick_symbol("TAPE-KRW")
+                  with
+                    p=6.0
+                    disabled=(symbol == "TAPE-KRW")
                   active bg=surface text=fg r=6.0
                   hovered bg=border text=fg r=6.0
+                  disabled bg=primary text=primary_fg r=6.0
                 text "Scroll to zoom - drag to pan" size=12.0 @text-muted
       box #chart-frame
         with
@@ -96,3 +104,22 @@ test candles_smoke
   expect app.width ~= 960.0
   expect frame.height > 400.0
   capture ready
+
+test symbol_selection_moves_after_click
+  viewport 640 400
+  target duck = #app/header/pick-duck
+  target tape = #app/header/pick-tape
+  expect symbol == "DUCK-USD"
+  expect a11y duck role "button"
+  expect a11y tape role "button"
+  expect a11y duck disabled true
+  expect a11y tape disabled false
+  expect duck.background == background.color(color.rgb8(108, 192, 111))
+  expect tape.background == background.color(color.rgb8(35, 34, 25))
+  click tape
+  expect symbol == "TAPE-KRW"
+  expect a11y duck disabled false
+  expect a11y tape disabled true
+  expect duck.background == background.color(color.rgb8(35, 34, 25))
+  expect tape.background == background.color(color.rgb8(108, 192, 111))
+  capture tape_selected
