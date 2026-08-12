@@ -214,6 +214,7 @@ component PastChat(chat:Chat, open:bool) -> str
   button #root -> emit(chat.path)
     with
       label=chat.title
+      checked=open
       w=fill
       p=0.0
       @ghost_action

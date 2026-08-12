@@ -259,13 +259,27 @@ test the_sidebar_lists_chats_already_had
   viewport 1180 700
   target list = #shell/sidebar/chat-list
   target first = #shell/sidebar/chat-list/chat("/sessions/4.jsonl")/root
+  target other = #shell/sidebar/chat-list/chat("/sessions/3.jsonl")/root
   expect exists list
   expect text "Recent"
   expect text "Which version of iced is current?"
   expect text "Write a test for the SSE reader"
   expect text "2026-08-08"
   expect a11y first name "Which version of iced is current?"
+  expect a11y first checked true
+  expect a11y other checked false
   capture history
+
+// The real row route owns the open transition. A path absent from the
+// deterministic test store reaches the failure handler, proving the click
+// did not merely paint a marker without running the route.
+test clicking_a_recent_chat_runs_the_open_route
+  preset history
+  viewport 1180 700
+  target other = #shell/sidebar/chat-list/chat("/sessions/3.jsonl")/root
+  click other
+  expect open_path == ""
+  expect !loading_chat
 
 // An empty history is still a state, not a blank panel that looks unfinished.
 test an_empty_recent_sidebar_explains_itself
