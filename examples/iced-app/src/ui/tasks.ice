@@ -69,9 +69,15 @@ test narrow_toolbar_controls_fit
   target raw_id = #read-raw-id
   target capture = #capture-window
   target inspect = #inspect-handle
+  target about_toggle = #about-toggle
+  target about_button = #about-button
+  target new_window = #new-window
   expect raw_id.width >= 80.0
   expect capture.width >= 120.0
   expect inspect.width >= 100.0
+  expect about_toggle.right <= about_button.x
+  expect about_button.width >= 60.0
+  expect new_window.width >= 100.0
   capture narrow_toolbar_fixed
 
 test default_toolbar_controls_fit
@@ -79,9 +85,15 @@ test default_toolbar_controls_fit
   target raw_id = #read-raw-id
   target capture = #capture-window
   target inspect = #inspect-handle
+  target about_toggle = #about-toggle
+  target about_button = #about-button
+  target new_window = #new-window
   expect raw_id.width >= 80.0
   expect capture.width >= 120.0
   expect inspect.width >= 100.0
+  expect about_toggle.right <= about_button.x
+  expect about_button.width >= 60.0
+  expect new_window.width >= 100.0
   capture default_toolbar_fixed
 
 view
@@ -114,7 +126,7 @@ view
               @font-bold
               @text-fg
           text len(tasks) size=14.0 @text-muted
-          toggler "About" -> about_toggled _
+          toggler "About" #about-toggle -> about_toggled _
             with
               checked=about_open
               disabled=loading
@@ -126,8 +138,8 @@ view
             hovered unchecked bg=bg fg=primary text=fg
             disabled checked bg=surface fg=muted text=muted
             disabled unchecked bg=bg fg=muted text=muted
-          button "About" style=text -> open_about
-          button "New window" style=secondary -> open_child
+          button "About" #about-button style=text -> open_about
+          button "New window" #new-window style=secondary -> open_child
           text "Child:" size=14.0 @text-muted
           text child_width size=14.0 @text-muted
           text "×" size=14.0 @text-muted
