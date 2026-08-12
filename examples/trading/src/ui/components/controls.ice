@@ -57,7 +57,8 @@ component Choice(name:str, act:str, on:bool)
     if on
       button #on -> emit(pick)
         with
-          label=choice_label(act, true)
+          label=act
+          checked=true
           w=fill
           p=5.0
         active bg=raised text=fg r=3.0
@@ -72,7 +73,8 @@ component Choice(name:str, act:str, on:bool)
     if !on
       button #off -> emit(pick)
         with
-          label=choice_label(act, false)
+          label=act
+          checked=false
           w=fill
           p=5.0
         active bg=panel text=muted r=3.0
@@ -86,8 +88,8 @@ component Choice(name:str, act:str, on:bool)
             @text-faint
 
 // One tab per page, named by the act of going there. The page already drawn is
-// still a button, and a button carries no state a reader can hear, so it says
-// which it is the way the interval tabs do: by appending it to its own name.
+// still a button, so the selected state is exposed separately from its action
+// name.
 component NavTab(name:str, target:Page, current:Page)
   emits
     pick(Page)
@@ -95,7 +97,8 @@ component NavTab(name:str, target:Page, current:Page)
     if target == current
       button #tab-on -> emit(pick, target)
         with
-          label=page_label(name, true)
+          label=page_label(name)
+          checked=true
           w=80.0
           p=7.0
         active bg=raised text=fg r=4.0
@@ -110,7 +113,8 @@ component NavTab(name:str, target:Page, current:Page)
     if target != current
       button #tab-off -> emit(pick, target)
         with
-          label=page_label(name, false)
+          label=page_label(name)
+          checked=false
           w=80.0
           p=7.0
         active bg=panel text=muted r=4.0
@@ -218,7 +222,8 @@ component IntervalTab(name:str, current:str)
     if name == current
       button #tab-on -> emit(pick, name)
         with
-          label=interval_label(name, true)
+          label=interval_label(name)
+          checked=true
           w=38.0
           p=5.0
         active bg=raised text=fg r=4.0
@@ -233,7 +238,8 @@ component IntervalTab(name:str, current:str)
     if name != current
       button #tab-off -> emit(pick, name)
         with
-          label=interval_label(name, false)
+          label=interval_label(name)
+          checked=false
           w=38.0
           p=5.0
         active bg=panel text=muted r=4.0

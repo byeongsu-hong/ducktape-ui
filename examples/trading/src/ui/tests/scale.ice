@@ -95,11 +95,11 @@ test trading_the_order_kinds_say_which_is_selected
   target scale_off = kinds/kind-scale/root/off
   target scale_on = kinds/kind-scale/root/on
   target limit_off = kinds/kind-limit/root/off
-  expect a11y limit_on name "Rest at a price you choose, already selected"
+  expect a11y limit_on name "Rest at a price you choose"
   expect a11y scale_off name "Spread the size over a range of prices"
   click scale_off
   expect ticket_scale
-  expect a11y scale_on name "Spread the size over a range of prices, already selected"
+  expect a11y scale_on name "Spread the size over a range of prices"
   expect a11y limit_off name "Rest at a price you choose"
 
 // The confirmation lists the rungs it froze, one line each, and restates the

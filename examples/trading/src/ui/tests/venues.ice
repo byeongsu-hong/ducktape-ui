@@ -475,7 +475,7 @@ test trading_the_terminal_on_the_other_venue
   target bar = trade/chart-bar
   target tabs = bar/intervals
   target showing = tabs/interval-1m/root/tab-on
-  expect a11y showing name "Show 1m candles, already showing"
+  expect a11y showing name "Show 1m candles"
   expect text "ORDER BOOK"
   expect text "SPREAD"
   // Lighter's own book, to the tick it quotes — a screen drawn from the other

@@ -781,8 +781,8 @@ fn direct_call_cost() {
         hyperliquid::book_label(level.price, true)
     );
     price!(
-        "interval_label(str, bool)",
-        hyperliquid::interval_label(state.interval.clone(), true)
+        "interval_label(str)",
+        hyperliquid::interval_label(state.interval.clone())
     );
     price!(
         "valid_address(draft)",

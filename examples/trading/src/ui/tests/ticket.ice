@@ -164,17 +164,19 @@ test trading_the_order_type_and_its_life_say_which_is_selected
   target crossing = tif/tif-ioc/root/off
   target crossing_on = tif/tif-ioc/root/on
   target resting_off = tif/tif-gtc/root/off
-  expect a11y limit_on name "Rest at a price you choose, already selected"
+  expect a11y limit_on name "Rest at a price you choose"
   expect a11y market_off name "Cross the spread now"
-  expect a11y resting name "Rest until cancelled, already selected"
+  expect a11y limit_on checked true
+  expect a11y market_off checked false
+  expect a11y resting name "Rest until cancelled"
   expect a11y crossing name "Fill now or cancel the rest"
   click crossing
   expect ticket_tif == Tif.ioc
-  expect a11y crossing_on name "Fill now or cancel the rest, already selected"
+  expect a11y crossing_on name "Fill now or cancel the rest"
   expect a11y resting_off name "Rest until cancelled"
   click market_off
   expect ticket_market
-  expect a11y market_on name "Cross the spread now, already selected"
+  expect a11y market_on name "Cross the spread now"
   // A market order has no resting rule to choose, so the row is not there to
   // be announced at all.
   expect missing tif
@@ -194,7 +196,7 @@ test trading_a_venue_that_expires_an_order_does_not_call_it_cancelled
   expect ticket_tif == Tif.gtc
   expect text "GTT" within ticket
   expect no text "GTC" within ticket
-  expect a11y resting name "Rest until its deadline, already selected"
+  expect a11y resting name "Rest until its deadline"
   expect text "Lighter has no rest-until-cancelled: the order carries a deadline it is signed with and expires there."
   // And the other two mean the same thing at both exchanges, so neither is
   // renamed and neither carries a sentence.
