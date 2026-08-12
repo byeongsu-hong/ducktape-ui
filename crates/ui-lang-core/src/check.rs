@@ -569,6 +569,7 @@ fn check(
                     document,
                     &operation_ids,
                     &pane_grids,
+                    true,
                 )
             })
         })?;
@@ -583,6 +584,7 @@ fn check(
                 document,
                 &operation_ids,
                 &pane_grids,
+                true,
             )
         })?;
     }
@@ -626,6 +628,7 @@ fn check(
                             document,
                             &operation_ids,
                             &HashMap::new(),
+                            false,
                         )
                     })?;
                     Ok::<_, Error>(())

@@ -8,6 +8,7 @@ pub(in crate::check) fn check_handler(
     document: &Document,
     operation_ids: &[WidgetIdPath],
     pane_grids: &HashMap<String, PaneGridNames>,
+    app_scoped: bool,
 ) -> Result<(), Error> {
     let sync_env = SyncTypeEnv::new(readables);
     let mut env = ScopedTypeEnv::new(&sync_env);
@@ -21,7 +22,19 @@ pub(in crate::check) fn check_handler(
         operation_ids,
         pane_grids,
         &mut env,
+        app_scoped,
     )
+}
+
+/// Whether any component keeps state that outlives a render pass. In a daemon
+/// such a graph qualifies every rendered id with the window that drew it, so
+/// one window's render never prunes another's storage (the codegen root-scope
+/// rule this mirrors) — and an id built without a window addresses nothing.
+fn retains_mounted_component_state(document: &Document) -> bool {
+    document.components.iter().any(|component| {
+        component.lifetime == ComponentLifetime::Mounted
+            && (!component.states.is_empty() || !component.handlers.is_empty())
+    })
 }
 
 fn check_handler_statements(
@@ -31,6 +44,7 @@ fn check_handler_statements(
     operation_ids: &[WidgetIdPath],
     pane_grids: &HashMap<String, PaneGridNames>,
     env: &mut ScopedTypeEnv<'_>,
+    app_scoped: bool,
 ) -> Result<(), Error> {
     for (index, statement) in statements.iter().enumerate() {
         check_task_finality(statement, index + 1 == statements.len())?;
@@ -213,6 +227,7 @@ fn check_handler_statements(
                         operation_ids,
                         pane_grids,
                         &mut child_env,
+                        app_scoped,
                     )?;
                 }
             }
@@ -229,6 +244,7 @@ fn check_handler_statements(
                     operation_ids,
                     pane_grids,
                     &mut child_env,
+                    app_scoped,
                 )?;
             }
             Statement::Abort { handle, span } => {
@@ -272,6 +288,16 @@ fn check_handler_statements(
                 };
                 if let Some(target) = target {
                     check_widget_target(target, &env, document, operation_ids, span)?;
+                    // A component handler carries its instance scope — window
+                    // included — with the route that dispatched it; an app or
+                    // preset handler builds ids from the bare app name.
+                    if app_scoped && document.daemon && retains_mounted_component_state(document) {
+                        return Err(Error::new(
+                            "E172",
+                            span,
+                            "an app handler in a daemon keeping mounted state cannot target a widget id: every rendered id carries its window, and the handler names none",
+                        ));
+                    }
                 }
                 if let WidgetOperation::Find { selector, .. } = operation {
                     check_widget_selector(selector, &env, document, operation_ids, span)?;
