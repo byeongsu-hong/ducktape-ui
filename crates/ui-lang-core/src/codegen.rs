@@ -1151,6 +1151,7 @@ mod testing;
 mod type_code;
 mod view;
 
+pub(crate) use expr::copy_expression_type;
 use type_code::rust_type_code;
 
 use application::*;

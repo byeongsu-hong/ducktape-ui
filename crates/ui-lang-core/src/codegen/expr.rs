@@ -2486,7 +2486,10 @@ fn resolved_path_code(
     Ok(code)
 }
 
-fn copy_expression_type(ty: &Type) -> bool {
+/// Types whose Rust image is `Copy`: cloning one is a free bitwise copy, so
+/// borrow-aware emission (`for` rows, keyed-lazy value chains) treats them as
+/// owned values rather than references.
+pub(crate) fn copy_expression_type(ty: &Type) -> bool {
     matches!(
         ty,
         Type::Bool

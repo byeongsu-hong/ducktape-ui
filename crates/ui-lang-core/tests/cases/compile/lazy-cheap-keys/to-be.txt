@@ -1,0 +1,3 @@
+for (__ice_index, message) in self.messages.iter().enumerate()
+::ui_lang_runtime::memo_lazy((message.rev, message.seq, ("CheapKeys").to_owned(), __ice_palette.name)
+move |__dependency| { let __lazy_scope = __dependency.2.clone(); let row: crate::backend::Message = message.clone();

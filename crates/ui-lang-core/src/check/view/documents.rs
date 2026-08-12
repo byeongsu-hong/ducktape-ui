@@ -150,6 +150,7 @@ pub(in crate::check) fn infer_documents_group(
         }
         ViewNode::Lazy {
             dependency,
+            keys,
             binding,
             id,
             child,
@@ -173,6 +174,26 @@ pub(in crate::check) fn infer_documents_group(
                     ),
                 )
                 .hint("use bool, i64, str, an extern type with Hash + Clone, or a list/optional of those"));
+            }
+            for (index, key) in keys.iter().enumerate() {
+                let key_type = retained_view_expr_type(
+                    key,
+                    env,
+                    document,
+                    span,
+                    CheckedViewExprRole::LazyKey(index as u32),
+                )?;
+                if !matches!(key_type, Type::Bool | Type::I64 | Type::Str) {
+                    return Err(Error::new(
+                        "E139",
+                        span,
+                        format!(
+                            "lazy key type `{}` is not a cheap projection",
+                            key_type.display()
+                        ),
+                    )
+                    .hint("use bool, i64, or str"));
+                }
             }
             check_lazy_subtree(child, document, &mut HashSet::new(), false)?;
             let mut child_env = HashMap::from([(binding.clone(), dependency_type)]);

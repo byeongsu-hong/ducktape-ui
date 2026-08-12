@@ -241,6 +241,39 @@ pub(in crate::codegen) fn render_structure(
             // the parked subtree so a torn-down mount (a `match` arm switch)
             // rehydrates on re-entry instead of re-shaping every row.
             let site = node.0;
+            if !lazy.keys.is_empty() {
+                // `lazy value by key, key as name`: the keys stand in for the
+                // value in the dependency tuple, and the value never crosses
+                // a frame — the builder captures it by reference (or by Copy)
+                // and clones it into the binding only when a key changes, so
+                // an unchanged frame performs no deep clone of the value.
+                let keys = lazy
+                    .keys
+                    .iter()
+                    .map(|key| resolved_expr_use_code(program, *key, env, ValueMode::Owned))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(", ");
+                let scope_index = lazy.keys.len();
+                let lazy_body = format!(
+                    "let __lazy_scope = __dependency.{scope_index}.clone(); let {binding_name}: {dependency_rust} = {dependency}; let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
+                );
+                let builder = format!("move |__dependency| {{ {lazy_body} }}");
+                let lazy_code = format!(
+                    "::ui_lang_runtime::memo_lazy(({keys}, ({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64).into()"
+                );
+                return Ok(Some(identify_rendered(
+                    if hoisted.is_empty() {
+                        lazy_code
+                    } else {
+                        format!("{{ {hoisted}{lazy_code} }}")
+                    },
+                    identity,
+                    message,
+                    env,
+                    document,
+                    scope,
+                )?));
+            }
             let lazy_body = format!(
                 "let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
             );

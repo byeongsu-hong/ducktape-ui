@@ -456,8 +456,32 @@ pub(in crate::parser) fn parse_lazy(
     if !styles.is_empty() {
         return Err(error("E096", line, "lazy does not accept `@` utilities"));
     }
-    if !(4..=5).contains(&parts.len()) || parts[2] != "as" {
-        return Err(error("E096", line, "lazy uses `lazy dependency as name`"));
+    let usage = "lazy uses `lazy dependency as name` or `lazy value by key, key as name`";
+    let as_index = match parts.get(2).map(String::as_str) {
+        Some("as") => 2,
+        Some("by") => {
+            let index = parts
+                .iter()
+                .rposition(|part| part == "as")
+                .ok_or_else(|| error("E096", line, usage))?;
+            if index < 4 {
+                return Err(error("E096", line, usage));
+            }
+            index
+        }
+        _ => return Err(error("E096", line, usage)),
+    };
+    let mut keys = Vec::new();
+    if as_index > 2 {
+        for key in split_top(&parts[3..as_index].join(" "), ',') {
+            if key.is_empty() {
+                return Err(error("E096", line, usage));
+            }
+            keys.push(parse_expr(strip_wrapping_parens(key), line)?);
+        }
+    }
+    if parts.len() < as_index + 2 || parts.len() > as_index + 3 {
+        return Err(error("E096", line, usage));
     }
     if line.children.len() != 1 {
         return Err(error(
@@ -467,12 +491,13 @@ pub(in crate::parser) fn parse_lazy(
         ));
     }
     let mut id = None;
-    for part in &parts[4..] {
+    for part in &parts[as_index + 2..] {
         parse_unique_id(part, &mut id, line, "E096", "lazy")?;
     }
     Ok(ViewNode::Lazy {
         dependency: parse_expr(strip_wrapping_parens(&parts[1]), line)?,
-        binding: identifier(&parts[3], line)?,
+        keys,
+        binding: identifier(&parts[as_index + 1], line)?,
         id,
         child: Box::new(parse_view(&line.children[0])?),
         span: Span::line(line.number),

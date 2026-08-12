@@ -53,6 +53,18 @@ impl CheckedExprUseId {
     }
 }
 
+fn keyed_lazy_value_error(span: &Span) -> Error {
+    Error::new(
+        "E139",
+        span,
+        "a keyed lazy value must be a state field or a `for` row over one",
+    )
+    .hint(
+        "`lazy value by key as name` captures the value by reference, \
+         so it must live in app or component state",
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CheckedValueId(u32);
 
@@ -259,6 +271,10 @@ pub(crate) enum CheckedViewFlow {
     },
     Lazy {
         dependency: CheckedExprUseId,
+        /// `lazy value by key, key as name`: the projections that stand in
+        /// for the value in the memo dependency tuple. Empty for the plain
+        /// form.
+        keys: Vec<CheckedExprUseId>,
         binding: CheckedLocalId,
     },
     Table {
@@ -662,6 +678,7 @@ pub(crate) enum CheckedViewExprRole {
     KeyedMaxWidth,
     KeyedVirtualRow,
     LazyDependency,
+    LazyKey(u32),
     TableRows,
     TableWidth,
     TablePadding,
@@ -9518,6 +9535,71 @@ impl<'a> FactsBuilder<'a> {
         id
     }
 
+    /// A keyed lazy (`lazy value by ...`) never clones its value into the
+    /// memo dependency tuple: the generated builder captures the value by
+    /// reference and clones it only when a key changes. That reference must
+    /// outlive the built view, so the value has to be a place rooted in app
+    /// or component state — a state field path, or a `for` row over such a
+    /// place, recursively. A Copy-typed row is captured by value and ends
+    /// any chain.
+    fn require_borrow_stable_lazy_value(
+        &self,
+        use_id: CheckedExprUseId,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let mut root = self.facts.expression_use(use_id).root;
+        loop {
+            let expression = self.facts.expression(root);
+            let CheckedExprKind::Path {
+                root: path_root,
+                projections,
+            } = &expression.kind
+            else {
+                return Err(keyed_lazy_value_error(span));
+            };
+            let struct_projections_only = projections
+                .iter()
+                .all(|projection| matches!(projection.kind, CheckedProjectionKind::Struct(_)));
+            if !struct_projections_only {
+                return Err(keyed_lazy_value_error(span));
+            }
+            match path_root {
+                CheckedPathRoot::Value(
+                    CheckedValueRef::AppState(_) | CheckedValueRef::ComponentState(_),
+                ) => return Ok(()),
+                CheckedPathRoot::Local(local) => {
+                    let local = self.facts.local(*local);
+                    if crate::codegen::copy_expression_type(&local.ty) {
+                        return Ok(());
+                    }
+                    let CheckedLocalOwner::View {
+                        view,
+                        role: CheckedViewLocalRole::ForItem,
+                    } = local.owner
+                    else {
+                        return Err(keyed_lazy_value_error(span));
+                    };
+                    // The enclosing `for` is still mid-lowering, so its flow
+                    // is not recorded yet; its items expression already is.
+                    let items = self
+                        .facts
+                        .expression_use_by_owner(CheckedExprOwner::View {
+                            view,
+                            role: CheckedViewExprRole::ForItems,
+                        })
+                        .ok_or_else(|| {
+                            self.invariant(
+                                span,
+                                "checked for row without a checked items expression",
+                            )
+                        })?;
+                    root = self.facts.expression_use(items).root;
+                }
+                _ => return Err(keyed_lazy_value_error(span)),
+            }
+        }
+    }
+
     fn push_view_local(
         &mut self,
         name: &str,
@@ -9877,6 +9959,7 @@ impl<'a> FactsBuilder<'a> {
             }
             ViewNode::Lazy {
                 dependency,
+                keys,
                 binding,
                 child,
                 span,
@@ -9893,6 +9976,23 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
+                let mut key_uses = Vec::with_capacity(keys.len());
+                for (index, key) in keys.iter().enumerate() {
+                    key_uses.push(self.push_view_expression(
+                        CheckedExprOwner::View {
+                            view,
+                            role: CheckedViewExprRole::LazyKey(index as u32),
+                        },
+                        key,
+                        None,
+                        env,
+                        span,
+                        origin,
+                    )?);
+                }
+                if !key_uses.is_empty() {
+                    self.require_borrow_stable_lazy_value(dependency_use, span)?;
+                }
                 let ty = self.facts.expression_use(dependency_use).source.clone();
                 let local = self.push_view_local(
                     binding,
@@ -9911,6 +10011,7 @@ impl<'a> FactsBuilder<'a> {
                 self.lower_view_expression_tree(child, &scoped)?;
                 CheckedViewFlow::Lazy {
                     dependency: dependency_use,
+                    keys: key_uses,
                     binding: local,
                 }
             }
@@ -13811,11 +13912,13 @@ view
         let program = lower::lower(analyze(source).unwrap()).unwrap();
         let CheckedViewFlow::Lazy {
             dependency,
+            keys,
             binding,
         } = &program.checked_facts().view(ViewId(0)).flow
         else {
             panic!("root must retain lazy facts");
         };
+        assert!(keys.is_empty(), "plain lazy records no keys");
         assert_eq!(
             program.checked_facts().expression_use(*dependency).owner,
             CheckedExprOwner::View {
