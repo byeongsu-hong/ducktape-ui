@@ -128,6 +128,13 @@ jobs:
           shared-key: workspace
           # Without this the job id joins the key and the shared one is moot.
           add-job-id-key: false
+          # A warm restore measured 16.5m against 22.9m cold (runs 31550383286
+          # vs 31554043656), and the ~12m that remain are this workspace's own
+          # release artifacts — trading-example and ui-lang-runtime under fat
+          # LTO — which the default save prunes. Cache them too; only members
+          # whose source changed recompile. Experiment per backlog #29:
+          # compare the next few main runs before trusting the shape.
+          cache-workspace-crates: true
       - name: Run RichTextEditor performance contracts
         run: scripts/editor-performance-contracts.sh target/performance/rich-text-editor.jsonl
       - name: Upload RichTextEditor performance evidence
