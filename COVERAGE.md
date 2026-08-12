@@ -228,8 +228,10 @@ tag. Linux and macOS CI additionally drive the real packaging tools —
 verify the resulting package and disk image. A tag builds both Apple
 architectures and joins them with `lipo`, installs and removes the `.deb`
 through `apt` and validates its desktop entry, installs and removes the `.msi`
-through `msiexec`, and publishes attested, checksummed artifacts, notarized and
-stapled once the signing secrets exist. This is distribution evidence over the
+through `msiexec`, and publishes attested, checksummed artifacts. Those
+artifacts are signed ad hoc by decision, so the notarization and Authenticode
+paths the command supports are exercised by their own contracts rather than by
+this repository's releases. This is distribution evidence over the
 existing Core contract, not a new syntax or LSP capability.
 
 Every `cargo ice` command runs its analysis on a thread that asks for eight

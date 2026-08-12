@@ -126,52 +126,18 @@ jobs:
 
   app:
     name: Showcase disk image
-    # A tag publishes it; a manual run is how the signing path gets exercised
-    # first. Pull requests skip it — the macOS bundling steps are covered by
-    # `Workspace (macos-latest)` in CI, without two release builds.
+    # A tag publishes it; a manual run is how a packaging change gets
+    # exercised first. Pull requests skip it — the macOS bundling steps are
+    # covered by `Workspace (macos-latest)` in CI, without two release builds.
     if: github.event_name != 'pull_request'
     runs-on: macos-latest
     # Two architectures through the release profile's fat LTO and single
     # codegen unit, with no compiler cache, is the whole cost of this job.
     timeout-minutes: 120
-    env:
-      # An unset secret arrives as the empty string, which `cargo ice bundle`
-      # reads as absent: the disk image is then signed ad hoc and not sent to
-      # Apple, so the pipeline stays runnable before the secrets exist.
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-      ICE_CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-      ICE_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-      ICE_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
     steps:
       - uses: actions/checkout@v7
       - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
-      - name: Import the Developer ID certificate
-        if: env.MACOS_CERTIFICATE != ''
-        run: |
-          set -euo pipefail
-          keychain="$RUNNER_TEMP/ice-signing.keychain-db"
-          password="$(uuidgen)"
-          security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 3600 "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
-          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" \
-            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          # Without this, codesign prompts for keychain access and the job
-          # hangs until its timeout instead of signing.
-          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain" login.keychain-db
-          security find-identity -v -p codesigning "$keychain"
-      - name: Stage the notary key
-        if: env.MACOS_NOTARY_KEY != ''
-        run: |
-          set -euo pipefail
-          key="$RUNNER_TEMP/notary-key.p8"
-          printf '%s' "$MACOS_NOTARY_KEY" | base64 --decode > "$key"
-          echo "ICE_NOTARY_KEY=$key" >> "$GITHUB_ENV"
-      - name: Build the signed disk image
+      - name: Build the disk image
         run: |
           cargo ice bundle -p showcase \
             --target aarch64-apple-darwin --target x86_64-apple-darwin
@@ -197,12 +163,6 @@ jobs:
           set -euo pipefail
           cd target/ice-bundle
           for image in *.dmg; do
-            # A stapled ticket is what lets a first launch pass Gatekeeper on a
-            # machine that cannot reach Apple, so it is checked, not assumed.
-            if [ -n "${ICE_NOTARY_KEY:-}" ]; then
-              xcrun stapler validate "$image"
-              spctl --assess --type open --context context:primary-signature --verbose=2 "$image"
-            fi
             shasum -a 256 "$image" > "$image.sha256"
           done
       - uses: actions/upload-artifact@v7

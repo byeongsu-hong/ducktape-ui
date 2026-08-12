@@ -189,6 +189,22 @@ ready, preserving queue order). Other targets, daemon and multi-window
 adapters, exact desktop bounds, rich text, and unlisted widgets are outside
 this Core contract.
 
+## Installing a build
+
+Tagged releases publish the showcase catalog as a macOS `.dmg`, a Debian
+`.deb`, and a Windows `.msi`, each beside its SHA-256.
+
+These builds are signed ad hoc, so the first launch takes one extra gesture:
+on macOS, Control-click the app and choose **Open** instead of double-clicking
+it, and on Windows choose **More info** then **Run anyway** at the SmartScreen
+prompt. `sudo apt install ./showcase_*.deb` needs nothing extra. Building from
+source needs nothing extra either — the prompt exists because the file was
+downloaded, not because the application differs.
+
+`cargo ice bundle -p PACKAGE` produces the same artifact for your own Ice
+application, and signs and notarizes it when you supply a certificate; see
+[`docs/tooling.md`](docs/tooling.md).
+
 ## Examples
 
 ```bash

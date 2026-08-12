@@ -96,32 +96,27 @@ another package declares its own bundle.
 The jobs also run on `workflow_dispatch`, which is how a packaging change gets
 exercised on a branch instead of debugged on a tag.
 
-## Signing secrets
+## Signing
 
-Signing is driven entirely by repository secrets, so every job is runnable
-before they exist — an unset secret arrives as an empty string, which is read
-as "not configured". macOS then signs ad hoc and skips notarization, and
-Windows leaves the installer unsigned.
+Released disk images and installers are signed ad hoc. That is a decision, not
+an omission: no Developer ID or Authenticode certificate belongs to this
+repository, and none is going to.
 
-| Secret | Contents |
-| --- | --- |
-| `MACOS_CERTIFICATE` | base64 of the Developer ID Application `.p12` |
-| `MACOS_CERTIFICATE_PASSWORD` | that `.p12`'s export password |
-| `MACOS_SIGNING_IDENTITY` | `Developer ID Application: NAME (TEAMID)` |
-| `MACOS_NOTARY_KEY` | base64 of the App Store Connect API `.p8` |
-| `MACOS_NOTARY_KEY_ID` | that key's ID |
-| `MACOS_NOTARY_ISSUER` | the issuer UUID for that key |
+An ad-hoc signature is still required rather than cosmetic — Apple silicon
+refuses to run a macOS binary carrying none — but it does not satisfy
+Gatekeeper. macOS quarantines anything a browser downloads, so a first launch
+needs Control-click then Open. Windows SmartScreen shows a comparable prompt on
+an unsigned installer. The `.deb` is unaffected: a Debian package is
+authenticated by the repository serving it, and a direct download by the
+checksum published beside it. The README states this where someone downloading
+will read it.
 
-Certificates expire. A signature made before expiry stays valid because it
-carries a trusted timestamp, but the next release fails at `codesign` — renew
-the Developer ID certificate and replace the first three secrets.
-
-Windows signing reads `ICE_WINDOWS_CERTIFICATE` and
-`ICE_WINDOWS_CERTIFICATE_PASSWORD`; the release job does not map secrets onto
-them yet, because an Authenticode certificate issued today requires either
-hardware token access or a cloud signing service, and which one to use is a
-decision this repository has not made. A `.deb` is authenticated by the
-repository serving it, so Linux needs no signing secret.
+`cargo ice bundle` itself supports Developer ID signing, notarization, and
+Authenticode, and `docs/tooling.md` documents the environment variables that
+drive them — that is for anyone publishing their own Ice application. This
+workflow reads none of them, so adopting a certificate later means wiring
+secrets into the job at that point rather than keeping dead configuration for
+it now.
 
 ## Registry order
 
