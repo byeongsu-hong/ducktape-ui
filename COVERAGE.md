@@ -114,7 +114,7 @@ and interrupted output replacement cause full cache regeneration, stale
 transaction artifacts are removed, concurrent publishers retain both roots,
 and an unchanged pass preserves output and manifest mtimes.
 The Linux native job additionally starts real, separate `cargo ice dev` and
-`cargo check` processes against the same `iced-app` target while the dev build
+`cargo check` processes against the same `showcase` target while the dev build
 fingerprint forces generation. It requires both commands to complete their
 overlap, requires the distinct dev-fingerprint and normal-check output caches,
 validates every manifest content digest and absence of transaction debris, then
@@ -270,10 +270,9 @@ coverage is claimed.
 Deterministic semantic and render-inspection tests continue to use the
 headless tiny-skia backend. A separate native CI matrix forces iced's `wgpu`
 compositor with no tiny-skia fallback and requires the generated root to
-publish its exact readiness token after the first child draw. Linux exercises
-the canvas, shader, image, SVG, clipping, and font surface in `iced-app` through
-Vulkan; macOS boots the native Markdown editor through Metal; Windows boots the
-component showcase through DX12. The harness fails on early process exit,
+publish its exact readiness token after the first child draw. Linux and Windows
+boot the component showcase through Vulkan and DX12 respectively, while macOS
+boots the native Markdown editor through Metal. The harness fails on early process exit,
 malformed readiness output, renderer initialization failure, or a 60-second
 first-draw timeout, and requires the process to remain alive for one second
 after readiness so fatal submission/device errors cannot pass on the draw
@@ -941,10 +940,10 @@ value the subtree was built with, and `SPEC.md` says so.
 Evidence: `crates/ui-lang-core/tests/cases/compile/row-animation` (generated
 `from` transition, per-instance materialization, frame subscription over
 component storage), `crates/ui-lang-core/tests/cases/format/row-animation`,
-`examples/iced-app/src/ui/animation.ice` (`ArrivalRow` demo, and the
+`examples/showcase/tests/cases/ui/animation.ice` (`ArrivalRow` demo, and the
 `computed_surface_opacity` first-class test asserting the painted alpha), and
 `a_row_owns_its_fade_and_that_fade_ends` in
-`examples/iced-app/src/tests/tasks.rs`.
+`examples/showcase/src/native_fixtures/tasks.rs`.
 
 ## Evidence rule
 

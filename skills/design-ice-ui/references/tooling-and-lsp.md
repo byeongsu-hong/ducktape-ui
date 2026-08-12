@@ -303,7 +303,7 @@ surface ledger.
 Use:
 
 ```bash
-cargo ice expand examples/iced-app/src/ui/tasks.ice
+cargo ice expand examples/showcase/src/ui/app.ice
 ```
 
 Expansion is for:
@@ -331,7 +331,7 @@ from Cargo's `OUT_DIR`.
 cargo ice fmt --check
 cargo ice check
 cargo ice test
-cargo test -p iced-app <focused-test-filter>
+cargo test -p showcase <focused-test-filter>
 ```
 
 Use `cargo ice fmt` before `--check` when formatting changes are expected.

@@ -22,16 +22,16 @@ trap cleanup EXIT
 
 cd "$workspace"
 
-# Remove only the disposable iced-app package artifacts so both commands must
+# Remove only the disposable showcase package artifacts so both commands must
 # publish their own generated cache during this run. Without this boundary,
 # two stale manifests from an earlier build could make the cache assertions a
 # false positive.
-cargo clean -p iced-app
+cargo clean -p showcase
 
-setsid cargo ice dev examples/iced-app/src/ui/tasks.ice -- -p iced-app >"$dev_log" 2>&1 &
+setsid cargo ice dev examples/showcase/src/ui/app.ice -- -p showcase >"$dev_log" 2>&1 &
 dev_pid=$!
 dev_group=$dev_pid
-setsid cargo check --locked -p iced-app >"$check_log" 2>&1 &
+setsid cargo check --locked -p showcase >"$check_log" 2>&1 &
 check_pid=$!
 
 deadline=$((SECONDS + 300))
@@ -78,14 +78,14 @@ from pathlib import Path
 import sys
 
 workspace = Path(sys.argv[1])
-roots = list((workspace / "target/debug/build").glob("iced-app-*/out/ui-lang-generated/manifest.json"))
+roots = list((workspace / "target/debug/build").glob("showcase-*/out/ui-lang-generated/manifest.json"))
 if not roots:
-    raise SystemExit("no iced-app generated manifest was published")
+    raise SystemExit("no showcase generated manifest was published")
 
 matching = []
 for manifest_path in roots:
     document = json.loads(manifest_path.read_text())
-    if any(entry.get("source") == "src/ui/tasks.ice" for entry in document.get("outputs", {}).values()):
+    if any(entry.get("source") == "src/ui/app.ice" for entry in document.get("outputs", {}).values()):
         matching.append((manifest_path, document))
 if len(matching) < 2:
     raise SystemExit(

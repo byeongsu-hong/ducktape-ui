@@ -535,7 +535,7 @@ compile to Rust's built-in test runner, so no Rust registration or separate
 case grammar is needed. Follow:
 
 ```text
-examples/iced-app/src/ui/component_state.ice
+examples/showcase/tests/cases/ui/component_state.ice
 examples/showcase/src/ui/app.ice
 ```
 

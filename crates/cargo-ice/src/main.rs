@@ -168,7 +168,7 @@ fn run() -> Result<(), String> {
             let roots = root_files(&files)?;
             analyze(&roots, &files)?;
             compat::verify(&root)?;
-            cargo(&["test", "-p", "iced-app"])?;
+            cargo(&["test", "-p", "showcase"])?;
         }
         _ => unreachable!("commands were validated before scanning the workspace"),
     }

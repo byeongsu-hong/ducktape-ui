@@ -9,12 +9,63 @@ mod frame_probe;
 
 ui_lang::include_app!("src/ui/app.ice");
 
+#[cfg(test)]
+mod native_fixtures;
+
+#[cfg(test)]
+mod alignment;
+#[cfg(test)]
+mod background_gradient;
+#[cfg(test)]
+mod border_radius;
+#[cfg(test)]
+mod color;
+#[cfg(test)]
+mod content_fit;
+#[cfg(test)]
+mod event_status;
+#[cfg(test)]
+mod font_values;
+#[cfg(test)]
+mod lazy_context;
+#[cfg(test)]
+mod length;
+#[cfg(test)]
+mod mouse_interaction;
+#[cfg(test)]
+mod redraw_request;
+#[cfg(test)]
+mod resizable_panes;
+#[cfg(test)]
+mod rotation;
+#[cfg(test)]
+mod scroll_delta;
+#[cfg(test)]
+mod secret_input;
+#[cfg(test)]
+mod shadow;
+#[cfg(test)]
+mod text_values;
+#[cfg(test)]
+mod theme_mode;
+#[cfg(test)]
+mod window_id;
+#[cfg(test)]
+mod window_position;
+#[cfg(test)]
+mod window_screenshot;
+#[cfg(test)]
+mod window_values;
+
+#[cfg(test)]
+mod backend;
+
 fn main() -> iced::Result {
     Showcase::run()
 }
 
 #[cfg(test)]
-mod tests {
+mod smoke_tests {
     use super::{__ShowcaseMessage, Showcase};
 
     #[test]

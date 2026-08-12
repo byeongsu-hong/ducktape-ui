@@ -88,8 +88,8 @@ refactoring `.ice`. Read the other references only when their scope is involved:
    modules.
 2. Read the complete files being changed and every `use` edge in their source
    graph. Treat declarations as graph-wide even when split across files.
-3. Reuse the repository's closest compiling `.ice` example. Prefer the readable
-   task app for Core patterns and focused fixtures for advanced features.
+3. Reuse the repository's closest compiling `.ice` example. Prefer the showcase
+   source graph for Core patterns and focused fixtures for advanced features.
 4. Run `cargo ice schema` when a construct or property is uncertain. The schema
    is generated from the same Core table as LSP completion.
 5. If a live LSP client is available, keep the app root open so imported-buffer
@@ -103,13 +103,12 @@ crates/ui/src/ice/default.ice            workspace design-system entry source
 crates/ui/src/ice/components.ice         shared structural components and variants
 crates/ui/src/ice/recipes.ice            shared semantic visual roles
 examples/showcase/src/ui/app.ice         catalog and first-class behavior test
-examples/iced-app/src/ui/tasks.ice       readable app root
-examples/iced-app/src/ui/extern/         production and test extern declarations
-examples/iced-app/src/ui/components/     component and slot patterns
-examples/iced-app/src/ui/handlers/       state transitions and effects
-examples/iced-app/src/ui/component_state.ice  layout, paint, and interaction tests
-examples/iced-app/src/ui/showcase.ice    language widget surface
-examples/iced-app/src/ui/*.ice           focused native fixtures
+examples/showcase/src/ui/extern/         production extern declarations
+examples/showcase/src/ui/components/     component and slot patterns
+examples/showcase/src/ui/handlers/       state transitions and effects
+examples/showcase/tests/cases/ui/component_state.ice  layout, paint, and interaction tests
+examples/showcase/tests/cases/ui/showcase.ice  language widget surface
+examples/showcase/tests/cases/ui/*.ice  focused native fixtures
 examples/apple-music/src/ui/app.ice      complete product-style source graph
 SPEC.md                                  implemented language revision
 COVERAGE.md                              exact Iced surface ledger

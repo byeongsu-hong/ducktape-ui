@@ -208,7 +208,6 @@ application, and signs and notarizes it when you supply a certificate; see
 ## Examples
 
 ```bash
-cargo run -p iced-app          # the reference task app + native-surface fixtures
 cargo run -p music-example     # macOS-Music-style flows, liquid-glass player
 cargo run -p browser-example   # native CEF child inside an Ice shell (see examples/cef-browser)
 cargo ice dev -p hotreload-example # side-by-side hot reload preview and Ice editor

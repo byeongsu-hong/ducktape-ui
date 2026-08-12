@@ -12,7 +12,6 @@ members = [
     "examples/candles",
     "examples/cef-browser",
     "examples/hotreload",
-    "examples/iced-app",
     "examples/markdown-editor",
     "examples/showcase",
     "examples/starter",

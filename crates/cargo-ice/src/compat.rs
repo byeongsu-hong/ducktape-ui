@@ -18,7 +18,7 @@ pub fn verify(root: &Path) -> Result<(), String> {
     verify_dependency(
         &workspace_manifest,
         root,
-        &root.join("examples/iced-app/Cargo.toml"),
+        &root.join("examples/showcase/Cargo.toml"),
         "iced",
         &format!("={ICED_VERSION}"),
         None,
@@ -27,7 +27,7 @@ pub fn verify(root: &Path) -> Result<(), String> {
     verify_dependency(
         &workspace_manifest,
         root,
-        &root.join("examples/iced-app/Cargo.toml"),
+        &root.join("examples/showcase/Cargo.toml"),
         "ui-lang-build",
         &format!("={UI_LANG_BUILD_VERSION}"),
         Some(&root.join("crates/ui-lang-build")),
@@ -36,7 +36,7 @@ pub fn verify(root: &Path) -> Result<(), String> {
     verify_dependency(
         &workspace_manifest,
         root,
-        &root.join("examples/iced-app/Cargo.toml"),
+        &root.join("examples/showcase/Cargo.toml"),
         "ui-lang-runtime",
         &format!("={UI_LANG_RUNTIME_VERSION}"),
         Some(&root.join("crates/ui-lang-runtime")),

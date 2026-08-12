@@ -59,7 +59,8 @@ const ALL_RENDER_NODES: &[&str] = &[
 
 #[test]
 fn render_contract_covers_every_render_node() {
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/iced-app/src/ui");
+    let examples =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/showcase/tests/cases/ui");
     let path = examples.join("render_surface.ice");
     let program = crate::lower::lower(analyze_file(&path).unwrap()).unwrap();
     crate::codegen::generate(&program, path.to_str().unwrap())
@@ -74,7 +75,8 @@ fn render_contract_covers_every_render_node() {
 
 #[test]
 fn dynamic_identity_analysis_is_separate_from_every_render_family() {
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/iced-app/src/ui");
+    let examples =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/showcase/tests/cases/ui");
     let path = examples.join("render_surface.ice").canonicalize().unwrap();
     let source = fs::read_to_string(&path).unwrap();
     let source = source

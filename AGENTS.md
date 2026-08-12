@@ -22,10 +22,9 @@ edit `target/`.
 - `cargo fmt --all -- --check`: verify Rust formatting.
 - `cargo ice fmt --check`: verify `.ice` formatting.
 - `cargo ice check`: analyze Ice sources, then check the workspace.
-- `cargo run -p iced-app`: run the main reference application.
+- `cargo run -p showcase`: run the reference application and component catalog.
 
 Use `cargo run -p music-example` for the larger visual example.
-Use `cargo run -p showcase` for the complete default component catalog.
 Platform-specific accessibility checks are in `scripts/`.
 
 ## Coding Style & Naming Conventions
