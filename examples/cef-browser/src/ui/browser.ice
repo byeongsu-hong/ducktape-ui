@@ -1,5 +1,6 @@
 app CefBrowser
   title "CEF in Ice"
+  palette active_palette
   id "dev.ducktape.ice.cef-browser"
   text-size 14
   antialiasing true
@@ -50,8 +51,23 @@ palette browser for BrowserTheme
   disabled      #b6bcc7
   danger        #d34b4b
   success       #28a66a
+palette dark for BrowserTheme
+  bg            #11141b
+  chrome        #1a1e27
+  surface       #12151c
+  address       #242936
+  fg            #eef1f7
+  muted         #969daa
+  border        #343a48
+  primary       #7c8cff
+  primary_hover #8d9aff
+  on_primary    #ffffff
+  disabled      #5f6675
+  danger        #ff7777
+  success       #55cf91
 
 state
+  active_palette:palette[BrowserTheme] = BrowserTheme.browser
   address = "ice://welcome"
   attached = false
   runtime_active = false
@@ -63,11 +79,18 @@ derived
   can_navigate = attached && !empty(trim(address))
 
 on mount
-  task attach(address) -> attached_result _
+  parallel
+    task attach(address) -> attached_result _
+    task system theme -> system_theme_changed _
 
 on attached_result(result)
   attached = result.attached
   status = result.status
+
+on system_theme_changed(next)
+  active_palette = BrowserTheme.browser
+  return if next != "dark"
+  active_palette = BrowserTheme.dark
 
 on tick(_now)
   runtime_active = pump()
@@ -93,6 +116,7 @@ on refresh
 
 subscribe
   every 16ms -> tick _
+  system theme -> system_theme_changed _
 
 view
   col #root
@@ -233,3 +257,22 @@ test renders_ice_chrome_without_cef
   expect toolbar.width == 1100.0
   expect address_input.value == "ice://welcome"
   expect browser.height == 692.0
+
+test system_theme_updates_browser_palette
+  viewport 1100 760
+  target root = #root
+  target toolbar = #root/toolbar
+  target address_shell = #root/toolbar/address-shell
+  target browser = #root/browser-surface
+  system-theme light
+  expect root.background == background.color(color.rgb8(232, 235, 241))
+  expect toolbar.background == background.color(color.rgb8(245, 246, 249))
+  expect address_shell.background == background.color(color.rgb8(255, 255, 255))
+  expect browser.background == background.color(color.rgb8(255, 255, 255))
+  capture light
+  system-theme dark
+  expect root.background == background.color(color.rgb8(17, 20, 27))
+  expect toolbar.background == background.color(color.rgb8(26, 30, 39))
+  expect address_shell.background == background.color(color.rgb8(36, 41, 54))
+  expect browser.background == background.color(color.rgb8(18, 21, 28))
+  capture dark

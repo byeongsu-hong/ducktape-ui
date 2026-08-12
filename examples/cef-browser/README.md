@@ -7,6 +7,12 @@ native-window boundary.
 
 ![CEF rendering below the Ice-owned toolbar](screenshot.svg)
 
+The Ice-owned chrome follows the system theme:
+
+| Light | Dark |
+| --- | --- |
+| ![Light CEF browser chrome](screenshots/system_theme_updates_browser_palette/light.png) | ![Dark CEF browser chrome](screenshots/system_theme_updates_browser_palette/dark.png) |
+
 CEF is opt-in because its binary distribution is large. Build and stage the app
 with the included bundler:
 
