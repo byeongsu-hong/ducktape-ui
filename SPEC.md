@@ -4890,6 +4890,14 @@ snap/end; and absolute scroll-to/scroll-by. Effects have no route and
 non-negative `i64`; relative offsets are `f64` in `0.0..=1.0`; absolute
 offsets are unrestricted `f64`.
 
+In a daemon whose graph keeps `lifetime mounted` component state, every
+rendered id is qualified by the window that drew it, so one window's render
+never prunes another's storage. An app or preset handler builds target paths
+from the bare app name and would silently address nothing there, so
+id-targeted operations in those handlers are rejected (`E172`) until a handler
+can name a window. Component handlers are unaffected: their paths start at the
+component instance, whose scope already carries its window.
+
 Feature-gated native widget selectors use the same checked paths and ordinary
 Ice expressions:
 
