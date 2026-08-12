@@ -384,7 +384,19 @@ view
                   button "Copy link" #copy-link @outline_action -> copy_url
                 text "Waiting for it to be approved…" @meta
       if signed
-        scroll #transcript w=fill h=fill
+        // End-anchored: the offset is a distance from the bottom, so history
+        // measured for real above the viewport — or a beat appending below —
+        // carries the reader's rows with it instead of shifting them, and the
+        // chat rests on its newest row, where `snap-end` already points it.
+        // End-anchored: the offset is a distance from the bottom, so history
+        // measured for real above the viewport carries the reader's rows with
+        // it instead of shifting them, and the chat rests on its newest row,
+        // where `snap-end` already points it.
+        scroll #transcript
+          with
+            w=fill
+            h=fill
+            anchor-y=end
           box
             with
               w=fill
@@ -412,7 +424,15 @@ view
                   // `keyed` gives every row a stable identity and `lazy` keys its
                   // rebuild on the row itself, so a token landing in the live reply
                   // below rebuilds one row's widgets and nothing else.
-                  keyed entry in entries by=entry.id #rows w=fill gap=18.0
+                  // `virtual-row` lays out only the rows the viewport can reach;
+                  // a long chat's settled history costs nothing per frame until
+                  // it is scrolled back into view. The estimate is a collapsed
+                  // row; measured heights follow the key once a row is seen.
+                  keyed entry in entries by=entry.id #rows
+                    with
+                      w=fill
+                      gap=18.0
+                      virtual-row=60.0
                     lazy entry as settled
                       col w=fill
                         // One `if` per kind rather than a `match`: the kinds are
