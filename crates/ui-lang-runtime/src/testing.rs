@@ -618,6 +618,7 @@ pub enum AccessibilityProperty {
     Name,
     Value,
     Checked,
+    Expanded,
     Disabled,
     Focused,
     Action,
@@ -990,6 +991,7 @@ struct AccessibilityData {
     description: Option<String>,
     value: Option<String>,
     checked: Option<bool>,
+    expanded: Option<bool>,
     disabled: bool,
     focused: bool,
     supports_activate: bool,
@@ -1315,6 +1317,15 @@ impl Target {
             self.fail(
                 "checked",
                 "expected: retained accessibility checked state\nactual: property is absent",
+            )
+        })
+    }
+
+    pub fn accessibility_expanded(&self) -> bool {
+        self.accessibility("expanded").expanded.unwrap_or_else(|| {
+            self.fail(
+                "expanded",
+                "expected: retained accessibility expanded state\nactual: property is absent",
             )
         })
     }
@@ -1700,6 +1711,7 @@ impl<Message: 'static> Selector for IdSelector<Message> {
                             description: state.description.clone(),
                             value: state.value.clone(),
                             checked: state.checked,
+                            expanded: state.expanded,
                             disabled: state.disabled,
                             focused: state.focused,
                             supports_activate: !state.disabled && state.supports_activate,
@@ -2611,11 +2623,12 @@ where
         let target = self.target(id, source);
         let actual = match property {
             AccessibilityProperty::Checked => target.accessibility_checked(),
+            AccessibilityProperty::Expanded => target.accessibility_expanded(),
             AccessibilityProperty::Disabled => target.accessibility_disabled(),
             AccessibilityProperty::Focused => target.accessibility_focused(),
             _ => self.invalid_action(
                 "accessibility boolean expectation",
-                "checked, disabled, or focused",
+                "checked, expanded, disabled, or focused",
                 format!("{property:?}"),
                 source,
             ),
@@ -5404,6 +5417,7 @@ fn target_manifest(target: &Target) -> serde_json::Value {
             "description": data.description,
             "value": data.value,
             "checked": data.checked,
+            "expanded": data.expanded,
             "disabled": data.disabled,
             "focused": data.focused,
             "actions": {

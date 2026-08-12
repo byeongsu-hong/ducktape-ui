@@ -793,10 +793,12 @@ fn generate_expectation(
                     writeln!(out, "let __target = {path}; let __expected = {value}; __test.check_accessibility_str(&__target, ::ui_lang_runtime::testing::AccessibilityProperty::{property}, &__expected, {location});").unwrap();
                 }
                 ResolvedTestAccessibilityProperty::Checked(value)
+                | ResolvedTestAccessibilityProperty::Expanded(value)
                 | ResolvedTestAccessibilityProperty::Disabled(value)
                 | ResolvedTestAccessibilityProperty::Focused(value) => {
                     let property = match property {
                         ResolvedTestAccessibilityProperty::Checked(_) => "Checked",
+                        ResolvedTestAccessibilityProperty::Expanded(_) => "Expanded",
                         ResolvedTestAccessibilityProperty::Disabled(_) => "Disabled",
                         ResolvedTestAccessibilityProperty::Focused(_) => "Focused",
                         _ => unreachable!(),

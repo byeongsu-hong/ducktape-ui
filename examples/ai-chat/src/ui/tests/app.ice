@@ -15,8 +15,10 @@ test folding_a_finished_turn_reveals_what_it_did
   expect text "Worked for 12s · 4 steps"
   expect no text "Checking the crate before answering"
   expect no text "Searched the web"
+  expect a11y work expanded false
 
   click work
+  expect a11y work expanded true
   expect text "Checking the crate before answering"
   expect text "Searched the web"
   expect text "Opened a page"

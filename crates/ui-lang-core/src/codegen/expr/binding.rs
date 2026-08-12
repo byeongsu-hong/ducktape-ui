@@ -410,6 +410,7 @@ pub(in crate::codegen) fn native_field_projection(
                 | "pixel_aligned"
                 | "focused"
                 | "accessibility_checked"
+                | "accessibility_expanded"
                 | "accessibility_disabled"
                 | "accessibility_supports_activate"
                 | "accessibility_supports_focus" => Type::Bool,

@@ -133,6 +133,8 @@ pub(in crate::parser) fn parse_button(
             disabled = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("checked=") {
             options.checked = Some(parse_expr(strip_wrapping_parens(value), line)?);
+        } else if let Some(value) = part.strip_prefix("expanded=") {
+            options.expanded = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("w=") {
             options.width = Some(parse_length(value, line)?);
         } else if let Some(value) = part.strip_prefix("h=") {

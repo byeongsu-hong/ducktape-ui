@@ -370,6 +370,7 @@ pub(crate) fn field_type(
             | "pixel_aligned"
             | "focused"
             | "accessibility_checked"
+            | "accessibility_expanded"
             | "accessibility_disabled"
             | "accessibility_supports_activate"
             | "accessibility_supports_focus" => Some(Type::Bool),

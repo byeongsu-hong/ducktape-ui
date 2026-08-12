@@ -598,7 +598,7 @@ state
   disabled = false
 on pressed
 view
-  button #action label="Save" disabled=disabled checked=disabled w=fill h=48.0 p=8.0 clip=true style=dynamic_button(disabled) -> pressed
+  button #action label="Save" disabled=disabled checked=disabled expanded=disabled w=fill h=48.0 p=8.0 clip=true style=dynamic_button(disabled) -> pressed
     row
       text "Save"
       text "⌘S"
@@ -611,6 +611,9 @@ view
 
     let bad_checked = source.replace("checked=disabled", "checked=1.0");
     let error = analyze(&bad_checked).unwrap_err();
+    assert_eq!(error.code, "E101");
+    let bad_expanded = source.replace("expanded=disabled", "expanded=1.0");
+    let error = analyze(&bad_expanded).unwrap_err();
     assert_eq!(error.code, "E101");
 
     let bad_color = source.replace("border=primary", "border=missing");

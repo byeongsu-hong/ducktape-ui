@@ -221,6 +221,7 @@ fn accessibility_property_expr(property: &TestAccessibilityProperty) -> Option<&
         | TestAccessibilityProperty::Name(value)
         | TestAccessibilityProperty::Value(value)
         | TestAccessibilityProperty::Checked(value)
+        | TestAccessibilityProperty::Expanded(value)
         | TestAccessibilityProperty::Disabled(value)
         | TestAccessibilityProperty::Focused(value)
         | TestAccessibilityProperty::Action {
@@ -564,6 +565,7 @@ fn check_test_step(
                     | TestAccessibilityProperty::Name(value)
                     | TestAccessibilityProperty::Value(value) => (value, Type::Str),
                     TestAccessibilityProperty::Checked(value)
+                    | TestAccessibilityProperty::Expanded(value)
                     | TestAccessibilityProperty::Disabled(value)
                     | TestAccessibilityProperty::Focused(value)
                     | TestAccessibilityProperty::Action {
