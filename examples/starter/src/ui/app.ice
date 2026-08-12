@@ -33,6 +33,8 @@ view
       text "Ice starter" size=30.0 @text-fg
       text name #greeting size=20.0 @text-muted
       input "Your name" #name <-> name w=320.0
+        focused border=primary border-w=2.0
+        focused-hovered border=primary border-w=2.0
       row gap=12.0 align=center
         button "Increment" #increment -> increment
           active bg=primary text=primary_fg r=8.0
@@ -51,3 +53,12 @@ test starter_flow
   click increment_button
   expect count == 1
   capture ready
+
+test starter_name_focus_is_visible
+  viewport 480 360
+  target name_input = #app/content/name
+  click name_input
+  expect name_input.focused
+  expect name_input.border.color == color.rgb8(49, 94, 251)
+  expect name_input.border.width ~= 2.0
+  capture focused
