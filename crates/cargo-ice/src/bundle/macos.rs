@@ -332,7 +332,12 @@ mod tests {
     /// sequence, so the tool arguments are wrong here rather than on a tag.
     #[cfg(target_os = "macos")]
     #[test]
-    fn a_signed_bundle_becomes_a_mountable_disk_image() {
+    fn a_signed_bundle_becomes_a_disk_image() {
+        /// Every UDIF image ends with a 512-byte trailer, and these four bytes
+        /// are what identifies one.
+        const UDIF_TRAILER_SIZE: usize = 512;
+        const UDIF_MAGIC: &[u8] = b"koly";
+
         let directory = tempfile::tempdir().expect("temporary directory");
         // The test binary is a real Mach-O for this architecture, which is
         // what codesign needs; no system path is assumed to be signable.
@@ -356,7 +361,22 @@ mod tests {
 
         let dmg = directory.path().join("Showcase-0.1.0-test.dmg");
         write_dmg(&app, &meta, &dmg).expect("write the disk image");
-        tool("hdiutil", &["verify".to_owned(), path(&dmg)]).expect("the disk image verifies");
-        assert!(dmg.is_file(), "the disk image is where the release looks");
+        // `hdiutil verify` attaches the image through DiskArbitration, which
+        // answered `Resource temporarily unavailable` on a loaded runner and
+        // left an orphaned helper behind — a coin flip against every pull
+        // request. `hdiutil create` already reported success; what is left to
+        // check is that it wrote a UDIF image, and the trailer says so without
+        // asking the kernel for a device.
+        let image = fs::read(&dmg).expect("read the disk image");
+        let trailer = image
+            .len()
+            .checked_sub(UDIF_TRAILER_SIZE)
+            .expect("a disk image ends with a 512-byte trailer");
+        assert_eq!(
+            &image[trailer..trailer + 4],
+            UDIF_MAGIC,
+            "`{}` is not a UDIF disk image",
+            dmg.display()
+        );
     }
 }

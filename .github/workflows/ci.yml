@@ -320,7 +320,7 @@ jobs:
       # nowhere else, and a release tag is a bad place to discover it is wrong.
       - name: Test macOS bundling
         if: matrix.runner == 'macos-latest'
-        run: cargo test --locked -p cargo-ice a_signed_bundle_becomes_a_mountable_disk_image
+        run: cargo test --locked -p cargo-ice a_signed_bundle_becomes_a_disk_image
       - name: Test native editor interactions
         run: |
           cargo test --locked -p ui-lang-runtime rich_text_editor --lib
