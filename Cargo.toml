@@ -44,8 +44,19 @@ unsafe_code = "forbid"
 # Debug info stays complete but lives beside the binary instead of inside it.
 # Copying it in was the larger half of every dev link: showcase relinks 0.6s
 # faster and its binary drops from 443MB to 158MB.
+#
+# `lto = "off"` is not the default (`false`): the default omits the flag, and
+# rustc then runs *local* ThinLTO across a crate's codegen units whenever its
+# opt-level is above zero — which trading-example's stanza below sets. On the
+# 2026-08-12 crate that pass was 23.2s of a 28.2s `.ice`-edit rebuild
+# (`-Ztime-passes`: LLVM_thinlto), and turning it off took the measured edit
+# from 24.5s to 3.7s while the dense-terminal `frame_cost` moved ~1.8%
+# (4433us -> 4514us idle-redraw p50, interleaved on one box) — inside the
+# probe's own ~0.5ms cross-binary noise floor. Crates at opt-level 0 never
+# ran the pass, so this changes nothing else in dev.
 [profile.dev]
 split-debuginfo = "unpacked"
+lto = "off"
 
 [profile.dev.package.music-example]
 debug = 0
@@ -53,10 +64,11 @@ debug = 0
 # `cargo run -p trading-example` is a debug build, and a debug frame on the
 # terminal's densest screen was 11221us of build and layout against release's
 # 3.3ms — the one reading in `docs/testing.md` with no headroom at 60Hz. This
-# takes it to 7155us, and takes back nothing: touching a source file and
-# rebuilding the crate is 2.51s against 2.58s at opt-level 0, because
-# opt-level 0 hands LLVM more IR to lower than opt-level 1 does. A cold build
-# of the graph goes 48s to 59s.
+# took it to 7155us. "Takes back nothing" was true of the crate it was
+# measured on (a 2.51s edit rebuild against 2.58s at opt-level 0); the crate
+# has since grown into the full HTS, and at this opt-level rustc's local
+# ThinLTO pass came to dominate the edit loop — see `lto = "off"` above,
+# which keeps this stanza's frame win and returns the edit loop to seconds.
 #
 # `[profile.dev.package."*"] opt-level = 2` was measured on top of this and
 # rejected. It takes the frame a further 0.82x, because a frame is iced's

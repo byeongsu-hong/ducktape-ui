@@ -719,11 +719,18 @@ iced's. Raising the framework crates (`ui-lang-runtime`, `ducktape-ui`) to 2
 moved nothing, for the same reason — they instantiate very little of what a
 frame walks.
 
-Optimizing the app costs no iteration speed, which is the trade this had to
-clear. Touching one of its source files and rebuilding is **2.51s against
-2.58s** at opt-level 0 — opt-level 0 hands LLVM more IR to lower than
-opt-level 1 does, and that pays for the optimizing. A cold build of the graph
-goes 48s to 59s.
+Optimizing the app cost no iteration speed **on the crate it was measured
+on**: touching a source file and rebuilding was 2.51s against 2.58s at
+opt-level 0. The crate then grew into the full HTS, and the edit rebuild grew
+to **24.5s** — of which `-Ztime-passes` attributed **23.2s to LLVM_thinlto**:
+at any opt-level above zero, rustc runs *local* ThinLTO across the crate's
+codegen units unless told not to. The workspace now sets
+`[profile.dev] lto = "off"` (2026-08-12), which returned the measured edit to
+**3.7s** while `frame_cost`'s idle-redraw p50 moved 4433us → 4514us (~1.8%,
+interleaved A/B on one box) — inside the probe's own ~0.5ms cross-binary
+noise floor. Crates at opt-level 0 never ran the pass, so dev behavior is
+otherwise unchanged. The dense-terminal debug frame itself now reads ~4.4ms,
+well inside 60Hz either way.
 
 **`[profile.dev.package."*"] opt-level = 2` was measured and rejected**, so
 nobody repeats it. It is the last row above, a further 0.82x, and it costs
