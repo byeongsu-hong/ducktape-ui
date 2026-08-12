@@ -9569,16 +9569,23 @@ impl<'a> FactsBuilder<'a> {
                 ) => return Ok(()),
                 CheckedPathRoot::Local(local) => {
                     let local = self.facts.local(*local);
-                    if crate::codegen::copy_expression_type(&local.ty) {
-                        return Ok(());
-                    }
                     let CheckedLocalOwner::View {
                         view,
                         role: CheckedViewLocalRole::ForItem,
                     } = local.owner
                     else {
+                        // Only a `for` row is bound owned-by-value; every
+                        // other local (a match payload, a keyed-column item,
+                        // a table row) reaches emission as a reference even
+                        // when its Ice type is Copy, so the Copy exemption
+                        // below must not apply to it.
                         return Err(keyed_lazy_value_error(span));
                     };
+                    // A Copy `for` row is bound owned (`.iter().cloned()`),
+                    // so the capture is by value and the chain ends here.
+                    if crate::codegen::copy_expression_type(&local.ty) {
+                        return Ok(());
+                    }
                     // The enclosing `for` is still mid-lowering, so its flow
                     // is not recorded yet; its items expression already is.
                     let items = self

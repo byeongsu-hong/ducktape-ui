@@ -164,7 +164,13 @@ pub(in crate::check) fn infer_documents_group(
                 span,
                 CheckedViewExprRole::LazyDependency,
             )?;
-            if !lazy_hashable(&dependency_type) || contains_ui_enum(&dependency_type, document) {
+            // The plain form hashes the value, so it must be hashable; the
+            // keyed form hashes only the keys and merely clones the value on
+            // a miss, so its value needs Clone, not Hash — floats included.
+            if keys.is_empty()
+                && (!lazy_hashable(&dependency_type)
+                    || contains_ui_enum(&dependency_type, document))
+            {
                 return Err(Error::new(
                     "E139",
                     span,
@@ -174,6 +180,20 @@ pub(in crate::check) fn infer_documents_group(
                     ),
                 )
                 .hint("use bool, i64, str, an extern type with Hash + Clone, or a list/optional of those"));
+            }
+            if !keys.is_empty()
+                && (!keyed_lazy_value_cloneable(&dependency_type)
+                    || contains_ui_enum(&dependency_type, document))
+            {
+                return Err(Error::new(
+                    "E139",
+                    span,
+                    format!(
+                        "keyed lazy value type `{}` cannot be cached",
+                        dependency_type.display()
+                    ),
+                )
+                .hint("use bool, i64, f64, str, an extern type with Clone, or a list/optional of those"));
             }
             for (index, key) in keys.iter().enumerate() {
                 let key_type = retained_view_expr_type(

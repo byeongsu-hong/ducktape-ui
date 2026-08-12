@@ -479,6 +479,20 @@ pub(in crate::check) fn infer_view(
     unreachable!("every view node belongs to an inference group")
 }
 
+/// A keyed lazy (`lazy value by ...`) never hashes its value — only the keys
+/// enter the memo tuple — so the value needs Clone, not Hash: everything a
+/// plain dependency accepts, plus floats.
+pub(crate) fn keyed_lazy_value_cloneable(ty: &Type) -> bool {
+    match ty {
+        Type::F64 => true,
+        Type::List(inner) | Type::Option(inner) => keyed_lazy_value_cloneable(inner),
+        Type::Result(output, error) => {
+            keyed_lazy_value_cloneable(output) && keyed_lazy_value_cloneable(error)
+        }
+        _ => lazy_hashable(ty),
+    }
+}
+
 pub(crate) fn lazy_hashable(ty: &Type) -> bool {
     match ty {
         Type::Bool

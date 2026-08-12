@@ -1,0 +1,3 @@
+for (__ice_index, sensor) in self.sensors.iter().enumerate()
+::ui_lang_runtime::memo_lazy((sensor.id.to_owned(), sensor.revision, ("CheapKeys").to_owned(), __ice_palette.name)
+let reading: f64 = sensor.reading;
