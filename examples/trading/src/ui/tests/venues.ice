@@ -274,13 +274,18 @@ test trading_the_network_picker_says_which_one_is_being_read
   expect text "REAL MONEY" within here
   expect text "TESTNET" within test_net
   expect no text "REAL MONEY" within test_net
-  expect a11y here name "Read Hyperliquid, real money, already reading"
+  expect a11y here name "Read Hyperliquid, real money"
   expect a11y other name "Read Lighter, real money"
   expect a11y test_net name "Read Hyperliquid Testnet, testnet"
+  expect a11y here checked true
+  expect a11y other checked false
+  expect a11y test_net checked false
   dispatch switch_venue(Venue.lighter)
   dispatch open_venues
-  expect a11y opened name "Read Lighter, real money, already reading"
+  expect a11y opened name "Read Lighter, real money"
   expect a11y left name "Read Hyperliquid, real money"
+  expect a11y opened checked true
+  expect a11y left checked false
 
 // The row is the switch. Everything else here dispatches `switch_venue`
 // directly, which proves what the handler throws away and nothing at all about

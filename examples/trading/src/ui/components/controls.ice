@@ -125,10 +125,9 @@ component NavTab(name:str, target:Page, current:Page)
             tracking=1.1
             @text-faint
 
-// One row per network, named by the act of reading it. By the same rule the
-// page tabs follow: the network already being read is still a button, and a
-// button carries no state a reader can hear, so it says which it is by
-// appending it to its own name rather than by being the highlighted one.
+// One row per network, named by the act of reading it. The network already
+// being read exposes that state directly through the button's accessibility
+// state, just as the page tabs do.
 //
 // Every row states its kind beside its name, on the drawn row and the undrawn
 // ones alike. A picker is where the mistake this app must never allow is
@@ -144,7 +143,8 @@ component VenueTab(target:Venue, current:Venue)
     if target == current
       button #tab-on -> emit(pick, target)
         with
-          label=venue_label(target, true)
+          label=venue_label(target)
+          checked=true
           w=fill
           p=7.0
         active bg=raised text=fg r=3.0
@@ -164,7 +164,8 @@ component VenueTab(target:Venue, current:Venue)
     if target != current
       button #tab-off -> emit(pick, target)
         with
-          label=venue_label(target, false)
+          label=venue_label(target)
+          checked=false
           w=fill
           p=7.0
         active bg=panel text=muted r=3.0
