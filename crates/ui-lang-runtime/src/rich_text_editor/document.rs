@@ -104,13 +104,38 @@ pub(super) struct StyledLine {
     pub(super) line_rule: Option<Color>,
 }
 
-#[derive(Debug, PartialEq)]
-struct StyledLineFormat {
+/// Scratch buffers for per-line format construction. `update` walks up to the
+/// whole document comparing freshly highlighted formats against cached line
+/// signatures; these buffers make a compare-and-discard line allocation-free
+/// instead of paying a highlight vector, a boundary vector, and a segment
+/// vector per line walked.
+#[derive(Default)]
+struct FormatScratch {
+    highlights: Vec<(Range<usize>, Format)>,
+    boundaries: Vec<usize>,
     segments: Vec<Segment>,
+}
+
+/// The per-line format facts that ride beside [`FormatScratch::segments`].
+#[derive(Debug, Clone, Copy)]
+struct LineMeta {
     empty_format: Format,
     line_highlight: Option<text::Highlight>,
     line_padding: Padding,
     line_rule: Option<Color>,
+}
+
+impl LineMeta {
+    fn styled(self, text: String, segments: Vec<Segment>) -> StyledLine {
+        StyledLine {
+            text,
+            segments,
+            empty_format: self.empty_format,
+            line_highlight: self.line_highlight,
+            line_padding: self.line_padding,
+            line_rule: self.line_rule,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -262,6 +287,7 @@ impl DocumentLayout {
         // per preedit, and per format key, which are exactly the equal-length
         // cases. A geometry change still rebuilds every line, so it keeps to
         // the general path.
+        let mut scratch = FormatScratch::default();
         if !geometry_changed && old_len == new_len {
             let mut rebuilt = 0;
             let mut highlighted = 0;
@@ -272,9 +298,12 @@ impl DocumentLayout {
             for index in scan_start..truncate_at {
                 let text = texts.get(index);
                 highlighted += 1;
-                let styled_format = styled_line_format(text, highlighter, format);
+                let meta = styled_line_format(&mut scratch, text, highlighter, format);
                 styled_signature_comparisons += 1;
-                if self.lines[index].signature.matches(text, &styled_format) {
+                if self.lines[index]
+                    .signature
+                    .matches(text, &scratch.segments, &meta)
+                {
                     continue;
                 }
                 rebuilt += 1;
@@ -285,7 +314,8 @@ impl DocumentLayout {
                     newly_owned_styled_text_bytes += text.len();
                     text.to_owned()
                 };
-                self.lines[index] = DocumentLine::new(styled_format.with_text(owned), style);
+                self.lines[index] =
+                    DocumentLine::new(meta.styled(owned, scratch.segments.clone()), style);
             }
 
             let mut top = 0.0;
@@ -350,14 +380,14 @@ impl DocumentLayout {
             }
 
             highlighted += 1;
-            let styled_format = styled_line_format(text, highlighter, format);
+            let meta = styled_line_format(&mut scratch, text, highlighter, format);
             let reusable = candidate
                 .and_then(|candidate| old.get_mut(candidate))
                 .and_then(|line| {
                     if !geometry_changed
                         && line.as_ref().is_some_and(|line| {
                             styled_signature_comparisons += 1;
-                            line.signature.matches(text, &styled_format)
+                            line.signature.matches(text, &scratch.segments, &meta)
                         })
                     {
                         line.take()
@@ -384,7 +414,7 @@ impl DocumentLayout {
                     newly_owned_styled_text_bytes += text.len();
                     text.to_owned()
                 });
-                DocumentLine::new(styled_format.with_text(text), style)
+                DocumentLine::new(meta.styled(text, scratch.segments.clone()), style)
             });
             lines.push(line);
         }
@@ -660,26 +690,13 @@ impl DocumentLine {
 }
 
 impl StyledLine {
-    fn matches(&self, text: &str, format: &StyledLineFormat) -> bool {
+    fn matches(&self, text: &str, segments: &[Segment], meta: &LineMeta) -> bool {
         self.text == text
-            && self.segments == format.segments
-            && self.empty_format == format.empty_format
-            && self.line_highlight == format.line_highlight
-            && self.line_padding == format.line_padding
-            && self.line_rule == format.line_rule
-    }
-}
-
-impl StyledLineFormat {
-    fn with_text(self, text: String) -> StyledLine {
-        StyledLine {
-            text,
-            segments: self.segments,
-            empty_format: self.empty_format,
-            line_highlight: self.line_highlight,
-            line_padding: self.line_padding,
-            line_rule: self.line_rule,
-        }
+            && self.segments == segments
+            && self.empty_format == meta.empty_format
+            && self.line_highlight == meta.line_highlight
+            && self.line_padding == meta.line_padding
+            && self.line_rule == meta.line_rule
     }
 }
 
@@ -786,18 +803,27 @@ impl TextLines {
 }
 
 fn styled_line_format<H>(
+    scratch: &mut FormatScratch,
     source: &str,
     highlighter: &mut H,
     format: &dyn Fn(&H::Highlight) -> Format,
-) -> StyledLineFormat
+) -> LineMeta
 where
     H: text::Highlighter,
 {
-    let highlights = highlighter
-        .highlight_line(source)
-        .map(|(range, highlight)| (range, format(&highlight)))
-        .collect::<Vec<_>>();
-    let segments = compose_segments(source, &highlights);
+    scratch.highlights.clear();
+    scratch.highlights.extend(
+        highlighter
+            .highlight_line(source)
+            .map(|(range, highlight)| (range, format(&highlight))),
+    );
+    compose_segments_into(
+        &mut scratch.segments,
+        &mut scratch.boundaries,
+        source,
+        &scratch.highlights,
+    );
+    let highlights = &scratch.highlights;
     let empty_format = highlights
         .iter()
         .fold(Format::default(), |base, (_, next)| base.overlay(*next));
@@ -818,8 +844,7 @@ where
         .filter_map(|(_, format)| format.line_rule)
         .next_back();
 
-    StyledLineFormat {
-        segments,
+    LineMeta {
         empty_format,
         line_highlight,
         line_padding,
@@ -833,12 +858,27 @@ pub(super) struct Segment {
     pub(super) format: Format,
 }
 
+#[cfg(test)]
 pub(super) fn compose_segments(line: &str, highlights: &[(Range<usize>, Format)]) -> Vec<Segment> {
+    let mut segments = Vec::new();
+    compose_segments_into(&mut segments, &mut Vec::new(), line, highlights);
+    segments
+}
+
+fn compose_segments_into(
+    segments: &mut Vec<Segment>,
+    boundaries: &mut Vec<usize>,
+    line: &str,
+    highlights: &[(Range<usize>, Format)],
+) {
+    segments.clear();
     if line.is_empty() {
-        return Vec::new();
+        return;
     }
 
-    let mut boundaries = vec![0, line.len()];
+    boundaries.clear();
+    boundaries.push(0);
+    boundaries.push(line.len());
     for (range, _) in highlights {
         let start = range.start.min(line.len());
         let end = range.end.min(line.len());
@@ -850,7 +890,6 @@ pub(super) fn compose_segments(line: &str, highlights: &[(Range<usize>, Format)]
     boundaries.sort_unstable();
     boundaries.dedup();
 
-    let mut segments: Vec<Segment> = Vec::new();
     for pair in boundaries.windows(2) {
         let range = pair[0]..pair[1];
         if range.is_empty()
@@ -873,7 +912,6 @@ pub(super) fn compose_segments(line: &str, highlights: &[(Range<usize>, Format)]
             segments.push(Segment { range, format });
         }
     }
-    segments
 }
 
 pub(super) fn to_span(source: String, format: Format) -> Span<'static, (), Font> {

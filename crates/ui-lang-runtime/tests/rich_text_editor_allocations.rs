@@ -125,12 +125,17 @@ fn allocation_contract_100k_total_allocations() {
         selection: None,
     });
     let revised_version = ContentVersion::new(91, 1);
+    // The count is dominated by materializing the changed source through
+    // `Content::text()`, which pays one small allocation per document line;
+    // the highlight pass itself is bounded by the revealed viewport and the
+    // compare walk reuses scratch buffers. Splicing the source through the
+    // change hint instead of re-materializing it is the next cut available.
     measure(
         &mut records,
         "one_char_insertion",
         1,
-        600_000,
-        400_000_000,
+        150_000,
+        20_000_000,
         || {
             content.perform(text_editor::Action::Edit(Edit::Insert('x')));
             let mut editor = RichTextEditor::<_, ()>::new(&content, revised_version)
@@ -147,24 +152,20 @@ fn allocation_contract_100k_total_allocations() {
     );
 
     let resized_limits = layout::Limits::new(Size::ZERO, Size::new(640.0, 600.0));
-    measure(
-        &mut records,
-        "viewport_resize",
-        1,
-        3_500_000,
-        1_300_000_000,
-        || {
-            let mut editor = RichTextEditor::<_, ()>::new(&content, revised_version)
-                .width(Length::Fixed(640.0))
-                .height(Length::Fixed(600.0))
-                .wrapping(text::Wrapping::None)
-                .highlight_with::<WholeLine>((), 1, |_| Format {
-                    color: Some(Color::BLACK),
-                    ..Format::default()
-                });
-            black_box(editor.layout(&mut tree, &renderer, &resized_limits));
-        },
-    );
+    // With wrapping off a width change cannot reflow a glyph, so the pass
+    // does not even open: the measured cost is zero allocations. The budget
+    // exists to catch a reflow sneaking back into pure-resize layout.
+    measure(&mut records, "viewport_resize", 1, 2_000, 1_000_000, || {
+        let mut editor = RichTextEditor::<_, ()>::new(&content, revised_version)
+            .width(Length::Fixed(640.0))
+            .height(Length::Fixed(600.0))
+            .wrapping(text::Wrapping::None)
+            .highlight_with::<WholeLine>((), 1, |_| Format {
+                color: Some(Color::BLACK),
+                ..Format::default()
+            });
+        black_box(editor.layout(&mut tree, &renderer, &resized_limits));
+    });
 
     let resized_viewport = Rectangle::with_size(Size::new(640.0, 600.0));
     let anchor = Point::new(10.0, 10.0);
@@ -245,8 +246,8 @@ fn allocation_contract_100k_total_allocations() {
         &mut records,
         "hangul_ime_sequence",
         3,
-        1_200_000,
-        1_100_000_000,
+        50_000,
+        400_000_000,
         || {
             let mut editor = editable_editor(&content, revised_version, 640.0);
             node = editor.layout(&mut tree, &renderer, &resized_limits);
