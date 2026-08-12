@@ -105,6 +105,13 @@ test candles_smoke
   expect frame.height > 400.0
   capture ready
 
+test candles_chart_has_accessible_name
+  viewport 640 400
+  target chart = #app/chart-frame/chart
+  expect chart.visible
+  expect a11y chart role "image"
+  expect a11y chart name "Mock market candlestick chart"
+
 test symbol_selection_moves_after_click
   viewport 640 400
   target duck = #app/header/pick-duck

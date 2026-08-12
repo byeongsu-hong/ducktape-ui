@@ -200,7 +200,10 @@ enum FocusBehavior {
 }
 
 #[derive(Clone)]
-struct Semantics<Message> {
+struct SemanticSnapshot {
+    // This metadata stays independent of `Message` so test inspection can
+    // retain it through `Element::map`, whose wrapper changes the message type
+    // without changing the accessible widget's stored state.
     id: StableId,
     logical_id: Option<String>,
     source: Option<testing::Location>,
@@ -222,8 +225,29 @@ struct Semantics<Message> {
     active_descendant: Option<StableId>,
     disabled: bool,
     focus: FocusBehavior,
+    focused: bool,
+    supports_activate: bool,
+}
+
+#[derive(Clone)]
+struct Semantics<Message> {
+    snapshot: SemanticSnapshot,
     focus_id: widget::Id,
     activate: Option<Message>,
+}
+
+impl<Message> std::ops::Deref for Semantics<Message> {
+    type Target = SemanticSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
+impl<Message> std::ops::DerefMut for Semantics<Message> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.snapshot
+    }
 }
 
 impl<Message> Semantics<Message> {
@@ -242,27 +266,31 @@ impl<Message> Semantics<Message> {
         };
 
         Self {
-            id,
-            logical_id: None,
-            source: None,
-            role,
-            label: None,
-            description: None,
-            value: None,
-            checked: None,
-            selected: None,
-            expanded: None,
-            level: None,
-            row_count: None,
-            column_count: None,
-            row_index: None,
-            column_index: None,
-            sort_direction: None,
-            position_in_set: None,
-            size_of_set: None,
-            active_descendant: None,
-            disabled: false,
-            focus,
+            snapshot: SemanticSnapshot {
+                id,
+                logical_id: None,
+                source: None,
+                role,
+                label: None,
+                description: None,
+                value: None,
+                checked: None,
+                selected: None,
+                expanded: None,
+                level: None,
+                row_count: None,
+                column_count: None,
+                row_index: None,
+                column_index: None,
+                sort_direction: None,
+                position_in_set: None,
+                size_of_set: None,
+                active_descendant: None,
+                disabled: false,
+                focus,
+                focused: false,
+                supports_activate: false,
+            },
             focus_id: id.widget_id(),
             activate: None,
         }
@@ -271,22 +299,21 @@ impl<Message> Semantics<Message> {
 
 struct SemanticState<Message> {
     semantics: Semantics<Message>,
-    focused: bool,
     focus_visible: bool,
 }
 
 impl<Message> Focusable for SemanticState<Message> {
     fn is_focused(&self) -> bool {
-        self.focused
+        self.semantics.focused
     }
 
     fn focus(&mut self) {
-        self.focused = true;
+        self.semantics.focused = true;
         self.focus_visible = true;
     }
 
     fn unfocus(&mut self) {
-        self.focused = false;
+        self.semantics.focused = false;
         self.focus_visible = false;
     }
 }
@@ -502,11 +529,13 @@ where
     }
 
     pub fn on_activate(mut self, message: Message) -> Self {
+        self.semantics.supports_activate = true;
         self.semantics.activate = Some(message);
         self
     }
 
     pub fn on_activate_maybe(mut self, message: Option<Message>) -> Self {
+        self.semantics.supports_activate = message.is_some();
         self.semantics.activate = message;
         self
     }
@@ -525,7 +554,6 @@ where
     fn state(&self) -> tree::State {
         tree::State::new(SemanticState {
             semantics: self.semantics.clone(),
-            focused: false,
             focus_visible: false,
         })
     }
@@ -536,9 +564,11 @@ where
 
     fn diff(&self, tree: &mut widget::Tree) {
         let state = tree.state.downcast_mut::<SemanticState<Message>>();
+        let focused = state.semantics.focused;
         state.semantics = self.semantics.clone();
+        state.semantics.focused = focused;
         if state.semantics.disabled {
-            state.focused = false;
+            state.semantics.focused = false;
             state.focus_visible = false;
         }
         tree.diff_children(std::slice::from_ref(&self.content));
@@ -573,9 +603,10 @@ where
         let state = tree.state.downcast_mut::<SemanticState<Message>>();
         let focus_id = state.semantics.focus_id.clone();
         if state.semantics.disabled {
-            state.focused = false;
+            state.semantics.focused = false;
             state.focus_visible = false;
         }
+        operation.custom(None, layout.bounds(), &mut state.semantics.snapshot);
         operation.custom(Some(&focus_id), layout.bounds(), state);
 
         if !state.semantics.disabled && state.semantics.focus == FocusBehavior::Wrapper {
@@ -630,7 +661,7 @@ where
             match event {
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 | Event::Touch(iced::touch::Event::FingerPressed { .. }) => {
-                    state.focused = cursor.is_over(layout.bounds());
+                    state.semantics.focused = cursor.is_over(layout.bounds());
                     state.focus_visible = false;
                 }
                 _ => {}
@@ -648,7 +679,7 @@ where
             viewport,
         );
 
-        if shell.is_event_captured() || state.semantics.disabled || !state.focused {
+        if shell.is_event_captured() || state.semantics.disabled || !state.semantics.focused {
             return;
         }
 
@@ -1291,6 +1322,7 @@ struct SemanticFrame {
     node_index: Option<usize>,
     children: Vec<NodeId>,
     focus: Option<NodeId>,
+    semantic_focus: Option<SemanticFocus>,
     atomic: bool,
 }
 
@@ -1367,7 +1399,33 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
             }
             return;
         }
-        let Some(state) = state.downcast_mut::<SemanticState<Message>>() else {
+        if let Some(state) = state.downcast_mut::<SemanticState<Message>>() {
+            let Some(frame) = self.frames.last() else {
+                return;
+            };
+            let (Some(index), Some(focus)) = (frame.node_index, frame.semantic_focus) else {
+                return;
+            };
+            let id = self.nodes[index].0;
+            if !state.semantics.disabled {
+                let node = &mut self.nodes[index].1;
+                if state.semantics.focus != FocusBehavior::None {
+                    node.add_action(Action::Focus);
+                }
+                if state.semantics.activate.is_some() {
+                    node.add_action(Action::Click);
+                }
+                self.actions.insert(
+                    id,
+                    ActionTarget {
+                        activate: state.semantics.activate.clone(),
+                        focus: (state.semantics.focus != FocusBehavior::None).then_some(focus),
+                    },
+                );
+            }
+            return;
+        }
+        let Some(semantics) = state.downcast_mut::<SemanticSnapshot>() else {
             return;
         };
         if self.frames.iter().any(|frame| frame.atomic) {
@@ -1375,11 +1433,11 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
                 node_index: None,
                 children: Vec::new(),
                 focus: None,
+                semantic_focus: None,
                 atomic: false,
             });
             return;
         }
-        let semantics = &state.semantics;
         let (id, focus) =
             disambiguate_semantic_id(semantics.id, &mut self.occurrences, &mut self.used_ids);
         let finite = |value: f32| {
@@ -1445,22 +1503,8 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         }
         if semantics.disabled {
             node.set_disabled();
-        } else {
-            if semantics.focus != FocusBehavior::None {
-                node.add_action(Action::Focus);
-            }
-            if semantics.activate.is_some() {
-                node.add_action(Action::Click);
-            }
-            self.actions.insert(
-                id,
-                ActionTarget {
-                    activate: semantics.activate.clone(),
-                    focus: (semantics.focus != FocusBehavior::None).then_some(focus),
-                },
-            );
         }
-        if state.focused {
+        if semantics.focused {
             self.focus = id;
         }
         if let Some(parent) = self
@@ -1479,6 +1523,7 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
             node_index: Some(node_index),
             children: Vec::new(),
             focus: (semantics.focus != FocusBehavior::None).then_some(id),
+            semantic_focus: Some(focus),
             atomic: atomic_role(semantics.role),
         });
     }
@@ -2479,6 +2524,31 @@ mod tests {
     }
 
     #[test]
+    fn mapped_elements_retain_accesskit_semantics() {
+        let inner: Element<'static, Option<()>, Theme, TestRenderer> = accessible(
+            iced::widget::text("Chart"),
+            StableId::new("mapped-chart"),
+            Role::Image,
+        )
+        .label("Market chart")
+        .into();
+        let root: TestElement<'static> = inner.map(|_| Message::First);
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(320.0, 200.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+
+        let snapshot = snapshot(&mut ui, &renderer);
+        let nodes = semantic_nodes(&snapshot);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].1.role(), Role::Image);
+        assert_eq!(nodes[0].1.label(), Some("Market chart"));
+    }
+
+    #[test]
     fn logical_keys_keep_node_ids_when_source_order_changes() {
         fn ids(order: [(&'static str, &'static str); 2]) -> HashMap<String, NodeId> {
             let children: Vec<TestElement<'static>> = order
@@ -2834,17 +2904,14 @@ mod tests {
         operation.translation = Vector::new(-f32::MAX, -f32::MAX);
         let mut state: SemanticState<Message> = SemanticState {
             semantics: Semantics::new(StableId::new("extreme-bounds"), Role::Button),
-            focused: false,
             focus_visible: false,
         };
-        operation.custom(
-            None,
-            Rectangle::new(
-                Point::new(f32::MAX, f32::MAX),
-                Size::new(f32::MAX, f32::MAX),
-            ),
-            &mut state,
+        let bounds = Rectangle::new(
+            Point::new(f32::MAX, f32::MAX),
+            Size::new(f32::MAX, f32::MAX),
         );
+        operation.custom(None, bounds, &mut state.semantics.snapshot);
+        operation.custom(None, bounds, &mut state);
         operation.custom(None, Rectangle::default(), &mut SemanticEnd);
         let Outcome::Some(snapshot) = operation.finish() else {
             panic!("snapshot operation did not finish");
@@ -3148,7 +3215,7 @@ mod tests {
         drop(shell);
 
         let state = tree.state.downcast_ref::<SemanticState<Message>>();
-        assert!(state.focused);
+        assert!(state.semantics.focused);
         assert!(!state.focus_visible);
 
         element.as_widget().draw(
