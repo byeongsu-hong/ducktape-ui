@@ -1,5 +1,8 @@
 **/target/
 /.worktree/
 /HANDOFF.md
-/examples/terminal/screenshots/
+# Terminal captures may contain local session metadata; only keep the
+# deterministic idle launcher used by the example documentation.
+/examples/terminal/screenshots/*
+!/examples/terminal/screenshots/launcher_controls_light.png
 *.rs.bk
