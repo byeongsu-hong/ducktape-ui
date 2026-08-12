@@ -665,6 +665,11 @@ impl Lowerer {
                             values.take_type(&Type::Bool, "accessibility checked state")?,
                         )
                     }
+                    TestAccessibilityProperty::Expanded(_) => {
+                        ResolvedTestAccessibilityProperty::Expanded(
+                            values.take_type(&Type::Bool, "accessibility expanded state")?,
+                        )
+                    }
                     TestAccessibilityProperty::Disabled(_) => {
                         ResolvedTestAccessibilityProperty::Disabled(
                             values.take_type(&Type::Bool, "accessibility disabled state")?,

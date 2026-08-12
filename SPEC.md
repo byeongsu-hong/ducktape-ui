@@ -85,7 +85,7 @@ produce a deterministic AccessKit tree with these mappings:
 | `text` | `Label` | the visible text is its value |
 | `input` | `TextInput` | label, optional description, value, disabled/focus state |
 | secure or `secret` `input` | `PasswordInput` | label, optional description, disabled/focus state; no value is exported |
-| `button` | `Button` | label, optional description and toggled state, disabled/focus state, click action |
+| `button` | `Button` | label, optional description, toggled/expanded state, disabled/focus state, click action |
 | `checkbox` | `CheckBox` | label, optional description, toggled/disabled/focus state, click action |
 | `toggler` | `Switch` | label, optional description, toggled/disabled/focus state, click action |
 | `radio` | `RadioButton` | label, optional description, selected/checked state, disabled/focus state, click action |
@@ -102,7 +102,8 @@ accessible names; an explicit `label=` overrides them. Pick and combo controls
 use their placeholder, while editors use their placeholder or `Editor` when it
 is absent. Slider and progress use the stable defaults `Slider` and `Progress`.
 A button's optional `checked=` expression is checked as `bool` and publishes an
-AccessKit toggled state without changing its click route or visual styling.
+AccessKit toggled state; `expanded=` similarly publishes expanded/collapsed
+state. Neither changes the click route or visual styling.
 A button whose content is a child node requires `label=` (`E105`). An image
 without `label=` is decorative and is omitted from the semantic tree; media
 `description=` without `label=` is also `E105`. Secure inputs use
@@ -782,7 +783,7 @@ test_step      = "click" test_target test_pointer_button?
                | "expect" "a11y" test_target
                  ("role" | "name" | "value") expr
                | "expect" "a11y" test_target
-                 ("checked" | "disabled" | "focused") expr
+                 ("checked" | "expanded" | "disabled" | "focused") expr
                | "expect" "a11y" test_target "action"
                  ("click" | "focus") expr?
 test_pointer_button = "left" | "right" | "middle" | "back" | "forward"
@@ -1054,7 +1055,7 @@ input_style_property
 input_icon     = "icon" combo_icon_property+
 button         = "button" (string | INDENT node) id? button_property*
                  styles? "->" route (INDENT button_status_style*)?
-button_property = accessibility_property | ("disabled=" | "checked=") expr
+button_property = accessibility_property | ("disabled=" | "checked=" | "expanded=") expr
                 | ("w=" | "h=") length
                 | ("p=" | "clip=") expr
                 | "style=" (("primary" | "secondary" | "success" | "warning"

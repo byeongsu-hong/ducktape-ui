@@ -259,7 +259,7 @@ const COMPLETIONS: &[Completion] = &[
     Completion::new(
         "expect a11y",
         "test assertion",
-        "expect a11y ${1:target} ${2|role,name,value,checked,disabled,focused,action|} ${3:value}",
+        "expect a11y ${1:target} ${2|role,name,value,checked,expanded,disabled,focused,action|} ${3:value}",
     ),
     Completion::new("if", "control", "if ${1:condition}\n  $0"),
     Completion::new(
@@ -1005,7 +1005,7 @@ fn construct_schema(item: &Completion) -> Value {
             Vec::new(),
         ),
         "expect a11y" => test_statement(
-            "expect a11y <target> role|name|value <str-expression> | checked|disabled|focused <bool-expression> | action <click|focus> [<bool-expression>]",
+            "expect a11y <target> role|name|value <str-expression> | checked|expanded|disabled|focused <bool-expression> | action <click|focus> [<bool-expression>]",
         ),
         "if" => details(
             &["view"],
@@ -1257,6 +1257,8 @@ fn construct_schema(item: &Completion) -> Value {
             let mut button = properties(&[
                 ("description", "str-expression", false),
                 ("disabled", "bool-expression", false),
+                ("checked", "bool-expression", false),
+                ("expanded", "bool-expression", false),
                 ("w", "length", false),
                 ("h", "length", false),
                 ("p", "number", false),
@@ -2010,6 +2012,7 @@ fn test_target_fields() -> Value {
         ("accessibility_description", "str"),
         ("accessibility_value", "str"),
         ("accessibility_checked", "bool"),
+        ("accessibility_expanded", "bool"),
         ("accessibility_disabled", "bool"),
         ("accessibility_supports_activate", "bool"),
         ("accessibility_supports_focus", "bool"),
@@ -2204,7 +2207,7 @@ fn capture_manifest_schema() -> Value {
             "accessibility": {
                 "type": "object",
                 "required": [
-                    "role", "name", "description", "value", "checked", "disabled",
+                    "role", "name", "description", "value", "checked", "expanded", "disabled",
                     "focused", "actions"
                 ],
                 "fields": {
@@ -2213,6 +2216,7 @@ fn capture_manifest_schema() -> Value {
                     "description": { "type": ["string", "null"] },
                     "value": { "type": ["string", "null"] },
                     "checked": { "type": ["boolean", "null"] },
+                    "expanded": { "type": ["boolean", "null"] },
                     "disabled": { "type": "boolean" },
                     "focused": { "type": "boolean" },
                     "actions": {
@@ -2468,7 +2472,7 @@ fn test_contract() -> Value {
             "text": ["expect text <str-expression> [within <target>]", "expect no text <str-expression> [within <target>]"],
             "accessibility": {
                 "text": "expect a11y <target> role|name|value <str-expression>",
-                "boolean": "expect a11y <target> checked|disabled|focused <bool-expression>",
+                "boolean": "expect a11y <target> checked|expanded|disabled|focused <bool-expression>",
                 "action": "expect a11y <target> action <click|focus> [<bool-expression>]"
             },
         },
@@ -3906,6 +3910,7 @@ mod tests {
                 "accessibility_description",
                 "accessibility_value",
                 "accessibility_checked",
+                "accessibility_expanded",
                 "accessibility_disabled",
                 "accessibility_supports_activate",
                 "accessibility_supports_focus",

@@ -45,6 +45,7 @@ pub(crate) struct ResolvedButton {
     pub(crate) content: ResolvedButtonContent,
     pub(crate) disabled: Option<CheckedExprUseId>,
     pub(crate) checked: Option<CheckedExprUseId>,
+    pub(crate) expanded: Option<CheckedExprUseId>,
     pub(crate) accessibility_label: Option<CheckedExprUseId>,
     pub(crate) accessibility_description: Option<CheckedExprUseId>,
     pub(crate) width: Option<ResolvedContainerLength>,
@@ -185,6 +186,7 @@ impl Lowerer {
         };
         let disabled = values.optional(disabled.as_ref(), &Type::Bool, "disabled")?;
         let checked_state = values.optional(options.checked.as_ref(), &Type::Bool, "checked")?;
+        let expanded = values.optional(options.expanded.as_ref(), &Type::Bool, "expanded")?;
         let accessibility_label = values.optional(
             options.accessibility.label.as_ref(),
             &Type::Str,
@@ -267,6 +269,7 @@ impl Lowerer {
                     content: resolved_content,
                     disabled,
                     checked: checked_state,
+                    expanded,
                     accessibility_label,
                     accessibility_description,
                     width,

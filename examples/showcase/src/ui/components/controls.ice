@@ -34,9 +34,10 @@ component CollapsibleDemo()
   on toggle
     open = !open
   col w=fill gap=8.0
-    button -> toggle
+    button #deployment-toggle -> toggle
       with
         label="Toggle deployment details"
+        expanded=open
         w=fill
         h=36.0
         @secondary_action

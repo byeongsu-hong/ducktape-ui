@@ -1059,6 +1059,7 @@ fn parse_accessibility_expectation(
         ("name", [value]) => TestAccessibilityProperty::Name(expression(value)?),
         ("value", [value]) => TestAccessibilityProperty::Value(expression(value)?),
         ("checked", [value]) => TestAccessibilityProperty::Checked(expression(value)?),
+        ("expanded", [value]) => TestAccessibilityProperty::Expanded(expression(value)?),
         ("disabled", [value]) => TestAccessibilityProperty::Disabled(expression(value)?),
         ("focused", [value]) => TestAccessibilityProperty::Focused(expression(value)?),
         ("action", [name]) if name == "true" => {
@@ -1093,7 +1094,7 @@ fn parse_accessibility_expectation(
             return Err(error(
                 TEST_ERROR,
                 line,
-                "a11y properties use role|name|value string, checked|disabled|focused bool, or action name [bool]",
+                "a11y properties use role|name|value string, checked|expanded|disabled|focused bool, or action name [bool]",
             ));
         }
     };

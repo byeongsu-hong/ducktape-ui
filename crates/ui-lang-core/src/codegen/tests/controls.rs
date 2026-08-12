@@ -572,7 +572,7 @@ state
 on pressed
 view
   col
-    button #action label="Save" disabled=disabled checked=disabled w=fill h=48.0 p=8.0 clip=true style=dynamic_button(disabled) @disabled:opacity-50 -> pressed
+    button #action label="Save" disabled=disabled checked=disabled expanded=disabled w=fill h=48.0 p=8.0 clip=true style=dynamic_button(disabled) @disabled:opacity-50 -> pressed
       row
         text "Save"
         text "⌘S"
@@ -596,6 +596,7 @@ view
     assert!(generated.contains("::ui_lang_runtime::Role::Button"));
     assert!(generated.contains(".label(\"Save\".to_owned())"));
     assert!(generated.contains(".checked(self.disabled)"));
+    assert!(generated.contains(".expanded(self.disabled)"));
     assert!(generated.contains("crate::backend::dynamic_button(__theme, __status, self.disabled)"));
     assert!(generated.contains("fn __ui_lang_check_button_style_dynamic_button"));
     assert!(generated.contains("button::Status::Hovered =>"));

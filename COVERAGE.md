@@ -704,7 +704,7 @@ targets do not yet export to native screen readers.
 | --- | --- |
 | `text` | AccessKit `Label` with the visible text as its value |
 | `input` | `TextInput` with value, or `PasswordInput` with no exported value — permanently so for a `secret` binding; leading text is the default name and checked `label=`/`description=` may override/extend it |
-| `button` | `Button` with focus/click actions and optional checked/toggled state; compact text is the default name, child content requires `label=`, and `description=` is optional |
+| `button` | `Button` with focus/click actions and optional checked/toggled or expanded state; compact text is the default name, child content requires `label=`, and `description=` is optional |
 | `checkbox` | `CheckBox` with toggled state and focus/click actions; visible text is the default name and checked `label=`/`description=` may override/extend it |
 | `toggler` | `Switch` with toggled/disabled state and focus/click actions; visible text is the default name and checked `label=`/`description=` may override/extend it |
 | `slider` | `Slider` with a stable default name, current value, and descendant focus action |
@@ -809,7 +809,7 @@ public behavior has direct documented Ice syntax and tests.
 
 | iced surface | Ice status | Current representation / missing work |
 | --- | --- | --- |
-| `button` | native | native string or arbitrary child content, compact-label typography utilities, disabled route, optional checked/toggled accessibility state, typed size/padding/clip, all eight iced presets, every concrete field across all four statuses including linear backgrounds, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
+| `button` | native | native string or arbitrary child content, compact-label typography utilities, disabled route, optional checked/toggled or expanded accessibility state, typed size/padding/clip, all eight iced presets, every concrete field across all four statuses including linear backgrounds, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `canvas` | native | declarative rectangle/circle/line/text/path geometry; complete path builder segments, fill rules, solid/linear fill and stroke, caps/joins/dashes, transforms, clips, typed `if`/`for`, complete raster/SVG frame drawing fields, dependency-keyed geometry cache with shared named groups, typed local `Program::State`, all five event families and every variant, state updates, publish/capture/next-frame/timed-redraw actions, pointer routes, and static/state-dependent/out-of-bounds interaction cover the complete public Program behavior |
 | `checkbox` | native | native label/value/disabled event, size/width/spacing, text typography/wrapping, complete font descriptors and custom icon; all four presets, every concrete Style field across active/hovered/disabled checked and unchecked statuses, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `column` | native | children, typed spacing/per-side padding, all `Length` bounds, max width, cross-axis alignment, clipping and wrapping column spacing/alignment, and `virtual-row=` viewport-bounded layout |

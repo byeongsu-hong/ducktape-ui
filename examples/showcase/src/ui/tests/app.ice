@@ -70,6 +70,16 @@ test language_feature_contracts
   expect demo_page == 2
   expect text "16 / 9"
 
+test collapsible_button_exposes_expanded_state
+  preset test
+  viewport 520 420
+  mount
+    CollapsibleDemo #collapsible
+  target deployment_toggle = #collapsible/deployment-toggle
+  expect a11y deployment_toggle expanded false
+  click deployment_toggle
+  expect a11y deployment_toggle expanded true
+
 test generated_control_accessibility
   preset test
   viewport 520 420

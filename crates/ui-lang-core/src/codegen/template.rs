@@ -625,6 +625,7 @@ impl Builder<'_> {
         if content.is_some()
             || button.disabled.is_some()
             || button.checked.is_some()
+            || button.expanded.is_some()
             || button.accessibility_label.is_some()
             || button.accessibility_description.is_some()
             || button.width.is_some()

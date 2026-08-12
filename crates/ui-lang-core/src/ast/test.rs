@@ -300,6 +300,7 @@ pub enum TestAccessibilityProperty {
     Name(Expr),
     Value(Expr),
     Checked(Expr),
+    Expanded(Expr),
     Disabled(Expr),
     Focused(Expr),
     Action { name: String, expected: Expr },
@@ -399,6 +400,7 @@ pub(crate) fn test_step_expression_roots(step: &TestStep) -> Vec<&Expr> {
                     | TestAccessibilityProperty::Name(value)
                     | TestAccessibilityProperty::Value(value)
                     | TestAccessibilityProperty::Checked(value)
+                    | TestAccessibilityProperty::Expanded(value)
                     | TestAccessibilityProperty::Disabled(value)
                     | TestAccessibilityProperty::Focused(value)
                     | TestAccessibilityProperty::Action {
@@ -517,6 +519,7 @@ fn test_expectation_semantic_key(expectation: &TestExpectation) -> String {
                 TestAccessibilityProperty::Name(_) => "name",
                 TestAccessibilityProperty::Value(_) => "value",
                 TestAccessibilityProperty::Checked(_) => "checked",
+                TestAccessibilityProperty::Expanded(_) => "expanded",
                 TestAccessibilityProperty::Disabled(_) => "disabled",
                 TestAccessibilityProperty::Focused(_) => "focused",
                 TestAccessibilityProperty::Action { name, .. } => name,
@@ -934,6 +937,9 @@ fn accessibility_property_source(property: &TestAccessibilityProperty) -> String
         TestAccessibilityProperty::Value(value) => format!("value {}", expr_source(value)),
         TestAccessibilityProperty::Checked(value) => {
             format!("checked {}", expr_source(value))
+        }
+        TestAccessibilityProperty::Expanded(value) => {
+            format!("expanded {}", expr_source(value))
         }
         TestAccessibilityProperty::Disabled(value) => {
             format!("disabled {}", expr_source(value))

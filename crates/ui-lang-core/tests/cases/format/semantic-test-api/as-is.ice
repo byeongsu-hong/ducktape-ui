@@ -134,6 +134,7 @@ test semantic_driver
     expect control.accessibility_description == "action"
     expect field.accessibility_value == "replacement"
     expect control.accessibility_checked || !control.accessibility_checked
+    expect control.accessibility_expanded || !control.accessibility_expanded
     expect !control.accessibility_disabled
     expect control.accessibility_supports_activate
     expect control.accessibility_supports_focus
