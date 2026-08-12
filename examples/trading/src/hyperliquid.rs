@@ -6601,9 +6601,8 @@ mod tests {
             "the size reads unsigned; the word carries the side"
         );
 
-        // A page tab draws a heading and is heard as the act, and the page
-        // already on screen is a button like the other three: which one that
-        // is has to be in the name, because nothing else about a button is.
+        // A page tab draws a heading and is heard as the act; its selected
+        // state is exposed separately on the button.
         assert_eq!(page_label("PORTFOLIO".into()), "Show the portfolio page");
     }
 

@@ -148,9 +148,9 @@ test trading_a_market_order_is_quoted_at_the_book_it_would_cross
   capture ticket_market_order
 
 // Which order type and which resting rule are selected was the highlight and
-// nothing else. accesskit carries a toggled state for a checkbox and a switch,
-// not for a button, so a reader who cannot see the highlight was one press
-// from an order that fills now when they meant one that rests.
+// nothing else. The button exposes its selected state separately from its
+// action name, so a reader cannot confuse an order that fills now with one
+// that rests.
 test trading_the_order_type_and_its_life_say_which_is_selected
   preset held
   viewport 1660 820
@@ -170,10 +170,14 @@ test trading_the_order_type_and_its_life_say_which_is_selected
   expect a11y market_off checked false
   expect a11y resting name "Rest until cancelled"
   expect a11y crossing name "Fill now or cancel the rest"
+  expect a11y resting checked true
+  expect a11y crossing checked false
   click crossing
   expect ticket_tif == Tif.ioc
   expect a11y crossing_on name "Fill now or cancel the rest"
   expect a11y resting_off name "Rest until cancelled"
+  expect a11y crossing_on checked true
+  expect a11y resting_off checked false
   click market_off
   expect ticket_market
   expect a11y market_on name "Cross the spread now"

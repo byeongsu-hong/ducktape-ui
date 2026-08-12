@@ -43,10 +43,8 @@ component Sweeper(name:str, count:i64, cancel:bool, refusal:str)
 //
 // Every one of these in the ticket is a fact the order carries to the venue —
 // how it rests, which pocket its margin comes from, which unit its size is
-// typed in — so the taken one says so in its own name rather than only in its
-// colour. accesskit carries a toggled state for a checkbox and a switch and
-// none for a button, so the highlight is the whole answer to a reader who can
-// see it and no answer at all to one who cannot.
+// typed in — so the taken one exposes checked state separately from its
+// action name as well as keeping the visible highlight.
 //
 // `name` is what the column has room to paint and `act` is what a reader
 // hears, because four capital letters are no help said one at a time.
