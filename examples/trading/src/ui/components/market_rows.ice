@@ -8,6 +8,7 @@ component MarketRow(market:SymbolRow)
   button #row -> emit(pick, market.name)
     with
       label=market_label(market)
+      checked=market.selected
       w=fill
       p=0.0
     active bg=panel text=fg r=0.0
