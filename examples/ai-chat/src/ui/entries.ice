@@ -194,8 +194,12 @@ component Usage(detail:str)
 // A quiet dropdown for the header: it reads as a subtitle until it is used.
 // The default pick styling puts a filled highlight behind the selection, which
 // is far too loud for something sitting under the app's own name.
-component Chip(options:[str], selected:str?) -> str
-  pick options selected #root p=7.0 text-size=13.0 -> emit(_)
+component Chip(options:[str], selected:str?, hint:str) -> str
+  pick options selected #root -> emit(_)
+    with
+      hint=hint
+      p=7.0
+      text-size=13.0
     active text=muted handle=muted bg=surface border=surface r=7.0
     hovered text=fg handle=fg bg=accent border=border r=7.0
     opened text=fg handle=fg bg=accent border=border r=7.0

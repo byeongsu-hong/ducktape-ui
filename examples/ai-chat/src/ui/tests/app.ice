@@ -70,6 +70,8 @@ test the_composer_shows_what_will_answer_and_how_hard
   target effort_chip = #shell/app/composer/effort/root
   expect text "gpt-5.6-sol" within model_chip
   expect text "xhigh" within effort_chip
+  expect a11y model_chip name "Model"
+  expect a11y effort_chip name "Reasoning effort"
 
 // What this can and cannot prove, stated plainly: the overlay's own contents
 // are outside the tree the harness scans, and this palette paints an opened
