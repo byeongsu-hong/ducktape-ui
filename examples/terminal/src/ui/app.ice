@@ -11,6 +11,7 @@ app TerminalWorkspace
 
 use "theme.ice"
 use "extern/terminal.ice"
+use "tests/app.ice"
 
 font body family=sans default=true
 font strong family=sans weight=semibold
@@ -32,6 +33,10 @@ derived
   tool_available = (kind == "shell") || (kind == "ssh" && environment.ssh_available) || (kind == "claude" && environment.claude_available) || (kind == "codex" && environment.codex_available)
   can_start = !busy && ssh_ready && tool_available
   has_error = !empty(error)
+
+preset test
+  state
+    directory = "/workspace/ice-terminal"
 
 on mount
   environment = detect_environment()
@@ -73,6 +78,20 @@ on failed(cause)
 
 subscribe
   terminal_events(session) when running -> terminal_notice _
+
+component SessionChoice(label:str, value:str, selected:bool) -> str
+  radio label #root -> emit(_)
+    with
+      value=value
+      selected=selected
+      w=fill
+      size=16.0
+      gap=8.0
+      text-size=13.0
+    active selected bg=raised dot=primary border=primary border-w=2.0 text=fg
+    active unselected bg=surface dot=muted border=border border-w=1.0 text=fg
+    hovered selected bg=hover dot=primary border=primary_hover border-w=2.0 text=fg
+    hovered unselected bg=raised dot=primary border=muted border-w=1.0 text=fg
 
 view
   box
@@ -131,26 +150,26 @@ view
                   size=15.0
                   font=strong
                   @text-fg
-              radio "Shell" -> kind_changed _
+              SessionChoice #shell-choice -> kind_changed _
                 with
+                  label="Shell"
                   value="shell"
                   selected=(kind == "shell")
-                  w=fill
-              radio "SSH" -> kind_changed _
+              SessionChoice #ssh-choice -> kind_changed _
                 with
+                  label="SSH"
                   value="ssh"
                   selected=(kind == "ssh")
-                  w=fill
-              radio "Claude Code" -> kind_changed _
+              SessionChoice #claude-choice -> kind_changed _
                 with
+                  label="Claude Code"
                   value="claude"
                   selected=(kind == "claude")
-                  w=fill
-              radio "Codex" -> kind_changed _
+              SessionChoice #codex-choice -> kind_changed _
                 with
+                  label="Codex"
                   value="codex"
                   selected=(kind == "codex")
-                  w=fill
             col w=fill gap=6.0
               text "Availability" size=12.0 @text-muted
               row gap=10.0 wrap
@@ -169,10 +188,32 @@ view
             if kind == "ssh"
               col w=fill gap=6.0
                 text "SSH destination" size=12.0 @text-muted
-                input "user@host" #target <-> target hint="ssh user@host or ssh -p 2222 user@host"
+                input "" #target-field <-> target
+                  with
+                    label="SSH destination"
+                    hint="ssh user@host or ssh -p 2222 user@host"
+                    w=fill
+                    p=9.0
+                    text-size=13.0
+                  active bg=raised border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
+                  hovered bg=raised border=muted border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
+                  focused bg=raised border=primary border-w=2.0 r=8.0 placeholder=muted value=fg selection=primary
+                  focused-hovered bg=raised border=primary_hover border-w=2.0 r=8.0 placeholder=muted value=fg selection=primary
+                  disabled bg=surface border=border border-w=1.0 r=8.0 placeholder=subtle value=subtle selection=primary
             col w=fill gap=6.0
               text "Local working directory" size=12.0 @text-muted
-              input "Local working directory" #directory <-> directory hint="Directory path or ~"
+              input "" #directory-field <-> directory
+                with
+                  label="Local working directory"
+                  hint="Directory path or ~"
+                  w=fill
+                  p=9.0
+                  text-size=13.0
+                active bg=raised border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
+                hovered bg=raised border=muted border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
+                focused bg=raised border=primary border-w=2.0 r=8.0 placeholder=muted value=fg selection=primary
+                focused-hovered bg=raised border=primary_hover border-w=2.0 r=8.0 placeholder=muted value=fg selection=primary
+                disabled bg=surface border=border border-w=1.0 r=8.0 placeholder=subtle value=subtle selection=primary
             if !tool_available
               text "The selected command is not available on PATH."
                 with
