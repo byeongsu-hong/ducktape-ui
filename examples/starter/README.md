@@ -5,6 +5,8 @@ Ice delivery path visible: `build.rs` compiles `src/ui/app.ice`,
 `ui_lang::include_app!` includes the generated program, and the authored Ice
 test drives the real headless application.
 
+![Starter input with a visible focus ring](screenshots/starter_name_focus_is_visible/focused.png)
+
 ```bash
 cargo run -p ice-starter
 cargo test -p ice-starter
