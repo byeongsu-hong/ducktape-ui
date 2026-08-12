@@ -73,6 +73,7 @@ test narrow_toolbar_controls_fit
   target about_button = #about-button
   target new_window = #new-window
   target workspace = #workspace
+  target task_list = workspace/tasks/task-list
   expect raw_id.width >= 80.0
   expect capture.width >= 120.0
   expect inspect.width >= 100.0
@@ -81,6 +82,7 @@ test narrow_toolbar_controls_fit
   expect new_window.width >= 100.0
   expect workspace.height >= 120.0
   expect workspace.bottom <= 360.0
+  expect task_list.visible
   capture narrow_toolbar_fixed
 
 test default_toolbar_controls_fit
@@ -115,7 +117,7 @@ view
       col
         with
           gap=4.0
-          p=8.0
+          p=12.0
           @w-full
           @h-full
           @bg-bg
@@ -223,9 +225,6 @@ view
             if busy
               text "Working..." size=14.0 @text-muted
 
-        if empty(tasks) && !loading
-          text "No tasks yet." size=14.0 @text-muted
-
         panes #workspace w=fill h=fill gap=8.0 min-size=120.0 resize=8.0 drag click=pane_clicked(_)
           style
             hovered-region bg=linear(0.785, primary/10@0.0, primary/40@1.0) border=primary border-w=2.0 r=8.0
@@ -248,10 +247,13 @@ view
                   dir=vertical
                   w=fill
                   h=fill
-                keyed task in tasks by=task.id w=fill gap=8.0
-                  TaskRow task=task loading=loading
-                    events
-                      toggle -> toggle _ _
+                col w=fill
+                  if empty(tasks) && !loading
+                    text "No tasks yet." size=14.0 @text-muted
+                  keyed task in tasks by=task.id w=fill gap=8.0
+                    TaskRow task=task loading=loading
+                      events
+                        toggle -> toggle _ _
             pane details border-w=1.0 r=10.0 @bg-surface border-border
               title p=12.0 always-controls border-w=1.0 @bg-bg border-border
                 text "Details"
