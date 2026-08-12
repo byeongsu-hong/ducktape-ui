@@ -13,8 +13,8 @@ mod tests {
         let id = ui_lang_runtime::StableId::new("downstream-consumer");
         assert_ne!(id.node_id().0, 0);
 
-        use ducktape_ui::ui::theme::LIGHT;
-        use ducktape_ui::ui::virtual_list::{
+        use ui_lang_components::ui::theme::LIGHT;
+        use ui_lang_components::ui::virtual_list::{
             VirtualListConfig, VirtualListEvent, VirtualListId, VirtualListState, virtual_list,
         };
 

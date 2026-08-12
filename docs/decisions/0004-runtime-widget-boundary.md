@@ -18,7 +18,7 @@ and `COVERAGE.md` say so and the evidence below exists.
 ## Decision
 
 A reusable native data surface is implemented first in `ui-lang-runtime` with
-a typed Rust API. `ducktape-ui` may expose a themed Rust interface and reusable
+a typed Rust API. `ui-lang-components` may expose a themed Rust interface and reusable
 Ice composition around it. Each application keeps its domain item/state types
 and declares the typed extern component that adapts the native widget into its
 Ice graph. Core does not gain a special loop, selector, or widget syntax.
@@ -37,7 +37,7 @@ The runtime API must define:
 The integration and component layers separately own applicable props, events,
 slots, visual interaction states, semantic theme/font inheritance, responsive
 examples, and accessibility names and keyboard behavior. The showcase must
-consume the same public runtime and `ducktape-ui` interfaces as downstream
+consume the same public runtime and `ui-lang-components` interfaces as downstream
 applications; app-local extern glue is not presented as library API.
 
 Virtualization begins with fixed row height, stable keys, overscan, selection,
@@ -52,7 +52,7 @@ runtime capability, not part of the first contract.
 This commits the language to a reconciliation and measurement model before the
 runtime behavior is proven.
 
-### Implement only a `ducktape-ui` composition
+### Implement only a `ui-lang-components` composition
 
 Ordinary composition cannot provide bounded layout and event work for very
 large collections without a native stateful widget.

@@ -54,9 +54,9 @@ jobs:
           ICE_API_ACCEPT_BREAKING: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'api-breaking-approved' }}
           ICE_API_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          committed=api/baselines/ducktape-ui.json
-          current=target/ducktape-ui-api.json
-          cargo ice api crates/ui/src/ice/default.ice > "$current"
+          committed=api/baselines/ui-lang-components.json
+          current=target/ui-lang-components-api.json
+          cargo ice api crates/ui-lang-components/src/ice/default.ice > "$current"
 
           if ! cmp -- "$committed" "$current"; then
             echo "::error file=$committed::regenerate the committed API baseline with the documented cargo ice api command"
@@ -72,12 +72,18 @@ jobs:
             exit 1
           fi
 
-          baseline=target/ducktape-ui-api-base.json
-          if ! git cat-file -e "$ICE_API_BASE_SHA:$committed" 2>/dev/null; then
-            echo "::error file=$committed::pull request base does not contain the required reviewed Ice API baseline"
+          baseline=target/ui-lang-components-api-base.json
+          # The comparison point is whichever reviewed baseline the base commit
+          # carries, found rather than assumed: a renamed crate moves the file,
+          # and hardcoding today's path would make that rename unreviewable
+          # against yesterday's. Exactly one must exist, so an added second
+          # baseline is an error rather than an arbitrary choice.
+          base_paths="$(git ls-tree --name-only "$ICE_API_BASE_SHA" api/baselines/)"
+          if [[ "$(grep -c . <<< "$base_paths")" != "1" ]]; then
+            echo "::error::the pull request base must carry exactly one reviewed Ice API baseline, found: ${base_paths:-none}"
             exit 1
           fi
-          git show "$ICE_API_BASE_SHA:$committed" > "$baseline"
+          git show "$ICE_API_BASE_SHA:$base_paths" > "$baseline"
           cargo ice api diff "$baseline" "$baseline" > /dev/null
           if cargo ice api diff "$baseline" "$current"; then
             exit 0
@@ -90,12 +96,12 @@ jobs:
       - name: Check standalone UI feature on native and wasm
         run: |
           cargo check --locked -p ui-lang-runtime --no-default-features --features data-grid,virtual-list,x11
-          cargo check --locked -p ducktape-ui --no-default-features --features button,data-grid,tree-view,virtual-list,x11
-          cargo check --locked -p ducktape-ui --no-default-features --features log-timeline,x11
+          cargo check --locked -p ui-lang-components --no-default-features --features button,data-grid,tree-view,virtual-list,x11
+          cargo check --locked -p ui-lang-components --no-default-features --features log-timeline,x11
           rustup target add wasm32-unknown-unknown
           cargo check --locked -p ui-lang-runtime --target wasm32-unknown-unknown --no-default-features --features data-grid,virtual-list
-          cargo check --locked -p ducktape-ui --target wasm32-unknown-unknown --no-default-features --features button,data-grid,tree-view,virtual-list
-          cargo check --locked -p ducktape-ui --target wasm32-unknown-unknown --no-default-features --features log-timeline
+          cargo check --locked -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features button,data-grid,tree-view,virtual-list
+          cargo check --locked -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features log-timeline
       - name: Test native WGPU smoke harness
         run: |
           rustc --edition=2024 -D warnings --test scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke-tests

@@ -25,7 +25,7 @@ use "components/content.ice"
 use "components/catalog.ice"
 use "handlers/app.ice"
 use "tests/app.ice"
-use "../../../../crates/ui/src/ice/default.ice"
+use "../../../../crates/ui-lang-components/src/ice/default.ice"
 
 component CompactFeature(title:str)
   box #root r=11.0 @panel

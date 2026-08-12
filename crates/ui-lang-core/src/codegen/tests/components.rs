@@ -5,7 +5,7 @@ fn lowers_multiple_extern_namespaces() {
     let source = r#"app Plugins
 extern crate::backend
   pure title() -> str
-extern ducktape_ui::ice
+extern ui_lang_components::ice
   component native_switch(checked:bool) -> bool
 theme contract AppTheme
   bg
@@ -28,7 +28,7 @@ view
 "#;
     let generated = compile(source, "plugins.ice").unwrap();
     assert!(generated.contains("crate::backend::title()"));
-    assert!(generated.contains("ducktape_ui::ice::native_switch(arg0)"));
+    assert!(generated.contains("ui_lang_components::ice::native_switch(arg0)"));
 }
 
 #[test]

@@ -8,7 +8,7 @@ packages=(
   ui-lang-template
   ui-lang-core
   ui-lang-runtime
-  ducktape-ui
+  ui-lang-components
   ui-lang-build
   ui-lang
   cargo-ice
@@ -17,7 +17,7 @@ consumer_packages=(
   ui-lang-template
   ui-lang-core
   ui-lang-runtime
-  ducktape-ui
+  ui-lang-components
   ui-lang-build
   ui-lang
 )

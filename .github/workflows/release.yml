@@ -10,7 +10,7 @@ on:
       - scripts/downstream-package-smoke.sh
       - tests/downstream-app/**
       - crates/cargo-ice/**
-      - crates/ui/**
+      - crates/ui-lang-components/**
       - crates/ui-lang/**
       - crates/ui-lang-build/**
       - crates/ui-lang-core/**
@@ -43,11 +43,11 @@ jobs:
       - run: scripts/downstream-package-smoke.sh
       - name: Verify release API baseline
         run: |
-          committed=api/baselines/ducktape-ui.json
-          current=target/release-ducktape-ui-api.json
-          report=target/release-ducktape-ui-api-diff.json
+          committed=api/baselines/ui-lang-components.json
+          current=target/release-ui-lang-components-api.json
+          report=target/release-ui-lang-components-api-diff.json
 
-          cargo ice api crates/ui/src/ice/default.ice > "$current"
+          cargo ice api crates/ui-lang-components/src/ice/default.ice > "$current"
           if ! cmp -- "$committed" "$current"; then
             echo "::error file=$committed::release API baseline is not the exact current fingerprint"
             diff -u -- "$committed" "$current" || true

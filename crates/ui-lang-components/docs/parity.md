@@ -1,6 +1,6 @@
 # shadcn/ui parity
 
-ducktape-ui targets the complete [official shadcn/ui component catalog](https://ui.shadcn.com/docs/components), adapted to iced's retained-mode architecture. Parity means the same user-facing job and state model, not a literal port of React or DOM APIs.
+ui-lang-components targets the complete [official shadcn/ui component catalog](https://ui.shadcn.com/docs/components), adapted to iced's retained-mode architecture. Parity means the same user-facing job and state model, not a literal port of React or DOM APIs.
 
 **63 / 63 non-deprecated official components are Shipped.**
 
@@ -72,7 +72,7 @@ ducktape-ui targets the complete [official shadcn/ui component catalog](https://
 | Tooltip | Shipped | Noninteractive passive-content tooltip with keyboard focus plus hover, Escape dismissal, exact open/close delays, fixed text metrics/max width, collision placement, and unclipped shadow bounds. |
 | Typography | Shipped | Theme-backed heading, prose, supporting, and inline-code roles. |
 
-ducktape-ui also ships iced-specific `theme`, `surface`, `segmented-control`, `focus-control`, `modal`, and `menu` primitives. `focus-control` provides a stable focus ID and visible ring for either pointer/touch/Enter/Space activation or passive keyboard regions through iced's advanced widget API; the CLI enables the required `advanced` feature automatically. Compound-widget focus routing and semantic roles remain explicit limitations where iced does not provide them.
+ui-lang-components also ships iced-specific `theme`, `surface`, `segmented-control`, `focus-control`, `modal`, and `menu` primitives. `focus-control` provides a stable focus ID and visible ring for either pointer/touch/Enter/Space activation or passive keyboard regions through iced's advanced widget API; the CLI enables the required `advanced` feature automatically. Compound-widget focus routing and semantic roles remain explicit limitations where iced does not provide them.
 
 `VirtualList` is an additional iced-specific product primitive rather than a
 shadcn catalog entry. V1 virtualizes fixed-height unique-key rows, exposes

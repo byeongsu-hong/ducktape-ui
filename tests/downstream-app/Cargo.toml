@@ -6,7 +6,7 @@ rust-version = "1.88"
 publish = false
 
 [dependencies]
-ducktape-ui = { version = "=0.1.0", features = ["virtual-list"] }
+ui-lang-components = { version = "=0.1.0", features = ["virtual-list"] }
 iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "wgpu", "x11"] }
 ui-lang = "=0.1.0"
 ui-lang-runtime = "=0.1.0"

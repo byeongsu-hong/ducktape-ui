@@ -10,7 +10,7 @@ The public path has three layers:
 1. `ui-lang-runtime` owns keyed row reconciliation, fixed-pixel column
    geometry, the active cell and selected row, keyboard navigation, native
    two-axis scrolling, headless inspection, and AccessKit grid semantics.
-2. `ducktape-ui::ui::data_grid` re-exports those typed contracts and adds
+2. `ui_lang_components::ui::data_grid` re-exports those typed contracts and adds
    Ducktape header, cell, selection, focus, and editing styles.
 3. An Ice application owns its rows, sort policy, edit values, and native cell
    editors behind a typed `extern component`. `DataGrid.Frame` composes a title,

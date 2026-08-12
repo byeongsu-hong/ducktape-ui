@@ -57,6 +57,6 @@ the actual `.crate` archives and builds that fixture outside this workspace.
 The starter instead keeps the authored build/include/test path small enough to
 copy and read.
 
-The starter has no `ducktape-ui` or showcase dependency, and its Ice graph has
+The starter has no `ui-lang-components` or showcase dependency, and its Ice graph has
 no repository-relative import. Its local `theme.ice` import is compiled through
 the same `ui-lang-build` graph as a downstream multi-file application.

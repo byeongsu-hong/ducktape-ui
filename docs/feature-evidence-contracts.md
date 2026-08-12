@@ -38,7 +38,7 @@ epic cannot be declared complete while a required row is missing.
 | Native renderer | WGPU first draw or renderer-specific smoke |
 | Performance | realistic large fixture and budget |
 
-## `ducktape-ui` component
+## `ui-lang-components` component
 
 | Evidence | Required result |
 | --- | --- |

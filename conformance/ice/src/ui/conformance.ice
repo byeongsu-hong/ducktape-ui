@@ -13,7 +13,7 @@ app Conformance
 font geist family="Geist" default=true
 font geist_mono family="Geist Mono"
 
-use "../../../../crates/ui/src/ice/default.ice"
+use "../../../../crates/ui-lang-components/src/ice/default.ice"
 
 state
   case_id = "button.default"
