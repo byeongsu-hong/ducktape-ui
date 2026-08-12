@@ -795,7 +795,7 @@ that cannot leave the chip.
 | --- | --- |
 | Wrapping key | P-256, generated with `kSecAttrTokenIDSecureEnclave`, permanent in the data-protection keychain, one per account |
 | Guard on it | `kSecAccessControlPrivateKeyUsage` + `kSecAccessControlBiometryCurrentSet`, protection `WhenPasscodeSetThisDeviceOnly` |
-| Envelope | ECIES — ephemeral key agreement, X9.63 KDF, AES-GCM (`kSecKeyAlgorithmECIESEncryptionCofactorX963SHA256AESGCM`) |
+| Envelope | ECIES — ephemeral key agreement, X9.63 KDF, AES-GCM with the IV drawn from the KDF output (`kSecKeyAlgorithmECIESEncryptionCofactorVariableIVX963SHA256AESGCM`) |
 | Stored item | `ducktape-sealed-1:` + ciphertext, under the same `wallet:0x…` account |
 | Plaintext lifetime | after a fresh biometric assertion, in this process, until the `Secret` wrapping it drops |
 
