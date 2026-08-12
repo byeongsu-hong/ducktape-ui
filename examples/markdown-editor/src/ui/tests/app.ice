@@ -50,6 +50,20 @@ test shell_layout_and_toolbar_contract
   expect status.bottom ~= app.bottom
   expect save.visible
 
+test save_tracks_document_dirty_state
+  preset test
+  viewport 1200 800
+  target save = #app/toolbar/root/file-row/file-actions/save
+  target document_editor = #app/editor-surface/root/page/document
+  expect a11y save name "Save"
+  expect a11y save disabled true
+  capture save_clean
+  click document_editor
+  type "!"
+  expect text "Unsaved"
+  expect a11y save disabled false
+  capture save_dirty
+
 test toolbar_theme_and_find_interactions
   preset test
   viewport 1200 800
