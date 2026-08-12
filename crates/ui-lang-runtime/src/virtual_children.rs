@@ -409,8 +409,17 @@ where
         let mut running = 0.0;
         for index in 0..count {
             let node = if live.contains(index) {
-                let child_limits =
-                    layout::Limits::new(Size::new(0.0, 0.0), Size::new(width, f32::INFINITY));
+                // Height-compressed, exactly as the enclosing scrollable hands
+                // its content: flex then resolves a fill-height descendant — a
+                // `rule vertical` in a row, say — against measured content
+                // instead of against this infinite limit. Plain `Limits::new`
+                // dropped that flag, and one such row measured infinite,
+                // placing every row below it at y = ∞.
+                let child_limits = layout::Limits::with_compression(
+                    Size::ZERO,
+                    Size::new(width, f32::INFINITY),
+                    Size::new(limits.compression().width, true),
+                );
                 let node = self.children[index].as_widget_mut().layout(
                     &mut tree.children[index],
                     renderer,

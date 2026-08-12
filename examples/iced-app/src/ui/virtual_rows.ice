@@ -79,6 +79,39 @@ test virtual_column_mounts_only_what_the_viewport_can_see
   expect missing #stream/list/row("row 100")
   expect text "row 399"
 
+// A vertical rule is fill-height by nature, and iced propagates a fill child
+// up through its ancestors — so a keyed row carrying one reports fill height
+// to the virtualized column. The column lays mounted rows out against an
+// infinite height limit the way its enclosing scrollable does, and without
+// the scrollable's height *compression* on those limits, fill resolved to
+// infinity: the ruled row measured ∞ and placed every row below it at y = ∞,
+// which reads as a transcript that simply ends. The compressed limit resolves
+// the rule against measured content, exactly as the plain column always has.
+test a_fill_height_descendant_keeps_virtual_rows_finite
+  viewport 400 480
+  mount
+    RuledStream nums=virtual_nums(40) #ruled
+  target first = #ruled/stream/list/key(0)/row(0)
+
+  expect first.height < 100.0
+  expect text "row 0"
+  // Pre-fix these sat at y = ∞ — present in the tree, visible to nobody.
+  expect text "row 1"
+  expect text "row 8"
+  // Still virtualized: the far end is beyond the first-pass window.
+  expect no text "row 39"
+
+component RuledStream(nums:[i64])
+  scroll #stream
+    with
+      dir=vertical
+      w=fill
+      h=fill
+    keyed n in nums by=n #list w=fill virtual-row=32.0
+      row #row(n) w=fill gap=8.0
+        rule vertical thickness=2.0
+        text virtual_label(n)
+
 view
   col
     text "Rows" #header h=200.0

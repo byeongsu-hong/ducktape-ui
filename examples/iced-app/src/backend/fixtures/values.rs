@@ -342,3 +342,11 @@ impl iced::advanced::text::Highlighter for DemoHighlighter {
         self.line
     }
 }
+
+pub fn virtual_nums(count: i64) -> Vec<i64> {
+    (0..count.max(0)).collect()
+}
+
+pub fn virtual_label(n: i64) -> String {
+    format!("row {n}")
+}
