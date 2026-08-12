@@ -1,6 +1,6 @@
 //! Headless runtime used by generated Ice tests.
 
-use crate::{SemanticEnd, SemanticState, StableId};
+use crate::{SemanticEnd, SemanticSnapshot, SemanticState, StableId};
 use iced::advanced::Renderer as _;
 use iced::advanced::renderer::Headless as _;
 use iced::advanced::text::Paragraph as _;
@@ -1473,7 +1473,9 @@ struct IdSelector<Message> {
     native_id: widget::Id,
     stable_id: widget::Id,
     semantic_frames: Vec<Option<usize>>,
+    next_semantic_group: usize,
     source_frames: Vec<Location>,
+    identified_bounds: Vec<Option<Rectangle>>,
     marker: PhantomData<fn() -> Message>,
 }
 
@@ -1537,7 +1539,9 @@ impl<Message> IdSelector<Message> {
             native_id: logical_id.to_owned().into(),
             stable_id: StableId::new(logical_id).widget_id(),
             semantic_frames: Vec::new(),
+            next_semantic_group: 0,
             source_frames: Vec::new(),
+            identified_bounds: Vec::new(),
             marker: PhantomData,
         }
     }
@@ -1555,20 +1559,30 @@ impl<Message: 'static> Selector for IdSelector<Message> {
         if let Candidate::Custom { state, .. } = &candidate {
             if state.downcast_ref::<RenderSourceEnd>().is_some() {
                 self.source_frames.pop();
+                self.identified_bounds.pop();
                 return None;
             }
             if let Some(state) = state.downcast_ref::<RenderSourceState>() {
                 self.source_frames.push(state.0);
+                self.identified_bounds.push(None);
                 return None;
             }
             if state.downcast_ref::<SemanticEnd>().is_some() {
                 self.semantic_frames.pop();
                 return None;
             }
-            if let Some(state) = state.downcast_ref::<SemanticState<Message>>() {
-                let matches = state.semantics.logical_id.as_deref() == Some(&self.logical_id)
-                    || self.matches_id(candidate.id());
-                let group = matches.then(|| data_address(state));
+            if let Some(state) = state.downcast_ref::<SemanticSnapshot>() {
+                // An identified extern call is a generated container around a
+                // native element. Its root semantics may use an adapter-owned
+                // logical id, so pair equal bounds inside the same source frame.
+                let matches = state.logical_id.as_deref() == Some(&self.logical_id)
+                    || self.matches_id(candidate.id())
+                    || self.identified_bounds.last().copied().flatten() == Some(candidate.bounds());
+                let group = matches.then(|| {
+                    let group = self.next_semantic_group;
+                    self.next_semantic_group += 1;
+                    group
+                });
                 self.semantic_frames.push(group);
                 if !matches {
                     return None;
@@ -1581,10 +1595,16 @@ impl<Message: 'static> Selector for IdSelector<Message> {
             return None;
         }
 
-        if !matches!(&candidate, Candidate::Custom { state, .. } if state.downcast_ref::<SemanticState<Message>>().is_some())
+        if !matches!(&candidate, Candidate::Custom { state, .. } if state.downcast_ref::<SemanticSnapshot>().is_some())
             && !self.matches_id(candidate.id())
         {
             return None;
+        }
+
+        if self.matches_id(candidate.id())
+            && let Some(bounds) = self.identified_bounds.last_mut()
+        {
+            *bounds = Some(candidate.bounds());
         }
 
         let bounds = candidate.bounds();
@@ -1666,29 +1686,28 @@ impl<Message: 'static> Selector for IdSelector<Message> {
                 source,
             ),
             Candidate::Custom { state, .. } => {
-                if let Some(state) = state.downcast_ref::<SemanticState<Message>>() {
-                    let semantics = &state.semantics;
+                if let Some(state) = state.downcast_ref::<SemanticSnapshot>() {
                     (
                         true,
                         Some(data_address(state)),
-                        role_name(semantics.role),
+                        role_name(state.role),
                         None,
                         None,
-                        semantics.value.clone(),
+                        state.value.clone(),
                         Some(AccessibilityData {
-                            role: semantics.role,
-                            name: semantics.label.clone(),
-                            description: semantics.description.clone(),
-                            value: semantics.value.clone(),
-                            checked: semantics.checked,
-                            disabled: semantics.disabled,
+                            role: state.role,
+                            name: state.label.clone(),
+                            description: state.description.clone(),
+                            value: state.value.clone(),
+                            checked: state.checked,
+                            disabled: state.disabled,
                             focused: state.focused,
-                            supports_activate: !semantics.disabled && semantics.activate.is_some(),
-                            supports_focus: !semantics.disabled
-                                && semantics.focus != crate::FocusBehavior::None,
+                            supports_activate: !state.disabled && state.supports_activate,
+                            supports_focus: !state.disabled
+                                && state.focus != crate::FocusBehavior::None,
                         }),
                         Some(state.focused),
-                        semantics.source,
+                        state.source,
                     )
                 } else {
                     (
@@ -6107,6 +6126,22 @@ mod tests {
         .into()
     }
 
+    fn identified_extern_view(_state: &State) -> Element<'_, Message> {
+        let source = push_render_source(HERE);
+        let native: Element<'_, Option<()>> = crate::accessible(
+            container(text("Chart")).width(120).height(80),
+            StableId::new("native-chart"),
+            crate::Role::Image,
+        )
+        .logical_id("native-chart")
+        .label("Market chart")
+        .into();
+        let native = native.map(|_| Message::ObservedKey);
+        let identified = container(native).id("App/chart");
+        drop(source);
+        sourced(identified, HERE)
+    }
+
     #[derive(Default)]
     struct EditorState {
         content: text_editor::Content,
@@ -6716,6 +6751,26 @@ mod tests {
             "App/root/increment",
             AccessibilityProperty::Focused,
             true,
+            HERE,
+        );
+    }
+
+    #[test]
+    fn identified_extern_target_retains_descendant_semantics() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                identified_extern_view,
+            ),
+            Config::new("identified_extern_semantics").viewport(320.0, 240.0),
+        );
+
+        driver.check_accessibility_str("App/chart", AccessibilityProperty::Role, "image", HERE);
+        driver.check_accessibility_str(
+            "App/chart",
+            AccessibilityProperty::Name,
+            "Market chart",
             HERE,
         );
     }
