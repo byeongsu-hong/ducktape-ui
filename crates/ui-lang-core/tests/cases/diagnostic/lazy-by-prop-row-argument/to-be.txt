@@ -1,0 +1,2 @@
+E139
+prop `message` of `Bubble` feeds a keyed lazy value, so it must be passed an app state field or a prop fed from one

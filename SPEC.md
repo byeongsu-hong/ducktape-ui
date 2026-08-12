@@ -2202,9 +2202,11 @@ stale value or borrow view state.
 of the value: the keys — each `bool`, `i64`, or `str` — replace the value in
 the dependency tuple, and the value is captured by reference and cloned into
 the owned `cached` alias only when a key changes. An unchanged frame therefore
-deep-clones nothing, which is the point: a `for` over non-Copy rows already
+deep-clones nothing, which is the point: a `for` — and a keyed column — over
+non-Copy rows already
 iterates by reference, so a row list whose every row is a keyed `lazy` builds
-its frame without cloning a single row. The keys are the author's contract
+its frame without cloning a single row, whether the rows repeat under a
+`for`, a keyed column, or a keyed virtual column. The keys are the author's contract
 that they move whenever the value's rendered content moves — `lazy message by
 message.rev, message.seq as row` — and content that changes without moving a
 key keeps showing the cached subtree. The keyed value itself is never hashed,
@@ -2212,11 +2214,18 @@ so it needs Clone rather than Hash: `f64` — and an extern type or list/optiona
 carrying one — is a legal keyed value where the plain form's dependency must
 hash. Because the captured reference must
 outlive the view, the keyed form's value must be a place rooted in app or
-component state: a state field path, or a `for` row over such a place,
-recursively; a Copy-typed `for` row is captured by value and ends that chain,
-but only a `for` row — every other binding (a match payload, a keyed-column
-item, a table row) reaches the builder as a reference even when Copy-typed and
-is rejected. Every
+component state: a state field path, a component prop every call feeds from
+one, or a `for` or keyed-column row over such a place, recursively; a
+Copy-typed row is captured by value and ends that chain, but only a `for` or
+keyed-column row — every other binding (a match payload, a table row) reaches
+the builder as a reference to a frame temporary or as an owned value a `move`
+builder would tear out of the enclosing body, and is rejected. A prop-rooted
+value makes every call of the component part of the contract: generated
+components bake the caller's argument expression into the prop, so each call
+(and any default) must pass that prop an app state field path — or a prop fed
+the same way, recursively — and any other argument (a literal, a computed
+expression, a loop row, a component-state read) is rejected at the call site,
+where the fix belongs. Every
 other rule of the plain form — the alias-only subtree scope, unmount parking,
 preserved component routing — applies unchanged.
 

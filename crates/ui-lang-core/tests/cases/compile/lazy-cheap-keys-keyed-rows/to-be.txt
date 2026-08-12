@@ -1,0 +1,4 @@
+for message in self.messages.iter() { let __key = message.seq;
+memo_lazy((message.rev, message.seq, (format!("{}/key({})
+move |__dependency| { let __lazy_scope = __dependency.2.clone(); let row: crate::backend::Message = message.clone();
+virtual_keyed_children(__children, (48.0) as f32)
