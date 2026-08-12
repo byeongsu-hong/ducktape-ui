@@ -106,8 +106,8 @@ const NETWORKS: [Network; 4] = [
 ];
 
 /// What a reader hears on the switch, by the rule the page and interval tabs
-/// already follow: the button is named for the act, and the one already taken
-/// says so in its name rather than in its colour.
+/// already follow: the button is named for the act, with selection exposed as
+/// accessibility state.
 ///
 /// The kind is in here rather than only in the badge beside it. A labelled
 /// button's name replaces its contents, so the box reading REAL MONEY inside
@@ -115,9 +115,8 @@ const NETWORKS: [Network; 4] = [
 /// check the colour hearing four names and no deployments. This is the row a
 /// finger is travelling towards; it has to answer "real money or not" before
 /// it is pressed, and to every reader.
-pub fn venue_label(venue: Venue, shown: bool) -> String {
-    let state = if shown { ", already reading" } else { "" };
-    format!("Read {}, {}{state}", venue_name(venue), spoken_kind(venue))
+pub fn venue_label(venue: Venue) -> String {
+    format!("Read {}, {}", venue_name(venue), spoken_kind(venue))
 }
 
 /// What the control that opens the picker says it is and what it is showing.
@@ -2329,26 +2328,19 @@ mod tests {
 
     /// A switch that says which venue is being read only in its highlight
     /// colour says it to whoever can see two inks. The name a reader hears
-    /// carries the state, and it is a different sentence for each venue and
-    /// for each of the two states.
+    /// carries the venue and deployment; selection is a separate property.
     #[test]
     fn the_switch_names_the_venue_and_says_which_one_is_being_read() {
         assert_eq!(venue_name(Venue::Hyperliquid), "Hyperliquid");
         assert_eq!(venue_name(Venue::Lighter), "Lighter");
 
+        assert_eq!(venue_label(Venue::Lighter), "Read Lighter, real money");
         assert_eq!(
-            venue_label(Venue::Lighter, false),
-            "Read Lighter, real money"
-        );
-        assert_eq!(
-            venue_label(Venue::Lighter, true),
-            "Read Lighter, real money, already reading"
+            venue_label(Venue::Hyperliquid),
+            "Read Hyperliquid, real money"
         );
 
-        let mut heard: Vec<String> = BOTH
-            .iter()
-            .flat_map(|venue| [venue_label(*venue, false), venue_label(*venue, true)])
-            .collect();
+        let mut heard: Vec<String> = BOTH.iter().map(|venue| venue_label(*venue)).collect();
         assert!(
             heard.iter().all(
                 |label| label.contains(&venue_name(if label.contains("Lighter") {
@@ -2361,7 +2353,7 @@ mod tests {
         );
         heard.sort();
         heard.dedup();
-        assert_eq!(heard.len(), 4, "two tabs sounding alike say nothing");
+        assert_eq!(heard.len(), 2, "the two venues need distinct labels");
     }
 
     /// Which deployment a row is, spoken rather than only painted.
@@ -2375,13 +2367,11 @@ mod tests {
     fn every_switch_says_which_deployment_it_is() {
         for network in NETWORKS {
             let spoken = venue_kind(network.venue).to_lowercase();
-            for shown in [false, true] {
-                let row = venue_label(network.venue, shown);
-                assert!(
-                    row.contains(&spoken),
-                    "{row}: a row chosen without its kind is a row chosen blind"
-                );
-            }
+            let row = venue_label(network.venue);
+            assert!(
+                row.contains(&spoken),
+                "{row}: a row chosen without its kind is a row chosen blind"
+            );
 
             let trigger = venue_switch_label(network.venue);
             assert!(trigger.starts_with(network.name), "{trigger}");

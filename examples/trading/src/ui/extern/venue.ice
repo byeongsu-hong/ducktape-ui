@@ -7,7 +7,7 @@ extern crate::venue
   // Where a written export landed, or why it did not.
   Export(note:str, error:str)
   pure venue_name(venue:Venue) -> str
-  pure venue_label(venue:Venue, shown:bool) -> str
+  pure venue_label(venue:Venue) -> str
   // What the header's venue block says it is. It is the control that opens the
   // picker, so it names the act as well as the network it is showing.
   pure venue_switch_label(venue:Venue) -> str
