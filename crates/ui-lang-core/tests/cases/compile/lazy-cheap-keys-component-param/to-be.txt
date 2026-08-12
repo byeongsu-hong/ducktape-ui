@@ -1,0 +1,4 @@
+fn __ice_component_use_0(&self, __ice_palette: __IcePalette, __ice_use_scope: ::std::string::String) -> __IceElement<'_, __ParamKeysMessage> {
+for (__ice_index, message) in self.messages.iter().enumerate() {
+memo_lazy((message.rev, message.seq, (format!("{}/root", __ice_use_scope)
+move |__dependency| { let __lazy_scope = __dependency.2.clone(); let row: crate::backend::Message = message.clone();

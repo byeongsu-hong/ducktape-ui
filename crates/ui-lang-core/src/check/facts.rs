@@ -57,11 +57,26 @@ fn keyed_lazy_value_error(span: &Span) -> Error {
     Error::new(
         "E139",
         span,
-        "a keyed lazy value must be a state field or a `for` row over one",
+        "a keyed lazy value must be a state field, a prop fed from one, or a `for` or keyed row over one",
     )
     .hint(
         "`lazy value by key as name` captures the value by reference, \
          so it must live in app or component state",
+    )
+}
+
+fn keyed_lazy_prop_argument_error(span: &Span, component: &str, prop: &str) -> Error {
+    Error::new(
+        "E139",
+        span,
+        format!(
+            "prop `{prop}` of `{component}` feeds a keyed lazy value, \
+             so it must be passed an app state field or a prop fed from one"
+        ),
+    )
+    .hint(
+        "the keyed lazy captures the prop by reference, so every call site \
+         (and any default) must supply a place that outlives the built view",
     )
 }
 
@@ -3131,6 +3146,9 @@ struct FactsBuilder<'a> {
     builtins_by_name: HashMap<String, CheckedBuiltinId>,
     dynamic_pane_grids: std::collections::HashSet<String>,
     analyses: CheckedAnalyses,
+    /// Keyed-lazy value chains that ended at a component prop, awaiting the
+    /// per-call argument validation that runs after every view has lowered.
+    pending_keyed_lazy_props: Vec<ComponentParamId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -3375,6 +3393,7 @@ impl<'a> FactsBuilder<'a> {
             builtins_by_name: HashMap::new(),
             dynamic_pane_grids: crate::hir::dynamic_pane_grids(document),
             analyses,
+            pending_keyed_lazy_props: Vec::new(),
         }
     }
 
@@ -3870,7 +3889,7 @@ impl<'a> FactsBuilder<'a> {
                 self.lower_view_expression_tree(mount, &app_env)?;
             }
         }
-        Ok(())
+        self.validate_keyed_lazy_prop_arguments()
     }
 
     fn lower_handler_expressions(&mut self) -> Result<(), Error> {
@@ -9539,14 +9558,18 @@ impl<'a> FactsBuilder<'a> {
     /// memo dependency tuple: the generated builder captures the value by
     /// reference and clones it only when a key changes. That reference must
     /// outlive the built view, so the value has to be a place rooted in app
-    /// or component state — a state field path, or a `for` row over such a
-    /// place, recursively. A Copy-typed row is captured by value and ends
-    /// any chain.
+    /// or component state — a state field path, or a `for` or keyed-column
+    /// row over such a place, recursively. A Copy-typed row is captured by
+    /// value and ends any chain. A chain rooted at a component prop is
+    /// returned as `Some(param)` instead of accepted outright: the reference
+    /// a prop-rooted capture borrows is whatever each call site baked into
+    /// the prop, so its stability is validated per argument after every view
+    /// has lowered (see [`Self::validate_keyed_lazy_prop_arguments`]).
     fn require_borrow_stable_lazy_value(
         &self,
         use_id: CheckedExprUseId,
         span: &Span,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<ComponentParamId>, Error> {
         let mut root = self.facts.expression_use(use_id).root;
         loop {
             let expression = self.facts.expression(root);
@@ -9566,44 +9589,125 @@ impl<'a> FactsBuilder<'a> {
             match path_root {
                 CheckedPathRoot::Value(
                     CheckedValueRef::AppState(_) | CheckedValueRef::ComponentState(_),
-                ) => return Ok(()),
+                ) => return Ok(None),
+                CheckedPathRoot::Value(CheckedValueRef::ComponentParam(param)) => {
+                    return Ok(Some(*param));
+                }
                 CheckedPathRoot::Local(local) => {
                     let local = self.facts.local(*local);
-                    let CheckedLocalOwner::View {
-                        view,
-                        role: CheckedViewLocalRole::ForItem,
-                    } = local.owner
-                    else {
-                        // Only a `for` row is bound owned-by-value; every
-                        // other local (a match payload, a keyed-column item,
-                        // a table row) reaches emission as a reference even
-                        // when its Ice type is Copy, so the Copy exemption
-                        // below must not apply to it.
+                    let CheckedLocalOwner::View { view, role } = local.owner else {
                         return Err(keyed_lazy_value_error(span));
                     };
-                    // A Copy `for` row is bound owned (`.iter().cloned()`),
-                    // so the capture is by value and the chain ends here.
+                    // Only `for` and keyed-column rows bind their non-Copy
+                    // items as references into the items place (and their
+                    // Copy items owned via `.iter().cloned()`). Every other
+                    // local — a match payload, a table row — reaches
+                    // emission as a reference to a frame temporary or as an
+                    // owned value a `move` builder would tear out of the
+                    // enclosing body, so the walk stops at these two roles
+                    // and the Copy exemption below applies to nothing else.
+                    let items_role = match role {
+                        CheckedViewLocalRole::ForItem => CheckedViewExprRole::ForItems,
+                        CheckedViewLocalRole::KeyedItem => CheckedViewExprRole::KeyedItems,
+                        _ => return Err(keyed_lazy_value_error(span)),
+                    };
+                    // A Copy row is bound owned (`.iter().cloned()`), so the
+                    // capture is by value and the chain ends here.
                     if crate::codegen::copy_expression_type(&local.ty) {
-                        return Ok(());
+                        return Ok(None);
                     }
-                    // The enclosing `for` is still mid-lowering, so its flow
+                    // The enclosing loop is still mid-lowering, so its flow
                     // is not recorded yet; its items expression already is.
                     let items = self
                         .facts
                         .expression_use_by_owner(CheckedExprOwner::View {
                             view,
-                            role: CheckedViewExprRole::ForItems,
+                            role: items_role,
                         })
                         .ok_or_else(|| {
                             self.invariant(
                                 span,
-                                "checked for row without a checked items expression",
+                                "checked row local without a checked items expression",
                             )
                         })?;
                     root = self.facts.expression_use(items).root;
                 }
                 _ => return Err(keyed_lazy_value_error(span)),
             }
+        }
+    }
+
+    /// A keyed lazy value rooted at a component prop is borrow-stable only
+    /// when EVERY call feeds the prop an app state field path — or another
+    /// prop fed the same way, recursively, since generated components bake
+    /// the caller's argument expression into the prop. Row-bound locals are
+    /// rejected here even though the in-scope walk accepts them: an outlined
+    /// component use passes a local-value argument as an owned by-value
+    /// method parameter, and a `move` builder capturing that owned value
+    /// would tear it out from under the rest of the body. Component-state
+    /// reads are rejected too: their baked code embeds the call-site scope
+    /// local, which a `move` builder captures by move. Runs after every view
+    /// has lowered, because a call inside a later component body records its
+    /// argument source after the prop's own body was checked.
+    fn validate_keyed_lazy_prop_arguments(&mut self) -> Result<(), Error> {
+        let mut worklist = std::mem::take(&mut self.pending_keyed_lazy_props);
+        let mut visited: HashSet<ComponentParamId> = HashSet::new();
+        while let Some(param) = worklist.pop() {
+            if !visited.insert(param) {
+                continue;
+            }
+            let mut sources: Vec<CheckedExprUseId> = self
+                .facts
+                .component_argument_sources
+                .iter()
+                .filter(|((_, source_param), _)| *source_param == param)
+                .map(|(_, source)| match source {
+                    CheckedComponentArgumentSource::Supplied(expression)
+                    | CheckedComponentArgumentSource::Default(expression) => *expression,
+                })
+                .collect();
+            // Deterministic reporting: the textually earliest argument is
+            // lowered first, so the smallest use id is the one named.
+            sources.sort_by_key(|use_id| use_id.0);
+            for use_id in sources {
+                if let Some(next) = self.require_state_backed_prop_argument(param, use_id)? {
+                    worklist.push(next);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn require_state_backed_prop_argument(
+        &self,
+        param: ComponentParamId,
+        use_id: CheckedExprUseId,
+    ) -> Result<Option<ComponentParamId>, Error> {
+        let expression_use = self.facts.expression_use(use_id);
+        let origin = self.origins.get(expression_use.origin);
+        let span = Span {
+            line: origin.line,
+            column: origin.column,
+        };
+        let error = || {
+            let component = &self.document.components[param.component.0 as usize];
+            let prop = &component.params[param.index as usize].name;
+            keyed_lazy_prop_argument_error(&span, &component.name, prop)
+        };
+        let expression = self.facts.expression(expression_use.root);
+        let CheckedExprKind::Path { root, projections } = &expression.kind else {
+            return Err(error());
+        };
+        let struct_projections_only = projections
+            .iter()
+            .all(|projection| matches!(projection.kind, CheckedProjectionKind::Struct(_)));
+        if !struct_projections_only {
+            return Err(error());
+        }
+        match root {
+            CheckedPathRoot::Value(CheckedValueRef::AppState(_)) => Ok(None),
+            CheckedPathRoot::Value(CheckedValueRef::ComponentParam(next)) => Ok(Some(*next)),
+            _ => Err(error()),
         }
     }
 
@@ -9997,8 +10101,11 @@ impl<'a> FactsBuilder<'a> {
                         origin,
                     )?);
                 }
-                if !key_uses.is_empty() {
-                    self.require_borrow_stable_lazy_value(dependency_use, span)?;
+                if !key_uses.is_empty()
+                    && let Some(param) =
+                        self.require_borrow_stable_lazy_value(dependency_use, span)?
+                {
+                    self.pending_keyed_lazy_props.push(param);
                 }
                 let ty = self.facts.expression_use(dependency_use).source.clone();
                 let local = self.push_view_local(

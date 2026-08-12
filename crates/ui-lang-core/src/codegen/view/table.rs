@@ -166,11 +166,22 @@ pub(in crate::codegen) fn render_keyed_column(
         ),
     );
     let key = resolved_expr_use_code(program, keyed.key, &child_env, ValueMode::Owned)?;
+    // Copy rows are free to copy; anything else iterates by reference — the
+    // same borrow-aware treatment `for` rows get. The key expression and
+    // every child use site project through the reference unchanged, so row
+    // identity and diffing are untouched; only the up-front per-row deep
+    // clone disappears.
+    let element_ty = &program.expressions().local(keyed.item.local).ty;
+    let iterate = if copy_expression_type(element_ty) {
+        ".iter().cloned()"
+    } else {
+        ".iter()"
+    };
     let scope = borrowed_scope(scope);
     let child_scope = format!("format!(\"{{}}/key({{}})\", {scope}, __key)");
     let child = render_node(child, document, message, &child_env, &child_scope, slot)?;
     let mut code = format!(
-        "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}.iter().cloned() {{ let __key = {key}; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }} let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>();"
+        "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}{iterate} {{ let __key = {key}; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }} let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>();"
     );
     let spacing = keyed
         .spacing

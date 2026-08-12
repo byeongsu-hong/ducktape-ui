@@ -29,6 +29,10 @@ mod font_values;
 #[cfg(test)]
 mod lazy_cheap_keys;
 #[cfg(test)]
+mod lazy_cheap_keys_keyed;
+#[cfg(test)]
+mod lazy_cheap_keys_prop;
+#[cfg(test)]
 mod lazy_context;
 #[cfg(test)]
 mod length;
