@@ -645,6 +645,10 @@ where
     /// Lines at or past this index still carry the highlighting of an earlier
     /// pass. Scrolling one into view has to re-open a shaping pass.
     highlight_valid_until: usize,
+    /// Lines below this index deferred a draw-only format delta — stale
+    /// colour above the viewport, never stale geometry. Scrolling up to one
+    /// re-opens a pass, mirroring `highlight_valid_until` downward.
+    format_stale_before: usize,
     content_version: Option<ContentVersion>,
     width: f32,
     font: Font,
@@ -754,6 +758,7 @@ where
             source: String::new(),
             source_line_map: TextLines::empty(),
             highlight_valid_until: 0,
+            format_stale_before: 0,
             content_version: None,
             width: 0.0,
             font,
@@ -872,10 +877,19 @@ where
             .lines_above(scroll_for_highlight + viewport_height)
             .saturating_add(HIGHLIGHT_OVERSCAN_LINES)
             .min(state.source_line_map.len());
+        // The window's first line, with the overscan mirrored upward: lines
+        // above it may hold a deferred draw-only format delta, and scrolling
+        // up to them re-opens a pass the same way `highlight_until` passing
+        // the validated mark re-opens one downward.
+        let viewport_start = state
+            .document
+            .lines_above(scroll_for_highlight)
+            .saturating_sub(HIGHLIGHT_OVERSCAN_LINES);
         let needs_shape = source_changed
             || preedit_changed
             || settings_updated
             || highlight_until > state.highlight_valid_until
+            || viewport_start < state.format_stale_before
             || width_changed
             || state.font != font
             || state.text_size != text_size
@@ -940,10 +954,13 @@ where
                     change: document_change,
                     geometry_changed,
                     format_changed,
+                    viewport_start,
+                    stale_before: state.format_stale_before,
                 },
                 highlight_until,
             );
             state.highlight_valid_until = update.highlight_valid_until;
+            state.format_stale_before = update.format_stale_before;
             #[cfg(test)]
             {
                 state.metrics.mapping_line_comparisons += update.mapping_line_comparisons;

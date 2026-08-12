@@ -423,3 +423,122 @@ fn consecutive_line_highlights_share_one_surface() {
         }]
     );
 }
+
+#[test]
+fn a_draw_only_format_delta_above_the_viewport_defers_and_cleans_on_scroll_up() {
+    let doc_lines: Vec<String> = (0..100).map(|index| format!("line {index}")).collect();
+    let doc = TestDoc::new(&doc_lines);
+    let mut document = DocumentLayout::default();
+    let mut highlighter = WholeLine::default();
+    let style = test_layout_style(400.0);
+
+    let built = document.update(
+        doc.lines(),
+        &mut highlighter,
+        &|_| Format::default(),
+        style,
+        DocumentUpdate::text(DocumentChange::Discover),
+        usize::MAX,
+    );
+    assert_eq!(built.rebuilt_lines, 100);
+
+    // A colour-only format key flip while the viewport shows [80, 100): the
+    // walk classifies every line, rebuilds only the window, and marks the
+    // prefix stale instead of shaping 80 paragraphs nobody can see.
+    let recolor = |_: &()| Format {
+        color: Some(Color::BLACK),
+        ..Format::default()
+    };
+    let flipped = document.update(
+        doc.lines(),
+        &mut highlighter,
+        &recolor,
+        style,
+        DocumentUpdate {
+            change: DocumentChange::Unchanged,
+            geometry_changed: false,
+            format_changed: true,
+            viewport_start: 80,
+            stale_before: 0,
+        },
+        100,
+    );
+    assert_eq!(flipped.highlighted_lines, 100);
+    assert_eq!(flipped.rebuilt_lines, 20);
+    assert_eq!(flipped.format_stale_before, 80);
+    assert_eq!(
+        document.lines[90].signature.segments[0].format.color,
+        Some(Color::BLACK)
+    );
+    assert_eq!(document.lines[10].signature.segments[0].format.color, None);
+    // Deferring cannot move a line: the tops the reader scrolls by are exact.
+    assert!((document.lines[10].top - 10.0 * document.lines[0].height).abs() < 0.01);
+
+    // Scrolling up to [40, 60) re-opens a pass that cleans exactly the
+    // revealed window and lowers the mark to its first line; what is left
+    // below the window falls beyond `highlight_valid_until` and is cleaned
+    // by the ordinary scroll-down pass when it is shown again.
+    let cleaned = document.update(
+        doc.lines(),
+        &mut highlighter,
+        &recolor,
+        style,
+        DocumentUpdate {
+            change: DocumentChange::Unchanged,
+            geometry_changed: false,
+            format_changed: false,
+            viewport_start: 40,
+            stale_before: 80,
+        },
+        60,
+    );
+    assert_eq!(cleaned.rebuilt_lines, 20);
+    assert_eq!(cleaned.format_stale_before, 40);
+    assert_eq!(cleaned.highlight_valid_until, 60);
+    assert_eq!(
+        document.lines[50].signature.segments[0].format.color,
+        Some(Color::BLACK)
+    );
+    assert_eq!(document.lines[10].signature.segments[0].format.color, None);
+}
+
+#[test]
+fn a_format_delta_that_can_move_a_glyph_rebuilds_eagerly_everywhere() {
+    let doc_lines: Vec<String> = (0..50).map(|index| format!("line {index}")).collect();
+    let doc = TestDoc::new(&doc_lines);
+    let mut document = DocumentLayout::default();
+    let mut highlighter = WholeLine::default();
+    let style = test_layout_style(400.0);
+
+    document.update(
+        doc.lines(),
+        &mut highlighter,
+        &|_| Format::default(),
+        style,
+        DocumentUpdate::text(DocumentChange::Discover),
+        usize::MAX,
+    );
+
+    // A size change moves glyphs and therefore line tops: deferring it would
+    // let the document shift under a reader scrolling back. Every mismatch
+    // rebuilds, viewport or not, and nothing is marked stale.
+    let resized = document.update(
+        doc.lines(),
+        &mut highlighter,
+        &|_: &()| Format {
+            size: Some(Pixels(20.0)),
+            ..Format::default()
+        },
+        style,
+        DocumentUpdate {
+            change: DocumentChange::Unchanged,
+            geometry_changed: false,
+            format_changed: true,
+            viewport_start: 40,
+            stale_before: 0,
+        },
+        50,
+    );
+    assert_eq!(resized.rebuilt_lines, 50);
+    assert_eq!(resized.format_stale_before, 0);
+}

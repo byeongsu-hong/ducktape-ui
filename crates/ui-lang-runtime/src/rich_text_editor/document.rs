@@ -162,6 +162,10 @@ pub(super) struct LayoutUpdate {
     /// Lines below this index kept their cached highlighting. The caller must
     /// re-open a pass before showing any of them.
     pub(super) highlight_valid_until: usize,
+    /// Lines below this index may hold a deferred draw-only format delta —
+    /// stale colour, never stale geometry. The caller must re-open a pass
+    /// before the viewport reaches above this mark.
+    pub(super) format_stale_before: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -186,6 +190,13 @@ pub(super) struct DocumentUpdate {
     pub(super) change: DocumentChange,
     pub(super) geometry_changed: bool,
     pub(super) format_changed: bool,
+    /// First line of the revealed viewport window (minus overscan). A line
+    /// above it whose format delta cannot move a glyph may defer its rebuild
+    /// to the pass that scrolls it back into view.
+    pub(super) viewport_start: usize,
+    /// The stale-prefix mark carried from the previous pass: lines below it
+    /// may hold a deferred draw-only format delta.
+    pub(super) stale_before: usize,
 }
 
 impl DocumentUpdate {
@@ -195,6 +206,8 @@ impl DocumentUpdate {
             change,
             geometry_changed: false,
             format_changed: false,
+            viewport_start: 0,
+            stale_before: 0,
         }
     }
 }
@@ -226,6 +239,8 @@ impl DocumentLayout {
             change,
             geometry_changed,
             format_changed,
+            viewport_start,
+            stale_before,
         } = update;
         let LineMapping {
             common_prefix,
@@ -253,12 +268,27 @@ impl DocumentLayout {
         };
         let text_changed = common_prefix < old_len || common_prefix < new_len;
 
+        // A text edit above the stale prefix shifts its lines; the reveal that
+        // follows every edit re-validates from the edit's viewport, so the
+        // prefix conservatively shrinks to the edit point.
+        let mut stale_before = stale_before;
+        if text_changed {
+            stale_before = stale_before.min(common_prefix);
+        }
+
         let mut scan_start = highlighter.current_line().min(new_len);
         if text_changed {
             scan_start = scan_start.min(common_prefix);
         }
         if format_changed {
             scan_start = 0;
+        }
+        // The viewport has climbed above the stale prefix's floor: re-open
+        // from the window's first line so the stale lines it shows are
+        // re-highlighted, exactly as scrolling below `highlight_valid_until`
+        // re-opens downward.
+        if stale_before > viewport_start {
+            scan_start = scan_start.min(viewport_start);
         }
         if scan_start < new_len {
             highlighter.change_line(scan_start);
@@ -294,6 +324,7 @@ impl DocumentLayout {
             let mut styled_signature_comparisons = 0;
             let mut newly_owned_styled_texts = 0;
             let mut newly_owned_styled_text_bytes = 0;
+            let mut deferred = false;
 
             for index in scan_start..truncate_at {
                 let text = texts.get(index);
@@ -304,6 +335,20 @@ impl DocumentLayout {
                     .signature
                     .matches(text, &scratch.segments, &meta)
                 {
+                    continue;
+                }
+                // Above the revealed viewport, a delta that cannot move a
+                // glyph — colour, a highlight plate, a strikethrough — keeps
+                // its shaped paragraph and its exact height, and is rebuilt by
+                // the pass that scrolls it back into view. Deferring a delta
+                // that CAN move a glyph would let line tops drift under the
+                // reader, so those stay eager wherever they sit.
+                if index < viewport_start
+                    && self.lines[index]
+                        .signature
+                        .layout_matches(text, &scratch.segments, &meta)
+                {
+                    deferred = true;
                     continue;
                 }
                 rebuilt += 1;
@@ -325,6 +370,16 @@ impl DocumentLayout {
             }
             self.height = top.max(style.line_height.to_absolute(style.text_size).0);
 
+            let format_stale_before = if deferred {
+                viewport_start
+            } else if scan_start <= stale_before {
+                // The walk re-validated everything from `scan_start` on and
+                // deferred nothing, so any surviving staleness sits above it.
+                stale_before.min(scan_start)
+            } else {
+                stale_before
+            };
+
             return LayoutUpdate {
                 mapping_line_comparisons,
                 styled_signature_comparisons,
@@ -337,6 +392,7 @@ impl DocumentLayout {
                 change_hint_used,
                 change_hint_rejected,
                 highlight_valid_until: truncate_at,
+                format_stale_before,
             };
         }
 
@@ -438,6 +494,12 @@ impl DocumentLayout {
             change_hint_used,
             change_hint_rejected,
             highlight_valid_until: truncate_at,
+            // The general path never defers; whatever it walked is clean.
+            format_stale_before: if scan_start <= stale_before {
+                stale_before.min(scan_start)
+            } else {
+                stale_before
+            },
         }
     }
 
@@ -697,6 +759,28 @@ impl StyledLine {
             && self.line_highlight == meta.line_highlight
             && self.line_padding == meta.line_padding
             && self.line_rule == meta.line_rule
+    }
+
+    /// Whether the new format agrees with this signature on everything that
+    /// can move a glyph or a line top — font, size, line height, padding —
+    /// leaving only paint: colour, highlight plates, rules, strikethrough.
+    /// Equal-height is what makes deferring such a delta safe.
+    fn layout_matches(&self, text: &str, segments: &[Segment], meta: &LineMeta) -> bool {
+        fn paint_only(a: &Format, b: &Format) -> bool {
+            a.font == b.font
+                && a.size == b.size
+                && a.line_height == b.line_height
+                && a.line_padding == b.line_padding
+        }
+        self.text == text
+            && self.line_padding == meta.line_padding
+            && paint_only(&self.empty_format, &meta.empty_format)
+            && self.segments.len() == segments.len()
+            && self
+                .segments
+                .iter()
+                .zip(segments)
+                .all(|(old, new)| old.range == new.range && paint_only(&old.format, &new.format))
     }
 }
 

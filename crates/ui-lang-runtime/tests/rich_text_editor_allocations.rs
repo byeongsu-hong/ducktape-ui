@@ -98,12 +98,17 @@ fn allocation_contract_100k_total_allocations() {
         }
     });
 
+    // A colour-only format key flip re-shapes the revealed viewport window;
+    // the walk classifies the rest allocation-free and defers their rebuild
+    // to the pass that scrolls them into view. The caret loop above left the
+    // viewport deep, so this once shaped ~97k offscreen paragraphs — 2.7M
+    // blocks and 918MB — for lines no frame would draw.
     measure(
         &mut records,
         "format_key_only",
         1,
-        4_000_000,
-        1_700_000_000,
+        50_000,
+        20_000_000,
         || {
             let mut editor = RichTextEditor::<_, ()>::new(&content, version)
                 .width(Length::Fixed(800.0))
