@@ -27,6 +27,62 @@ use "handlers/app.ice"
 use "tests/app.ice"
 use "../../../../crates/ui/src/ice/default.ice"
 
+component CompactFeature(title:str)
+  box #root r=11.0 @panel
+    col w=fill gap=12.0
+      text title @section_title
+      slot
+
+component RetainedFeatures(panel_width:f64, compact:bool, virtual_list:VirtualListState, tree_view:TreeViewState, data_grid:DataGridState)
+  emits
+    virtual_list_changed(VirtualListEvent)
+    tree_view_changed(TreeViewEvent)
+    data_grid_changed(DataGridEvent)
+  row gap=12.0
+    box w=panel_width
+      col w=fill
+        if compact
+          CompactFeature #virtual-list-panel title="Virtual list"
+            box w=fill h=96.0
+              extern virtual_list(virtual_list) #virtual-list -> emit(virtual_list_changed, _)
+        if !compact
+          VirtualList.Frame #virtual-list-panel-wide
+            with
+              title="Virtual list"
+              description="Only visible fixed-height keyed rows cross the typed boundary."
+              count=100000
+            box w=fill h=96.0
+              extern virtual_list(virtual_list) #virtual-list -> emit(virtual_list_changed, _)
+    box w=panel_width
+      col w=fill
+        if compact
+          CompactFeature #tree-view-panel title="Tree view"
+            box w=fill h=96.0
+              extern tree_view(tree_view) #tree-view -> emit(tree_view_changed, _)
+        if !compact
+          TreeView.Frame #tree-view-panel-wide
+            with
+              title="Tree view"
+              description="Hierarchy, expansion, rename, and tree semantics stay retained."
+              count=100000
+            box w=fill h=96.0
+              extern tree_view(tree_view) #tree-view -> emit(tree_view_changed, _)
+    box w=panel_width
+      col w=fill
+        if compact
+          CompactFeature #data-grid-panel title="Data grid"
+            box w=fill h=96.0
+              extern data_grid(data_grid) #data-grid -> emit(data_grid_changed, _)
+        if !compact
+          DataGrid.Frame #data-grid-panel-wide
+            with
+              title="Data grid"
+              description="Fixed keyed rows and typed cells."
+              rows=100000
+              columns=16
+            box w=fill h=96.0
+              extern data_grid(data_grid) #data-grid -> emit(data_grid_changed, _)
+
 view
   overlay
     with
@@ -61,32 +117,43 @@ view
                 title="Ice is the source of truth"
                 description="Layout, state, routes, styles, and accessibility are generated from .ice files."
 
-            row w=fill gap=12.0
-              box w=fill
-                VirtualList.Frame #virtual-list-panel
-                  with
-                    title="Virtual list"
-                    description="Only visible fixed-height keyed rows cross the typed boundary."
-                    count=100000
-                  box w=fill h=96.0
-                    extern virtual_list(virtual_list) #virtual-list -> virtual_list_changed _
-              box w=fill
-                TreeView.Frame #tree-view-panel
-                  with
-                    title="Tree view"
-                    description="Hierarchy, expansion, rename, and tree semantics stay retained."
-                    count=100000
-                  box w=fill h=96.0
-                    extern tree_view(tree_view) #tree-view -> tree_view_changed _
-              box w=fill
-                DataGrid.Frame #data-grid-panel
-                  with
-                    title="Data grid"
-                    description="Fixed keyed rows and typed cells."
-                    rows=100000
-                    columns=16
-                  box w=fill h=96.0
-                    extern data_grid(data_grid) #data-grid -> data_grid_changed _
+            responsive
+              with
+                size=(feature_width, feature_height)
+                w=fill
+                h=192.0
+              col w=fill h=fill
+                if feature_width < 900.0
+                  scroll
+                    with
+                      w=fill
+                      h=fill
+                      dir=horizontal
+                      bar-w=8.0
+                      scroller-w=6.0
+                    RetainedFeatures #compact-feature-strip
+                      with
+                        panel_width=300.0
+                        compact=true
+                        virtual_list=virtual_list
+                        tree_view=tree_view
+                        data_grid=data_grid
+                      events
+                        virtual_list_changed -> virtual_list_changed _
+                        tree_view_changed -> tree_view_changed _
+                        data_grid_changed -> data_grid_changed _
+                if feature_width >= 900.0
+                  RetainedFeatures #wide-feature-strip
+                    with
+                      panel_width=((feature_width - 24.0) / 3.0)
+                      compact=false
+                      virtual_list=virtual_list
+                      tree_view=tree_view
+                      data_grid=data_grid
+                    events
+                      virtual_list_changed -> virtual_list_changed _
+                      tree_view_changed -> tree_view_changed _
+                      data_grid_changed -> data_grid_changed _
 
           scroll #catalog-scroll
             with

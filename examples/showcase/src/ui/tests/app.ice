@@ -124,6 +124,12 @@ test catalog_layout
   preset test
   viewport 1120 1200
   target app = #app
+  target virtual_panel = app/compact-feature-strip/virtual-list-panel/root
+  target virtual_widget = virtual_panel/virtual-list
+  target tree_panel = app/compact-feature-strip/tree-view-panel/root
+  target tree_widget = tree_panel/tree-view
+  target data_grid_panel = app/compact-feature-strip/data-grid-panel/root
+  target data_grid_widget = data_grid_panel/data-grid
   target scroller = app/catalog-scroll
   target page = scroller/page
   target grid = page/catalog-grid/root
@@ -225,6 +231,17 @@ test catalog_layout
   resize 720 560
   expect app.width ~= 720.0
   expect app.height ~= 560.0
+  expect virtual_panel.width > 280.0
+  expect virtual_panel.height < 210.0
+  expect tree_panel.height ~= virtual_panel.height
+  expect data_grid_panel.height ~= virtual_panel.height
+  expect virtual_widget.bottom < virtual_panel.bottom
+  expect tree_widget.bottom < tree_panel.bottom
+  expect data_grid_widget.bottom < data_grid_panel.bottom
+  expect virtual_widget.height ~= 96.0
+  expect tree_widget.height ~= virtual_widget.height
+  expect data_grid_widget.height ~= virtual_widget.height
+  expect scroller.height > 140.0
   expect page.x ~= app.x
   expect page.width ~= app.width - 16.0
   expect grid.x ~= page.x + 24.0
