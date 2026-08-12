@@ -43,11 +43,18 @@ test language_feature_contracts
           next -> demo_page_next
       extern aspect_ratio_demo() #aspect
   target show_code = #tabs/show-code
+  target show_preview = #tabs/show-preview
+  target show_preview_selected = #tabs/show-preview-selected
+  target show_code_selected = #tabs/show-code-selected
   target pagination_next = #pagination/next
   expect show_code.height ~= 32.0
   expect show_code.text_size ~= 12.5
   expect show_code.text_y ~= show_code.y + (show_code.height - show_code.text_height) / 2.0
+  expect show_preview_selected.height ~= 32.0
+  expect show_preview_selected.text_y ~= show_preview_selected.y + (show_preview_selected.height - show_preview_selected.text_height) / 2.0
   expect a11y show_code name "Code"
+  expect a11y show_code checked false
+  expect a11y show_preview_selected checked true
   expect pagination_next.height ~= 32.0
   expect pagination_next.text_size ~= 12.5
   expect pagination_next.text_y ~= pagination_next.y + (pagination_next.height - pagination_next.text_height) / 2.0
@@ -55,6 +62,10 @@ test language_feature_contracts
   click show_code
   expect text "button \"Save\" @primary_action -> save"
   expect demo_page == 1
+  expect a11y show_code_selected checked true
+  expect a11y show_preview checked false
+  expect show_code_selected.height ~= 32.0
+  expect show_code_selected.text_y ~= show_code_selected.y + (show_code_selected.height - show_code_selected.text_height) / 2.0
   click pagination_next
   expect demo_page == 2
   expect text "16 / 9"

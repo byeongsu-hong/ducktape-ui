@@ -66,13 +66,15 @@ component TabsDemo()
             p=4.0
             @bg-accent
             @rounded-lg
-          button "Preview" -> preview
+          button "Preview" #show-preview-selected -> preview
             with
+              checked=(selected == DemoTab.preview)
               h=32.0
               @secondary_action
               @py-6px
           button "Code" #show-code -> code
             with
+              checked=(selected == DemoTab.code)
               h=32.0
               @ghost_action
               @py-6px
@@ -95,11 +97,13 @@ component TabsDemo()
             @rounded-lg
           button "Preview" #show-preview -> preview
             with
+              checked=(selected == DemoTab.preview)
               h=32.0
               @ghost_action
               @py-6px
-          button "Code" -> code
+          button "Code" #show-code-selected -> code
             with
+              checked=(selected == DemoTab.code)
               h=32.0
               @secondary_action
               @py-6px
