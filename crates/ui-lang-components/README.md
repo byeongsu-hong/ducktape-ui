@@ -1,11 +1,11 @@
-# ducktape-ui
+# ui-lang-components
 
-Default, composable UI components for [Ice](https://github.com/byeongsu-hong/ducktape-ui) and [iced](https://github.com/iced-rs/iced).
+Default, composable UI components for [Ice](https://github.com/byeongsu-hong/ui-lang-components) and [iced](https://github.com/iced-rs/iced).
 
 Ice is the canonical application authoring surface: `.ice` owns layout, state, routes, styles, and accessibility. The feature-gated Rust modules remain the typed native boundary for retained widgets whose behavior is intentionally lower-level than Ice.
 
 Core controls remain native Ice nodes so its accessibility tree stays intact;
-`ducktape-ui` supplies their checked semantic recipes. Widgets with opaque
+`ui-lang-components` supplies their checked semantic recipes. Widgets with opaque
 retained state cross typed `extern` boundaries instead.
 
 The workspace follows that split:
@@ -24,7 +24,7 @@ the checked source interface directly:
 ```ice
 app App
 
-use "../../../../crates/ui/src/ice/default.ice"
+use "../../../../crates/ui-lang-components/src/ice/default.ice"
 
 state
   email = ""
@@ -59,7 +59,7 @@ the showcase adapter interface is not part of the default application surface.
 
 Large fixed-row collections use the feature-gated
 [`VirtualList`](docs/virtual-list.md). Its state/event API lives in
-`ui-lang-runtime`, `ducktape-ui` applies semantic theme tokens, and
+`ui-lang-runtime`, `ui-lang-components` applies semantic theme tokens, and
 `VirtualList.Frame` provides the reusable Ice composition around an
 application-owned typed extern. [`TreeView`](docs/tree-view.md) adds retained
 hierarchy, expansion, lazy loading, rename state, and tree accessibility on the
@@ -82,11 +82,11 @@ Each component remains individually feature-gated, and enabling one also enables
 
 ```toml
 [dependencies]
-ducktape-ui = { git = "https://github.com/byeongsu-hong/ducktape-ui", features = ["button", "input", "card"] }
+ui-lang-components = { git = "https://github.com/byeongsu-hong/ui-lang-components", features = ["button", "input", "card"] }
 iced = "=0.14.0"
 ```
 
-`ducktape-ui` does not silently choose an iced renderer or platform. Consumers
+`ui-lang-components` does not silently choose an iced renderer or platform. Consumers
 that use it without a separate default-featured `iced` dependency opt into
 `wgpu` or `tiny-skia` and then `x11` or `wayland`; either standalone native
 platform feature includes iced's minimal thread-pool executor. The executor is
@@ -95,7 +95,7 @@ leave the native platform features disabled and select the renderer appropriate
 to their target.
 
 ```rust
-use ducktape_ui::ui::{
+use ui_lang_components::ui::{
     button::{Button, ButtonVariant},
     theme::{LIGHT, SHADCN_LIGHT},
 };
@@ -191,6 +191,6 @@ cargo ice test
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets --all-features
-cargo check -p ducktape-ui --no-default-features --features button,x11
-cargo check -p ducktape-ui --target wasm32-unknown-unknown --no-default-features --features button
+cargo check -p ui-lang-components --no-default-features --features button,x11
+cargo check -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features button
 ```

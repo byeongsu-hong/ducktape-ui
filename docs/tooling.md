@@ -205,8 +205,8 @@ qualified alias identity; absolute source paths and codegen/HIR internals are
 not part of the hash. `cargo ice api diff BASE.json CURRENT.json` prints a
 human report by default, or versioned JSON with `--format json`, classifying
 changes as `breaking`, `behavioral_review`, or `additive`. Breaking changes
-exit nonzero. The reviewed public baseline for `ducktape-ui` lives at
-`api/baselines/ducktape-ui.json`.
+exit nonzero. The reviewed public baseline for `ui-lang-components` lives at
+`api/baselines/ui-lang-components.json`.
 
 ## lsp
 

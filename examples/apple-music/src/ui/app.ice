@@ -32,8 +32,8 @@ use "components/player.ice"
 use "handlers/app.ice"
 use "tests/app.ice"
 use "tests/components.ice"
-use "../../../../crates/ui/src/ice/recipes.ice"
-use "../../../../crates/ui/src/ice/components.ice"
+use "../../../../crates/ui-lang-components/src/ice/recipes.ice"
+use "../../../../crates/ui-lang-components/src/ice/components.ice"
 
 font geist family="Geist" default=true
 

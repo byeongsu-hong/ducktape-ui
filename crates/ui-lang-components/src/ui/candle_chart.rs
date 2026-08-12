@@ -3293,7 +3293,7 @@ mod tests {
 
     /// Timing evidence for the cached-layer design, not a pass/fail test.
     /// Run with:
-    /// `cargo test -p ducktape-ui --release --features candle-chart,tiny-skia,x11 \`
+    /// `cargo test -p ui-lang-components --release --features candle-chart,tiny-skia,x11 \`
     /// `  --lib candle_chart::tests::bench_frame_costs -- --ignored --nocapture`
     #[test]
     #[ignore = "timing evidence; run explicitly in release mode"]

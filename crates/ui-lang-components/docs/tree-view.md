@@ -9,7 +9,7 @@ The public path has three layers:
 1. `ui-lang-runtime` owns keyed preorder reconciliation, expansion, lazy-load
    requests, hierarchical keyboard movement, selection, rename state, drag
    target calculation, native scrolling, inspection, and AccessKit semantics.
-2. `ducktape-ui::ui::tree_view` adds Ducktape selection colors and level-based
+2. `ui_lang_components::ui::tree_view` adds Ducktape selection colors and level-based
    indentation.
 3. An Ice application owns its typed data and reducer behind an `extern
    component`. `TreeView.Frame` composes the title and bounded native slot.

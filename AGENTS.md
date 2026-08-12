@@ -7,7 +7,7 @@ contains the parser, AST, semantic checker, formatter, and Rust code generator.
 `crates/ui-lang/` provides the proc-macro adapter, `crates/ui-lang-runtime/`
 contains runtime widgets and accessibility support, `crates/ui-lang-template/`
 defines the published view format both the generator and the runtime use,
-`crates/ui/` provides the default component library, and `crates/cargo-ice/`
+`crates/ui-lang-components/` provides the default component library, and `crates/cargo-ice/`
 implements the `cargo ice` tooling. Runnable applications live in `examples/`;
 their `.ice` sources are under `src/ui/` and supporting Rust code under `src/`.
 End-to-end language fixtures are in `crates/ui-lang-core/tests/cases/`. Do not

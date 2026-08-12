@@ -12,22 +12,22 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use ducktape_ui::ui::candle_chart::{
-    ChartMarker, MarkerShape, PriceLine, SharedCandles, candle_chart_shared, format_price,
-    format_volume,
-};
-use ducktape_ui::ui::theme;
 use iced::{Color, Element, Font, Length};
 use serde_json::{Value, json};
 use smol::channel::{Receiver, Sender};
 use tungstenite::stream::MaybeTlsStream;
+use ui_lang_components::ui::candle_chart::{
+    ChartMarker, MarkerShape, PriceLine, SharedCandles, candle_chart_shared, format_price,
+    format_volume,
+};
+use ui_lang_components::ui::theme;
 use ui_lang_runtime::{Role, StableId, accessible};
 
 use crate::Venue;
 use crate::signing::{self, Action, Chain, Wallet};
 use crate::venue::venue_name;
 
-pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
+pub use ui_lang_components::ui::candle_chart::{Candle, CandleHit};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// Items waiting between a websocket thread and Ice.
@@ -3655,7 +3655,7 @@ const WIDTHS: [&str; 6] = ["1d", "4h", "1h", "15m", "5m", "1m"];
 /// that is mostly empty with a long average that never begins. A market listed
 /// last week has four daily bars and four hundred hourly ones, and the hourly
 /// chart is the one that shows it.
-const ENOUGH_BARS: i64 = ducktape_ui::ui::candle_chart::DEFAULT_BARS as i64;
+const ENOUGH_BARS: i64 = ui_lang_components::ui::candle_chart::DEFAULT_BARS as i64;
 
 /// The next width down when this one is too thin to open on, and the width
 /// itself when it is not — which is also the answer at `1m`, where there is

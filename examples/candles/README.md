@@ -1,7 +1,7 @@
 # Candles
 
 A native lightweight financial chart written in Ice. The `candle-chart`
-widget in [`crates/ui`](../../crates/ui/src/ui/candle_chart.rs) renders
+widget in [`crates/ui`](../../crates/ui-lang-components/src/ui/candle_chart.rs) renders
 OHLCV candlesticks, a volume histogram, price/time axes, a last-price line,
 and a crosshair on an iced canvas. Grid, candles, volume, and axes live in a
 cached geometry layer that is only rebuilt when the data or the visible range
@@ -60,7 +60,7 @@ and a tick updates only its block path in O(log). Memory cost: ~2 f64 per
 candle. Reproduce with:
 
 ```bash
-cargo test -p ducktape-ui --release --features candle-chart,tiny-skia,x11 \
+cargo test -p ui-lang-components --release --features candle-chart,tiny-skia,x11 \
   --lib candle_chart::tests::bench_frame_costs -- --ignored --nocapture
 ```
 

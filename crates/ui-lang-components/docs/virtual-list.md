@@ -9,7 +9,7 @@ The public path has three layers:
    measured viewport geometry, focus, pointer selection, keyboard navigation,
    internal native-scroll synchronization, and AccessKit
    collection/item semantics.
-2. `ducktape-ui::ui::virtual_list` re-exports those exact public state/event
+2. `ui_lang_components::ui::virtual_list` re-exports those exact public state/event
    types and adds Ducktape row theming.
 3. An Ice application declares its own typed `extern component`, `task`
    reducer, item type, and data source. `VirtualList.Frame` is the reusable Ice
@@ -116,7 +116,7 @@ exactly. TreeView and DataGrid build on this runtime contract;
 variable-height virtualization and nested vertical scrolling need separate
 measurement, anchoring, and coordinate-context evidence before admission.
 
-The `ducktape-ui` feature enables only the renderer-side
+The `ui-lang-components` feature enables only the renderer-side
 `ui-lang-runtime/virtual-list` boundary and therefore compiles for
 `wasm32-unknown-unknown`. Direct native runtime consumers that disable default
 features must also select a platform backend, for example:
@@ -127,7 +127,7 @@ ui-lang-runtime = { version = "0.1.0", default-features = false, features = ["vi
 
 `wayland` is the Linux alternative; both enable `thread-pool`. The runtime also
 exposes `wgpu` and `tiny-skia` passthrough features, aligned with
-`ducktape-ui`. Bare `virtual-list` deliberately chooses no Linux window backend
+`ui-lang-components`. Bare `virtual-list` deliberately chooses no Linux window backend
 and is sufficient for `wasm32-unknown-unknown`. The full native Ice headless
 driver remains the runtime crate's default `test-runtime` feature. Release CI measures unchanged
 100,000-row frames, a showcase-equivalent `update_snapshot` plus `Scrolled`

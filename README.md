@@ -213,7 +213,7 @@ cargo run -p browser-example   # native CEF child inside an Ice shell (see examp
 cargo ice dev -p hotreload-example # side-by-side hot reload preview and Ice editor
 cargo run -p markdown-example  # native Markdown editor (see examples/markdown-editor/DESIGN.md)
 cargo run -p terminal-example  # native PTY terminal component (see examples/terminal)
-cargo run -p showcase          # the ducktape-ui component catalog (crates/ui)
+cargo run -p showcase          # the default component catalog (crates/ui-lang-components)
 cargo run -p ice-starter       # the minimal copyable build/include/test path
 cargo run -p candles-example   # native lightweight financial chart (see examples/candles)
 cargo run -p trading-example   # live Hyperliquid markets, positions, and fills (see examples/trading)
@@ -247,8 +247,8 @@ every depth; both run on every platform. Other targets compile the same source
 with the tray as a no-op; see `SPEC.md` for the mapping.
 
 `showcase` also exercises the 100k-row collection widgets behind typed extern
-boundaries — no Core syntax involved: [`VirtualList`](crates/ui/docs/virtual-list.md),
-[`TreeView`](crates/ui/docs/tree-view.md), [`DataGrid`](crates/ui/docs/data-grid.md).
+boundaries — no Core syntax involved: [`VirtualList`](crates/ui-lang-components/docs/virtual-list.md),
+[`TreeView`](crates/ui-lang-components/docs/tree-view.md), [`DataGrid`](crates/ui-lang-components/docs/data-grid.md).
 
 ## First-class tests
 

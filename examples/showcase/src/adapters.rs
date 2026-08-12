@@ -1,6 +1,12 @@
 //! Fixed retained-widget adapters for the component catalog.
 
-use ducktape_ui::ui::{
+use iced::alignment::{Horizontal, Vertical};
+use iced::font::{Style as FontStyle, Weight};
+use iced::widget::{column, container, row, text};
+use iced::{Background, Border, Element, Font, Length};
+use std::collections::HashMap;
+use std::sync::Arc;
+use ui_lang_components::ui::{
     alert_dialog::{
         AlertDialogActionVariant, AlertDialogEvent as UiAlertDialogEvent, AlertDialogFocus,
         alert_dialog as ui_alert_dialog, next_open as next_alert_dialog_open,
@@ -73,12 +79,6 @@ use ducktape_ui::ui::{
         VirtualListState as UiVirtualListState, virtual_list as ui_virtual_list,
     },
 };
-use iced::alignment::{Horizontal, Vertical};
-use iced::font::{Style as FontStyle, Weight};
-use iced::widget::{column, container, row, text};
-use iced::{Background, Border, Element, Font, Length};
-use std::collections::HashMap;
-use std::sync::Arc;
 use ui_lang_runtime::{Role, StableId, accessible};
 
 const ACTION_HEIGHT: f32 = 36.0;
@@ -86,7 +86,7 @@ const DEMO_STAGE_HEIGHT: f32 = 208.0;
 const SIDEBAR_STAGE_HEIGHT: f32 = 404.0;
 const DATA_TABLE_PAGE_SIZE: usize = 3;
 
-pub use ducktape_ui::ui::{
+pub use ui_lang_components::ui::{
     calendar::{CalendarEvent, CalendarState},
     chart::ChartHit,
     command::CommandState,
@@ -99,8 +99,8 @@ pub use ducktape_ui::ui::{
     popover::PopoverEvent,
 };
 
-pub type CommandEvent = ducktape_ui::ui::command::CommandEvent<String>;
-pub type SelectEvent = ducktape_ui::ui::select::SelectEvent<String>;
+pub type CommandEvent = ui_lang_components::ui::command::CommandEvent<String>;
+pub type SelectEvent = ui_lang_components::ui::select::SelectEvent<String>;
 pub type LogTimelineEvent = UiLogTimelineEvent<u64>;
 pub type VirtualListEvent = UiVirtualListEvent<u64>;
 pub type TreeViewEvent = UiTreeViewEvent<u64>;
@@ -270,7 +270,7 @@ pub struct DatePickerState {
 #[derive(Debug, Clone)]
 pub struct SelectState {
     ids: SelectIds,
-    menu: ducktape_ui::ui::menu::MenuState,
+    menu: ui_lang_components::ui::menu::MenuState,
     selected: Option<String>,
     open: bool,
 }
@@ -350,7 +350,7 @@ pub fn checkbox_style(
     _iced_theme: &iced::Theme,
     status: iced::widget::checkbox::Status,
 ) -> iced::widget::checkbox::Style {
-    ducktape_ui::ui::checkbox::style(&theme(), status)
+    ui_lang_components::ui::checkbox::style(&theme(), status)
 }
 
 pub fn switch(id: &str, checked: bool, disabled: bool) -> Element<'static, bool> {
@@ -371,19 +371,19 @@ pub fn switch(id: &str, checked: bool, disabled: bool) -> Element<'static, bool>
 }
 
 pub fn progress_style(_iced_theme: &iced::Theme) -> iced::widget::progress_bar::Style {
-    ducktape_ui::ui::progress::style(&theme(), ProgressVariant::Default)
+    ui_lang_components::ui::progress::style(&theme(), ProgressVariant::Default)
 }
 
 pub fn progress_success_style(_iced_theme: &iced::Theme) -> iced::widget::progress_bar::Style {
-    ducktape_ui::ui::progress::style(&theme(), ProgressVariant::Success)
+    ui_lang_components::ui::progress::style(&theme(), ProgressVariant::Success)
 }
 
 pub fn progress_warning_style(_iced_theme: &iced::Theme) -> iced::widget::progress_bar::Style {
-    ducktape_ui::ui::progress::style(&theme(), ProgressVariant::Warning)
+    ui_lang_components::ui::progress::style(&theme(), ProgressVariant::Warning)
 }
 
 pub fn progress_destructive_style(_iced_theme: &iced::Theme) -> iced::widget::progress_bar::Style {
-    ducktape_ui::ui::progress::style(&theme(), ProgressVariant::Destructive)
+    ui_lang_components::ui::progress::style(&theme(), ProgressVariant::Destructive)
 }
 
 pub fn input_otp<'a>(
@@ -408,7 +408,7 @@ pub fn input_otp<'a>(
 
 pub fn spinner(frame: i64, reduced_motion: bool) -> Element<'static, ()> {
     let spinner = ui_spinner(
-        frame.rem_euclid(ducktape_ui::ui::spinner::FRAME_COUNT.into()) as u8,
+        frame.rem_euclid(ui_lang_components::ui::spinner::FRAME_COUNT.into()) as u8,
         reduced_motion,
         &theme(),
     );
@@ -533,7 +533,7 @@ pub fn date_picker(state: &DatePickerState) -> Element<'static, DatePickerEvent>
 
 pub fn aspect_ratio_demo() -> Element<'static, ()> {
     let theme = theme();
-    let view = ducktape_ui::ui::aspect_ratio::aspect_ratio(16.0 / 9.0, move || {
+    let view = ui_lang_components::ui::aspect_ratio::aspect_ratio(16.0 / 9.0, move || {
         container(
             text("16 / 9")
                 .size(20)
@@ -680,9 +680,9 @@ pub fn select_state() -> SelectState {
     let groups = select_groups();
     SelectState {
         ids: SelectIds::new("ice-default"),
-        menu: ducktape_ui::ui::menu::MenuState::initial(&ducktape_ui::ui::select::select_entries(
-            &groups, None,
-        )),
+        menu: ui_lang_components::ui::menu::MenuState::initial(
+            &ui_lang_components::ui::select::select_entries(&groups, None),
+        ),
         selected: None,
         open: false,
     }
@@ -693,7 +693,7 @@ pub fn select_apply(mut state: SelectState, event: SelectEvent) -> iced::Task<Se
     if let SelectEvent::Selected(value) = &event {
         state.selected = Some(value.clone());
     }
-    if let SelectEvent::Menu(ducktape_ui::ui::menu::MenuEvent::StateChanged(menu)) = &event {
+    if let SelectEvent::Menu(ui_lang_components::ui::menu::MenuEvent::StateChanged(menu)) = &event {
         state.menu.clone_from(menu);
     }
     let focus = event.focus_task(&state.ids, &select_groups(), &state.menu);
@@ -1341,7 +1341,7 @@ pub fn sonner(state: &SonnerState) -> Element<'_, SonnerEvent> {
         column![
             iced::widget::Space::new().height(Length::Fill),
             text(count_label).size(12),
-            ducktape_ui::ui::button::button("Show notification", &theme)
+            ui_lang_components::ui::button::button("Show notification", &theme)
                 .height(ACTION_HEIGHT)
                 .on_press(SonnerEvent::Show),
         ]
@@ -1629,7 +1629,7 @@ pub fn hover_card() -> Element<'static, bool> {
         column![
             text("ducktape-ui").size(16),
             text("Default components authored from Ice."),
-            ducktape_ui::ui::button::button("Open profile", &theme)
+            ui_lang_components::ui::button::button("Open profile", &theme)
                 .height(ACTION_HEIGHT)
                 .on_press(true)
         ]
@@ -2634,7 +2634,7 @@ fn catalog_items(query: &str) -> Vec<CatalogItem> {
     .collect()
 }
 
-fn theme() -> ducktape_ui::ui::theme::Theme {
+fn theme() -> ui_lang_components::ui::theme::Theme {
     LIGHT.with_fonts(
         crate::Showcase::default_font(),
         Font::with_name("Geist Mono"),

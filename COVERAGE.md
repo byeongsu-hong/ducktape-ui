@@ -192,7 +192,7 @@ new component that already owns events remains one additive component change.
 The extracted-crate downstream fixture runs the packaged `cargo-ice` binary to
 prove deterministic emission, a zero JSON diff, rejection of that named-event
 change, and rejection of a corrupt fingerprint outside the workspace.
-Pull-request CI requires an exactly regenerated `ducktape-ui` artifact,
+Pull-request CI requires an exactly regenerated `ui-lang-components` artifact,
 compares it with the target commit's reviewed baseline, and accepts a breaking
 result only through a maintainer-controlled label event for the latest head.
 The release packages job independently regenerates the artifact and requires
@@ -392,7 +392,7 @@ child typography ownership, invalid bodies, duplicate
 declarations, target mismatch, and semantic disabled button background/text
 overrides. Recipe definitions and references also
 participate in cross-file LSP definition and safe rename. The workspace-local
-`ducktape-ui` interface and showcase compile through the same recipe path, and a
+`ui-lang-components` interface and showcase compile through the same recipe path, and a
 focused test proves its Ice palette matches the retained Rust `LIGHT` palette.
 The private HIR assigns recipe, style-use, target, and variant IDs and stores
 each recipe as a cycle-free, base-first semantic patch. A style use merges that
@@ -446,9 +446,9 @@ through an unavailable or unrelated cursor. The runnable showcase keeps the
 list in a fixed non-scrolling region and gives only the catalog below it an
 independent vertical scrollable.
 The extracted-crate downstream consumer compiles and executes the public
-runtime and `ducktape-ui` boundary.
+runtime and `ui-lang-components` boundary.
 The showcase consumes it through a typed Ice extern and first-class tiny-skia
-capture; direct `ui-lang-runtime` and `ducktape-ui` minimal-feature checks cover
+capture; direct `ui-lang-runtime` and `ui-lang-components` minimal-feature checks cover
 native X11 and wasm, and the extracted runtime package repeats the direct native
 `virtual-list,x11` contract. Bare `virtual-list` intentionally leaves native
 platform selection to the caller. The

@@ -50,11 +50,11 @@ hash-corrupt artifact. This proves the public API workflow from packaged crates
 rather than from workspace paths.
 
 The default component library also keeps a reviewed semantic API baseline at
-`api/baselines/ducktape-ui.json`. Before release, regenerate and compare it:
+`api/baselines/ui-lang-components.json`. Before release, regenerate and compare it:
 
 ```bash
-cargo ice api crates/ui/src/ice/default.ice > target/ducktape-ui-api.json
-cargo ice api diff api/baselines/ducktape-ui.json target/ducktape-ui-api.json
+cargo ice api crates/ui-lang-components/src/ice/default.ice > target/ui-lang-components-api.json
+cargo ice api diff api/baselines/ui-lang-components.json target/ui-lang-components-api.json
 ```
 
 Breaking changes exit nonzero. Update the committed baseline only when the
@@ -122,7 +122,7 @@ it now.
 
 The first crates.io publication must respect this dependency graph:
 
-1. `ui-lang-core`, `ui-lang-runtime`, and `ducktape-ui`
+1. `ui-lang-core`, `ui-lang-runtime`, and `ui-lang-components`
 2. `ui-lang-build`
 3. `ui-lang` and `cargo-ice`
 

@@ -93,7 +93,7 @@ property.
 
 ## Build the visual system
 
-If the application has the `ducktape-ui` source interface at a stable relative
+If the application has the `ui-lang-components` source interface at a stable relative
 path, import its `default.ice` and start with the shared components and recipes.
 A Cargo dependency alone does not create an Ice import path; otherwise vendor
 the complete `src/ice` directory or use the Rust API. Do not copy individual

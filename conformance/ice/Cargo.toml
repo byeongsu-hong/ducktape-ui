@@ -13,7 +13,7 @@ ui-lang-runtime.workspace = true
 ui-lang-build.workspace = true
 
 [dev-dependencies]
-ducktape-ui = { workspace = true, features = ["button", "theme"] }
+ui-lang-components = { workspace = true, features = ["button", "theme"] }
 iced_test = "=0.14.0"
 png = "0.18"
 serde = { version = "1", features = ["derive"] }

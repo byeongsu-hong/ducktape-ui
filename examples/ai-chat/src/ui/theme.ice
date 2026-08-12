@@ -1,6 +1,6 @@
 // The night palette for the design system's own contract.
 //
-// `crates/ui/src/ice/default.ice` ships one palette, `app`, which is warm paper
+// `crates/ui-lang-components/src/ice/default.ice` ships one palette, `app`, which is warm paper
 // — so this is warm ink rather than the usual blue-grey: the same hues held at
 // low light, so a chat that is open all evening does not change character when
 // the lamp goes off. Terracotta lifts to clay, which is the one hue that has to

@@ -18,7 +18,7 @@ app AiChat
     min-size 760 480
     position centered
 
-use "../../../../crates/ui/src/ice/default.ice"
+use "../../../../crates/ui-lang-components/src/ice/default.ice"
 use "theme.ice"
 use "extern/codex.ice"
 use "entries.ice"

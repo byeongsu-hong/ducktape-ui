@@ -1,5 +1,4 @@
 use super::Conformance;
-use ducktape_ui::ui::theme::{LIGHT, Theme};
 use iced::widget;
 use iced_test::Simulator;
 use serde::Deserialize;
@@ -7,6 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use ui_lang_components::ui::theme::{LIGHT, Theme};
 
 const CONTRACT: &str = include_str!("../../expected/reference.json");
 const GEIST_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Geist-Regular.ttf");

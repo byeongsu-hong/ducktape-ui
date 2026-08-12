@@ -1952,7 +1952,7 @@ named by the `ClientOrderIndex` its placer chose, and that index is what
 
 ## Marking trades on the chart
 
-The chart is `candle-chart` from [`crates/ui`](../../crates/ui/src/ui/candle_chart.rs)
+The chart is `candle-chart` from [`crates/ui`](../../crates/ui-lang-components/src/ui/candle_chart.rs)
 with three annotation overlays:
 
 ```rust

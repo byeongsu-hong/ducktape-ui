@@ -1,11 +1,11 @@
 #[cfg(feature = "button")]
 #[test]
 fn enabled_component_imports_and_accepts_custom_content() {
-    use ducktape_ui::ui::{
+    use iced::widget::{row, text};
+    use ui_lang_components::ui::{
         button::{Button, ButtonVariant},
         theme::LIGHT,
     };
-    use iced::widget::{row, text};
 
     let button: iced::Element<'_, ()> =
         Button::new(row![text("custom icon"), text("custom label")], &LIGHT)
@@ -19,7 +19,7 @@ fn enabled_component_imports_and_accepts_custom_content() {
 #[cfg(feature = "log-timeline")]
 #[test]
 fn log_timeline_feature_exports_the_typed_virtualized_boundary() {
-    use ducktape_ui::ui::{
+    use ui_lang_components::ui::{
         log_timeline::{
             LogTimelineEvent, LogTimelineState, VirtualListConfig, VirtualListId, log_timeline,
         },

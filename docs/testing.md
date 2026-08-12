@@ -715,7 +715,7 @@ on both — absolute numbers run high there and only the ratio is a reading:
 Why the *app*, when the frame is spent inside iced: a frame is iced's generic
 widget machinery monomorphized into the crate that *instantiates* it, and a
 monomorphization is codegen'd at the instantiating crate's opt-level, not at
-iced's. Raising the framework crates (`ui-lang-runtime`, `ducktape-ui`) to 2
+iced's. Raising the framework crates (`ui-lang-runtime`, `ui-lang-components`) to 2
 moved nothing, for the same reason — they instantiate very little of what a
 frame walks.
 
@@ -1113,7 +1113,7 @@ generated file count goes from 12 to 60. Interleaved, under a quiet machine:
 
 | edit | per fragment | per component |
 | --- | --- | --- |
-| `crates/ui/src/ice/components.ice` | 2.38s | 2.35s |
+| `crates/ui-lang-components/src/ice/components.ice` | 2.38s | 2.35s |
 | `components/navigation.ice` (control) | 2.55s | 2.61s |
 
 Nothing. Whatever decides the codegen cost of an edit here, it is not the

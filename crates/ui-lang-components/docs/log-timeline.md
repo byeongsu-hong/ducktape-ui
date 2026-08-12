@@ -70,7 +70,7 @@ whose height changes, new-turn peek anchors, or preserved prepend position; use
 `MessageScroller`. Do not use `MessageScroller` to mount a 100,000-line fixed
 log merely to obtain tail following; use `LogTimeline`.
 
-The `ducktape-ui/log-timeline` feature enables `virtual-list` transitively and
+The `ui-lang-components/log-timeline` feature enables `virtual-list` transitively and
 therefore uses the renderer-only `ui-lang-runtime/virtual-list` boundary. It
 selects no native platform backend, remains compatible with wasm, and inherits
 the same bounded-height/no-vertical-scrolling-ancestor requirement documented

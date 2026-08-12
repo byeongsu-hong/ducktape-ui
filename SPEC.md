@@ -2297,7 +2297,7 @@ Iced editor formats can vary color and font. Mixed metrics, span backgrounds,
 visual-line backgrounds, and shared rich hit-test geometry require a custom
 widget such as `ui_lang_runtime::RichTextEditor`.
 Large fixed-height collections use `ui_lang_runtime::VirtualListState` and the
-feature-gated `ducktape_ui::ui::virtual_list` typed boundary. Stable unique keys
+feature-gated `ui_lang_components::ui::virtual_list` typed boundary. Stable unique keys
 reconcile selection across reorder/delete, while native focus, pointer selection,
 Up/Down/Home/End/PageUp/PageDown, scroll-to-item, visible-range inspection, and
 named AccessKit list/item metadata remain runtime behavior. Visible and mounted
@@ -2348,7 +2348,7 @@ focuses and navigates the collection but does not create offscreen item nodes or
 per-item accessibility actions.
 
 Hierarchical fixed-row collections use `ui_lang_runtime::TreeViewState` and the
-feature-gated `ducktape_ui::ui::tree_view` boundary on that same native
+feature-gated `ui_lang_components::ui::tree_view` boundary on that same native
 collection engine. Callers reconcile unique keyed nodes in preorder, with each
 parent preceding a contiguous child subtree and marked `has_children`; invalid
 duplicate, missing, later, leaf, or already-closed parents reject the complete
@@ -2368,7 +2368,7 @@ identity, one-based level, sibling position and size, selection, and expansion.
 caller-flattened, and outside Core syntax.
 
 Large fixed-row tabular surfaces use `ui_lang_runtime::DataGridState` and the
-feature-gated `ducktape_ui::ui::data_grid` boundary. Callers reconcile unique
+feature-gated `ui_lang_components::ui::data_grid` boundary. Callers reconcile unique
 typed row keys and unique fixed-pixel typed columns. Successful reconciliation
 atomically publishes constant-time row and column indexes; stable row semantic
 identity, the active cell, and its selected row follow keys across reorder.

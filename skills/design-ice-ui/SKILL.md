@@ -55,7 +55,7 @@ Apply these rules before editing:
   for higher-order or custom native behavior. Do not add a keyword merely to
   mirror another Iced method, and do not treat a missing application-facing
   capability as outside the language contract.
-- When the `ducktape-ui` source interface exists at a stable relative path,
+- When the `ui-lang-components` source interface exists at a stable relative path,
   import its `default.ice` once and reuse its checked components and recipes
   before declaring local equivalents. A Cargo dependency alone does not create
   an Ice import path; otherwise vendor its complete `src/ice` directory or use
@@ -99,9 +99,9 @@ refactoring `.ice`. Read the other references only when their scope is involved:
 In this repository, start with:
 
 ```text
-crates/ui/src/ice/default.ice            workspace design-system entry source
-crates/ui/src/ice/components.ice         shared structural components and variants
-crates/ui/src/ice/recipes.ice            shared semantic visual roles
+crates/ui-lang-components/src/ice/default.ice            workspace design-system entry source
+crates/ui-lang-components/src/ice/components.ice         shared structural components and variants
+crates/ui-lang-components/src/ice/recipes.ice            shared semantic visual roles
 examples/showcase/src/ui/app.ice         catalog and first-class behavior test
 examples/showcase/src/ui/extern/         production extern declarations
 examples/showcase/src/ui/components/     component and slot patterns
@@ -115,8 +115,8 @@ COVERAGE.md                              exact Iced surface ledger
 ```
 
 When those upstream files are not present in the working project, use the
-public [language specification](https://github.com/byeongsu-hong/ducktape-ui/blob/main/SPEC.md)
-and [coverage ledger](https://github.com/byeongsu-hong/ducktape-ui/blob/main/COVERAGE.md).
+public [language specification](https://github.com/byeongsu-hong/ui-lang-components/blob/main/SPEC.md)
+and [coverage ledger](https://github.com/byeongsu-hong/ui-lang-components/blob/main/COVERAGE.md).
 
 ## Make the smallest valid change
 

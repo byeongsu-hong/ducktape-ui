@@ -1,14 +1,14 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use ducktape_ui::ui::candle_chart::{
+use iced::{Element, Length, Subscription};
+use ui_lang_components::ui::candle_chart::{
     SharedCandles, candle_chart_shared, format_price, format_volume,
 };
-use ducktape_ui::ui::theme;
-use iced::{Element, Length, Subscription};
+use ui_lang_components::ui::theme;
 use ui_lang_runtime::{Role, StableId, accessible};
 
-pub use ducktape_ui::ui::candle_chart::{Candle, CandleHit};
+pub use ui_lang_components::ui::candle_chart::{Candle, CandleHit};
 
 /// Exchange-thread tick cadence; the chart's live beat matches it.
 const TICK: Duration = Duration::from_millis(100);

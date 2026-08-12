@@ -9,7 +9,7 @@ packages=(
   ui-lang-template
   ui-lang-core
   ui-lang-runtime
-  ducktape-ui
+  ui-lang-components
   ui-lang-build
   ui-lang
   cargo-ice
@@ -46,7 +46,7 @@ template_patch=(
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-template
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-core "${template_patch[@]}"
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-runtime "${template_patch[@]}"
-cargo package --locked --no-verify "${dirty_args[@]}" -p ducktape-ui \
+cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-components \
   "${runtime_patch[@]}" "${template_patch[@]}"
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-build \
   "${core_patch[@]}" "${template_patch[@]}"
@@ -112,7 +112,7 @@ check_package ui-lang-template
 check_package ui-lang-core "${packaged_template_patch[@]}"
 check_package ui-lang-runtime "${packaged_template_patch[@]}"
 check_package_features ui-lang-runtime data-grid,x11 "${packaged_template_patch[@]}"
-check_package ducktape-ui "${packaged_runtime_patch[@]}" "${packaged_template_patch[@]}"
+check_package ui-lang-components "${packaged_runtime_patch[@]}" "${packaged_template_patch[@]}"
 check_package ui-lang-build "${packaged_patches[@]}" "${packaged_template_patch[@]}"
 check_package ui-lang "${packaged_patches[@]}" "${packaged_build_patch[@]}" \
   "${packaged_template_patch[@]}"
