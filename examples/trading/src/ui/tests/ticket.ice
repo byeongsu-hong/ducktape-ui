@@ -157,6 +157,7 @@ test trading_the_order_type_and_its_life_say_which_is_selected
   target app = #app
   target ticket = app/terminal-fit/trade/ticket-panel/ticket-body
   target limit_on = ticket/ticket-kind/kind-limit/root/on
+  target limit_off = ticket/ticket-kind/kind-limit/root/off
   target market_off = ticket/ticket-kind/kind-market/root/off
   target market_on = ticket/ticket-kind/kind-market/root/on
   target tif = ticket/limit-group/ticket-tif
@@ -181,6 +182,8 @@ test trading_the_order_type_and_its_life_say_which_is_selected
   click market_off
   expect ticket_market
   expect a11y market_on name "Cross the spread now"
+  expect a11y market_on checked true
+  expect a11y limit_off checked false
   // A market order has no resting rule to choose, so the row is not there to
   // be announced at all.
   expect missing tif
