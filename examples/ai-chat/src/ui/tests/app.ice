@@ -22,10 +22,12 @@ test folding_a_finished_turn_reveals_what_it_did
   expect text "Checking the crate before answering"
   expect text "Searched the web"
   expect text "Opened a page"
+  expect a11y thoughts_toggle expanded false
   expect thoughts.height < 30.0
 
   // And the summary inside it opens on its own.
   click thoughts_toggle
+  expect a11y thoughts_toggle expanded true
   expect thoughts.height > 40.0
 
   click work

@@ -97,6 +97,7 @@ component Reasoning(row_id:i64, title:str, body:str, open:bool) -> i64
         button #toggle -> emit(row_id)
           with
             label=title
+            expanded=open
             p=0.0
             @ghost_action
           row
