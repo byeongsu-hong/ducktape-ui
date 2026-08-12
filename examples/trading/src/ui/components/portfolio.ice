@@ -5,12 +5,20 @@ component PortfolioRange(name:str, value:str, current:str)
     pick(str)
   col
     if value == current
-      button #selected label=range_label(value, true) p=7.0 -> emit(pick, value)
+      button #selected -> emit(pick, value)
+        with
+          label=range_label(value)
+          checked=true
+          p=7.0
         active bg=fg text=fg_invert r=3.0
         hovered bg=fg text=fg_invert r=3.0
         text name size=10.0 @text-fg_invert
     if value != current
-      button #off label=range_label(value, false) p=7.0 -> emit(pick, value)
+      button #off -> emit(pick, value)
+        with
+          label=range_label(value)
+          checked=false
+          p=7.0
         active bg=raised text=muted r=3.0
         hovered bg=edge text=fg r=3.0
         text name size=10.0 @text-muted

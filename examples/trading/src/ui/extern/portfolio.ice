@@ -4,7 +4,7 @@ extern crate::portfolio
   PortfolioFlow(trades:i64, volume:f64, realized:f64, wins:i64, losses:i64, closed:i64, win_pct:f64)
   PortfolioFunding(paid:f64, received:f64, net:f64)
   venue_portfolio(venue:Venue, address:str) -> PortfolioHistory ! HlError
-  pure range_label(range:str, shown:bool) -> str
+  pure range_label(range:str) -> str
   pure portfolio_empty() -> PortfolioHistory
   pure portfolio_unavailable(message:str) -> PortfolioHistory
   pure demo_portfolio_history() -> PortfolioHistory
