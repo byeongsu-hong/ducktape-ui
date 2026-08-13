@@ -103,7 +103,10 @@ pub fn cursor_context(
     position: SourcePosition,
     document: Option<&Document>,
 ) -> CursorContext {
-    let lines = source.split('\n').collect::<Vec<_>>();
+    let lines = source
+        .split('\n')
+        .take(position.line.saturating_add(1))
+        .collect::<Vec<_>>();
     let current = lines.get(position.line).copied().unwrap_or("");
     let indent = editor_indentation(current);
     let trimmed = current.trim();
@@ -433,6 +436,41 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_cursor_context_collects_only_the_source_prefix() {
+        use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
+
+        const TRAILING_LINES: usize = 4_000;
+        let mut source = String::from("component Shell()\n  ui::Dialog\n    with\n      title=\n");
+        for _ in 0..TRAILING_LINES {
+            source.push_str("view\n");
+        }
+        let region = Region::new(&INSTRUMENTED_SYSTEM);
+
+        let context = cursor_context(
+            std::hint::black_box(&source),
+            SourcePosition {
+                line: 3,
+                column: 12,
+            },
+            None,
+        );
+        let stats = region.change();
+
+        assert_eq!(
+            context,
+            CursorContext::NodeMetadata {
+                node: Some("ui::Dialog".into())
+            }
+        );
+        eprintln!(
+            "cursor context before {TRAILING_LINES} trailing lines: {} allocations / {} reallocations / {} bytes",
+            stats.allocations, stats.reallocations, stats.bytes_allocated
+        );
+        assert_eq!(stats.reallocations, 0, "{stats:?}");
+    }
+
+    #[test]
     fn incomplete_source_mutations_never_panic() {
         let source = "component Shell()\n  on submit\n    run \n  ui::Dialog\n    with\n      title=\n    events\n      close\nview\n  match request\n    \ntest interaction\n  click #submit\n";
         let fragments = [
@@ -459,7 +497,7 @@ mod tests {
                 lines.insert(index, fragment);
             }
             let mutated = lines.join("\n");
-            for line in 0..=lines.len() {
+            for line in (0..=lines.len()).chain([usize::MAX]) {
                 for column in [0, lines.get(line).map_or(0, |line| line.len()), usize::MAX] {
                     let _ = cursor_context(&mutated, SourcePosition { line, column }, None);
                 }
