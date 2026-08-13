@@ -6,7 +6,9 @@ use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Point as GridPoint, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{self, Term, TermMode, cell::Flags, viewport_to_point};
+use alacritty_terminal::term::{
+    self, ClipboardType, Term, TermMode, cell::Flags, viewport_to_point,
+};
 use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Rgb};
 use iced::advanced::text::{Paragraph as _, Renderer as _};
@@ -19,7 +21,7 @@ use iced::alignment;
 use iced::font::{Style as FontStyle, Weight as FontWeight};
 use iced::futures::stream::BoxStream;
 use iced::futures::{SinkExt, StreamExt};
-use iced::keyboard::{self, Key, Modifiers, key::Named};
+use iced::keyboard::{self, Key, Location, Modifiers, key::Named};
 use iced::mouse::{self, ScrollDelta};
 use iced::{
     Background, Border, Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Shadow,
@@ -37,6 +39,7 @@ const FONT_SIZE: f32 = 14.0;
 const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 32.0;
 const LINE_HEIGHT: f32 = 1.4;
+const SCROLL_MULTIPLIER: f32 = 3.0;
 const TERMINAL_FONT: Font = Font::with_name("JetBrains Mono");
 const FRAME_INTERVAL: Duration = Duration::from_millis(8);
 const DEFAULT_COLUMNS: u16 = 80;
@@ -71,6 +74,14 @@ pub struct Environment {
 pub struct Notice {
     pub running: bool,
     pub title: String,
+}
+
+enum ClipboardRequest {
+    Store(ClipboardType, String),
+    Load(
+        ClipboardType,
+        Arc<dyn Fn(&str) -> String + Sync + Send + 'static>,
+    ),
 }
 
 #[derive(Clone)]
@@ -422,6 +433,7 @@ struct Terminal {
     term: Arc<FairMutex<Term<EventProxy>>>,
     notifier: Notifier,
     events: Arc<tokio::sync::Mutex<UnboundedReceiver<AlacrittyEvent>>>,
+    clipboard_requests: Vec<ClipboardRequest>,
     wakeup_pending: Arc<AtomicBool>,
     size: TerminalSize,
     frame: Arc<TerminalFrame>,
@@ -469,6 +481,7 @@ impl Terminal {
             term,
             notifier,
             events: Arc::new(tokio::sync::Mutex::new(event_receiver)),
+            clipboard_requests: Vec::new(),
             wakeup_pending,
             size,
             frame: Arc::new(TerminalFrame::empty()),
@@ -511,9 +524,15 @@ impl Terminal {
                         .notify(formatter(palette_rgb(index)).into_bytes());
                 }
                 AlacrittyEvent::Exit | AlacrittyEvent::ChildExit(_) => running = false,
+                AlacrittyEvent::ClipboardStore(kind, text) => {
+                    self.clipboard_requests
+                        .push(ClipboardRequest::Store(kind, text));
+                }
+                AlacrittyEvent::ClipboardLoad(kind, formatter) => {
+                    self.clipboard_requests
+                        .push(ClipboardRequest::Load(kind, formatter));
+                }
                 AlacrittyEvent::MouseCursorDirty
-                | AlacrittyEvent::ClipboardStore(_, _)
-                | AlacrittyEvent::ClipboardLoad(_, _)
                 | AlacrittyEvent::CursorBlinkingChange
                 | AlacrittyEvent::Bell => {}
             }
@@ -543,33 +562,49 @@ impl Terminal {
         self.notifier.notify(bytes);
     }
 
+    fn write_input(&mut self, bytes: impl Into<std::borrow::Cow<'static, [u8]>>) {
+        {
+            let mut term = self.term.lock();
+            term.scroll_display(Scroll::Bottom);
+            term.selection = None;
+        }
+        self.snapshot();
+        self.write(bytes);
+    }
+
+    fn service_clipboard(&mut self, clipboard: &mut dyn Clipboard) {
+        for reply in service_clipboard_requests(&mut self.clipboard_requests, clipboard) {
+            self.write(reply);
+        }
+    }
+
     fn mode(&self) -> TermMode {
         *self.term.lock().mode()
     }
 
-    fn paste(&self, text: String) {
-        if self.mode().contains(TermMode::BRACKETED_PASTE) {
-            let text = text.replace('\u{1b}', "");
-            self.write(format!("\x1b[200~{text}\x1b[201~").into_bytes());
-        } else {
-            self.write(text.into_bytes());
-        }
+    fn paste(&mut self, text: String) {
+        self.write_input(paste_bytes(&text, self.mode()));
     }
 
     fn selected_text(&self) -> Option<String> {
         self.term.lock().selection_to_string()
     }
 
-    fn scroll(&mut self, lines: i32) {
-        if lines == 0 {
+    fn scroll(&mut self, columns: i32, lines: i32, allow_alternate: bool) {
+        if columns == 0 && lines == 0 {
             return;
         }
         let mut term = self.term.lock();
         let mode = *term.mode();
-        if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+        if allow_alternate && mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+            let mut bytes =
+                Vec::with_capacity((lines.unsigned_abs() + columns.unsigned_abs()) as usize * 3);
             let suffix = if lines > 0 { b'A' } else { b'B' };
-            let mut bytes = Vec::with_capacity(lines.unsigned_abs() as usize * 3);
             for _ in 0..lines.unsigned_abs() {
+                bytes.extend_from_slice(&[0x1b, b'O', suffix]);
+            }
+            let suffix = if columns > 0 { b'D' } else { b'C' };
+            for _ in 0..columns.unsigned_abs() {
                 bytes.extend_from_slice(&[0x1b, b'O', suffix]);
             }
             drop(term);
@@ -599,6 +634,17 @@ impl Terminal {
         self.snapshot();
     }
 
+    fn expand_selection(&mut self, cell: GridPoint<usize>, ty: SelectionType, side: Side) {
+        let mut term = self.term.lock();
+        let point = viewport_to_point(term.grid().display_offset(), cell);
+        if let Some(selection) = term.selection.as_mut() {
+            selection.ty = ty;
+            selection.update(point, side);
+        }
+        drop(term);
+        self.snapshot();
+    }
+
     fn mouse_report(
         &self,
         button: u8,
@@ -606,36 +652,16 @@ impl Terminal {
         cell: GridPoint<usize>,
         pressed: bool,
     ) {
-        let mode = self.mode();
-        let mut code = button;
-        if modifiers.shift() {
-            code += 4;
+        let term = self.term.lock();
+        let display_offset = term.grid().display_offset();
+        let mode = *term.mode();
+        drop(term);
+        if cell.line < display_offset {
+            return;
         }
-        if modifiers.alt() {
-            code += 8;
-        }
-        if modifiers.control() {
-            code += 16;
-        }
-
-        if mode.contains(TermMode::SGR_MOUSE) {
-            let suffix = if pressed { 'M' } else { 'm' };
-            self.write(
-                format!(
-                    "\x1b[<{code};{};{}{suffix}",
-                    cell.column.0 + 1,
-                    cell.line + 1
-                )
-                .into_bytes(),
-            );
-        } else if pressed {
-            let column = cell.column.0.min(222) as u8 + 33;
-            let line = cell.line.min(222) as u8 + 33;
-            self.write(vec![0x1b, b'[', b'M', code + 32, column, line]);
-        } else {
-            let column = cell.column.0.min(222) as u8 + 33;
-            let line = cell.line.min(222) as u8 + 33;
-            self.write(vec![0x1b, b'[', b'M', 35, column, line]);
+        let cell = GridPoint::new(cell.line - display_offset, cell.column);
+        if let Some(bytes) = mouse_report_bytes(mode, button, modifiers, cell, pressed) {
+            self.write(bytes);
         }
     }
 
@@ -1047,8 +1073,10 @@ struct SurfaceState {
     layout: Size,
     mouse_cell: GridPoint<usize>,
     dragging: bool,
+    pressed_button: Option<mouse::Button>,
     last_click: Option<advanced_mouse::Click>,
     scroll_pixels: f32,
+    scroll_pixels_x: f32,
     ime_preedit: Option<input_method::Preedit>,
 }
 
@@ -1266,6 +1294,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         let state = tree.state.downcast_mut::<SurfaceState>();
         let bounds = layout.bounds();
         let mut terminal = lock(&self.terminal);
+        terminal.service_clipboard(clipboard);
         if terminal.resize(bounds.size(), state.cell) {
             shell.request_redraw();
         }
@@ -1285,6 +1314,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if hovered => {
                 state.focused = true;
+                state.pressed_button = Some(mouse::Button::Left);
                 let Some(position) = cursor.position() else {
                     return;
                 };
@@ -1295,10 +1325,14 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 } else {
                     let click =
                         advanced_mouse::Click::new(position, mouse::Button::Left, state.last_click);
-                    let ty = match click.kind() {
-                        advanced_mouse::click::Kind::Single => SelectionType::Simple,
-                        advanced_mouse::click::Kind::Double => SelectionType::Semantic,
-                        advanced_mouse::click::Kind::Triple => SelectionType::Lines,
+                    let ty = if state.modifiers.control() {
+                        SelectionType::Block
+                    } else {
+                        match click.kind() {
+                            advanced_mouse::click::Kind::Single => SelectionType::Simple,
+                            advanced_mouse::click::Kind::Double => SelectionType::Semantic,
+                            advanced_mouse::click::Kind::Triple => SelectionType::Lines,
+                        }
                     };
                     state.last_click = Some(click);
                     terminal.start_selection(
@@ -1311,48 +1345,123 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 state.dragging = true;
                 shell.capture_event();
             }
-            Event::Mouse(mouse::Event::CursorMoved { position }) if hovered => {
-                state.mouse_cell = mouse_cell(*position, bounds, state.cell, terminal.size);
-                if state.dragging {
-                    let mode = terminal.mode();
-                    if mode.intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG)
-                        && !state.modifiers.shift()
-                    {
-                        terminal.mouse_report(32, state.modifiers, state.mouse_cell, true);
-                    } else {
-                        terminal.update_selection(
-                            state.mouse_cell,
-                            selection_side(*position, bounds, state.cell),
-                        );
+            Event::Mouse(mouse::Event::ButtonPressed(
+                button @ (mouse::Button::Middle | mouse::Button::Right),
+            )) if hovered => {
+                state.focused = true;
+                state.pressed_button = Some(*button);
+                let Some(position) = cursor.position() else {
+                    return;
+                };
+                state.mouse_cell = mouse_cell(position, bounds, state.cell, terminal.size);
+                let mode = terminal.mode();
+                if mode.intersects(TermMode::MOUSE_MODE) && !state.modifiers.shift() {
+                    terminal.mouse_report(
+                        mouse_button_code(*button).expect("matched reportable mouse button"),
+                        state.modifiers,
+                        state.mouse_cell,
+                        true,
+                    );
+                    state.dragging = true;
+                } else if *button == mouse::Button::Middle {
+                    if let Some(text) = clipboard.read(clipboard::Kind::Primary) {
+                        terminal.paste(text);
                         shell.request_redraw();
                     }
+                } else {
+                    let click = advanced_mouse::Click::new(position, *button, state.last_click);
+                    let ty = if state.modifiers.control() {
+                        SelectionType::Block
+                    } else {
+                        match click.kind() {
+                            advanced_mouse::click::Kind::Single => SelectionType::Simple,
+                            advanced_mouse::click::Kind::Double => SelectionType::Semantic,
+                            advanced_mouse::click::Kind::Triple => SelectionType::Lines,
+                        }
+                    };
+                    state.last_click = Some(click);
+                    terminal.expand_selection(
+                        state.mouse_cell,
+                        ty,
+                        selection_side(position, bounds, state.cell),
+                    );
+                    state.dragging = true;
+                    shell.request_redraw();
+                }
+                shell.capture_event();
+            }
+            Event::Mouse(mouse::Event::CursorMoved { position }) if hovered || state.dragging => {
+                let next_mouse_cell = mouse_cell(*position, bounds, state.cell, terminal.size);
+                let cell_changed = next_mouse_cell != state.mouse_cell;
+                state.mouse_cell = next_mouse_cell;
+                let mode = terminal.mode();
+                if !state.modifiers.shift()
+                    && let Some(button) = motion_mouse_code(mode, state.pressed_button)
+                    && cell_changed
+                {
+                    terminal.mouse_report(button, state.modifiers, state.mouse_cell, true);
+                    shell.capture_event();
+                } else if state.dragging
+                    && matches!(
+                        state.pressed_button,
+                        Some(mouse::Button::Left | mouse::Button::Right)
+                    )
+                {
+                    terminal.update_selection(
+                        state.mouse_cell,
+                        selection_side(*position, bounds, state.cell),
+                    );
+                    shell.request_redraw();
                     shell.capture_event();
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.dragging => {
-                if terminal.mode().intersects(TermMode::MOUSE_MODE) && !state.modifiers.shift() {
-                    terminal.mouse_report(0, state.modifiers, state.mouse_cell, false);
+            Event::Mouse(mouse::Event::ButtonReleased(button))
+                if state.pressed_button == Some(*button) =>
+            {
+                if terminal.mode().intersects(TermMode::MOUSE_MODE)
+                    && !state.modifiers.shift()
+                    && let Some(code) = mouse_button_code(*button)
+                {
+                    terminal.mouse_report(code, state.modifiers, state.mouse_cell, false);
+                } else if matches!(button, mouse::Button::Left | mouse::Button::Right)
+                    && let Some(selection) = terminal.selected_text()
+                {
+                    clipboard.write(clipboard::Kind::Primary, selection);
                 }
                 state.dragging = false;
+                state.pressed_button = None;
                 shell.capture_event();
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if hovered => {
-                let lines = match delta {
-                    ScrollDelta::Lines { y, .. } => y.round() as i32,
-                    ScrollDelta::Pixels { y, .. } => {
-                        state.scroll_pixels += *y;
+                let mouse_reporting =
+                    terminal.mode().intersects(TermMode::MOUSE_MODE) && !state.modifiers.shift();
+                let multiplier = scroll_multiplier(mouse_reporting);
+                let (columns, lines) = match delta {
+                    ScrollDelta::Lines { x, y } => (
+                        (x * multiplier).round() as i32,
+                        (y * multiplier).round() as i32,
+                    ),
+                    ScrollDelta::Pixels { x, y } => {
+                        state.scroll_pixels_x += *x * multiplier;
+                        state.scroll_pixels += *y * multiplier;
+                        let columns = (state.scroll_pixels_x / state.cell.width).trunc() as i32;
                         let lines = (state.scroll_pixels / state.cell.height).trunc() as i32;
+                        state.scroll_pixels_x -= columns as f32 * state.cell.width;
                         state.scroll_pixels -= lines as f32 * state.cell.height;
-                        lines
+                        (columns, lines)
                     }
                 };
-                if terminal.mode().intersects(TermMode::MOUSE_MODE) && !state.modifiers.shift() {
+                if mouse_reporting {
                     let button = if lines >= 0 { 64 } else { 65 };
                     for _ in 0..lines.unsigned_abs() {
                         terminal.mouse_report(button, state.modifiers, state.mouse_cell, true);
                     }
+                    let button = if columns >= 0 { 66 } else { 67 };
+                    for _ in 0..columns.unsigned_abs() {
+                        terminal.mouse_report(button, state.modifiers, state.mouse_cell, true);
+                    }
                 } else {
-                    terminal.scroll(lines);
+                    terminal.scroll(columns, lines, !state.modifiers.shift());
                     shell.request_redraw();
                 }
                 shell.capture_event();
@@ -1362,12 +1471,17 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key,
+                modified_key,
                 modifiers,
+                location,
                 text,
+                repeat,
                 ..
             }) if state.focused => {
                 state.modifiers = *modifiers;
-                if let Some(font_size) = zoomed_font_size(key, *modifiers, state.font_size) {
+                if state.ime_preedit.is_some() {
+                    // IME commits are delivered separately and must be the only PTY input.
+                } else if let Some(font_size) = zoomed_font_size(key, *modifiers, state.font_size) {
                     if font_size != state.font_size {
                         state.font_size = font_size;
                         state.cell = terminal_cell_size(font_size);
@@ -1385,9 +1499,48 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 } else if is_paste_shortcut(key, *modifiers) {
                     if let Some(text) = clipboard.read(clipboard::Kind::Standard) {
                         terminal.paste(text);
+                        shell.request_redraw();
                     }
-                } else if let Some(bytes) =
-                    encode_key(key, text.as_deref(), *modifiers, terminal.mode())
+                } else if let Some(bytes) = encode_key_event(
+                    key,
+                    modified_key,
+                    text.as_deref(),
+                    *modifiers,
+                    *location,
+                    if *repeat {
+                        KeyEventKind::Repeat
+                    } else {
+                        KeyEventKind::Press
+                    },
+                    terminal.mode(),
+                ) {
+                    if is_modifier_key(key) {
+                        terminal.write(bytes);
+                    } else {
+                        terminal.write_input(bytes);
+                        shell.request_redraw();
+                    }
+                }
+                shell.capture_event();
+            }
+            Event::Keyboard(keyboard::Event::KeyReleased {
+                key,
+                modified_key,
+                modifiers,
+                location,
+                ..
+            }) if state.focused => {
+                state.modifiers = *modifiers;
+                if state.ime_preedit.is_none()
+                    && let Some(bytes) = encode_key_event(
+                        key,
+                        modified_key,
+                        None,
+                        *modifiers,
+                        *location,
+                        KeyEventKind::Release,
+                        terminal.mode(),
+                    )
                 {
                     terminal.write(bytes);
                 }
@@ -1407,8 +1560,9 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 shell.request_redraw();
             }
             Event::InputMethod(input_method::Event::Commit(content)) if state.focused => {
-                terminal.write(content.clone().into_bytes());
+                terminal.write_input(content.clone().into_bytes());
                 state.ime_preedit = None;
+                shell.request_redraw();
                 shell.capture_event();
             }
             Event::InputMethod(input_method::Event::Closed) => state.ime_preedit = None,
@@ -1503,6 +1657,39 @@ fn is_copy_shortcut(key: &Key, modifiers: Modifiers) -> bool {
         }
 }
 
+fn clipboard_kind(kind: ClipboardType) -> clipboard::Kind {
+    match kind {
+        ClipboardType::Clipboard => clipboard::Kind::Standard,
+        ClipboardType::Selection => clipboard::Kind::Primary,
+    }
+}
+
+fn is_modifier_key(key: &Key) -> bool {
+    matches!(
+        key,
+        Key::Named(Named::Shift | Named::Control | Named::Alt | Named::Super)
+    )
+}
+
+fn service_clipboard_requests(
+    requests: &mut Vec<ClipboardRequest>,
+    clipboard: &mut dyn Clipboard,
+) -> Vec<Vec<u8>> {
+    let mut replies = Vec::new();
+    for request in std::mem::take(requests) {
+        match request {
+            ClipboardRequest::Store(kind, text) => {
+                clipboard.write(clipboard_kind(kind), text);
+            }
+            ClipboardRequest::Load(kind, formatter) => {
+                let text = clipboard.read(clipboard_kind(kind)).unwrap_or_default();
+                replies.push(formatter(&text).into_bytes());
+            }
+        }
+    }
+    replies
+}
+
 fn is_paste_shortcut(key: &Key, modifiers: Modifiers) -> bool {
     key.as_ref() == Key::Character("v")
         && if cfg!(target_os = "macos") {
@@ -1526,12 +1713,218 @@ fn zoomed_font_size(key: &Key, modifiers: Modifiers, font_size: f32) -> Option<f
     Some((font_size + step).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE))
 }
 
+#[cfg(test)]
 fn encode_key(
     key: &Key,
     text: Option<&str>,
     modifiers: Modifiers,
     mode: TermMode,
 ) -> Option<Vec<u8>> {
+    encode_key_event(
+        key,
+        key,
+        text,
+        modifiers,
+        Location::Standard,
+        KeyEventKind::Press,
+        mode,
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyEventKind {
+    Press,
+    Repeat,
+    Release,
+}
+
+fn encode_key_event(
+    key: &Key,
+    modified_key: &Key,
+    text: Option<&str>,
+    modifiers: Modifiers,
+    location: Location,
+    kind: KeyEventKind,
+    mode: TermMode,
+) -> Option<Vec<u8>> {
+    // `alacritty_terminal` owns protocol state but its host key encoder lives in the
+    // Alacritty frontend. Keep the same binding-first ordering as the pinned 0.25.1 frontend.
+    if kind != KeyEventKind::Release
+        && let Some(bytes) = legacy_key_binding(key, modifiers, location, mode)
+    {
+        return Some(bytes);
+    }
+    let modifiers = terminal_input_modifiers(key, modifiers);
+
+    let kitty = mode.intersects(
+        TermMode::REPORT_ALL_KEYS_AS_ESC
+            | TermMode::DISAMBIGUATE_ESC_CODES
+            | TermMode::REPORT_EVENT_TYPES,
+    );
+    if kitty && should_encode_kitty(key, text, modifiers, location, kind, mode) {
+        return kitty_key_sequence(key, modified_key, text, modifiers, location, kind, mode);
+    }
+    if kind == KeyEventKind::Release {
+        return None;
+    }
+
+    encode_legacy_key(key, text, modifiers, mode)
+}
+
+fn terminal_input_modifiers(key: &Key, modifiers: Modifiers) -> Modifiers {
+    if cfg!(target_os = "macos")
+        && modifiers.alt()
+        && matches!(
+            key,
+            Key::Character(_)
+                | Key::Named(
+                    Named::Enter | Named::Backspace | Named::Tab | Named::Space | Named::Escape
+                )
+        )
+    {
+        modifiers.difference(Modifiers::ALT)
+    } else {
+        modifiers
+    }
+}
+
+fn legacy_key_binding(
+    key: &Key,
+    modifiers: Modifiers,
+    location: Location,
+    mode: TermMode,
+) -> Option<Vec<u8>> {
+    let named = match key {
+        Key::Named(named) => *named,
+        _ => return None,
+    };
+    let disambiguated = mode.contains(TermMode::DISAMBIGUATE_ESC_CODES);
+    let encode_all = mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC);
+
+    if modifiers.is_empty() && mode.contains(TermMode::APP_CURSOR) {
+        let final_character = match named {
+            Named::Home => 'H',
+            Named::End => 'F',
+            Named::ArrowUp => 'A',
+            Named::ArrowDown => 'B',
+            Named::ArrowRight => 'C',
+            Named::ArrowLeft => 'D',
+            _ => {
+                return legacy_non_cursor_binding(
+                    named,
+                    modifiers,
+                    location,
+                    disambiguated,
+                    encode_all,
+                );
+            }
+        };
+        return Some(format!("\x1bO{final_character}").into_bytes());
+    }
+
+    legacy_non_cursor_binding(named, modifiers, location, disambiguated, encode_all)
+}
+
+fn legacy_non_cursor_binding(
+    key: Named,
+    modifiers: Modifiers,
+    location: Location,
+    disambiguated: bool,
+    encode_all: bool,
+) -> Option<Vec<u8>> {
+    if modifiers.is_empty() && !encode_all && !disambiguated {
+        let sequence = match key {
+            Named::F1 => "\x1bOP",
+            Named::F2 => "\x1bOQ",
+            Named::F3 => "\x1bOR",
+            Named::F4 => "\x1bOS",
+            Named::Enter if location == Location::Numpad => "\n",
+            _ => "",
+        };
+        if !sequence.is_empty() {
+            return Some(sequence.as_bytes().to_vec());
+        }
+    }
+    if key == Named::Backspace && modifiers.is_empty() && !encode_all {
+        return Some(vec![0x7f]);
+    }
+    if key == Named::Tab && modifiers == Modifiers::SHIFT && !encode_all && !disambiguated {
+        return Some(b"\x1b[Z".to_vec());
+    }
+    if key == Named::Tab
+        && modifiers == Modifiers::SHIFT | Modifiers::ALT
+        && !encode_all
+        && !disambiguated
+    {
+        return Some(b"\x1b\x1b[Z".to_vec());
+    }
+    if key == Named::Backspace && modifiers == Modifiers::ALT && !encode_all && !disambiguated {
+        return Some(b"\x1b\x7f".to_vec());
+    }
+    if key == Named::Backspace && modifiers == Modifiers::SHIFT && !encode_all && !disambiguated {
+        return Some(vec![0x7f]);
+    }
+
+    None
+}
+
+fn should_encode_kitty(
+    key: &Key,
+    text: Option<&str>,
+    modifiers: Modifiers,
+    location: Location,
+    kind: KeyEventKind,
+    mode: TermMode,
+) -> bool {
+    if mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) {
+        return true;
+    }
+    if kind == KeyEventKind::Release && mode.contains(TermMode::REPORT_EVENT_TYPES) {
+        return !matches!(
+            key,
+            Key::Named(Named::Enter | Named::Tab | Named::Backspace)
+        );
+    }
+
+    let disambiguated = mode.contains(TermMode::DISAMBIGUATE_ESC_CODES)
+        && (matches!(key, Key::Named(Named::Escape))
+            || location == Location::Numpad
+            || (!modifiers.is_empty()
+                && (modifiers != Modifiers::SHIFT
+                    || matches!(
+                        key,
+                        Key::Named(Named::Tab | Named::Enter | Named::Backspace)
+                    ))));
+
+    disambiguated
+        || match key {
+            Key::Named(
+                Named::Enter | Named::Backspace | Named::Tab | Named::Space | Named::Escape,
+            ) => false,
+            Key::Named(_) => true,
+            Key::Character(_) => text.is_none_or(str::is_empty),
+            Key::Unidentified => text.is_none_or(str::is_empty),
+        }
+}
+
+fn encode_legacy_key(
+    key: &Key,
+    text: Option<&str>,
+    modifiers: Modifiers,
+    mode: TermMode,
+) -> Option<Vec<u8>> {
+    if matches!(key, Key::Character(_))
+        && let Some(text) = text
+        && !text.is_empty()
+    {
+        let mut bytes = Vec::with_capacity(text.len() + usize::from(modifiers.alt()));
+        if modifiers.alt() {
+            bytes.push(0x1b);
+        }
+        bytes.extend_from_slice(text.as_bytes());
+        return Some(bytes);
+    }
+
     if let Key::Character(character) = key
         && modifiers.control()
         && !modifiers.logo()
@@ -1551,11 +1944,25 @@ fn encode_key(
         return Some(bytes);
     }
 
+    if matches!(
+        key,
+        Key::Named(Named::Enter | Named::Tab | Named::Backspace | Named::Space | Named::Escape)
+    ) && let Some(text) = text
+        && !text.is_empty()
+    {
+        let mut bytes = Vec::with_capacity(text.len() + usize::from(modifiers.alt()));
+        if modifiers.alt() {
+            bytes.push(0x1b);
+        }
+        bytes.extend_from_slice(text.as_bytes());
+        return Some(bytes);
+    }
+
     if let Key::Named(named) = key {
         return named_key(*named, modifiers, mode).map(|sequence| sequence.into_bytes());
     }
 
-    text.map(|text| {
+    text.filter(|text| !text.is_empty()).map(|text| {
         let mut bytes = Vec::with_capacity(text.len() + usize::from(modifiers.alt()));
         if modifiers.alt() {
             bytes.push(0x1b);
@@ -1563,6 +1970,403 @@ fn encode_key(
         bytes.extend_from_slice(text.as_bytes());
         bytes
     })
+}
+
+fn kitty_key_sequence(
+    key: &Key,
+    modified_key: &Key,
+    text: Option<&str>,
+    modifiers: Modifiers,
+    location: Location,
+    kind: KeyEventKind,
+    mode: TermMode,
+) -> Option<Vec<u8>> {
+    let event_type = mode.contains(TermMode::REPORT_EVENT_TYPES)
+        && matches!(kind, KeyEventKind::Repeat | KeyEventKind::Release);
+    let associated_text = text.filter(|text| {
+        mode.contains(TermMode::REPORT_ASSOCIATED_TEXT)
+            && kind != KeyEventKind::Release
+            && !text.is_empty()
+            && !is_control_character(text)
+    });
+    let mut modifier_bits = kitty_modifier_bits(modifiers);
+
+    let (mut payload, terminator) = numpad_key_base(modified_key, location)
+        .or_else(|| kitty_named_base(modified_key))
+        .or_else(|| {
+            normal_named_base(
+                modified_key,
+                modifiers,
+                event_type,
+                associated_text.is_some(),
+            )
+        })
+        .or_else(|| {
+            kitty_control_base(
+                modified_key,
+                location,
+                kind,
+                mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC),
+                &mut modifier_bits,
+            )
+        })
+        .or_else(|| kitty_text_base(key, modified_key, associated_text, mode))?;
+
+    if event_type || modifier_bits != 0 || associated_text.is_some() {
+        payload.push_str(&format!(";{}", modifier_bits + 1));
+    }
+    if event_type {
+        payload.push(':');
+        payload.push(match kind {
+            KeyEventKind::Press => '1',
+            KeyEventKind::Repeat => '2',
+            KeyEventKind::Release => '3',
+        });
+    }
+    if let Some(text) = associated_text {
+        let mut codepoints = text.chars().map(u32::from);
+        if let Some(codepoint) = codepoints.next() {
+            payload.push_str(&format!(";{codepoint}"));
+        }
+        for codepoint in codepoints {
+            payload.push_str(&format!(":{codepoint}"));
+        }
+    }
+
+    Some(format!("\x1b[{payload}{terminator}").into_bytes())
+}
+
+fn kitty_modifier_bits(modifiers: Modifiers) -> u8 {
+    u8::from(modifiers.shift())
+        | u8::from(modifiers.alt()) << 1
+        | u8::from(modifiers.control()) << 2
+        | u8::from(modifiers.logo()) << 3
+}
+
+fn numpad_key_base(key: &Key, location: Location) -> Option<(String, char)> {
+    if location != Location::Numpad {
+        return None;
+    }
+    let code = match key.as_ref() {
+        Key::Character("0") => 57399,
+        Key::Character("1") => 57400,
+        Key::Character("2") => 57401,
+        Key::Character("3") => 57402,
+        Key::Character("4") => 57403,
+        Key::Character("5") => 57404,
+        Key::Character("6") => 57405,
+        Key::Character("7") => 57406,
+        Key::Character("8") => 57407,
+        Key::Character("9") => 57408,
+        Key::Character(".") => 57409,
+        Key::Character("/") => 57410,
+        Key::Character("*") => 57411,
+        Key::Character("-") => 57412,
+        Key::Character("+") => 57413,
+        Key::Named(Named::Enter) => 57414,
+        Key::Character("=") => 57415,
+        Key::Named(Named::ArrowLeft) => 57417,
+        Key::Named(Named::ArrowRight) => 57418,
+        Key::Named(Named::ArrowUp) => 57419,
+        Key::Named(Named::ArrowDown) => 57420,
+        Key::Named(Named::PageUp) => 57421,
+        Key::Named(Named::PageDown) => 57422,
+        Key::Named(Named::Home) => 57423,
+        Key::Named(Named::End) => 57424,
+        Key::Named(Named::Insert) => 57425,
+        Key::Named(Named::Delete) => 57426,
+        _ => return None,
+    };
+    Some((code.to_string(), 'u'))
+}
+
+fn kitty_named_base(key: &Key) -> Option<(String, char)> {
+    let named = match key {
+        Key::Named(named) => *named,
+        _ => return None,
+    };
+    let (code, terminator) = match named {
+        Named::F3 => (13, '~'),
+        Named::F13 => (57376, 'u'),
+        Named::F14 => (57377, 'u'),
+        Named::F15 => (57378, 'u'),
+        Named::F16 => (57379, 'u'),
+        Named::F17 => (57380, 'u'),
+        Named::F18 => (57381, 'u'),
+        Named::F19 => (57382, 'u'),
+        Named::F20 => (57383, 'u'),
+        Named::F21 => (57384, 'u'),
+        Named::F22 => (57385, 'u'),
+        Named::F23 => (57386, 'u'),
+        Named::F24 => (57387, 'u'),
+        Named::F25 => (57388, 'u'),
+        Named::F26 => (57389, 'u'),
+        Named::F27 => (57390, 'u'),
+        Named::F28 => (57391, 'u'),
+        Named::F29 => (57392, 'u'),
+        Named::F30 => (57393, 'u'),
+        Named::F31 => (57394, 'u'),
+        Named::F32 => (57395, 'u'),
+        Named::F33 => (57396, 'u'),
+        Named::F34 => (57397, 'u'),
+        Named::F35 => (57398, 'u'),
+        Named::ScrollLock => (57359, 'u'),
+        Named::PrintScreen => (57361, 'u'),
+        Named::Pause => (57362, 'u'),
+        Named::ContextMenu => (57363, 'u'),
+        Named::MediaPlay => (57428, 'u'),
+        Named::MediaPause => (57429, 'u'),
+        Named::MediaPlayPause => (57430, 'u'),
+        Named::MediaStop => (57432, 'u'),
+        Named::MediaFastForward => (57433, 'u'),
+        Named::MediaRewind => (57434, 'u'),
+        Named::MediaTrackNext => (57435, 'u'),
+        Named::MediaTrackPrevious => (57436, 'u'),
+        Named::MediaRecord => (57437, 'u'),
+        Named::AudioVolumeDown => (57438, 'u'),
+        Named::AudioVolumeUp => (57439, 'u'),
+        Named::AudioVolumeMute => (57440, 'u'),
+        _ => return None,
+    };
+    Some((code.to_string(), terminator))
+}
+
+fn normal_named_base(
+    key: &Key,
+    modifiers: Modifiers,
+    event_type: bool,
+    associated_text: bool,
+) -> Option<(String, char)> {
+    let named = match key {
+        Key::Named(named) => *named,
+        _ => return None,
+    };
+    let one = if modifiers.is_empty() && !event_type && !associated_text {
+        ""
+    } else {
+        "1"
+    };
+    let (payload, terminator) = match named {
+        Named::PageUp => ("5", '~'),
+        Named::PageDown => ("6", '~'),
+        Named::Insert => ("2", '~'),
+        Named::Delete => ("3", '~'),
+        Named::Home => (one, 'H'),
+        Named::End => (one, 'F'),
+        Named::ArrowLeft => (one, 'D'),
+        Named::ArrowRight => (one, 'C'),
+        Named::ArrowUp => (one, 'A'),
+        Named::ArrowDown => (one, 'B'),
+        Named::F1 => (one, 'P'),
+        Named::F2 => (one, 'Q'),
+        Named::F3 => (one, 'R'),
+        Named::F4 => (one, 'S'),
+        Named::F5 => ("15", '~'),
+        Named::F6 => ("17", '~'),
+        Named::F7 => ("18", '~'),
+        Named::F8 => ("19", '~'),
+        Named::F9 => ("20", '~'),
+        Named::F10 => ("21", '~'),
+        Named::F11 => ("23", '~'),
+        Named::F12 => ("24", '~'),
+        Named::F13 => ("25", '~'),
+        Named::F14 => ("26", '~'),
+        Named::F15 => ("28", '~'),
+        Named::F16 => ("29", '~'),
+        Named::F17 => ("31", '~'),
+        Named::F18 => ("32", '~'),
+        Named::F19 => ("33", '~'),
+        Named::F20 => ("34", '~'),
+        _ => return None,
+    };
+    Some((payload.into(), terminator))
+}
+
+fn kitty_control_base(
+    key: &Key,
+    location: Location,
+    kind: KeyEventKind,
+    encode_all: bool,
+    modifiers: &mut u8,
+) -> Option<(String, char)> {
+    let named = match key {
+        Key::Named(named) => *named,
+        _ => return None,
+    };
+    let mut code = match named {
+        Named::Tab => 9,
+        Named::Enter => 13,
+        Named::Escape => 27,
+        Named::Space => 32,
+        Named::Backspace => 127,
+        _ if !encode_all => return None,
+        _ => 0,
+    };
+    code = match (named, location) {
+        (Named::Shift, Location::Left) => 57441,
+        (Named::Control, Location::Left) => 57442,
+        (Named::Alt, Location::Left) => 57443,
+        (Named::Super, Location::Left) => 57444,
+        (Named::Hyper, Location::Left) => 57445,
+        (Named::Meta, Location::Left) => 57446,
+        (Named::Shift, _) => 57447,
+        (Named::Control, _) => 57448,
+        (Named::Alt, _) => 57449,
+        (Named::Super, _) => 57450,
+        (Named::Hyper, _) => 57451,
+        (Named::Meta, _) => 57452,
+        (Named::CapsLock, _) => 57358,
+        (Named::NumLock, _) => 57360,
+        _ => code,
+    };
+    let pressed = kind != KeyEventKind::Release;
+    let flag = match named {
+        Named::Shift => Some(1),
+        Named::Alt => Some(2),
+        Named::Control => Some(4),
+        Named::Super => Some(8),
+        _ => None,
+    };
+    if let Some(flag) = flag {
+        if pressed {
+            *modifiers |= flag;
+        } else {
+            *modifiers &= !flag;
+        }
+    }
+    (code != 0).then(|| (code.to_string(), 'u'))
+}
+
+fn kitty_text_base(
+    key: &Key,
+    modified_key: &Key,
+    associated_text: Option<&str>,
+    mode: TermMode,
+) -> Option<(String, char)> {
+    let modified = match modified_key {
+        Key::Character(character) if character.chars().count() == 1 => character.chars().next()?,
+        Key::Character(_)
+            if mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) && associated_text.is_some() =>
+        {
+            return Some(("0".into(), 'u'));
+        }
+        _ => return None,
+    };
+    let base = match key {
+        Key::Character(character) if character.chars().count() == 1 => character.chars().next()?,
+        _ => modified.to_lowercase().next().unwrap_or(modified),
+    };
+    let base = u32::from(base);
+    let alternate = u32::from(modified);
+    let payload = if mode.contains(TermMode::REPORT_ALTERNATE_KEYS) && alternate != base {
+        format!("{base}:{alternate}")
+    } else {
+        base.to_string()
+    };
+    Some((payload, 'u'))
+}
+
+fn is_control_character(text: &str) -> bool {
+    let Some(codepoint) = text.as_bytes().first().copied() else {
+        return false;
+    };
+    text.len() == 1 && (codepoint < 0x20 || (0x7f..=0x9f).contains(&codepoint))
+}
+
+fn paste_bytes(text: &str, mode: TermMode) -> Vec<u8> {
+    if mode.contains(TermMode::BRACKETED_PASTE) {
+        let filtered = text.replace(['\x1b', '\x03'], "");
+        format!("\x1b[200~{filtered}\x1b[201~").into_bytes()
+    } else {
+        text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()
+    }
+}
+
+fn mouse_report_bytes(
+    mode: TermMode,
+    button: u8,
+    modifiers: Modifiers,
+    cell: GridPoint<usize>,
+    pressed: bool,
+) -> Option<Vec<u8>> {
+    let mut modifier_code = 0;
+    if modifiers.shift() {
+        modifier_code += 4;
+    }
+    if modifiers.alt() {
+        modifier_code += 8;
+    }
+    if modifiers.control() {
+        modifier_code += 16;
+    }
+    let code = button + modifier_code;
+
+    if mode.contains(TermMode::SGR_MOUSE) {
+        let suffix = if pressed { 'M' } else { 'm' };
+        Some(
+            format!(
+                "\x1b[<{code};{};{}{suffix}",
+                cell.column.0 + 1,
+                cell.line + 1
+            )
+            .into_bytes(),
+        )
+    } else {
+        let utf8 = mode.contains(TermMode::UTF8_MOUSE);
+        let max_point = if utf8 { 2015 } else { 223 };
+        if cell.column.0 >= max_point || cell.line >= max_point {
+            return None;
+        }
+
+        let mut bytes = vec![
+            0x1b,
+            b'[',
+            b'M',
+            32 + if pressed { code } else { 3 + modifier_code },
+        ];
+        let mut encode_position = |position: usize| {
+            if utf8 && position >= 95 {
+                let position = 33 + position;
+                bytes.push((0xc0 + position / 64) as u8);
+                bytes.push((0x80 + (position & 63)) as u8);
+            } else {
+                bytes.push((33 + position) as u8);
+            }
+        };
+        encode_position(cell.column.0);
+        encode_position(cell.line);
+        Some(bytes)
+    }
+}
+
+fn mouse_button_code(button: mouse::Button) -> Option<u8> {
+    match button {
+        mouse::Button::Left => Some(0),
+        mouse::Button::Middle => Some(1),
+        mouse::Button::Right => Some(2),
+        _ => None,
+    }
+}
+
+fn motion_mouse_code(mode: TermMode, pressed: Option<mouse::Button>) -> Option<u8> {
+    if !mode.intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG) {
+        return None;
+    }
+    match pressed {
+        Some(mouse::Button::Left) => Some(32),
+        Some(mouse::Button::Middle) => Some(33),
+        Some(mouse::Button::Right) => Some(34),
+        None if mode.contains(TermMode::MOUSE_MOTION) => Some(35),
+        _ => None,
+    }
+}
+
+fn scroll_multiplier(mouse_reporting: bool) -> f32 {
+    if mouse_reporting {
+        1.0
+    } else {
+        SCROLL_MULTIPLIER
+    }
 }
 
 fn named_key(key: Named, modifiers: Modifiers, mode: TermMode) -> Option<String> {
@@ -1621,6 +2425,14 @@ fn named_key(key: Named, modifiers: Modifiers, mode: TermMode) -> Option<String>
         Named::F10 => function_tilde(21, modifier),
         Named::F11 => function_tilde(23, modifier),
         Named::F12 => function_tilde(24, modifier),
+        Named::F13 => function_tilde(25, modifier),
+        Named::F14 => function_tilde(26, modifier),
+        Named::F15 => function_tilde(28, modifier),
+        Named::F16 => function_tilde(29, modifier),
+        Named::F17 => function_tilde(31, modifier),
+        Named::F18 => function_tilde(32, modifier),
+        Named::F19 => function_tilde(33, modifier),
+        Named::F20 => function_tilde(34, modifier),
         _ => return None,
     })
 }
@@ -1644,14 +2456,17 @@ fn function_tilde(number: u8, modifier: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        EventProxy, Flags, Modifiers, Named, PaintCell, Rgb8, TerminalSize, TextStyle,
-        build_text_runs, encode_key, launch, named_key, palette_rgb, ssh_args, terminal_cell_size,
-        zoomed_font_size,
+        ClipboardRequest, EventProxy, Flags, KeyEventKind, Modifiers, Named, PaintCell, Rgb8,
+        TerminalSize, TextStyle, build_text_runs, clipboard_kind, encode_key, encode_key_event,
+        launch, motion_mouse_code, mouse_report_bytes, named_key, palette_rgb, paste_bytes,
+        scroll_multiplier, service_clipboard_requests, ssh_args, terminal_cell_size,
+        terminal_input_modifiers, zoomed_font_size,
     };
     use alacritty_terminal::event::{Event as AlacrittyEvent, EventListener};
     use alacritty_terminal::term::TermMode;
     use alacritty_terminal::vte::ansi::NamedColor;
     use iced::advanced::text::Paragraph as _;
+    use iced::advanced::{Clipboard, clipboard};
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use std::time::{Duration, Instant};
@@ -1706,6 +2521,360 @@ mod tests {
             ),
             Some(vec![0x15])
         );
+
+        assert_eq!(
+            encode_key_event(
+                &iced::keyboard::Key::Character("2".into()),
+                &iced::keyboard::Key::Character("2".into()),
+                Some("\0"),
+                Modifiers::CTRL,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Press,
+                TermMode::default(),
+            ),
+            Some(vec![0])
+        );
+    }
+
+    #[test]
+    fn kitty_protocol_disambiguates_ctrl_space() {
+        assert_eq!(
+            encode_key(
+                &iced::keyboard::Key::Named(Named::Space),
+                None,
+                Modifiers::CTRL,
+                TermMode::DISAMBIGUATE_ESC_CODES,
+            ),
+            Some(b"\x1b[32;5u".to_vec())
+        );
+    }
+
+    #[test]
+    fn kitty_protocol_reports_repeat_release_alternate_text_and_numpad() {
+        let arrow = iced::keyboard::Key::Named(Named::ArrowUp);
+        let event_types = TermMode::REPORT_EVENT_TYPES;
+        assert_eq!(
+            encode_key_event(
+                &arrow,
+                &arrow,
+                None,
+                Modifiers::NONE,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Repeat,
+                event_types,
+            ),
+            Some(b"\x1b[1;1:2A".to_vec())
+        );
+        assert_eq!(
+            encode_key_event(
+                &arrow,
+                &arrow,
+                None,
+                Modifiers::NONE,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Release,
+                event_types,
+            ),
+            Some(b"\x1b[1;1:3A".to_vec())
+        );
+        assert_eq!(
+            encode_key_event(
+                &iced::keyboard::Key::Named(Named::Enter),
+                &iced::keyboard::Key::Named(Named::Enter),
+                None,
+                Modifiers::NONE,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Release,
+                event_types,
+            ),
+            None
+        );
+
+        let base = iced::keyboard::Key::Character("a".into());
+        let shifted = iced::keyboard::Key::Character("A".into());
+        assert_eq!(
+            encode_key_event(
+                &base,
+                &shifted,
+                Some("A"),
+                Modifiers::SHIFT,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Press,
+                TermMode::REPORT_ALL_KEYS_AS_ESC
+                    | TermMode::REPORT_ALTERNATE_KEYS
+                    | TermMode::REPORT_ASSOCIATED_TEXT,
+            ),
+            Some(b"\x1b[97:65;2;65u".to_vec())
+        );
+
+        let one = iced::keyboard::Key::Character("1".into());
+        assert_eq!(
+            encode_key_event(
+                &one,
+                &one,
+                Some("1"),
+                Modifiers::NONE,
+                iced::keyboard::Location::Numpad,
+                KeyEventKind::Press,
+                TermMode::DISAMBIGUATE_ESC_CODES,
+            ),
+            Some(b"\x1b[57400u".to_vec())
+        );
+    }
+
+    #[test]
+    fn legacy_bindings_precede_kitty_encoding_on_key_press() {
+        let arrow = iced::keyboard::Key::Named(Named::ArrowUp);
+        let mode = TermMode::APP_CURSOR | TermMode::REPORT_EVENT_TYPES;
+        assert_eq!(
+            encode_key_event(
+                &arrow,
+                &arrow,
+                None,
+                Modifiers::NONE,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Press,
+                mode,
+            ),
+            Some(b"\x1bOA".to_vec())
+        );
+        assert_eq!(
+            encode_key_event(
+                &arrow,
+                &arrow,
+                None,
+                Modifiers::NONE,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Release,
+                mode,
+            ),
+            Some(b"\x1b[1;1:3A".to_vec())
+        );
+
+        let f1 = iced::keyboard::Key::Named(Named::F1);
+        assert_eq!(
+            encode_key_event(
+                &f1,
+                &f1,
+                None,
+                Modifiers::NONE,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Press,
+                TermMode::REPORT_EVENT_TYPES,
+            ),
+            Some(b"\x1bOP".to_vec())
+        );
+        assert_eq!(
+            encode_key_event(
+                &f1,
+                &f1,
+                None,
+                Modifiers::NONE,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Press,
+                TermMode::DISAMBIGUATE_ESC_CODES,
+            ),
+            Some(b"\x1b[P".to_vec())
+        );
+
+        let tab = iced::keyboard::Key::Named(Named::Tab);
+        assert_eq!(
+            encode_key_event(
+                &tab,
+                &tab,
+                None,
+                Modifiers::SHIFT | Modifiers::ALT,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Press,
+                TermMode::default(),
+            ),
+            Some(b"\x1b\x1b[Z".to_vec())
+        );
+        let enter = iced::keyboard::Key::Named(Named::Enter);
+        assert_eq!(
+            encode_key_event(
+                &enter,
+                &enter,
+                Some("\r"),
+                Modifiers::NONE,
+                iced::keyboard::Location::Numpad,
+                KeyEventKind::Press,
+                TermMode::default(),
+            ),
+            Some(b"\n".to_vec())
+        );
+    }
+
+    #[test]
+    fn legacy_named_controls_use_the_platform_text_payload() {
+        let enter = iced::keyboard::Key::Named(Named::Enter);
+        assert_eq!(
+            encode_key_event(
+                &enter,
+                &enter,
+                Some("\r"),
+                Modifiers::ALT,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Press,
+                TermMode::default(),
+            ),
+            Some(b"\x1b\r".to_vec())
+        );
+
+        let backspace = iced::keyboard::Key::Named(Named::Backspace);
+        assert_eq!(
+            encode_key_event(
+                &backspace,
+                &backspace,
+                Some("\x08"),
+                Modifiers::CTRL,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Press,
+                TermMode::REPORT_EVENT_TYPES,
+            ),
+            Some(vec![0x08])
+        );
+
+        assert_eq!(
+            encode_key_event(
+                &iced::keyboard::Key::Unidentified,
+                &iced::keyboard::Key::Unidentified,
+                Some(""),
+                Modifiers::NONE,
+                iced::keyboard::Location::Standard,
+                KeyEventKind::Press,
+                TermMode::default(),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn macos_option_only_modifies_non_text_keys_by_default() {
+        let character = iced::keyboard::Key::Character("a".into());
+        let character_modifiers = terminal_input_modifiers(&character, Modifiers::ALT);
+        assert_eq!(character_modifiers.alt(), !cfg!(target_os = "macos"),);
+
+        let arrow = iced::keyboard::Key::Named(Named::ArrowLeft);
+        assert!(terminal_input_modifiers(&arrow, Modifiers::ALT).alt());
+    }
+
+    #[test]
+    fn paste_matches_terminal_line_and_bracket_safety_rules() {
+        assert_eq!(
+            paste_bytes("one\r\ntwo\n", TermMode::default()),
+            b"one\rtwo\r"
+        );
+        assert_eq!(
+            paste_bytes("safe\x1b[201~still\x03text", TermMode::BRACKETED_PASTE,),
+            b"\x1b[200~safe[201~stilltext\x1b[201~"
+        );
+    }
+
+    #[test]
+    fn osc52_preserves_clipboard_kind() {
+        assert_eq!(
+            clipboard_kind(alacritty_terminal::term::ClipboardType::Clipboard),
+            iced::advanced::clipboard::Kind::Standard,
+        );
+        assert_eq!(
+            clipboard_kind(alacritty_terminal::term::ClipboardType::Selection),
+            iced::advanced::clipboard::Kind::Primary,
+        );
+    }
+
+    #[derive(Default)]
+    struct TestClipboard {
+        standard: Option<String>,
+        primary: Option<String>,
+    }
+
+    impl Clipboard for TestClipboard {
+        fn read(&self, kind: clipboard::Kind) -> Option<String> {
+            match kind {
+                clipboard::Kind::Standard => self.standard.clone(),
+                clipboard::Kind::Primary => self.primary.clone(),
+            }
+        }
+
+        fn write(&mut self, kind: clipboard::Kind, contents: String) {
+            *match kind {
+                clipboard::Kind::Standard => &mut self.standard,
+                clipboard::Kind::Primary => &mut self.primary,
+            } = Some(contents);
+        }
+    }
+
+    #[test]
+    fn osc52_services_every_store_and_load_in_order() {
+        let formatter = Arc::new(|text: &str| format!("<{text}>"));
+        let mut requests = vec![
+            ClipboardRequest::Store(
+                alacritty_terminal::term::ClipboardType::Clipboard,
+                "first".into(),
+            ),
+            ClipboardRequest::Load(
+                alacritty_terminal::term::ClipboardType::Clipboard,
+                formatter.clone(),
+            ),
+            ClipboardRequest::Store(
+                alacritty_terminal::term::ClipboardType::Clipboard,
+                "second".into(),
+            ),
+            ClipboardRequest::Load(
+                alacritty_terminal::term::ClipboardType::Clipboard,
+                formatter,
+            ),
+        ];
+        let mut clipboard = TestClipboard::default();
+
+        let replies = service_clipboard_requests(&mut requests, &mut clipboard);
+
+        assert!(requests.is_empty());
+        assert_eq!(replies, [b"<first>".to_vec(), b"<second>".to_vec()]);
+        assert_eq!(
+            clipboard.read(clipboard::Kind::Standard),
+            Some("second".into())
+        );
+    }
+
+    #[test]
+    fn mouse_reports_preserve_modifiers_utf8_coordinates_and_bounds() {
+        let origin = alacritty_terminal::index::Point::new(0, alacritty_terminal::index::Column(0));
+        assert_eq!(
+            mouse_report_bytes(TermMode::default(), 0, Modifiers::CTRL, origin, false,),
+            Some(vec![0x1b, b'[', b'M', 51, 33, 33])
+        );
+
+        let utf8_column =
+            alacritty_terminal::index::Point::new(0, alacritty_terminal::index::Column(95));
+        assert_eq!(
+            mouse_report_bytes(TermMode::UTF8_MOUSE, 0, Modifiers::NONE, utf8_column, true,),
+            Some(vec![0x1b, b'[', b'M', 32, 0xc2, 0x80, 33])
+        );
+
+        let out_of_bounds =
+            alacritty_terminal::index::Point::new(0, alacritty_terminal::index::Column(223));
+        assert_eq!(
+            mouse_report_bytes(TermMode::default(), 0, Modifiers::NONE, out_of_bounds, true,),
+            None
+        );
+    }
+
+    #[test]
+    fn mouse_motion_reports_dragged_buttons_and_unpressed_motion() {
+        assert_eq!(
+            motion_mouse_code(TermMode::MOUSE_DRAG, Some(iced::mouse::Button::Left)),
+            Some(32)
+        );
+        assert_eq!(
+            motion_mouse_code(TermMode::MOUSE_DRAG, Some(iced::mouse::Button::Middle),),
+            Some(33)
+        );
+        assert_eq!(motion_mouse_code(TermMode::MOUSE_MOTION, None), Some(35));
+        assert_eq!(motion_mouse_code(TermMode::MOUSE_DRAG, None), None);
+        assert_eq!(scroll_multiplier(true), 1.0);
+        assert_eq!(scroll_multiplier(false), super::SCROLL_MULTIPLIER);
     }
 
     #[test]
