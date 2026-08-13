@@ -302,9 +302,11 @@ cargo ice expand FILE     # print the generated Rust for a root
 cargo ice dev -p PACKAGE  # discover its Ice root, watch, reload, and restart as needed
 cargo ice bundle -p PKG   # installable app for this host: .dmg, .deb, or .msi
 cargo ice inspect FILE    # headless render -> PNG + JSON manifest
+cargo ice inspect FILE --test FLOW --trace  # release interaction timings -> trace.json
+cargo ice inspect FILE --fuzz interactions --seed 42 --steps 500  # deterministic semantic campaign
 cargo ice diff A B        # compare two manifests + PNGs
 cargo ice api FILE        # public-surface fingerprint; `api diff` classifies changes
-cargo ice review FILE     # run Ice tests into one JSON/HTML evidence bundle
+cargo ice review FILE --trace  # tests, captures, and linked interaction traces
 cargo ice schema          # machine-readable construct table (drives the LSP)
 cargo ice lsp             # stdio LSP: diagnostics, completion, rename, code actions
 ```

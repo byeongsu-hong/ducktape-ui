@@ -25,6 +25,36 @@ package selection. `cargo ice diff BASE.json CURRENT.json` writes
 changed-pixel ratio exceeds explicit `--pixel-threshold`,
 `--max-changed-ratio`, or `--value-tolerance` settings.
 
+Interaction tracing is an opt-in release-mode path over that same generated
+program and semantic driver:
+
+```sh
+cargo ice inspect src/ui/app.ice --test checkout_flow --trace --warmup 2 --repeat 20
+cargo ice inspect src/ui/app.ice --fuzz interactions --seed 42 --steps 500 --confirm 2
+cargo ice inspect src/ui/app.ice --replay target/ice-inspect/app/trace.json --confirm 2
+```
+
+Authored tracing records the exact first-class Ice test. Fuzzing refreshes the
+live target/capability inventory after every action and deterministically picks
+from pointer enter/leave, wheel/scroll, click, focus, key/chord, resize,
+redraw, and virtual-time advance. Replay pins the recorded action sequence and
+environment on a fresh boot. `--deadline-ms` and `--max-to-median` are explicit
+local latency policies. Generated candidates must repeat under `--confirm`;
+authored latency policy requires at least two measured repeats before it can
+publish a finding. Confirmed generated
+findings are reduced by replaying smaller action sequences on fresh boots.
+
+Every mode writes a strict, versioned `trace.json` beside the normal inspection
+artifacts. It contains source and rendered-target provenance, raw per-run
+samples, p50/p95/p99/max summaries, 60/120 Hz deadline misses, a stable finding
+fingerprint, reduction attempts, and PNG/manifest evidence for the worst
+confirmed state. View, UI build/layout, event dispatch, program update, widget
+operation, task settle, and whole-action boundaries are timed. Draw is marked
+unavailable because rendering and evidence capture deliberately happen outside
+the measured interval. Promote a useful reduced sequence by translating its
+semantic actions into a normal first-class Ice test with domain assertions;
+the trace artifact is evidence, not a second test DSL.
+
 ## bundle
 
 `cargo ice bundle -p PACKAGE` turns one Ice application into something a person
@@ -134,7 +164,7 @@ unreadable evidence as a failed review. A report baseline must be a successful
 review reports are rejected. With explicit `--test` selections, baseline keys
 are filtered before manifest paths are resolved or read, so evidence belonging
 to unselected tests is outside that run while a full review validates every
-entry. Capture manifests use schema 2 and review/diff reports use schema 1 with
+entry. Capture manifests use schema 2 and review reports use schema 2 with
 distinct artifact kinds. Direct diff and review share one structural manifest
 validator covering the published required fields, source provenance, nested
 geometry/accessibility/paint shapes, and sibling PNG identity. Every failure
@@ -144,6 +174,9 @@ already-written detailed failure report for that run is retained.
 execution and policy. The output contains `report.json`, `report.html`,
 `diagnostics.json`, test logs, current PNGs/manifests, and per-capture
 `diff.png`/`report.json` files.
+Passing `--trace` runs the selected tests in release mode and adds strict trace
+artifacts plus worst-phase/finding links to the JSON and HTML reports. Traces
+live outside the capture tree, so they never masquerade as capture manifests.
 
 ## dev
 

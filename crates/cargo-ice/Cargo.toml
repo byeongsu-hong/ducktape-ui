@@ -27,6 +27,7 @@ toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 ui-lang-core.workspace = true
+ui-lang-template.workspace = true
 
 [dev-dependencies]
 dhat = "0.3"

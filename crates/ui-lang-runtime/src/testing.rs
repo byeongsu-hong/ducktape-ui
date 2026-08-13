@@ -1,5 +1,7 @@
 //! Headless runtime used by generated Ice tests.
 
+mod trace;
+
 use crate::{SemanticEnd, SemanticSnapshot, SemanticState, StableId};
 use iced::advanced::Renderer as _;
 use iced::advanced::renderer::Headless as _;
@@ -36,6 +38,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
+use trace::Recorder as TraceRecorder;
+use ui_lang_template::trace::Phase;
 
 const MAX_SCREENSHOT_PIXELS: usize = 16_777_216;
 
@@ -837,7 +841,7 @@ impl Config {
 
 /// Runs the hidden headless inspection entry point generated for every Ice app.
 #[doc(hidden)]
-pub fn agent_inspect<P>(program: impl FnOnce() -> P, source_path: &'static str)
+pub fn agent_inspect<P>(program: impl Fn() -> P, source_path: &'static str)
 where
     P: Program + 'static,
     P::Renderer: 'static,
@@ -888,16 +892,59 @@ where
         config = config.artifact_dir(directory);
     }
 
+    if let Some(campaign) = trace::Campaign::from_env() {
+        let artifact_dir = config.artifact_dir.clone().unwrap_or_else(|| {
+            PathBuf::from("target")
+                .join("ice-test-artifacts")
+                .join(safe_path_component(name))
+        });
+        let mut artifact = trace::run_campaign(program, config, campaign);
+        artifact.app_root = manifest_source_path(source_path);
+        artifact.package =
+            std::env::var("ICE_TRACE_PACKAGE").unwrap_or_else(|_| "<generated-package>".into());
+        artifact.validate().unwrap_or_else(|error| {
+            panic!("{source}: generated invalid interaction trace: {error}")
+        });
+        std::fs::create_dir_all(&artifact_dir).unwrap_or_else(|error| {
+            panic!(
+                "{source}: cannot create trace output {}: {error}",
+                artifact_dir.display()
+            )
+        });
+        let trace_path = artifact_dir.join("trace.json");
+        let mut bytes = serde_json::to_vec_pretty(&artifact)
+            .expect("interaction trace artifact is serializable");
+        bytes.push(b'\n');
+        std::fs::write(&trace_path, bytes).unwrap_or_else(|error| {
+            panic!(
+                "{source}: cannot write trace artifact {}: {error}",
+                trace_path.display()
+            )
+        });
+        write_agent_result(
+            source,
+            serde_json::json!({
+                "source": generated_source,
+                "trace": trace_path,
+            }),
+        );
+        return;
+    }
+
     let mut driver = Driver::new(program(), config);
     let capture = driver.capture(name, source);
-    let result_path = std::env::var_os("ICE_AGENT_INSPECT_RESULT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| panic!("{source}: ICE_AGENT_INSPECT_RESULT is required"));
     let result = serde_json::json!({
         "source": generated_source,
         "png": capture.png_path,
         "manifest": capture.metadata_path,
     });
+    write_agent_result(source, result);
+}
+
+fn write_agent_result(source: Location, result: serde_json::Value) {
+    let result_path = std::env::var_os("ICE_AGENT_INSPECT_RESULT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("{source}: ICE_AGENT_INSPECT_RESULT is required"));
     std::fs::write(
         &result_path,
         serde_json::to_vec_pretty(&result).expect("inspection result is serializable"),
@@ -2168,6 +2215,11 @@ where
     next_subscription_generation: u64,
     pending_subscription_starts: HashSet<SubscriptionKey>,
     pending_subscription_events: HashMap<SubscriptionKey, usize>,
+    trace: Option<TraceRecorder>,
+    action_index: usize,
+    capture_before_action: Option<usize>,
+    capture_after_action: Option<usize>,
+    trace_capture_result: Option<PathBuf>,
 }
 
 impl<P> Driver<P>
@@ -2184,6 +2236,7 @@ where
     }
 
     fn new_inner(program: P, config: Config) -> Self {
+        let trace_config = config.clone();
         // Claimed before the program boots, because a boot preset is already
         // application code and may already reach state this instance owns.
         let instance = app_instance();
@@ -2337,10 +2390,16 @@ where
             next_subscription_generation: 0,
             pending_subscription_starts: HashSet::new(),
             pending_subscription_events: HashMap::new(),
+            trace: None,
+            action_index: 0,
+            capture_before_action: parsed_env("ICE_TRACE_CAPTURE_BEFORE_ACTION"),
+            capture_after_action: parsed_env("ICE_TRACE_CAPTURE_ACTION"),
+            trace_capture_result: std::env::var_os("ICE_TRACE_CAPTURE_RESULT").map(PathBuf::from),
         };
         driver.resubscribe(config.source);
         driver.run_task(task, config.source);
         driver.settle(config.source);
+        driver.trace = TraceRecorder::from_env(&driver, &trace_config);
         driver
     }
 
@@ -2696,6 +2755,80 @@ where
 
     /// Performs one semantic action. A capture action returns its artifact.
     pub fn perform_action(&mut self, action: Action, source: Location) -> Option<Capture> {
+        let target_source = self
+            .trace
+            .is_some()
+            .then(|| {
+                trace::primary_target(&action).and_then(|target| self.target_render_source(target))
+            })
+            .flatten();
+        if self.trace.is_some()
+            || self.capture_before_action.is_some()
+            || self.capture_after_action.is_some()
+        {
+            self.action_index = self.action_index.saturating_add(1);
+        }
+        self.capture_selected_trace_state(source, true);
+        if matches!(&action, Action::Capture(_)) {
+            if let Some(trace) = &mut self.trace {
+                trace.record_untimed(&action, source, target_source);
+            }
+            let output = self.perform_action_inner(action, source);
+            self.capture_selected_trace_state(source, false);
+            return output;
+        }
+        if let Some(trace) = &mut self.trace {
+            trace.begin(&action, source, target_source);
+        }
+        let output = self.perform_action_inner(action, source);
+        if let Some(trace) = &mut self.trace {
+            trace.finish();
+        }
+        self.capture_selected_trace_state(source, false);
+        output
+    }
+
+    fn capture_selected_trace_state(&mut self, source: Location, before: bool) {
+        let selected = if before {
+            self.capture_before_action
+        } else {
+            self.capture_after_action
+        };
+        let Some(selected) = selected else {
+            return;
+        };
+        if Some(selected) != self.action_index.checked_sub(1) {
+            return;
+        }
+        let capture = self.capture(
+            &format!("trace_worst_{}", self.action_index.saturating_sub(1)),
+            source,
+        );
+        if let Some(path) = self.trace_capture_result.take() {
+            let result = serde_json::json!({
+                "action_index": self.action_index.saturating_sub(1),
+                "png": capture.png_path,
+                "manifest": capture.metadata_path,
+            });
+            std::fs::write(
+                &path,
+                serde_json::to_vec_pretty(&result).expect("trace capture result is serializable"),
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{source}: cannot write trace capture result {}: {error}",
+                    path.display()
+                )
+            });
+        }
+        if before {
+            self.capture_before_action = None;
+        } else {
+            self.capture_after_action = None;
+        }
+    }
+
+    fn perform_action_inner(&mut self, action: Action, source: Location) -> Option<Capture> {
         match action {
             Action::Enter(target) => self.enter(&target, source),
             Action::Leave => self.leave(source),
@@ -3794,6 +3927,79 @@ where
         ))
     }
 
+    fn target_render_source(&mut self, id: &str) -> Option<Location> {
+        let mut layouts = self.with_interface(|interface, renderer, _| {
+            find_targets::<P::Message, P::Renderer>(interface, renderer, id)
+        });
+        normalize_target_matches(&mut layouts);
+        match layouts.as_slice() {
+            [layout] => layout.source,
+            _ => None,
+        }
+    }
+
+    fn interaction_inventory(&mut self) -> Vec<trace::InteractionTarget> {
+        self.known_ids()
+            .into_iter()
+            .filter_map(|id| {
+                let mut layouts = self.with_interface(|interface, renderer, _| {
+                    find_targets::<P::Message, P::Renderer>(interface, renderer, &id)
+                });
+                normalize_target_matches(&mut layouts);
+                let [layout] = layouts.as_slice() else {
+                    return None;
+                };
+                let visible = layout.visible_bounds.is_some();
+                let scrollable = layout.translation.is_some()
+                    && self.has_widget_capability(&id, WidgetCapability::Scrollable);
+                let focusable = layout.accessibility.as_ref().is_some_and(|accessibility| {
+                    accessibility.supports_focus && !accessibility.disabled
+                }) || self.has_widget_capability(&id, WidgetCapability::Focusable);
+                Some(trace::InteractionTarget {
+                    id,
+                    visible,
+                    scrollable,
+                    focusable,
+                })
+            })
+            .collect()
+    }
+
+    fn has_widget_capability(&mut self, id: &str, capability: WidgetCapability) -> bool {
+        self.with_interface(|interface, renderer, _| {
+            let mut operation = MatchingWidgetIds::new(id, capability).find_all();
+            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+            matches!(operation.finish(), Outcome::Some(ids) if ids.len() == 1)
+        })
+    }
+
+    fn enable_trace(
+        &mut self,
+        config: &Config,
+        configuration: ui_lang_template::trace::Configuration,
+        seed: Option<u64>,
+    ) {
+        self.trace = Some(TraceRecorder::for_campaign(
+            self,
+            config,
+            configuration,
+            seed,
+        ));
+    }
+
+    fn finish_trace_action(&mut self) {
+        if let Some(trace) = &mut self.trace {
+            trace.finish();
+        }
+    }
+
+    fn take_trace(&mut self) -> ui_lang_template::trace::Artifact {
+        self.trace
+            .take()
+            .expect("campaign trace is enabled")
+            .into_artifact()
+    }
+
     fn known_ids(&mut self) -> Vec<String> {
         let mut ids = self.with_interface(|interface, renderer, _| {
             let mut operation = KnownIds::<P::Message>::new().find_all();
@@ -4103,12 +4309,16 @@ where
     fn simulate(&mut self, events: impl IntoIterator<Item = iced::Event>, source: Location) {
         let events = events.into_iter().collect::<Vec<_>>();
         let cursor = self.cursor;
-        let (messages, statuses) = self.with_interface(|interface, renderer, clipboard| {
-            let mut messages = Vec::new();
-            let (_, statuses) =
-                interface.update(&events, cursor, renderer, clipboard, &mut messages);
-            (messages, statuses)
-        });
+        let trace = self.tracing_action();
+        let (messages, statuses, elapsed) =
+            self.with_interface(|interface, renderer, clipboard| {
+                let mut messages = Vec::new();
+                let started = trace.then(Instant::now);
+                let (_, statuses) =
+                    interface.update(&events, cursor, renderer, clipboard, &mut messages);
+                (messages, statuses, started.map(|started| started.elapsed()))
+            });
+        self.record_phase(Phase::EventDispatch, elapsed);
         self.finish_simulation(events, messages, statuses, source);
     }
 
@@ -4135,10 +4345,15 @@ where
 
     fn update(&mut self, message: P::Message, source: Option<Location>) {
         let test_name = self.test_name;
+        let started = self.phase_start();
         let task = with_panic_context(test_name, source, || {
             self.runtime
                 .enter(|| self.program.update(&mut self.state, message))
         });
+        self.record_phase(
+            Phase::ProgramUpdate,
+            started.map(|started| started.elapsed()),
+        );
         self.resubscribe(source);
         self.run_task(task, source);
     }
@@ -4270,6 +4485,8 @@ where
                 && self.pending_subscription_starts.is_empty()
                 && self.pending_subscription_events.is_empty()
             {
+                let elapsed = self.tracing_action().then(|| start.elapsed());
+                self.record_phase(Phase::TaskSettle, elapsed);
                 return;
             }
             if start.elapsed() >= self.timeout {
@@ -4354,7 +4571,9 @@ where
     }
 
     fn perform_widget(&mut self, mut operation: Box<dyn widget::Operation>) {
-        self.with_interface(|interface, renderer, _| {
+        let trace = self.tracing_action();
+        let elapsed = self.with_interface(|interface, renderer, _| {
+            let started = trace.then(Instant::now);
             loop {
                 interface.operate(renderer, &mut operation);
                 match operation.finish() {
@@ -4362,7 +4581,9 @@ where
                     Outcome::Chain(next) => operation = next,
                 }
             }
+            started.map(|started| started.elapsed())
         });
+        self.record_phase(Phase::WidgetOperation, elapsed);
     }
 
     fn perform_window(&mut self, action: runtime::window::Action, source: Option<Location>) {
@@ -4619,7 +4840,10 @@ where
             &mut TestClipboard,
         ) -> R,
     ) -> R {
+        let view_started = self.phase_start();
         let element = self.program.view(&self.state, self.window);
+        let view_elapsed = view_started.map(|started| started.elapsed());
+        let build_started = self.phase_start();
         let mut interface = UserInterface::build(
             element,
             self.size,
@@ -4631,9 +4855,28 @@ where
             }),
             &mut self.renderer,
         );
+        let build_elapsed = build_started.map(|started| started.elapsed());
         let output = f(&mut interface, &mut self.renderer, &mut self.clipboard);
         self.cache = Some(interface.into_cache());
+        self.record_phase(Phase::View, view_elapsed);
+        self.record_phase(Phase::UiBuildLayout, build_elapsed);
         output
+    }
+
+    fn tracing_action(&self) -> bool {
+        self.trace
+            .as_ref()
+            .is_some_and(TraceRecorder::is_recording_action)
+    }
+
+    fn phase_start(&self) -> Option<Instant> {
+        self.tracing_action().then(Instant::now)
+    }
+
+    fn record_phase(&mut self, phase: Phase, elapsed: Option<Duration>) {
+        if let (Some(trace), Some(elapsed)) = (&mut self.trace, elapsed) {
+            trace.phase(phase, elapsed);
+        }
     }
 }
 
@@ -6228,6 +6471,310 @@ mod tests {
         let scroll = driver.target("App/root/scroll", HERE);
         assert!(scroll.content_height() >= 200.0);
         assert_eq!(scroll.scroll_y(), 0.0);
+    }
+
+    #[test]
+    fn action_tracing_records_ordered_phases_and_is_inert_when_disabled() {
+        let program =
+            || iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view);
+        let config = Config::new("trace_order").viewport(320.0, 240.0);
+        let mut ordinary = Driver::new(program(), config.clone());
+        ordinary.perform_action(
+            Action::Click {
+                target: "App/root/increment".into(),
+                button: MouseButton::Left,
+                count: 1,
+            },
+            HERE,
+        );
+        assert_eq!(ordinary.state().count, 1);
+        assert!(ordinary.trace.is_none());
+        assert_eq!(ordinary.action_index, 0);
+
+        let mut traced = Driver::new(program(), config.clone());
+        traced.enable_trace(
+            &config,
+            ui_lang_template::trace::Configuration {
+                mode: ui_lang_template::trace::Mode::Replay,
+                test: None,
+                warmup: 0,
+                repeat: 1,
+                steps: Some(1),
+                confirmations: 1,
+                deadline_ms: None,
+                max_to_median_ratio: None,
+                generator_version: None,
+            },
+            None,
+        );
+        traced.perform_action(
+            Action::Click {
+                target: "App/root/increment".into(),
+                button: MouseButton::Left,
+                count: 1,
+            },
+            HERE,
+        );
+        assert_eq!(traced.state().count, ordinary.state().count);
+        let artifact = traced.take_trace();
+        assert_eq!(artifact.actions.len(), 1);
+        assert_eq!(
+            artifact.actions[0].target.as_deref(),
+            Some("App/root/increment")
+        );
+        assert!(artifact.actions[0].target_source.is_some());
+        assert_eq!(artifact.samples.last().unwrap().phase, Phase::Action);
+        let update = artifact
+            .samples
+            .iter()
+            .position(|sample| sample.phase == Phase::ProgramUpdate)
+            .unwrap();
+        let final_settle = artifact
+            .samples
+            .iter()
+            .rposition(|sample| sample.phase == Phase::TaskSettle)
+            .unwrap();
+        assert!(update < final_settle);
+    }
+
+    #[derive(Debug, Default)]
+    struct CliffState {
+        armed: bool,
+        hits: usize,
+    }
+
+    #[derive(Debug, Clone)]
+    enum CliffMessage {
+        Arm,
+        Hit,
+    }
+
+    static CLIFF_BOOTS: AtomicUsize = AtomicUsize::new(0);
+
+    fn cliff_boot() -> CliffState {
+        CLIFF_BOOTS.fetch_add(1, Ordering::Relaxed);
+        CliffState::default()
+    }
+
+    fn cliff_update(state: &mut CliffState, message: CliffMessage) -> Task<CliffMessage> {
+        match message {
+            CliffMessage::Arm => state.armed = true,
+            CliffMessage::Hit => {
+                if state.armed {
+                    std::thread::sleep(Duration::from_millis(60));
+                }
+                state.hits += 1;
+            }
+        }
+        Task::none()
+    }
+
+    fn cliff_controls<'a>() -> Element<'a, CliffMessage> {
+        column![
+            crate::accessible(
+                button("Arm").on_press(CliffMessage::Arm),
+                StableId::new("Cliff/arm"),
+                crate::Role::Button,
+            )
+            .logical_id("Cliff/arm")
+            .on_activate(CliffMessage::Arm),
+            crate::accessible(
+                button("Cliff").on_press(CliffMessage::Hit),
+                StableId::new("Cliff/slow"),
+                crate::Role::Button,
+            )
+            .logical_id("Cliff/slow")
+            .on_activate(CliffMessage::Hit),
+        ]
+        .into()
+    }
+
+    fn cliff_view(_state: &CliffState) -> Element<'_, CliffMessage> {
+        cliff_controls()
+    }
+
+    #[test]
+    fn seeded_campaign_confirms_replays_and_reduces_a_stateful_latency_cliff() {
+        const SEED: u64 = 2;
+        const STEPS: usize = 21;
+        let program = || {
+            iced::application::<CliffState, CliffMessage, iced::Theme, iced::Renderer>(
+                cliff_boot,
+                cliff_update,
+                cliff_view,
+            )
+        };
+        let config = Config::new("seeded_cliff")
+            .source(HERE)
+            .viewport(320.0, 240.0)
+            .artifact_dir(
+                std::env::temp_dir().join(format!("ice-trace-cliff-{}-{SEED}", std::process::id())),
+            );
+        let artifact_dir = config.artifact_dir.clone().unwrap();
+        let artifact = trace::run_campaign(
+            program,
+            config.clone(),
+            trace::Campaign {
+                mode: ui_lang_template::trace::Mode::Fuzz,
+                seed: Some(SEED),
+                steps: Some(STEPS),
+                confirmations: 2,
+                deadline_ms: Some(30.0),
+                max_to_median_ratio: None,
+                replay: None,
+            },
+        );
+        artifact.validate().unwrap();
+        let finding = artifact
+            .finding
+            .as_ref()
+            .expect("confirmed latency finding");
+        assert_eq!(finding.kind, ui_lang_template::trace::FindingKind::Latency);
+        assert_eq!(finding.confirmed_runs, 2);
+        let reduction = artifact
+            .reduction
+            .as_ref()
+            .expect("the finding sequence must be minimized");
+        assert!(reduction.minimized_actions.len() < artifact.actions.len());
+        let reduced_targets = reduction
+            .minimized_actions
+            .iter()
+            .filter_map(|action| action.target.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(reduced_targets, ["Cliff/arm", "Cliff/slow"]);
+        let worst = artifact
+            .worst_states
+            .first()
+            .expect("confirmed finding keeps untimed visual evidence");
+        assert!(Path::new(&worst.png).is_file());
+        assert!(Path::new(&worst.manifest).is_file());
+
+        let boots_before_replay = CLIFF_BOOTS.load(Ordering::Relaxed);
+        let replay = trace::run_campaign(
+            program,
+            config,
+            trace::Campaign {
+                mode: ui_lang_template::trace::Mode::Replay,
+                seed: artifact.seed,
+                steps: Some(artifact.actions.len()),
+                confirmations: 1,
+                deadline_ms: Some(30.0),
+                max_to_median_ratio: None,
+                replay: Some(artifact.clone()),
+            },
+        );
+        assert!(CLIFF_BOOTS.load(Ordering::Relaxed) > boots_before_replay);
+        assert_eq!(replay.actions, artifact.actions);
+        assert_eq!(
+            replay.finding.as_ref().map(|finding| &finding.fingerprint),
+            Some(&finding.fingerprint)
+        );
+        std::fs::remove_dir_all(artifact_dir).unwrap();
+    }
+
+    #[derive(Debug)]
+    struct FlakyCliffState {
+        armed: bool,
+        slow: bool,
+    }
+
+    fn flaky_cliff_update(
+        state: &mut FlakyCliffState,
+        message: CliffMessage,
+    ) -> Task<CliffMessage> {
+        match message {
+            CliffMessage::Arm => state.armed = true,
+            CliffMessage::Hit if state.armed && state.slow => {
+                std::thread::sleep(Duration::from_millis(60));
+            }
+            CliffMessage::Hit => {}
+        }
+        Task::none()
+    }
+
+    fn flaky_cliff_view(_state: &FlakyCliffState) -> Element<'_, CliffMessage> {
+        cliff_controls()
+    }
+
+    #[test]
+    fn confirmation_discards_a_one_off_latency_candidate() {
+        let boots = Arc::new(AtomicUsize::new(0));
+        let program = || {
+            let boots = Arc::clone(&boots);
+            iced::application::<FlakyCliffState, CliffMessage, iced::Theme, iced::Renderer>(
+                move || FlakyCliffState {
+                    armed: false,
+                    slow: boots.fetch_add(1, Ordering::Relaxed) == 0,
+                },
+                flaky_cliff_update,
+                flaky_cliff_view,
+            )
+        };
+        let artifact = trace::run_campaign(
+            program,
+            Config::new("flaky_cliff").viewport(320.0, 240.0),
+            trace::Campaign {
+                mode: ui_lang_template::trace::Mode::Fuzz,
+                seed: Some(2),
+                steps: Some(21),
+                confirmations: 2,
+                deadline_ms: Some(30.0),
+                max_to_median_ratio: None,
+                replay: None,
+            },
+        );
+        assert!(boots.load(Ordering::Relaxed) >= 2);
+        assert!(artifact.finding.is_none());
+        assert!(artifact.reduction.is_none());
+        assert!(artifact.worst_states.is_empty());
+    }
+
+    #[test]
+    #[ignore = "trace overhead contract run explicitly by the performance CI name filter"]
+    fn performance_contract_interaction_trace_overhead() {
+        const ACTIONS: usize = 30;
+        let program =
+            || iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view);
+        let action = || Action::Redraw;
+        let config = Config::new("trace_overhead").viewport(320.0, 240.0);
+        let mut ordinary = Driver::new(program(), config.clone());
+        let started = Instant::now();
+        for _ in 0..ACTIONS {
+            ordinary.perform_action(action(), HERE);
+        }
+        let ordinary_elapsed = started.elapsed();
+
+        let mut traced = Driver::new(program(), config.clone());
+        traced.enable_trace(
+            &config,
+            ui_lang_template::trace::Configuration {
+                mode: ui_lang_template::trace::Mode::Replay,
+                test: None,
+                warmup: 0,
+                repeat: 1,
+                steps: Some(ACTIONS),
+                confirmations: 1,
+                deadline_ms: None,
+                max_to_median_ratio: None,
+                generator_version: None,
+            },
+            None,
+        );
+        let started = Instant::now();
+        for _ in 0..ACTIONS {
+            traced.perform_action(action(), HERE);
+        }
+        let traced_elapsed = started.elapsed();
+        let artifact = traced.take_trace();
+        assert_eq!(
+            ordinary.action_index, 0,
+            "disabled tracing retains no action state"
+        );
+        assert_eq!(artifact.actions.len(), ACTIONS);
+        assert!(
+            traced_elapsed <= ordinary_elapsed.mul_f64(1.5),
+            "enabled tracing exceeded its documented 50% ceiling: ordinary={ordinary_elapsed:?}, traced={traced_elapsed:?}"
+        );
     }
 
     /// What is drawn on a layer is on screen, so a question about what is on

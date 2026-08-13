@@ -47,6 +47,25 @@ palette light for AppTheme
 }
 
 #[test]
+fn trace_modes_are_visible_in_command_help() {
+    let project = write_project();
+    let inspect = run(&project, &["inspect", "--help"]);
+    assert!(inspect.status.success());
+    let inspect = String::from_utf8(inspect.stdout).unwrap();
+    for flag in ["--trace", "--fuzz interactions", "--replay", "--confirm"] {
+        assert!(inspect.contains(flag), "inspect help omitted {flag}");
+    }
+
+    let review = run(&project, &["review", "--help"]);
+    assert!(review.status.success());
+    assert!(
+        String::from_utf8(review.stdout)
+            .unwrap()
+            .contains("--trace")
+    );
+}
+
+#[test]
 fn api_finds_the_containing_package_from_a_descendant_directory() {
     let project = write_project();
     let interface_directory = project.path().join("src/ui");

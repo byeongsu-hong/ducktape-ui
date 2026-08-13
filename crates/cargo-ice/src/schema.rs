@@ -2,6 +2,10 @@ use crate::evidence::{
     CAPTURE_DIFF_ARTIFACT_KIND, CAPTURE_SCHEMA_VERSION, REVIEW_ARTIFACT_KIND, REVIEW_SCHEMA_VERSION,
 };
 use serde_json::{Value, json};
+use ui_lang_template::trace::{
+    ARTIFACT_KIND as TRACE_ARTIFACT_KIND, GENERATOR_VERSION as TRACE_GENERATOR_VERSION,
+    SCHEMA_VERSION as TRACE_SCHEMA_VERSION,
+};
 
 pub use ui_lang_core::LANGUAGE_REVISION;
 pub const ICED_VERSION: &str = "0.14.0";
@@ -2510,19 +2514,43 @@ fn test_contract() -> Value {
             "pixelGoldenComparison": false,
             "ambiguousMatch": "runtime failure; never guessed",
             "customRendererPaint": false,
+            "interactionTrace": {
+                "commands": [
+                    "cargo ice inspect ROOT.ice --test NAME --trace [--warmup N] [--repeat N]",
+                    "cargo ice inspect ROOT.ice --fuzz interactions --seed N --steps N [--confirm N]",
+                    "cargo ice inspect ROOT.ice --replay TRACE.json [--confirm N]"
+                ],
+                "artifactKind": TRACE_ARTIFACT_KIND,
+                "schemaVersion": TRACE_SCHEMA_VERSION,
+                "generatorVersion": TRACE_GENERATOR_VERSION,
+                "buildProfile": "release",
+                "phases": ["action", "view", "ui_build_layout", "event_dispatch", "program_update", "widget_operation", "task_settle"],
+                "unavailablePhases": ["draw"],
+                "rawSamples": true,
+                "summaries": ["p50", "p95", "p99", "max", "60hz deadline misses", "120hz deadline misses"],
+                "findingKinds": ["panic", "timeout", "assertion", "latency"],
+                "latencyPolicies": ["--deadline-ms", "--max-to-median"],
+                "confirmation": "exact semantic sequence on fresh boots before publishing a finding",
+                "reduction": "confirmed generated findings only; every accepted result is strictly smaller and preserves the stable fingerprint",
+                "evidence": "worst-state PNG and capture-v2 manifest produced outside measured intervals",
+                "provenance": ["action source", "rendered target source"],
+                "promotion": "translate the reduced semantic sequence into an ordinary first-class Ice test with domain assertions",
+                "secondDsl": false,
+                "secondDriver": false,
+            },
             "reviewBundle": {
                 "command": "cargo ice review ROOT.ice [options]",
                 "artifactKind": REVIEW_ARTIFACT_KIND,
                 "schemaVersion": REVIEW_SCHEMA_VERSION,
                 "captureDiffArtifactKind": CAPTURE_DIFF_ARTIFACT_KIND,
-                "formats": ["report.json", "report.html", "diagnostics.json", "test logs", "capture PNG/JSON", "diff PNG/JSON"],
+                "formats": ["report.json", "report.html", "diagnostics.json", "test logs", "capture PNG/JSON", "optional trace JSON", "diff PNG/JSON"],
                 "testSelection": "all declared first-class Ice tests or repeated --test NAME",
                 "baselineIdentity": "stable test-name/capture-name manifest key",
                 "baselineReport": "exact-schema successful ice_review_bundle with typed unique capture entries",
                 "selectedBaselineScope": "filter keys before resolving, reading, or checking manifest paths",
                 "failurePublication": "every failure after opening output publishes the current run ID; preserve a detailed current-run failure",
-                "failurePolicy": ["test failure", "changed capture", "new capture", "removed capture", "unreadable evidence"],
-                "summaries": ["semantic diagnostics", "AccessKit role/name/action inventory", "source-mapped structured changes"],
+                "failurePolicy": ["test failure", "changed capture", "new capture", "removed capture", "invalid requested trace", "unreadable evidence"],
+                "summaries": ["semantic diagnostics", "AccessKit role/name/action inventory", "source-mapped structured changes", "optional interaction tail/finding"],
             },
         },
         "nonGoals": ["DOM", "CSS selectors", "synthetic component bounds", "component-local state access", "DSL mocks", "general virtual clock", "built-in pixel-golden comparison", "multi-window orchestration"],
@@ -3760,8 +3788,15 @@ mod tests {
         );
         let review = &contract["inspection"]["reviewBundle"];
         assert_eq!(review["artifactKind"], "ice_review_bundle");
-        assert_eq!(review["schemaVersion"], 1);
+        assert_eq!(review["schemaVersion"], 2);
         assert_eq!(review["captureDiffArtifactKind"], "ice_capture_diff");
+        let trace = &contract["inspection"]["interactionTrace"];
+        assert_eq!(trace["artifactKind"], "ice_interaction_trace");
+        assert_eq!(trace["schemaVersion"], 1);
+        assert_eq!(trace["generatorVersion"], 1);
+        assert_eq!(trace["buildProfile"], "release");
+        assert_eq!(trace["secondDsl"], false);
+        assert_eq!(trace["secondDriver"], false);
         assert!(
             review["selectedBaselineScope"]
                 .as_str()

@@ -633,7 +633,16 @@ paint; redraw-emitted messages remain unapplied and capture stays
 observation-only. Generated identified targets retain their originating
 imported `.ice` path, line, and column. `cargo ice inspect` activates an
 otherwise inert generated entry for one real app `Program`, fixed environment,
-and preset; `cargo ice diff` externally compares structured values and RGBA
+and preset. Its release-only trace modes measure authored tests,
+deterministically generate semantic actions from a refreshed live inventory,
+or replay an exact artifact environment/sequence on a fresh boot. The strict
+trace-schema-1 artifact retains raw phase samples and tail summaries,
+source/target provenance, stable confirmed-finding fingerprints, strictly
+smaller reductions where one exists, and untimed worst-state PNG/manifests. A
+seeded stateful runtime fixture proves discovery, confirmation, fresh-boot
+replay, and dependency-preserving reduction; a mutation disabling only its
+injected cliff is Red at the finding assertion. `cargo ice diff` externally
+compares structured values and RGBA
 pixels and writes JSON/PNG reports. `cargo ice review` selects declared Ice
 tests, records their exact process results and captures, reuses the same diff
 engine, summarizes live AccessKit metadata, and maps structured changes back to
@@ -641,7 +650,7 @@ the target or capture statement source. Unit contracts cover option/test
 selection, HTML escaping, accessibility aggregation, source mapping, and the
 shared pixel/manifest comparison. Direct diff and review share a typed capture
 schema-2 validator for required fields and core nested provenance, geometry,
-accessibility, and paint shapes. Typed review-schema-1 baseline tests reject
+accessibility, and paint shapes. Typed review-schema-2 baseline tests reject
 wrong artifact kinds, failed reports, malformed capture entries, duplicates,
 and unsafe paths. Run-ID failure tests prove stale success is replaced while a
 current detailed failure is preserved. Pull-request CI exercises a full

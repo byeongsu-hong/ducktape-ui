@@ -23,6 +23,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod trace;
+
 /// A position in the table of strings the view computes each frame.
 ///
 /// The five slot kinds below index five separate tables rather than one, and

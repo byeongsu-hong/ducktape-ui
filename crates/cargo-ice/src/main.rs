@@ -19,6 +19,13 @@ use std::process::{Command, ExitCode, Stdio};
 
 const DEV_USAGE: &str =
     "cargo ice dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...]";
+const INSPECT_USAGE: &str = "cargo ice inspect ROOT.ice [render options]\n\
+  cargo ice inspect ROOT.ice --test NAME --trace [--warmup N] [--repeat N] [--deadline-ms MS | --max-to-median RATIO]\n\
+  cargo ice inspect ROOT.ice --fuzz interactions --seed N --steps N [--confirm N] [--deadline-ms MS | --max-to-median RATIO]\n\
+  cargo ice inspect ROOT.ice --replay TRACE.json [--confirm N]\n\
+Trace and fuzz campaigns always use release builds and write a strict sibling trace.json.";
+const REVIEW_USAGE: &str = "cargo ice review ROOT.ice [--test NAME]... [--trace] [--baseline DIR] [--output DIR] [comparison options]\n\
+--trace runs selected tests in release mode and links their interaction traces from report.html.";
 
 enum DevTarget<'a> {
     Package(&'a str),
@@ -65,6 +72,20 @@ fn run() -> Result<(), String> {
     }
     let check_only = trailing == ["--check"];
 
+    if trailing == ["--help"] {
+        match command {
+            "inspect" => {
+                println!("{INSPECT_USAGE}");
+                return Ok(());
+            }
+            "review" => {
+                println!("{REVIEW_USAGE}");
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
     match command {
         "schema" => {
             println!(
@@ -82,7 +103,7 @@ fn run() -> Result<(), String> {
         "bundle" => return bundle::run(&root_for_command()?, trailing),
         "help" | "--help" | "-h" => {
             println!(
-                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...] | bundle -p <package> [--target <triple>]... | inspect <file.ice> [options] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | review <file.ice> [options] | schema | lsp>"
+                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...] | bundle -p <package> [--target <triple>]... | inspect <file.ice> [--trace|--fuzz interactions|--replay trace.json] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | review <file.ice> [--trace] | schema | lsp>"
             );
             return Ok(());
         }

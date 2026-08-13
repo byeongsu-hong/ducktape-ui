@@ -916,6 +916,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ui-lang-core",
+ "ui-lang-template",
 ]
 
 [[package]]
