@@ -20,6 +20,11 @@ env:
   ICED_TEST_BACKEND: tiny-skia
   # One content-keyed compiler cache for every job on every platform: the six
   # jobs that build overlapping dependency graphs stop paying for them twice.
+  # sccache is an optimization, not a correctness gate: every sccache-action
+  # step runs with continue-on-error (its binary download from GitHub releases
+  # flakes, issue #595) followed by a guard that clears these two variables via
+  # GITHUB_ENV when setup failed — the job then builds uncached but green
+  # instead of every cargo call spawning a wrapper that never arrived.
   RUSTC_WRAPPER: sccache
   SCCACHE_GHA_ENABLED: "true"
   CARGO_NET_RETRY: "10"
@@ -38,6 +43,14 @@ jobs:
         with:
           fetch-depth: 0
       - uses: mozilla-actions/sccache-action@v0.0.11
+        id: sccache
+        continue-on-error: true
+      - name: Disable sccache after failed setup
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
       - run: cargo ice fmt --check
       - name: Check complete Iced coverage ledger
         run: |
@@ -181,6 +194,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
+        id: sccache
+        continue-on-error: true
+      - name: Disable sccache after failed setup
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
       - name: Verify full and selected review bundles
         run: |
           cargo ice review examples/showcase/src/ui/app.ice \
@@ -304,6 +325,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
+        id: sccache
+        continue-on-error: true
+      - name: Disable sccache after failed setup
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
       - run: rustup toolchain install 1.88.0 --profile minimal
       - run: cargo +1.88.0 check --workspace --locked
 
@@ -318,6 +347,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
+        id: sccache
+        continue-on-error: true
+      - name: Disable sccache after failed setup
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
       # Measured exception to the sccache-only rule: this job builds many dev
       # test targets, where a restored `target/` lets cargo fingerprint-skip
       # compilation and linking outright. Without it the macOS leg ran 9-26m
@@ -360,6 +397,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
+        id: sccache
+        continue-on-error: true
+      - name: Disable sccache after failed setup
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
       - name: Install system dependencies
         run: |
           sudo apt-get $APT update
@@ -408,6 +453,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
+        id: sccache
+        continue-on-error: true
+      - name: Disable sccache after failed setup
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
       - name: Install Linux display and Vulkan dependencies
         if: matrix.label == 'Linux'
         run: |
