@@ -125,7 +125,9 @@ where
             + (self.length + separator_count).saturating_sub(1) as f32 * SLOT_GAP
             + separator_count as f32 * SEPARATOR_WIDTH;
 
-        let mut slots = Row::new().spacing(SLOT_GAP).height(SLOT_SIZE);
+        let mut slots = Row::with_capacity(self.length + separator_count)
+            .spacing(SLOT_GAP)
+            .height(SLOT_SIZE);
         for index in 0..self.length {
             let character = characters.next();
             slots = slots.push(slot(character, self.invalid, self.disabled, &self.theme));
