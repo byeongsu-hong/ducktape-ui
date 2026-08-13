@@ -217,16 +217,29 @@ impl State {
             .unwrap_or(estimate)
     }
 
-    /// Row tops, from measurements where they exist and the estimate
-    /// elsewhere, with `spacing` between every pair.
-    fn tops(&self, count: usize, estimate: f32, spacing: f32) -> Vec<f32> {
-        let mut tops = Vec::with_capacity(count);
-        let mut running = 0.0;
+    /// Finds the rows intersecting a viewport without storing every row top.
+    fn window(
+        &self,
+        count: usize,
+        estimate: f32,
+        spacing: f32,
+        visible_top: f32,
+        visible_height: f32,
+    ) -> (usize, usize) {
+        let visible_bottom = visible_top + visible_height;
+        let mut first = 0;
+        let mut last = 0;
+        let mut top = 0.0;
         for index in 0..count {
-            tops.push(running);
-            running += self.height_of(index, estimate) + spacing;
+            if top <= visible_top {
+                first = index;
+            }
+            if top < visible_bottom {
+                last = index + 1;
+            }
+            top += self.height_of(index, estimate) + spacing;
         }
-        tops
+        (first, last)
     }
 
     /// Moves the remembered viewport and reports whether it escaped the rows
@@ -239,11 +252,13 @@ impl State {
         }
         self.viewport = visible;
 
-        let tops = self.tops(self.measured.len(), self.estimated_height, self.spacing);
-        let first = tops
-            .partition_point(|top| *top <= visible.y)
-            .saturating_sub(1);
-        let last = tops.partition_point(|top| *top < visible.y + visible.height);
+        let (first, last) = self.window(
+            self.measured.len(),
+            self.estimated_height,
+            self.spacing,
+            visible.y,
+            visible.height,
+        );
         first < self.live.mounted.start || last > self.live.mounted.end
     }
 }
@@ -476,8 +491,6 @@ where
     ) -> layout::Node {
         let count = self.children.len();
         let state = tree.state.downcast_mut::<State>();
-        let tops = state.tops(count, self.estimated_height, self.spacing);
-
         // Before the first draw the viewport is unknown; fill a screen's worth
         // from the top rather than the whole document. A vertical scrollable
         // hands its content an *infinite* height limit, so the limit alone
@@ -491,10 +504,13 @@ where
         } else {
             NOMINAL_SCREEN_HEIGHT.max(self.estimated_height)
         };
-        let first = tops
-            .partition_point(|top| *top <= visible_top)
-            .saturating_sub(1);
-        let last = tops.partition_point(|top| *top < visible_top + visible_height);
+        let (first, last) = state.window(
+            count,
+            self.estimated_height,
+            self.spacing,
+            visible_top,
+            visible_height,
+        );
         let live = Live {
             mounted: first.saturating_sub(OVERSCAN_ROWS)..(last + OVERSCAN_ROWS).min(count),
             // Measure the focused child wherever it is, so it keeps its key
