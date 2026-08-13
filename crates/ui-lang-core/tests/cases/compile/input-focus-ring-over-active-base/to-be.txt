@@ -1,0 +1,1 @@
+__style.border.color = __ice_palette.colors[2]; if matches!(__status, ::iced::widget::text_input::Status::Focused { .. }) { __style.border.color = __ice_palette.colors[3]; } __style })
