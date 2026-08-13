@@ -378,12 +378,11 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
-        let children = self
-            .items
-            .iter()
-            .map(|item| &item.content)
-            .collect::<Vec<_>>();
-        tree.diff_children(&children);
+        tree.diff_children_custom(
+            &self.items,
+            |tree, item| tree.diff(&item.content),
+            |item| Tree::new(&item.content),
+        );
     }
 
     fn size(&self) -> Size<Length> {
