@@ -34,11 +34,15 @@ pub fn directed_row<'a, Message>(
 where
     Message: 'a,
 {
-    let mut items = items.into_iter().collect::<Vec<_>>();
-    if direction == Direction::RightToLeft {
-        items.reverse();
+    let items = items.into_iter();
+    if direction == Direction::LeftToRight {
+        return items.fold(Row::new(), Row::push);
     }
-    items.into_iter().fold(Row::new(), Row::push)
+    items
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .fold(Row::new(), Row::push)
 }
 
 #[cfg(test)]
