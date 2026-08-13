@@ -73,7 +73,7 @@ fn performance_contract_100k_unchanged_render() {
     const FRAMES: usize = 60;
     const P50_BUDGET_US: u128 = 750;
     const P95_BUDGET_US: u128 = 1_500;
-    const ALLOCATION_BUDGET: usize = 180;
+    const ALLOCATION_BUDGET: usize = 131;
     const ALLOCATED_BYTES_BUDGET: usize = 128 * 1024;
 
     let items: Vec<u64> = (0..100_000).collect();
