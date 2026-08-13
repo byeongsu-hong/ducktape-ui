@@ -23,6 +23,7 @@ static TRANSACTION_ID: AtomicU64 = AtomicU64::new(0);
 std::thread_local! {
     static GENERATED_WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static CONTENT_COMPARISON_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RERUN_DIRECTIVE_FORMATS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Debug)]
@@ -437,17 +438,20 @@ fn split_generated_groups(
     Ok((root, groups))
 }
 
-fn rerun_directives(sources: &[PathBuf], assets: &[PathBuf]) -> Vec<String> {
-    std::iter::once(format!(
-        "cargo::rerun-if-env-changed={DEV_BUILD_FINGERPRINT_ENV}"
-    ))
-    .chain(
-        sources
-            .iter()
-            .chain(assets)
-            .map(|path| format!("cargo::rerun-if-changed={}", path.display())),
-    )
-    .collect()
+fn rerun_directives<'a>(
+    sources: &'a [PathBuf],
+    assets: &'a [PathBuf],
+) -> impl Iterator<Item = String> + 'a {
+    std::iter::once_with(|| {
+        #[cfg(test)]
+        RERUN_DIRECTIVE_FORMATS.with(|formats| formats.set(formats.get() + 1));
+        format!("cargo::rerun-if-env-changed={DEV_BUILD_FINGERPRINT_ENV}")
+    })
+    .chain(sources.iter().chain(assets).map(|path| {
+        #[cfg(test)]
+        RERUN_DIRECTIVE_FORMATS.with(|formats| formats.set(formats.get() + 1));
+        format!("cargo::rerun-if-changed={}", path.display())
+    }))
 }
 
 impl GenerationLock {
@@ -949,6 +953,14 @@ mod tests {
         super::CONTENT_COMPARISON_READS.with(std::cell::Cell::get)
     }
 
+    fn reset_rerun_directive_formats() {
+        super::RERUN_DIRECTIVE_FORMATS.with(|formats| formats.set(0));
+    }
+
+    fn rerun_directive_formats() -> usize {
+        super::RERUN_DIRECTIVE_FORMATS.with(std::cell::Cell::get)
+    }
+
     fn fixture(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "ui-lang-build-{name}-{}-{}",
@@ -1017,7 +1029,8 @@ mod tests {
             rerun_directives(
                 &["src/ui/app.ice".into(), "src/ui/content.ice".into()],
                 &["assets/font.ttf".into(), "assets/icon.rgba".into()],
-            ),
+            )
+            .collect::<Vec<_>>(),
             [
                 "cargo::rerun-if-env-changed=ICE_DEV_BUILD_FINGERPRINT",
                 "cargo::rerun-if-changed=src/ui/app.ice",
@@ -1026,6 +1039,32 @@ mod tests {
                 "cargo::rerun-if-changed=assets/icon.rgba",
             ]
         );
+    }
+
+    #[test]
+    fn rerun_directives_format_paths_as_the_caller_consumes_them() {
+        let sources = [PathBuf::from("src/ui/app.ice")];
+        let assets = [PathBuf::from("assets/icon.rgba")];
+        reset_rerun_directive_formats();
+
+        let mut directives = rerun_directives(&sources, &assets);
+        assert_eq!(rerun_directive_formats(), 0);
+        assert_eq!(
+            directives.next().as_deref(),
+            Some("cargo::rerun-if-env-changed=ICE_DEV_BUILD_FINGERPRINT")
+        );
+        assert_eq!(rerun_directive_formats(), 1);
+        assert_eq!(
+            directives.next().as_deref(),
+            Some("cargo::rerun-if-changed=src/ui/app.ice")
+        );
+        assert_eq!(rerun_directive_formats(), 2);
+        assert_eq!(
+            directives.next().as_deref(),
+            Some("cargo::rerun-if-changed=assets/icon.rgba")
+        );
+        assert_eq!(rerun_directive_formats(), 3);
+        assert_eq!(directives.next(), None);
     }
 
     #[test]
