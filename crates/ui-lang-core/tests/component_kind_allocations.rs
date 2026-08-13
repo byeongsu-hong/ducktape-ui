@@ -11,6 +11,7 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 fn validating_component_names_does_not_allocate() {
     const VALIDATIONS: usize = 4_000;
 
+    black_box(SymbolKind::Component.accepts(black_box("catalog::controls::Card.Header")));
     let region = Region::new(GLOBAL);
     let accepted = (0..VALIDATIONS)
         .filter(|_| {
