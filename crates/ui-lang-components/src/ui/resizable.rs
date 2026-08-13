@@ -652,16 +652,9 @@ where
         }
 
         let bounds = layout.bounds();
-        let geometry = group_geometry(
-            bounds,
-            self.layout.sizes(),
-            self.orientation,
-            self.pointer_hit_size,
-            self.touch_hit_size,
-        );
-        let dragging = tree.state.downcast_ref::<State>().drag.clone();
+        let dragging = tree.state.downcast_ref::<State>().drag.as_ref();
 
-        let movement = match (event, dragging.as_ref()) {
+        let movement = match (event, dragging) {
             (
                 Event::Mouse(mouse::Event::CursorMoved { position }),
                 Some(Drag {
@@ -681,17 +674,17 @@ where
             ) if id == active => Some(*position),
             _ => None,
         };
-        let finished = finish_drag(tree.state.downcast_mut::<State>(), event);
 
-        if let (Some(point), Some(drag)) = (movement, dragging.as_ref()) {
+        if let (Some(point), Some(drag)) = (movement, dragging) {
             let delta = drag_delta(drag.origin, point, bounds, self.orientation);
             let sizes = drag.layout.resize(drag.handle, delta);
             let changed = sizes != drag.last;
+            let finished = finish_drag(tree.state.downcast_mut::<State>(), event);
             if !finished
                 && changed
                 && let Some(active) = tree.state.downcast_mut::<State>().drag.as_mut()
             {
-                active.last = sizes.clone();
+                active.last.clone_from(&sizes);
             }
             if !finished || changed {
                 shell.publish((self.on_resize)(sizes));
@@ -701,13 +694,14 @@ where
             return;
         }
 
+        let finished = finish_drag(tree.state.downcast_mut::<State>(), event);
         if finished {
             shell.capture_event();
             shell.request_redraw();
             return;
         }
 
-        if dragging.is_some() {
+        if tree.state.downcast_ref::<State>().drag.is_some() {
             return;
         }
 
@@ -723,6 +717,13 @@ where
         };
 
         if let Some((source, point, coarse)) = press {
+            let geometry = group_geometry(
+                bounds,
+                self.layout.sizes(),
+                self.orientation,
+                self.pointer_hit_size,
+                self.touch_hit_size,
+            );
             let handle = hit_handle(&geometry, point, coarse, |index| {
                 !self.handle_disabled(index)
             });
