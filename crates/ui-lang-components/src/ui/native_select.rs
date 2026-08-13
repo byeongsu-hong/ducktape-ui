@@ -152,7 +152,7 @@ where
         L: Borrow<[T]>,
         V: Borrow<T>,
     {
-        let options: Rc<[T]> = Rc::from(options.borrow().to_vec());
+        let options: Rc<[T]> = Rc::from(options.borrow());
         let selected = selected.map(|value| value.borrow().clone());
         let selected_index = selected
             .as_ref()
