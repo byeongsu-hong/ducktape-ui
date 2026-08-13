@@ -122,8 +122,14 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        let default_theme = theme::Base::default(theme.mode());
-        let theme = self.theme.as_ref().unwrap_or(&default_theme);
+        let default_theme;
+        let theme = match &self.theme {
+            Some(theme) => theme,
+            None => {
+                default_theme = theme::Base::default(theme.mode());
+                &default_theme
+            }
+        };
 
         if let Some(background) = &self.background {
             renderer.fill_quad(
@@ -175,8 +181,14 @@ where
                 layout: Layout<'_>,
                 cursor: mouse::Cursor,
             ) {
-                let default_theme = theme::Base::default(theme.mode());
-                let theme = self.theme.as_ref().unwrap_or(&default_theme);
+                let default_theme;
+                let theme = match self.theme {
+                    Some(theme) => theme,
+                    None => {
+                        default_theme = theme::Base::default(theme.mode());
+                        &default_theme
+                    }
+                };
                 self.content
                     .as_overlay()
                     .draw(renderer, theme, style, layout, cursor);
