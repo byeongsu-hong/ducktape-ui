@@ -34,7 +34,10 @@ use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 const FONT_SIZE: f32 = 14.0;
+const MIN_FONT_SIZE: f32 = 8.0;
+const MAX_FONT_SIZE: f32 = 32.0;
 const LINE_HEIGHT: f32 = 1.4;
+const TERMINAL_FONT: Font = Font::with_name("JetBrains Mono");
 const FRAME_INTERVAL: Duration = Duration::from_millis(8);
 const DEFAULT_COLUMNS: u16 = 80;
 const DEFAULT_LINES: u16 = 24;
@@ -369,8 +372,8 @@ impl TerminalSize {
         let cell_height = cell.height.round().max(1.0) as u16;
 
         Self {
-            columns: (bounds.width / f32::from(cell_width)).floor().max(1.0) as u16,
-            lines: (bounds.height / f32::from(cell_height)).floor().max(1.0) as u16,
+            columns: (bounds.width / cell.width.max(1.0)).floor().max(1.0) as u16,
+            lines: (bounds.height / cell.height.max(1.0)).floor().max(1.0) as u16,
             cell_width,
             cell_height,
         }
@@ -689,7 +692,13 @@ const ANSI_PALETTE: [Rgb8; 16] = [
 ];
 
 fn palette_rgb(index: usize) -> Rgb {
-    let Rgb8(r, g, b) = indexed_color(index.min(255));
+    let color = match index {
+        index if index == NamedColor::Foreground as usize => named_color(NamedColor::Foreground),
+        index if index == NamedColor::Background as usize => named_color(NamedColor::Background),
+        index if index == NamedColor::Cursor as usize => named_color(NamedColor::Cursor),
+        index => indexed_color(index),
+    };
+    let Rgb8(r, g, b) = color;
     Rgb { r, g, b }
 }
 
@@ -1033,6 +1042,7 @@ struct SurfaceState {
     focused: bool,
     reported_focus: bool,
     modifiers: Modifiers,
+    font_size: f32,
     cell: Size,
     layout: Size,
     mouse_cell: GridPoint<usize>,
@@ -1062,6 +1072,23 @@ struct TerminalSurface {
     session_id: u64,
 }
 
+fn terminal_cell_size(font_size: f32) -> Size {
+    let paragraph = <iced::Renderer as text::Renderer>::Paragraph::with_text(text::Text {
+        content: "M",
+        bounds: Size::INFINITE,
+        size: Pixels(font_size),
+        line_height: text::LineHeight::Relative(LINE_HEIGHT),
+        font: TERMINAL_FONT,
+        align_x: text::Alignment::Left,
+        align_y: alignment::Vertical::Top,
+        shaping: text::Shaping::Basic,
+        wrapping: text::Wrapping::None,
+    });
+    let measured = paragraph.min_bounds();
+
+    Size::new(measured.width.max(1.0), measured.height.max(1.0))
+}
+
 impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<SurfaceState>()
@@ -1070,6 +1097,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
     fn state(&self) -> tree::State {
         tree::State::new(SurfaceState {
             session_id: self.session_id,
+            font_size: FONT_SIZE,
             cell: Size::new(
                 f32::from(DEFAULT_CELL_WIDTH),
                 f32::from(DEFAULT_CELL_HEIGHT),
@@ -1083,6 +1111,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         if state.session_id != self.session_id {
             *state = SurfaceState {
                 session_id: self.session_id,
+                font_size: state.font_size,
                 cell: state.cell,
                 ..SurfaceState::default()
             };
@@ -1100,23 +1129,8 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         limits: &layout::Limits,
     ) -> layout::Node {
         let size = limits.resolve(Length::Fill, Length::Fill, Size::ZERO);
-        let paragraph = <iced::Renderer as text::Renderer>::Paragraph::with_text(text::Text {
-            content: "M",
-            bounds: Size::INFINITE,
-            size: Pixels(FONT_SIZE),
-            line_height: text::LineHeight::Relative(LINE_HEIGHT),
-            font: Font::MONOSPACE,
-            align_x: text::Alignment::Left,
-            align_y: alignment::Vertical::Top,
-            shaping: text::Shaping::Basic,
-            wrapping: text::Wrapping::None,
-        });
-        let measured = paragraph.min_bounds();
         let state = tree.state.downcast_mut::<SurfaceState>();
-        state.cell = Size::new(
-            measured.width.ceil().max(1.0),
-            measured.height.ceil().max(1.0),
-        );
+        state.cell = terminal_cell_size(state.font_size);
         state.layout = size;
 
         layout::Node::new(size)
@@ -1193,7 +1207,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
             }
 
             for run in &frame.text {
-                let mut font = Font::MONOSPACE;
+                let mut font = TERMINAL_FONT;
                 if run.style.bold {
                     font.weight = FontWeight::Bold;
                 }
@@ -1207,7 +1221,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                             state.cell.width * f32::from(run.columns),
                             state.cell.height,
                         ),
-                        size: Pixels(FONT_SIZE),
+                        size: Pixels(state.font_size),
                         line_height: text::LineHeight::Relative(LINE_HEIGHT),
                         font,
                         align_x: text::Alignment::Left,
@@ -1353,7 +1367,18 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 ..
             }) if state.focused => {
                 state.modifiers = *modifiers;
-                if is_copy_shortcut(key, *modifiers) {
+                if let Some(font_size) = zoomed_font_size(key, *modifiers, state.font_size) {
+                    if font_size != state.font_size {
+                        state.font_size = font_size;
+                        state.cell = terminal_cell_size(font_size);
+                        terminal.resize(bounds.size(), state.cell);
+                        if let Some(preedit) = &mut state.ime_preedit {
+                            preedit.text_size = Some(Pixels(font_size));
+                        }
+                        shell.invalidate_layout();
+                        shell.request_redraw();
+                    }
+                } else if is_copy_shortcut(key, *modifiers) {
                     if let Some(selection) = terminal.selected_text() {
                         clipboard.write(clipboard::Kind::Standard, selection);
                     }
@@ -1377,7 +1402,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 state.ime_preedit = Some(input_method::Preedit {
                     content: content.clone(),
                     selection: selection.clone(),
-                    text_size: Some(Pixels(FONT_SIZE)),
+                    text_size: Some(Pixels(state.font_size)),
                 });
                 shell.request_redraw();
             }
@@ -1487,6 +1512,20 @@ fn is_paste_shortcut(key: &Key, modifiers: Modifiers) -> bool {
         }
 }
 
+fn zoomed_font_size(key: &Key, modifiers: Modifiers, font_size: f32) -> Option<f32> {
+    if !modifiers.logo() {
+        return None;
+    }
+
+    let step = match key.as_ref() {
+        Key::Character("+" | "=") => 1.0,
+        Key::Character("-") => -1.0,
+        _ => return None,
+    };
+
+    Some((font_size + step).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE))
+}
+
 fn encode_key(
     key: &Key,
     text: Option<&str>,
@@ -1555,6 +1594,10 @@ fn named_key(key: Named, modifiers: Modifiers, mode: TermMode) -> Option<String>
         Named::Tab => "\t".into(),
         Named::Backspace if modifiers.alt() => "\x1b\x7f".into(),
         Named::Backspace => "\x7f".into(),
+        Named::Space if modifiers.control() && modifiers.alt() => "\x1b\0".into(),
+        Named::Space if modifiers.control() => "\0".into(),
+        Named::Space if modifiers.alt() => "\x1b ".into(),
+        Named::Space => " ".into(),
         Named::Escape => "\x1b".into(),
         Named::ArrowUp => cursor('A'),
         Named::ArrowDown => cursor('B'),
@@ -1602,14 +1645,29 @@ fn function_tilde(number: u8, modifier: usize) -> String {
 mod tests {
     use super::{
         EventProxy, Flags, Modifiers, Named, PaintCell, Rgb8, TerminalSize, TextStyle,
-        build_text_runs, encode_key, launch, named_key, ssh_args,
+        build_text_runs, encode_key, launch, named_key, palette_rgb, ssh_args, terminal_cell_size,
+        zoomed_font_size,
     };
     use alacritty_terminal::event::{Event as AlacrittyEvent, EventListener};
     use alacritty_terminal::term::TermMode;
+    use alacritty_terminal::vte::ansi::NamedColor;
+    use iced::advanced::text::Paragraph as _;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
+
+    fn load_terminal_test_font() {
+        use iced::advanced::graphics::text::font_system;
+        use std::borrow::Cow;
+
+        font_system()
+            .write()
+            .expect("font system")
+            .load_font(Cow::Borrowed(include_bytes!(
+                "../../../assets/fonts/JetBrainsMono-Regular.ttf"
+            )));
+    }
 
     #[test]
     fn ssh_accepts_a_destination_or_full_command() {
@@ -1648,6 +1706,106 @@ mod tests {
             ),
             Some(vec![0x15])
         );
+    }
+
+    #[test]
+    fn space_key_writes_an_ascii_space() {
+        assert_eq!(
+            named_key(Named::Space, Modifiers::NONE, TermMode::default()),
+            Some(" ".into())
+        );
+    }
+
+    #[test]
+    fn command_plus_and_minus_zoom_the_terminal_font() {
+        load_terminal_test_font();
+        let command = Modifiers::LOGO;
+
+        assert_eq!(
+            zoomed_font_size(
+                &iced::keyboard::Key::Character("+".into()),
+                command | Modifiers::SHIFT,
+                super::FONT_SIZE,
+            ),
+            Some(15.0)
+        );
+        assert_eq!(
+            zoomed_font_size(
+                &iced::keyboard::Key::Character("=".into()),
+                command,
+                super::FONT_SIZE,
+            ),
+            Some(15.0)
+        );
+        assert_eq!(
+            zoomed_font_size(&iced::keyboard::Key::Character("-".into()), command, 15.0,),
+            Some(super::FONT_SIZE)
+        );
+        assert_eq!(
+            zoomed_font_size(
+                &iced::keyboard::Key::Character("+".into()),
+                Modifiers::SHIFT,
+                super::FONT_SIZE,
+            ),
+            None
+        );
+
+        let normal_cell = terminal_cell_size(super::FONT_SIZE);
+        let zoomed_cell = terminal_cell_size(15.0);
+        let bounds = iced::Size::new(840.0, 392.0);
+
+        assert!(zoomed_cell.width > normal_cell.width);
+        assert!(zoomed_cell.height > normal_cell.height);
+        assert!(
+            TerminalSize::fit(bounds, zoomed_cell).columns
+                < TerminalSize::fit(bounds, normal_cell).columns
+        );
+    }
+
+    #[test]
+    fn terminal_cell_matches_the_fractional_glyph_advance() {
+        load_terminal_test_font();
+
+        let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
+            iced::advanced::text::Text {
+                content: "M",
+                bounds: iced::Size::INFINITE,
+                size: iced::Pixels(super::FONT_SIZE),
+                line_height: iced::advanced::text::LineHeight::Relative(super::LINE_HEIGHT),
+                font: super::TERMINAL_FONT,
+                align_x: iced::advanced::text::Alignment::Left,
+                align_y: iced::alignment::Vertical::Top,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+        );
+        let measured = paragraph.min_bounds();
+
+        assert_eq!(terminal_cell_size(super::FONT_SIZE), measured);
+
+        let box_line = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
+            iced::advanced::text::Text {
+                content: "╭────────╮",
+                bounds: iced::Size::INFINITE,
+                size: iced::Pixels(super::FONT_SIZE),
+                line_height: iced::advanced::text::LineHeight::Relative(super::LINE_HEIGHT),
+                font: super::TERMINAL_FONT,
+                align_x: iced::advanced::text::Alignment::Left,
+                align_y: iced::alignment::Vertical::Top,
+                shaping: iced::advanced::text::Shaping::Auto,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+        );
+        let expected_width = terminal_cell_size(super::FONT_SIZE).width * 10.0;
+
+        assert!((box_line.min_bounds().width - expected_width).abs() < 0.01);
+    }
+
+    #[test]
+    fn dynamic_background_query_reports_the_terminal_background() {
+        let color = palette_rgb(NamedColor::Background as usize);
+
+        assert_eq!((color.r, color.g, color.b), (16, 15, 13));
     }
 
     #[test]
@@ -1715,16 +1873,16 @@ mod tests {
         assert_eq!(exact.lines, 24);
     }
 
-    #[cfg(unix)]
     #[test]
-    fn pty_output_reaches_visible_text_runs() {
-        let mut terminal = super::Terminal::new(
-            u64::MAX,
-            "/bin/sh".into(),
-            vec!["-lc".into(), "printf ICE_RENDER_PIPELINE".into()],
-            std::env::current_dir().unwrap(),
-        )
-        .unwrap();
+    fn fractional_cell_advance_determines_the_grid_width() {
+        let size = TerminalSize::fit(iced::Size::new(83.9, 196.0), iced::Size::new(8.4, 19.6));
+
+        assert_eq!(size.columns, 9);
+        assert_eq!(size.lines, 10);
+    }
+
+    #[cfg(unix)]
+    fn wait_for_visible(terminal: &mut super::Terminal, expected: &str) {
         // Wedged-detector backstop, not a tuned budget: every event below is
         // waited on, never polled for, so this only fires when the PTY is
         // stuck outright. The old 2s wall-clock deadline lost the race to a
@@ -1743,7 +1901,7 @@ mod tests {
                 .iter()
                 .map(|run| run.content.as_str())
                 .collect::<String>();
-            if visible.contains("ICE_RENDER_PIPELINE") {
+            if visible.contains(expected) {
                 return;
             }
 
@@ -1762,12 +1920,37 @@ mod tests {
                         panic!("the PTY event channel closed before its output became visible")
                     }
                     Err(_) => panic!(
-                        "PTY output never reached the visible terminal frame within the \
+                        "`{expected}` never reached the visible terminal frame within the \
                          {backstop:?} wedged-detector backstop"
                     ),
                 }
             });
             terminal.handle_events(batch);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_space_round_trip_reaches_visible_text_runs() {
+        let mut terminal = super::Terminal::new(
+            u64::MAX - 1,
+            "/bin/sh".into(),
+            vec![
+                "-lc".into(),
+                "IFS= read -r value; [ \"$value\" = \"hello world\" ] && printf SHELL_SPACE_OK"
+                    .into(),
+            ],
+            std::env::current_dir().unwrap(),
+        )
+        .unwrap();
+        terminal.write(b"hello".to_vec());
+        terminal.write(
+            named_key(Named::Space, Modifiers::NONE, TermMode::default())
+                .unwrap()
+                .into_bytes(),
+        );
+        terminal.write(b"world\r".to_vec());
+
+        wait_for_visible(&mut terminal, "SHELL_SPACE_OK");
     }
 }
