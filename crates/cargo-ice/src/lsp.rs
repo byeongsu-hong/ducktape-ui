@@ -2640,49 +2640,49 @@ fn block_insertion(source: &str, lines: &[&str], at: usize, text: String) -> Val
     }
 }
 
-fn top_level_positions(source: &str, target: char) -> Vec<usize> {
-    let mut positions = Vec::new();
+fn top_level_positions(source: &str, target: char) -> impl Iterator<Item = usize> + '_ {
+    let mut characters = source.char_indices();
     let mut quote = false;
     let mut escaped = false;
     let mut depth = 0usize;
-    for (index, ch) in source.char_indices() {
-        if quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                quote = false;
+    std::iter::from_fn(move || {
+        for (index, ch) in characters.by_ref() {
+            if quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    quote = false;
+                }
+                continue;
             }
-            continue;
+            match ch {
+                '"' => quote = true,
+                '(' | '[' => depth += 1,
+                ')' | ']' => depth = depth.saturating_sub(1),
+                _ if depth == 0 && ch == target => return Some(index),
+                _ => {}
+            }
         }
-        match ch {
-            '"' => quote = true,
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth = depth.saturating_sub(1),
-            _ if depth == 0 && ch == target => positions.push(index),
-            _ => {}
-        }
-    }
-    positions
+        None
+    })
 }
 
 fn top_level_single_pipe(source: &str) -> Option<usize> {
     let bytes = source.as_bytes();
-    top_level_positions(source, '|').into_iter().find(|index| {
+    top_level_positions(source, '|').find(|index| {
         (index.checked_sub(1).and_then(|index| bytes.get(index)) != Some(&b'|'))
             && bytes.get(index + 1) != Some(&b'|')
     })
 }
 
 fn route_argument_count(source: &str) -> usize {
-    usize::from(!source.trim().is_empty()) + top_level_positions(source, ',').len()
+    usize::from(!source.trim().is_empty()) + top_level_positions(source, ',').count()
 }
 
 fn route_handler(line: &str) -> Option<(&str, usize)> {
-    let arrow = top_level_positions(line, '-')
-        .into_iter()
-        .find(|index| line[*index..].starts_with("->"))?;
+    let arrow = top_level_positions(line, '-').find(|index| line[*index..].starts_with("->"))?;
     let route = line[arrow + 2..].trim();
     let end = top_level_single_pipe(route).unwrap_or(route.len());
     let success = route[..end].trim();
@@ -6038,6 +6038,49 @@ mod tests {
                 !title.starts_with("Add error route") && !title.starts_with("Create handler")
             }),
             "lane invalidation has no completion route: {actions:?}"
+        );
+    }
+
+    #[test]
+    fn top_level_positions_preserve_byte_offsets_and_malformed_boundaries() {
+        let positions =
+            |source, target| super::top_level_positions(source, target).collect::<Vec<_>>();
+
+        assert_eq!(positions(r#"α,"b,c",(d,e),f"#, ','), vec![2, 8, 14]);
+        assert_eq!(positions(r#""a\",b",c"#, ','), vec![7]);
+        assert_eq!(positions(")a,b", ','), vec![2]);
+        assert_eq!(positions("(a],b", ','), vec![3]);
+        assert!(positions("(a,b", ',').is_empty());
+        assert!(positions("\"a,b", ',').is_empty());
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_top_level_positions_stream_without_scratch() {
+        fn count(positions: impl IntoIterator<Item = usize>) -> usize {
+            positions.into_iter().count()
+        }
+
+        const CALLS: u64 = 100;
+        const SOURCE: &str = r#"one,(two,three),"four,five",six"#;
+        assert_eq!(count(super::top_level_positions(SOURCE, ',')), 3);
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..CALLS {
+            assert_eq!(
+                count(std::hint::black_box(super::top_level_positions(
+                    std::hint::black_box(SOURCE),
+                    std::hint::black_box(','),
+                ))),
+                3
+            );
+        }
+        let heap = dhat::HeapStats::get();
+
+        assert_eq!(heap.total_blocks, 0, "position scan allocations: {heap:?}");
+        eprintln!(
+            "{CALLS} top-level position scans: {} heap blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes
         );
     }
 
