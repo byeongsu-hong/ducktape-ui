@@ -20,6 +20,50 @@ fn valid_app() -> &'static str {
 }
 
 #[test]
+#[ignore = "allocation contract; run alone with --test-threads=1"]
+fn performance_contract_initial_snapshot_moves_owned_paths() {
+    const FILES: usize = 64;
+    const MAX_BLOCKS: u64 = FILES as u64 * 5 + 3;
+
+    let fixture = tempfile::tempdir().unwrap();
+    let files = (0..FILES)
+        .map(|index| {
+            let path = fixture.path().join(format!("input-{index:02}.rs"));
+            std::fs::write(&path, index.to_string()).unwrap();
+            path
+        })
+        .collect::<Vec<_>>();
+    let mut graph = CargoInputGraph::workspace(fixture.path());
+    graph.package_roots.clear();
+    graph.workspace_files.clone_from(&files);
+    assert_eq!(
+        dev_stamps_with_cargo_inputs(fixture.path(), &[], &[], &graph)
+            .1
+            .len(),
+        FILES
+    );
+
+    let _profiler = dhat::Profiler::builder().testing().build();
+    let snapshot = std::hint::black_box(dev_stamps_with_cargo_inputs(
+        fixture.path(),
+        &[],
+        &[],
+        std::hint::black_box(&graph),
+    ));
+    let heap = dhat::HeapStats::get();
+
+    assert_eq!(snapshot.1.len(), FILES);
+    assert!(
+        heap.total_blocks <= MAX_BLOCKS,
+        "initial snapshot allocated too many blocks: {heap:?}"
+    );
+    eprintln!(
+        "{FILES} initial snapshot paths: {} heap blocks / {} bytes",
+        heap.total_blocks, heap.total_bytes
+    );
+}
+
+#[test]
 fn package_selection_discovers_its_ice_root() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path();
