@@ -166,7 +166,7 @@ pub(in crate::parser) fn parse_expr_list(source: &str, line: &Line) -> Result<Ve
         .collect()
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Token {
     Ident(String),
     Str(String),
@@ -194,6 +194,7 @@ enum Token {
     GtEq,
     And,
     Or,
+    Taken,
 }
 
 struct ExprParser<'a> {
@@ -386,7 +387,10 @@ impl<'a> ExprParser<'a> {
     }
 
     fn next(&mut self) -> Option<Token> {
-        let value = self.tokens.get(self.index).cloned();
+        let value = self
+            .tokens
+            .get_mut(self.index)
+            .map(|token| std::mem::replace(token, Token::Taken));
         self.index += usize::from(value.is_some());
         value
     }
