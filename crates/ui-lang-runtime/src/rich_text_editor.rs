@@ -657,15 +657,14 @@ where
     }
 
     /// Every drop boundary as a `(boundary, absolute y)` snap candidate.
-    fn drop_candidates(
-        &self,
-        state: &State<Highlighter>,
+    fn drop_candidates<'b>(
+        &'b self,
+        state: &'b State<Highlighter>,
         text_bounds: Rectangle,
-    ) -> Vec<(usize, f32)> {
+    ) -> impl Iterator<Item = (usize, f32)> + 'b {
         self.drop_boundaries
             .iter()
-            .map(|&boundary| (boundary, self.boundary_y(state, boundary, text_bounds)))
-            .collect()
+            .map(move |&boundary| (boundary, self.boundary_y(state, boundary, text_bounds)))
     }
 }
 
@@ -1275,12 +1274,12 @@ where
                 if let Some(mut drag) = state.gutter_drag {
                     if let Some(point) = cursor.position() {
                         let text_bounds = bounds.shrink(self.padding);
-                        let candidates = self.drop_candidates(state, text_bounds);
                         if !drag.moved && (point.y - drag.grab_y).abs() > DRAG_THRESHOLD {
                             drag.moved = true;
                         }
                         if drag.moved {
-                            let snapped = snap_boundary(&candidates, point.y);
+                            let snapped =
+                                snap_boundary(self.drop_candidates(state, text_bounds), point.y);
                             if snapped != drag.boundary {
                                 drag.boundary = snapped;
                                 shell.request_redraw();
