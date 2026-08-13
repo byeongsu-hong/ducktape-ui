@@ -572,7 +572,6 @@ impl Chrome {
 }
 
 /// Per-frame axis metadata shared by the cached and overlay layers.
-#[derive(Clone)]
 struct Axes {
     ticks: Vec<f64>,
     /// Decimals on axis tick labels.
@@ -1721,29 +1720,23 @@ impl<Message> CandleProgram<'_, Message> {
         let mut pyramid = state.pyramid.borrow_mut();
         pyramid.sync(candles);
         let stamp = fingerprint(candles, visuals, viewport, size, &self.theme.palette);
-        let (scale, axes) = {
+        {
             let mut derived = state.derived.borrow_mut();
-            match derived.as_ref() {
-                Some(cached) if cached.stamp == stamp => (cached.scale, cached.axes.clone()),
-                _ => {
-                    state.layers.clear();
-                    let scale = autoscale(&pyramid, candles, range.clone(), &self.overlays);
-                    let axes = self.axes(candles, chrome, viewport, range.clone(), scale);
-                    *derived = Some(DerivedFrame {
-                        stamp,
-                        scale,
-                        axes: axes.clone(),
-                    });
-                    (scale, axes)
-                }
+            if derived.as_ref().is_none_or(|cached| cached.stamp != stamp) {
+                state.layers.clear();
+                let scale = autoscale(&pyramid, candles, range.clone(), &self.overlays);
+                let axes = self.axes(candles, chrome, viewport, range.clone(), scale);
+                *derived = Some(DerivedFrame { stamp, scale, axes });
             }
-        };
+        }
+        let derived = state.derived.borrow();
+        let cached = derived.as_ref().expect("derived frame initialized above");
         let ctx = FrameCtx {
             candles,
             chrome,
             viewport,
-            scale,
-            axes: &axes,
+            scale: cached.scale,
+            axes: &cached.axes,
             pyramid: &pyramid,
         };
         let layers = state.layers.draw(renderer, size, |frame| {
@@ -1764,13 +1757,14 @@ impl<Message> CandleProgram<'_, Message> {
             chrome
                 .plot
                 .contains(Point::new(x, chrome.plot.y + 1.0))
-                .then(|| Point::new(x, scale.y(chrome.plot, candle.close)))
+                .then(|| Point::new(x, cached.scale.y(chrome.plot, candle.close)))
         });
         let crosshair = cursor_in_plot.or(key_position);
         self.draw_axis_labels(&ctx, &mut overlay, crosshair);
         if let Some(position) = crosshair {
             self.draw_crosshair(&ctx, &mut overlay, position);
         }
+        drop(derived);
         if chip_visible(state.viewport.get(), candles.len()) {
             let chip = latest_chip(chrome.plot);
             overlay.fill_rectangle(
@@ -2252,7 +2246,13 @@ impl<Message> CandleProgram<'_, Message> {
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::System;
+
     use super::*;
+    use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+
+    #[global_allocator]
+    static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
     fn candles(n: usize) -> Vec<Candle> {
         (0..n)
@@ -3534,6 +3534,62 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_cached_draw_borrows_derived_axes() {
+        use iced::advanced::renderer::Headless as _;
+        use iced::widget::canvas::Program as _;
+
+        const DRAWS: usize = 100;
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(14.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless tiny-skia renderer");
+        let data = candles(1_000);
+        let draws = Rc::new(Cell::new(0));
+        let ranges = Rc::new(Cell::new(0));
+        let mut program = hover_program(&data);
+        program.overlays.push(Box::new(CountedOverlay {
+            stamp: 1,
+            range: (1_000.0, 1_050.0),
+            draws: Rc::clone(&draws),
+            ranges: Rc::clone(&ranges),
+        }));
+        let state = CandleState::default();
+        let bounds = Rectangle::with_size(BOUNDS);
+        let draw = || {
+            drop(std::hint::black_box(program.draw(
+                &state,
+                &renderer,
+                &iced::Theme::Light,
+                bounds,
+                mouse::Cursor::Unavailable,
+            )));
+        };
+
+        draw();
+        assert_eq!((draws.get(), ranges.get()), (1, 1));
+
+        let region = Region::new(GLOBAL);
+        for _ in 0..DRAWS {
+            draw();
+        }
+        let stats = region.change();
+
+        eprintln!(
+            "{DRAWS} cached candle draws: {} allocations / {} reallocations / {} bytes",
+            stats.allocations, stats.reallocations, stats.bytes_allocated
+        );
+        assert_eq!(
+            (draws.get(), ranges.get()),
+            (1, 1),
+            "all draws hit the cache"
+        );
+        assert!(stats.allocations <= 1_800, "{stats:?}");
     }
 
     #[test]
