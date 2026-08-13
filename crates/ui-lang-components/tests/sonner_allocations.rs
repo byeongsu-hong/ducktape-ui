@@ -12,6 +12,15 @@ use ui_lang_components::ui::theme::LIGHT;
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
+fn render(state: &SonnerState) {
+    black_box(sonner_with_content(
+        state,
+        |_| (),
+        |entry, _controls, _theme| Element::from(iced::widget::text(entry.data().title())),
+        &LIGHT,
+    ));
+}
+
 #[test]
 fn performance_contract_sonner_streams_visible_entries() {
     const RENDERS: usize = 4_000;
@@ -21,15 +30,13 @@ fn performance_contract_sonner_streams_visible_entries() {
         state.show(format!("Toast {index}"), Duration::ZERO);
     }
 
+    for _ in 0..RENDERS {
+        render(&state);
+    }
+
     let region = Region::new(GLOBAL);
     for _ in 0..RENDERS {
-        let view = sonner_with_content(
-            &state,
-            |_| (),
-            |entry, _controls, _theme| Element::from(iced::widget::text(entry.data().title())),
-            &LIGHT,
-        );
-        black_box(view);
+        render(&state);
     }
     let stats = region.change();
 
