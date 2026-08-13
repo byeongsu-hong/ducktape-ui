@@ -1,6 +1,6 @@
 use super::*;
 use crate::codegen::{
-    BindingEnvMetrics, ValueMode, binding_env_metrics, checked_state_env,
+    BindingEnvMetrics, ValueMode, binding_env_metrics, checked_state_env, generate_theme,
     reset_binding_env_metrics, resolved_expr_use_code,
 };
 
@@ -124,6 +124,76 @@ view
     assert!(generated.contains(r#"\"background\": {\n      \"base\": {\n        \"token\": 4"#));
     assert!(
         generated.contains("dynamic_themer(::std::option::Option::Some(__ice_app_theme.clone())")
+    );
+}
+
+#[test]
+fn theme_callbacks_overlay_window_without_cloning_state_environment() {
+    let source = r#"daemon ScopedTheme
+  title describe(window, label)
+  theme native_theme(window, dark)
+  palette active_palette
+  bg background
+  fg foreground
+  scale scale_for(window, zoom)
+extern crate::backend
+  pure describe(id:window-id, label:str) -> str
+  pure scale_for(id:window-id, zoom:f64) -> f64
+  theme native_theme(id:window-id, dark:bool)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette light for AppTheme
+  bg #ffffff
+  fg #111111
+  primary #3366ff
+  danger #cc3344
+palette dark for AppTheme
+  bg #111111
+  fg #ffffff
+  primary #88aaff
+  danger #ff6677
+state
+  label = "Scoped"
+  dark = false
+  active_palette:palette[AppTheme] = AppTheme.light
+  background = "000000"
+  foreground = "ffffff"
+  zoom = 1.25
+secret window
+view
+  text label
+"#;
+    let program = crate::lower::lower(crate::analyze(source).unwrap()).unwrap();
+    let state_bindings = checked_state_env(&program, "self").len();
+    assert_eq!(state_bindings, 7);
+
+    reset_binding_env_metrics();
+    let mut generated = String::new();
+    generate_theme(&mut generated, &program).unwrap();
+    let metrics = binding_env_metrics();
+
+    assert_eq!(
+        metrics.binding_clone_allocations, 0,
+        "theme generation cloned its {state_bindings}-binding state environment"
+    );
+    assert_eq!(metrics.overlays, 1);
+    assert_eq!(metrics.overlay_binding_allocations, 1);
+    for expected in [
+        "crate::backend::describe(window, self.label.to_owned())",
+        "crate::backend::native_theme(window, self.dark)",
+        "match self.active_palette.clone()",
+        "self.background.to_owned()",
+        "self.foreground.to_owned()",
+        "crate::backend::scale_for(window, self.zoom)",
+    ] {
+        assert!(generated.contains(expected), "missing {expected}");
+    }
+    assert!(
+        !generated.contains("self.__ice_secrets"),
+        "the daemon callback-local `window` must shadow the same-named secret"
     );
 }
 
@@ -833,9 +903,9 @@ derived
     let (small, small_elapsed, small_output) = measure(500);
     let (large, large_elapsed, large_output) = measure(4_000);
 
-    assert_eq!(small.overlays, 500);
-    assert_eq!(large.overlays, 4_000);
-    assert_eq!(large.overlay_binding_allocations, 4_000);
+    assert_eq!(small.overlays, 501);
+    assert_eq!(large.overlays, 4_001);
+    assert_eq!(large.overlay_binding_allocations, 4_001);
     assert!(
         large.binding_clone_allocations <= large.overlays * 3,
         "projection codegen copied more than a constant number of bindings per expression: {} clones for {} overlays",
@@ -1022,8 +1092,8 @@ state
     assert_eq!(large_facts.view_scope_env_overlays, 4_000);
     assert_eq!(small_facts.view_scope_env_full_clones, 0);
     assert_eq!(large_facts.view_scope_env_full_clones, 0);
-    assert_eq!(small_codegen.overlays, 500);
-    assert_eq!(large_codegen.overlays, 4_000);
+    assert_eq!(small_codegen.overlays, 501);
+    assert_eq!(large_codegen.overlays, 4_001);
     assert_eq!(small_codegen.scope_env_full_clones, 0);
     assert_eq!(large_codegen.scope_env_full_clones, 0);
     assert!(

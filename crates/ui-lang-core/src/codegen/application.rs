@@ -23,7 +23,7 @@ pub(in crate::codegen) fn generate_theme(
     let settings = program.settings();
     let theme = program.theme();
     let state_env = checked_state_env(program, "self");
-    let mut callback_env = state_env.clone();
+    let mut callback_env = ScopedBindingEnv::new(&state_env);
     if settings.kind == ProgramKind::Daemon {
         callback_env.insert(
             "window".into(),
