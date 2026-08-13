@@ -763,7 +763,7 @@ where
     F: Fn(SonnerEvent) -> Message + Clone + 'a,
     C: Fn(&'a ToastEntry, SonnerControls<Message>, &Theme) -> Element<'a, Message> + Clone + 'a,
 {
-    let mut stack = iced::widget::Column::new()
+    let mut stack = iced::widget::Column::with_capacity(state.entries.len().min(state.max_visible))
         .spacing(if state.is_expanded() { 8 } else { 4 })
         .width(TOAST_WIDTH);
     let render = |stack: Column<'a, Message>, entry: &'a ToastEntry| {
