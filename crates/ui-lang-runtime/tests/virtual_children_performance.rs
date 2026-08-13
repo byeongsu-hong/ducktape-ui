@@ -61,30 +61,46 @@ fn renderer() -> iced_test::renderer::Renderer {
 }
 
 #[test]
-fn repeated_exact_key_diff_allocates_nothing() {
-    const FRAMES: usize = 32;
+fn repeated_diff_and_layout_skip_temporary_buffers() {
+    const DIFF_FRAMES: usize = 32;
+    const LAYOUT_FRAMES: usize = 16;
 
     let renderer = renderer();
     let mut initial = virtual_keyed_children(rows(), 20.0);
     let mut tree = Tree::new(&initial as &dyn Widget<(), Theme, iced_test::renderer::Renderer>);
-    let _ = initial.layout(
-        &mut tree,
-        &renderer,
-        &layout::Limits::new(Size::ZERO, Size::new(240.0, 100_000.0)),
-    );
+    let limits = layout::Limits::new(Size::ZERO, Size::new(240.0, 100_000.0));
+    let _ = initial.layout(&mut tree, &renderer, &limits);
 
     let unchanged = virtual_keyed_children(rows(), 20.0);
     unchanged.diff(std::hint::black_box(&mut tree));
 
     let region = Region::new(GLOBAL);
-    for _ in 0..FRAMES {
+    for _ in 0..DIFF_FRAMES {
         unchanged.diff(std::hint::black_box(&mut tree));
     }
     let stats = region.change();
 
     assert_eq!(
         stats.allocations, 0,
-        "{FRAMES} exact-key frames allocated {} times ({} bytes)",
+        "{DIFF_FRAMES} exact-key frames allocated {} times ({} bytes)",
         stats.allocations, stats.bytes_allocated
+    );
+
+    let region = Region::new(GLOBAL);
+    for _ in 0..LAYOUT_FRAMES {
+        std::hint::black_box(initial.layout(&mut tree, &renderer, &limits));
+    }
+    let stats = region.change();
+
+    assert_eq!(
+        stats.allocations, LAYOUT_FRAMES,
+        "{LAYOUT_FRAMES} layout frames allocated {} times ({} bytes)",
+        stats.allocations, stats.bytes_allocated
+    );
+    assert_eq!(
+        stats.bytes_allocated,
+        LAYOUT_FRAMES * ROWS * std::mem::size_of::<layout::Node>(),
+        "{LAYOUT_FRAMES} layout frames allocated {} bytes",
+        stats.bytes_allocated
     );
 }
