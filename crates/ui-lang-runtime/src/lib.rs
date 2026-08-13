@@ -408,6 +408,18 @@ where
 {
     content: Element<'a, Message, Theme, Renderer>,
     semantics: Semantics<Message>,
+    focus_ring: Option<FocusRing>,
+}
+
+/// Recipe-owned looks for the wrapper's keyboard focus ring.
+///
+/// The ring's visibility is not configurable: it always keys on the wrapper's
+/// focus-visible state, so a pointer press never wears it and keyboard
+/// traversal always does. Only its paint is the caller's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FocusRing {
+    color: iced::Color,
+    radius: f32,
 }
 
 /// Creates an accessible wrapper around an Iced widget.
@@ -422,6 +434,7 @@ where
     Accessible {
         content: content.into(),
         semantics: Semantics::new(id, role),
+        focus_ring: None,
     }
 }
 
@@ -559,6 +572,15 @@ where
     pub fn on_activate_maybe(mut self, message: Option<Message>) -> Self {
         self.semantics.supports_activate = message.is_some();
         self.semantics.activate = message;
+        self
+    }
+
+    /// Styles the keyboard focus ring this wrapper draws when focus is
+    /// visible. The default ring uses the ambient text color with a
+    /// three-pixel radius; a styled ring keeps the two-pixel stroke and takes
+    /// the given color and corner radius instead.
+    pub fn focus_ring(mut self, color: iced::Color, radius: f32) -> Self {
+        self.focus_ring = Some(FocusRing { color, radius });
         self
     }
 }
@@ -705,12 +727,20 @@ where
             return;
         }
 
-        let Event::Keyboard(keyboard::Event::KeyPressed {
-            key, repeat: false, ..
-        }) = event
-        else {
+        let Event::Keyboard(keyboard::Event::KeyPressed { key, repeat, .. }) = event else {
             return;
         };
+
+        // The web's `:focus-visible` heuristic: keyboard interaction with a
+        // pointer-focused control makes its focus visible again.
+        if wrapper_focus && !state.focus_visible {
+            state.focus_visible = true;
+            shell.request_redraw();
+        }
+
+        if *repeat {
+            return;
+        }
 
         let activates = match state.semantics.role {
             Role::Button | Role::DefaultButton => matches!(
@@ -750,13 +780,17 @@ where
         );
         let state = tree.state.downcast_ref::<SemanticState<Message>>();
         if state.focus_visible && !state.semantics.disabled {
+            let ring = self.focus_ring.unwrap_or(FocusRing {
+                color: style.text_color,
+                radius: 3.0,
+            });
             renderer.fill_quad(
                 renderer::Quad {
                     bounds: layout.bounds(),
                     border: iced::Border {
-                        color: style.text_color,
+                        color: ring.color,
                         width: 2.0,
-                        radius: 3.0.into(),
+                        radius: ring.radius.into(),
                     },
                     ..renderer::Quad::default()
                 },
@@ -3253,6 +3287,142 @@ mod tests {
         );
 
         assert!(renderer.quads.is_empty());
+    }
+
+    #[test]
+    fn styled_focus_ring_follows_the_focus_origin() {
+        let id = StableId::new("styled-focus-ring");
+        let ring_color = iced::Color::from_rgb(0.2, 0.4, 1.0);
+        let build = || -> Element<'_, Message, (), RecordingRenderer> {
+            let leaf: Element<'_, Message, (), RecordingRenderer> = Element::new(Leaf);
+            accessible(leaf, id, Role::Button)
+                .label("Styled")
+                .focus_ring(ring_color, 8.0)
+                .into()
+        };
+        let viewport = Rectangle::with_size(Size::new(100.0, 100.0));
+        let style = renderer::Style {
+            text_color: iced::Color::WHITE,
+        };
+
+        // Pointer-acquired focus paints no ring at all.
+        let mut element = build();
+        let mut tree = WidgetTree::new(&element);
+        let mut renderer = RecordingRenderer::default();
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        element.as_widget_mut().update(
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&node),
+            mouse::Cursor::Available(Point::new(40.0, 15.0)),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        drop(shell);
+        assert!(
+            tree.state
+                .downcast_ref::<SemanticState<Message>>()
+                .semantics
+                .focused
+        );
+        element.as_widget().draw(
+            &tree,
+            &mut renderer,
+            &(),
+            &style,
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        assert!(renderer.quads.is_empty());
+
+        // Keyboard-acquired focus paints the recipe's ring, not the default.
+        let mut element = build();
+        let mut tree = WidgetTree::new(&element);
+        let mut renderer = RecordingRenderer::default();
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let mut focus = operation::focusable::focus::<()>(id.widget_id());
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut focus);
+        element.as_widget().draw(
+            &tree,
+            &mut renderer,
+            &(),
+            &style,
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        assert_eq!(renderer.quads.len(), 1);
+        assert_eq!(renderer.quads[0].border.color, ring_color);
+        assert_eq!(renderer.quads[0].border.width, 2.0);
+        assert_eq!(renderer.quads[0].border.radius, 8.0.into());
+    }
+
+    #[test]
+    fn key_press_after_pointer_focus_restores_the_outline() {
+        let id = StableId::new("pointer-then-key");
+        let leaf: Element<'_, Message, (), RecordingRenderer> = Element::new(Leaf);
+        let mut element: Element<'_, Message, (), RecordingRenderer> =
+            accessible(leaf, id, Role::Button).label("Focusable").into();
+        let mut tree = WidgetTree::new(&element);
+        let mut renderer = RecordingRenderer::default();
+        let viewport = Rectangle::with_size(Size::new(100.0, 100.0));
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        for event in [
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            iced_test::simulator::press_key(key::Named::Enter, None),
+        ] {
+            let mut shell = Shell::new(&mut messages);
+            element.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Available(Point::new(40.0, 15.0)),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        }
+
+        let state = tree.state.downcast_ref::<SemanticState<Message>>();
+        assert!(state.semantics.focused);
+        assert!(state.focus_visible);
+
+        element.as_widget().draw(
+            &tree,
+            &mut renderer,
+            &(),
+            &renderer::Style {
+                text_color: iced::Color::WHITE,
+            },
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+
+        assert_eq!(renderer.quads.len(), 1);
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
