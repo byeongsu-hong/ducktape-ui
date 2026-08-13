@@ -38,21 +38,19 @@ where
     Message: Clone + 'a,
     Value: Copy + Eq,
 {
-    let content = items
-        .into_iter()
-        .fold(Row::new(), |content, (value, item_content)| {
-            let variant = if value == selected {
-                ButtonVariant::Secondary
-            } else {
-                ButtonVariant::Ghost
-            };
-            content.push(
-                Button::new(item_content, theme)
-                    .variant(variant)
-                    .size(ButtonSize::Small)
-                    .on_press(on_select(value)),
-            )
-        });
+    let content = Row::with_children(items.into_iter().map(|(value, item_content)| {
+        let variant = if value == selected {
+            ButtonVariant::Secondary
+        } else {
+            ButtonVariant::Ghost
+        };
+        Element::from(
+            Button::new(item_content, theme)
+                .variant(variant)
+                .size(ButtonSize::Small)
+                .on_press(on_select(value)),
+        )
+    }));
     let theme = *theme;
 
     container(content)
