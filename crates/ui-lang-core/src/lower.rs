@@ -18308,6 +18308,36 @@ view
     }
 
     #[test]
+    #[ignore = "overlay route lowering allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_overlay_routes_avoid_temporary_heap_storage() {
+        use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
+
+        const OVERLAYS: usize = 4_096;
+        let mut source = format!("app OverlayAllocations\n{THEME}on close\nview\n  col\n");
+        for index in 0..OVERLAYS {
+            writeln!(
+                source,
+                "    overlay when=true dismiss=close backdrop=black/60 p=8.0\n      content\n        text \"Page {index}\"\n      layer\n        text \"Dialog {index}\""
+            )
+            .unwrap();
+        }
+        let checked = analyze(&source).unwrap();
+        let region = Region::new(&INSTRUMENTED_SYSTEM);
+
+        let program = std::hint::black_box(lower(std::hint::black_box(checked)).unwrap());
+        let stats = region.change();
+
+        assert_eq!(program.overlays.len(), OVERLAYS);
+        eprintln!(
+            "{OVERLAYS} overlay routes lowered: {} allocations / {} reallocations / {} allocated bytes",
+            stats.allocations, stats.reallocations, stats.bytes_allocated
+        );
+        assert!(stats.allocations <= 217_187, "{stats:?}");
+        assert!(stats.reallocations <= 8_227, "{stats:?}");
+        assert!(stats.bytes_allocated <= 53_408_896, "{stats:?}");
+    }
+
+    #[test]
     #[ignore = "large normalized container lowering and emission performance contract"]
     fn performance_contract_four_thousand_containers_lower_and_emit_under_two_seconds() {
         const CONTAINERS: usize = 4_000;
