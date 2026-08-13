@@ -404,7 +404,10 @@ fn stamp_files(files: &[PathBuf]) -> SourceStamp {
     files.dedup();
     files
         .into_iter()
-        .map(|path| (path.clone(), stamp_file(&path)))
+        .map(|path| {
+            let stamp = stamp_file(&path);
+            (path, stamp)
+        })
         .collect()
 }
 
