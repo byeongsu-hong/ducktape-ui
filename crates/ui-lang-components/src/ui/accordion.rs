@@ -163,7 +163,7 @@ where
         })
         .collect();
     let on_event = Rc::new(on_event);
-    let mut result = Column::new().width(Length::Fill);
+    let mut result = Column::with_capacity(items.len() * 2).width(Length::Fill);
 
     for (index, item) in items.into_iter().enumerate() {
         let open = state.is_open(&item.id);
