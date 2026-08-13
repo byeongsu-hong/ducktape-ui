@@ -200,12 +200,12 @@ where
             .collect::<Vec<Element<'a, Message>>>();
 
         match self.orientation {
-            ToggleGroupOrientation::Horizontal => Row::with_children(controls)
+            ToggleGroupOrientation::Horizontal => Row::from_vec(controls)
                 .spacing(layout_spacing(self.spacing, self.variant))
                 .align_y(Alignment::Center)
                 .width(Length::Shrink)
                 .into(),
-            ToggleGroupOrientation::Vertical => Column::with_children(controls)
+            ToggleGroupOrientation::Vertical => Column::from_vec(controls)
                 .spacing(layout_spacing(self.spacing, self.variant))
                 .align_x(Alignment::Center)
                 .width(Length::Shrink)
