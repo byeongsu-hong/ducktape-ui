@@ -13,7 +13,7 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 type Renderer = iced_test::renderer::Renderer;
 
 #[test]
-fn bounded_zstack_layout_allocates_only_its_retained_children() {
+fn zstack_layout_allocates_only_its_retained_children() {
     const LAYERS: usize = 64;
 
     let renderer = iced_test::futures::futures::executor::block_on(<Renderer as Headless>::new(
@@ -46,6 +46,37 @@ fn bounded_zstack_layout_allocates_only_its_retained_children() {
     assert_eq!(node.size(), Size::new(LAYERS as f32, 10.0));
     eprintln!(
         "{LAYERS} bounded layers: {} allocations / {} reallocations / {} bytes",
+        stats.allocations, stats.reallocations, stats.bytes_allocated
+    );
+    assert_eq!(stats.allocations, 1, "{stats:?}");
+    assert_eq!(stats.reallocations, 0, "{stats:?}");
+
+    let children = std::iter::once(Element::<'static, (), Theme, Renderer>::from(
+        iced::widget::Space::new().width(64.0).height(10.0),
+    ))
+    .chain((1..LAYERS).map(|_| {
+        Element::from(
+            iced::widget::Space::new()
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill),
+        )
+    }))
+    .collect::<Vec<_>>();
+    let mut stack = zstack(children);
+    let mut tree = widget::Tree::new(&stack as &dyn Widget<(), Theme, Renderer>);
+    let limits = layout::Limits::new(Size::ZERO, Size::new(1_000.0, f32::INFINITY));
+
+    let region = Region::new(GLOBAL);
+    let node = std::hint::black_box(&mut stack).layout(&mut tree, &renderer, &limits);
+    let stats = region.change();
+
+    assert_eq!(node.children().len(), LAYERS);
+    assert_eq!(node.size(), Size::new(64.0, 10.0));
+    for child in node.children() {
+        assert_eq!(child.size(), Size::new(64.0, 10.0));
+    }
+    eprintln!(
+        "{LAYERS} unbounded layers: {} allocations / {} reallocations / {} bytes",
         stats.allocations, stats.reallocations, stats.bytes_allocated
     );
     assert_eq!(stats.allocations, 1, "{stats:?}");

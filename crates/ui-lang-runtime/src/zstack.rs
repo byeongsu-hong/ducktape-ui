@@ -168,23 +168,20 @@ where
             return layout::Node::with_children(resolved_size(intrinsic), nodes);
         }
 
-        let deferred: Vec<bool> = self.children.iter().map(is_deferred).collect();
-
-        let mut nodes: Vec<Option<layout::Node>> = self
+        let mut nodes = self
             .children
             .iter_mut()
             .zip(tree.children.iter_mut())
-            .zip(deferred.iter())
-            .map(|((child, state), deferred)| {
-                if *deferred {
-                    None
+            .map(|(child, state)| {
+                if is_deferred(child) {
+                    layout::Node::default()
                 } else {
-                    Some(child.as_widget_mut().layout(state, renderer, &limits))
+                    child.as_widget_mut().layout(state, renderer, &limits)
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        let intrinsic = nodes.iter().flatten().fold(Size::ZERO, |acc, node| {
+        let intrinsic = nodes.iter().fold(Size::ZERO, |acc, node| {
             let size = node.size();
             Size::new(acc.width.max(size.width), acc.height.max(size.height))
         });
@@ -198,11 +195,10 @@ where
             .zip(tree.children.iter_mut())
             .zip(nodes.iter_mut())
         {
-            if node.is_none() {
-                *node = Some(child.as_widget_mut().layout(state, renderer, &bounded));
+            if is_deferred(child) {
+                *node = child.as_widget_mut().layout(state, renderer, &bounded);
             }
         }
-        let nodes: Vec<layout::Node> = nodes.into_iter().flatten().collect();
 
         layout::Node::with_children(size, nodes)
     }
