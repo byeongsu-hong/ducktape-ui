@@ -801,7 +801,7 @@ where
         let row: Element<'a, Message, Theme, Renderer> = accessible_row.into();
         mounted_keys.push(semantic_key);
         mounted_children.push(row);
-        mounted.push((index, item_key.clone()));
+        mounted.push((index, item_key));
         mounted_semantic_ids.push(semantic_key);
     }
 
