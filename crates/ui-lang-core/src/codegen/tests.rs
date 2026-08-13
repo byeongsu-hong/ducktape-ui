@@ -91,6 +91,31 @@ fn source_path_hex_encoding_uses_one_exact_allocation() {
 }
 
 #[test]
+#[ignore = "allocation contract; run alone with --test-threads=1"]
+fn rust_identifier_hex_encoding_uses_one_allocation_per_name() {
+    const CALLS: usize = 4_000;
+    const BYTES: usize = 17;
+    let name = "noncanonical-name";
+    let expected = "6e6f6e63616e6f6e6963616c2d6e616d65";
+    assert_eq!(name.len(), BYTES);
+    let region = Region::new(GLOBAL);
+
+    for _ in 0..CALLS {
+        let encoded = std::hint::black_box(super::rust_identifier_hex(std::hint::black_box(name)));
+        assert_eq!(encoded, expected);
+    }
+    let stats = region.change();
+
+    eprintln!(
+        "{CALLS} Rust identifier encodings: {} allocations / {} reallocations / {} allocated bytes",
+        stats.allocations, stats.reallocations, stats.bytes_allocated
+    );
+    assert_eq!(stats.allocations, CALLS, "{stats:?}");
+    assert_eq!(stats.reallocations, 0, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, CALLS * BYTES * 2, "{stats:?}");
+}
+
+#[test]
 fn declared_sync_calls_shadow_simple_builtins() {
     let source = r#"app Demo
 extern crate::backend
