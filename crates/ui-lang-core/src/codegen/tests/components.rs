@@ -841,6 +841,42 @@ view
     assert!(generated.contains(", &(__for_scope)).into()"));
 }
 
+/// The keyed-column counterpart of the `for` test above, in the downstream
+/// chat shape: a component-prop list whose keyed rows each hold a keyed
+/// `lazy`. The component call binds a reconciliation scope, so without a
+/// per-row override every row's `lazy` parks under the ONE component-wide
+/// memo site — unmounting the list keeps a single row and a remount
+/// cold-builds all the others.
+#[test]
+fn keyed_rows_park_their_lazy_under_a_per_row_scope() {
+    let source = r#"app KeyedLazyRows
+extern crate::backend
+  Message(seq:i64, rev:i64, body:str)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Stream(messages:[Message])
+  keyed message in messages by=message.seq
+    lazy message by message.rev, message.seq as row
+      text row.body
+state
+  messages:[Message] = []
+view
+  Stream messages=messages
+"#;
+    let generated = compile(source, "keyed_lazy_rows.ice").unwrap();
+
+    assert!(generated.contains("let __ice_key_recon = format!(\"{}/key({})\""));
+    assert!(generated.contains(", &(__ice_key_recon)).into()"));
+}
+
 #[test]
 fn lowers_parsed_markdown_with_complete_sizes_and_link_route() {
     let source = r##"app Docs
