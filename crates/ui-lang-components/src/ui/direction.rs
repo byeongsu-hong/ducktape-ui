@@ -36,13 +36,11 @@ where
 {
     let items = items.into_iter();
     if direction == Direction::LeftToRight {
-        return items.fold(Row::new(), Row::push);
+        return Row::with_children(items);
     }
-    items
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .fold(Row::new(), Row::push)
+    let mut items = items.collect::<Vec<_>>();
+    items.reverse();
+    Row::from_vec(items)
 }
 
 #[cfg(test)]
