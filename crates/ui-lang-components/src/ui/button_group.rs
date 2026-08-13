@@ -21,7 +21,6 @@ pub fn button_group<'a, Message>(
 where
     Message: 'a,
 {
-    let children = children.into_iter().collect::<Vec<_>>();
     let content: Element<'a, Message> = match orientation {
         ButtonGroupOrientation::Horizontal => Row::with_children(children).into(),
         ButtonGroupOrientation::Vertical => Column::with_children(children).into(),
@@ -47,21 +46,30 @@ pub fn style(theme: &Theme) -> iced::widget::container::Style {
 mod tests {
     use super::super::theme::{DARK, LIGHT};
     use super::*;
-    use iced::widget::text;
+    use iced::widget::{button, text};
 
     #[test]
-    fn both_orientations_keep_every_caller_owned_child() {
+    fn both_orientations_keep_caller_child_order() {
         for orientation in [
             ButtonGroupOrientation::Horizontal,
             ButtonGroupOrientation::Vertical,
         ] {
-            let children = vec![
+            let children: [Element<'_, ()>; 2] = [
                 text::<iced::Theme, iced::Renderer>("One").into(),
-                text("Two").into(),
+                button(text("Two")).into(),
             ];
+            let expected = children.each_ref().map(|child| child.as_widget().tag());
             let group: Element<'_, ()> = button_group(children, orientation, &LIGHT).into();
 
-            assert_eq!(group.as_widget().children().len(), 2);
+            assert!(
+                group
+                    .as_widget()
+                    .children()
+                    .into_iter()
+                    .map(|child| child.tag)
+                    .eq(expected),
+                "{orientation:?} reordered children"
+            );
         }
     }
 
