@@ -23,6 +23,10 @@ fn performance_contract_command_filter_normalizes_query_once() {
         }),
     )];
 
+    drop(filter_items(
+        black_box(&groups),
+        black_box("  missing   command "),
+    ));
     let region = Region::new(GLOBAL);
     let matches = filter_items(black_box(&groups), black_box("  missing   command "));
     let stats = region.change();
