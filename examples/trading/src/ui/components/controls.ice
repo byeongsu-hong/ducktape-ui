@@ -251,6 +251,85 @@ component IntervalTab(name:str, current:str)
             font=digits
             @text-muted
 
+// One study in the chart's legend and the switch that controls it. The small
+// stroke is the exact colour used on the plot, so five simultaneous lines do
+// not leave the reader guessing which abbreviation belongs to which one.
+component ChartIndicatorInk(target:ChartIndicator)
+  col #root
+    match target
+      ChartIndicator.sma_20
+        box
+          with
+            w=12.0
+            h=2.0
+            bg=indicator_sma_20
+          space w=fill h=fill
+      ChartIndicator.sma_60
+        box
+          with
+            w=12.0
+            h=2.0
+            bg=indicator_sma_60
+          space w=fill h=fill
+      ChartIndicator.ema_20
+        box
+          with
+            w=12.0
+            h=2.0
+            bg=indicator_ema_20
+          space w=fill h=fill
+      ChartIndicator.bollinger_20
+        box
+          with
+            w=12.0
+            h=2.0
+            bg=indicator_bollinger_20
+          space w=fill h=fill
+      ChartIndicator.vwma_20
+        box
+          with
+            w=12.0
+            h=2.0
+            bg=indicator_vwma_20
+          space w=fill h=fill
+
+component ChartIndicatorToggle(target:ChartIndicator, on:bool)
+  emits
+    pick(ChartIndicator)
+  col #root
+    if on
+      button #toggle-on -> emit(pick, target)
+        with
+          label=chart_indicator_action(target, true)
+          checked=true
+          w=82.0
+          p=5.0
+        active bg=raised text=fg r=3.0
+        hovered bg=raised text=fg r=3.0
+        row gap=5.0 align=center
+          ChartIndicatorInk target=target
+          text chart_indicator_name(target)
+            with
+              size=9.0
+              tracking=0.4
+              @text-fg
+    if !on
+      button #toggle-off -> emit(pick, target)
+        with
+          label=chart_indicator_action(target, false)
+          checked=false
+          w=82.0
+          p=5.0
+        active bg=panel text=muted r=3.0
+        hovered bg=raised text=fg r=3.0
+        row gap=5.0 align=center
+          ChartIndicatorInk target=target
+          text chart_indicator_name(target)
+            with
+              size=9.0
+              tracking=0.4
+              @text-muted
+
 // A pane the narrow terminal has folded away, and the control that unfolds it.
 // It is a toggle and not a tab: the pane it names comes back into this same
 // screen beside everything already on it, and nothing leaves to make room. The

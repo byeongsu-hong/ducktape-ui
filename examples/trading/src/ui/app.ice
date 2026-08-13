@@ -71,6 +71,7 @@ use "tests/twap.ice"
 use "tests/hotkeys.ice"
 use "tests/tray.ice"
 use "tests/render.ice"
+use "tests/indicators.ice"
 use "tests/export.ice"
 use "tests/scrolling.ice"
 

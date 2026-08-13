@@ -23,9 +23,13 @@ use ui_lang_components::ui::candle_chart::{
 use ui_lang_components::ui::theme;
 use ui_lang_runtime::{Role, StableId, accessible};
 
-use crate::Venue;
+use crate::indicators::{ChartIndicators, chart_indicator_summary};
+pub use crate::indicators::{
+    chart_indicator_action, chart_indicator_active, chart_indicator_name, toggle_chart_indicator,
+};
 use crate::signing::{self, Action, Chain, Wallet};
 use crate::venue::venue_name;
+use crate::{ChartIndicator, Venue};
 
 pub use ui_lang_components::ui::candle_chart::{Candle, CandleHit};
 
@@ -84,8 +88,8 @@ fn rgb(hex: u32) -> Color {
 }
 
 /// The chart wears the terminal's palette rather than the library default:
-/// a cold near-black ground, monochrome moving averages, and colour reserved
-/// for the two things that mean money moved.
+/// a cold near-black ground, green and red reserved for money moving, and a
+/// distinct non-directional ink for each optional study.
 fn chart_theme() -> theme::Theme {
     let mut chart = theme::DARK;
     chart.palette.background = rgb(0x14_12_0f);
@@ -94,10 +98,12 @@ fn chart_theme() -> theme::Theme {
     chart.palette.border = rgb(0x2f_28_23);
     chart.palette.success = rgb(0x5f_ae_7e);
     chart.palette.destructive = rgb(0xd0_64_5a);
-    // The moving-average slots; ink rather than colour, so the fills and the
-    // position levels are the only long/short marks on the plot.
-    chart.palette.accent = rgb(0x4a_42_3b);
-    chart.palette.warning = rgb(0x6b_61_57);
+    // Kept in step with the five swatches in `ui/theme.ice`.
+    chart.palette.accent = rgb(0xd4_a3_73);
+    chart.palette.warning = rgb(0xb8_a1_d9);
+    chart.palette.brand = rgb(0x5b_a6_d9);
+    chart.palette.control_line = rgb(0x8d_98_9f);
+    chart.palette.primary = rgb(0xd7_8a_bd);
     chart.typography.font = Font::with_name("Monoplex KR");
     chart
 }
@@ -4649,15 +4655,21 @@ pub struct ChartSignal {
 /// there — which is every Lighter chart, since that venue serves no fills to
 /// an address, and every chart on either venue before the first fill lands.
 ///
-/// So both halves are read off what the chart is actually given: the venue it
-/// was told to draw, and whether any markers survived the filter.
-fn chart_label(venue: Venue, marked: bool) -> String {
+/// Every claim is read off what the chart is actually given: the venue it was
+/// told to draw, the active studies, and whether any markers survived the
+/// filter.
+fn chart_label(venue: Venue, marked: bool, indicators: &[ChartIndicator]) -> String {
     let name = venue_name(venue);
-    if marked {
-        format!("{name} candlestick chart with this account's fills marked")
-    } else {
+    let studies = chart_indicator_summary(indicators);
+    let mut label = if studies.is_empty() {
         format!("{name} candlestick chart")
+    } else {
+        format!("{name} candlestick chart; indicators: {studies}")
+    };
+    if marked {
+        label.push_str("; this account's fills marked");
     }
+    label
 }
 
 /// The chart for the selected market, with this account's levels drawn across
@@ -4674,6 +4686,7 @@ pub fn chart(
     positions: &[Position],
     orders: &[Order],
     coin: &str,
+    indicators: &[ChartIndicator],
 ) -> Element<'static, ChartSignal> {
     // One theme for the frame. Reading `.palette` from a fresh one in each
     // helper rebuilt the whole thing, font resolution included, four times per
@@ -4692,12 +4705,12 @@ pub fn chart(
             .map_or(2, |candle| price_decimals(candle.close))
     };
     let marks = fill_markers(fills, coin, palette);
-    let label = chart_label(venue, !marks.is_empty());
+    let label = chart_label(venue, !marks.is_empty(), indicators);
     let chart = candle_chart_shared(tape.candles.clone(), &theme)
         .precision(scale)
         .height(Length::Fill)
         .live(BEAT)
-        .moving_averages([20, 60])
+        .overlay(ChartIndicators::new(indicators, palette))
         .price_lines(position_lines(positions, coin, palette))
         .price_lines(order_lines(orders, coin, palette))
         .markers(marks)
@@ -5378,8 +5391,8 @@ mod tests {
     }
 
     /// The chart is a canvas with no text in it, so its accessibility name is
-    /// the entire chart for a reader who cannot see it — and both halves of
-    /// that sentence are claims that can be false.
+    /// the entire chart for a reader who cannot see it — and every part of
+    /// that sentence is a claim that can be false.
     ///
     /// Which venue: the name was fixed at "Hyperliquid" while the chart drew
     /// whichever venue was on screen, so a Lighter chart announced the other
@@ -5392,22 +5405,23 @@ mod tests {
     /// Hyperliquid's too until this account's first fill in this market. Both
     /// states are asserted for the same reason.
     #[test]
-    fn the_chart_is_named_for_the_venue_it_draws_and_the_marks_it_has() {
+    fn the_chart_is_named_for_the_venue_indicators_and_marks_it_has() {
+        let indicators = [ChartIndicator::Sma20, ChartIndicator::Sma60];
         assert_eq!(
-            chart_label(Venue::Hyperliquid, true),
-            "Hyperliquid candlestick chart with this account's fills marked"
+            chart_label(Venue::Hyperliquid, true, &indicators),
+            "Hyperliquid candlestick chart; indicators: SMA 20, SMA 60; this account's fills marked"
         );
         assert_eq!(
-            chart_label(Venue::Lighter, true),
-            "Lighter candlestick chart with this account's fills marked"
+            chart_label(Venue::Lighter, true, &indicators),
+            "Lighter candlestick chart; indicators: SMA 20, SMA 60; this account's fills marked"
         );
         // No marks, so no promise of any. The venue is still named.
         assert_eq!(
-            chart_label(Venue::Hyperliquid, false),
-            "Hyperliquid candlestick chart"
+            chart_label(Venue::Hyperliquid, false, &indicators),
+            "Hyperliquid candlestick chart; indicators: SMA 20, SMA 60"
         );
         assert_eq!(
-            chart_label(Venue::Lighter, false),
+            chart_label(Venue::Lighter, false, &[]),
             "Lighter candlestick chart"
         );
 
@@ -5416,7 +5430,7 @@ mod tests {
         for venue in [Venue::Hyperliquid, Venue::Lighter] {
             for marked in [false, true] {
                 assert!(
-                    chart_label(venue, marked).starts_with(&venue_name(venue)),
+                    chart_label(venue, marked, &indicators).starts_with(&venue_name(venue)),
                     "the chart has to open with the name the rest of the app uses"
                 );
             }
@@ -6585,13 +6599,11 @@ mod tests {
         assert_eq!(chart.border, token("edge"));
         assert_eq!(chart.success, token("up"));
         assert_eq!(chart.destructive, token("down"));
-        assert_eq!(chart.warning, token("faint"));
-
-        // `accent` is the only slot with no counterpart, and deliberately so:
-        // the moving averages are ink rather than colour, because the fills
-        // and the position levels are the only long/short marks on the plot.
-        assert_ne!(chart.accent, chart.success);
-        assert_ne!(chart.accent, chart.destructive);
+        assert_eq!(chart.accent, token("indicator_sma_20"));
+        assert_eq!(chart.warning, token("indicator_sma_60"));
+        assert_eq!(chart.brand, token("indicator_ema_20"));
+        assert_eq!(chart.control_line, token("indicator_bollinger_20"));
+        assert_eq!(chart.primary, token("indicator_vwma_20"));
     }
 
     #[test]

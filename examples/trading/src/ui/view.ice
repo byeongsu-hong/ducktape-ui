@@ -526,12 +526,60 @@ view
                                   events
                                     pick -> toggle_fills
                           rule horizontal thickness=1.0 color=edge
+                          // Five independent price-space studies. This is its
+                          // own short row because the interval tabs, OHLCV
+                          // readout and folded-pane switches already fill the
+                          // bar above at the window's minimum width.
+                          box #indicator-bar
+                            with
+                              w=fill
+                              h=30.0
+                              bg=panel
+                            row
+                              with
+                                w=fill
+                                h=fill
+                                px=14.0
+                                gap=4.0
+                                align=center
+                              Label value="INDICATORS"
+                              ChartIndicatorToggle #indicator-sma-20
+                                with
+                                  target=ChartIndicator.sma_20
+                                  on=chart_indicator_active(chart_indicators, ChartIndicator.sma_20)
+                                events
+                                  pick -> toggle_chart_indicator _
+                              ChartIndicatorToggle #indicator-sma-60
+                                with
+                                  target=ChartIndicator.sma_60
+                                  on=chart_indicator_active(chart_indicators, ChartIndicator.sma_60)
+                                events
+                                  pick -> toggle_chart_indicator _
+                              ChartIndicatorToggle #indicator-ema-20
+                                with
+                                  target=ChartIndicator.ema_20
+                                  on=chart_indicator_active(chart_indicators, ChartIndicator.ema_20)
+                                events
+                                  pick -> toggle_chart_indicator _
+                              ChartIndicatorToggle #indicator-bollinger-20
+                                with
+                                  target=ChartIndicator.bollinger_20
+                                  on=chart_indicator_active(chart_indicators, ChartIndicator.bollinger_20)
+                                events
+                                  pick -> toggle_chart_indicator _
+                              ChartIndicatorToggle #indicator-vwma-20
+                                with
+                                  target=ChartIndicator.vwma_20
+                                  on=chart_indicator_active(chart_indicators, ChartIndicator.vwma_20)
+                                events
+                                  pick -> toggle_chart_indicator _
+                          rule horizontal thickness=1.0 color=edge
                           box #chart-frame
                             with
                               w=fill
                               h=fill
                               p=6.0
-                            extern chart(venue, tape, fills, positions, orders, coin) #chart -> chart_signalled _
+                            extern chart(venue, tape, fills, positions, orders, coin, chart_indicators) #chart -> chart_signalled _
                           resize-handle #split drag=lower_resized cursor=resize-vertical
                             box
                               with
