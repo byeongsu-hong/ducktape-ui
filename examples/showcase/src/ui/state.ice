@@ -43,6 +43,7 @@ state
   hover_card_open = false
   card_action = ""
   navigation_route = "Components"
+  showcase_page:str = initial_showcase_page()
 
 derived
   catalog_at_start = catalog_page <= 0
@@ -68,3 +69,8 @@ preset test
     hover_card_open = false
     card_action = ""
     navigation_route = "Components"
+    showcase_page = "components"
+
+preset retained_data
+  state
+    showcase_page = "retained"

@@ -38,6 +38,7 @@ extern crate::adapters
   SonnerState()
   SonnerEvent()
   CatalogItem(name:str, source:str)
+  sync initial_showcase_page() -> str
   checkbox-style checkbox_style()
   progress-style progress_style()
   progress-style progress_success_style()

@@ -145,12 +145,6 @@ test catalog_layout
   preset test
   viewport 1120 1200
   target app = #app
-  target virtual_panel = app/compact-feature-strip/virtual-list-panel/root
-  target virtual_widget = virtual_panel/virtual-list
-  target tree_panel = app/compact-feature-strip/tree-view-panel/root
-  target tree_widget = tree_panel/tree-view
-  target data_grid_panel = app/compact-feature-strip/data-grid-panel/root
-  target data_grid_widget = data_grid_panel/data-grid
   target scroller = app/catalog-scroll
   target page = scroller/page
   target grid = page/catalog-grid/root
@@ -252,17 +246,7 @@ test catalog_layout
   resize 720 560
   expect app.width ~= 720.0
   expect app.height ~= 560.0
-  expect virtual_panel.width > 280.0
-  expect virtual_panel.height < 210.0
-  expect tree_panel.height ~= virtual_panel.height
-  expect data_grid_panel.height ~= virtual_panel.height
-  expect virtual_widget.bottom < virtual_panel.bottom
-  expect tree_widget.bottom < tree_panel.bottom
-  expect data_grid_widget.bottom < data_grid_panel.bottom
-  expect virtual_widget.height ~= 96.0
-  expect tree_widget.height ~= virtual_widget.height
-  expect data_grid_widget.height ~= virtual_widget.height
-  expect scroller.height > 140.0
+  expect scroller.height > 300.0
   expect page.x ~= app.x
   expect page.width ~= app.width - 16.0
   expect grid.x ~= page.x + 24.0
@@ -271,6 +255,42 @@ test catalog_layout
   expect badges.y > buttons.bottom
   expect fields.x ~= buttons.x
   expect fields.y > badges.bottom
+
+test retained_data_is_a_separate_screen
+  preset test
+  viewport 1120 820
+  target app = #app
+  target components_switcher = app/view-switcher-components
+  target retained_switcher = app/view-switcher-retained
+  target retained_tab = components_switcher/show-retained-data
+  target retained_tab_selected = retained_switcher/show-retained-data-selected
+  target components_tab = retained_switcher/show-components
+  target retained_screen = app/retained-screen
+  target virtual_panel = retained_screen/wide-feature-strip/virtual-list-panel-wide/root
+  target virtual_widget = virtual_panel/virtual-list
+  target compact_virtual_panel = retained_screen/compact-feature-strip/virtual-list-panel/root
+  target compact_virtual_widget = compact_virtual_panel/virtual-list
+  expect showcase_page == "components"
+  expect text "Buttons"
+  expect no text "100,000 keyed rows"
+  expect a11y retained_tab checked false
+  click retained_tab
+  expect showcase_page == "retained"
+  expect no text "Buttons"
+  expect text "100,000 keyed rows"
+  expect a11y retained_tab_selected checked true
+  expect virtual_widget.height > 300.0
+  expect virtual_widget.bottom < retained_screen.bottom
+  capture retained_data_wide
+  resize 720 560
+  expect compact_virtual_panel.width > 280.0
+  expect compact_virtual_widget.height > 140.0
+  expect compact_virtual_widget.bottom < retained_screen.bottom
+  capture retained_data_narrow
+  click components_tab
+  expect showcase_page == "components"
+  expect text "Buttons"
+  expect no text "100,000 keyed rows"
 
 test dialog_preserves_catalog_position
   preset test
