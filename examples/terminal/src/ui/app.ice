@@ -5,6 +5,7 @@ app TerminalWorkspace
   font "../../../../assets/fonts/JetBrainsMono-Regular.ttf"
   font "../../../../assets/fonts/JetBrainsMono-Bold.ttf"
   font "../../../../assets/fonts/JetBrainsMono-Italic.ttf"
+  font "../../../../assets/fonts/MonoplexKR-Regular.ttf"
   text-size 14
   antialiasing true
   window
@@ -78,8 +79,10 @@ on stop
 
 on terminal_notice(notice)
   running = notice.running
-  return if empty(notice.title)
   title = notice.title
+  task terminal_attention(notice.attention) -> terminal_attention_done
+
+on terminal_attention_done
 
 on failed(cause)
   busy = false
