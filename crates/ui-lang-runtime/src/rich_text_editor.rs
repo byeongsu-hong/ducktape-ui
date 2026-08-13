@@ -41,6 +41,7 @@ pub use affordance::{
 };
 #[path = "rich_text_editor/keyboard.rs"]
 mod keyboard_input;
+pub use keyboard_input::default_key_binding;
 use keyboard_input::*;
 #[path = "rich_text_editor/composition.rs"]
 mod composition;
@@ -157,6 +158,10 @@ pub enum Action {
 /// the press.
 type LinePressFn<'a, Message> = dyn Fn(&str, Position) -> Option<Message> + 'a;
 
+/// The key-binding override — decides every press; `None` leaves the key
+/// unhandled so it bubbles to the application.
+type KeyBindingFn<'a> = dyn Fn(&text_editor::KeyPress) -> Option<Binding<Edit>> + 'a;
+
 /// The hover-gutter route — `None` hides the gutter for that line.
 type GutterFn<'a, Message> = dyn Fn(usize, GutterButton) -> Option<Message> + 'a;
 
@@ -193,6 +198,7 @@ where
     padding: Padding,
     wrapping: text::Wrapping,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
+    key_binding: Option<Box<KeyBindingFn<'a>>>,
     on_line_press: Option<Box<LinePressFn<'a, Message>>>,
     on_gutter: Option<Box<GutterFn<'a, Message>>>,
     drop_boundaries: Vec<usize>,
@@ -231,6 +237,7 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             padding: Padding::new(5.0),
             wrapping: text::Wrapping::default(),
             on_action: None,
+            key_binding: None,
             focus_enabled: true,
             highlighter_settings: (),
             format: Box::new(|_| Format::default()),
@@ -326,6 +333,42 @@ where
         self
     }
 
+    /// Overrides how key presses map to editor bindings, the way iced's stock
+    /// `text_editor` allows.
+    ///
+    /// The closure fully decides each press: return `None` to leave the key
+    /// unhandled (it bubbles to the application), or delegate to
+    /// [`default_key_binding`] for the editor's stock behavior. The closure
+    /// sees the press itself — including its live modifiers — so decisions
+    /// like parting plain Enter from Shift+Enter happen at the widget, not
+    /// against a lagged modifier mirror.
+    ///
+    /// ```
+    /// use iced::keyboard::{Key, key};
+    /// use iced::widget::text_editor::Content;
+    /// use ui_lang_runtime::rich_text_editor::default_key_binding;
+    /// use ui_lang_runtime::{ContentVersion, RichTextEditor};
+    ///
+    /// let content = Content::new();
+    /// let editor: RichTextEditor<'_, _, ()> =
+    ///     RichTextEditor::new(&content, ContentVersion::new(1, 0)).key_binding(|press| {
+    ///         let plain_enter = matches!(press.key, Key::Named(key::Named::Enter))
+    ///             && !press.modifiers.shift();
+    ///         if plain_enter {
+    ///             None // the application decides what plain Enter means
+    ///         } else {
+    ///             default_key_binding(press)
+    ///         }
+    ///     });
+    /// ```
+    pub fn key_binding(
+        mut self,
+        key_binding: impl Fn(&text_editor::KeyPress) -> Option<Binding<Edit>> + 'a,
+    ) -> Self {
+        self.key_binding = Some(Box::new(key_binding));
+        self
+    }
+
     /// Keeps the editor's internal focus and drag state aligned with the
     /// surrounding view focus.
     pub fn focus_enabled(mut self, enabled: bool) -> Self {
@@ -376,6 +419,7 @@ where
             padding: self.padding,
             wrapping: self.wrapping,
             on_action: self.on_action,
+            key_binding: self.key_binding,
             focus_enabled: self.focus_enabled,
             highlighter_settings: settings,
             format: Box::new(format),
@@ -1488,7 +1532,10 @@ where
                     text: text.clone(),
                     status,
                 };
-                let binding = editor_binding(&key_press);
+                let binding = match self.key_binding.as_deref() {
+                    Some(key_binding) => key_binding(&key_press),
+                    None => default_key_binding(&key_press),
+                };
 
                 if let Some(binding) = binding {
                     state.pending_ime_commit.clear();

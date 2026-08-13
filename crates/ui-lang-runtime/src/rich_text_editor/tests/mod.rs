@@ -176,6 +176,8 @@ fn headless_renderer() -> iced::Renderer {
 
 #[path = "ime.rs"]
 mod ime_tests;
+#[path = "keyboard.rs"]
+mod keyboard_tests;
 #[path = "layout.rs"]
 mod layout_tests;
 #[path = "performance.rs"]

@@ -65,7 +65,12 @@ pub(super) fn rich_binding(press: &text_editor::KeyPress) -> Option<Binding<Edit
     }
 }
 
-pub(super) fn editor_binding(press: &text_editor::KeyPress) -> Option<Binding<Edit>> {
+/// The editor's stock key handling: application command shortcuts bubble,
+/// rich-document bindings (indent, word/line deletion) apply, and everything
+/// else falls through to [`Binding::from_key_press`]. A
+/// [`RichTextEditor::key_binding`](super::RichTextEditor::key_binding)
+/// override delegates here for every press it does not decide itself.
+pub fn default_key_binding(press: &text_editor::KeyPress) -> Option<Binding<Edit>> {
     if command_shortcut_bubbles(press) {
         return None;
     }

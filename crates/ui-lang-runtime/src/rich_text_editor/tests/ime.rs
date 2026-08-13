@@ -529,27 +529,27 @@ fn application_command_shortcuts_are_not_inserted_as_text() {
     };
 
     assert_eq!(
-        editor_binding(&press(Key::Character("z".into()), Code::KeyZ, "z")),
+        default_key_binding(&press(Key::Character("z".into()), Code::KeyZ, "z")),
         None
     );
     assert_eq!(
-        editor_binding(&press(Key::Character("ㅋ".into()), Code::KeyZ, "z")),
+        default_key_binding(&press(Key::Character("ㅋ".into()), Code::KeyZ, "z")),
         None
     );
     assert_eq!(
-        editor_binding(&press(Key::Character("c".into()), Code::KeyC, "c")),
+        default_key_binding(&press(Key::Character("c".into()), Code::KeyC, "c")),
         Some(Binding::Copy)
     );
     assert_eq!(
-        editor_binding(&press(Key::Character("x".into()), Code::KeyX, "x")),
+        default_key_binding(&press(Key::Character("x".into()), Code::KeyX, "x")),
         Some(Binding::Cut)
     );
     assert_eq!(
-        editor_binding(&press(Key::Character("v".into()), Code::KeyV, "v")),
+        default_key_binding(&press(Key::Character("v".into()), Code::KeyV, "v")),
         Some(Binding::Paste)
     );
     assert_eq!(
-        editor_binding(&press(Key::Character("a".into()), Code::KeyA, "a")),
+        default_key_binding(&press(Key::Character("a".into()), Code::KeyA, "a")),
         Some(Binding::SelectAll)
     );
 }
