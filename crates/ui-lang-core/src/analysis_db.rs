@@ -1013,58 +1013,53 @@ impl AnalysisDb {
         if !metadata_due && !content_due {
             return Ok(());
         }
-        let source_stamps = checked.source_stamps.clone();
-        let asset_stamps = checked.asset_stamps.clone();
-        let mut next_sources = Vec::with_capacity(source_stamps.len());
-        let mut next_assets = Vec::with_capacity(asset_stamps.len());
+        let (root, mut checked) = self
+            .checked_roots
+            .remove_entry(root)
+            .expect("checked root exists during refresh");
 
-        for (path, previous) in source_stamps {
+        for (path, previous) in &mut checked.source_stamps {
             self.metrics.source_stamps_checked += 1;
-            let mut metadata = DiskStamp::read(&path, None);
+            let mut metadata = DiskStamp::read(path, None);
             metadata.content_hash = previous.content_hash;
-            let current = if content_due || !metadata.same_identity(&previous) {
-                self.disk_stamp_with_content(&path)
+            let current = if content_due || !metadata.same_identity(previous) {
+                self.disk_stamp_with_content(path)
             } else {
                 metadata
             };
-            if !current.same_resolved_input(&previous)
+            if !current.same_resolved_input(previous)
                 || !current.is_file
                 || current.content_hash != previous.content_hash
             {
-                self.checked_roots.remove(root);
-                self.dirty_roots.insert(root.to_owned());
+                self.dirty_roots.insert(root);
                 return Ok(());
             }
-            next_sources.push((path, current));
+            *previous = current;
         }
-        for (path, previous) in asset_stamps {
+        for (path, previous) in &mut checked.asset_stamps {
             self.metrics.asset_stamps_checked += 1;
-            let mut metadata = DiskStamp::read(&path, None);
+            let mut metadata = DiskStamp::read(path, None);
             metadata.content_hash = previous.content_hash;
-            let current = if content_due || !metadata.same_identity(&previous) {
-                self.disk_stamp_with_content(&path)
+            let current = if content_due || !metadata.same_identity(previous) {
+                self.disk_stamp_with_content(path)
             } else {
                 metadata
             };
-            if !current.same_resolved_input(&previous)
+            if !current.same_resolved_input(previous)
                 || !current.is_file
                 || current.content_hash != previous.content_hash
             {
-                self.checked_roots.remove(root);
-                self.dirty_roots.insert(root.to_owned());
+                self.dirty_roots.insert(root);
                 return Ok(());
             }
-            next_assets.push((path, current));
+            *previous = current;
         }
 
-        if let Some(checked) = self.checked_roots.get_mut(root) {
-            checked.source_stamps = next_sources;
-            checked.asset_stamps = next_assets;
-            checked.metadata_validated_at = now;
-            if content_due {
-                checked.content_validated_at = now;
-            }
+        checked.metadata_validated_at = now;
+        if content_due {
+            checked.content_validated_at = now;
         }
+        self.checked_roots.insert(root, checked);
         Ok(())
     }
 
@@ -1763,6 +1758,7 @@ mod tests {
     use super::{
         AnalysisConfig, AnalysisDb, CompilerFeatureSet, LANGUAGE_REVISION, ValidationPolicy,
     };
+    use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::PathBuf;
@@ -2349,6 +2345,50 @@ mod tests {
         assert_eq!(metrics.files_hashed, 0, "{metrics:?}");
         assert_eq!(metrics.root_cache_hits, REQUESTS, "{metrics:?}");
         assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+    }
+
+    #[test]
+    #[ignore = "metadata refresh allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_metadata_refresh_reuses_retained_stamp_storage() {
+        const IMPORTS: usize = 256;
+
+        let fixture = Fixture::new();
+        let mut source = String::from("app StampRefresh\n");
+        for index in 0..IMPORTS {
+            let name = format!("part-{index}.ice");
+            fixture.write(&name, &format!("// fragment {index}\n"));
+            source.push_str(&format!("use \"{name}\"\n"));
+        }
+        source.push_str(
+            "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  text \"ready\"\n",
+        );
+        fixture.write("app.ice", &source);
+        let root = fixture.path("app.ice");
+        let mut db = AnalysisDb::default();
+        db.set_validation_policy(ValidationPolicy::new(
+            Duration::ZERO,
+            Duration::from_secs(60),
+        ));
+        let first = db.query_root(&root).unwrap();
+        db.take_metrics();
+
+        let region = Region::new(&INSTRUMENTED_SYSTEM);
+        let second = db.query_root(&root).unwrap();
+        let stats = region.change();
+        let metrics = db.take_metrics();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(metrics.source_stamps_checked, IMPORTS + 1);
+        assert_eq!(metrics.files_loaded, 0);
+        eprintln!(
+            "{} retained stamps: {} allocations / {} reallocations / {} bytes",
+            IMPORTS + 1,
+            stats.allocations,
+            stats.reallocations,
+            stats.bytes_allocated
+        );
+        assert_eq!(stats.allocations, 261, "{stats:?}");
+        assert_eq!(stats.reallocations, 2, "{stats:?}");
     }
 
     #[test]
