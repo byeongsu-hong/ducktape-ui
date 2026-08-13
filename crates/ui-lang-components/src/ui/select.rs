@@ -242,20 +242,15 @@ where
     }
 
     pub fn into_element(self) -> Element<'a, Message> {
-        let selected_label = self.groups.iter().find_map(|group| {
+        let groups = self.groups;
+        let selected_label = groups.iter().find_map(|group| {
             group
                 .options
                 .iter()
                 .find(|option| self.selected.as_ref() == Some(&option.value))
                 .map(|option| option.label.clone())
         });
-        let entries = select_entries(&self.groups, self.selected.as_ref());
-        let values = self
-            .groups
-            .iter()
-            .flat_map(|group| group.options.iter())
-            .map(|option| (option.id.clone(), option.value.clone()))
-            .collect::<Vec<_>>();
+        let entries = select_entries(&groups, self.selected.as_ref());
         let trigger: Element<'a, Message> = if let Some(trigger) = self.trigger {
             container(trigger).width(self.width).into()
         } else {
@@ -304,16 +299,16 @@ where
         };
 
         let menu_event = Rc::clone(&self.on_event);
-        let menu_values = Rc::new(values);
         let content = menu(
             self.ids.menu.clone(),
             &entries,
             self.state,
             move |event| match event {
-                MenuEvent::Activated(activation) => menu_values
+                MenuEvent::Activated(activation) => groups
                     .iter()
-                    .find(|(id, _)| id == &activation.id)
-                    .map(|(_, value)| menu_event(SelectEvent::Selected(value.clone())))
+                    .flat_map(|group| group.options.iter())
+                    .find(|option| option.id == activation.id)
+                    .map(|option| menu_event(SelectEvent::Selected(option.value.clone())))
                     .unwrap_or_else(|| {
                         menu_event(SelectEvent::Menu(MenuEvent::Activated(activation)))
                     }),
