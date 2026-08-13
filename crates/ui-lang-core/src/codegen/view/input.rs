@@ -382,6 +382,16 @@ fn resolved_input_style_code(
         )
         .unwrap();
     }
+    if let Some(active) = &input.styles.active {
+        append_resolved_input_status(&mut code, active, program, env)?;
+    }
+    // THE FOCUS PASS RUNS AFTER THE `active` BASE. `active` is the base for
+    // every status, not just `Status::Active`, so writing it after the
+    // `focus:border-*` utility restored the base border color while focused:
+    // an input that declared any `active border=` silently killed the recipe
+    // ring. An explicit `focused` block still wins, because the status match
+    // below runs last. `button.rs` handles the identical hazard for
+    // `disabled:opacity`.
     if let Some(focus) = &utilities.focus_border_color {
         write!(
             code,
@@ -389,9 +399,6 @@ fn resolved_input_style_code(
             resolved_theme_color(focus)
         )
         .unwrap();
-    }
-    if let Some(active) = &input.styles.active {
-        append_resolved_input_status(&mut code, active, program, env)?;
     }
     let overrides = [
         ("Hovered", None, input.styles.hovered.as_ref()),
