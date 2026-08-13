@@ -401,7 +401,11 @@ fn parse_match_pattern(line: &Line) -> Result<Option<MatchPattern>, Error> {
         ("ok", MatchPattern::Ok as fn(String) -> MatchPattern),
         ("err", MatchPattern::Err as fn(String) -> MatchPattern),
     ] {
-        if line.text.starts_with(&format!("{name}(")) {
+        if line
+            .text
+            .strip_prefix(name)
+            .is_some_and(|rest| rest.starts_with('('))
+        {
             let (actual, binding) = parse_local_signature(&line.text, line)?;
             if actual != name || binding.contains(',') || binding.trim().is_empty() {
                 return Err(error(
@@ -439,4 +443,55 @@ fn parse_match_pattern(line: &Line) -> Result<Option<MatchPattern>, Error> {
         variant,
         binding,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
+
+    fn line(text: &str) -> Line {
+        line_tree(text, &[None], Rc::default())
+            .unwrap()
+            .pop()
+            .unwrap()
+    }
+
+    #[test]
+    fn typed_match_pattern_requires_the_opening_delimiter() {
+        assert!(matches!(
+            parse_match_pattern(&line("some(value)")).unwrap(),
+            Some(MatchPattern::Some(binding)) if binding == "value"
+        ));
+        assert!(
+            parse_match_pattern(&line("somewhere(value)"))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn literal_match_pattern_scan_does_not_allocate() {
+        const CALLS: usize = 4_000;
+        let line = line("literal");
+        let region = Region::new(&INSTRUMENTED_SYSTEM);
+
+        for _ in 0..CALLS {
+            assert!(
+                std::hint::black_box(parse_match_pattern(std::hint::black_box(&line)))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let stats = region.change();
+
+        eprintln!(
+            "{CALLS} literal pattern scans: {} allocations / {} reallocations / {} allocated bytes",
+            stats.allocations, stats.reallocations, stats.bytes_allocated
+        );
+        assert_eq!(stats.allocations, 0, "{stats:?}");
+        assert_eq!(stats.reallocations, 0, "{stats:?}");
+        assert_eq!(stats.bytes_allocated, 0, "{stats:?}");
+    }
 }
