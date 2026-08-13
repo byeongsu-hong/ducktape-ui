@@ -240,6 +240,28 @@ fn performance_contract_100k_deep_preorder_reconcile() {
 }
 
 #[test]
+#[ignore = "100k-node release allocation contract run explicitly in CI"]
+fn performance_contract_100k_deep_reconcile_avoids_sibling_count_table() {
+    const NODES: usize = 100_000;
+
+    let items = (0..NODES as u64).collect::<Vec<_>>();
+    let mut state = TreeViewState::new(TreeViewId::new("deep-tree-allocation-contract"));
+    state.reconcile(&items, deep_node, config()).unwrap();
+    let region = Region::new(GLOBAL);
+
+    state.reconcile(&items, deep_node, config()).unwrap();
+    let stats = region.change();
+
+    eprintln!(
+        "{NODES}-node deep reconcile: {} allocations / {} reallocations / {} allocated bytes",
+        stats.allocations, stats.reallocations, stats.bytes_allocated
+    );
+    assert_eq!(stats.allocations, 12, "{stats:?}");
+    assert_eq!(stats.reallocations, 15, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 19_454_212, "{stats:?}");
+}
+
+#[test]
 #[ignore = "100k-node release performance contract run explicitly in CI"]
 fn performance_contract_100k_late_hierarchical_interactions() {
     const TOGGLE_SAMPLES: usize = 60;

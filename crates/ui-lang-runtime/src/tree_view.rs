@@ -418,7 +418,7 @@ where
         let mut records: Vec<TreeNodeRecord<Key>> = Vec::with_capacity(items.len());
         let mut indexes: HashMap<Key, usize> =
             HashMap::with_capacity_and_hasher(items.len(), rustc_hash::FxBuildHasher);
-        let mut sibling_counts = HashMap::<Option<usize>, usize>::default();
+        let mut root_count = 0;
         let mut open_path = Vec::<usize>::new();
         for (source_index, item) in items.iter().enumerate() {
             let node = node(item);
@@ -456,9 +456,15 @@ where
                 open_path.clear();
             }
             let level = parent_index.map_or(1, |parent| records[parent].level + 1);
-            let siblings = sibling_counts.entry(parent_index).or_default();
-            *siblings += 1;
-            let position_in_set = *siblings;
+            let position_in_set = if let Some(parent) = parent_index {
+                // Until the final pass, a parent's empty `size_of_set` slot is
+                // its direct-child count.
+                records[parent].size_of_set += 1;
+                records[parent].size_of_set
+            } else {
+                root_count += 1;
+                root_count
+            };
             indexes.insert(node.key.clone(), records.len());
             records.push(TreeNodeRecord {
                 key: node.key,
@@ -472,8 +478,12 @@ where
             });
             open_path.push(records.len() - 1);
         }
-        for record in &mut records {
-            record.size_of_set = sibling_counts[&record.parent_index];
+        // Parents precede children, so reverse order reads every parent's child
+        // count before replacing that slot with the parent's own sibling count.
+        for index in (0..records.len()).rev() {
+            records[index].size_of_set = records[index]
+                .parent_index
+                .map_or(root_count, |parent| records[parent].size_of_set);
         }
         Arc::make_mut(&mut self.expanded).retain(|key| {
             indexes
@@ -913,6 +923,14 @@ mod tests {
         assert_eq!(
             state.rows.iter().map(|row| row.key).collect::<Vec<_>>(),
             vec![1, 5]
+        );
+        assert_eq!(
+            state
+                .nodes
+                .iter()
+                .map(|node| (node.key, node.position_in_set, node.size_of_set))
+                .collect::<Vec<_>>(),
+            vec![(1, 1, 2), (2, 1, 2), (3, 2, 2), (4, 1, 1), (5, 2, 2)]
         );
 
         let duplicate = vec![item(7, None), item(7, None)];
