@@ -47,6 +47,14 @@ pub(in crate::parser) fn parse_text(
                 "E063",
                 "text style must be a declared style call",
             )?);
+        } else if part == "underline" {
+            options.underline = Some(Expr::Bool(true));
+        } else if let Some(value) = part.strip_prefix("underline=") {
+            options.underline = Some(parse_expr(strip_wrapping_parens(value), line)?);
+        } else if part == "strike" {
+            options.strikethrough = Some(Expr::Bool(true));
+        } else if let Some(value) = part.strip_prefix("strike=") {
+            options.strikethrough = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else {
             return Err(error(
                 "E063",

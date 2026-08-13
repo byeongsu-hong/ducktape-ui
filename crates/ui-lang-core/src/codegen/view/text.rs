@@ -21,14 +21,20 @@ pub(in crate::codegen) fn render_text(
                 document,
             )?;
             let code = resolved_plain_text_code(text, message, env, program)?;
-            let selection = text
+            // A tracked run is a row, and a ruled text is a paragraph span —
+            // neither is the Text widget the selectable wrapper adapts.
+            let plain_widget = text
                 .options
                 .tracking
                 .filter(|tracking| *tracking > 0.0)
-                .map_or(
-                    "let __text = ::ui_lang_runtime::selectable_text(__text);",
-                    |_| "",
-                );
+                .is_none()
+                && text.options.underline.is_none()
+                && text.options.strikethrough.is_none();
+            let selection = if plain_widget {
+                "let __text = ::ui_lang_runtime::selectable_text(__text);"
+            } else {
+                ""
+            };
             Ok(format!(
                 "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; {selection} ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).value(__text_value).into() }}"
             ))
@@ -59,6 +65,9 @@ fn resolved_plain_text_code(
 ) -> Result<String, Error> {
     let options = &text.options;
     let style = &text.utility_style;
+    if options.underline.is_some() || options.strikethrough.is_some() {
+        return resolved_ruled_text_code(text, env, program);
+    }
     let mut glyph = String::new();
     let Some(tracking) = options.tracking.filter(|tracking| *tracking > 0.0) else {
         glyph.push_str("::iced::widget::text(__text_value.clone())");
@@ -118,6 +127,41 @@ fn resolved_plain_text_code(
         .unwrap();
     }
     write!(code, " {wrapper} }}").unwrap();
+    Ok(code)
+}
+
+/// An underlined or struck text renders as a one-span paragraph: iced's
+/// plain `Text` cannot draw a rule, and `Span` can. The container carries the
+/// same options the plain widget would; the check layer keeps `tracking=` and
+/// `shape=` — the two options a paragraph cannot express — out of this path.
+fn resolved_ruled_text_code(
+    text: &ResolvedText,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    let options = &text.options;
+    let mut span = String::from("::iced::widget::span(__text_value.clone())");
+    if let Some(underline) = options.underline {
+        write!(
+            span,
+            ".underline({})",
+            resolved_expr_use_code(program, underline, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    if let Some(strikethrough) = options.strikethrough {
+        write!(
+            span,
+            ".strikethrough({})",
+            resolved_expr_use_code(program, strikethrough, env, ValueMode::Owned)?
+        )
+        .unwrap();
+    }
+    let mut code = format!(
+        "{{ let __rich_spans: ::std::vec::Vec<::iced::widget::text::Span<'_, ::std::string::String>> = ::std::vec![{span}]; ::iced::widget::rich_text(__rich_spans)"
+    );
+    append_resolved_glyph_options(&mut code, options, &text.utility_style, env, program)?;
+    code.push_str(" }");
     Ok(code)
 }
 
