@@ -4,10 +4,10 @@ use super::*;
 
 pub(in crate::check) fn check_app_settings(
     document: &Document,
-    states: &HashMap<String, Type>,
+    states: &dyn ExprTypeEnv,
     analyses: &mut CheckedAnalyses,
 ) -> Result<(), Error> {
-    let mut callback_states = states.clone();
+    let mut callback_states = ScopedTypeEnv::new(states);
     if document.daemon {
         callback_states.insert("window".into(), Type::WindowId);
     }
@@ -185,7 +185,7 @@ pub(in crate::check) fn check_app_settings(
 fn check_tray(
     tray: &TraySettings,
     document: &Document,
-    states: &HashMap<String, Type>,
+    states: &dyn ExprTypeEnv,
     analyses: &mut CheckedAnalyses,
 ) -> Result<(), Error> {
     let mut typed = |id, setting: &AppExpression, expected: &Type, what: &str| {
@@ -312,4 +312,126 @@ fn check_tray(
 pub(in crate::check) fn valid_app_color(value: &str) -> bool {
     let hex = value.strip_prefix('#').unwrap_or(value);
     matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|value| value.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::fmt::Write as _;
+
+    struct CountingTypeEnv {
+        types: HashMap<String, Type>,
+        plain_setting_lookups: Cell<u8>,
+        window_lookups: Cell<usize>,
+        visited_entries: Cell<usize>,
+    }
+
+    impl ExprTypeEnv for CountingTypeEnv {
+        fn get_type(&self, name: &str) -> Option<&Type> {
+            let plain_setting = match name {
+                "background" => 1,
+                "foreground" => 2,
+                _ => 0,
+            };
+            self.plain_setting_lookups
+                .set(self.plain_setting_lookups.get() | plain_setting);
+            if name == "window" {
+                self.window_lookups.set(self.window_lookups.get() + 1);
+            }
+            self.types.get(name)
+        }
+
+        fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
+            self.visited_entries
+                .set(self.visited_entries.get() + self.types.len());
+            for (name, ty) in &self.types {
+                visitor(name, ty);
+            }
+        }
+
+        fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
+            self.types
+                .iter()
+                .find_map(|(name, ty)| name.starts_with(prefix).then_some(ty))
+        }
+    }
+
+    #[test]
+    fn daemon_callback_settings_borrow_and_shadow_the_state_environment() {
+        const FILLER_STATES: usize = 256;
+        let mut source = String::from(
+            r#"daemon ScopedSettings
+  title describe(window, label)
+  theme native_theme(window, dark)
+  bg background
+  fg foreground
+  scale scale_for(window, zoom)
+extern crate::backend
+  pure describe(id:window-id, label:str) -> str
+  pure scale_for(id:window-id, zoom:f64) -> f64
+  theme native_theme(id:window-id, dark:bool)
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  label = "Scoped"
+  dark = false
+  background = "000000"
+  foreground = "ffffff"
+  zoom = 1.25
+"#,
+        );
+        for index in 0..FILLER_STATES {
+            writeln!(source, "  filler_{index} = {index}").unwrap();
+        }
+        source.push_str("secret window\nview\n  text label\n");
+
+        let document = crate::parse(&source).unwrap();
+        let mut types = document
+            .states
+            .iter()
+            .map(|state| (state.name.clone(), state.ty.clone()))
+            .collect::<HashMap<_, _>>();
+        types.extend(
+            document
+                .secrets
+                .iter()
+                .map(|secret| (secret.name.clone(), Type::Secret)),
+        );
+        let env = CountingTypeEnv {
+            types,
+            plain_setting_lookups: Cell::new(0),
+            window_lookups: Cell::new(0),
+            visited_entries: Cell::new(0),
+        };
+        assert_eq!(env.types.len(), FILLER_STATES + 6);
+        assert_eq!(env.types.get("window"), Some(&Type::Secret));
+
+        check_app_settings(&document, &env, &mut CheckedAnalyses::default()).unwrap();
+
+        assert_eq!(
+            env.plain_setting_lookups.get(),
+            3,
+            "background and foreground must use the base environment"
+        );
+        assert_eq!(
+            env.window_lookups.get(),
+            0,
+            "the daemon callback-local `window` must shadow the secret"
+        );
+        assert_eq!(
+            env.visited_entries.get(),
+            0,
+            "checking callback settings copied the {}-entry environment",
+            env.types.len()
+        );
+    }
 }
