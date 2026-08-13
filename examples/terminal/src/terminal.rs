@@ -23,6 +23,7 @@ use iced::futures::stream::BoxStream;
 use iced::futures::{SinkExt, StreamExt};
 use iced::keyboard::{self, Key, Location, Modifiers, key::Named};
 use iced::mouse::{self, ScrollDelta};
+use iced::time::Instant;
 use iced::{
     Background, Border, Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Shadow,
     Size, Subscription, Theme, window,
@@ -41,7 +42,10 @@ const MAX_FONT_SIZE: f32 = 32.0;
 const LINE_HEIGHT: f32 = 1.4;
 const SCROLL_MULTIPLIER: f32 = 3.0;
 const TERMINAL_FONT: Font = Font::with_name("JetBrains Mono");
+const TERMINAL_WIDE_FONT: Font = Font::with_name("Monoplex KR");
 const FRAME_INTERVAL: Duration = Duration::from_millis(8);
+const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(750);
+const CURSOR_BLINK_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_COLUMNS: u16 = 80;
 const DEFAULT_LINES: u16 = 24;
 const DEFAULT_CELL_WIDTH: u16 = 9;
@@ -74,6 +78,7 @@ pub struct Environment {
 pub struct Notice {
     pub running: bool,
     pub title: String,
+    pub attention: bool,
 }
 
 enum ClipboardRequest {
@@ -137,11 +142,14 @@ pub async fn start_session(
     })?;
     let id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
     let title = launch.title;
-    let terminal = Terminal::new(id, program, launch.args, working_directory).map_err(|error| {
-        TerminalError {
-            message: format!("Could not start {title}: {error}"),
-        }
-    })?;
+    let mut terminal =
+        Terminal::new(id, program, launch.args, working_directory).map_err(|error| {
+            TerminalError {
+                message: format!("Could not start {title}: {error}"),
+            }
+        })?;
+    terminal.title = title.clone();
+    terminal.default_title = title.clone();
 
     Ok(Started {
         session: Session {
@@ -187,11 +195,22 @@ pub fn focus_terminal(session: Session) -> iced::Task<()> {
     iced::widget::operation::focus(widget_id)
 }
 
+pub fn terminal_attention(requested: bool) -> iced::Task<()> {
+    if !requested {
+        return iced::Task::none();
+    }
+
+    window::latest().and_then(|window| {
+        window::request_user_attention(window, Some(window::UserAttention::Informational))
+    })
+}
+
 fn handle_event_batch((session, events): (Session, Vec<AlacrittyEvent>)) -> Notice {
     let Some(terminal) = &session.terminal else {
         return Notice {
             running: false,
             title: String::new(),
+            attention: false,
         };
     };
 
@@ -437,6 +456,8 @@ struct Terminal {
     wakeup_pending: Arc<AtomicBool>,
     size: TerminalSize,
     frame: Arc<TerminalFrame>,
+    title: String,
+    default_title: String,
 }
 
 impl Terminal {
@@ -485,6 +506,8 @@ impl Terminal {
             wakeup_pending,
             size,
             frame: Arc::new(TerminalFrame::empty()),
+            title: "Terminal".into(),
+            default_title: "Terminal".into(),
         };
         terminal.snapshot();
 
@@ -503,7 +526,7 @@ impl Terminal {
 
     fn handle_events(&mut self, events: Vec<AlacrittyEvent>) -> Notice {
         let mut running = true;
-        let mut title = String::new();
+        let mut attention = false;
         let mut needs_snapshot = false;
 
         for event in events {
@@ -512,29 +535,35 @@ impl Terminal {
                     self.wakeup_pending.store(false, Ordering::Release);
                     needs_snapshot = true;
                 }
-                AlacrittyEvent::Title(next) => title = next,
-                AlacrittyEvent::ResetTitle => title = "Terminal".into(),
+                AlacrittyEvent::Title(next) => self.title = next,
+                AlacrittyEvent::ResetTitle => self.title.clone_from(&self.default_title),
                 AlacrittyEvent::PtyWrite(text) => self.notifier.notify(text.into_bytes()),
                 AlacrittyEvent::TextAreaSizeRequest(formatter) => {
                     self.notifier
                         .notify(formatter(self.size.into()).into_bytes());
                 }
                 AlacrittyEvent::ColorRequest(index, formatter) => {
-                    self.notifier
-                        .notify(formatter(palette_rgb(index)).into_bytes());
+                    let term = self.term.lock();
+                    if let Some(color) = queried_color(index, term.colors()) {
+                        self.notifier.notify(formatter(color).into_bytes());
+                    }
                 }
                 AlacrittyEvent::Exit | AlacrittyEvent::ChildExit(_) => running = false,
-                AlacrittyEvent::ClipboardStore(kind, text) => {
+                AlacrittyEvent::ClipboardStore(kind, text) if self.term.lock().is_focused => {
                     self.clipboard_requests
                         .push(ClipboardRequest::Store(kind, text));
                 }
-                AlacrittyEvent::ClipboardLoad(kind, formatter) => {
+                AlacrittyEvent::ClipboardLoad(kind, formatter) if self.term.lock().is_focused => {
                     self.clipboard_requests
                         .push(ClipboardRequest::Load(kind, formatter));
                 }
-                AlacrittyEvent::MouseCursorDirty
-                | AlacrittyEvent::CursorBlinkingChange
-                | AlacrittyEvent::Bell => {}
+                AlacrittyEvent::ClipboardStore(..) | AlacrittyEvent::ClipboardLoad(..) => {}
+                AlacrittyEvent::CursorBlinkingChange => needs_snapshot = true,
+                AlacrittyEvent::Bell => {
+                    let term = self.term.lock();
+                    attention |= bell_requests_attention(term.is_focused, *term.mode());
+                }
+                AlacrittyEvent::MouseCursorDirty => {}
             }
         }
 
@@ -542,7 +571,21 @@ impl Terminal {
             self.snapshot();
         }
 
-        Notice { running, title }
+        Notice {
+            running,
+            title: self.title.clone(),
+            attention,
+        }
+    }
+
+    fn set_focused(&mut self, focused: bool) {
+        let mut term = self.term.lock();
+        if term.is_focused == focused {
+            return;
+        }
+        term.is_focused = focused;
+        drop(term);
+        self.snapshot();
     }
 
     fn resize(&mut self, bounds: Size, cell: Size) -> bool {
@@ -673,6 +716,18 @@ impl Terminal {
     }
 }
 
+fn bell_requests_attention(focused: bool, mode: TermMode) -> bool {
+    !focused && mode.contains(TermMode::URGENCY_HINTS)
+}
+
+fn terminal_mouse_interaction(mode: TermMode, modifiers: Modifiers) -> mouse::Interaction {
+    if mode.intersects(TermMode::MOUSE_MODE) && !modifiers.shift() {
+        mouse::Interaction::Idle
+    } else {
+        mouse::Interaction::Text
+    }
+}
+
 impl Drop for Terminal {
     fn drop(&mut self) {
         let _ = self.notifier.0.send(Msg::Shutdown);
@@ -717,15 +772,23 @@ const ANSI_PALETTE: [Rgb8; 16] = [
     Rgb8(246, 241, 232),
 ];
 
-fn palette_rgb(index: usize) -> Rgb {
-    let color = match index {
-        index if index == NamedColor::Foreground as usize => named_color(NamedColor::Foreground),
-        index if index == NamedColor::Background as usize => named_color(NamedColor::Background),
-        index if index == NamedColor::Cursor as usize => named_color(NamedColor::Cursor),
-        index => indexed_color(index),
-    };
+fn queried_color(index: usize, colors: &term::color::Colors) -> Option<Rgb> {
+    let color = colors[index].map_or_else(
+        || {
+            (index != NamedColor::Cursor as usize).then(|| match index {
+                index if index == NamedColor::Foreground as usize => {
+                    named_color(NamedColor::Foreground)
+                }
+                index if index == NamedColor::Background as usize => {
+                    named_color(NamedColor::Background)
+                }
+                index => indexed_color(index),
+            })
+        },
+        |rgb| Some(Rgb8(rgb.r, rgb.g, rgb.b)),
+    )?;
     let Rgb8(r, g, b) = color;
-    Rgb { r, g, b }
+    Some(Rgb { r, g, b })
 }
 
 fn indexed_color(index: usize) -> Rgb8 {
@@ -801,10 +864,18 @@ fn resolve_color(color: AnsiColor, colors: &term::color::Colors) -> Rgb8 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextFont {
+    Terminal,
+    Wide,
+    PauseSymbol,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TextStyle {
     color: Rgb8,
     bold: bool,
     italic: bool,
+    font: TextFont,
 }
 
 #[derive(Debug)]
@@ -815,6 +886,7 @@ struct PaintCell {
     zerowidth: Vec<char>,
     foreground: Rgb8,
     background: Rgb8,
+    underline: Rgb8,
     flags: Flags,
 }
 
@@ -835,25 +907,39 @@ struct ColorRun {
     color: Rgb8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineKind {
+    Underline,
+    DoubleUnderline,
+    Undercurl,
+    DottedUnderline,
+    DashedUnderline,
+    Strikeout,
+}
+
 #[derive(Debug)]
 struct LineRun {
     row: u16,
     column: u16,
     columns: u16,
     color: Rgb8,
-    strike: bool,
+    kind: LineKind,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct CursorPaint {
     row: u16,
     column: u16,
+    columns: u16,
     shape: CursorShape,
     color: Rgb8,
+    text_color: Rgb8,
+    blinking: bool,
 }
 
 #[derive(Debug)]
 struct TerminalFrame {
+    background: Rgb8,
     text: Vec<TextRun>,
     backgrounds: Vec<ColorRun>,
     lines: Vec<LineRun>,
@@ -863,6 +949,7 @@ struct TerminalFrame {
 impl TerminalFrame {
     fn empty() -> Self {
         Self {
+            background: TERMINAL_BACKGROUND,
             text: Vec::new(),
             backgrounds: Vec::new(),
             lines: Vec::new(),
@@ -871,19 +958,33 @@ impl TerminalFrame {
     }
 
     fn from_term(term: &Term<EventProxy>, size: TerminalSize) -> Self {
+        let focused = term.is_focused;
+        let blinking = term.cursor_style().blinking;
         let content = term.renderable_content();
+        let terminal_foreground =
+            resolve_color(AnsiColor::Named(NamedColor::Foreground), content.colors);
+        let terminal_background =
+            resolve_color(AnsiColor::Named(NamedColor::Background), content.colors);
         let display_offset = content.display_offset as i32;
         let cursor_row = content.cursor.point.line.0 + display_offset;
         let cursor_column = content.cursor.point.column.0;
-        let cursor = (content.cursor.shape != CursorShape::Hidden
+        let cursor_shape = if !focused && content.cursor.shape != CursorShape::Hidden {
+            CursorShape::HollowBlock
+        } else {
+            content.cursor.shape
+        };
+        let mut cursor = (cursor_shape != CursorShape::Hidden
             && cursor_row >= 0
             && cursor_row < i32::from(size.lines)
             && cursor_column < size.columns as usize)
-            .then(|| CursorPaint {
+            .then_some(CursorPaint {
                 row: cursor_row as u16,
                 column: cursor_column as u16,
-                shape: content.cursor.shape,
-                color: resolve_color(AnsiColor::Named(NamedColor::Cursor), content.colors),
+                columns: 1,
+                shape: cursor_shape,
+                color: terminal_foreground,
+                text_color: terminal_background,
+                blinking,
             });
         let mut cells = Vec::with_capacity(size.lines as usize * size.columns as usize);
 
@@ -897,19 +998,44 @@ impl TerminalFrame {
             if indexed.flags.intersects(Flags::DIM | Flags::DIM_BOLD) {
                 foreground = foreground.dimmed();
             }
-            if indexed.flags.contains(Flags::INVERSE)
-                || content
-                    .selection
-                    .is_some_and(|selection| selection.contains(indexed.point))
-            {
+            let selected = content
+                .selection
+                .is_some_and(|selection| selection.contains(indexed.point));
+            if indexed.flags.contains(Flags::INVERSE) || selected {
                 std::mem::swap(&mut foreground, &mut background);
             }
-            if cursor.is_some_and(|cursor| {
-                cursor.shape == CursorShape::Block
-                    && cursor.row == row as u16
-                    && cursor.column == indexed.point.column.0 as u16
-            }) {
-                foreground = background;
+            if selected && foreground == background && !indexed.flags.contains(Flags::HIDDEN) {
+                foreground = terminal_background;
+                background = terminal_foreground;
+            }
+
+            let mut underline = indexed
+                .underline_color()
+                .map_or(foreground, |color| resolve_color(color, content.colors));
+            if indexed.flags.intersects(Flags::DIM | Flags::DIM_BOLD) {
+                underline = underline.dimmed();
+            }
+
+            if let Some(cursor) = cursor.as_mut()
+                && cursor.row == row as u16
+                && cursor.column == indexed.point.column.0 as u16
+            {
+                cursor.columns = if indexed.flags.contains(Flags::WIDE_CHAR) {
+                    2
+                } else {
+                    1
+                };
+                cursor.color = content.colors[NamedColor::Cursor]
+                    .map(|rgb| Rgb8(rgb.r, rgb.g, rgb.b))
+                    .unwrap_or(foreground);
+                cursor.text_color = background;
+                if foreground == background {
+                    cursor.color = terminal_foreground;
+                    cursor.text_color = terminal_background;
+                }
+                if cursor.shape == CursorShape::Block {
+                    foreground = cursor.text_color;
+                }
             }
 
             cells.push(PaintCell {
@@ -919,13 +1045,15 @@ impl TerminalFrame {
                 zerowidth: indexed.zerowidth().unwrap_or_default().to_vec(),
                 foreground,
                 background,
+                underline,
                 flags: indexed.flags,
             });
         }
 
         Self {
+            background: terminal_background,
             text: build_text_runs(&cells),
-            backgrounds: build_color_runs(&cells),
+            backgrounds: build_color_runs(&cells, terminal_background),
             lines: build_line_runs(&cells),
             cursor,
         }
@@ -950,6 +1078,7 @@ fn build_text_runs(cells: &[PaintCell]) -> Vec<TextRun> {
             color: cell.foreground,
             bold: cell.flags.intersects(Flags::BOLD | Flags::DIM_BOLD),
             italic: cell.flags.contains(Flags::ITALIC),
+            font: text_font(cell.character, cell.flags),
         };
         let row = cell.row;
         let column = cell.column;
@@ -970,8 +1099,13 @@ fn build_text_runs(cells: &[PaintCell]) -> Vec<TextRun> {
                 color: cell.foreground,
                 bold: cell.flags.intersects(Flags::BOLD | Flags::DIM_BOLD),
                 italic: cell.flags.contains(Flags::ITALIC),
+                font: text_font(cell.character, cell.flags),
             };
             if cell_style != style || cell.column < next_column {
+                break;
+            }
+            let isolated = cell.flags.contains(Flags::WIDE_CHAR) || !cell.zerowidth.is_empty();
+            if !content.is_empty() && isolated {
                 break;
             }
             if cell.character == ' ' || cell.character == '\t' || cell.flags.contains(Flags::HIDDEN)
@@ -996,6 +1130,9 @@ fn build_text_runs(cells: &[PaintCell]) -> Vec<TextRun> {
                     1
                 });
             index += 1;
+            if isolated {
+                break;
+            }
         }
 
         runs.push(TextRun {
@@ -1010,10 +1147,20 @@ fn build_text_runs(cells: &[PaintCell]) -> Vec<TextRun> {
     runs
 }
 
-fn build_color_runs(cells: &[PaintCell]) -> Vec<ColorRun> {
+fn text_font(character: char, flags: Flags) -> TextFont {
+    if character == '\u{23f8}' {
+        TextFont::PauseSymbol
+    } else if flags.contains(Flags::WIDE_CHAR) {
+        TextFont::Wide
+    } else {
+        TextFont::Terminal
+    }
+}
+
+fn build_color_runs(cells: &[PaintCell], terminal_background: Rgb8) -> Vec<ColorRun> {
     let mut runs: Vec<ColorRun> = Vec::new();
     for cell in cells {
-        if cell.background == TERMINAL_BACKGROUND {
+        if cell.background == terminal_background {
             continue;
         }
         if let Some(last) = runs.last_mut()
@@ -1036,30 +1183,60 @@ fn build_color_runs(cells: &[PaintCell]) -> Vec<ColorRun> {
 
 fn build_line_runs(cells: &[PaintCell]) -> Vec<LineRun> {
     let mut runs: Vec<LineRun> = Vec::new();
-    for cell in cells {
-        let strike = cell.flags.contains(Flags::STRIKEOUT);
-        let underline = cell.flags.intersects(Flags::ALL_UNDERLINES);
-        if !strike && !underline {
-            continue;
-        }
-        if let Some(last) = runs.last_mut()
-            && last.row == cell.row
-            && last.color == cell.foreground
-            && last.strike == strike
-            && last.column + last.columns == cell.column
-        {
-            last.columns += 1;
-        } else {
-            runs.push(LineRun {
-                row: cell.row,
-                column: cell.column,
-                columns: 1,
-                color: cell.foreground,
-                strike,
-            });
+    for kind in [
+        LineKind::Underline,
+        LineKind::DoubleUnderline,
+        LineKind::Undercurl,
+        LineKind::DottedUnderline,
+        LineKind::DashedUnderline,
+        LineKind::Strikeout,
+    ] {
+        for cell in cells {
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) || !kind.matches(cell.flags) {
+                continue;
+            }
+            let color = if kind == LineKind::Strikeout {
+                cell.foreground
+            } else {
+                cell.underline
+            };
+            let columns = if cell.flags.contains(Flags::WIDE_CHAR) {
+                2
+            } else {
+                1
+            };
+            if let Some(last) = runs.last_mut()
+                && last.row == cell.row
+                && last.color == color
+                && last.kind == kind
+                && last.column + last.columns == cell.column
+            {
+                last.columns += columns;
+            } else {
+                runs.push(LineRun {
+                    row: cell.row,
+                    column: cell.column,
+                    columns,
+                    color,
+                    kind,
+                });
+            }
         }
     }
     runs
+}
+
+impl LineKind {
+    fn matches(self, flags: Flags) -> bool {
+        match self {
+            Self::Underline => flags.contains(Flags::UNDERLINE),
+            Self::DoubleUnderline => flags.contains(Flags::DOUBLE_UNDERLINE),
+            Self::Undercurl => flags.contains(Flags::UNDERCURL),
+            Self::DottedUnderline => flags.contains(Flags::DOTTED_UNDERLINE),
+            Self::DashedUnderline => flags.contains(Flags::DASHED_UNDERLINE),
+            Self::Strikeout => flags.contains(Flags::STRIKEOUT),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1069,6 +1246,7 @@ struct SurfaceState {
     reported_focus: bool,
     modifiers: Modifiers,
     font_size: f32,
+    wide_font_size: f32,
     cell: Size,
     layout: Size,
     mouse_cell: GridPoint<usize>,
@@ -1078,6 +1256,11 @@ struct SurfaceState {
     scroll_pixels: f32,
     scroll_pixels_x: f32,
     ime_preedit: Option<input_method::Preedit>,
+    cursor_visible: bool,
+    cursor_blink_at: Option<Instant>,
+    cursor_blink_timeout: Option<Instant>,
+    cursor_blink_timed_out: bool,
+    cursor_blinking: bool,
 }
 
 impl operation::Focusable for SurfaceState {
@@ -1100,6 +1283,89 @@ struct TerminalSurface {
     session_id: u64,
 }
 
+fn reset_cursor_blink(state: &mut SurfaceState, now: Instant) {
+    state.cursor_visible = true;
+    state.cursor_blink_at = Some(now + CURSOR_BLINK_INTERVAL);
+    state.cursor_blink_timeout = Some(now + CURSOR_BLINK_TIMEOUT);
+    state.cursor_blink_timed_out = false;
+}
+
+fn sync_cursor_blinking(state: &mut SurfaceState, enabled: bool, now: Instant) -> bool {
+    if state.cursor_blinking == enabled {
+        return false;
+    }
+    state.cursor_blinking = enabled;
+    if enabled {
+        reset_cursor_blink(state, now);
+    } else {
+        state.cursor_visible = true;
+        state.cursor_blink_at = None;
+        state.cursor_blink_timeout = None;
+        state.cursor_blink_timed_out = false;
+    }
+    true
+}
+
+fn advance_cursor_blink(state: &mut SurfaceState, now: Instant, enabled: bool) -> Option<Instant> {
+    if !enabled {
+        state.cursor_visible = true;
+        state.cursor_blink_at = None;
+        state.cursor_blink_timeout = None;
+        state.cursor_blink_timed_out = false;
+        return None;
+    }
+    if state.cursor_blink_timed_out {
+        return None;
+    }
+    if state.cursor_blink_at.is_none() {
+        reset_cursor_blink(state, now);
+    }
+
+    if state
+        .cursor_blink_timeout
+        .is_some_and(|timeout| now >= timeout)
+    {
+        state.cursor_visible = true;
+        state.cursor_blink_at = None;
+        state.cursor_blink_timed_out = true;
+        return None;
+    }
+
+    if let Some(mut blink_at) = state.cursor_blink_at
+        && now >= blink_at
+    {
+        while now >= blink_at {
+            state.cursor_visible = !state.cursor_visible;
+            blink_at += CURSOR_BLINK_INTERVAL;
+        }
+        state.cursor_blink_at = Some(blink_at);
+    }
+
+    match (state.cursor_blink_at, state.cursor_blink_timeout) {
+        (Some(blink), Some(timeout)) => Some(blink.min(timeout)),
+        (Some(blink), None) => Some(blink),
+        _ => None,
+    }
+}
+
+fn sync_terminal_focus(terminal: &mut Terminal, state: &mut SurfaceState, now: Instant) -> bool {
+    if state.focused == state.reported_focus {
+        return false;
+    }
+
+    terminal.set_focused(state.focused);
+    if terminal.mode().contains(TermMode::FOCUS_IN_OUT) {
+        terminal.write(if state.focused {
+            b"\x1b[I".to_vec()
+        } else {
+            b"\x1b[O".to_vec()
+        });
+    }
+    state.reported_focus = state.focused;
+    reset_cursor_blink(state, now);
+    true
+}
+
 fn terminal_cell_size(font_size: f32) -> Size {
     let paragraph = <iced::Renderer as text::Renderer>::Paragraph::with_text(text::Text {
         content: "M",
@@ -1117,6 +1383,23 @@ fn terminal_cell_size(font_size: f32) -> Size {
     Size::new(measured.width.max(1.0), measured.height.max(1.0))
 }
 
+fn terminal_wide_font_size(font_size: f32) -> f32 {
+    let paragraph = <iced::Renderer as text::Renderer>::Paragraph::with_text(text::Text {
+        content: "M",
+        bounds: Size::INFINITE,
+        size: Pixels(font_size),
+        line_height: text::LineHeight::Relative(LINE_HEIGHT),
+        font: TERMINAL_WIDE_FONT,
+        align_x: text::Alignment::Left,
+        align_y: alignment::Vertical::Top,
+        shaping: text::Shaping::Basic,
+        wrapping: text::Wrapping::None,
+    });
+    let wide_advance = paragraph.min_bounds().width.max(1.0);
+
+    font_size * terminal_cell_size(font_size).width / wide_advance
+}
+
 impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<SurfaceState>()
@@ -1126,10 +1409,12 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         tree::State::new(SurfaceState {
             session_id: self.session_id,
             font_size: FONT_SIZE,
+            wide_font_size: FONT_SIZE,
             cell: Size::new(
                 f32::from(DEFAULT_CELL_WIDTH),
                 f32::from(DEFAULT_CELL_HEIGHT),
             ),
+            cursor_visible: true,
             ..SurfaceState::default()
         })
     }
@@ -1140,7 +1425,9 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
             *state = SurfaceState {
                 session_id: self.session_id,
                 font_size: state.font_size,
+                wide_font_size: state.wide_font_size,
                 cell: state.cell,
+                cursor_visible: true,
                 ..SurfaceState::default()
             };
         }
@@ -1159,6 +1446,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         let size = limits.resolve(Length::Fill, Length::Fill, Size::ZERO);
         let state = tree.state.downcast_mut::<SurfaceState>();
         state.cell = terminal_cell_size(state.font_size);
+        state.wide_font_size = terminal_wide_font_size(state.font_size);
         state.layout = size;
 
         layout::Node::new(size)
@@ -1194,7 +1482,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         let bounds = layout.bounds();
         let clip = bounds.intersection(viewport).unwrap_or(bounds);
         renderer.with_layer(clip, |renderer| {
-            fill(renderer, bounds, TERMINAL_BACKGROUND.iced());
+            fill(renderer, bounds, frame.background.iced());
 
             for run in &frame.backgrounds {
                 fill(
@@ -1204,8 +1492,18 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 );
             }
 
-            if let Some(cursor) = frame.cursor {
-                let mut cursor_bounds = cell_rect(bounds, state.cell, cursor.row, cursor.column, 1);
+            if let Some(cursor) = frame.cursor
+                && state.cursor_visible
+                && state.ime_preedit.is_none()
+            {
+                let mut cursor_bounds = cell_rect(
+                    bounds,
+                    state.cell,
+                    cursor.row,
+                    cursor.column,
+                    cursor.columns,
+                );
+                let thickness = (state.cell.width * 0.15).round().max(1.0);
                 match cursor.shape {
                     CursorShape::Block => fill(renderer, cursor_bounds, cursor.color.iced()),
                     CursorShape::HollowBlock => renderer.fill_quad(
@@ -1213,7 +1511,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                             bounds: cursor_bounds,
                             border: Border {
                                 color: cursor.color.iced(),
-                                width: 1.0,
+                                width: thickness,
                                 radius: 0.0.into(),
                             },
                             shadow: Shadow::default(),
@@ -1222,12 +1520,12 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                         Background::Color(Color::TRANSPARENT),
                     ),
                     CursorShape::Beam => {
-                        cursor_bounds.width = 2.0;
+                        cursor_bounds.width = thickness;
                         fill(renderer, cursor_bounds, cursor.color.iced());
                     }
                     CursorShape::Underline => {
-                        cursor_bounds.y += cursor_bounds.height - 2.0;
-                        cursor_bounds.height = 2.0;
+                        cursor_bounds.y += cursor_bounds.height - thickness;
+                        cursor_bounds.height = thickness;
                         fill(renderer, cursor_bounds, cursor.color.iced());
                     }
                     CursorShape::Hidden => {}
@@ -1235,7 +1533,24 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
             }
 
             for run in &frame.text {
-                let mut font = TERMINAL_FONT;
+                if run.style.font == TextFont::PauseSymbol {
+                    for bar in pause_symbol_rects(cell_rect(
+                        bounds,
+                        state.cell,
+                        run.row,
+                        run.column,
+                        run.columns,
+                    )) {
+                        fill(renderer, bar, run.style.color.iced());
+                    }
+                    continue;
+                }
+
+                let mut font = match run.style.font {
+                    TextFont::Terminal => TERMINAL_FONT,
+                    TextFont::Wide => TERMINAL_WIDE_FONT,
+                    TextFont::PauseSymbol => unreachable!(),
+                };
                 if run.style.bold {
                     font.weight = FontWeight::Bold;
                 }
@@ -1249,7 +1564,11 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                             state.cell.width * f32::from(run.columns),
                             state.cell.height,
                         ),
-                        size: Pixels(state.font_size),
+                        size: Pixels(if run.style.font == TextFont::Wide {
+                            state.wide_font_size
+                        } else {
+                            state.font_size
+                        }),
                         line_height: text::LineHeight::Relative(LINE_HEIGHT),
                         font,
                         align_x: text::Alignment::Left,
@@ -1257,25 +1576,16 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                         shaping: text::Shaping::Auto,
                         wrapping: text::Wrapping::None,
                     },
-                    Point::new(
-                        bounds.x + f32::from(run.column) * state.cell.width,
-                        bounds.y + f32::from(run.row) * state.cell.height,
-                    ),
+                    terminal_text_origin(bounds, state.cell, run.row, run.column),
                     run.style.color.iced(),
                     clip,
                 );
             }
 
             for line in &frame.lines {
-                let mut line_bounds =
-                    cell_rect(bounds, state.cell, line.row, line.column, line.columns);
-                line_bounds.y += if line.strike {
-                    line_bounds.height * 0.52
-                } else {
-                    line_bounds.height - 2.0
-                };
-                line_bounds.height = 1.0;
-                fill(renderer, line_bounds, line.color.iced());
+                for line_bounds in line_rects(bounds, state.cell, line) {
+                    fill(renderer, line_bounds, line.color.iced());
+                }
             }
         });
     }
@@ -1299,15 +1609,14 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
             shell.request_redraw();
         }
 
-        if state.focused != state.reported_focus {
-            if terminal.mode().contains(TermMode::FOCUS_IN_OUT) {
-                terminal.write(if state.focused {
-                    b"\x1b[I".to_vec()
-                } else {
-                    b"\x1b[O".to_vec()
-                });
-            }
-            state.reported_focus = state.focused;
+        if sync_terminal_focus(&mut terminal, state, Instant::now()) {
+            shell.request_redraw();
+        }
+        let blinking = terminal.frame.cursor.is_some_and(|cursor| cursor.blinking)
+            && state.focused
+            && state.ime_preedit.is_none();
+        if sync_cursor_blinking(state, blinking, Instant::now()) {
+            shell.request_redraw();
         }
 
         let hovered = cursor.is_over(bounds);
@@ -1366,6 +1675,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 } else if *button == mouse::Button::Middle {
                     if let Some(text) = clipboard.read(clipboard::Kind::Primary) {
                         terminal.paste(text);
+                        reset_cursor_blink(state, Instant::now());
                         shell.request_redraw();
                     }
                 } else {
@@ -1485,6 +1795,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                     if font_size != state.font_size {
                         state.font_size = font_size;
                         state.cell = terminal_cell_size(font_size);
+                        state.wide_font_size = terminal_wide_font_size(font_size);
                         terminal.resize(bounds.size(), state.cell);
                         if let Some(preedit) = &mut state.ime_preedit {
                             preedit.text_size = Some(Pixels(font_size));
@@ -1499,6 +1810,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 } else if is_paste_shortcut(key, *modifiers) {
                     if let Some(text) = clipboard.read(clipboard::Kind::Standard) {
                         terminal.paste(text);
+                        reset_cursor_blink(state, Instant::now());
                         shell.request_redraw();
                     }
                 } else if let Some(bytes) = encode_key_event(
@@ -1518,6 +1830,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                         terminal.write(bytes);
                     } else {
                         terminal.write_input(bytes);
+                        reset_cursor_blink(state, Instant::now());
                         shell.request_redraw();
                     }
                 }
@@ -1562,12 +1875,28 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
             Event::InputMethod(input_method::Event::Commit(content)) if state.focused => {
                 terminal.write_input(content.clone().into_bytes());
                 state.ime_preedit = None;
+                reset_cursor_blink(state, Instant::now());
                 shell.request_redraw();
                 shell.capture_event();
             }
             Event::InputMethod(input_method::Event::Closed) => state.ime_preedit = None,
             Event::Window(window::Event::Unfocused) => state.focused = false,
+            Event::Window(window::Event::RedrawRequested(now)) => {
+                if let Some(at) = advance_cursor_blink(state, *now, state.cursor_blinking) {
+                    shell.request_redraw_at(at);
+                }
+            }
             _ => {}
+        }
+
+        if sync_terminal_focus(&mut terminal, state, Instant::now()) {
+            shell.request_redraw();
+        }
+        let blinking = terminal.frame.cursor.is_some_and(|cursor| cursor.blinking)
+            && state.focused
+            && state.ime_preedit.is_none();
+        if sync_cursor_blinking(state, blinking, Instant::now()) {
+            shell.request_redraw();
         }
 
         if state.focused {
@@ -1575,13 +1904,22 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
             let cursor = frame.cursor.unwrap_or(CursorPaint {
                 row: 0,
                 column: 0,
+                columns: 1,
                 shape: CursorShape::Block,
                 color: TERMINAL_FOREGROUND,
+                text_color: TERMINAL_BACKGROUND,
+                blinking: false,
             });
             shell
                 .input_method_mut()
                 .merge(&input_method::InputMethod::Enabled {
-                    cursor: cell_rect(bounds, state.cell, cursor.row, cursor.column, 1),
+                    cursor: cell_rect(
+                        bounds,
+                        state.cell,
+                        cursor.row,
+                        cursor.column,
+                        cursor.columns,
+                    ),
                     purpose: input_method::Purpose::Terminal,
                     preedit: state.ime_preedit.clone(),
                 });
@@ -1590,14 +1928,16 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
 
     fn mouse_interaction(
         &self,
-        _tree: &Tree,
+        tree: &Tree,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _viewport: &Rectangle,
         _renderer: &iced::Renderer,
     ) -> mouse::Interaction {
         if cursor.is_over(layout.bounds()) {
-            mouse::Interaction::Text
+            let state = tree.state.downcast_ref::<SurfaceState>();
+            let mode = lock(&self.terminal).mode();
+            terminal_mouse_interaction(mode, state.modifiers)
         } else {
             mouse::Interaction::None
         }
@@ -1623,6 +1963,67 @@ fn cell_rect(bounds: Rectangle, cell: Size, row: u16, column: u16, columns: u16)
         width: f32::from(columns) * cell.width,
         height: cell.height,
     }
+}
+
+fn pause_symbol_rects(bounds: Rectangle) -> [Rectangle; 2] {
+    let bar_width = (bounds.width * 0.16).max(1.0);
+    let gap = bar_width;
+    let height = bounds.height * 0.58;
+    let x = bounds.x + (bounds.width - bar_width * 3.0) / 2.0;
+    let y = bounds.y + (bounds.height - height) / 2.0;
+
+    [
+        Rectangle::new(Point::new(x, y), Size::new(bar_width, height)),
+        Rectangle::new(
+            Point::new(x + bar_width + gap, y),
+            Size::new(bar_width, height),
+        ),
+    ]
+}
+
+fn terminal_text_origin(bounds: Rectangle, cell: Size, row: u16, column: u16) -> Point {
+    Point::new(
+        bounds.x + f32::from(column) * cell.width,
+        bounds.y + (f32::from(row) + 0.5) * cell.height,
+    )
+}
+
+fn line_rects(bounds: Rectangle, cell: Size, line: &LineRun) -> Vec<Rectangle> {
+    let cell_bounds = cell_rect(bounds, cell, line.row, line.column, line.columns);
+    let bottom = cell_bounds.y + cell_bounds.height;
+    let solid = |y| {
+        Rectangle::new(
+            Point::new(cell_bounds.x, y),
+            Size::new(cell_bounds.width, 1.0),
+        )
+    };
+
+    match line.kind {
+        LineKind::Underline => vec![solid(bottom - 2.0)],
+        LineKind::DoubleUnderline => vec![solid(bottom - 4.0), solid(bottom - 1.0)],
+        LineKind::Strikeout => vec![solid(cell_bounds.y + cell_bounds.height * 0.52)],
+        LineKind::Undercurl => patterned_line(cell_bounds, 1.0, 1.0, true),
+        LineKind::DottedUnderline => patterned_line(cell_bounds, 1.0, 2.0, false),
+        LineKind::DashedUnderline => patterned_line(cell_bounds, 4.0, 2.0, false),
+    }
+}
+
+fn patterned_line(bounds: Rectangle, width: f32, gap: f32, wave: bool) -> Vec<Rectangle> {
+    let mut rects = Vec::new();
+    let mut x = bounds.x;
+    let end = bounds.x + bounds.width;
+    let mut raised = false;
+    while x < end {
+        let segment_width = width.min(end - x);
+        let y = bounds.y + bounds.height - if wave && raised { 3.0 } else { 1.0 };
+        rects.push(Rectangle::new(
+            Point::new(x, y),
+            Size::new(segment_width, 1.0),
+        ));
+        x += width + gap;
+        raised = !raised;
+    }
+    rects
 }
 
 fn mouse_cell(
@@ -2456,15 +2857,18 @@ fn function_tilde(number: u8, modifier: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipboardRequest, EventProxy, Flags, KeyEventKind, Modifiers, Named, PaintCell, Rgb8,
-        TerminalSize, TextStyle, build_text_runs, clipboard_kind, encode_key, encode_key_event,
-        launch, motion_mouse_code, mouse_report_bytes, named_key, palette_rgb, paste_bytes,
-        scroll_multiplier, service_clipboard_requests, ssh_args, terminal_cell_size,
-        terminal_input_modifiers, zoomed_font_size,
+        ClipboardRequest, EventProxy, Flags, KeyEventKind, LineKind, Modifiers, Named, PaintCell,
+        Rgb8, SurfaceState, TerminalFrame, TerminalSize, TextFont, TextStyle, advance_cursor_blink,
+        bell_requests_attention, build_line_runs, build_text_runs, clipboard_kind, encode_key,
+        encode_key_event, launch, line_rects, motion_mouse_code, mouse_report_bytes, named_key,
+        paste_bytes, queried_color, reset_cursor_blink, scroll_multiplier,
+        service_clipboard_requests, ssh_args, terminal_cell_size, terminal_input_modifiers,
+        terminal_mouse_interaction, terminal_text_origin, terminal_wide_font_size,
+        zoomed_font_size,
     };
     use alacritty_terminal::event::{Event as AlacrittyEvent, EventListener};
-    use alacritty_terminal::term::TermMode;
-    use alacritty_terminal::vte::ansi::NamedColor;
+    use alacritty_terminal::term::{Term, TermMode};
+    use alacritty_terminal::vte::ansi::{self, NamedColor};
     use iced::advanced::text::Paragraph as _;
     use iced::advanced::{Clipboard, clipboard};
     use std::sync::Arc;
@@ -2482,6 +2886,30 @@ mod tests {
             .load_font(Cow::Borrowed(include_bytes!(
                 "../../../assets/fonts/JetBrainsMono-Regular.ttf"
             )));
+        font_system()
+            .write()
+            .expect("font system")
+            .load_font(Cow::Borrowed(include_bytes!(
+                "../../../assets/fonts/MonoplexKR-Regular.ttf"
+            )));
+    }
+
+    fn test_term(recording: &[u8]) -> Term<EventProxy> {
+        let (sender, _) = mpsc::unbounded_channel();
+        let proxy = EventProxy {
+            sender,
+            wakeup_pending: Arc::new(AtomicBool::new(false)),
+        };
+        let size = TerminalSize {
+            columns: 8,
+            lines: 2,
+            cell_width: 8,
+            cell_height: 20,
+        };
+        let mut term = Term::new(Default::default(), &size, proxy);
+        let mut parser: ansi::Processor = ansi::Processor::new();
+        parser.advance(&mut term, recording);
+        term
     }
 
     #[test]
@@ -2972,7 +3400,8 @@ mod tests {
 
     #[test]
     fn dynamic_background_query_reports_the_terminal_background() {
-        let color = palette_rgb(NamedColor::Background as usize);
+        let term = test_term(b"");
+        let color = queried_color(NamedColor::Background as usize, term.colors()).unwrap();
 
         assert_eq!((color.r, color.g, color.b), (16, 15, 13));
     }
@@ -2995,6 +3424,7 @@ mod tests {
             color: Rgb8(1, 2, 3),
             bold: false,
             italic: false,
+            font: TextFont::Terminal,
         };
         let cells = "claude code"
             .chars()
@@ -3006,6 +3436,7 @@ mod tests {
                 zerowidth: Vec::new(),
                 foreground: style.color,
                 background: Rgb8(0, 0, 0),
+                underline: style.color,
                 flags: Flags::empty(),
             })
             .collect::<Vec<_>>();
@@ -3013,6 +3444,250 @@ mod tests {
         let runs = build_text_runs(&cells);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].content, "claude code");
+    }
+
+    #[test]
+    fn pause_symbol_uses_an_isolated_native_run() {
+        let cells = "A⏸B"
+            .chars()
+            .enumerate()
+            .map(|(column, character)| PaintCell {
+                row: 0,
+                column: column as u16,
+                character,
+                zerowidth: Vec::new(),
+                foreground: Rgb8(1, 2, 3),
+                background: Rgb8(0, 0, 0),
+                underline: Rgb8(1, 2, 3),
+                flags: Flags::empty(),
+            })
+            .collect::<Vec<_>>();
+
+        let runs = build_text_runs(&cells);
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[1].content, "⏸");
+        assert_eq!(runs[1].style.font, TextFont::PauseSymbol);
+    }
+
+    #[test]
+    fn terminal_text_origin_uses_the_cell_center() {
+        let origin = terminal_text_origin(
+            iced::Rectangle::new(iced::Point::new(10.0, 20.0), iced::Size::new(400.0, 300.0)),
+            iced::Size::new(8.5, 19.5),
+            2,
+            3,
+        );
+
+        assert_eq!(origin, iced::Point::new(35.5, 68.75));
+    }
+
+    #[test]
+    fn wide_glyphs_start_new_absolute_text_runs() {
+        let cells = [
+            PaintCell {
+                row: 0,
+                column: 0,
+                character: 'A',
+                zerowidth: Vec::new(),
+                foreground: Rgb8(1, 2, 3),
+                background: Rgb8(0, 0, 0),
+                underline: Rgb8(1, 2, 3),
+                flags: Flags::empty(),
+            },
+            PaintCell {
+                row: 0,
+                column: 1,
+                character: '한',
+                zerowidth: Vec::new(),
+                foreground: Rgb8(1, 2, 3),
+                background: Rgb8(0, 0, 0),
+                underline: Rgb8(1, 2, 3),
+                flags: Flags::WIDE_CHAR,
+            },
+            PaintCell {
+                row: 0,
+                column: 2,
+                character: ' ',
+                zerowidth: Vec::new(),
+                foreground: Rgb8(1, 2, 3),
+                background: Rgb8(0, 0, 0),
+                underline: Rgb8(1, 2, 3),
+                flags: Flags::WIDE_CHAR_SPACER,
+            },
+            PaintCell {
+                row: 0,
+                column: 3,
+                character: 'B',
+                zerowidth: Vec::new(),
+                foreground: Rgb8(1, 2, 3),
+                background: Rgb8(0, 0, 0),
+                underline: Rgb8(1, 2, 3),
+                flags: Flags::empty(),
+            },
+        ];
+
+        let runs = build_text_runs(&cells);
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0].content, "A");
+        assert_eq!((runs[1].column, runs[1].columns), (1, 2));
+        assert_eq!(runs[1].content, "한");
+        assert_eq!((runs[2].column, runs[2].content.as_str()), (3, "B"));
+    }
+
+    #[test]
+    fn wide_cell_cursor_uses_two_columns_and_unfocused_hollow_shape() {
+        let mut term = test_term("한\x1b[H".as_bytes());
+        term.is_focused = true;
+        let focused = TerminalFrame::from_term(
+            &term,
+            TerminalSize {
+                columns: 8,
+                lines: 2,
+                cell_width: 8,
+                cell_height: 20,
+            },
+        );
+        let cursor = focused.cursor.expect("cursor");
+        assert_eq!(cursor.columns, 2);
+        assert_eq!(cursor.shape, ansi::CursorShape::Block);
+
+        term.is_focused = false;
+        let unfocused = TerminalFrame::from_term(
+            &term,
+            TerminalSize {
+                columns: 8,
+                lines: 2,
+                cell_width: 8,
+                cell_height: 20,
+            },
+        );
+        assert_eq!(
+            unfocused.cursor.expect("cursor").shape,
+            ansi::CursorShape::HollowBlock
+        );
+    }
+
+    #[test]
+    fn dynamic_terminal_background_fills_the_frame() {
+        let term = test_term(b"\x1b]11;rgb:0101/0202/0303\x07");
+        let frame = TerminalFrame::from_term(
+            &term,
+            TerminalSize {
+                columns: 8,
+                lines: 2,
+                cell_width: 8,
+                cell_height: 20,
+            },
+        );
+
+        assert_eq!(frame.background, Rgb8(1, 2, 3));
+    }
+
+    #[test]
+    fn cursor_color_query_only_replies_after_dynamic_override() {
+        let term = test_term(b"");
+        assert_eq!(
+            queried_color(NamedColor::Cursor as usize, term.colors()),
+            None
+        );
+
+        let term = test_term(b"\x1b]12;rgb:0909/0808/0707\x07");
+        let color = queried_color(NamedColor::Cursor as usize, term.colors()).unwrap();
+        assert_eq!((color.r, color.g, color.b), (9, 8, 7));
+    }
+
+    #[test]
+    fn terminal_line_styles_keep_kind_color_and_wide_width() {
+        let cells = [PaintCell {
+            row: 0,
+            column: 1,
+            character: '한',
+            zerowidth: Vec::new(),
+            foreground: Rgb8(1, 2, 3),
+            background: Rgb8(0, 0, 0),
+            underline: Rgb8(10, 20, 30),
+            flags: Flags::WIDE_CHAR | Flags::UNDERCURL | Flags::STRIKEOUT,
+        }];
+
+        let runs = build_line_runs(&cells);
+        assert_eq!(runs.len(), 2);
+        let undercurl = runs
+            .iter()
+            .find(|run| run.kind == LineKind::Undercurl)
+            .unwrap();
+        assert_eq!((undercurl.color, undercurl.columns), (Rgb8(10, 20, 30), 2));
+        let strike = runs
+            .iter()
+            .find(|run| run.kind == LineKind::Strikeout)
+            .unwrap();
+        assert_eq!(strike.color, Rgb8(1, 2, 3));
+
+        let rects = line_rects(
+            iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(100.0, 40.0)),
+            iced::Size::new(8.0, 20.0),
+            undercurl,
+        );
+        assert!(rects.len() > 2);
+        assert_ne!(rects[0].y, rects[1].y);
+    }
+
+    #[test]
+    fn cursor_blink_matches_alacritty_interval_and_timeout() {
+        let start = iced::time::Instant::now();
+        let mut state = SurfaceState::default();
+        reset_cursor_blink(&mut state, start);
+        assert!(state.cursor_visible);
+
+        let next = advance_cursor_blink(&mut state, start + super::CURSOR_BLINK_INTERVAL, true);
+        assert!(!state.cursor_visible);
+        assert_eq!(next, Some(start + super::CURSOR_BLINK_INTERVAL * 2));
+
+        assert_eq!(
+            advance_cursor_blink(&mut state, start + super::CURSOR_BLINK_TIMEOUT, true,),
+            None
+        );
+        assert!(state.cursor_visible);
+        assert!(state.cursor_blink_timed_out);
+    }
+
+    #[test]
+    fn bell_and_mouse_cursor_follow_terminal_modes() {
+        assert!(bell_requests_attention(false, TermMode::URGENCY_HINTS));
+        assert!(!bell_requests_attention(true, TermMode::URGENCY_HINTS));
+        assert_eq!(
+            terminal_mouse_interaction(TermMode::MOUSE_REPORT_CLICK, Modifiers::NONE),
+            iced::mouse::Interaction::Idle
+        );
+        assert_eq!(
+            terminal_mouse_interaction(TermMode::MOUSE_REPORT_CLICK, Modifiers::SHIFT),
+            iced::mouse::Interaction::Text
+        );
+    }
+
+    #[test]
+    fn monoplex_wide_glyph_occupies_exactly_two_terminal_cells() {
+        load_terminal_test_font();
+        let wide_size = terminal_wide_font_size(super::FONT_SIZE);
+        let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
+            iced::advanced::text::Text {
+                content: "한",
+                bounds: iced::Size::INFINITE,
+                size: iced::Pixels(wide_size),
+                line_height: iced::advanced::text::LineHeight::Relative(super::LINE_HEIGHT),
+                font: super::TERMINAL_WIDE_FONT,
+                align_x: iced::advanced::text::Alignment::Left,
+                align_y: iced::alignment::Vertical::Top,
+                shaping: iced::advanced::text::Shaping::Auto,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+        );
+        let expected = terminal_cell_size(super::FONT_SIZE).width * 2.0;
+
+        assert!(
+            (paragraph.min_bounds().width - expected).abs() < 0.01,
+            "wide={} expected={expected} wide_size={wide_size}",
+            paragraph.min_bounds().width,
+        );
     }
 
     #[test]
