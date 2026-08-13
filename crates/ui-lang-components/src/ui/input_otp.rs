@@ -118,7 +118,7 @@ where
 
     fn into_element(self) -> Element<'a, Message> {
         let value = normalize(self.value, self.length, self.pattern);
-        let characters = value.chars().collect::<Vec<_>>();
+        let mut characters = value.chars();
         let separators = separator_indices(self.length, &self.groups);
         let separator_count = separators.len();
         let width = self.length as f32 * SLOT_SIZE
@@ -127,7 +127,7 @@ where
 
         let mut slots = Row::new().spacing(SLOT_GAP).height(SLOT_SIZE);
         for index in 0..self.length {
-            let character = characters.get(index).copied();
+            let character = characters.next();
             slots = slots.push(slot(character, self.invalid, self.disabled, &self.theme));
             if separators.contains(&(index + 1)) {
                 let separator = self.separator.as_ref().map_or_else(

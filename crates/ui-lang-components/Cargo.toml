@@ -172,6 +172,7 @@ ui-lang-runtime = { path = "../ui-lang-runtime", version = "0.1.0", optional = t
 
 [dev-dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["thread-pool", "tiny-skia", "wgpu", "x11"] }
+stats_alloc = "0.1.10"
 
 [lints]
 workspace = true
