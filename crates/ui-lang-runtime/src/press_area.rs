@@ -15,9 +15,15 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, r
 use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
 
 /// A press-position observer wrapping a single child.
-pub struct PressArea<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
+pub struct PressArea<
+    'a,
+    Message,
+    Theme = iced::Theme,
+    Renderer = iced::Renderer,
+    OnPressAt = fn(Point) -> Message,
+> {
     content: Element<'a, Message, Theme, Renderer>,
-    on_press_at: Option<Box<dyn Fn(Point) -> Message + 'a>>,
+    on_press_at: Option<OnPressAt>,
 }
 
 /// Creates a [`PressArea`] around the given content.
@@ -33,19 +39,28 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> PressArea<'a, Message, Theme, Renderer> {
+impl<'a, Message, Theme, Renderer, OnPressAt> PressArea<'a, Message, Theme, Renderer, OnPressAt> {
     /// Sets the callback receiving the local position of a left press.
     #[must_use]
-    pub fn on_press_at(mut self, on_press_at: impl Fn(Point) -> Message + 'a) -> Self {
-        self.on_press_at = Some(Box::new(on_press_at));
-        self
+    pub fn on_press_at<NewOnPressAt>(
+        self,
+        on_press_at: NewOnPressAt,
+    ) -> PressArea<'a, Message, Theme, Renderer, NewOnPressAt>
+    where
+        NewOnPressAt: Fn(Point) -> Message + 'a,
+    {
+        PressArea {
+            content: self.content,
+            on_press_at: Some(on_press_at),
+        }
     }
 }
 
-impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for PressArea<'_, Message, Theme, Renderer>
+impl<Message, Theme, Renderer, OnPressAt> Widget<Message, Theme, Renderer>
+    for PressArea<'_, Message, Theme, Renderer, OnPressAt>
 where
     Message: Clone,
+    OnPressAt: Fn(Point) -> Message,
     Renderer: iced::advanced::Renderer,
 {
     fn tag(&self) -> tree::Tag {
@@ -184,14 +199,16 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<PressArea<'a, Message, Theme, Renderer>>
+impl<'a, Message, Theme, Renderer, OnPressAt>
+    From<PressArea<'a, Message, Theme, Renderer, OnPressAt>>
     for Element<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: 'a,
     Renderer: iced::advanced::Renderer + 'a,
+    OnPressAt: Fn(Point) -> Message + 'a,
 {
-    fn from(area: PressArea<'a, Message, Theme, Renderer>) -> Self {
+    fn from(area: PressArea<'a, Message, Theme, Renderer, OnPressAt>) -> Self {
         Self::new(area)
     }
 }
