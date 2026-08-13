@@ -134,7 +134,7 @@ pub(in crate::codegen) fn resolved_theme_factory_code(
 
 pub(in crate::codegen) fn resolved_app_theme_factory_code(
     factory: &ResolvedAppThemeFactory,
-    env: &HashMap<String, Binding>,
+    env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
     let function = program.extern_function(factory.function);

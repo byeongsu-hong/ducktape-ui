@@ -574,8 +574,8 @@ fn performance_contract_four_thousand_handler_statements_reuse_authoritative_ana
     assert_eq!(large.scope_env_full_clones, 0);
     assert_eq!(small_bindings.scope_env_full_clones, 0);
     assert_eq!(large_bindings.scope_env_full_clones, 0);
-    assert_eq!(small_bindings.binding_clone_allocations, 1);
-    assert_eq!(large_bindings.binding_clone_allocations, 1);
+    assert_eq!(small_bindings.binding_clone_allocations, 0);
+    assert_eq!(large_bindings.binding_clone_allocations, 0);
     assert!(large_output >= small_output * 6 && large_output <= small_output * 9);
     eprintln!(
         "500 handler statements in {small_elapsed:?}; 4k in {large_elapsed:?}; output {small_output}/{large_output} bytes"
@@ -611,7 +611,7 @@ fn performance_contract_four_thousand_handler_locals_use_scoped_hash_environment
     assert_eq!(facts.type_scope_env_full_clones, 0);
     assert_eq!(facts.scope_env_full_clones, 0);
     assert_eq!(bindings.scope_env_full_clones, 0);
-    assert_eq!(bindings.binding_clone_allocations, 1);
+    assert_eq!(bindings.binding_clone_allocations, 0);
     assert!(generated.contains("let local_3999 ="));
 }
 
