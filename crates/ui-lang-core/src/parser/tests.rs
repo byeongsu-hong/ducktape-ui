@@ -1,6 +1,45 @@
 use super::*;
 use crate::test_support::example;
 
+fn namespaced_line() -> Line {
+    line_tree("Card", &[Some("catalog".into())], Rc::default())
+        .unwrap()
+        .pop()
+        .unwrap()
+}
+
+#[test]
+fn qualification_adds_only_a_missing_namespace() {
+    let line = namespaced_line();
+
+    assert_eq!(line.qualify("Card"), "catalog::Card");
+    assert_eq!(line.qualify("catalog::Card"), "catalog::Card");
+    assert_eq!(line.qualify("catalog"), "catalog");
+    assert_eq!(line.qualify("catalogue::Card"), "catalog::catalogue::Card");
+}
+
+#[test]
+#[ignore = "allocation contract; run alone with --test-threads=1"]
+fn qualification_scans_the_namespace_prefix_in_place() {
+    use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
+
+    const CALLS: usize = 4_000;
+    let line = namespaced_line();
+    let region = Region::new(&INSTRUMENTED_SYSTEM);
+
+    for _ in 0..CALLS {
+        std::hint::black_box(line.qualify(std::hint::black_box("Card")));
+    }
+    let stats = region.change();
+
+    eprintln!(
+        "{CALLS} qualified names: {} allocations / {} reallocations / {} bytes",
+        stats.allocations, stats.reallocations, stats.bytes_allocated
+    );
+    assert_eq!(stats.allocations, CALLS, "{stats:?}");
+    assert_eq!(stats.reallocations, CALLS, "{stats:?}");
+}
+
 #[test]
 fn syntax_boundaries_ignore_escaped_quotes() {
     let quoted = r#""a\" b,=->)""#;

@@ -31,7 +31,10 @@ impl Line {
     fn qualify(&self, name: &str) -> String {
         match &self.namespace {
             Some(namespace)
-                if name != namespace && !name.starts_with(&format!("{namespace}::")) =>
+                if name != namespace
+                    && !name
+                        .strip_prefix(namespace)
+                        .is_some_and(|rest| rest.starts_with("::")) =>
             {
                 format!("{namespace}::{name}")
             }
