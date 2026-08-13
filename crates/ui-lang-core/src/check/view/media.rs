@@ -135,9 +135,41 @@ pub(in crate::check) fn infer_media_group(
                     "viewer minimum scale cannot exceed maximum scale",
                 ));
             }
+            // `color=inherit` hands the svg the enclosing button's
+            // status-resolved text color — hover ink keys on the button's
+            // bounds and disabled ink on its status. `inherit` is reserved in
+            // this position; the ink then has exactly one owner.
+            let inherits_button_ink = options.svg_color.as_deref() == Some("inherit");
+            if inherits_button_ink {
+                if !inside_button_content() {
+                    return Err(Error::new(
+                        "E129",
+                        span,
+                        "svg `color=inherit` requires the svg to be button content",
+                    )
+                    .hint(
+                        "`inherit` draws the svg with the button's status-resolved text color, so the svg must sit inside a button's content in the same view body",
+                    ));
+                }
+                if options.svg_hover_color.is_some() {
+                    return Err(Error::new(
+                        "E129",
+                        span,
+                        "svg `color=inherit` already follows the button's status; `hover=` cannot own the hovered ink too",
+                    ));
+                }
+                if options.svg_style.is_some() {
+                    return Err(Error::new(
+                        "E129",
+                        span,
+                        "svg `color=inherit` already follows the button's status; `style=` cannot own the ink too",
+                    ));
+                }
+            }
             for color in options
                 .svg_color
                 .iter()
+                .filter(|_| !inherits_button_ink)
                 .chain(options.svg_hover_color.iter().flatten())
             {
                 require_theme_color(color, document, span, "E129", "svg")?;

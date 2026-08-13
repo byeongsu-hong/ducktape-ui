@@ -1,0 +1,4 @@
+let __button_ink = ::ui_lang_runtime::button_ink();
+let __svg_ink = __button_ink.clone();
+.style(move |_theme, _status| ::iced::widget::svg::Style { color: ::std::option::Option::Some(__svg_ink.get()) })
+__button_ink.set(__style.text_color); __style })

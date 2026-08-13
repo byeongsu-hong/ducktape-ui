@@ -47,6 +47,10 @@ pub(in crate::codegen) fn render_button(
         .map(|value| format!(".expanded({value})"))
         .unwrap_or_default();
     let activate = resolved_interaction_route_code(&button.route, &[], env, program, message)?;
+    let hands_ink = match child {
+        Some(child) => content_carries_inherited_ink(child, document)?,
+        None => false,
+    };
     let mut content = match (&button.content, child) {
         (ResolvedButtonContent::Label(label), None) => {
             let mut text = format!("::iced::widget::text({})", rust_string(label));
@@ -91,8 +95,19 @@ pub(in crate::codegen) fn render_button(
         }
         content = format!("{centered}.into() }}");
     }
+    // The ink cell is the channel through which this button hands its
+    // status-resolved text color to `color=inherit` svg children: the style
+    // closure below writes the FINAL ink (disabled pass included) and iced's
+    // button draw resolves that closure before drawing content, so every
+    // reader sees this frame's status. Only declared when the content subtree
+    // actually reads it — an unused cell would be an allocation per view pass.
+    let ink_cell = if hands_ink {
+        " let __button_ink = ::ui_lang_runtime::button_ink();"
+    } else {
+        ""
+    };
     let mut code = format!(
-        "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled}; let __activate = {activate}; let __button_content: __IceElement<'_, {message}> = {content}; let __button = ::iced::widget::button(__button_content)"
+        "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled};{ink_cell} let __activate = {activate}; let __button_content: __IceElement<'_, {message}> = {content}; let __button = ::iced::widget::button(__button_content)"
     );
     if let Some(padding) = button.utility_style.padding_code() {
         write!(code, ".padding({padding})").unwrap();
@@ -124,10 +139,90 @@ pub(in crate::codegen) fn render_button(
         .unwrap();
     }
     code.push_str(".on_press_maybe(if __disabled { None } else { Some(__activate.clone()) })");
-    code.push_str(&resolved_button_style_code(button, program, env)?);
+    code.push_str(&resolved_button_style_code(
+        button, program, env, hands_ink,
+    )?);
     Ok(format!(
         "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}){checked}{expanded}.disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
     ))
+}
+
+/// Whether the button's content subtree contains a `color=inherit` svg — the
+/// children this button must hand its status ink to through `__button_ink`.
+/// The walk stops at the boundaries the checker also refuses to cross
+/// (component calls, slot fills, lazy/keyed children, nested buttons): their
+/// code escapes this button's generated block, so the cell cannot reach them.
+fn content_carries_inherited_ink(node: ViewId, document: &LoweredProgram) -> Result<bool, Error> {
+    let view = document.resolved_view(node)?;
+    let any = |children: &[ViewId]| -> Result<bool, Error> {
+        for child in children {
+            if content_carries_inherited_ink(*child, document)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    };
+    let carries = match &view.kind {
+        ResolvedViewKind::Media => {
+            document
+                .resolved_media(node)?
+                .options
+                .svg_inherits_button_ink
+        }
+        ResolvedViewKind::Component { .. }
+        | ResolvedViewKind::Slot { .. }
+        | ResolvedViewKind::Lazy { .. }
+        | ResolvedViewKind::KeyedColumn { .. }
+        | ResolvedViewKind::Button { .. } => false,
+        ResolvedViewKind::Layout { children }
+        | ResolvedViewKind::If { children }
+        | ResolvedViewKind::For { children } => any(children)?,
+        ResolvedViewKind::Match { arms } => {
+            let mut found = false;
+            for arm in arms {
+                found |= any(arm)?;
+            }
+            found
+        }
+        ResolvedViewKind::Container { content }
+        | ResolvedViewKind::MouseArea { content }
+        | ResolvedViewKind::ResizeHandle { content }
+        | ResolvedViewKind::Theme { content }
+        | ResolvedViewKind::Float { content }
+        | ResolvedViewKind::Pin { content }
+        | ResolvedViewKind::Sensor { content }
+        | ResolvedViewKind::ResponsiveSize { content } => {
+            content_carries_inherited_ink(*content, document)?
+        }
+        ResolvedViewKind::Tooltip { content, tip } => any(&[*content, *tip])?,
+        ResolvedViewKind::Overlay { content, layer } => any(&[*content, *layer])?,
+        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => any(&[*narrow, *wide])?,
+        ResolvedViewKind::Table { columns } => {
+            let mut found = false;
+            for column in columns {
+                found |= any(&[column.header, column.cell])?;
+            }
+            found
+        }
+        ResolvedViewKind::PaneGrid { panes, templates } => {
+            let mut found = false;
+            for pane in panes.iter().chain(templates) {
+                found |= content_carries_inherited_ink(pane.content, document)?;
+                if let Some(title) = &pane.title {
+                    found |= content_carries_inherited_ink(title.content, document)?;
+                    for child in [title.controls, title.compact_controls]
+                        .into_iter()
+                        .flatten()
+                    {
+                        found |= content_carries_inherited_ink(child, document)?;
+                    }
+                }
+            }
+            found
+        }
+        _ => false,
+    };
+    Ok(carries)
 }
 
 fn append_resolved_button_label_style(code: &mut String, style: &ResolvedStyle) {
@@ -165,6 +260,7 @@ fn resolved_button_style_code(
     button: &ResolvedButton,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
+    hands_ink: bool,
 ) -> Result<String, Error> {
     let _derived_guard = enter_escaping_derived_reads();
     let utilities = &button.utility_style;
@@ -216,6 +312,15 @@ fn resolved_button_style_code(
         ResolvedButtonPreset::Subtle => "subtle",
     };
     if !has_utilities && !has_typed {
+        // Handing ink to content forces a closure even for a bare preset:
+        // someone has to write the cell before the content draws.
+        if hands_ink {
+            let base = custom
+                .unwrap_or_else(|| format!("::iced::widget::button::{preset}(__theme, __status)"));
+            return Ok(format!(
+                ".style(move |__theme, __status| {{ let __style = {base}; __button_ink.set(__style.text_color); __style }})"
+            ));
+        }
         return Ok(if let Some(custom) = custom {
             format!(".style(move |__theme, __status| {custom})")
         } else if button.preset == ResolvedButtonPreset::Primary {
@@ -343,6 +448,11 @@ fn resolved_button_style_code(
             write!(code, " __style.text_color.a *= {disabled};").unwrap();
         }
         code.push_str(" }");
+    }
+    // AFTER the disabled pass: the cell must carry the FINAL content ink, or
+    // an inherit-svg would draw a disabled button's glyph at full strength.
+    if hands_ink {
+        code.push_str(" __button_ink.set(__style.text_color);");
     }
     code.push_str(" __style })");
     Ok(code)

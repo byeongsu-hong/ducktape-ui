@@ -129,8 +129,33 @@ fn append_resolved_glyph_options(
     program: &LoweredProgram,
 ) -> Result<(), Error> {
     append_resolved_text_options(code, options, style, env, program)?;
-    if let Some(color) = &style.text_color {
-        write!(code, ".color({})", resolved_theme_color(color)).unwrap();
+    // `disabled:text-*` exists only on text inside a button's content (the
+    // checker enforces it), where the enclosing button's generated block
+    // binds `__disabled` — the same predicate that makes the button
+    // `Status::Disabled`. Branching on it here is how an explicitly-colored
+    // child follows the button's disabled ramp.
+    match (&style.text_color, &style.disabled_text_color) {
+        (Some(color), Some(disabled)) => {
+            write!(
+                code,
+                ".color(if __disabled {{ {} }} else {{ {} }})",
+                resolved_theme_color(disabled),
+                resolved_theme_color(color)
+            )
+            .unwrap();
+        }
+        (None, Some(disabled)) => {
+            write!(
+                code,
+                ".color_maybe(if __disabled {{ ::std::option::Option::Some({}) }} else {{ ::std::option::Option::None }})",
+                resolved_theme_color(disabled)
+            )
+            .unwrap();
+        }
+        (Some(color), None) => {
+            write!(code, ".color({})", resolved_theme_color(color)).unwrap();
+        }
+        (None, None) => {}
     }
     Ok(())
 }

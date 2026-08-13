@@ -1230,7 +1230,7 @@ media          = ("image" | "svg" | "viewer") expr id? media_property*
 media_property = accessibility_property | ("w=" | "h=") length
                | "fit=" ("contain" | "cover" | "fill" | "none" | "scale-down" | expr)
                | "rotate=" expr | "opacity=" expr
-               | "memory" | "color=" color_ref
+               | "memory" | "color=" (color_ref | "inherit")
                | "hover=" (color_ref | "none")
                | "style=" name "(" expr_list? ")"
                | "filter=" ("linear" | "nearest")
@@ -1652,6 +1652,13 @@ Crop is `(x, y, width, height)` in non-negative `i64` source-pixel coordinates.
 `memory`, `color`, and `hover` are SVG-only. `memory` accepts UTF-8 SVG text or
 raw `bytes`; `color` filters both statuses and `hover` overrides the
 hovered status with a checked theme color or `none`.
+`color=inherit` is reserved: the svg draws with the enclosing BUTTON's
+status-resolved text color — the same inherited ink a color-less text child
+reads — so its hover ink keys on the button's bounds and its disabled ink on
+the button's status, including the button's `disabled` pass. It requires the
+svg to be button content in the same view body (component calls, slot fills,
+and lazy children are outside that body), and it excludes `hover=` and
+`style=`, which would be a second owner of the same ink.
 Core `image` accepts checked `label=` and `description=` text. A labeled image
 is an AccessKit `Image`; an unlabeled image is decorative, and a description
 without a label is rejected.
@@ -5593,6 +5600,7 @@ A resolved test target exposes these checked fields:
 | primitive counts | `surface_count`, `text_count`, `image_count` | `i64` |
 | text primitive | `text_x`, `text_y`, `text_width`, `text_height`, `text_baseline` | `f64` |
 | image primitive | `image_x`, `image_y`, `image_width`, `image_height` | `f64` |
+| image paint | `image_color` (svg tint; an untinted primitive fails) | native checked value |
 | raster geometry | `pixel_aligned` | `bool` |
 | focus | `focused` | `bool` |
 | accessibility text | `accessibility_role`, `accessibility_name`, `accessibility_description`, `accessibility_value` | `str` |
@@ -5788,8 +5796,19 @@ The accepted utility surface is:
 | color | `bg-TOKEN`, `text-TOKEN`, `border-TOKEN` | checked per widget |
 | border | `border`, `border-2` | visual layout wrappers, box, input, and button |
 | radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full`, or exact `rounded-Npx` | layout wrappers, input, and button |
-| states | `hover:bg-*`, `pressed:bg-*`, `disabled:bg-*`, `disabled:text-*`, `disabled:opacity-*` | button |
+| states | `hover:bg-*`, `pressed:bg-*`, `disabled:bg-*`, `disabled:text-*`, `disabled:opacity-*` | button; `disabled:text-*` also text inside button content |
 | focus | `focus:border-*` | input |
+
+A button hands its status to child content through its text ink. Its
+status-resolved text color (utilities, status blocks, and the disabled pass
+combined) is the inherited color every color-less text child draws with, and
+an svg child opts into the same channel with `color=inherit` — so a
+single-glyph icon button lights its glyph over the whole plate, not over the
+svg's own bounds. A child that pins an explicit color opts out of the channel;
+inside a button's content it may still declare `disabled:text-*`, a status arm
+keyed on the button's disabled status, so explicit ink follows the disabled
+ramp without a mount parameter. Hover and pressed ink for children stay on the
+shared channel: declare them on the button, not the child.
 
 Structured native status blocks use `active` as their shared base. A button's
 `hovered`, `pressed`, and `disabled` blocks only need their deltas; input,

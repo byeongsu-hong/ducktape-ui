@@ -1,0 +1,2 @@
+E129
+svg `color=inherit` already follows the button's status; `hover=` cannot own the hovered ink too

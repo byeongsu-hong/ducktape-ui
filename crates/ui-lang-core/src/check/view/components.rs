@@ -100,6 +100,9 @@ pub(in crate::check) fn infer_components_group(
                     )));
                 }
                 let mut child_ids = HashSet::new();
+                // A slot fill is emitted inside the component's body — outside
+                // any enclosing button's generated block.
+                let _boundary = leave_button_content();
                 infer_view(
                     &component_slot.content,
                     env,

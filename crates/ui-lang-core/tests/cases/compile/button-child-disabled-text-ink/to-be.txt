@@ -1,0 +1,1 @@
+.color(if __disabled { __ice_palette.colors[4] } else { __ice_palette.colors[1] })

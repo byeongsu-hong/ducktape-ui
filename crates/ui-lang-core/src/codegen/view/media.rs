@@ -528,7 +528,18 @@ fn render_resolved_media(
             .as_ref()
             .map(|style| resolved_media_svg_style(style, program, env))
             .transpose()?;
-        if let Some(colors) = &options.svg_colors {
+        if options.svg_inherits_button_ink {
+            // `color=inherit`: the enclosing button's generated block binds
+            // `__button_ink` and its style closure writes the status-resolved
+            // text color into it before content draws, so reading the cell at
+            // svg draw time hands this glyph the button's ink — hover keys on
+            // the button's bounds, disabled on its status. The checker
+            // guarantees an enclosing button in the same view body, and the
+            // ink cell excludes `hover=`/`style=` (single ink owner).
+            code = format!(
+                "{{ let __svg_ink = __button_ink.clone(); {code}.style(move |_theme, _status| ::iced::widget::svg::Style {{ color: ::std::option::Option::Some(__svg_ink.get()) }}) }}"
+            );
+        } else if let Some(colors) = &options.svg_colors {
             let base = custom.unwrap_or_else(|| "::iced::widget::svg::Style::default()".into());
             let idle = colors
                 .idle

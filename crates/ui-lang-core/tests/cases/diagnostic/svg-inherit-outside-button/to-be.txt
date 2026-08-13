@@ -1,0 +1,2 @@
+E129
+svg `color=inherit` requires the svg to be button content

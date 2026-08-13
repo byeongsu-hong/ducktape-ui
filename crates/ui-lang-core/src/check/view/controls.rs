@@ -79,6 +79,7 @@ pub(in crate::check) fn infer_controls_group(
             check_styles(styles, document, span, StyleTarget::Button(options))?;
             retain_interaction_analyses(span, button_analysis_guard.finish())?;
             if let Some(content) = content {
+                let _content = enter_button_content();
                 infer_view(content, env, document, signatures, ids)?;
             }
         }

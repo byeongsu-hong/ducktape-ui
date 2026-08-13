@@ -100,6 +100,50 @@ impl ViewAnalysisGuard {
     }
 }
 
+thread_local! {
+    /// Whether the node being checked sits inside a button's content within
+    /// the SAME template body. A button hands its status to child content
+    /// through bindings of its own generated block (`__disabled`, the content
+    /// ink cell), so child syntax that reads them is only sound where that
+    /// block lexically encloses the child's generated code. Component calls,
+    /// slot fills, and lazy children leave that block — an outlined component
+    /// method or a memoized lazy closure outlives or escapes the button's
+    /// per-build bindings — so their guards suppress the flag.
+    static INSIDE_BUTTON_CONTENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(in crate::check) struct ButtonContentGuard {
+    previous: bool,
+}
+
+impl ButtonContentGuard {
+    fn set(value: bool) -> Self {
+        let previous = INSIDE_BUTTON_CONTENT.with(|flag| flag.replace(value));
+        Self { previous }
+    }
+}
+
+impl Drop for ButtonContentGuard {
+    fn drop(&mut self) {
+        INSIDE_BUTTON_CONTENT.with(|flag| flag.set(self.previous));
+    }
+}
+
+/// Marks the checked subtree as a button's content.
+pub(in crate::check) fn enter_button_content() -> ButtonContentGuard {
+    ButtonContentGuard::set(true)
+}
+
+/// Suppresses the button-content flag across a boundary the button's
+/// generated bindings do not cross (component calls, slot fills, lazy).
+pub(in crate::check) fn leave_button_content() -> ButtonContentGuard {
+    ButtonContentGuard::set(false)
+}
+
+pub(in crate::check) fn inside_button_content() -> bool {
+    INSIDE_BUTTON_CONTENT.with(std::cell::Cell::get)
+}
+
 pub(super) fn scoped_view_env(env: &dyn ExprTypeEnv) -> ScopedTypeEnv<'_> {
     #[cfg(test)]
     ACTIVE_VIEW_ANALYSES.with(|active| {

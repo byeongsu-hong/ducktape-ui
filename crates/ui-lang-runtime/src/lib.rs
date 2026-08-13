@@ -379,6 +379,24 @@ impl Operation for WithoutFocus<'_> {
     }
 }
 
+/// The ink channel through which a generated button hands its
+/// status-resolved text color to `color=inherit` svg content.
+///
+/// iced's inherited-ink channel (`renderer::Style.text_color`) reaches text
+/// widgets but never an svg's style closure, so the generated button block
+/// binds one of these cells instead: the button's style closure writes its
+/// FINAL `text_color` (disabled pass included), and iced's button draw
+/// resolves that closure before drawing content, so an svg style closure
+/// reading the cell during the same draw always sees this frame's status ink.
+pub type ButtonInk = std::rc::Rc<std::cell::Cell<iced::Color>>;
+
+/// Creates the ink cell a generated button shares with its `color=inherit`
+/// svg content. The initial value is never drawn: the button's style closure
+/// overwrites it before any reader draws.
+pub fn button_ink() -> ButtonInk {
+    std::rc::Rc::new(std::cell::Cell::new(iced::Color::TRANSPARENT))
+}
+
 /// Wraps an Iced widget with semantics owned by Ice.
 pub struct Accessible<'a, Message, Theme, Renderer>
 where

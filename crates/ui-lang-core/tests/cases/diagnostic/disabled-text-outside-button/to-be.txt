@@ -1,0 +1,2 @@
+E042
+utility `disabled:text-muted` has no effect on `text`
