@@ -1430,6 +1430,7 @@ fn compare_json_values(
     out: &mut Vec<Value>,
 ) {
     match (baseline, current) {
+        (Some(baseline), Some(current)) if baseline == current => {}
         (Some(Value::Object(baseline)), Some(Value::Object(current))) => {
             let mut keys = baseline.keys().chain(current.keys()).collect::<Vec<_>>();
             keys.sort();
@@ -1465,7 +1466,6 @@ fn compare_json_values(
                 out.push(json!({ "path": path, "baseline": baseline, "current": current }));
             }
         }
-        (Some(baseline), Some(current)) if baseline == current => {}
         _ => out.push(json!({
             "path": path,
             "baseline": difference_value(baseline),
@@ -1823,11 +1823,18 @@ mod tests {
 
     #[test]
     fn reports_structured_and_pixel_differences() {
-        let baseline = json!({ "targets": [{ "geometry": { "x": 1.0 } }] });
-        let current = json!({ "targets": [{ "geometry": { "x": 1.1 } }] });
+        let baseline = json!({ "targets": [{ "geometry": { "x": 10, "y": 20 } }] });
+        let current = json!({ "targets": [{ "geometry": { "x": 11, "y": 22 } }] });
         let mut differences = Vec::new();
-        compare_json("", &baseline, &current, 0.01, &mut differences);
-        assert_eq!(differences[0]["path"], "/targets/0/geometry/x");
+        compare_json("", &baseline, &current, 1.0, &mut differences);
+        assert_eq!(
+            differences,
+            [json!({
+                "path": "/targets/0/geometry/y",
+                "baseline": 20,
+                "current": 22,
+            })]
+        );
         let image = PngImage {
             width: 1,
             height: 1,
@@ -1847,6 +1854,31 @@ mod tests {
         compare_json("", &baseline, &current, 0.0, &mut differences);
         assert_eq!(differences[0]["path"], "/source");
         assert_eq!(differences[0]["current"]["$missing"], true);
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_equal_json_skips_path_building() {
+        const FIELDS: usize = 4_096;
+        let baseline = Value::Object(
+            (0..FIELDS)
+                .map(|index| (format!("field_{index:04}"), Value::from(index)))
+                .collect(),
+        );
+        let current = baseline.clone();
+        let mut differences = Vec::new();
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        compare_json("", &baseline, &current, 0.0, &mut differences);
+        let stats = dhat::HeapStats::get();
+
+        assert!(differences.is_empty());
+        assert_eq!(stats.total_blocks, 0, "{stats:?}");
+        assert_eq!(stats.total_bytes, 0, "{stats:?}");
+        eprintln!(
+            "unchanged {FIELDS}-field JSON diff: {} heap blocks / {} bytes",
+            stats.total_blocks, stats.total_bytes
+        );
     }
 
     #[test]
