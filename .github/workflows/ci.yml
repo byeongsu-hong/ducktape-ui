@@ -168,6 +168,7 @@ jobs:
         run: |
           cargo test --locked -p ui-lang-core performance_contract -- --ignored --test-threads=1
           cargo test --locked -p ui-lang-runtime performance_contract -- --ignored --test-threads=1
+          cargo test --locked -p ui-lang-components --all-features performance_contract_cached_draw_borrows_derived_axes -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test virtual_list_performance -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test log_timeline_performance -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test tree_view_performance -- --ignored --nocapture --test-threads=1
