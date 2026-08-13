@@ -45,6 +45,7 @@ impl Lowerer {
         let CheckedViewFlow::Lazy {
             dependency,
             keys,
+            key_bindings: checked_key_bindings,
             binding: local,
         } = checked_view.flow
         else {
@@ -151,18 +152,31 @@ impl Lowerer {
             }
         }
 
+        if checked_key_bindings.len() != keys.len() {
+            return Err(self.invariant(span, "lazy key binding count diverged"));
+        }
         let mut key_bindings = Vec::new();
-        for (index, key) in keys.iter().enumerate() {
-            let Some(local) = self.facts.local_by_owner(CheckedLocalOwner::View {
+        for (index, (key, binding)) in keys.iter().zip(checked_key_bindings).enumerate() {
+            let (local, name) = match (binding.local, binding.name) {
+                (None, None) => continue,
+                (Some(local), Some(name)) => (local, name),
+                _ => return Err(self.invariant(span, "lazy key binding shape diverged")),
+            };
+            let checked = self.facts.try_local(local).ok_or_else(|| {
+                self.invariant(span, "lazy key binding local ID is outside its arena")
+            })?;
+            let expression = self.facts.try_expression_use(*key).ok_or_else(|| {
+                self.invariant(span, "lazy key expression-use ID is outside its arena")
+            })?;
+            let expected_owner = CheckedLocalOwner::View {
                 view: id,
                 role: CheckedViewLocalRole::LazyKey(index as u32),
-            }) else {
-                continue;
             };
-            let checked = self.facts.local(local);
-            let expression = self.facts.expression_use(*key);
-            if checked.ty != expression.source {
-                return Err(self.invariant(span, "lazy key binding type diverged"));
+            if checked.owner != expected_owner
+                || checked.name != name
+                || checked.ty != expression.source
+            {
+                return Err(self.invariant(span, "lazy key binding contract diverged"));
             }
             key_bindings.push(ResolvedLazyKeyBinding {
                 index,

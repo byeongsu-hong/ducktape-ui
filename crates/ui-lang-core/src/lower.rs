@@ -11816,6 +11816,23 @@ view
         let error = lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("local ID is outside its arena"));
+
+        let keyed_source = format!(
+            "app InvalidLazyKeyFacts\n{THEME}state\n  rows:[str] = []\n  revision:i64 = 0\nview\n  lazy rows by revision as cached\n    for row in cached\n      text row\n"
+        );
+        let mut checked = analyze(&keyed_source).unwrap();
+        checked
+            .facts
+            .corrupt_lazy_key_binding_local(ViewId(0), 0, u32::MAX);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("local ID is outside its arena"));
+
+        let mut checked = analyze(&keyed_source).unwrap();
+        checked.facts.remove_lazy_key_binding_local(ViewId(0), 0);
+        let error = lower(checked).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("binding shape diverged"));
     }
 
     #[test]

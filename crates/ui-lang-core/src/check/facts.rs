@@ -291,6 +291,9 @@ pub(crate) enum CheckedViewFlow {
         /// for the value in the memo dependency tuple. Empty for the plain
         /// form.
         keys: Vec<CheckedExprUseId>,
+        /// One retained local for each bare-identifier key, aligned with
+        /// `keys`. Computed keys and the dependency alias carry `None`.
+        key_bindings: Vec<CheckedLazyKeyBinding>,
         binding: CheckedLocalId,
     },
     Table {
@@ -320,6 +323,12 @@ pub(crate) enum CheckedViewFlow {
         semantic_key: String,
         expression_count: u32,
     },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckedLazyKeyBinding {
+    pub(crate) local: Option<CheckedLocalId>,
+    pub(crate) name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1312,6 +1321,24 @@ impl CheckedFacts {
             panic!("test view must be lazy");
         };
         *binding = CheckedLocalId(raw);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_lazy_key_binding_local(&mut self, view: ViewId, index: usize, raw: u32) {
+        let CheckedViewFlow::Lazy { key_bindings, .. } = &mut self.views[view.0 as usize].flow
+        else {
+            panic!("test view must be lazy");
+        };
+        key_bindings[index].local = Some(CheckedLocalId(raw));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_lazy_key_binding_local(&mut self, view: ViewId, index: usize) {
+        let CheckedViewFlow::Lazy { key_bindings, .. } = &mut self.views[view.0 as usize].flow
+        else {
+            panic!("test view must be lazy");
+        };
+        key_bindings[index].local = None;
     }
 
     #[cfg(test)]
@@ -10089,7 +10116,7 @@ impl<'a> FactsBuilder<'a> {
                     origin,
                 )?;
                 let mut key_uses = Vec::with_capacity(keys.len());
-                let mut key_locals = Vec::with_capacity(keys.len());
+                let mut key_bindings = Vec::with_capacity(keys.len());
                 for (index, key) in keys.iter().enumerate() {
                     let use_id = self.push_view_expression(
                         CheckedExprOwner::View {
@@ -10104,25 +10131,37 @@ impl<'a> FactsBuilder<'a> {
                     )?;
                     key_uses.push(use_id);
                     let Expr::Path(segments) = key else {
+                        key_bindings.push(CheckedLazyKeyBinding {
+                            local: None,
+                            name: None,
+                        });
                         continue;
                     };
                     let [name] = segments.as_slice() else {
+                        key_bindings.push(CheckedLazyKeyBinding {
+                            local: None,
+                            name: None,
+                        });
                         continue;
                     };
                     if name == binding {
+                        key_bindings.push(CheckedLazyKeyBinding {
+                            local: None,
+                            name: None,
+                        });
                         continue;
                     }
                     let ty = self.facts.expression_use(use_id).source.clone();
-                    key_locals.push((
-                        name.clone(),
-                        self.push_view_local(
+                    key_bindings.push(CheckedLazyKeyBinding {
+                        local: Some(self.push_view_local(
                             name,
                             ty,
                             view,
                             CheckedViewLocalRole::LazyKey(index as u32),
                             span,
-                        ),
-                    ));
+                        )),
+                        name: Some(name.clone()),
+                    });
                 }
                 if !key_uses.is_empty()
                     && let Some(param) =
@@ -10141,15 +10180,19 @@ impl<'a> FactsBuilder<'a> {
                 let empty = FactEnv::default();
                 let mut scoped = ScopedFactEnv::new(&empty);
                 scoped.insert(binding.clone(), CheckedPathRoot::Local(local), ty);
-                for (name, local) in key_locals {
+                for binding in &key_bindings {
+                    let (Some(local), Some(name)) = (binding.local, binding.name.as_ref()) else {
+                        continue;
+                    };
                     let ty = self.facts.local(local).ty.clone();
-                    scoped.insert(name, CheckedPathRoot::Local(local), ty);
+                    scoped.insert(name.clone(), CheckedPathRoot::Local(local), ty);
                 }
                 record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                 self.lower_view_expression_tree(child, &scoped)?;
                 CheckedViewFlow::Lazy {
                     dependency: dependency_use,
                     keys: key_uses,
+                    key_bindings,
                     binding: local,
                 }
             }
@@ -14051,12 +14094,14 @@ view
         let CheckedViewFlow::Lazy {
             dependency,
             keys,
+            key_bindings,
             binding,
         } = &program.checked_facts().view(ViewId(0)).flow
         else {
             panic!("root must retain lazy facts");
         };
         assert!(keys.is_empty(), "plain lazy records no keys");
+        assert!(key_bindings.is_empty(), "plain lazy records no key locals");
         assert_eq!(
             program.checked_facts().expression_use(*dependency).owner,
             CheckedExprOwner::View {
