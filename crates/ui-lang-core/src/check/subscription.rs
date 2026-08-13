@@ -63,8 +63,8 @@ pub(crate) fn native_subscription_payloads(
             ],
             InputMethodEvent::Commit => vec![Type::Str],
         },
-        SubscriptionSource::Keyboard(KeyboardEvent::Press) => vec![Type::KeyPress],
-        SubscriptionSource::Keyboard(KeyboardEvent::Release) => vec![Type::KeyRelease],
+        SubscriptionSource::Keyboard(KeyboardEvent::Press { .. }) => vec![Type::KeyPress],
+        SubscriptionSource::Keyboard(KeyboardEvent::Release { .. }) => vec![Type::KeyRelease],
         SubscriptionSource::Keyboard(KeyboardEvent::Modifiers) => vec![Type::KeyModifiers],
         SubscriptionSource::Mouse(event) => match event {
             MouseEvent::Entered | MouseEvent::Left => Vec::new(),
@@ -109,8 +109,8 @@ pub(in crate::check) fn canvas_event_name(source: &SubscriptionSource) -> Option
         SubscriptionSource::InputMethod(InputMethodEvent::Preedit) => "input-method preedit",
         SubscriptionSource::InputMethod(InputMethodEvent::Commit) => "input-method commit",
         SubscriptionSource::InputMethod(InputMethodEvent::Closed) => "input-method closed",
-        SubscriptionSource::Keyboard(KeyboardEvent::Press) => "keyboard press",
-        SubscriptionSource::Keyboard(KeyboardEvent::Release) => "keyboard release",
+        SubscriptionSource::Keyboard(KeyboardEvent::Press { .. }) => "keyboard press",
+        SubscriptionSource::Keyboard(KeyboardEvent::Release { .. }) => "keyboard release",
         SubscriptionSource::Keyboard(KeyboardEvent::Modifiers) => "keyboard modifiers",
         SubscriptionSource::Mouse(MouseEvent::Entered) => "mouse entered",
         SubscriptionSource::Mouse(MouseEvent::Left) => "mouse left",
@@ -362,7 +362,7 @@ pub(in crate::check) fn infer_subscriptions(
                     .expect("native subscription payloads"),
             ),
             SubscriptionSource::Keyboard(event) => (
-                facts::CheckedSubscriptionSourceAnalysis::Keyboard(*event),
+                facts::CheckedSubscriptionSourceAnalysis::Keyboard(event.clone()),
                 native_subscription_payloads(&subscription.source, subscription.window_id)
                     .expect("native subscription payloads"),
             ),

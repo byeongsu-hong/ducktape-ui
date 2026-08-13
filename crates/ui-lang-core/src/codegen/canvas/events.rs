@@ -237,8 +237,14 @@ pub(in crate::codegen) fn canvas_event_filter(source: &ResolvedCanvasEventSource
             InputMethodEvent::Closed => "matches!(__event, ::iced::widget::canvas::Event::InputMethod(::iced::advanced::input_method::Event::Closed)).then_some(())".into(),
         },
         ResolvedCanvasEventSource::Keyboard(event) => match event {
-            KeyboardEvent::Press => "match __event { ::iced::widget::canvas::Event::Keyboard(::iced::keyboard::Event::KeyPressed { key, modified_key, physical_key, location, modifiers, text, repeat }) => ::std::option::Option::Some(__IceKeyPress { key: key.clone(), modified_key: modified_key.clone(), physical_key: *physical_key, location: *location, modifiers: *modifiers, text: text.as_ref().map(::std::string::ToString::to_string), repeat: *repeat }), _ => ::std::option::Option::None }".into(),
-            KeyboardEvent::Release => "match __event { ::iced::widget::canvas::Event::Keyboard(::iced::keyboard::Event::KeyReleased { key, modified_key, physical_key, location, modifiers }) => ::std::option::Option::Some(__IceKeyRelease { key: key.clone(), modified_key: modified_key.clone(), physical_key: *physical_key, location: *location, modifiers: *modifiers }), _ => ::std::option::Option::None }".into(),
+            KeyboardEvent::Press { key } => {
+                let guard = crate::codegen::subscription::named_key_guard(key.as_deref());
+                format!("match __event {{ ::iced::widget::canvas::Event::Keyboard(::iced::keyboard::Event::KeyPressed {{ key, modified_key, physical_key, location, modifiers, text, repeat }}){guard} => ::std::option::Option::Some(__IceKeyPress {{ key: key.clone(), modified_key: modified_key.clone(), physical_key: *physical_key, location: *location, modifiers: *modifiers, text: text.as_ref().map(::std::string::ToString::to_string), repeat: *repeat }}), _ => ::std::option::Option::None }}")
+            }
+            KeyboardEvent::Release { key } => {
+                let guard = crate::codegen::subscription::named_key_guard(key.as_deref());
+                format!("match __event {{ ::iced::widget::canvas::Event::Keyboard(::iced::keyboard::Event::KeyReleased {{ key, modified_key, physical_key, location, modifiers }}){guard} => ::std::option::Option::Some(__IceKeyRelease {{ key: key.clone(), modified_key: modified_key.clone(), physical_key: *physical_key, location: *location, modifiers: *modifiers }}), _ => ::std::option::Option::None }}")
+            }
             KeyboardEvent::Modifiers => "match __event { ::iced::widget::canvas::Event::Keyboard(::iced::keyboard::Event::ModifiersChanged(modifiers)) => ::std::option::Option::Some(*modifiers), _ => ::std::option::Option::None }".into(),
         },
         ResolvedCanvasEventSource::Mouse(event) => match event {

@@ -97,7 +97,7 @@ pub(crate) struct ResolvedCanvasEvent {
     pub(crate) route_payload: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ResolvedCanvasEventSource {
     InputMethod(InputMethodEvent),
     Keyboard(KeyboardEvent),
@@ -900,7 +900,9 @@ impl Lowerer {
             SubscriptionSource::InputMethod(event) => {
                 ResolvedCanvasEventSource::InputMethod(*event)
             }
-            SubscriptionSource::Keyboard(event) => ResolvedCanvasEventSource::Keyboard(*event),
+            SubscriptionSource::Keyboard(event) => {
+                ResolvedCanvasEventSource::Keyboard(event.clone())
+            }
             SubscriptionSource::Mouse(event) => ResolvedCanvasEventSource::Mouse(*event),
             SubscriptionSource::Touch(event) => ResolvedCanvasEventSource::Touch(*event),
             SubscriptionSource::Window(event) => ResolvedCanvasEventSource::Window(*event),

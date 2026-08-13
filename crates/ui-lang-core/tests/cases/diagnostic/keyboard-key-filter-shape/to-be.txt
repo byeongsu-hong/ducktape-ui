@@ -1,0 +1,2 @@
+E084
+key= names a key with a lowercase name like escape or arrow-left, or an exact iced variant like TVInputHDMI1

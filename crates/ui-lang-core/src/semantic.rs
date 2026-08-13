@@ -330,10 +330,16 @@ pub enum InputMethodEvent {
     Closed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyboardEvent {
-    Press,
-    Release,
+    /// `key` narrows the subscription to one logical named key; it holds a
+    /// validated `iced::keyboard::key::Named` identifier such as `Escape`.
+    Press {
+        key: Option<String>,
+    },
+    Release {
+        key: Option<String>,
+    },
     Modifiers,
 }
 

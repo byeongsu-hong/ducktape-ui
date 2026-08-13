@@ -249,14 +249,20 @@ pub(in crate::codegen) fn generate_subscription(
             }
             ResolvedSubscriptionSource::Keyboard(event) => {
                 let filter = match event {
-                    KeyboardEvent::Press => {
-                        "match __event { ::iced::keyboard::Event::KeyPressed { key, modified_key, physical_key, location, modifiers, text, repeat } => ::std::option::Option::Some(__IceKeyPress { key, modified_key, physical_key, location, modifiers, text: text.map(|value| value.to_string()), repeat }), _ => ::std::option::Option::None }"
+                    KeyboardEvent::Press { key } => {
+                        let guard = named_key_guard(key.as_deref());
+                        format!(
+                            "match __event {{ ::iced::keyboard::Event::KeyPressed {{ key, modified_key, physical_key, location, modifiers, text, repeat }}{guard} => ::std::option::Option::Some(__IceKeyPress {{ key, modified_key, physical_key, location, modifiers, text: text.map(|value| value.to_string()), repeat }}), _ => ::std::option::Option::None }}"
+                        )
                     }
-                    KeyboardEvent::Release => {
-                        "match __event { ::iced::keyboard::Event::KeyReleased { key, modified_key, physical_key, location, modifiers } => ::std::option::Option::Some(__IceKeyRelease { key, modified_key, physical_key, location, modifiers }), _ => ::std::option::Option::None }"
+                    KeyboardEvent::Release { key } => {
+                        let guard = named_key_guard(key.as_deref());
+                        format!(
+                            "match __event {{ ::iced::keyboard::Event::KeyReleased {{ key, modified_key, physical_key, location, modifiers }}{guard} => ::std::option::Option::Some(__IceKeyRelease {{ key, modified_key, physical_key, location, modifiers }}), _ => ::std::option::Option::None }}"
+                        )
                     }
                     KeyboardEvent::Modifiers => {
-                        "match __event { ::iced::keyboard::Event::ModifiersChanged(modifiers) => ::std::option::Option::Some(modifiers), _ => ::std::option::Option::None }"
+                        "match __event { ::iced::keyboard::Event::ModifiersChanged(modifiers) => ::std::option::Option::Some(modifiers), _ => ::std::option::Option::None }".to_owned()
                     }
                 };
                 let filter = format!(
@@ -511,6 +517,19 @@ fn checked_subscription_route_code(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(format!("{message}::{variant}({})", arguments.join(", ")))
+}
+
+/// A match guard narrowing a `KeyPressed`/`KeyReleased` arm to one logical
+/// named key. `variant` is the parser-validated
+/// `iced::keyboard::key::Named` identifier; `None` leaves the arm unguarded.
+pub(in crate::codegen) fn named_key_guard(variant: Option<&str>) -> String {
+    variant
+        .map(|variant| {
+            format!(
+                " if matches!(key, ::iced::keyboard::Key::Named(::iced::keyboard::key::Named::{variant}))"
+            )
+        })
+        .unwrap_or_default()
 }
 
 pub(in crate::codegen) fn event_status_filter(

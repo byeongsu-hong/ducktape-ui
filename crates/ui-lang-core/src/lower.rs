@@ -601,8 +601,10 @@ fn resolved_native_subscription_payloads(
             ],
             InputMethodEvent::Commit => vec![Type::Str],
         },
-        CheckedSubscriptionSource::Keyboard(KeyboardEvent::Press) => vec![Type::KeyPress],
-        CheckedSubscriptionSource::Keyboard(KeyboardEvent::Release) => vec![Type::KeyRelease],
+        CheckedSubscriptionSource::Keyboard(KeyboardEvent::Press { .. }) => vec![Type::KeyPress],
+        CheckedSubscriptionSource::Keyboard(KeyboardEvent::Release { .. }) => {
+            vec![Type::KeyRelease]
+        }
         CheckedSubscriptionSource::Keyboard(KeyboardEvent::Modifiers) => vec![Type::KeyModifiers],
         CheckedSubscriptionSource::Mouse(event) => match event {
             MouseEvent::Entered | MouseEvent::Left => Vec::new(),
@@ -6527,7 +6529,7 @@ impl Lowerer {
                 ResolvedSubscriptionSource::InputMethod(*event)
             }
             CheckedSubscriptionSource::Keyboard(event) => {
-                ResolvedSubscriptionSource::Keyboard(*event)
+                ResolvedSubscriptionSource::Keyboard(event.clone())
             }
             CheckedSubscriptionSource::Mouse(event) => ResolvedSubscriptionSource::Mouse(*event),
             CheckedSubscriptionSource::SystemTheme => ResolvedSubscriptionSource::SystemTheme,

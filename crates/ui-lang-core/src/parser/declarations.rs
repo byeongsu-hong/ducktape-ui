@@ -350,18 +350,7 @@ pub(in crate::parser) fn parse_subscription(line: &Line) -> Result<Subscription,
             _ => return Err(error("E084", line, "unknown window event")),
         })
     } else if let Some(event) = call.strip_prefix("keyboard ") {
-        SubscriptionSource::Keyboard(match event.trim() {
-            "press" => KeyboardEvent::Press,
-            "release" => KeyboardEvent::Release,
-            "modifiers" => KeyboardEvent::Modifiers,
-            _ => {
-                return Err(error(
-                    "E084",
-                    line,
-                    "keyboard event must be press, release, or modifiers",
-                ));
-            }
-        })
+        SubscriptionSource::Keyboard(parse_keyboard_event(event, line)?)
     } else if let Some(event) = call.strip_prefix("mouse ") {
         SubscriptionSource::Mouse(match event.trim() {
             "entered" => MouseEvent::Entered,
@@ -448,6 +437,63 @@ pub(in crate::parser) fn parse_subscription(line: &Line) -> Result<Subscription,
         route: parse_route(route.trim(), line)?,
         span: Span::line(line.number),
     })
+}
+
+fn parse_keyboard_event(event: &str, line: &Line) -> Result<KeyboardEvent, Error> {
+    let mut words = event.split_whitespace();
+    let kind = words.next().unwrap_or_default();
+    let key = match words.next() {
+        None => None,
+        Some(option) => {
+            let Some(name) = option.strip_prefix("key=") else {
+                return Err(error(
+                    "E084",
+                    line,
+                    "keyboard press/release takes only a `key=` option",
+                ));
+            };
+            Some(named_key_variant(name, line)?)
+        }
+    };
+    if words.next().is_some() {
+        return Err(error(
+            "E084",
+            line,
+            "keyboard press/release takes only a `key=` option",
+        ));
+    }
+    match (kind, key) {
+        ("press", key) => Ok(KeyboardEvent::Press { key }),
+        ("release", key) => Ok(KeyboardEvent::Release { key }),
+        ("modifiers", None) => Ok(KeyboardEvent::Modifiers),
+        ("modifiers", Some(_)) => Err(error(
+            "E084",
+            line,
+            "keyboard modifiers does not take a key filter",
+        )),
+        _ => Err(error(
+            "E084",
+            line,
+            "keyboard event must be press, release, or modifiers",
+        )),
+    }
+}
+
+fn named_key_variant(name: &str, line: &Line) -> Result<String, Error> {
+    let (exact, ergonomic) = testing::test_key_name_shape(name);
+    if !exact && !ergonomic {
+        return Err(error(
+            "E084",
+            line,
+            "key= names a key with a lowercase name like escape or arrow-left, or an exact iced variant like TVInputHDMI1",
+        ));
+    }
+    let canonical = if exact {
+        name.to_owned()
+    } else {
+        name.replace('_', "-")
+    };
+    Ok(crate::semantic::test_keyboard_variant_name(&canonical))
 }
 
 pub(in crate::parser) fn parse_duration(source: &str, line: &Line) -> Result<u64, Error> {

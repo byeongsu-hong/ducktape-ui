@@ -27,6 +27,8 @@ mod event_status;
 #[cfg(test)]
 mod font_values;
 #[cfg(test)]
+mod keyboard_filter;
+#[cfg(test)]
 mod lazy_cheap_keys;
 #[cfg(test)]
 mod lazy_cheap_keys_keyed;
