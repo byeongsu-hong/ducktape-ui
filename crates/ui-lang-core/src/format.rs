@@ -35,7 +35,9 @@ pub fn format_fragment(source: &str) -> String {
         if indent > *indents.last().unwrap_or(&0) {
             indents.push(indent);
         }
-        output.push_str(&"  ".repeat(indents.len() - 1));
+        for _ in 1..indents.len() {
+            output.push_str("  ");
+        }
         output.push_str(text);
         output.push('\n');
     }
@@ -43,7 +45,7 @@ pub fn format_fragment(source: &str) -> String {
 }
 
 fn reorder_component_metadata(source: &str) -> String {
-    let mut lines = source.lines().map(str::to_owned).collect::<Vec<_>>();
+    let mut lines = source.lines().collect::<Vec<_>>();
     for index in (0..lines.len()).rev() {
         let indent = lines[index].len() - lines[index].trim_start().len();
         let Some(head) = lines[index].split_ascii_whitespace().next() else {
@@ -84,7 +86,7 @@ fn reorder_component_metadata(source: &str) -> String {
         }
         let children = ordered
             .into_iter()
-            .flat_map(|(start, end)| lines[start..end].iter().cloned())
+            .flat_map(|(start, end)| lines[start..end].iter().copied())
             .collect::<Vec<_>>();
         lines.splice(index + 1..end, children);
     }
@@ -95,7 +97,7 @@ fn reorder_component_metadata(source: &str) -> String {
     output
 }
 
-fn format_block_end(lines: &[String], line: usize, indent: usize) -> usize {
+fn format_block_end(lines: &[&str], line: usize, indent: usize) -> usize {
     lines
         .iter()
         .enumerate()
