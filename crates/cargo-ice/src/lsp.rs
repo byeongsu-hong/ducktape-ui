@@ -3919,6 +3919,34 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "formatter allocation contract; run alone with --test-threads=1"]
+    fn allocation_contract_formatter_avoids_per_line_scratch_strings() {
+        const LINES: usize = 256;
+        const MAX_BLOCKS: u64 = LINES as u64 * 2 + 64;
+
+        let mut source = String::from("view\n");
+        let mut expected = String::from("view\n");
+        for _ in 0..LINES {
+            source.push_str("    item\n");
+            expected.push_str("  item\n");
+        }
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        let formatted =
+            std::hint::black_box(ui_lang_core::format_fragment(std::hint::black_box(&source)));
+        let heap = dhat::HeapStats::get();
+        eprintln!(
+            "formatted {LINES} indented lines: {} heap blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes
+        );
+        assert!(
+            heap.total_blocks <= MAX_BLOCKS,
+            "formatter allocated per-line scratch strings: {heap:?}"
+        );
+        assert_eq!(formatted, expected);
+    }
+
+    #[test]
     #[ignore = "allocation contract; run alone with --test-threads=1"]
     fn allocation_contract_semantic_lookup_does_not_copy_the_checked_document() {
         const REQUESTS: u64 = 100;
