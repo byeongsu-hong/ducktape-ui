@@ -3467,6 +3467,15 @@ memoized row on the screen, which costs more than the virtualization saves.
 `align=` is rejected here too (`E197`), for the reason it is rejected on a
 plain column.
 
+The enclosing `scroll` keeps a virtual column's mounted window synchronized
+through an entire wheel transaction. iced forwards the first wheel event to
+the content but may consume the rest at the scrollable; generated code reads
+the resulting scroll translation after every captured wheel event and opens a
+new layout only when that translation leaves the rows already held as
+overscan. A rapid wheel burst or immediate direction reversal therefore cannot
+move every mounted row outside the viewport, and movement still covered by
+overscan does not add a layout pass.
+
 **A virtualized row is not an unmounted row.** Rows stay in the tree whether or
 not the viewport can reach them, so a component with `lifetime mounted` under a
 virtualized column keeps its state and its clock while it is scrolled out: an

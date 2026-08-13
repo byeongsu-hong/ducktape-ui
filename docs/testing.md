@@ -677,6 +677,46 @@ The earlier decline of this change priced it at 301us from `frame_panels`
 before that probe was corrected, and rejected it on the two language gaps
 above. The gaps were real; the number was not the reason.
 
+### A wheel transaction can outrun a virtual column
+
+The viewport boundary above originally learned about scrolling only from the
+events iced forwarded to the column. That is not every physical wheel event:
+iced treats consecutive wheel input as one scroll transaction and, after the
+first event is captured by the scrollable, stops forwarding the rest to its
+content. Four rows of overscan hid ordinary movement. Eight 100px wheel events
+did not — the scroll translation moved beyond every mounted row while the
+column still held the first window, producing the empty/frozen frame reported
+when the list was shaken rapidly.
+
+Generated scrolls that own `virtual-row=` content now synchronize the virtual
+viewport from the scrollable's resulting translation after every captured
+wheel event. Layout reopens only once the translation leaves mounted overscan.
+`rapid_wheel_scrolling_never_runs_past_the_mounted_rows` drives twenty wheel
+events through one native `UserInterface::update`; the trading test drives
+eight down and eight immediately back through the first-class Ice test API.
+Both fail by drawing or publishing none of the rows reached without the sync,
+and pass with it. Positions, order book, alerts, and open orders now use the
+same fixed-row boundary as markets, fills, and tape, so every scrolling data
+list on the terminal follows that contract.
+
+### Chart zoom was waiting on a quadratic history prepend
+
+The chart's cached layer was not the zoom stall. In release at 1280x720 its
+geometry rebuild measured 76–96us for the usual 120-bar view and at most 755us
+with one million candles all visible. In the dense trading screen, six wheel
+zooms in followed by six out measured 3.1ms p50 end to end.
+
+The discontinuity came when zooming reached the oldest loaded bar. A history
+page held the chart's shared-candle mutex while binary-inserting every older
+candle at the front of the existing `Vec`. Prepending 1,000 candles before a
+200,000-candle tape moved the held tape 1,000 times and measured **235.2ms**.
+Feed-sized snapshots still take the tiny binary-update path; history pages now
+sort once and linearly merge the two slices, with a fresh overlapping candle
+replacing the held one. The same probe measures **4.74ms**, about **50x** less
+time under the mutex. The merge regression deliberately covers an unsorted
+page and an overlapping live candle so the fast path cannot silently reorder
+or stale the tape.
+
 ### Two reported symptoms, and which of them was a frame
 
 The terminal's owner reported list scrolling that "bounces" and a chart/positions

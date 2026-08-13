@@ -204,6 +204,8 @@ struct State {
     viewport: Rectangle,
     /// What layout actually measured, so draw and events agree with it.
     live: Live,
+    estimated_height: f32,
+    spacing: f32,
 }
 
 impl State {
@@ -225,6 +227,93 @@ impl State {
             running += self.height_of(index, estimate) + spacing;
         }
         tops
+    }
+
+    /// Moves the remembered viewport and reports whether it escaped the rows
+    /// already laid out. Moving inside overscan needs no layout at all: the
+    /// scrollable clips the extra rows and only changes their draw translation.
+    fn sync_viewport(&mut self, viewport: Rectangle, bounds: Rectangle) -> bool {
+        let visible = viewport - Vector::new(bounds.x, bounds.y);
+        if self.viewport == visible {
+            return false;
+        }
+        self.viewport = visible;
+
+        let tops = self.tops(self.measured.len(), self.estimated_height, self.spacing);
+        let first = tops
+            .partition_point(|top| *top <= visible.y)
+            .saturating_sub(1);
+        let last = tops.partition_point(|top| *top < visible.y + visible.height);
+        first < self.live.mounted.start || last > self.live.mounted.end
+    }
+}
+
+/// Synchronizes virtual descendants with the first scrollable in `content`
+/// after that scrollable consumes a wheel event. Iced suppresses descendant
+/// wheel updates for the rest of a scroll transaction; this operation crosses
+/// that deliberate event boundary without synthesizing pointer events.
+pub(crate) fn sync_after_wheel<Message, Theme, Renderer>(
+    content: &mut Element<'_, Message, Theme, Renderer>,
+    tree: &mut Tree,
+    layout: Layout<'_>,
+    renderer: &Renderer,
+) -> bool
+where
+    Renderer: iced::advanced::Renderer,
+{
+    let mut sync = SyncAfterWheel::default();
+    content
+        .as_widget_mut()
+        .operate(tree, layout, renderer, &mut sync);
+    sync.needs_layout
+}
+
+#[derive(Default)]
+struct SyncAfterWheel {
+    viewport: Option<Rectangle>,
+    nested_scrollable: bool,
+    skip_virtual_children: bool,
+    needs_layout: bool,
+}
+
+impl Operation for SyncAfterWheel {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        if self.nested_scrollable {
+            self.nested_scrollable = false;
+        } else if self.skip_virtual_children {
+            self.skip_virtual_children = false;
+        } else {
+            operate(self);
+        }
+    }
+
+    fn scrollable(
+        &mut self,
+        _id: Option<&Id>,
+        bounds: Rectangle,
+        _content_bounds: Rectangle,
+        translation: Vector,
+        _state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if self.viewport.is_some() {
+            self.nested_scrollable = true;
+        } else {
+            self.viewport = Some(Rectangle {
+                x: bounds.x + translation.x,
+                y: bounds.y + translation.y,
+                ..bounds
+            });
+        }
+    }
+
+    fn custom(&mut self, _id: Option<&Id>, bounds: Rectangle, state: &mut dyn std::any::Any) {
+        let (Some(viewport), Some(state)) = (self.viewport, state.downcast_mut::<State>()) else {
+            return;
+        };
+        self.needs_layout |= state.sync_viewport(viewport, bounds);
+        // The viewport sync is the operation's whole purpose. Do not walk the
+        // mounted rows just to discover that none of them are virtual columns.
+        self.skip_virtual_children = true;
     }
 }
 
@@ -297,6 +386,8 @@ where
         tree::State::new(State {
             measured: vec![None; self.children.len()],
             keys: self.keys.clone(),
+            estimated_height: self.estimated_height,
+            spacing: self.spacing,
             ..State::default()
         })
     }
@@ -306,6 +397,11 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
+        {
+            let state = tree.state.downcast_mut::<State>();
+            state.estimated_height = self.estimated_height;
+            state.spacing = self.spacing;
+        }
         if self.keys.is_empty() {
             tree.diff_children(&self.children);
             let state = tree.state.downcast_mut::<State>();
@@ -561,6 +657,7 @@ where
         operation: &mut dyn Operation,
     ) {
         let live = tree.state.downcast_ref::<State>().live.clone();
+        operation.custom(None, layout.bounds(), tree.state.downcast_mut::<State>());
         operation.container(None, layout.bounds());
         operation.traverse(&mut |operation| {
             for ((index, child), child_layout) in
@@ -650,6 +747,43 @@ mod tests {
             _cursor: mouse::Cursor,
             _viewport: &Rectangle,
         ) {
+        }
+    }
+
+    /// A fixed-height child that records whether it was actually asked to
+    /// draw inside the scrollable's translated viewport.
+    struct Visible {
+        draws: Rc<Cell<usize>>,
+        height: f32,
+    }
+
+    impl Widget<(), iced::Theme, iced_test::renderer::Renderer> for Visible {
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fixed(self.height))
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &iced_test::renderer::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(Size::new(limits.max().width, self.height))
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut iced_test::renderer::Renderer,
+            _theme: &iced::Theme,
+            _style: &renderer::Style,
+            layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            viewport: &Rectangle,
+        ) {
+            if layout.bounds().intersects(viewport) {
+                self.draws.set(self.draws.get() + 1);
+            }
         }
     }
 
@@ -960,6 +1094,62 @@ mod tests {
         assert!(
             laid_out <= 32,
             "a 100px viewport over 20px rows should reach a handful of children, not {laid_out} of {COUNT}"
+        );
+    }
+
+    /// Iced keeps consecutive wheel events in one scroll transaction and
+    /// deliberately stops forwarding them to the scrollable's content. A
+    /// virtual column must still move its mounted window during that burst;
+    /// otherwise a fast trackpad reversal can translate every mounted row out
+    /// of the viewport and draw one or more empty frames.
+    #[test]
+    fn rapid_wheel_scrolling_never_runs_past_the_mounted_rows() {
+        const COUNT: usize = 100;
+        const ROW: f32 = 20.0;
+        let draws = Rc::new(Cell::new(0));
+        let children: Vec<Element<'_, (), iced::Theme, iced_test::renderer::Renderer>> = (0..COUNT)
+            .map(|_| {
+                Element::new(Visible {
+                    draws: Rc::clone(&draws),
+                    height: ROW,
+                })
+            })
+            .collect();
+        let content = virtual_children(children, ROW);
+        let mut renderer = headless_renderer();
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut ui = UserInterface::build(
+            crate::virtual_scroll(iced::widget::scrollable(content)),
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let cursor = mouse::Cursor::Available(iced::Point::new(120.0, 50.0));
+        let wheels = (0..20)
+            .map(|_| {
+                Event::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Pixels { x: 0.0, y: -100.0 },
+                })
+            })
+            .collect::<Vec<_>>();
+        let _ = ui.update(
+            &wheels,
+            cursor,
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+
+        ui.draw(
+            &mut renderer,
+            &iced::Theme::Light,
+            &renderer::Style::default(),
+            cursor,
+        );
+        assert!(
+            draws.get() > 0,
+            "a rapid wheel burst scrolled beyond every mounted virtual row"
         );
     }
 }

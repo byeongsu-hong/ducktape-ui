@@ -36,6 +36,8 @@ mod tree_view;
 mod virtual_children;
 mod virtual_list;
 #[cfg(feature = "virtual-list")]
+mod virtual_scroll;
+#[cfg(feature = "virtual-list")]
 mod virtualization;
 mod zstack;
 
@@ -63,6 +65,8 @@ pub use tree_view::*;
 #[cfg(feature = "virtual-list")]
 pub use virtual_children::*;
 pub use virtual_list::*;
+#[cfg(feature = "virtual-list")]
+pub use virtual_scroll::*;
 pub use zstack::*;
 
 #[cfg(feature = "data-grid")]

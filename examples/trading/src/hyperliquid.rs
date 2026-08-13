@@ -611,13 +611,59 @@ fn value_i64(value: &Value, key: &str) -> i64 {
 
 /// Folds a fresh snapshot into the tape: the live candle is replaced in
 /// place, closed ones land in timestamp order.
-pub(crate) fn merge(tape: &mut Vec<Candle>, fresh: Vec<Candle>) {
+pub(crate) fn merge(tape: &mut Vec<Candle>, mut fresh: Vec<Candle>) {
+    // Feed updates are one candle and refreshes are three. Binary insertion
+    // is the cheapest path for those tiny snapshots and normally replaces at
+    // the back without moving anything.
+    if fresh.len() <= 8 {
+        for candle in fresh {
+            match tape.binary_search_by_key(&candle.ts, |held| held.ts) {
+                Ok(index) => tape[index] = candle,
+                Err(index) => tape.insert(index, candle),
+            }
+        }
+        return;
+    }
+
+    // A history page is hundreds of candles before the current first one.
+    // Inserting them one by one moved the whole tape once per candle while
+    // holding the chart's mutex. Normalize the page, then merge both sorted
+    // slices in one pass instead.
+    fresh.sort_by_key(|candle| candle.ts);
+    let mut incoming: Vec<Candle> = Vec::with_capacity(fresh.len());
     for candle in fresh {
-        match tape.binary_search_by_key(&candle.ts, |held| held.ts) {
-            Ok(index) => tape[index] = candle,
-            Err(index) => tape.insert(index, candle),
+        if let Some(previous) = incoming.last_mut()
+            && previous.ts == candle.ts
+        {
+            *previous = candle;
+        } else {
+            incoming.push(candle);
         }
     }
+
+    let held = std::mem::take(tape);
+    tape.reserve(held.len() + incoming.len());
+    let (mut old, mut new) = (0, 0);
+    while old < held.len() && new < incoming.len() {
+        match held[old].ts.cmp(&incoming[new].ts) {
+            Ordering::Less => {
+                tape.push(held[old]);
+                old += 1;
+            }
+            Ordering::Greater => {
+                tape.push(incoming[new]);
+                new += 1;
+            }
+            Ordering::Equal => {
+                // A fresh snapshot replaces the candle already held.
+                tape.push(incoming[new]);
+                old += 1;
+                new += 1;
+            }
+        }
+    }
+    tape.extend_from_slice(&held[old..]);
+    tape.extend_from_slice(&incoming[new..]);
 }
 
 /// Brings the tape up to date. An empty tape backfills a full window; a
@@ -6006,6 +6052,34 @@ mod tests {
         let switched = tape_focus(held.clone(), "ETH".into(), "5m".into());
         assert_eq!(*lock(&switched.focus), "ETH:5m");
         assert!(lock(&switched.candles).is_empty());
+    }
+
+    #[test]
+    fn a_history_page_is_merged_sorted_and_replaces_an_open_candle() {
+        let bar = |ts: i64, close: f64| Candle {
+            ts,
+            open: 1.0,
+            high: close + 1.0,
+            low: 0.5,
+            close,
+            volume: 1.0,
+        };
+        let mut tape: Vec<Candle> = (10..15).map(|ts| bar(ts, ts as f64)).collect();
+        // More than a feed-sized update exercises the linear history path.
+        // The page is deliberately unsorted and carries a corrected candle
+        // already held by the tape.
+        let mut page: Vec<Candle> = (0..9).rev().map(|ts| bar(ts, ts as f64)).collect();
+        page.push(bar(12, 99.0));
+
+        merge(&mut tape, page);
+
+        assert!(tape.windows(2).all(|pair| pair[0].ts < pair[1].ts));
+        assert_eq!(tape.len(), 14, "the overlapping candle is replaced");
+        assert_eq!(
+            tape.iter().find(|candle| candle.ts == 12).unwrap().close,
+            99.0,
+            "the fresh copy wins"
+        );
     }
 
     /// What a history read answers, and it is the figure the chart stops on: a
