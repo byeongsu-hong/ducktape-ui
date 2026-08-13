@@ -199,6 +199,10 @@ impl<Value> CommandItem<Value> {
 
     pub fn matches(&self, query: &str) -> bool {
         let query = normalize_query(query);
+        self.matches_normalized(&query)
+    }
+
+    fn matches_normalized(&self, query: &str) -> bool {
         if query.is_empty() {
             return true;
         }
@@ -262,6 +266,7 @@ pub fn filter_items<'a, Value>(
     groups: &'a [CommandGroup<Value>],
     query: &str,
 ) -> Vec<CommandMatch<'a, Value>> {
+    let query = normalize_query(query);
     groups
         .iter()
         .enumerate()
@@ -270,7 +275,7 @@ pub fn filter_items<'a, Value>(
                 .items
                 .iter()
                 .enumerate()
-                .filter(move |(_, command)| command.matches(query))
+                .filter(|(_, command)| command.matches_normalized(&query))
                 .map(move |(item, command)| CommandMatch {
                     group,
                     item,
@@ -475,7 +480,7 @@ where
                 let items: Vec<_> = group
                     .items
                     .into_iter()
-                    .filter(|item| item.matches(&normalized_query))
+                    .filter(|item| item.matches_normalized(&normalized_query))
                     .collect();
                 (!items.is_empty()).then_some((group.heading, items))
             })
