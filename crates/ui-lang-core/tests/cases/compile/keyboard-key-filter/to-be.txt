@@ -1,0 +1,1 @@
+::iced::keyboard::Event::KeyPressed { key, modified_key, physical_key, location, modifiers, text, repeat } if matches!(key, ::iced::keyboard::Key::Named(::iced::keyboard::key::Named::Escape)) => ::std::option::Option::Some(__IceKeyPress

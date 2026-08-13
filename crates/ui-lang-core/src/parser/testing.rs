@@ -770,7 +770,7 @@ fn parse_test_key_event(source: &str, line: &Line, pressed: bool) -> Result<Test
     Ok(event)
 }
 
-fn test_key_name_shape(source: &str) -> (bool, bool) {
+pub(super) fn test_key_name_shape(source: &str) -> (bool, bool) {
     let exact = source
         .bytes()
         .next()

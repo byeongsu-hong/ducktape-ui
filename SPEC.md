@@ -4190,6 +4190,23 @@ available on generic, input-method, keyboard, mouse, touch, and non-frame
 window events. Timers, system/extern subscriptions, and raw window frames have
 no iced event status and reject it.
 
+`keyboard press` and `keyboard release` accept a `key=` filter that narrows
+the subscription to one logical named key, so it fires for that key alone
+instead of every keyboard event:
+
+```ice
+subscribe
+  keyboard press key=escape status=captured -> dismiss_overlay _
+  keyboard release key=arrow-left -> nudge_done _
+```
+
+The name uses the same shapes as the test driver's `key-down`: a lowercase
+ergonomic name such as `escape` or `arrow-left`, or an exact iced variant such
+as `TVInputHDMI1`. The filter compares the press's logical `key`, composes
+with `status=` and `when` (written in `key= status= when` order), and applies
+to canvas `event keyboard press`/`release` bindings the same way. Character
+keys are not filterable, and `keyboard modifiers` rejects the option.
+
 `event` carries the complete native `iced::Event` value across handlers and
 typed extern functions. Non-raw events lower to `event::listen_with` so the
 status rule is uniform. `event raw` lowers to `event::listen_raw`, includes
