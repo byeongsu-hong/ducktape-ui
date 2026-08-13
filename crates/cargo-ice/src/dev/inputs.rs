@@ -696,12 +696,6 @@ fn is_ice_input(path: &Path) -> bool {
     path.extension().and_then(|extension| extension.to_str()) == Some("ice")
 }
 
-fn stable_hash(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-    })
-}
-
 fn stable_file_hash(identity: &Path, bytes: &[u8]) -> u64 {
     let identity = identity.as_os_str().as_encoded_bytes();
     identity
@@ -954,21 +948,26 @@ fn cargo_metadata_args(cargo_args: &[String]) -> Vec<String> {
 }
 
 pub(super) fn source_stamp_fingerprint(stamp: &SourceStamp) -> String {
-    let mut payload = Vec::new();
+    let mut hash = 0xcbf29ce484222325_u64;
+    let mut hash_bytes = |bytes: &[u8]| {
+        for byte in bytes {
+            hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+        }
+    };
     for (path, stamp) in stamp {
         let path = path.as_os_str().as_encoded_bytes();
-        payload.extend_from_slice(&(path.len() as u64).to_le_bytes());
-        payload.extend_from_slice(path);
+        hash_bytes(&(path.len() as u64).to_le_bytes());
+        hash_bytes(path);
         match stamp {
-            FileStamp::Missing => payload.push(0),
-            FileStamp::Unreadable => payload.push(1),
+            FileStamp::Missing => hash_bytes(&[0]),
+            FileStamp::Unreadable => hash_bytes(&[1]),
             FileStamp::Content(hash) => {
-                payload.push(2);
-                payload.extend_from_slice(&hash.to_le_bytes());
+                hash_bytes(&[2]);
+                hash_bytes(&hash.to_le_bytes());
             }
         }
     }
-    format!("{:016x}", stable_hash(&payload))
+    format!("{hash:016x}")
 }
 
 pub(super) fn cargo_build(
