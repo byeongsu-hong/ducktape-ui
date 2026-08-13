@@ -1,0 +1,1 @@
+.focus_ring(__ice_palette.colors[3], 8.0)

@@ -1,0 +1,2 @@
+E042
+utility `focus-visible:border-danger` has no effect on `input`
