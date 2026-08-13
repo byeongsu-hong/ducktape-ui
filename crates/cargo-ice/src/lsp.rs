@@ -1959,8 +1959,11 @@ fn code_actions_at(
     let character = usize::try_from(params["range"]["start"]["character"].as_u64()?).ok()?;
     let lines = source.split('\n').collect::<Vec<_>>();
     let current = lines.get(line).copied()?;
-    let parsed = ui_lang_core::parse(source).ok();
     let checked = checked_document(analysis_db, documents, uri);
+    let parsed = checked
+        .is_none()
+        .then(|| ui_lang_core::parse(source).ok())
+        .flatten();
     let document = checked
         .as_ref()
         .map(SemanticDocument::as_document)
@@ -5409,11 +5412,11 @@ mod tests {
         assert_eq!(index_metrics.scans, 0, "{index_metrics:?}");
         assert_eq!(index_metrics.source_reads, 0, "{index_metrics:?}");
         assert!(
-            heap.total_bytes <= REQUESTS as u64 * 48 * 1_024,
+            heap.total_bytes <= REQUESTS as u64 * 20 * 1_024,
             "mixed requests allocated source-sized copies: {heap:?}"
         );
         assert!(
-            heap.total_blocks <= REQUESTS as u64 * 2_000,
+            heap.total_blocks <= REQUESTS as u64 * 220,
             "mixed requests allocated too many blocks: {heap:?}"
         );
         eprintln!(
