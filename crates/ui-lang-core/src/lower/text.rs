@@ -63,6 +63,8 @@ pub(crate) struct ResolvedTextOptions {
     pub(crate) wrapping: Option<ResolvedTextWrapping>,
     pub(crate) tracking: Option<f64>,
     pub(crate) custom_style: Option<ResolvedTextCustomStyle>,
+    pub(crate) underline: Option<CheckedExprUseId>,
+    pub(crate) strikethrough: Option<CheckedExprUseId>,
 }
 
 #[derive(Clone, Debug)]
@@ -360,6 +362,9 @@ impl Lowerer {
         if custom_style.is_none() != checked.style.is_none() {
             return Err(self.invariant(span, "text custom style presence diverged"));
         }
+        let underline = values.optional(options.underline.as_ref(), &Type::Bool, "underline")?;
+        let strikethrough =
+            values.optional(options.strikethrough.as_ref(), &Type::Bool, "strike")?;
         Ok(ResolvedTextOptions {
             width,
             height,
@@ -385,6 +390,8 @@ impl Lowerer {
             }),
             tracking: options.tracking,
             custom_style,
+            underline,
+            strikethrough,
         })
     }
 

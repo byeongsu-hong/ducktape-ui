@@ -736,6 +736,8 @@ pub struct TextOptions {
     pub wrapping: Option<TextWrapping>,
     pub tracking: Option<f64>,
     pub custom_style: Option<ExternCall>,
+    pub underline: Option<Expr>,
+    pub strikethrough: Option<Expr>,
 }
 
 #[derive(Clone, Debug)]
@@ -809,6 +811,8 @@ fn push_text_option_roots<'a>(roots: &mut Vec<&'a Expr>, options: &'a TextOption
     if let Some(style) = &options.custom_style {
         roots.extend(&style.args);
     }
+    roots.extend(options.underline.as_ref());
+    roots.extend(options.strikethrough.as_ref());
 }
 
 pub(crate) fn text_expression_roots<'a>(
@@ -890,7 +894,7 @@ fn text_options_semantic_key(options: &TextOptions) -> String {
         |style| format!("{}:{}", style.function, style.args.len()),
     );
     format!(
-        "bounds={}:{}|size={}|line={}|font={}|align={:?}:{:?}|shape={:?}|wrap={:?}|tracking={:?}|custom={custom}",
+        "bounds={}:{}|size={}|line={}|font={}|align={:?}:{:?}|shape={:?}|wrap={:?}|tracking={:?}|custom={custom}|underline={}|strike={}",
         text_length_semantic_key(&options.width),
         text_length_semantic_key(&options.height),
         options.size.is_some(),
@@ -901,6 +905,8 @@ fn text_options_semantic_key(options: &TextOptions) -> String {
         options.shaping,
         options.wrapping,
         options.tracking.map(f64::to_bits),
+        options.underline.is_some(),
+        options.strikethrough.is_some(),
     )
 }
 

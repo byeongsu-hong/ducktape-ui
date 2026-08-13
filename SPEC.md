@@ -1035,6 +1035,8 @@ text_property  = ("w=" | "h=") length | "size=" expr
                | "wrap=" ("none" | "word" | "glyph" | "word-or-glyph")
                | "tracking=" number
                | "style=" call
+               | "underline" | "underline=" expr
+               | "strike" | "strike=" expr
 accessibility_property = ("label=" | "description=") expr
 input          = "input" string id? accessibility_property* "<->" name
                  input_property* styles?
@@ -1786,6 +1788,14 @@ color a tracked label with a `@text-*` utility instead. Unlike CSS
 tracked run is not mouse-selectable because it is a row rather than the single
 text paragraph required by the selection widget; its accessibility value is
 still the complete unsplit text.
+
+`underline`/`strike` draw a rule through the text, bare for `true` or with a
+bool expression. iced's plain `Text` cannot draw a rule, so a ruled text
+renders as a one-span paragraph (`rich_text` with a single span) carrying the
+same options; like a tracked run it is not mouse-selectable, and its
+accessibility value is still the complete text. The two options a paragraph
+cannot express are rejected: `tracking=` with a rule and `shape=` with a rule
+are both `E174`.
 
 `input` binds either `str` state or a declared `secret`, and additionally supports checked
 `label=`/`description=` accessibility text, bool secure mode, submit routes,

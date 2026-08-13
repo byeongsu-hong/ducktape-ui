@@ -507,6 +507,8 @@ impl Builder<'_> {
             // one plain widget for it, so the template can carry it too.
             || options.tracking.is_some_and(|tracking| tracking != 0.0)
             || options.custom_style.is_some()
+            || options.underline.is_some()
+            || options.strikethrough.is_some()
             || !style_is_only_text_color(&text.utility_style)
         {
             return Ok(None);

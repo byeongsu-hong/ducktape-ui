@@ -1,0 +1,2 @@
+::iced::widget::span(__text_value.clone()).underline(true)
+::iced::widget::span(__text_value.clone()).strikethrough(self.done)

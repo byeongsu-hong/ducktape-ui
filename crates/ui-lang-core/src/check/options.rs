@@ -973,5 +973,23 @@ pub(in crate::check) fn check_text_options(
             require_f32_literal_range(value, f64::EPSILON, None, label, span)?;
         }
     }
+    for value in [&options.underline, &options.strikethrough]
+        .into_iter()
+        .flatten()
+    {
+        require_type(&expr_type(value, env, document, span)?, &Type::Bool, span)?;
+    }
+    let draws_rule = options.underline.is_some() || options.strikethrough.is_some();
+    if draws_rule && options.tracking.is_some() {
+        return Err(
+            Error::new("E174", span, "tracked text cannot draw a rule").hint(
+                "a tracked text is a row of graphemes; drop `tracking=` or the underline/strike",
+            ),
+        );
+    }
+    if draws_rule && options.shaping.is_some() {
+        return Err(Error::new("E174", span, "text with a rule cannot set `shape=`")
+            .hint("an underlined or struck text renders as one paragraph span, which shapes its own text"));
+    }
     Ok(())
 }
