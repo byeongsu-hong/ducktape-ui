@@ -270,11 +270,11 @@ jobs:
           selected_dir, selected = load_bundle("selected")
           removed_dir, removed = load_bundle("full-removed-check")
           assert full["artifact_kind"] == "ice_review_bundle"
-          assert full["schema_version"] == 1
+          assert full["schema_version"] == 2
           assert full["success"] is True
           assert expected_key in {capture["key"] for capture in full["captures"]}
           assert selected["artifact_kind"] == "ice_review_bundle"
-          assert selected["schema_version"] == 1
+          assert selected["schema_version"] == 2
           assert selected["success"] is True
           assert selected["tests"]["selected"] == ["generated_control_accessibility"]
           assert len(selected["captures"]) == 1
