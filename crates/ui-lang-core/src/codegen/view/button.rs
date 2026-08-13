@@ -142,8 +142,23 @@ pub(in crate::codegen) fn render_button(
     code.push_str(&resolved_button_style_code(
         button, program, env, hands_ink,
     )?);
+    // `focus-visible:border-*` styles the accessible wrapper's keyboard focus
+    // ring, not the iced button style: `iced::widget::button::Status` never
+    // carries focus, while the wrapper owns the one focus-origin tracker.
+    let focus_ring = button
+        .utility_style
+        .focus_visible_border_color
+        .as_ref()
+        .map(|color| {
+            format!(
+                ".focus_ring({}, {}.0)",
+                resolved_theme_color(color),
+                button.utility_style.radius
+            )
+        })
+        .unwrap_or_default();
     Ok(format!(
-        "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}){checked}{expanded}.disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
+        "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}){checked}{expanded}.disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}{focus_ring}.into() }}"
     ))
 }
 

@@ -380,6 +380,12 @@ pub(in crate::check) fn check_styles(
                         .strip_prefix("border-")
                         .is_some_and(|color| valid_theme_color(color, document))
             }
+            Some("focus-visible") => {
+                matches!(target, StyleTarget::Button(_))
+                    && utility
+                        .strip_prefix("border-")
+                        .is_some_and(|color| valid_theme_color(color, document))
+            }
             Some("disabled") => {
                 let disabled_text_ink = utility
                     .strip_prefix("text-")
@@ -505,8 +511,12 @@ pub(in crate::check) fn check_styles(
         }
         _ => false,
     };
+    // A `focus-visible:border-*` ring is an overlay with its own two-pixel
+    // stroke; unlike `focus:border-*` it never recolors the widget's own
+    // border, so it does not require a base border width.
     let has_border_color = styles
         .iter()
+        .filter(|style| !style.starts_with("focus-visible:"))
         .map(|style| base_utility(style))
         .any(|utility| utility.starts_with("border-") && utility != "border-2");
     if (is_visual_box || matches!(target, StyleTarget::Input(_) | StyleTarget::Button(_)))

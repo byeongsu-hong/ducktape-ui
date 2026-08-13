@@ -381,7 +381,17 @@ package checked utility tokens for one declared target (`col`, `row`, `flex`,
 one same-target base, expand base-first across imported source graphs, preserve
 child and later-utility precedence, and let direct typed node properties
 override recipe defaults. Scaled utilities and exact-pixel spacing,
-radius, and decimal text sizes share that checked lowering path. Button-target
+radius, and decimal text sizes share that checked lowering path. The
+button-only `focus-visible:border-*` variant styles the accessible wrapper's
+origin-aware keyboard focus ring — pointer-acquired focus never paints it,
+keyboard/accessibility/programmatic focus always does, and a key press on a
+pointer-focused control restores it, matching the web's `:focus-visible`
+semantics; text-entry controls keep their native focused rendering, which is
+focus-visible whenever focused. Runtime unit tests cover both origins and the
+key-press restore, a compile fixture covers the ring lowering, a diagnostic
+fixture rejects the variant off buttons, and the showcase `focus_visible`
+first-class test proves click-no-ring/Tab-ring at the painted-quad level.
+Button-target
 text size, line-height, family, and weight utilities lower onto the generated
 text for compact string labels; arbitrary child content retains explicit
 ownership of its own typography. Every recipe

@@ -113,8 +113,15 @@ Semantic read order and keyboard focus order follow source/view-tree order.
 Tab and Shift+Tab traverse enabled interactive controls; disabled controls
 expose disabled state but no focus/click action and are skipped. Enter and Space
 activate a focused button, while Space activates a focused checkbox or toggler.
-Wrapper-focused controls draw a two-pixel outline; inputs, editors, sliders,
-pick lists, and combo boxes retain their native focused rendering. There is no
+Wrapper-focused controls draw a two-pixel outline only while their focus is
+visible, matching the web's `:focus-visible` semantics: keyboard traversal,
+accessibility focus, and programmatic focus operations show the outline, a
+pointer press acquires focus without it, and a key press on a pointer-focused
+control restores it. Inputs, editors, sliders, pick lists, and combo boxes
+retain their native focused rendering, which follows the web's text-entry
+heuristic instead: a control that accepts text is focus-visible whenever it is
+focused, so their `focused` status already carries `:focus-visible` meaning.
+The `focus-visible:border-*` button utility restyles the outline. There is no
 numeric focus-order syntax.
 
 Tree construction, focus updates, duplicate-ID disambiguation, and action
@@ -5834,6 +5841,7 @@ The accepted utility surface is:
 | radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full`, or exact `rounded-Npx` | layout wrappers, input, and button |
 | states | `hover:bg-*`, `pressed:bg-*`, `disabled:bg-*`, `disabled:text-*`, `disabled:opacity-*` | button; `disabled:text-*` also text inside button content |
 | focus | `focus:border-*` | input |
+| focus-visible | `focus-visible:border-*` | button |
 
 A button hands its status to child content through its text ink. Its
 status-resolved text color (utilities, status blocks, and the disabled pass
@@ -5864,6 +5872,15 @@ through 100.
 provided by `border-w=` or a supported wrapper/status `border` utility. A
 rounded row, column, grid, or stack requires a background or border, because
 iced would otherwise have nothing to round.
+
+`focus-visible:border-TOKEN` styles the keyboard focus ring drawn over a
+button, not the button's own border, so it requires no border width: the ring
+keeps its two-pixel stroke and takes the token's color and the button's
+`rounded-*` radius. The ring's visibility is not the recipe's to decide — it
+follows the focus origin exactly as the default outline does (keyboard,
+accessibility, and programmatic focus wear it; a pointer press does not), so
+moving a recipe's ring onto `focus-visible:` never removes keyboard users'
+focus affordance.
 
 The checker rejects both an unknown utility (`E041`) and a known utility on a
 node where the iced backend would ignore it (`E042`/`E044`). Silent CSS-like

@@ -20257,7 +20257,7 @@ view
     fn normalizes_recipe_inheritance_precedence_and_every_utility_variant() {
         let source = r#"app Styles
 recipe action for button
-  px-16px py-11px bg-surface/75 hover:bg-primary pressed:bg-danger disabled:bg-border disabled:text-fg disabled:opacity-25 border border-border rounded-9px text-12.5px leading-snug font-semibold
+  px-16px py-11px bg-surface/75 hover:bg-primary pressed:bg-danger disabled:bg-border disabled:text-fg disabled:opacity-25 border border-border rounded-9px text-12.5px leading-snug font-semibold focus-visible:border-danger
 recipe emphasized for button extends action
   bg-primary hover:bg-danger
 recipe destructive for button extends emphasized
@@ -20317,6 +20317,13 @@ view
             })
         ));
         assert_eq!(destructive.style.disabled_opacity, Some(0.25));
+        assert!(matches!(
+            destructive.style.focus_visible_border_color,
+            Some(ResolvedThemeColor {
+                base: ResolvedThemeColorBase::Token(ThemeTokenId { index: 3, .. }),
+                opacity: None,
+            })
+        ));
         assert_eq!(destructive.style.padding, [11, 16, 11, 16]);
         assert_eq!(destructive.style.radius, 9);
         assert_eq!(destructive.style.text_size, Some(12.5));

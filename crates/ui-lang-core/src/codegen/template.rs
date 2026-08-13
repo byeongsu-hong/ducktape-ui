@@ -921,6 +921,7 @@ fn style_is_only_text_color(style: &ResolvedStyle) -> bool {
         && style.disabled_text_color.is_none()
         && style.border_color.is_none()
         && style.focus_border_color.is_none()
+        && style.focus_visible_border_color.is_none()
         && style.border_width == 0
         && style.radius == 0
         && style.disabled_opacity.is_none()

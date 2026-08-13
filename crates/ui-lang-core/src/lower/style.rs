@@ -67,6 +67,7 @@ pub(crate) enum ResolvedStyleVariantKind {
     Pressed,
     Focused,
     Disabled,
+    FocusVisible,
 }
 
 impl ResolvedStyleVariantKind {
@@ -175,6 +176,7 @@ pub(crate) struct ResolvedStyle {
     pub(crate) disabled_text_color: Option<ResolvedThemeColor>,
     pub(crate) border_color: Option<ResolvedThemeColor>,
     pub(crate) focus_border_color: Option<ResolvedThemeColor>,
+    pub(crate) focus_visible_border_color: Option<ResolvedThemeColor>,
     pub(crate) border_width: u16,
     pub(crate) radius: u16,
     pub(crate) disabled_opacity: Option<f32>,
@@ -190,6 +192,7 @@ impl ResolvedStyle {
             2 => Variant::Pressed,
             3 => Variant::Focused,
             4 => Variant::Disabled,
+            5 => Variant::FocusVisible,
             _ => unreachable!("style variants are closed during lowering"),
         };
         match (variant, utility.property, &utility.value) {
@@ -245,6 +248,9 @@ impl ResolvedStyle {
             (Variant::Focused, Property::BorderColor, ResolvedUtilityValue::Color(value)) => {
                 self.focus_border_color = Some(value.clone())
             }
+            (Variant::FocusVisible, Property::BorderColor, ResolvedUtilityValue::Color(value)) => {
+                self.focus_visible_border_color = Some(value.clone())
+            }
             (Variant::Base, Property::BorderWidth, ResolvedUtilityValue::Pixels(value)) => {
                 self.border_width = *value
             }
@@ -294,6 +300,7 @@ impl ResolvedStyle {
         copy!(23, border_width);
         copy!(24, radius);
         copy!(25, disabled_opacity);
+        copy!(26, focus_visible_border_color);
         self.set_properties |= other.set_properties;
     }
 }
@@ -307,6 +314,7 @@ fn utility_property_mask(utility: &ResolvedUtility) -> u64 {
         2 => Variant::Pressed,
         3 => Variant::Focused,
         4 => Variant::Disabled,
+        5 => Variant::FocusVisible,
         _ => unreachable!("style variants are closed during lowering"),
     };
     let bit = match (variant, utility.property) {
@@ -332,6 +340,7 @@ fn utility_property_mask(utility: &ResolvedUtility) -> u64 {
         (Variant::Base, Property::BorderWidth) => 23,
         (Variant::Base, Property::Radius) => 24,
         (Variant::Disabled, Property::Opacity) => 25,
+        (Variant::FocusVisible, Property::BorderColor) => 26,
         (Variant::Base, Property::Padding) => {
             let ResolvedUtilityValue::Padding(values) = &utility.value else {
                 unreachable!("padding property has a padding value")
@@ -932,6 +941,7 @@ impl Lowerer {
             Some(("hover", utility)) => (ResolvedStyleVariantKind::Hovered, utility),
             Some(("pressed", utility)) => (ResolvedStyleVariantKind::Pressed, utility),
             Some(("focus", utility)) => (ResolvedStyleVariantKind::Focused, utility),
+            Some(("focus-visible", utility)) => (ResolvedStyleVariantKind::FocusVisible, utility),
             Some(("disabled", utility)) => (ResolvedStyleVariantKind::Disabled, utility),
             Some((variant, _)) => {
                 return Err(self.invariant(
