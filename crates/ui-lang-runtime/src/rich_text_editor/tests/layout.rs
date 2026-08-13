@@ -1,6 +1,85 @@
 use super::*;
 
 #[test]
+fn wrapped_rich_motion_keeps_visual_direction_and_boundaries() {
+    let lines = [
+        "one two three four five six".to_owned(),
+        "seven eight nine".to_owned(),
+    ];
+    let mut document = DocumentLayout::default();
+    document.update(
+        TestDoc::new(&lines).lines(),
+        &mut WholeLine::default(),
+        &|_| Format::default(),
+        test_layout_style(70.0),
+        DocumentUpdate::text(DocumentChange::Discover),
+        usize::MAX,
+    );
+
+    let position = Position {
+        line: 0,
+        column: lines[0].len() - 1,
+    };
+    let caret = document.caret(position);
+    let center_y = caret.y + caret.height / 2.0;
+    let viewport_height = caret.height * 2.0;
+    let seeded_x = caret.x + 1.0;
+    let expected = [
+        (
+            Motion::Up,
+            document.hit(Point::new(caret.x, center_y - caret.height)),
+            None,
+        ),
+        (
+            Motion::Down,
+            document.hit(Point::new(caret.x, center_y + caret.height)),
+            None,
+        ),
+        (Motion::Home, document.hit(Point::new(0.0, center_y)), None),
+        (Motion::End, document.hit(Point::new(70.0, center_y)), None),
+        (
+            Motion::PageUp,
+            document.hit(Point::new(caret.x, center_y - viewport_height)),
+            None,
+        ),
+        (
+            Motion::PageDown,
+            document.hit(Point::new(seeded_x, center_y + viewport_height)),
+            Some(seeded_x),
+        ),
+    ];
+    assert_eq!(expected[0].1.line, 0, "Up stays within the wrap");
+    assert_eq!(expected[1].1.line, 1, "Down crosses the source line");
+    assert_ne!(expected[0].1, expected[1].1, "vertical directions differ");
+    assert_ne!(expected[0].1, expected[4].1, "PageUp skips a run");
+    assert_ne!(expected[1].1, expected[5].1, "PageDown skips a run");
+    assert_ne!(expected[2].1, expected[3].1, "Home and End differ");
+
+    for (motion, expected, initial_x) in expected {
+        let hit_x = initial_x.unwrap_or(caret.x);
+        let mut preferred_x = initial_x;
+        let moved = movement::move_cursor(
+            &document,
+            &mut preferred_x,
+            viewport_height,
+            Cursor {
+                position,
+                selection: None,
+            },
+            motion,
+            false,
+        );
+        assert_eq!(moved.position, expected, "{motion:?}");
+        assert_eq!(moved.selection, None, "{motion:?}");
+        if matches!(motion, Motion::Home | Motion::End) {
+            assert_eq!(preferred_x, None, "{motion:?}");
+        } else {
+            assert_eq!(preferred_x, Some(hit_x), "{motion:?}");
+        }
+    }
+}
+
+#[test]
 fn overlapping_formats_keep_block_metrics_under_token_colors() {
     let block = Format {
         size: Some(Pixels(14.0)),

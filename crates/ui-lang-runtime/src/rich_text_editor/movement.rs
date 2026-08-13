@@ -1,7 +1,6 @@
 use super::document::{DocumentLayout, ordered_positions};
 use iced::Point;
 use iced::widget::text_editor::{Cursor, Motion, Position};
-use std::cmp::Ordering;
 
 pub(super) fn uses_rich_geometry(motion: Motion) -> bool {
     matches!(
@@ -53,6 +52,7 @@ fn rich_motion(
     position: Position,
     motion: Motion,
 ) -> Position {
+    #[derive(Clone, Copy)]
     struct VisualRun {
         line: usize,
         top: f32,
@@ -63,7 +63,17 @@ fn rich_motion(
 
     let caret = document.caret(position);
     let preferred_x_value = *preferred_x.get_or_insert(caret.x);
-    let runs = document
+    let caret_center = caret.y + caret.height / 2.0;
+    let distance = |run: &VisualRun| {
+        if caret_center < run.top {
+            run.top - caret_center
+        } else if caret_center > run.top + run.height {
+            caret_center - run.top - run.height
+        } else {
+            0.0
+        }
+    };
+    let (last, previous, current, next, page_up, page_down) = document
         .lines
         .iter()
         .enumerate()
@@ -82,57 +92,53 @@ fn rich_motion(
                         .map_or(line.signature.text.len(), |glyph| glyph.end),
                 })
         })
-        .collect::<Vec<_>>();
-    let caret_center = caret.y + caret.height / 2.0;
-    let current = runs
-        .iter()
-        .enumerate()
-        .min_by(|(_, left), (_, right)| {
-            let distance = |run: &VisualRun| {
-                if caret_center < run.top {
-                    run.top - caret_center
-                } else if caret_center > run.top + run.height {
-                    caret_center - run.top - run.height
-                } else {
-                    0.0
-                }
-            };
-            distance(left)
-                .partial_cmp(&distance(right))
-                .unwrap_or(Ordering::Equal)
-        })
-        .map_or(0, |(index, _)| index);
-
+        .fold(
+            (None, None, None, None, None, None),
+            |(last, previous, current, next, page_up, page_down), run| {
+                let (previous, current, next) =
+                    if current.is_none_or(|current| distance(&run) < distance(&current)) {
+                        (last, Some(run), None)
+                    } else {
+                        (previous, current, next.or(Some(run)))
+                    };
+                (
+                    Some(run),
+                    previous,
+                    current,
+                    next,
+                    if page_up.is_none() || run.top <= caret.y - viewport_height {
+                        Some(run)
+                    } else {
+                        page_up
+                    },
+                    page_down.or_else(|| (run.top >= caret.y + viewport_height).then_some(run)),
+                )
+            },
+        );
     let target = match motion {
-        Motion::Up => current.saturating_sub(1),
-        Motion::Down => (current + 1).min(runs.len().saturating_sub(1)),
-        Motion::PageUp => runs
-            .iter()
-            .rposition(|run| run.top <= caret.y - viewport_height)
-            .unwrap_or(0),
-        Motion::PageDown => runs
-            .iter()
-            .position(|run| run.top >= caret.y + viewport_height)
-            .unwrap_or_else(|| runs.len().saturating_sub(1)),
-        Motion::Home => {
-            *preferred_x = None;
-            return runs.get(current).map_or(position, |run| Position {
-                line: run.line,
-                column: run.start,
-            });
-        }
-        Motion::End => {
-            *preferred_x = None;
-            return runs.get(current).map_or(position, |run| Position {
-                line: run.line,
-                column: run.end,
-            });
-        }
+        Motion::Up => previous.or(current),
+        Motion::Down => next.or(current),
+        Motion::PageUp => page_up,
+        Motion::PageDown => page_down.or(last),
+        Motion::Home | Motion::End => current,
         _ => return position,
     };
 
-    let Some(run) = runs.get(target) else {
+    if matches!(motion, Motion::Home | Motion::End) {
+        *preferred_x = None;
+    }
+    let Some(run) = target else {
         return position;
     };
-    document.hit(Point::new(preferred_x_value, run.top + run.height / 2.0))
+    match motion {
+        Motion::Home => Position {
+            line: run.line,
+            column: run.start,
+        },
+        Motion::End => Position {
+            line: run.line,
+            column: run.end,
+        },
+        _ => document.hit(Point::new(preferred_x_value, run.top + run.height / 2.0)),
+    }
 }
