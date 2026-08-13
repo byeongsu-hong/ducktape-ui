@@ -58,6 +58,12 @@ on navigate_home
 on navigate_library
   navigation_route = "Library"
 
+on show_components
+  showcase_page = "components"
+
+on show_retained_data
+  showcase_page = "retained"
+
 on command_changed(event)
   task command_apply(command, event) -> command_applied _
 

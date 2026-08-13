@@ -86,6 +86,16 @@ const DEMO_STAGE_HEIGHT: f32 = 208.0;
 const SIDEBAR_STAGE_HEIGHT: f32 = 404.0;
 const DATA_TABLE_PAGE_SIZE: usize = 3;
 
+pub fn initial_showcase_page() -> String {
+    if std::env::var(ui_lang_runtime::dev::REQUIRED_DRAW_ENV)
+        .is_ok_and(|required| required.split(',').any(|name| name == "virtual-list"))
+    {
+        "retained".to_owned()
+    } else {
+        "components".to_owned()
+    }
+}
+
 pub use ui_lang_components::ui::{
     calendar::{CalendarEvent, CalendarState},
     chart::ChartHit,

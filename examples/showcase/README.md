@@ -9,11 +9,11 @@ cargo run -p showcase
 The catalog uses a paired grid at the default window size and stacks every
 section into one column at the 720-pixel minimum width.
 
-The 100,000-row `VirtualList`, `TreeView`, and 100,000-by-16 `DataGrid` are
-fixed, bounded regions above the independently scrolling catalog. This is the
-supported integration shape: each retained collection owns its scroll axes and
-must not be nested in another scrollable. At the 720-pixel minimum width, the
-three regions keep a readable minimum width inside a horizontal feature strip.
+The `Retained data` screen contains the 100,000-row `VirtualList`, `TreeView`,
+and 100,000-by-16 `DataGrid` without pinning them above the component catalog.
+Each retained collection still owns its scroll axes and is never nested in the
+catalog scrollable. At the 720-pixel minimum width, the three regions keep a
+readable minimum width inside a horizontal feature strip.
 The first-class `log_timeline_native_boundary` test exercises the separate
 100,000-row append-only `LogTimeline`: moving into history pauses tail follow,
 an append increments unread state, and an explicit resume returns to the live
@@ -22,7 +22,7 @@ catalog `MessageScroller`.
 
 ![Buttons, fields, and selection controls](screenshots/catalog-buttons.png)
 
-![Minimum-width retained collection strip](screenshots/catalog_retained_narrow.png)
+![Minimum-width retained data screen](screenshots/catalog_retained_narrow.png)
 
 ![Paired modal and data-table sections](screenshots/catalog-layout.png)
 
