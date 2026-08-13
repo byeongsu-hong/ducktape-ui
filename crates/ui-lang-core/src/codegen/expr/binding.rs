@@ -236,7 +236,7 @@ pub(in crate::codegen) fn component_scope_binding(component: &str, line: usize) 
 }
 
 pub(in crate::codegen) fn rust_identifier_hex(value: &str) -> String {
-    value.bytes().map(|byte| format!("{byte:02x}")).collect()
+    crate::codegen::encode_source_path(value)
 }
 
 fn canonical_component(value: &str) -> bool {
