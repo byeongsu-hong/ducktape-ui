@@ -960,6 +960,11 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
+        if tree.state.downcast_ref::<MountedRowsState>().keys == self.keys {
+            tree.diff_children(&self.children);
+            return;
+        }
+
         let state = tree.state.downcast_mut::<MountedRowsState>();
         let previous_children = std::mem::take(&mut tree.children);
         let mut retained = std::mem::take(&mut state.keys)
@@ -977,9 +982,7 @@ where
             })
             .collect();
         state.keys.clone_from(&self.keys);
-        for (tree, child) in tree.children.iter_mut().zip(&self.children) {
-            child.as_widget().diff(tree);
-        }
+        tree.diff_children(&self.children);
     }
 
     fn size(&self) -> Size<Length> {
@@ -2446,6 +2449,33 @@ mod tests {
             |_| (),
         );
         drop(element);
+    }
+
+    #[test]
+    fn unchanged_mounted_keys_still_reset_a_changed_widget_tag() {
+        let mounted = |child| MountedRows {
+            keys: vec![2],
+            children: vec![child],
+            touch_claim: Rc::new(Cell::new(TouchClaim::None)),
+            scroll_offset: Rc::new(Cell::new(0.0)),
+            realized_heights: Rc::new(RefCell::new(Vec::new())),
+            draw_probe: "mounted-rows-test",
+        };
+        let first_child: Element<'_, Message, Theme, iced_test::renderer::Renderer> =
+            iced::widget::text("row").into();
+        let first = mounted(first_child);
+        let mut tree =
+            WidgetTree::new(&first as &dyn Widget<Message, Theme, iced_test::renderer::Renderer>);
+        let previous_tag = tree.children[0].tag;
+
+        let changed_child: Element<'_, Message, Theme, iced_test::renderer::Renderer> =
+            iced::widget::button("row").into();
+        let changed_tag = changed_child.as_widget().tag();
+        let changed = mounted(changed_child);
+        tree.diff(&changed as &dyn Widget<Message, Theme, iced_test::renderer::Renderer>);
+
+        assert_ne!(previous_tag, changed_tag);
+        assert_eq!(tree.children[0].tag, changed_tag);
     }
 
     #[test]
