@@ -71,6 +71,29 @@ fn rejects_rust_and_compiler_reserved_identifiers() {
 }
 
 #[test]
+fn component_names_enforce_namespace_and_case_boundaries() {
+    for name in [
+        "Card",
+        "Card.Header",
+        "catalog::Card",
+        "Catalog::Card",
+        "catalog::controls::Card.Header",
+    ] {
+        assert!(SymbolKind::Component.accepts(name), "{name}");
+    }
+    for name in [
+        "::Card",
+        "catalog::",
+        "catalog::::Card",
+        "catalog::card",
+        "Catalog::card",
+        "catalog::Card.header",
+    ] {
+        assert!(!SymbolKind::Component.accepts(name), "{name}");
+    }
+}
+
+#[test]
 fn shadowed_image_constructors_require_explicit_state_types() {
     for (kind, signature, call) in [
         ("pure", "encoded(value:bytes) -> str", "encoded(bytes(00))"),
