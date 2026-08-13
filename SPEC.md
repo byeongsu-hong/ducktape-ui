@@ -2408,10 +2408,13 @@ offset, clipped to its owned viewport, plus descendant capture before and after
 dispatch, independently of the current mouse cursor. Trees for
 keys in consecutive mounted-window intersections
 remain retained. The focused AccessKit list exposes its selected mounted item as
-the active descendant. `VirtualList.Frame`
-is an Ice composition around an app-owned extern component; there is deliberately
-no `virtual-for` syntax, variable-height measurement, or nested vertical-scroll
-contract in v1. Accessibility v1
+the active descendant. Rust callers may opt into estimated variable-height rows
+with `VirtualListConfig::measured` and report mounted heights through
+`VirtualListEvent::RowsMeasured`; range queries remain bounded by the current
+item count.
+`VirtualList.Frame` is an Ice composition around an app-owned extern component;
+there is deliberately no `virtual-for` syntax, variable-height measurement, or
+nested vertical-scroll contract in the Ice v1 boundary. Accessibility v1
 focuses and navigates the collection but does not create offscreen item nodes or
 per-item accessibility actions.
 

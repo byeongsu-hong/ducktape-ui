@@ -290,3 +290,35 @@ fn performance_contract_100k_update_snapshot_scrolled_reducer() {
         "100k update_snapshot/Scrolled reducer: p50={p50}us p95={p95}us allocations(p95)={p95_allocations} bytes(p95)={p95_bytes}"
     );
 }
+
+#[test]
+#[ignore = "measured-list allocation contract run explicitly in CI"]
+fn performance_contract_measured_shrink_geometry_allocations() {
+    const SAMPLES: usize = 256;
+
+    let config = VirtualListConfig::measured(20.0).unwrap();
+    let items: Vec<u64> = (0..128).collect();
+    let mut state = VirtualListState::new(VirtualListId::new("measured-shrink-contract"));
+    state.reconcile(&items, |key| *key, config).unwrap();
+    state.apply(
+        VirtualListEvent::RowsMeasured {
+            heights: items.iter().map(|key| (*key, 21.0)).collect(),
+        },
+        &items,
+        |key| *key,
+        config,
+    );
+
+    let region = Region::new(GLOBAL);
+    for _ in 0..SAMPLES {
+        std::hint::black_box(state.inspect(64, config));
+    }
+    let stats = region.change();
+
+    eprintln!(
+        "256 measured shrink queries: allocations={} bytes={}",
+        stats.allocations, stats.bytes_allocated
+    );
+    assert_eq!(stats.allocations, 0);
+    assert_eq!(stats.bytes_allocated, 0);
+}

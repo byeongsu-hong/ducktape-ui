@@ -85,19 +85,6 @@ impl MeasuredHeights {
             .binary_search_by_key(&index, |entry| entry.index)
             .map_or(0.0, |position| self.entries[position].delta)
     }
-
-    /// Drops corrections at or beyond `item_count`.
-    fn truncated(&self, item_count: usize) -> Self {
-        let keep = self
-            .entries
-            .partition_point(|entry| entry.index < item_count);
-        if keep == self.entries.len() {
-            return self.clone();
-        }
-        Self {
-            entries: Arc::new(self.entries[..keep].to_vec()),
-        }
-    }
 }
 
 /// Row geometry for one query: the caller's estimate and item count combined
@@ -121,7 +108,7 @@ impl Rows {
             estimate,
             overscan,
             item_count,
-            measured: measured.truncated(item_count),
+            measured: measured.clone(),
         }
     }
 
@@ -518,7 +505,7 @@ mod tests {
         assert!(scroll.reveal(3, &rows));
         assert_eq!(scroll.offset(), 70.0);
 
-        // Truncation drops corrections beyond the item count.
+        // Queries ignore corrections beyond the item count.
         let shrunk = Rows::new(20.0, 0, 5, &measured);
         assert_eq!(shrunk.total_height(), 130.0);
     }
