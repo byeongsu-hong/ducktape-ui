@@ -41,6 +41,23 @@ pub fn chart_indicator_action(indicator: ChartIndicator, active: bool) -> String
     format!("{action} {name}")
 }
 
+pub fn chart_indicator_picker_label(indicators: Vec<ChartIndicator>) -> String {
+    format!("Choose chart indicators, {} selected", indicators.len())
+}
+
+pub fn focus_chart_indicators(window: Option<iced::window::Id>) -> iced::Task<()> {
+    let Some(window) = window else {
+        return iced::Task::none();
+    };
+    // Mounted daemon views qualify every logical widget ID by window. Ice app
+    // handlers cannot name that scope directly, so restore this one launcher
+    // through the same rendered path the accessibility test observes.
+    let target = iced::widget::Id::from(format!(
+        "Trading/{window:?}/app/terminal-fit/trade/chart-bar/indicators"
+    ));
+    iced::widget::operation::focus(target)
+}
+
 pub fn toggle_chart_indicator(
     mut indicators: Vec<ChartIndicator>,
     target: ChartIndicator,

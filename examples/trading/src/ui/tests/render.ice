@@ -57,6 +57,12 @@ test trading_the_crosshair_reads_out_the_candle_under_it
   target lowest = readout/cell-low/root
   target closed = readout/cell-close
   target traded = readout/cell-volume/root
+  target compact = bar/compact-readout
+  target compact_closed = compact/compact-close
+  target compact_traded = compact/compact-volume
+  target indicators = bar/indicators
+  target rail_toggle = bar/toggle-markets/root/toggle-off
+  target fills_toggle = bar/toggle-fills/root/toggle-off
   expect text "O" within opened
   expect text fmt_px(hit_open(demo_hover())) within opened
   expect text "H" within highest
@@ -67,6 +73,31 @@ test trading_the_crosshair_reads_out_the_candle_under_it
   expect text fmt_px(hit_close(demo_hover())) within closed
   expect text "VOL" within traded
   expect text fmt_volume(hit_volume(demo_hover())) within traded
+  expect missing compact
+  resize 1180 720
+  expect missing readout
+  expect text "C" within compact
+  expect text fmt_px(hit_close(demo_hover())) within compact_closed
+  expect text "V" within compact
+  expect text fmt_volume(hit_volume(demo_hover())) within compact_traded
+  // The live readout must not squeeze the three controls at the same minimum
+  // width where they are needed. Bounds alone are vacuous when Iced clamps a
+  // child, so each control also keeps a useful painted width and its action.
+  expect indicators.width > 70.0
+  expect a11y indicators name "Choose chart indicators, 2 selected"
+  expect rail_toggle.width > 40.0
+  expect a11y rail_toggle name "Show the markets pane"
+  expect fills_toggle.width > 30.0
+  expect a11y fills_toggle name "Show the fills pane"
+  resize 1280 720
+  expect missing readout
+  expect exists compact
+  expect text "C" within compact
+  expect text fmt_px(hit_close(demo_hover())) within compact_closed
+  expect text "V" within compact
+  expect text fmt_volume(hit_volume(demo_hover())) within compact_traded
+  expect indicators.width > 70.0
+  expect fills_toggle.width > 30.0
   expect no text "market not loaded"
   capture hovering
 

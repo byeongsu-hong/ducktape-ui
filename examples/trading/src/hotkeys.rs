@@ -54,7 +54,7 @@ pub fn hotkey_list() -> Vec<Hotkey> {
         hotkey("1 2 3 4", "Size to 25%, 50%, 75%, all"),
         hotkey("↑ ↓", "Move the limit price one tick"),
         hotkey("Enter", "Review the order — in a ticket field"),
-        hotkey("Esc", "Close the network picker, then the search"),
+        hotkey("Esc", "Close an open picker, then the search"),
     ]
 }
 

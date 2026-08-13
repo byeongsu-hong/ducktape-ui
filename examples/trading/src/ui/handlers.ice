@@ -120,6 +120,8 @@ on ticket_key(event)
 // panel opens over a backdrop that takes every click outside it, so the way
 // back out is that backdrop, Escape, or picking a row.
 on open_venues
+  indicators_open = false
+  indicator_window = none
   venues_open = true
 
 on close_venues
@@ -464,6 +466,30 @@ on pick_interval(next)
 on toggle_chart_indicator(next)
   chart_indicators = toggle_chart_indicator(chart_indicators, next)
 
+// Study choices take effect on the chart as they are pressed. Opening and
+// closing therefore owns only the modal surface; neither path rewrites the
+// selected list, the tape, or the chart's viewport.
+on open_indicators(at_window)
+  venues_open = false
+  indicators_open = true
+  indicator_window = some(at_window)
+  task widget focus-next
+
+on close_indicators
+  let restore = indicator_window
+  indicators_open = false
+  indicator_window = none
+  task focus_chart_indicators(restore) -> indicator_focus_restored
+
+on indicators_key(event)
+  return if event.key != key.named("Escape")
+  let restore = indicator_window
+  indicators_open = false
+  indicator_window = none
+  task focus_chart_indicators(restore) -> indicator_focus_restored
+
+on indicator_focus_restored
+
 on search(typed)
   query = typed
 
@@ -670,14 +696,17 @@ on ticket_review
 // confirmation the reader declined is not a draft to offer again — the ticket
 // still holds every field they typed.
 //
-// It clears both because there is one modal surface and one way off it: the
-// backdrop hands every click outside the panel here, whichever of the two is
-// standing on it. Only one ever is — each is opened from a control the other
-// one covers.
-on confirm_dismissed
+// It clears every reversible panel on the shared modal surface. Only one can
+// be standing — each is opened from a control the others cover. The optional
+// window is present only for the chart picker, whose launcher regains focus.
+on modal_dismissed
   return if sending
+  let restore = indicator_window
+  indicators_open = false
+  indicator_window = none
   confirm = none
   sweep = none
+  task focus_chart_indicators(restore) -> indicator_focus_restored
 
 // The one press in this app that spends money.
 on confirm_sent
@@ -884,7 +913,10 @@ subscribe
   // the terminal. App-scoped, it cleared a filter the reader could not see from
   // anywhere else, so the list came back narrowed to a word nothing on screen
   // showed.
-  keyboard press when page == Page.terminal && !gate && !venues_open && !empty(query) -> search_key _
+  keyboard press when page == Page.terminal && !gate && !venues_open && !indicators_open && !empty(query) -> search_key _
+  // Study selection is reversible and immediate, so Escape closes the picker
+  // without rolling its choices back.
+  keyboard press when indicators_open -> indicators_key _
   // Escape shuts the picker, and it shuts it before it clears the search box:
   // one press is one act, and the act a reader means is the panel covering
   // the screen rather than a word in a rail behind it.
@@ -898,7 +930,7 @@ subscribe
   // subscription reads state rather than derived values. They are the safety
   // rule as a condition: with the gate or either confirmation standing, the
   // whole scheme is off, so no key can reach past a panel to the send.
-  keyboard press status=ignored when page == Page.terminal && !gate && !order_pending(confirm) && !sweep_pending(sweep) && !venues_open -> ticket_key _
+  keyboard press status=ignored when page == Page.terminal && !gate && !order_pending(confirm) && !sweep_pending(sweep) && !venues_open && !indicators_open -> ticket_key _
   every 60s when !gate -> tick_universe
   every 5s when !gate && !empty(address) -> tick_account
   every 60s when !gate && !empty(address) -> tick_portfolio

@@ -146,5 +146,7 @@ extern crate::hyperliquid
   pure chart_indicator_active(indicators:[ChartIndicator], target:ChartIndicator) -> bool
   pure chart_indicator_name(indicator:ChartIndicator) -> str
   pure chart_indicator_action(indicator:ChartIndicator, active:bool) -> str
+  pure chart_indicator_picker_label(indicators:[ChartIndicator]) -> str
+  task focus_chart_indicators(window:window-id?) -> unit
   pure toggle_chart_indicator(indicators:[ChartIndicator], target:ChartIndicator) -> [ChartIndicator]
   component chart(venue:Venue, tape:&Tape, fills:&[Fill], positions:&[Position], orders:&[Order], coin:&str, indicators:&[ChartIndicator]) -> ChartSignal
