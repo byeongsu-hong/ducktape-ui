@@ -438,12 +438,13 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TooltipWidget<'_,
                 close_delay: self.close_delay,
             }))
         });
-        let overlays = trigger_overlay
-            .into_iter()
-            .chain(tooltip_overlay)
-            .collect::<Vec<_>>();
-
-        (!overlays.is_empty()).then(|| overlay::Group::with_children(overlays).overlay())
+        match (trigger_overlay, tooltip_overlay) {
+            (None, None) => None,
+            (Some(overlay), None) | (None, Some(overlay)) => Some(overlay),
+            (Some(trigger), Some(tooltip)) => {
+                Some(overlay::Group::with_children(vec![trigger, tooltip]).overlay())
+            }
+        }
     }
 }
 
