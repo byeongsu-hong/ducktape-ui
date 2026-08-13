@@ -820,25 +820,17 @@ pub fn sidebar_menu_button_content<'a, Message>(
 where
     Message: 'a,
 {
-    let mut items = Vec::new();
-    if let Some(leading) = leading {
-        items.push(leading);
-    }
-    if !collapsed {
-        items.push(
-            container(
-                text(label)
-                    .size(theme.typography.caption)
-                    .line_height(LineHeight::Absolute(Pixels(16.0))),
-            )
-            .width(Length::Fill)
-            .into(),
-        );
-        if let Some(trailing) = trailing {
-            items.push(trailing);
-        }
-    }
-    directed_row(items, direction)
+    let label = (!collapsed).then(|| {
+        container(
+            text(label)
+                .size(theme.typography.caption)
+                .line_height(LineHeight::Absolute(Pixels(16.0))),
+        )
+        .width(Length::Fill)
+        .into()
+    });
+    let trailing = trailing.filter(|_| !collapsed);
+    directed_row([leading, label, trailing].into_iter().flatten(), direction)
         .spacing(SIDEBAR_METRICS.section_padding)
         .align_y(Alignment::Center)
         .width(if collapsed {
