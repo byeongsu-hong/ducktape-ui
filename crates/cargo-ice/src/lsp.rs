@@ -4988,7 +4988,7 @@ mod tests {
         let metrics = db.take_metrics();
         assert_eq!(metrics.roots_checked, 1);
         assert_eq!(metrics.roots_reused, 0);
-        assert_eq!(metrics.files_loaded, 3);
+        assert_eq!(metrics.files_loaded, 2);
         assert!(metrics.bytes_loaded < unrelated_payload.len());
         assert_eq!(reports.len(), 2);
     }

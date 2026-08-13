@@ -1217,19 +1217,6 @@ impl AnalysisDb {
     }
 
     fn load_graph(&mut self, root: &Path, source_load: SourceLoad) -> Result<LoadedGraph, Error> {
-        let root_source_load = match source_load {
-            SourceLoad::RetainedRoot => SourceLoad::Retained,
-            source_load => source_load,
-        };
-        let (_, parsed) = self.parsed_file(root, root_source_load)?;
-        if !source_is_app(&parsed.source) {
-            return Err(file_error(
-                "E183",
-                root,
-                1,
-                "a root must declare `app Name` or `daemon Name`; import this fragment from an app or daemon instead",
-            ));
-        }
         let mut loader = GraphLoader {
             graph: LoadedGraph {
                 loaded: LoadedSource {
@@ -1271,8 +1258,9 @@ impl AnalysisDb {
         if !loader.included.insert((path.to_owned(), namespace.clone())) {
             return Ok(());
         }
+        let is_root = loader.stack.is_empty();
         let source_load = match loader.source_load {
-            SourceLoad::RetainedRoot if loader.stack.is_empty() => SourceLoad::Retained,
+            SourceLoad::RetainedRoot if is_root => SourceLoad::Retained,
             SourceLoad::RetainedRoot => SourceLoad::Disk,
             source_load => source_load,
         };
@@ -1281,6 +1269,14 @@ impl AnalysisDb {
             loader.graph.loaded.dependencies.push(path.to_owned());
         }
         let (key, parsed) = self.parsed_file(path, source_load)?;
+        if is_root && !source_is_app(&parsed.source) {
+            return Err(file_error(
+                "E183",
+                path,
+                1,
+                "a root must declare `app Name` or `daemon Name`; import this fragment from an app or daemon instead",
+            ));
+        }
         loader.graph.fingerprint.0.push((key, namespace.clone()));
         let mut direct = BTreeSet::new();
         let mut resolved_imports = Vec::new();
@@ -1873,6 +1869,23 @@ mod tests {
             key.compiler_features().iter().collect::<Vec<_>>(),
             ["native-dialog"]
         );
+    }
+
+    #[test]
+    fn cold_root_is_loaded_and_hashed_once() {
+        let fixture = Fixture::new();
+        let source = inline_app("Demo", "one");
+        fixture.write("app.ice", &source);
+        let mut db = AnalysisDb::default();
+
+        db.analyze_root(fixture.path("app.ice")).unwrap();
+        let metrics = db.take_metrics();
+
+        assert_eq!(metrics.files_loaded, 1, "{metrics:?}");
+        assert_eq!(metrics.bytes_loaded, source.len(), "{metrics:?}");
+        assert_eq!(metrics.files_hashed, 1, "{metrics:?}");
+        assert_eq!(metrics.bytes_hashed, source.len(), "{metrics:?}");
+        assert_eq!(metrics.files_scanned, 1, "{metrics:?}");
     }
 
     #[test]
