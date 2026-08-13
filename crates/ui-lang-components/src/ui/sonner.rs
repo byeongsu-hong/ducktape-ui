@@ -766,19 +766,19 @@ where
     let mut stack = iced::widget::Column::new()
         .spacing(if state.is_expanded() { 8 } else { 4 })
         .width(TOAST_WIDTH);
-    let mut visible = state.visible().collect::<Vec<_>>();
-    if state.placement.is_top() {
-        visible.reverse();
-    }
-
-    for entry in visible {
-        stack = stack.push(render_entry(
+    let render = |stack: Column<'a, Message>, entry: &'a ToastEntry| {
+        stack.push(render_entry(
             entry,
             on_event.clone(),
             content.clone(),
             theme,
-        ));
-    }
+        ))
+    };
+    stack = if state.placement.is_top() {
+        state.visible().rev().fold(stack, render)
+    } else {
+        state.visible().fold(stack, render)
+    };
 
     let focus_reporter = FocusReporter {
         content: stack.into(),
@@ -1153,6 +1153,7 @@ fn semantic_tint(theme: &Theme, tone: Color) -> (Color, Color, Color) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     use super::super::theme::{DARK, LIGHT};
@@ -1411,18 +1412,28 @@ mod tests {
 
     #[test]
     fn top_and_bottom_placements_use_expected_render_order() {
+        fn rendered_ids(state: &SonnerState) -> Vec<ToastId> {
+            let rendered = Rc::new(RefCell::new(Vec::new()));
+            let capture = Rc::clone(&rendered);
+            let _view = sonner_with_content(
+                state,
+                |_| (),
+                move |entry, _controls, _theme| {
+                    capture.borrow_mut().push(entry.id());
+                    Element::from(text(""))
+                },
+                &LIGHT,
+            );
+            rendered.borrow().clone()
+        }
+
         let mut top = SonnerState::new(3, ToastPlacement::TopLeft);
         let first = top.show("First", Duration::ZERO);
         let second = top.show("Second", Duration::ZERO);
-        let mut rendered = top.visible().map(ToastEntry::id).collect::<Vec<_>>();
-        if top.placement().is_top() {
-            rendered.reverse();
-        }
-        assert_eq!(rendered, [second, first]);
+        assert_eq!(rendered_ids(&top), [second, first]);
 
         top.set_placement(ToastPlacement::BottomLeft);
-        let rendered = top.visible().map(ToastEntry::id).collect::<Vec<_>>();
-        assert_eq!(rendered, [first, second]);
+        assert_eq!(rendered_ids(&top), [first, second]);
         assert_eq!(top.placement().horizontal(), Horizontal::Left);
         assert_eq!(top.placement().vertical(), Vertical::Bottom);
     }
