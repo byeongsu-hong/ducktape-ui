@@ -308,11 +308,13 @@ pub(super) struct GutterDrag {
 pub(super) const DRAG_THRESHOLD: f32 = 4.0;
 
 /// The drop boundary nearest `y`, from `(boundary, absolute y)` candidates.
-pub(super) fn snap_boundary(candidates: &[(usize, f32)], y: f32) -> Option<usize> {
+pub(super) fn snap_boundary(
+    candidates: impl Iterator<Item = (usize, f32)>,
+    y: f32,
+) -> Option<usize> {
     candidates
-        .iter()
         .min_by(|left, right| (left.1 - y).abs().total_cmp(&(right.1 - y).abs()))
-        .map(|(boundary, _)| *boundary)
+        .map(|(boundary, _)| boundary)
 }
 
 /// The accent line marking where a dragged block would land.
@@ -508,10 +510,10 @@ mod tests {
     #[test]
     fn the_drop_snaps_to_the_nearest_boundary() {
         let candidates = [(1, 100.0), (4, 160.0), (7, 240.0)];
-        assert_eq!(snap_boundary(&candidates, 96.0), Some(1));
-        assert_eq!(snap_boundary(&candidates, 131.0), Some(4));
-        assert_eq!(snap_boundary(&candidates, 500.0), Some(7));
-        assert_eq!(snap_boundary(&[], 100.0), None);
+        assert_eq!(snap_boundary(candidates.into_iter(), 96.0), Some(1));
+        assert_eq!(snap_boundary(candidates.into_iter(), 131.0), Some(4));
+        assert_eq!(snap_boundary(candidates.into_iter(), 500.0), Some(7));
+        assert_eq!(snap_boundary(std::iter::empty(), 100.0), None);
     }
 
     #[test]

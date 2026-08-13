@@ -108,6 +108,95 @@ fn performance_contract_rich_motion_allocations() {
     );
 }
 
+#[test]
+fn gutter_drag_moves_do_not_allocate_boundary_buffers() {
+    const MOVES: usize = 1_000;
+    const LINES: usize = 64;
+
+    let source = (0..LINES)
+        .map(|line| format!("line {line}\n"))
+        .collect::<String>();
+    let content = Content::with_text(&source);
+    let renderer = headless_renderer();
+    let viewport = Rectangle::with_size(Size::new(400.0, 300.0));
+    let limits = layout::Limits::new(Size::ZERO, viewport.size());
+    let mut editor = RichTextEditor::new(&content, ContentVersion::new(93, 0))
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(300.0))
+        .padding(60.0)
+        .on_action(|_| usize::MAX)
+        .on_gutter(|_, _| Some(usize::MAX - 1))
+        .on_gutter_drop((0..=LINES).collect(), |_, boundary| Some(boundary));
+    let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+    let node = editor.layout(&mut tree, &renderer, &limits);
+    let mut clipboard = clipboard::Null;
+    let mut messages = Vec::with_capacity(1);
+
+    macro_rules! update {
+        ($event:expr, $cursor:expr) => {{
+            let mut shell = Shell::new(&mut messages);
+            editor.update(
+                &mut tree,
+                &$event,
+                Layout::new(&node),
+                mouse::Cursor::Available($cursor),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+            shell.event_status()
+        }};
+    }
+
+    let hover = Point::new(80.0, 70.0);
+    let _ = update!(
+        Event::Mouse(mouse::Event::CursorMoved { position: hover }),
+        hover
+    );
+    let handle = Point::new(45.0, 70.0);
+    assert_eq!(
+        update!(
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            handle
+        ),
+        iced::event::Status::Captured
+    );
+    let warm = Point::new(45.0, 90.0);
+    assert_eq!(
+        update!(
+            Event::Mouse(mouse::Event::CursorMoved { position: warm }),
+            warm
+        ),
+        iced::event::Status::Captured
+    );
+
+    let profiler = dhat::Profiler::builder().testing().build();
+    let before = dhat::HeapStats::get();
+    for index in 0..MOVES {
+        let point = Point::new(45.0, if index % 2 == 0 { 90.0 } else { 110.0 });
+        assert_eq!(
+            update!(
+                Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                point
+            ),
+            iced::event::Status::Captured
+        );
+    }
+    let after = dhat::HeapStats::get();
+    drop(profiler);
+
+    let allocated = (
+        after.total_blocks - before.total_blocks,
+        after.total_bytes - before.total_bytes,
+    );
+    eprintln!(
+        "{MOVES} gutter drag moves across {LINES} lines: {} allocations, {} bytes",
+        allocated.0, allocated.1
+    );
+    assert_eq!(allocated, (0, 0));
+}
+
 #[derive(Default)]
 struct WholeLine {
     current_line: usize,
