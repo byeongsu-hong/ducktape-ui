@@ -1,14 +1,14 @@
 view
   col w=fill h=fill
-    // One modal surface, and two things that can stand on it: the gate is the
-    // app's front door, the confirmation is the last thing between a reader and
-    // an order. Neither may be reachable past the other, which is what one
-    // backdrop guarantees and two stacked ones would not. The network picker
-    // nests *inside* this one's content, so a confirmation stands over it too.
+    // One modal surface for every panel that must take the screen: study
+    // selection, custody, and the confirmations before an order. None may be
+    // reachable past another, which is what one backdrop guarantees and a
+    // stack of separate ones would not. The network picker nests *inside* this
+    // one's content, so a modal stands over it too.
     overlay
       with
         when=modal
-        dismiss=confirm_dismissed
+        dismiss=modal_dismissed
         backdrop=black/80
         p=24.0
         align-x=center
@@ -494,23 +494,66 @@ view
                                   events
                                     pick -> pick_interval _
                               rule vertical thickness=1.0 color=edge
-                              match hover
-                                some(hit)
-                                  row #readout gap=10.0 align=center
-                                    Stat name="O" value=fmt_px(hit.open) #cell-open
-                                    Stat name="H" value=fmt_px(hit.high) #cell-high
-                                    Stat name="L" value=fmt_px(hit.low) #cell-low
-                                    row #cell-close gap=6.0 align=center
+                              if term_w >= 1580.0
+                                match hover
+                                  some(hit)
+                                    row #readout gap=10.0 align=center
+                                      Stat name="O" value=fmt_px(hit.open) #cell-open
+                                      Stat name="H" value=fmt_px(hit.high) #cell-high
+                                      Stat name="L" value=fmt_px(hit.low) #cell-low
+                                      row #cell-close gap=6.0 align=center
+                                        Label value="C"
+                                        text fmt_px(hit.close)
+                                          with
+                                            size=11.0
+                                            font=digits
+                                            @text-fg
+                                      Stat name="VOL" value=fmt_volume(hit.volume) #cell-volume
+                                  none
+                                    space
+                              if term_w < 1580.0
+                                match hover
+                                  some(hit)
+                                    row #compact-readout gap=3.0 align=center
                                       Label value="C"
-                                      text fmt_px(hit.close)
+                                      text fmt_px(hit.close) #compact-close
                                         with
                                           size=11.0
                                           font=digits
-                                          @text-fg
-                                    Stat name="VOL" value=fmt_volume(hit.volume) #cell-volume
-                                none
-                                  space
+                                          @text-muted
+                                      Label value="V"
+                                      text fmt_volume(hit.volume) #compact-volume
+                                        with
+                                          size=11.0
+                                          font=digits
+                                          @text-muted
+                                  none
+                                    space
                               space w=fill
+                              button #indicators -> open_indicators window
+                                with
+                                  label=chart_indicator_picker_label(chart_indicators)
+                                  expanded=indicators_open
+                                  p=5.0
+                                active bg=panel text=muted r=4.0
+                                hovered bg=raised text=fg r=4.0
+                                row gap=6.0 align=center
+                                  text "INDICATORS"
+                                    with
+                                      size=9.0
+                                      tracking=0.7
+                                      @text-muted
+                                  box
+                                    with
+                                      px=5.0
+                                      py=1.0
+                                      r=3.0
+                                      bg=raised
+                                    text fmt_count(len(chart_indicators))
+                                      with
+                                        size=9.0
+                                        font=digits
+                                        @text-fg
                               // The folded panes' toggles, on the terminal's own
                               // toolbar rather than beside the page tabs above —
                               // a control that sat up there would read as a
@@ -525,54 +568,6 @@ view
                                 PaneToggle name="FILLS" open=fills_open #toggle-fills
                                   events
                                     pick -> toggle_fills
-                          rule horizontal thickness=1.0 color=edge
-                          // Five independent price-space studies. This is its
-                          // own short row because the interval tabs, OHLCV
-                          // readout and folded-pane switches already fill the
-                          // bar above at the window's minimum width.
-                          box #indicator-bar
-                            with
-                              w=fill
-                              h=30.0
-                              bg=panel
-                            row
-                              with
-                                w=fill
-                                h=fill
-                                px=14.0
-                                gap=4.0
-                                align=center
-                              Label value="INDICATORS"
-                              ChartIndicatorToggle #indicator-sma-20
-                                with
-                                  target=ChartIndicator.sma_20
-                                  on=chart_indicator_active(chart_indicators, ChartIndicator.sma_20)
-                                events
-                                  pick -> toggle_chart_indicator _
-                              ChartIndicatorToggle #indicator-sma-60
-                                with
-                                  target=ChartIndicator.sma_60
-                                  on=chart_indicator_active(chart_indicators, ChartIndicator.sma_60)
-                                events
-                                  pick -> toggle_chart_indicator _
-                              ChartIndicatorToggle #indicator-ema-20
-                                with
-                                  target=ChartIndicator.ema_20
-                                  on=chart_indicator_active(chart_indicators, ChartIndicator.ema_20)
-                                events
-                                  pick -> toggle_chart_indicator _
-                              ChartIndicatorToggle #indicator-bollinger-20
-                                with
-                                  target=ChartIndicator.bollinger_20
-                                  on=chart_indicator_active(chart_indicators, ChartIndicator.bollinger_20)
-                                events
-                                  pick -> toggle_chart_indicator _
-                              ChartIndicatorToggle #indicator-vwma-20
-                                with
-                                  target=ChartIndicator.vwma_20
-                                  on=chart_indicator_active(chart_indicators, ChartIndicator.vwma_20)
-                                events
-                                  pick -> toggle_chart_indicator _
                           rule horizontal thickness=1.0 color=edge
                           box #chart-frame
                             with
@@ -2860,6 +2855,60 @@ view
                     @text-muted
       layer
         col
+          if indicators_open
+            box #indicator-panel
+              with
+                w=340.0
+                p=16.0
+                r=8.0
+                border-w=1.0
+                bg=panel
+                border=edge
+              col gap=12.0 w=fill
+                row
+                  with
+                    w=fill
+                    gap=6.0
+                    align=center
+                  Label value="INDICATORS"
+                  Label value=fmt_count(len(chart_indicators))
+                  space w=fill
+                  button #indicator-close label="Close chart indicators" p=6.0 -> close_indicators
+                    active bg=panel text=muted r=4.0
+                    hovered bg=raised text=fg r=4.0
+                    text "DONE" size=9.0 tracking=0.7
+                rule horizontal thickness=1.0 color=edge
+                col #indicator-picker gap=4.0 w=fill
+                  ChartIndicatorToggle #indicator-sma-20
+                    with
+                      target=ChartIndicator.sma_20
+                      on=chart_indicator_active(chart_indicators, ChartIndicator.sma_20)
+                    events
+                      pick -> toggle_chart_indicator _
+                  ChartIndicatorToggle #indicator-sma-60
+                    with
+                      target=ChartIndicator.sma_60
+                      on=chart_indicator_active(chart_indicators, ChartIndicator.sma_60)
+                    events
+                      pick -> toggle_chart_indicator _
+                  ChartIndicatorToggle #indicator-ema-20
+                    with
+                      target=ChartIndicator.ema_20
+                      on=chart_indicator_active(chart_indicators, ChartIndicator.ema_20)
+                    events
+                      pick -> toggle_chart_indicator _
+                  ChartIndicatorToggle #indicator-bollinger-20
+                    with
+                      target=ChartIndicator.bollinger_20
+                      on=chart_indicator_active(chart_indicators, ChartIndicator.bollinger_20)
+                    events
+                      pick -> toggle_chart_indicator _
+                  ChartIndicatorToggle #indicator-vwma-20
+                    with
+                      target=ChartIndicator.vwma_20
+                      on=chart_indicator_active(chart_indicators, ChartIndicator.vwma_20)
+                    events
+                      pick -> toggle_chart_indicator _
           // The import step, over everything including the gate: typing a
           // recovery phrase is the one act on this screen with nothing else
           // safely happening behind it.
@@ -3253,7 +3302,7 @@ view
                     gap=8.0
                     w=fill
                     align=center
-                  button #confirm-back -> confirm_dismissed
+                  button #confirm-back -> modal_dismissed
                     with
                       label="Go back without sending"
                       p=11.0
@@ -3357,7 +3406,7 @@ view
                     gap=8.0
                     w=fill
                     align=center
-                  button #sweep-back -> confirm_dismissed
+                  button #sweep-back -> modal_dismissed
                     with
                       label="Go back without sending"
                       p=11.0

@@ -63,7 +63,7 @@ test trading_the_narrow_terminal_folds_two_panes_within_reach
   target open_positions = lower/positions
   target printed = lower/fills
   target chart = terminal/chart-frame
-  target vwma = terminal/indicator-bar/indicator-vwma-20/root/toggle-off
+  target indicators = terminal/chart-bar/indicators
   target rail_toggle = terminal/chart-bar/toggle-markets/root/toggle-off
   target fills_toggle = terminal/chart-bar/toggle-fills/root/toggle-off
   // Chart, order book, ticket, positions and open orders: the five that may
@@ -73,11 +73,10 @@ test trading_the_narrow_terminal_folds_two_panes_within_reach
   expect text "OPEN ORDERS"
   expect text "IF YOU CROSS"
   expect text "POSITIONS" within open_positions
-  // The rightmost study control is the narrow row's canary: if it keeps its
-  // full painted width, the four before it do too. A clipped button still
-  // exists, but the layout engine collapses its painted width.
-  expect a11y vwma name "Show the VWMA 20 indicator"
-  expect vwma.width ~= 82.0
+  // Study controls moved behind one compact launcher, so the chart keeps the
+  // vertical space and the bar keeps fitting at the minimum width.
+  expect a11y indicators name "Choose chart indicators, 2 selected"
+  expect indicators.right <= terminal.right
   // The two that folded, and the buttons that say so, named by what pressing
   // them does rather than by the state they are in.
   expect missing rail

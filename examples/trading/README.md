@@ -206,11 +206,11 @@ its pane back onto this same screen next to everything already on it. The rail
 is a picker, so a pick folds it again and hands the 232 pixels back to the
 table it borrowed them from.
 
-The row directly under that bar is the chart legend and its controls. SMA 20
-and SMA 60 start on; EMA 20, Bollinger Bands 20/2σ and VWMA 20 can be layered
-onto them independently. These are price-space studies derived from the tape's
-OHLCV, so selecting one neither reloads the tape nor changes the interval,
-viewport or history position.
+The chart bar has one `INDICATORS` button with the number currently selected.
+It opens the modal study picker: SMA 20 and SMA 60 start on; EMA 20, Bollinger
+Bands 20/2σ and VWMA 20 can be layered onto them independently. These are
+price-space studies derived from the tape's OHLCV, so selecting one neither
+reloads the tape nor changes the interval, viewport or history position.
 
 ## Design
 

@@ -25,7 +25,8 @@ use ui_lang_runtime::{Role, StableId, accessible};
 
 use crate::indicators::{ChartIndicators, chart_indicator_summary};
 pub use crate::indicators::{
-    chart_indicator_action, chart_indicator_active, chart_indicator_name, toggle_chart_indicator,
+    chart_indicator_action, chart_indicator_active, chart_indicator_name,
+    chart_indicator_picker_label, focus_chart_indicators, toggle_chart_indicator,
 };
 use crate::signing::{self, Action, Chain, Wallet};
 use crate::venue::venue_name;

@@ -251,9 +251,9 @@ component IntervalTab(name:str, current:str)
             font=digits
             @text-muted
 
-// One study in the chart's legend and the switch that controls it. The small
-// stroke is the exact colour used on the plot, so five simultaneous lines do
-// not leave the reader guessing which abbreviation belongs to which one.
+// One study in the chart picker. The small stroke is the exact colour used on
+// the plot, so five simultaneous lines do not leave the reader guessing which
+// abbreviation belongs to which one while making a choice.
 component ChartIndicatorInk(target:ChartIndicator)
   col #root
     match target
@@ -296,13 +296,13 @@ component ChartIndicatorInk(target:ChartIndicator)
 component ChartIndicatorToggle(target:ChartIndicator, on:bool)
   emits
     pick(ChartIndicator)
-  col #root
+  col #root w=fill
     if on
       button #toggle-on -> emit(pick, target)
         with
           label=chart_indicator_action(target, true)
           checked=true
-          w=82.0
+          w=fill
           p=5.0
         active bg=raised text=fg r=3.0
         hovered bg=raised text=fg r=3.0
@@ -318,7 +318,7 @@ component ChartIndicatorToggle(target:ChartIndicator, on:bool)
         with
           label=chart_indicator_action(target, false)
           checked=false
-          w=82.0
+          w=fill
           p=5.0
         active bg=panel text=muted r=3.0
         hovered bg=raised text=fg r=3.0

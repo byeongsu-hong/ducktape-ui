@@ -77,6 +77,10 @@ state
   // and nothing else: which network is being read is `venue`, and this only
   // says whether the list of the others is on screen.
   venues_open = false
+  // The chart keeps its selected studies when this closes. This flag owns only
+  // the modal picker, just as `venues_open` owns only the network picker.
+  indicators_open = false
+  indicator_window:window-id? = none
   address = ""
   draft = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
   coin = "BTC"
@@ -332,17 +336,17 @@ derived
   // in it is a second, wrong reason.
   cancel_all_refusal = sweep_refused(cancel_refusal, len(orders), true)
   flatten_all_refusal = sweep_refused(cancel_refusal, len(positions), false)
-  // Whether anything is standing on the app's one modal surface. Four things
-  // can: the gate before an address is connected, the confirmation before an
-  // order goes, the same confirmation over a whole panel's worth, and the
-  // import step. None may be reachable past another, which is what one backdrop
-  // guarantees and four stacked ones would not.
+  // Whether anything is standing on the app's one modal surface. Five things
+  // can: the chart's study picker, the gate before an address is connected,
+  // the confirmation before an order goes, the same confirmation over a whole
+  // panel's worth, and the import step. None may be reachable past another,
+  // which is what one backdrop guarantees and five stacked ones would not.
   // Whether the backup check still has an empty box in it. Derived rather than
   // spelled at the button, because a `with` property will not take a `||` — the
   // checker refuses it and the formatter rewrites the line into something that
   // no longer parses, which is worse than the refusal.
   backup_incomplete = empty(backup_one) || empty(backup_two) || empty(backup_three)
-  modal = gate || order_pending(confirm) || sweep_pending(sweep) || import_open
+  modal = indicators_open || gate || order_pending(confirm) || sweep_pending(sweep) || import_open
 
 // The custody panel in each state it can be drawn in. `clock` is the same
 // reading the view asks `session_can_trade` with, so a fixture is live or
