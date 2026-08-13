@@ -312,6 +312,13 @@ fn activate_at(
     items: &[NavigationMenuItemInfo],
     index: usize,
 ) -> NavigationMenuEvent {
+    if items
+        .get(index)
+        .is_some_and(NavigationMenuItemInfo::enabled)
+    {
+        return activate_item(state, items, index);
+    }
+
     let mut state = state.clone();
     state.focused = Some(index);
     reduce_navigation_menu(&state, items, NavigationMenuCommand::Activate)
@@ -1497,6 +1504,39 @@ mod tests {
         assert_eq!(open.state().open, Some(2));
         let close = reduce_navigation_menu(open.state(), &items(), NavigationMenuCommand::Activate);
         assert_eq!(close.state().open, None);
+    }
+
+    fn reduced_activation_at(
+        state: &NavigationMenuState,
+        items: &[NavigationMenuItemInfo],
+        index: usize,
+    ) -> NavigationMenuEvent {
+        let mut state = state.clone();
+        state.focused = Some(index);
+        reduce_navigation_menu(&state, items, NavigationMenuCommand::Activate)
+    }
+
+    #[test]
+    fn activate_at_matches_the_reducer_for_fast_and_fallback_paths() {
+        let items = items();
+        // Enabled link, enabled disclosure, disabled item, and out of range.
+        for (state, index) in [
+            (NavigationMenuState::default().active("other"), 0),
+            (
+                NavigationMenuState {
+                    open: Some(2),
+                    ..NavigationMenuState::default()
+                },
+                2,
+            ),
+            (NavigationMenuState::default(), 1),
+            (NavigationMenuState::default(), items.len()),
+        ] {
+            assert_eq!(
+                activate_at(&state, &items, index),
+                reduced_activation_at(&state, &items, index)
+            );
+        }
     }
 
     #[test]
