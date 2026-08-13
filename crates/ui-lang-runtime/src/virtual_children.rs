@@ -415,6 +415,10 @@ where
             }
             return;
         }
+        if tree.state.downcast_ref::<State>().keys == self.keys {
+            tree.diff_children(&self.children);
+            return;
+        }
 
         let Tree {
             state, children, ..
@@ -422,13 +426,12 @@ where
         let state = state.downcast_mut::<State>();
         let previous = std::mem::take(&mut state.keys);
 
-        // Verbatim `iced::widget::keyed::Column::diff`: child widget state
-        // moves to wherever its key went, so a prepend does not shift every
-        // row's memo, cursor, and hover onto its neighbour.
+        // Child widget state moves to wherever its key went, so a prepend does
+        // not shift every row's memo, cursor, and hover onto its neighbour.
         tree::diff_children_custom_with_search(
             children,
             &self.children,
-            |tree, child| child.as_widget().diff(tree),
+            |tree, child| tree.diff(child.as_widget()),
             |index| {
                 self.keys.get(index).or_else(|| self.keys.last()).copied()
                     != previous.get(index).copied()
@@ -1057,6 +1060,71 @@ mod tests {
             tree.state.downcast_ref::<State>().live.focused,
             Some(2),
             "so the row still measured off-window is the one actually focused"
+        );
+    }
+
+    #[test]
+    fn unchanged_keys_still_reconcile_child_tags_and_keep_row_state() {
+        type Row = Element<'static, (), iced::Theme, iced_test::renderer::Renderer>;
+
+        let renderer = headless_renderer();
+        let initial: Vec<(u64, Row)> = (1..=3)
+            .map(|key| {
+                (
+                    key,
+                    Element::new(FocusableRow {
+                        height: key as f32 * 10.0,
+                    }),
+                )
+            })
+            .collect();
+        let mut widget = virtual_keyed_children(initial, 10.0);
+        let mut tree =
+            Tree::new(&widget as &dyn Widget<(), iced::Theme, iced_test::renderer::Renderer>);
+        let _ = widget.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(240.0, 1_000.0)),
+        );
+        tree.children[2].state.downcast_mut::<FocusState>().focused = true;
+        tree.state.downcast_mut::<State>().live.focused = Some(2);
+        let measured = tree.state.downcast_ref::<State>().measured.clone();
+
+        let replacement_layouts = Rc::new(Cell::new(0));
+        let changed: Vec<(u64, Row)> = vec![
+            (1, Element::new(FocusableRow { height: 10.0 })),
+            (
+                2,
+                Element::new(Counted {
+                    layouts: replacement_layouts,
+                    height: 200.0,
+                }),
+            ),
+            (3, Element::new(FocusableRow { height: 30.0 })),
+        ];
+        let changed = virtual_keyed_children(changed, 12.0).spacing(3.0);
+        changed.diff(&mut tree);
+
+        assert_eq!(
+            tree.children[1].tag,
+            tree::Tag::stateless(),
+            "an unchanged row key must not suppress a changed widget tag"
+        );
+        assert!(
+            matches!(tree.children[1].state, tree::State::None),
+            "the replacement widget must receive its own fresh state"
+        );
+        let state = tree.state.downcast_ref::<State>();
+        assert_eq!(
+            state.measured, measured,
+            "measurements stay with unchanged keys"
+        );
+        assert_eq!(state.live.focused, Some(2), "focus stays on the same key");
+        assert_eq!(state.estimated_height, 12.0);
+        assert_eq!(state.spacing, 3.0);
+        assert!(
+            tree.children[2].state.downcast_ref::<FocusState>().focused,
+            "the unchanged focused child keeps its widget state"
         );
     }
 
