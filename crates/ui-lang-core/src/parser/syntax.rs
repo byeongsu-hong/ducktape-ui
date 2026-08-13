@@ -160,17 +160,16 @@ pub(crate) fn split_words(source: &str) -> Vec<String> {
     let mut depth = 0;
     let mut string = false;
     let mut escaped = false;
-    let chars: Vec<(usize, char)> = source.char_indices().collect();
-    for (byte, ch) in &chars {
-        advance_string(*ch, &mut string, &mut escaped);
-        match *ch {
+    for (byte, ch) in source.char_indices() {
+        advance_string(ch, &mut string, &mut escaped);
+        match ch {
             '(' | '[' if !string => depth += 1,
             ')' | ']' if !string => depth -= 1,
             ch if ch.is_whitespace() && !string && depth == 0 => {
-                if start < *byte {
-                    output.push(source[start..*byte].into());
+                if start < byte {
+                    output.push(source[start..byte].into());
                 }
-                start = *byte + ch.len_utf8();
+                start = byte + ch.len_utf8();
             }
             _ => {}
         }

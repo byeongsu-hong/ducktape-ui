@@ -6,7 +6,7 @@ fn syntax_boundaries_ignore_escaped_quotes() {
     let quoted = r#""a\" b,=->)""#;
 
     assert_eq!(
-        split_words(&format!("{quoted} tail")),
+        split_words(&format!("{quoted}\u{2003}tail")),
         [quoted.to_owned(), "tail".to_owned()]
     );
 
