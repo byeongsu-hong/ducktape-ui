@@ -478,6 +478,41 @@ fn build_fingerprint_changes_with_path_content_and_file_state() {
         source_stamp_fingerprint(&missing),
         source_stamp_fingerprint(&unreadable)
     );
+
+    let mixed = vec![
+        (PathBuf::from("a"), FileStamp::Missing),
+        (PathBuf::from("bb"), FileStamp::Unreadable),
+        (
+            PathBuf::from("ccc"),
+            FileStamp::Content(0x0123_4567_89ab_cdef),
+        ),
+    ];
+    assert_eq!(source_stamp_fingerprint(&mixed), "d0de8a01928192ea");
+}
+
+#[test]
+#[ignore = "allocation contract; run alone with --test-threads=1"]
+fn performance_contract_source_stamp_fingerprint_streams_inputs() {
+    let stamp = (0..10_000)
+        .map(|index| {
+            (
+                PathBuf::from(format!("src/generated/input-{index:05}.rs")),
+                FileStamp::Content(index),
+            )
+        })
+        .collect();
+
+    let _profiler = dhat::Profiler::builder().testing().build();
+    let fingerprint = source_stamp_fingerprint(&stamp);
+    std::hint::black_box(&fingerprint);
+    let stats = dhat::HeapStats::get();
+
+    assert!(stats.total_blocks <= 2, "{stats:?}");
+    assert!(stats.total_bytes <= 64, "{stats:?}");
+    eprintln!(
+        "10k source-stamp fingerprint: {} heap blocks / {} bytes",
+        stats.total_blocks, stats.total_bytes
+    );
 }
 
 #[cfg(unix)]
