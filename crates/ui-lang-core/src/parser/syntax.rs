@@ -49,28 +49,26 @@ pub(in crate::parser) fn line_tree(
             "the first declaration must not be indented",
         ));
     }
-    let mut index = 0;
-    parse_block(&flat, &mut index, 0)
+    parse_block(&mut flat.into_iter().peekable(), 0)
 }
 
 pub(in crate::parser) fn parse_block(
-    flat: &[Line],
-    index: &mut usize,
+    flat: &mut std::iter::Peekable<std::vec::IntoIter<Line>>,
     indent: usize,
 ) -> Result<Vec<Line>, Error> {
     let mut output = Vec::new();
-    while *index < flat.len() {
-        if flat[*index].indent < indent {
+    while let Some(next) = flat.peek() {
+        if next.indent < indent {
             break;
         }
-        if flat[*index].indent > indent {
-            return Err(error("E009", &flat[*index], "unexpected indentation"));
+        if next.indent > indent {
+            return Err(error("E009", next, "unexpected indentation"));
         }
-        let mut line = flat[*index].clone();
-        *index += 1;
-        if *index < flat.len() && flat[*index].indent > indent {
-            let child_indent = flat[*index].indent;
-            line.children = parse_block(flat, index, child_indent)?;
+        let mut line = flat.next().expect("peeked line exists");
+        if let Some(child_indent) = flat.peek().map(|next| next.indent)
+            && child_indent > indent
+        {
+            line.children = parse_block(flat, child_indent)?;
         }
         output.push(line);
     }
