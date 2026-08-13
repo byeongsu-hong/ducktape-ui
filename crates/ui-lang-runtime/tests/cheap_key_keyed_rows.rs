@@ -79,6 +79,7 @@ fn view(messages: &[Row]) -> Element<'_, (), Theme, iced_test::renderer::Rendere
                 column![text(row.author).width(120.0), text(row.body).size(14)].into()
             },
             17u64,
+            key,
         )
         .into();
         children.push((key, child));

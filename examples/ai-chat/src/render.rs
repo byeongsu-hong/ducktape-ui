@@ -370,6 +370,7 @@ mod tests {
             dependency,
             |value: &u16| Element::from(iced::widget::text(value.to_string())),
             u64::MAX - 1,
+            dependency,
         )
     }
 
@@ -388,6 +389,7 @@ mod tests {
                 Element::new(body)
             },
             u64::MAX,
+            0_u16,
         );
         let tree = Tree::new(&row as &dyn Widget<String, iced::Theme, iced::Renderer>);
         let parsed = observed

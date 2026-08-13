@@ -23,12 +23,13 @@
 //! survive unmounting, the child's widget [`Tree`] lives inside this widget's
 //! state rather than in `Tree::children`, and dropping that state parks the
 //! whole subtree — element, memoized layout, widget state — in a
-//! thread-local lot keyed by `(codegen site, dependency hash)`. A remount
-//! with the same key reclaims it wholesale: no `view` call, no layout, no
-//! re-shaping. A row whose content changed while unmounted simply misses and
-//! cold-builds; a 64-bit hash collision is the same accepted risk as `Lazy`'s
-//! rebuild skip, scoped per site so distinct `lazy` expressions never share
-//! entries.
+//! thread-local lot keyed by `(codegen site, reconciliation scope, dependency
+//! hash)`. The lot keeps only the latest dependency revision at each concrete
+//! site/scope. A remount with that key reclaims it wholesale: no `view` call,
+//! no layout, no re-shaping. A row whose content changed while unmounted
+//! simply misses and cold-builds; a 64-bit hash collision is the same accepted
+//! risk as `Lazy`'s rebuild skip, scoped per mounted expression so distinct
+//! rows never share entries.
 //!
 //! Soundness rides on the contract `Lazy` already imposes: the content is a
 //! pure function of the dependency, so anything that changes what the subtree
@@ -64,12 +65,27 @@ struct Parked<Message: 'static, Theme: 'static, Renderer: 'static> {
     tree: Tree,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct MemoSite {
+    expression: u64,
+    scope: u64,
+}
+
+impl MemoSite {
+    fn new(expression: u64, scope: &impl Hash) -> Self {
+        let mut hasher = FxHasher::default();
+        scope.hash(&mut hasher);
+        Self {
+            expression,
+            scope: hasher.finish(),
+        }
+    }
+}
+
 struct Parking {
-    entries: FxHashMap<(u64, u64), Box<dyn Any>>,
-    /// Park order, oldest first, so eviction is a `pop_front` rather than a
-    /// scan of the whole lot. A key reclaimed before it was ever evicted stays
-    /// behind here as a stale entry; [`park`] drops those off the front.
-    order: std::collections::VecDeque<(u64, u64)>,
+    entries: FxHashMap<MemoSite, (u64, Box<dyn Any>)>,
+    /// Park order, oldest first, kept in exact parity with `entries`.
+    order: std::collections::VecDeque<MemoSite>,
 }
 
 const PARKING_CAP: usize = 1024;
@@ -84,46 +100,48 @@ thread_local! {
 /// `try_with` because thread teardown drops parked subtrees whose nested lazy
 /// state parks again; both here and in [`park`] any dropping of foreign
 /// subtrees happens OUTSIDE the borrow, since those drops re-enter the lot.
-fn reclaim(site: u64, hash: u64) -> Option<Box<dyn Any>> {
-    PARKING
-        .try_with(|parking| parking.borrow_mut().entries.remove(&(site, hash)))
-        .ok()
-        .flatten()
+fn reclaim(site: MemoSite, hash: u64) -> Option<Box<dyn Any>> {
+    let taken = PARKING
+        .try_with(|parking| {
+            let mut parking = parking.borrow_mut();
+            let Parking { entries, order } = &mut *parking;
+            let parked = entries.remove(&site);
+            if let Some(position) = order.iter().position(|parked_site| *parked_site == site) {
+                let _ = order.remove(position);
+            }
+            match parked {
+                Some((parked_hash, subtree)) if parked_hash == hash => (Some(subtree), None),
+                Some((_, subtree)) => (None, Some(subtree)),
+                None => (None, None),
+            }
+        })
+        .ok();
+    let (matched, stale) = taken?;
+    drop(stale);
+    matched
 }
 
-fn park(site: u64, hash: u64, subtree: Box<dyn Any>) {
+fn park(site: MemoSite, hash: u64, subtree: Box<dyn Any>) {
     let displaced = PARKING
         .try_with(|parking| {
             let mut parking = parking.borrow_mut();
             let Parking { entries, order } = &mut *parking;
-            let key = (site, hash);
-            // Keys reclaimed since the last park are still queued; drop them
-            // before reading the front, so the oldest LIVE entry is what an
-            // eviction takes and the queue does not grow with the churn.
-            // ponytail: draining only from the front means one long-parked key
-            // can hold stale ones behind it, so `order` can outgrow `entries`
-            // by 16 bytes a reclaim; a `retain` past 2 * PARKING_CAP is the
-            // cure if that ever shows up anywhere.
-            while order
-                .front()
-                .is_some_and(|front| !entries.contains_key(front))
-            {
-                let _ = order.pop_front();
+            let stale = entries.remove(&site).map(|(_, subtree)| subtree);
+            if let Some(position) = order.iter().position(|parked_site| *parked_site == site) {
+                let _ = order.remove(position);
             }
-            let evicted = if entries.len() >= PARKING_CAP && !entries.contains_key(&key) {
-                order.pop_front().and_then(|oldest| entries.remove(&oldest))
+            let evicted = if entries.len() >= PARKING_CAP {
+                order
+                    .pop_front()
+                    .and_then(|oldest| entries.remove(&oldest))
+                    .map(|(_, subtree)| subtree)
             } else {
                 None
             };
-            // Two live subtrees can share a key — a list whose rows are not
-            // distinct parks them all under one hash — and the loser of that
-            // race is dropped here. Carried out with the evicted one rather
-            // than dropped in place, because either drop re-enters the lot.
-            let replaced = entries.insert(key, subtree);
-            if replaced.is_none() {
-                order.push_back(key);
-            }
-            (evicted, replaced)
+            let replaced = entries.insert(site, (hash, subtree));
+            debug_assert!(replaced.is_none());
+            order.push_back(site);
+            (stale, evicted, replaced)
         })
         .ok();
     drop(displaced);
@@ -141,21 +159,22 @@ pub fn parked_subtrees() -> usize {
 /// necessary, and whose subtree survives unmounting via the parking lot.
 pub struct MemoLazy<'a, Message, Theme, Renderer, Dependency, View> {
     dependency: Dependency,
-    site: u64,
+    site: MemoSite,
     view: Box<dyn Fn(&Dependency) -> View + 'a>,
     element: RefCell<Option<Rc<RefCell<Option<Element<'static, Message, Theme, Renderer>>>>>>,
 }
 
 /// Creates a [`MemoLazy`] widget with the given dependency and view builder.
 ///
-/// `site` identifies the `lazy` expression that produced this widget (the
-/// codegen emits its view-node id); parked subtrees are keyed by it so two
-/// sites whose dependencies happen to hash alike can never reclaim each
-/// other's state.
+/// `site` identifies the `lazy` expression that produced this widget and
+/// `scope` identifies its concrete reconciled mount. Parked subtrees use both,
+/// so separate rows stay independent while stale revisions of one row replace
+/// each other.
 pub fn memo_lazy<'a, Message, Theme, Renderer, Dependency, View>(
     dependency: Dependency,
     view: impl Fn(&Dependency) -> View + 'a,
     site: u64,
+    scope: impl Hash,
 ) -> MemoLazy<'a, Message, Theme, Renderer, Dependency, View>
 where
     Dependency: Hash + 'a,
@@ -163,7 +182,7 @@ where
 {
     MemoLazy {
         dependency,
-        site,
+        site: MemoSite::new(site, &scope),
         view: Box::new(view),
         element: RefCell::new(None),
     }
@@ -204,7 +223,7 @@ where
 struct Internal<Message: 'static, Theme: 'static, Renderer: 'static> {
     element: Rc<RefCell<Option<Element<'static, Message, Theme, Renderer>>>>,
     hash: u64,
-    site: u64,
+    site: MemoSite,
     /// The memoized layout for the current `hash`: the `Limits` the node was
     /// computed under and the node itself. `None` after a rebuild.
     layout: Option<(layout::Limits, layout::Node)>,
@@ -655,10 +674,20 @@ mod tests {
             dependency,
             |value: &i32| Element::from(iced::widget::text(value.to_string())),
             site,
+            dependency,
         )
     }
 
     fn counting_widget(dependency: i32, site: u64, builds: Rc<Cell<u32>>) -> TestLazy<'static> {
+        counting_widget_in(dependency, site, dependency, builds)
+    }
+
+    fn counting_widget_in(
+        dependency: i32,
+        site: u64,
+        scope: i32,
+        builds: Rc<Cell<u32>>,
+    ) -> TestLazy<'static> {
         memo_lazy(
             dependency,
             move |value: &i32| {
@@ -666,6 +695,7 @@ mod tests {
                 Element::from(iced::widget::text(value.to_string()))
             },
             site,
+            scope,
         )
     }
 
@@ -734,7 +764,7 @@ mod tests {
     fn a_changed_dependency_remount_cold_builds() {
         let builds = Rc::new(Cell::new(0));
 
-        let first = counting_widget(7, 810, builds.clone());
+        let first = counting_widget_in(7, 810, 0, builds.clone());
         let mut tree = Tree::new(&first as &dyn Widget<(), iced::Theme, iced::Renderer>);
         internal(&mut tree).layout = Some((
             layout::Limits::NONE,
@@ -742,7 +772,7 @@ mod tests {
         ));
         drop(tree);
 
-        let second = counting_widget(8, 810, builds.clone());
+        let second = counting_widget_in(8, 810, 0, builds.clone());
         let mut tree = Tree::new(&second as &dyn Widget<(), iced::Theme, iced::Renderer>);
         assert_eq!(
             builds.get(),
@@ -764,10 +794,12 @@ mod tests {
                     *value,
                     |value: &i32| Element::from(iced::widget::text(value.to_string())),
                     901,
+                    *value,
                 );
                 Element::from(inner)
             },
             900,
+            1,
         );
         drop(Tree::new(
             &outer as &dyn Widget<(), iced::Theme, iced::Renderer>,
@@ -796,10 +828,12 @@ mod tests {
                         *value,
                         |value: &i32| Element::from(iced::widget::text(value.to_string())),
                         911,
+                        *value,
                     );
                     Element::from(inner)
                 },
                 910,
+                1,
             )
         };
 
@@ -810,6 +844,30 @@ mod tests {
         let second = Tree::new(&second as &dyn Widget<(), iced::Theme, iced::Renderer>);
         drop(first);
         drop(second);
+    }
+
+    #[test]
+    fn parking_a_new_revision_replaces_the_old_revision_at_the_same_site() {
+        let site = MemoSite::new(990, &"timeline");
+        park(site, 1, Box::new(1_u8));
+        park(site, 2, Box::new(2_u8));
+
+        assert!(reclaim(site, 2).is_some());
+        assert!(
+            reclaim(site, 1).is_none(),
+            "a concrete memo site must not retain stale dependency revisions"
+        );
+    }
+
+    #[test]
+    fn parking_keeps_different_scopes_of_one_expression_distinct() {
+        let first_row = MemoSite::new(991, &"row/1");
+        let second_row = MemoSite::new(991, &"row/2");
+        park(first_row, 1, Box::new(1_u8));
+        park(second_row, 2, Box::new(2_u8));
+
+        assert!(reclaim(first_row, 1).is_some());
+        assert!(reclaim(second_row, 2).is_some());
     }
 
     /// Past the cap the lot drops the park that has been waiting longest, so
@@ -862,9 +920,7 @@ mod tests {
         );
     }
 
-    /// The lot holds one entry per distinct `(site, dependency)` that has
-    /// unmounted — so a list of rows that are not distinct parks a fraction of
-    /// itself, and the rest is thrown away.
+    /// The lot holds one entry per concrete `(site, scope)` that has unmounted.
     #[test]
     fn a_list_of_repeated_rows_parks_one_entry_per_distinct_row() {
         let before = parked_subtrees();
@@ -879,7 +935,7 @@ mod tests {
         assert_eq!(
             parked_subtrees() - before,
             3,
-            "twenty rows over three distinct values park three subtrees, not twenty"
+            "twenty rows over three distinct scopes park three subtrees, not twenty"
         );
     }
 
@@ -954,6 +1010,7 @@ mod tests {
                 ]))
             },
             940,
+            "draw-probe",
         );
 
         let mut renderer = iced_test::futures::futures::executor::block_on(
