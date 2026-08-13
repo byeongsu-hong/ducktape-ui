@@ -287,13 +287,11 @@ where
     }
 
     let list: Element<'a, Message> = match orientation {
-        TabsOrientation::Horizontal => trigger_elements
-            .into_iter()
-            .fold(Row::new().spacing(theme.spacing.xs), Row::push)
+        TabsOrientation::Horizontal => Row::from_vec(trigger_elements)
+            .spacing(theme.spacing.xs)
             .into(),
-        TabsOrientation::Vertical => trigger_elements
-            .into_iter()
-            .fold(Column::new().spacing(theme.spacing.xs), Column::push)
+        TabsOrientation::Vertical => Column::from_vec(trigger_elements)
+            .spacing(theme.spacing.xs)
             .width(Length::Fill)
             .into(),
     };
