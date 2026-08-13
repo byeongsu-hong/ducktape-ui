@@ -766,7 +766,8 @@ where
     let range = window.mounted.clone();
     let top = window.top_spacer;
     let bottom = window.bottom_spacer;
-    let mut children = Vec::with_capacity(range.len());
+    let mut mounted_keys = Vec::with_capacity(range.len());
+    let mut mounted_children = Vec::with_capacity(range.len());
     let mut mounted = Vec::with_capacity(range.len());
     let mut mounted_semantic_ids = Vec::with_capacity(range.len());
     for index in range.clone() {
@@ -798,7 +799,8 @@ where
             accessible_row = accessible_row.expanded(expanded);
         }
         let row: Element<'a, Message, Theme, Renderer> = accessible_row.into();
-        children.push((semantic_key, row));
+        mounted_keys.push(semantic_key);
+        mounted_children.push(row);
         mounted.push((index, item_key.clone()));
         mounted_semantic_ids.push(semantic_key);
     }
@@ -810,7 +812,6 @@ where
     let native_scroll_offset = Rc::new(Cell::new(scroll_offset));
     let scrolled_offset = Rc::clone(&native_scroll_offset);
     let realized_heights = Rc::new(RefCell::new(Vec::new()));
-    let (mounted_keys, mounted_children) = children.into_iter().unzip();
     let mounted_rows: Element<'a, Message, Theme, Renderer> = Element::new(MountedRows {
         keys: mounted_keys,
         children: mounted_children,
