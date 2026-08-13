@@ -1,0 +1,61 @@
+#![cfg(feature = "radio-group")]
+
+use std::alloc::System;
+use std::hint::black_box;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use iced::Element;
+use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use ui_lang_components::ui::radio_group::{radio_group, radio_option};
+use ui_lang_components::ui::theme::LIGHT;
+
+#[global_allocator]
+static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+
+static VALUE_CLONES: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug, PartialEq, Eq)]
+struct Value(usize);
+
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        VALUE_CLONES.fetch_add(1, Ordering::Relaxed);
+        Self(self.0)
+    }
+}
+
+fn group(option_count: usize) -> Element<'static, Value> {
+    radio_group(
+        "allocation-contract",
+        (0..option_count).map(|index| radio_option(Value(index), "Option", &LIGHT)),
+        None,
+        |value| value,
+        &LIGHT,
+    )
+    .into()
+}
+
+#[test]
+fn radio_group_build_shares_keyboard_snapshots() {
+    const OPTIONS: usize = 8;
+    const ALLOCATION_BUDGET: usize = 119;
+
+    drop(black_box(group(OPTIONS)));
+    VALUE_CLONES.store(0, Ordering::Relaxed);
+
+    let region = Region::new(GLOBAL);
+    let element = black_box(group(OPTIONS));
+    let stats = region.change();
+    let clones = VALUE_CLONES.load(Ordering::Relaxed);
+    drop(element);
+
+    eprintln!(
+        "{OPTIONS} radio options: {clones} value clones, {} allocations, {} bytes",
+        stats.allocations, stats.bytes_allocated
+    );
+    assert!(
+        stats.allocations <= ALLOCATION_BUDGET,
+        "each key handler should share the group snapshots: {stats:?}"
+    );
+    assert_eq!(clones, OPTIONS, "each value should be snapshotted once");
+}
