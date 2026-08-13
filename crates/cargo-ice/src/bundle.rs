@@ -366,19 +366,23 @@ impl BundleMeta {
         let analysis = ui_lang_core::AnalysisDb::default()
             .analyze_root(&source)
             .map_err(|error| error.render(&source.display().to_string()))?;
-        let document = analysis.document.source_document().clone();
+        let document = analysis.document.source_document();
         let identifier = package
             .options
             .identifier
             .clone()
-            .or(document.settings.id)
+            .or_else(|| document.settings.id.clone())
             .ok_or_else(|| {
                 format!(
                     "`{}` declares no app `id`; a bundle identifier is required, so set one there or under [package.metadata.ice.bundle]",
                     source.display()
                 )
             })?;
-        let name = package.options.name.clone().unwrap_or(document.app);
+        let name = package
+            .options
+            .name
+            .clone()
+            .unwrap_or_else(|| document.app.clone());
         let description = package
             .description
             .clone()
@@ -591,6 +595,50 @@ mod tests {
             copyright: None,
             minimum_system_version: "11.0".into(),
         }
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn allocation_contract_bundle_identity_borrows_source_document() {
+        const STATES: usize = 256;
+        let fixture = tempfile::tempdir().expect("temporary bundle root");
+        let mut source = String::from(
+            "app Allocation\n  id \"dev.ducktape.allocation\"\n\
+             theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\n\
+             palette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n\
+             state\n",
+        );
+        for index in 0..STATES {
+            source.push_str(&format!("  value_{index} = {index}\n"));
+        }
+        source.push_str("view\n  text \"ready\"\n");
+        fs::write(fixture.path().join("app.ice"), source).expect("write Ice root");
+        let package = Package {
+            root: fixture.path().to_owned(),
+            name: "allocation".into(),
+            version: "0.1.0".into(),
+            description: Some("Allocation contract".into()),
+            authors: vec!["Ice <ice@example.invalid>".into()],
+            homepage: None,
+            executable: "allocation".into(),
+            source: fixture.path().join("main.rs"),
+            target_directory: fixture.path().join("target"),
+            icon: None,
+            options: BundleOptions::default(),
+        };
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        let meta = BundleMeta::resolve(&package, Platform::MacOs).expect("resolve identity");
+        let stats = dhat::HeapStats::get();
+
+        assert_eq!(meta.name, "Allocation");
+        assert_eq!(meta.identifier, "dev.ducktape.allocation");
+        assert_eq!(stats.total_blocks, 9_838, "{stats:?}");
+        assert_eq!(stats.total_bytes, 2_135_435, "{stats:?}");
+        eprintln!(
+            "{STATES}-state bundle identity: {} heap blocks / {} bytes",
+            stats.total_blocks, stats.total_bytes
+        );
     }
 
     /// The per-platform packagers cannot run here, so this covers everything
