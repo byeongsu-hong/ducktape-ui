@@ -942,7 +942,7 @@ fn check_derived(
                 )
                 .hint("capture the runtime value in state from an initializer or handler, then derive from that state"));
             }
-            let mut env = self.states.clone();
+            let mut env = ScopedTypeEnv::new(self.states);
             let mut deps = Vec::new();
             dependencies(&self.document.derived[index].value, self.names, &mut deps);
             for dependency in deps {
