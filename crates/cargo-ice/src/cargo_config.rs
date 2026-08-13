@@ -45,16 +45,13 @@ fn discovered_files(invocation_cwd: &Path) -> Vec<PathBuf> {
 }
 
 fn explicit_files(invocation_cwd: &Path, cargo_args: &[String]) -> Vec<PathBuf> {
-    let args = cargo_args
+    let mut args = cargo_args
         .iter()
-        .take_while(|argument| argument.as_str() != "--")
-        .collect::<Vec<_>>();
+        .take_while(|argument| argument.as_str() != "--");
     let mut files = Vec::new();
-    let mut index = 0;
-    while let Some(argument) = args.get(index) {
+    while let Some(argument) = args.next() {
         let value = if argument.as_str() == "--config" {
-            index += 1;
-            args.get(index).map(|value| value.as_str())
+            args.next().map(|value| value.as_str())
         } else {
             argument.strip_prefix("--config=")
         };
@@ -64,7 +61,6 @@ fn explicit_files(invocation_cwd: &Path, cargo_args: &[String]) -> Vec<PathBuf> 
                 files.push(path);
             }
         }
-        index += 1;
     }
     files
 }
@@ -108,6 +104,63 @@ fn normalize_path(path: &Path) -> PathBuf {
 mod tests {
     use super::{explicit_files, files_with_home};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_explicit_arguments_stream_without_scratch() {
+        const REQUESTS: u64 = 100;
+
+        let cwd = Path::new("/workspace/app");
+        let arguments = ["--release".to_owned()];
+        assert!(explicit_files(cwd, &arguments).is_empty());
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..REQUESTS {
+            assert!(
+                std::hint::black_box(explicit_files(cwd, std::hint::black_box(&arguments)))
+                    .is_empty()
+            );
+        }
+        let heap = dhat::HeapStats::get();
+
+        assert_eq!(heap.total_blocks, 0, "argument scan allocations: {heap:?}");
+        eprintln!(
+            "{REQUESTS} explicit argument scans: {} heap blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes
+        );
+    }
+
+    #[test]
+    fn explicit_argument_scan_preserves_separator_and_value_boundaries() {
+        let cwd = Path::new("/workspace/app");
+
+        assert_eq!(
+            explicit_files(
+                cwd,
+                &[
+                    "--config=before.toml".to_owned(),
+                    "--".to_owned(),
+                    "--config=after.toml".to_owned(),
+                ],
+            ),
+            [cwd.join("before.toml")]
+        );
+        assert!(
+            explicit_files(
+                cwd,
+                &[
+                    "--config".to_owned(),
+                    "--".to_owned(),
+                    "--config=after.toml".to_owned(),
+                ],
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            explicit_files(cwd, &["--config".to_owned(), "--release".to_owned()]),
+            [cwd.join("--release")]
+        );
+    }
 
     #[test]
     fn collects_both_explicit_config_path_forms_relative_to_the_invocation_cwd() {
