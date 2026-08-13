@@ -73,7 +73,7 @@ fn performance_contract_100k_unchanged_render() {
     const FRAMES: usize = 60;
     const P50_BUDGET_US: u128 = 750;
     const P95_BUDGET_US: u128 = 1_500;
-    const ALLOCATION_BUDGET: usize = 131;
+    const ALLOCATION_BUDGET: usize = 130;
     const ALLOCATED_BYTES_BUDGET: usize = 128 * 1024;
 
     let items: Vec<u64> = (0..100_000).collect();
@@ -86,6 +86,8 @@ fn performance_contract_100k_unchanged_render() {
         |key| *key,
         config(),
     );
+    let mounted = state.mounted_range(items.len(), config());
+    assert!(!mounted.is_empty());
     let builds = Cell::new(0_usize);
     let mut renderer = renderer();
     let mut cache = user_interface::Cache::default();
@@ -99,7 +101,9 @@ fn performance_contract_100k_unchanged_render() {
             |key| *key,
             |key| format!("Item {key}"),
             |index, _, _| {
-                builds.set(builds.get() + 1);
+                let build = builds.get();
+                assert_eq!(index, mounted.start + build % mounted.len());
+                builds.set(build + 1);
                 iced::widget::text(index).into()
             },
             |_| Message::List,
@@ -137,7 +141,7 @@ fn performance_contract_100k_unchanged_render() {
 
     let p95_allocations = percentile_usize(&allocations, 95);
     let p95_bytes = percentile_usize(&allocated_bytes, 95);
-    assert!(builds.get() <= FRAMES * 10);
+    assert_eq!(builds.get(), FRAMES * mounted.len());
     assert!(
         p95_allocations <= ALLOCATION_BUDGET,
         "unchanged render p95 allocated {p95_allocations} times"
