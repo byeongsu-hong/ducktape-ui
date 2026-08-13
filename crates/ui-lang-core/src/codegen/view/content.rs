@@ -334,10 +334,11 @@ pub(in crate::codegen) fn render_content(
                     component_env.insert(
                         state.name.clone(),
                         Binding {
-                            code: format!(
-                                "{states}.get(&{scope_binding}).map_or_else(|| {}, |__state| __state.{}.clone())",
-                                initial,
-                                state.name
+                            code: component_state_read_code(
+                                &states,
+                                &scope_binding,
+                                &initial,
+                                &state.name,
                             ),
                             ty: state.ty.clone(),
                             local: true,

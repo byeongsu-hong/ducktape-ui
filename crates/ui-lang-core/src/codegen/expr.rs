@@ -684,11 +684,27 @@ impl ExprArguments {
 
 struct ExprEmission<'a> {
     program: &'a LoweredProgram,
+    /// When set, a component-state root is emitted as a fresh read against
+    /// this scope identifier instead of the binding's baked code, which
+    /// embeds the call-site scope binding. Keyed-lazy dependency emission
+    /// passes the closure-owned hoisted context local here, so the deferred
+    /// `move` builder never captures the call-site scope binding.
+    component_state_scope: Option<&'a str>,
 }
 
 impl<'a> ExprEmission<'a> {
     fn for_resolved(program: &'a LoweredProgram) -> Self {
-        Self { program }
+        Self {
+            program,
+            component_state_scope: None,
+        }
+    }
+
+    fn with_component_state_scope(program: &'a LoweredProgram, scope: &'a str) -> Self {
+        Self {
+            program,
+            component_state_scope: Some(scope),
+        }
     }
 
     fn kind(&self, node: ExprNode) -> ExprNodeKind<'a> {
@@ -2338,6 +2354,51 @@ fn expr_node_list_code(
         .join(", "))
 }
 
+/// A component-state read rebuilt against an explicit scope identifier. The
+/// binding's baked code embeds the call-site scope binding, and inside a
+/// `move` closure that identifier must not be named at all — so the read is
+/// rebuilt from the state's contract rather than patched textually, since a
+/// user string literal in the initializer could legally contain the
+/// identifier.
+fn scoped_component_state_read_code(
+    program: &LoweredProgram,
+    state: crate::hir::ComponentStateId,
+    scope: &str,
+    span: &Span,
+) -> Result<String, Error> {
+    let component = program.component(state.component);
+    let declaration = component
+        .states
+        .iter()
+        .find(|declaration| declaration.id == state)
+        .ok_or_else(|| {
+            Error::new(
+                "E196",
+                span,
+                "normalized component state is absent from its component contract",
+            )
+        })?;
+    let field = component_state_field(&component.name);
+    let states = match component.storage {
+        ComponentStorage::Retained => format!("self.{field}"),
+        ComponentStorage::Mounted => format!("self.{field}.values()"),
+        ComponentStorage::Stateless => {
+            return Err(Error::new(
+                "E196",
+                span,
+                "normalized component state read belongs to a stateless component",
+            ));
+        }
+    };
+    let initial = resolved_initializer_code(&declaration.initializer, program)?;
+    Ok(component_state_read_code(
+        &states,
+        scope,
+        &initial,
+        &declaration.name,
+    ))
+}
+
 fn resolved_path_code(
     root: &ResolvedPathRoot,
     projections: &[ResolvedProjection],
@@ -2400,7 +2461,13 @@ fn resolved_path_code(
                     rust_string(&value.name)
                 ));
             }
-            (binding.code.clone(), binding.ty.clone(), binding.local)
+            let code = match (context.component_state_scope, value_ref) {
+                (Some(scope), ResolvedValueRef::ComponentState(state)) => {
+                    scoped_component_state_read_code(program, *state, scope, &span)?
+                }
+                _ => binding.code.clone(),
+            };
+            (code, binding.ty.clone(), binding.local)
         }
         ResolvedPathRoot::Local(id) => {
             let local = program.expressions().local(*id);
@@ -2671,10 +2738,37 @@ pub(in crate::codegen) fn resolved_expr_use_code(
     env: &dyn BindingEnvironment,
     mode: ValueMode,
 ) -> Result<String, Error> {
-    let expressions = program.expressions();
-    let expression_use = expressions.expression_use(expression_use);
     let context = ExprEmission::for_resolved(program);
-    let code = expr_node_code(ExprNode::Resolved(expression_use.root), env, &context, mode)?;
+    resolved_expr_use_code_in(&context, expression_use, env, mode)
+}
+
+/// [`resolved_expr_use_code`] with the scope identifier of every
+/// component-state read made a parameter: the read is emitted against
+/// `state_scope` instead of the call-site scope binding baked into its
+/// environment binding. Keyed-lazy dependency emission passes the
+/// closure-owned context local its hoist declares, so the deferred `move`
+/// builder never captures the call-site scope binding out of the enclosing
+/// render.
+pub(in crate::codegen) fn resolved_expr_use_code_with_state_scope(
+    program: &LoweredProgram,
+    expression_use: ResolvedExpressionId,
+    env: &dyn BindingEnvironment,
+    mode: ValueMode,
+    state_scope: &str,
+) -> Result<String, Error> {
+    let context = ExprEmission::with_component_state_scope(program, state_scope);
+    resolved_expr_use_code_in(&context, expression_use, env, mode)
+}
+
+fn resolved_expr_use_code_in(
+    context: &ExprEmission<'_>,
+    expression_use: ResolvedExpressionId,
+    env: &dyn BindingEnvironment,
+    mode: ValueMode,
+) -> Result<String, Error> {
+    let expressions = context.program.expressions();
+    let expression_use = expressions.expression_use(expression_use);
+    let code = expr_node_code(ExprNode::Resolved(expression_use.root), env, context, mode)?;
     Ok(match &expression_use.coercion {
         ResolvedInitializerCoercion::None => code,
         ResolvedInitializerCoercion::ListToCombo { .. } => {

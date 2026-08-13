@@ -198,6 +198,20 @@ pub(in crate::codegen) fn component_event<'a>(
     env.get(&component_event_key(component, event))
 }
 
+/// The read a component-state binding compiles to: the instance storage keyed
+/// by `scope`, falling back to the initializer while the instance has no
+/// entry. One shape shared by use-site lowering and scoped re-emission
+/// ([`super::resolved_expr_use_code_with_state_scope`]), so the two can never
+/// drift.
+pub(in crate::codegen) fn component_state_read_code(
+    states: &str,
+    scope: &str,
+    initial: &str,
+    state: &str,
+) -> String {
+    format!("{states}.get(&{scope}).map_or_else(|| {initial}, |__state| __state.{state}.clone())")
+}
+
 pub(in crate::codegen) fn component_state_field(component: &str) -> String {
     if canonical_component(component) {
         format!("__ice_component_{}", component.to_ascii_lowercase())
