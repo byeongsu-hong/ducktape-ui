@@ -41,6 +41,81 @@ fn qualification_scans_the_namespace_prefix_in_place() {
 }
 
 #[test]
+fn fallback_symbol_ranges_require_one_unambiguous_occurrence() {
+    const NAME: &str = "target";
+    for (case, source, use_first, expected) in [
+        ("unique candidate", "target", false, Some(1)),
+        ("ambiguous candidates", "target target", false, None),
+        ("uniquely assigned", "value=target target", false, Some(7)),
+        ("multiply assigned", "a=target b=target", false, None),
+        ("already used", "target target", true, Some(8)),
+    ] {
+        let symbols = Rc::default();
+        let line = line_tree(source, &[None], Rc::clone(&symbols))
+            .unwrap()
+            .pop()
+            .unwrap();
+        if use_first {
+            line.record_symbol(SymbolKind::Handler, NAME, false, &line.text[..NAME.len()]);
+        }
+
+        line.record_symbol(SymbolKind::Handler, NAME, false, NAME);
+        let actual = symbols
+            .borrow()
+            .last()
+            .unwrap()
+            .range
+            .as_ref()
+            .map(|range| range.start_column);
+        assert_eq!(actual, expected, "{case}");
+    }
+}
+
+#[test]
+#[ignore = "allocation contract; run alone with --test-threads=1"]
+fn performance_contract_symbol_fallback_scans_offsets_in_place() {
+    use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
+
+    const CALLS: usize = 4_000;
+    const NAME: &str = "target";
+    let symbols = Rc::default();
+    let line = line_tree("value=target target", &[None], Rc::clone(&symbols))
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    line.record_symbol(SymbolKind::Handler, NAME, false, NAME);
+    assert_eq!(
+        symbols.borrow()[0]
+            .range
+            .as_ref()
+            .map(|range| range.start_column),
+        Some(7)
+    );
+    symbols.borrow_mut().clear();
+
+    let region = Region::new(&INSTRUMENTED_SYSTEM);
+    for _ in 0..CALLS {
+        std::hint::black_box(&line).record_symbol(
+            SymbolKind::Handler,
+            std::hint::black_box(NAME),
+            false,
+            std::hint::black_box(NAME),
+        );
+        symbols.borrow_mut().clear();
+    }
+    let stats = region.change();
+
+    eprintln!(
+        "{CALLS} fallback symbol locations: {} allocations / {} reallocations / {} bytes",
+        stats.allocations, stats.reallocations, stats.bytes_allocated
+    );
+    assert_eq!(stats.allocations, CALLS, "{stats:?}");
+    assert_eq!(stats.reallocations, 0, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, CALLS * NAME.len(), "{stats:?}");
+}
+
+#[test]
 #[ignore = "allocation contract; run alone with --test-threads=1"]
 fn expression_parser_consumes_owned_token_payloads() {
     use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
