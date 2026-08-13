@@ -15,6 +15,11 @@ theme contract TerminalTheme
   up_flash
   down_flash
   fg_invert
+  indicator_sma_20
+  indicator_sma_60
+  indicator_ema_20
+  indicator_bollinger_20
+  indicator_vwma_20
 
 palette instrument for TerminalTheme
   bg #14120f
@@ -33,3 +38,8 @@ palette instrument for TerminalTheme
   up_flash #5fae7e66
   down_flash #d0645a66
   fg_invert #14120f
+  indicator_sma_20 #d4a373
+  indicator_sma_60 #b8a1d9
+  indicator_ema_20 #5ba6d9
+  indicator_bollinger_20 #8d989f
+  indicator_vwma_20 #d78abd

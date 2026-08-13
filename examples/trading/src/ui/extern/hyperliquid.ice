@@ -143,4 +143,8 @@ extern crate::hyperliquid
   pure fmt_count(value:i64) -> str
   pure fmt_leverage_mode(value:f64, mode:str) -> str
   pure fmt_time(ts:i64) -> str
-  component chart(venue:Venue, tape:&Tape, fills:&[Fill], positions:&[Position], orders:&[Order], coin:&str) -> ChartSignal
+  pure chart_indicator_active(indicators:[ChartIndicator], target:ChartIndicator) -> bool
+  pure chart_indicator_name(indicator:ChartIndicator) -> str
+  pure chart_indicator_action(indicator:ChartIndicator, active:bool) -> str
+  pure toggle_chart_indicator(indicators:[ChartIndicator], target:ChartIndicator) -> [ChartIndicator]
+  component chart(venue:Venue, tape:&Tape, fills:&[Fill], positions:&[Position], orders:&[Order], coin:&str, indicators:&[ChartIndicator]) -> ChartSignal

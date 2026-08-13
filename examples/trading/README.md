@@ -206,6 +206,12 @@ its pane back onto this same screen next to everything already on it. The rail
 is a picker, so a pick folds it again and hands the 232 pixels back to the
 table it borrowed them from.
 
+The row directly under that bar is the chart legend and its controls. SMA 20
+and SMA 60 start on; EMA 20, Bollinger Bands 20/2σ and VWMA 20 can be layered
+onto them independently. These are price-space studies derived from the tape's
+OHLCV, so selecting one neither reloads the tape nor changes the interval,
+viewport or history position.
+
 ## Design
 
 The screen is an instrument panel, so it is set like one. Every figure is
@@ -1950,17 +1956,24 @@ says an order rests. There is no order id in that answer either, so an order is
 named by the `ClientOrderIndex` its placer chose, and that index is what
 `lighter_place` returns and what `lighter_cancel` takes.
 
-## Marking trades on the chart
+## Studies and trade marks on the chart
 
 The chart is `candle-chart` from [`crates/ui`](../../crates/ui-lang-components/src/ui/candle_chart.rs)
-with three annotation overlays:
+with one selectable study overlay and three account annotation overlays:
 
 ```rust
 candle_chart_shared(tape, &chart_theme())
+    .overlay(ChartIndicators::new(indicators, palette)) // SMA, EMA, BB, VWMA
     .price_lines(position_lines(positions, coin))  // entry, liquidation
     .price_lines(order_lines(orders, coin))        // resting orders
     .markers(fill_markers(fills, coin))            // one glyph per fill
 ```
+
+The study overlay hashes its selected families and colours into its cache stamp.
+Every selected study contributes its visible values to the chart's price scale,
+so a line or band can expand beyond a candle without being clipped. VWMA waits
+for a non-zero rolling volume denominator; the venues' missing-volume fallback
+therefore produces no misleading line.
 
 A buy is a triangle pointing up out of its fill price, a sell points down into
 it, and each carries its size or, for a closing fill, what it realized. All
@@ -1982,7 +1995,7 @@ One extern block
 retained-identity/environment `sync` calls confined to top-level state
 initialization and immediately evaluated handler expressions, a set of `pure`
 formatters and list folds, and one `component` adapter that renders the chart
-from the tape plus the current fills, positions, and orders.
+from the tape plus the active indicators, current fills, positions, and orders.
 Candles never cross into Ice; everything the panels list does, because the
 panels list it — and only that. A struct crossing the boundary carries the
 fields the screen reads and no others, so the extern block stays a description

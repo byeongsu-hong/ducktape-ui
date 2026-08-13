@@ -3,6 +3,7 @@ mod custody;
 mod frame_probe;
 mod hotkeys;
 mod hyperliquid;
+mod indicators;
 mod lighter;
 mod lighter_sign;
 mod portfolio;

@@ -461,6 +461,9 @@ on pick_interval(next)
   history_exhausted = false
   run every venue_candles(venue, tape, coin, next) -> candles_loaded _ | failed _
 
+on toggle_chart_indicator(next)
+  chart_indicators = toggle_chart_indicator(chart_indicators, next)
+
 on search(typed)
   query = typed
 

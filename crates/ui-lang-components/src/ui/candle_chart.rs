@@ -272,12 +272,27 @@ impl PriceScale {
     }
 }
 
-fn autoscale(pyramid: &Pyramid, candles: &[Candle], range: Range<usize>) -> PriceScale {
-    let (lo, hi) = if range.is_empty() {
+fn autoscale(
+    pyramid: &Pyramid,
+    candles: &[Candle],
+    range: Range<usize>,
+    overlays: &[Box<dyn ChartOverlay + '_>],
+) -> PriceScale {
+    let (mut lo, mut hi) = if range.is_empty() {
         (f64::INFINITY, f64::NEG_INFINITY)
     } else {
-        pyramid.extremes(candles, range)
+        pyramid.extremes(candles, range.clone())
     };
+    for overlay in overlays {
+        if let Some((overlay_lo, overlay_hi)) = overlay.price_range(candles, range.clone())
+            && overlay_lo.is_finite()
+            && overlay_hi.is_finite()
+            && overlay_lo <= overlay_hi
+        {
+            lo = lo.min(overlay_lo);
+            hi = hi.max(overlay_hi);
+        }
+    }
     if !lo.is_finite() || !hi.is_finite() {
         return PriceScale { lo: 0.0, hi: 1.0 };
     }
@@ -960,6 +975,14 @@ pub trait ChartOverlay {
     fn draw(&self, frame: &mut canvas::Frame, coords: &ChartCoords<'_>);
 
     fn stamp(&self) -> u64;
+
+    /// Additional price bounds this overlay chooses to keep visible.
+    /// The chart asks only when rebuilding its cached geometry; overlays may
+    /// return `None` for annotations that should not expand the candle scale,
+    /// and invalid or reversed bounds are ignored.
+    fn price_range(&self, _candles: &[Candle], _visible: Range<usize>) -> Option<(f64, f64)> {
+        None
+    }
 }
 
 /// Where a marker sits relative to the price it annotates, and which way it
@@ -1680,16 +1703,31 @@ impl<Message> CandleProgram<'_, Message> {
             .fold(0xcbf2_9ce4_8422_2325, |hash, overlay| {
                 mix(hash, overlay.stamp())
             });
+        let visuals = self.moving_averages.iter().fold(
+            mix(overlays, self.moving_averages.len() as u64),
+            |hash, period| mix(hash, *period as u64),
+        );
+        let visuals = if self.moving_averages.is_empty() {
+            visuals
+        } else {
+            [
+                self.theme.palette.accent,
+                self.theme.palette.warning,
+                self.theme.palette.brand,
+            ]
+            .into_iter()
+            .fold(visuals, mix_color)
+        };
         let mut pyramid = state.pyramid.borrow_mut();
         pyramid.sync(candles);
-        let stamp = fingerprint(candles, overlays, viewport, size, &self.theme.palette);
+        let stamp = fingerprint(candles, visuals, viewport, size, &self.theme.palette);
         let (scale, axes) = {
             let mut derived = state.derived.borrow_mut();
             match derived.as_ref() {
                 Some(cached) if cached.stamp == stamp => (cached.scale, cached.axes.clone()),
                 _ => {
                     state.layers.clear();
-                    let scale = autoscale(&pyramid, candles, range.clone());
+                    let scale = autoscale(&pyramid, candles, range.clone(), &self.overlays);
                     let axes = self.axes(candles, chrome, viewport, range.clone(), scale);
                     *derived = Some(DerivedFrame {
                         stamp,
@@ -2319,11 +2357,11 @@ mod tests {
     #[test]
     fn autoscale_pads_range() {
         let data = candles(10);
-        let scale = autoscale(&pyramid_for(&data), &data, 0..10);
+        let scale = autoscale(&pyramid_for(&data), &data, 0..10, &[]);
         assert!(scale.lo < 99.0);
         assert!(scale.hi > 111.0);
 
-        let empty = autoscale(&pyramid_for(&data), &data, 3..3);
+        let empty = autoscale(&pyramid_for(&data), &data, 3..3, &[]);
         assert_eq!(empty, PriceScale { lo: 0.0, hi: 1.0 });
 
         let flat_data = [Candle {
@@ -2334,7 +2372,7 @@ mod tests {
             close: 50.0,
             volume: 0.0,
         }];
-        let flat = autoscale(&pyramid_for(&flat_data), &flat_data, 0..1);
+        let flat = autoscale(&pyramid_for(&flat_data), &flat_data, 0..1, &[]);
         assert!(flat.hi > flat.lo);
     }
 
@@ -2373,7 +2411,7 @@ mod tests {
                 close: hi,
                 volume: 0.0,
             }];
-            let scale = autoscale(&pyramid_for(&ulp_data), &ulp_data, 0..1);
+            let scale = autoscale(&pyramid_for(&ulp_data), &ulp_data, 0..1, &[]);
             let (ticks, _) = price_ticks(scale, 6);
             assert!(ticks.len() < 1_000);
         }
@@ -2417,7 +2455,7 @@ mod tests {
         let chrome = chrome(BOUNDS);
         let viewport = Viewport::initial(50, DEFAULT_BARS);
         let range = visible_indices(viewport, 50);
-        let scale = autoscale(&pyramid_for(&data), &data, range.clone());
+        let scale = autoscale(&pyramid_for(&data), &data, range.clone(), &[]);
 
         let derived = hover_program(&data);
         let axes = derived.axes(&data, chrome, viewport, range.clone(), scale);
@@ -2439,7 +2477,7 @@ mod tests {
         let chrome = chrome(BOUNDS);
         let viewport = Viewport::initial(50, DEFAULT_BARS);
         let range = visible_indices(viewport, 50);
-        let scale = autoscale(&pyramid_for(&data), &data, range.clone());
+        let scale = autoscale(&pyramid_for(&data), &data, range.clone(), &[]);
 
         let mut seoul = hover_program(&data);
         seoul.time_offset_secs = 9 * 3_600;
@@ -2839,6 +2877,28 @@ mod tests {
         }
     }
 
+    struct CountedOverlay {
+        stamp: u64,
+        range: (f64, f64),
+        draws: Rc<Cell<usize>>,
+        ranges: Rc<Cell<usize>>,
+    }
+
+    impl ChartOverlay for CountedOverlay {
+        fn draw(&self, _frame: &mut canvas::Frame, _coords: &ChartCoords<'_>) {
+            self.draws.set(self.draws.get() + 1);
+        }
+
+        fn stamp(&self) -> u64 {
+            self.stamp
+        }
+
+        fn price_range(&self, _candles: &[Candle], _visible: Range<usize>) -> Option<(f64, f64)> {
+            self.ranges.set(self.ranges.get() + 1);
+            Some(self.range)
+        }
+    }
+
     fn coords_for<'a>(data: &'a [Candle], theme: &'a UiTheme) -> ChartCoords<'a> {
         let chrome = chrome(BOUNDS);
         let viewport = Viewport::initial(data.len(), DEFAULT_BARS);
@@ -2848,7 +2908,7 @@ mod tests {
             candles: data,
             chrome,
             viewport,
-            scale: autoscale(&pyramid_for(data), data, visible.clone()),
+            scale: autoscale(&pyramid_for(data), data, visible.clone(), &[]),
             visible,
         }
     }
@@ -2928,6 +2988,104 @@ mod tests {
             fingerprint(&data, markers.stamp(), viewport, BOUNDS, palette),
             "overlay stamps reach the cache key"
         );
+    }
+
+    #[test]
+    fn overlay_membership_and_moving_averages_invalidate_the_same_cache() {
+        use iced::advanced::renderer::Headless as _;
+        use iced::widget::canvas::Program as _;
+
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(14.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless tiny-skia renderer");
+        let data = candles(40);
+        let state = CandleState::default();
+        let bounds = Rectangle::with_size(BOUNDS);
+        let cursor = mouse::Cursor::Unavailable;
+        let first_draws = Rc::new(Cell::new(0));
+        let first_ranges = Rc::new(Cell::new(0));
+        let second_draws = Rc::new(Cell::new(0));
+        let second_ranges = Rc::new(Cell::new(0));
+        let first = || CountedOverlay {
+            stamp: 1,
+            range: (80.0, 160.0),
+            draws: Rc::clone(&first_draws),
+            ranges: Rc::clone(&first_ranges),
+        };
+        let second = || CountedOverlay {
+            stamp: 2,
+            range: (-1_000.0, 1_000.0),
+            draws: Rc::clone(&second_draws),
+            ranges: Rc::clone(&second_ranges),
+        };
+
+        let mut both = hover_program(&data);
+        both.overlays = vec![Box::new(first()), Box::new(second())];
+        let _ = both.draw(&state, &renderer, &iced::Theme::Light, bounds, cursor);
+        assert_eq!((first_draws.get(), second_draws.get()), (1, 1));
+        assert_eq!((first_ranges.get(), second_ranges.get()), (1, 1));
+        let scale = state
+            .derived
+            .borrow()
+            .as_ref()
+            .expect("derived frame")
+            .scale;
+        assert!(scale.lo < -1_000.0 && scale.hi > 1_000.0);
+
+        let _ = both.draw(&state, &renderer, &iced::Theme::Light, bounds, cursor);
+        assert_eq!(
+            (first_draws.get(), second_draws.get()),
+            (1, 1),
+            "a cache hit does not redraw overlays"
+        );
+        assert_eq!(
+            (first_ranges.get(), second_ranges.get()),
+            (1, 1),
+            "a cache hit does not recompute overlay bounds"
+        );
+
+        let mut one = hover_program(&data);
+        one.overlays = vec![Box::new(first())];
+        let _ = one.draw(&state, &renderer, &iced::Theme::Light, bounds, cursor);
+        assert_eq!(
+            (first_draws.get(), second_draws.get()),
+            (2, 1),
+            "removing an overlay invalidates this CandleState"
+        );
+        assert_eq!((first_ranges.get(), second_ranges.get()), (2, 1));
+        let scale = state
+            .derived
+            .borrow()
+            .as_ref()
+            .expect("derived frame")
+            .scale;
+        assert!(scale.lo > -1_000.0 && scale.hi < 1_000.0);
+
+        let mut averaged = hover_program(&data);
+        averaged.moving_averages = vec![20];
+        averaged.overlays = vec![Box::new(first())];
+        let _ = averaged.draw(&state, &renderer, &iced::Theme::Light, bounds, cursor);
+        assert_eq!(
+            first_draws.get(),
+            3,
+            "moving-average membership also invalidates the static layer"
+        );
+        assert_eq!(first_ranges.get(), 3);
+
+        let mut recoloured = hover_program(&data);
+        recoloured.theme.palette.accent = Color::from_rgb8(1, 2, 3);
+        recoloured.moving_averages = vec![20];
+        recoloured.overlays = vec![Box::new(first())];
+        let _ = recoloured.draw(&state, &renderer, &iced::Theme::Light, bounds, cursor);
+        assert_eq!(
+            first_draws.get(),
+            4,
+            "a moving-average colour change invalidates its cached geometry"
+        );
+        assert_eq!(first_ranges.get(), 4);
     }
 
     fn wheel(lines: f32) -> canvas::Event {

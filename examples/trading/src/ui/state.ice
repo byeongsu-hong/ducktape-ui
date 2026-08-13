@@ -59,6 +59,16 @@ enum Tif
   ioc
   alo
 
+// Price-space studies the chart can draw together. They are state rather than
+// a single display mode because each control adds or removes one line family
+// without changing the market, interval, or the reader's place in history.
+enum ChartIndicator
+  sma_20
+  sma_60
+  ema_20
+  bollinger_20
+  vwma_20
+
 state
   page:Page = Page.terminal
   venue:Venue = Venue.hyperliquid
@@ -74,6 +84,7 @@ state
   // it steps down to one it can — see `candles_loaded` — so this is where the
   // chart starts looking rather than where it always lands.
   interval = "1d"
+  chart_indicators:[ChartIndicator] = [ChartIndicator.sma_20, ChartIndicator.sma_60]
   // Whether the width on the chart is the reader's rather than the app's. The
   // step-down is how a chart opens on a market it knows nothing about; once a
   // tab has been pressed the width is an answer to that press, and it holds
