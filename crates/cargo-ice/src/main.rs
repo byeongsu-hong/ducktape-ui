@@ -304,12 +304,9 @@ fn analyze(files: &[PathBuf], all_files: &[PathBuf]) -> Result<(), String> {
 
 fn orphan_ice_files<'a>(
     files: &'a [PathBuf],
-    dependencies: &std::collections::BTreeSet<PathBuf>,
-) -> Vec<&'a PathBuf> {
-    files
-        .iter()
-        .filter(|path| !dependencies.contains(*path))
-        .collect()
+    dependencies: &'a std::collections::BTreeSet<PathBuf>,
+) -> impl Iterator<Item = &'a PathBuf> + 'a {
+    files.iter().filter(|path| !dependencies.contains(*path))
 }
 
 fn root_files(files: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
@@ -639,15 +636,48 @@ mod tests {
 
     #[test]
     fn reports_ice_files_outside_every_root_graph() {
-        let files = ["app.ice", "used.ice", "orphan.ice"]
-            .map(PathBuf::from)
-            .to_vec();
-        let dependencies = [PathBuf::from("app.ice"), PathBuf::from("used.ice")]
+        let files =
+            ["app.ice", "nested/used.ice", "other/used.ice", "orphan.ice"].map(PathBuf::from);
+        let dependencies = [PathBuf::from("app.ice"), PathBuf::from("nested/used.ice")]
             .into_iter()
             .collect::<BTreeSet<_>>();
         assert_eq!(
-            orphan_ice_files(&files, &dependencies),
-            [&PathBuf::from("orphan.ice")]
+            orphan_ice_files(&files, &dependencies).collect::<Vec<_>>(),
+            [&files[2], &files[3]]
+        );
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_orphan_files_stream_without_scratch() {
+        fn count<'a>(paths: impl IntoIterator<Item = &'a PathBuf>) -> usize {
+            paths.into_iter().count()
+        }
+
+        const CALLS: u64 = 100;
+
+        let files = ["app.ice", "orphan.ice"].map(PathBuf::from);
+        let dependencies = [PathBuf::from("app.ice")]
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(count(orphan_ice_files(&files, &dependencies)), 1);
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..CALLS {
+            assert_eq!(
+                count(std::hint::black_box(orphan_ice_files(
+                    std::hint::black_box(&files),
+                    std::hint::black_box(&dependencies),
+                ))),
+                1
+            );
+        }
+        let heap = dhat::HeapStats::get();
+
+        assert_eq!(heap.total_blocks, 0, "orphan scan allocations: {heap:?}");
+        eprintln!(
+            "{CALLS} orphan source scans: {} heap blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes
         );
     }
 
