@@ -45,9 +45,23 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
                 (node.trim(), Some(route.trim()))
             });
         let (core, existing_utilities) = split_style_utilities(without_route, line);
-        let mut expanded = line.clone();
-        expanded.metadata = metadata.children.clone();
-        expanded.text = core.to_owned();
+        let mut expanded = Line {
+            number: line.number,
+            indent: line.indent,
+            text: core.to_owned(),
+            original_text: line.original_text.clone(),
+            metadata: metadata.children.clone(),
+            children: line
+                .children
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != metadata_index)
+                .map(|(_, child)| child.clone())
+                .collect(),
+            namespace: line.namespace.clone(),
+            symbols: Rc::clone(&line.symbols),
+            track_symbols: line.track_symbols,
+        };
         for option in options {
             expanded.text.push(' ');
             expanded.text.push_str(option);
@@ -65,13 +79,6 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
             expanded.text.push_str(" -> ");
             expanded.text.push_str(route);
         }
-        expanded.children = line
-            .children
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| *index != metadata_index)
-            .map(|(_, child)| child.clone())
-            .collect();
         return parse_view(&expanded);
     }
     if let Some(value) = line.text.strip_prefix("match ") {
@@ -457,6 +464,14 @@ mod tests {
             .unwrap()
     }
 
+    fn metadata_view_line() -> Line {
+        let source = "col\n  text \"one\"\n  with\n    w=fill\n";
+        line_tree(source, &vec![None; source.lines().count()], Rc::default())
+            .unwrap()
+            .pop()
+            .unwrap()
+    }
+
     #[test]
     fn typed_match_pattern_requires_the_opening_delimiter() {
         assert!(matches!(
@@ -493,5 +508,27 @@ mod tests {
         assert_eq!(stats.allocations, 0, "{stats:?}");
         assert_eq!(stats.reallocations, 0, "{stats:?}");
         assert_eq!(stats.bytes_allocated, 0, "{stats:?}");
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn metadata_view_expansion_allocation_contract() {
+        const CALLS: usize = 4_000;
+        let line = metadata_view_line();
+        std::hint::black_box(parse_view(&line).unwrap());
+        let region = Region::new(&INSTRUMENTED_SYSTEM);
+
+        for _ in 0..CALLS {
+            std::hint::black_box(parse_view(std::hint::black_box(&line)).unwrap());
+        }
+        let stats = region.change();
+
+        eprintln!(
+            "{CALLS} metadata view expansions: {} allocations / {} reallocations / {} allocated bytes",
+            stats.allocations, stats.reallocations, stats.bytes_allocated
+        );
+        assert!(stats.allocations <= 92_002, "{stats:?}");
+        assert_eq!(stats.reallocations, 12_000, "{stats:?}");
+        assert!(stats.bytes_allocated <= 16_824_144, "{stats:?}");
     }
 }
