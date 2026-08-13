@@ -1816,11 +1816,20 @@ fn signature_help_at(
     } else {
         format!(" -> {}", component.output.display())
     };
-    let prefix = source_line(source, line)?
-        .encode_utf16()
-        .take(character)
-        .collect::<Vec<_>>();
-    let prefix = String::from_utf16(&prefix).ok()?;
+    let line = source_line(source, line)?;
+    let mut prefix_end = line.len();
+    let mut utf16 = 0;
+    for (byte, ch) in line.char_indices() {
+        if utf16 == character {
+            prefix_end = byte;
+            break;
+        }
+        utf16 += ch.len_utf16();
+        if utf16 > character {
+            return None;
+        }
+    }
+    let prefix = &line[..prefix_end];
     let active = component
         .params
         .iter()
@@ -5338,6 +5347,48 @@ mod tests {
         assert_eq!(metrics.roots_checked, 0, "{metrics:?}");
         assert_eq!(metrics.roots_reused, 0, "{metrics:?}");
         assert_eq!(metrics.symbols_indexed, 0, "{metrics:?}");
+    }
+
+    #[test]
+    #[ignore = "CI performance contract; run explicitly"]
+    fn performance_contract_signature_help_borrows_cursor_prefix() {
+        const REQUESTS: usize = 100;
+
+        let fixture = Fixture::new();
+        let source = "app SignatureHelp\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Catalog(label:str, value:str)\n  text value\nview\n  Catalog label=\"😀\" value=\"Ready\"\n";
+        fixture.write("app.ice", source);
+        let root = fixture.path("app.ice");
+        let uri = file_path_uri(&root);
+        let documents = HashMap::from([(uri.clone(), source.to_owned())]);
+        let line = source
+            .lines()
+            .position(|line| line.trim_start().starts_with("Catalog "))
+            .unwrap();
+        let character = source.lines().nth(line).unwrap().encode_utf16().count();
+        let position = json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+        });
+        let mut db = ui_lang_core::AnalysisDb::default();
+        db.set_overlay(&root, source).unwrap();
+        db.query_root(&root).unwrap();
+
+        let warm = signature_help_at_with_db(&mut db, &documents, &position).unwrap();
+        assert_eq!(warm["activeParameter"], 1);
+        db.take_metrics();
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..REQUESTS {
+            let signature = signature_help_at_with_db(&mut db, &documents, &position).unwrap();
+            assert_eq!(signature["activeParameter"], 1);
+        }
+        let heap = dhat::HeapStats::get();
+        assert_eq!(heap.total_blocks, REQUESTS as u64 * 59, "{heap:?}");
+        assert_eq!(heap.total_bytes, REQUESTS as u64 * 5_474, "{heap:?}");
+        eprintln!(
+            "{REQUESTS} signature-help requests allocated {} blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes,
+        );
     }
 
     #[test]
