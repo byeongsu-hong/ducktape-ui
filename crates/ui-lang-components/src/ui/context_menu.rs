@@ -80,8 +80,8 @@ where
 {
     ids: ContextMenuIds,
     region: Element<'a, Message>,
-    entries: Vec<MenuEntry>,
-    state: MenuState,
+    entries: &'a [MenuEntry],
+    state: &'a MenuState,
     open: bool,
     anchor: Option<Point>,
     on_event: Rc<dyn Fn(ContextMenuEvent) -> Message + 'a>,
@@ -112,8 +112,8 @@ where
     ContextMenu {
         ids,
         region: region.into(),
-        entries: entries.to_vec(),
-        state: state.clone(),
+        entries,
+        state,
         open,
         anchor,
         on_event,
@@ -165,8 +165,8 @@ where
         let menu_event = Rc::clone(&self.on_event);
         let content = menu(
             self.ids.menu.clone(),
-            &self.entries,
-            &self.state,
+            self.entries,
+            self.state,
             move |event| menu_event(ContextMenuEvent::Menu(event)),
             &self.theme,
         )
@@ -624,10 +624,13 @@ mod tests {
     }
 
     #[test]
-    fn controlled_context_menu_builds_region_and_content_trees() {
+    fn controlled_context_menu_borrows_inputs_and_builds_trees() {
         let entries = vec![MenuItem::new("copy", "Copy").into()];
-        let state = MenuState::initial(&entries);
-        let element: Element<'_, ()> = context_menu(
+        let state = MenuState {
+            typeahead: "c".into(),
+            ..MenuState::initial(&entries)
+        };
+        let builder = context_menu(
             ContextMenuIds::new("document"),
             text("Right click"),
             &entries,
@@ -636,8 +639,15 @@ mod tests {
             None,
             |_| (),
             &LIGHT,
-        )
-        .into();
+        );
+        assert_eq!(
+            (
+                std::ptr::eq(builder.entries.as_ptr(), entries.as_ptr()),
+                std::ptr::eq(builder.state.typeahead.as_ptr(), state.typeahead.as_ptr()),
+            ),
+            (true, true)
+        );
+        let element: Element<'_, ()> = builder.into();
         assert_eq!(element.as_widget().children().len(), 2);
     }
 
