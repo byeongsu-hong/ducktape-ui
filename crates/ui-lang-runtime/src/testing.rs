@@ -1888,16 +1888,19 @@ fn accessibility_role_name(role: accesskit::Role) -> String {
 }
 
 fn camel_to_kebab(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    let characters = value.chars().collect::<Vec<_>>();
-    for (index, character) in characters.iter().copied().enumerate() {
+    let mut output =
+        String::with_capacity(value.len() + value.chars().filter(char::is_ascii_uppercase).count());
+    let mut characters = value.chars().peekable();
+    let mut previous: Option<char> = None;
+    while let Some(character) = characters.next() {
         if character.is_ascii_uppercase() {
-            let previous = index.checked_sub(1).and_then(|index| characters.get(index));
-            let next = characters.get(index + 1);
             let boundary = previous.is_some_and(|previous| {
                 previous.is_ascii_lowercase()
                     || previous.is_ascii_digit()
-                    || (previous.is_ascii_uppercase() && next.is_some_and(char::is_ascii_lowercase))
+                    || (previous.is_ascii_uppercase()
+                        && characters
+                            .peek()
+                            .is_some_and(|next| next.is_ascii_lowercase()))
             });
             if boundary {
                 output.push('-');
@@ -1906,6 +1909,7 @@ fn camel_to_kebab(value: &str) -> String {
         } else {
             output.push(character);
         }
+        previous = Some(character);
     }
     output
 }
