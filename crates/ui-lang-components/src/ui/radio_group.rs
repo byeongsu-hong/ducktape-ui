@@ -130,7 +130,7 @@ where
     }
 
     pub fn into_element(self) -> Element<'a, Message> {
-        let enabled: Vec<bool> = self
+        let enabled: Rc<[bool]> = self
             .options
             .iter()
             .map(|option| !self.disabled && !option.disabled)
@@ -143,7 +143,7 @@ where
         let tab_stop = selected_index
             .filter(|index| enabled[*index])
             .or_else(|| enabled.iter().position(|enabled| *enabled));
-        let values: Vec<Value> = self
+        let values: Rc<[Value]> = self
             .options
             .iter()
             .map(|option| option.value.clone())
@@ -168,8 +168,8 @@ where
             .padding([6, 8])
             .width(Length::Shrink);
             let activate = on_select(option.value);
-            let key_values = values.clone();
-            let key_enabled = enabled.clone();
+            let key_values = Rc::clone(&values);
+            let key_enabled = Rc::clone(&enabled);
             let key_on_select = Rc::clone(&on_select);
 
             let control = FocusControl::new(radio_id(&id, index), content, activate, &theme)
@@ -490,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn arrow_navigation_starts_from_the_focused_radio_without_a_selection() {
+    fn arrow_navigation_uses_each_focused_radio_and_skips_disabled_options() {
         use iced::advanced::{
             Layout, Shell, clipboard, layout, mouse, renderer::Headless as _, widget,
         };
@@ -500,8 +500,10 @@ mod tests {
         let mut element: Element<'_, u8> = radio_group(
             "plan",
             [
-                radio_option(1, "Free", &LIGHT),
-                radio_option(2, "Pro", &LIGHT),
+                radio_option(10, "Free", &LIGHT),
+                radio_option(20, "Team", &LIGHT).disabled(true),
+                radio_option(30, "Pro", &LIGHT),
+                radio_option(40, "Enterprise", &LIGHT),
             ],
             None,
             |value| value,
@@ -550,6 +552,29 @@ mod tests {
             &viewport,
         );
 
-        assert_eq!(messages, [2]);
+        assert_eq!(messages, [30]);
+
+        tree.children[0]
+            .state
+            .downcast_mut::<super::super::focus_control::State>()
+            .unfocus();
+        tree.children[3]
+            .state
+            .downcast_mut::<super::super::focus_control::State>()
+            .focus();
+        messages.clear();
+        let mut shell = Shell::new(&mut messages);
+        element.as_widget_mut().update(
+            &mut tree,
+            &event,
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        assert_eq!(messages, [10]);
     }
 }
