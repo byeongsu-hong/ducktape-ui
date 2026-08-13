@@ -439,7 +439,7 @@ pub(in crate::codegen) fn native_field_projection(
                 "background" => Type::Background,
                 "border" => Type::Border,
                 "shadow" => Type::Shadow,
-                "text_color" => Type::Color,
+                "text_color" | "image_color" => Type::Color,
                 "font" => Type::Font,
                 "line_height" => Type::TextLineHeight,
                 _ => return None,

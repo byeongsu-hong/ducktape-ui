@@ -67,6 +67,9 @@ pub(crate) struct ResolvedMediaOptions {
     pub(crate) rotation: Option<CheckedExprUseId>,
     pub(crate) opacity: Option<CheckedExprUseId>,
     pub(crate) svg_memory: bool,
+    /// `color=inherit`: the svg draws with the enclosing button's
+    /// status-resolved text color instead of a constant tint.
+    pub(crate) svg_inherits_button_ink: bool,
     pub(crate) svg_colors: Option<ResolvedMediaSvgColors>,
     pub(crate) svg_style: Option<ResolvedMediaSvgStyle>,
     pub(crate) filter: Option<ResolvedMediaFilter>,
@@ -318,9 +321,11 @@ impl Lowerer {
             return Err(self.invariant(span, "media left checked expressions unconsumed"));
         }
 
+        let svg_inherits_button_ink = options.svg_color.as_deref() == Some("inherit");
         let idle = options
             .svg_color
             .as_deref()
+            .filter(|_| !svg_inherits_button_ink)
             .map(|color| self.resolve_theme_color(color, span))
             .transpose()?;
         let hovered = match &options.svg_hover_color {
@@ -328,8 +333,9 @@ impl Lowerer {
             Some(None) => Some(None),
             Some(Some(color)) => Some(Some(self.resolve_theme_color(color, span)?)),
         };
-        let svg_colors = (options.svg_color.is_some() || options.svg_hover_color.is_some())
-            .then_some(ResolvedMediaSvgColors { idle, hovered });
+        let svg_colors = (!svg_inherits_button_ink
+            && (options.svg_color.is_some() || options.svg_hover_color.is_some()))
+        .then_some(ResolvedMediaSvgColors { idle, hovered });
         let resolved = ResolvedMedia {
             id,
             kind: match kind {
@@ -348,6 +354,7 @@ impl Lowerer {
                 rotation,
                 opacity,
                 svg_memory: options.svg_memory,
+                svg_inherits_button_ink,
                 svg_colors,
                 svg_style,
                 filter: options.filter.map(|filter| match filter {

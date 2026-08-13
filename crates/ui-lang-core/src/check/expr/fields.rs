@@ -384,7 +384,7 @@ pub(crate) fn field_type(
             "background" => Some(Type::Background),
             "border" => Some(Type::Border),
             "shadow" => Some(Type::Shadow),
-            "text_color" => Some(Type::Color),
+            "text_color" | "image_color" => Some(Type::Color),
             "font" => Some(Type::Font),
             "line_height" => Some(Type::TextLineHeight),
             _ => None,

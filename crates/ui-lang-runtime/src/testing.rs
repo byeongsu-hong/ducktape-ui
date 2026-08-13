@@ -982,6 +982,8 @@ pub struct TextPaint {
 #[derive(Debug, Clone, Copy)]
 pub struct ImagePaint {
     pub bounds: Rectangle,
+    /// The svg tint, when the primitive is a vector image drawn with one.
+    pub color: Option<Color>,
 }
 
 #[derive(Debug, Clone)]
@@ -1257,6 +1259,17 @@ impl Target {
 
     pub fn image_height(&self) -> f64 {
         f64::from(self.image("image_height").bounds.height)
+    }
+
+    /// The tint an svg primitive is drawn with. A raster image or an svg
+    /// drawing its own intrinsic colors has no tint and fails the assertion.
+    pub fn image_color(&self) -> Color {
+        self.image("image_color").color.unwrap_or_else(|| {
+            self.fail(
+                "image_color",
+                "expected: a tinted svg primitive\nactual: this image carries no tint color",
+            )
+        })
     }
 
     pub fn pixel_aligned(&self) -> bool {
@@ -4801,9 +4814,11 @@ fn inspect_paint<Renderer: 'static>(
             }
         }
         for image in &layer.images {
-            let clip_bounds = match image {
-                iced_tiny_skia::graphics::Image::Raster { clip_bounds, .. }
-                | iced_tiny_skia::graphics::Image::Vector { clip_bounds, .. } => *clip_bounds,
+            let (clip_bounds, color) = match image {
+                iced_tiny_skia::graphics::Image::Raster { clip_bounds, .. } => (*clip_bounds, None),
+                iced_tiny_skia::graphics::Image::Vector {
+                    clip_bounds, svg, ..
+                } => (*clip_bounds, svg.color),
             };
             if let Some(visible) = image
                 .bounds()
@@ -4811,7 +4826,10 @@ fn inspect_paint<Renderer: 'static>(
                 .and_then(|visible| visible.intersection(&layer.bounds))
                 && bounds.contains(visible.center())
             {
-                images.push(ImagePaint { bounds: visible });
+                images.push(ImagePaint {
+                    bounds: visible,
+                    color,
+                });
             }
         }
     }

@@ -146,6 +146,9 @@ pub(in crate::check) fn infer_documents_group(
                     "a virtual-row keyed column cannot set align: only mounted rows are laid out",
                 ));
             }
+            // Keyed rows may be reconciled across view builds, outliving an
+            // enclosing button's per-build status bindings.
+            let _boundary = leave_button_content();
             infer_view(child, &child_env, document, signatures, ids)?;
         }
         ViewNode::Lazy {
@@ -225,6 +228,9 @@ pub(in crate::check) fn infer_documents_group(
                 child_env.insert(COMPONENT_CONTEXT_INDEX.into(), Type::Named(component));
             }
             let mut child_ids = HashSet::new();
+            // A lazy child is memoized: its element outlives the button build
+            // that could have handed it status bindings.
+            let _boundary = leave_button_content();
             infer_view(child, &child_env, document, signatures, &mut child_ids)?;
         }
         ViewNode::Markdown {

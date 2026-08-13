@@ -381,14 +381,22 @@ pub(in crate::check) fn check_styles(
                         .is_some_and(|color| valid_theme_color(color, document))
             }
             Some("disabled") => {
-                matches!(target, StyleTarget::Button(_))
+                let disabled_text_ink = utility
+                    .strip_prefix("text-")
+                    .is_some_and(|color| valid_theme_color(color, document));
+                let on_button = matches!(target, StyleTarget::Button(_))
                     && (utility.starts_with("opacity-")
                         || utility
                             .strip_prefix("bg-")
                             .is_some_and(|color| valid_theme_color(color, document))
-                        || utility
-                            .strip_prefix("text-")
-                            .is_some_and(|color| valid_theme_color(color, document)))
+                        || disabled_text_ink);
+                // A text child inside a button's content may pin its disabled
+                // ink: the arm keys on the BUTTON's status, which is how an
+                // explicitly-colored glyph follows the disabled ramp.
+                let on_button_child_text = matches!(target, StyleTarget::Text(_))
+                    && disabled_text_ink
+                    && inside_button_content();
+                on_button || on_button_child_text
             }
             Some(_) => false,
             None => match utility {
@@ -469,11 +477,20 @@ pub(in crate::check) fn check_styles(
             },
         };
         if !supported {
-            return Err(Error::new(
+            let error = Error::new(
                 "E042",
                 span,
                 format!("utility `{original}` has no effect on `{target_name}`"),
-            ));
+            );
+            let stranded_disabled_text = variant == Some("disabled")
+                && matches!(target, StyleTarget::Text(_))
+                && utility.starts_with("text-");
+            if stranded_disabled_text {
+                return Err(error.hint(
+                    "`disabled:text-*` on text keys on a button's status, so it only works on text inside a button's content in the same view body",
+                ));
+            }
+            return Err(error);
         }
     }
 
