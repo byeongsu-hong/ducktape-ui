@@ -2,6 +2,7 @@
 //! launcher reads, in one `.deb` that `apt install ./file.deb` accepts.
 
 use super::{BundleMeta, capture, icon, path, tool};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -124,17 +125,19 @@ fn control_file(
         meta.package, meta.version, meta.maintainer
     );
     if !depends.is_empty() {
-        control.push_str(&format!("Depends: {depends}\n"));
+        writeln!(&mut control, "Depends: {depends}").expect("writing to a String cannot fail");
     }
     if let Some(homepage) = &meta.homepage {
-        control.push_str(&format!("Homepage: {homepage}\n"));
+        writeln!(&mut control, "Homepage: {homepage}").expect("writing to a String cannot fail");
     }
     // dpkg reads everything up to the first newline as the synopsis, so it
     // stays one line; a description with newlines would end the field early.
-    control.push_str(&format!(
-        "Description: {}\n",
+    writeln!(
+        &mut control,
+        "Description: {}",
         meta.description.replace('\n', " ")
-    ));
+    )
+    .expect("writing to a String cannot fail");
     control
 }
 
@@ -238,6 +241,40 @@ mod tests {
             control
                 .lines()
                 .any(|field| field.starts_with("Description: "))
+        );
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_control_file_writes_into_output() {
+        const DOCUMENTS: usize = 1_024;
+        const MAX_BLOCKS: u64 = 3_072;
+        const MAX_BYTES: u64 = 662_528;
+
+        let meta = showcase_meta();
+        let expected = control_file(&meta, "amd64", 42, "libc6 (>= 2.34)").len();
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..DOCUMENTS {
+            std::hint::black_box(control_file(
+                std::hint::black_box(&meta),
+                "amd64",
+                42,
+                "libc6 (>= 2.34)",
+            ));
+        }
+        let heap = dhat::HeapStats::get();
+
+        eprintln!(
+            "{DOCUMENTS} Debian control files ({expected} bytes): {} heap blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes
+        );
+        assert!(
+            heap.total_blocks <= MAX_BLOCKS,
+            "Debian control files allocated too many blocks: {heap:?}"
+        );
+        assert!(
+            heap.total_bytes <= MAX_BYTES,
+            "Debian control files allocated too many bytes: {heap:?}"
         );
     }
 
