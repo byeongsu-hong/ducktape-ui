@@ -47,6 +47,20 @@ fn keeps_generated_rust_names_distinct() {
 }
 
 #[test]
+fn marker_free_lines_skip_marker_resolution() {
+    let program =
+        crate::lower::lower(crate::analyze(example!("native_overlay.ice")).unwrap()).unwrap();
+    let generated = "let marker_free = 0;\n".repeat(4_000);
+    let expected = generated.clone();
+
+    super::SOURCE_MARKER_SLOW_PATH_LINES.set(0);
+    let resolved = super::resolve_source_markers(generated, &program, "app.ice");
+
+    assert_eq!(resolved, expected);
+    assert_eq!(super::SOURCE_MARKER_SLOW_PATH_LINES.get(), 0);
+}
+
+#[test]
 fn declared_sync_calls_shadow_simple_builtins() {
     let source = r#"app Demo
 extern crate::backend
