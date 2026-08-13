@@ -22,6 +22,7 @@ static TRANSACTION_ID: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 std::thread_local! {
     static GENERATED_WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CONTENT_COMPARISON_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Debug)]
@@ -59,16 +60,16 @@ impl Default for GeneratedManifest {
 }
 
 impl GeneratedManifest {
-    fn record(&mut self, relative: &str, contents: &str) -> Result<String, Error> {
+    fn record(&mut self, relative: &str, contents: &str) -> Result<(String, bool), Error> {
         let output = generated_file_name(relative);
-        self.insert(
+        let unchanged = self.insert(
             output.clone(),
             GeneratedManifestEntry {
                 source: relative.to_owned(),
                 content_sha256: content_digest(contents.as_bytes()),
             },
         )?;
-        Ok(output)
+        Ok((output, unchanged))
     }
 
     fn record_group(
@@ -76,16 +77,16 @@ impl GeneratedManifest {
         relative: &str,
         slug: &str,
         contents: &str,
-    ) -> Result<String, Error> {
+    ) -> Result<(String, bool), Error> {
         let output = generated_group_file_name(relative, slug);
-        self.insert(
+        let unchanged = self.insert(
             output.clone(),
             GeneratedManifestEntry {
                 source: relative.to_owned(),
                 content_sha256: content_digest(contents.as_bytes()),
             },
         )?;
-        Ok(output)
+        Ok((output, unchanged))
     }
 
     /// Drops this source's entries that the current compilation no longer
@@ -96,7 +97,7 @@ impl GeneratedManifest {
             .retain(|output, entry| entry.source != source || produced.contains(output));
     }
 
-    fn insert(&mut self, output: String, entry: GeneratedManifestEntry) -> Result<(), Error> {
+    fn insert(&mut self, output: String, entry: GeneratedManifestEntry) -> Result<bool, Error> {
         if let Some(existing) = self.outputs.get(&output)
             && existing.source != entry.source
         {
@@ -105,8 +106,9 @@ impl GeneratedManifest {
                 existing.source, entry.source
             )));
         }
+        let unchanged = self.outputs.get(&output) == Some(&entry);
         self.outputs.insert(output, entry);
-        Ok(())
+        Ok(unchanged)
     }
 
     fn validate(&self) -> Result<(), Error> {
@@ -485,8 +487,8 @@ impl GenerationTransaction {
     }
 
     fn stage_output(&mut self, relative: &str, contents: &str) -> Result<String, Error> {
-        let output = self.manifest.record(relative, contents)?;
-        self.stage_named(output, contents)
+        let (output, unchanged) = self.manifest.record(relative, contents)?;
+        self.stage_named(output, contents, unchanged)
     }
 
     fn stage_group_output(
@@ -495,13 +497,19 @@ impl GenerationTransaction {
         slug: &str,
         contents: &str,
     ) -> Result<String, Error> {
-        let output = self.manifest.record_group(relative, slug, contents)?;
-        self.stage_named(output, contents)
+        let (output, unchanged) = self.manifest.record_group(relative, slug, contents)?;
+        self.stage_named(output, contents, unchanged)
     }
 
-    fn stage_named(&mut self, output: String, contents: &str) -> Result<String, Error> {
-        let destination = self.directory.join(&output);
-        if file_contents_equal(&destination, contents.as_bytes()) {
+    fn stage_named(
+        &mut self,
+        output: String,
+        contents: &str,
+        unchanged: bool,
+    ) -> Result<String, Error> {
+        // Existing manifest entries were content-validated when this
+        // transaction began; entries added here already have staged output.
+        if unchanged {
             return Ok(output);
         }
         let staged = self.staging_directory.join(&output);
@@ -848,7 +856,12 @@ fn prune_generated(
 }
 
 fn file_contents_equal(path: &Path, contents: &[u8]) -> bool {
-    fs::read(path).is_ok_and(|existing| existing == contents)
+    let Ok(existing) = fs::read(path) else {
+        return false;
+    };
+    #[cfg(test)]
+    CONTENT_COMPARISON_READS.with(|reads| reads.set(reads.get() + 1));
+    existing == contents
 }
 
 fn record_generated_write() {
@@ -914,6 +927,14 @@ mod tests {
 
     fn generated_writes() -> usize {
         super::GENERATED_WRITES.with(std::cell::Cell::get)
+    }
+
+    fn reset_content_comparison_reads() {
+        super::CONTENT_COMPARISON_READS.with(|reads| reads.set(0));
+    }
+
+    fn content_comparison_reads() -> usize {
+        super::CONTENT_COMPARISON_READS.with(std::cell::Cell::get)
     }
 
     fn fixture(name: &str) -> PathBuf {
@@ -1019,7 +1040,10 @@ mod tests {
     #[test]
     fn manifest_rejects_output_collisions() {
         let mut manifest = GeneratedManifest::default();
-        let output = manifest.record("src/ui/app.ice", "first").unwrap();
+        let (output, unchanged) = manifest.record("src/ui/app.ice", "first").unwrap();
+        assert!(!unchanged);
+        assert!(manifest.record("src/ui/app.ice", "first").unwrap().1);
+        assert!(!manifest.record("src/ui/app.ice", "changed").unwrap().1);
         let error = manifest
             .insert(
                 output,
@@ -1410,6 +1434,7 @@ mod tests {
         );
 
         reset_generated_writes();
+        reset_content_comparison_reads();
         let started = Instant::now();
         compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
         let incremental = started.elapsed();
@@ -1417,6 +1442,11 @@ mod tests {
             generated_writes(),
             0,
             "unchanged incremental codegen must not rewrite generated outputs"
+        );
+        assert_eq!(
+            content_comparison_reads(),
+            1,
+            "unchanged outputs were reread after manifest validation"
         );
         assert!(
             incremental <= INCREMENTAL_BUDGET,
