@@ -853,7 +853,9 @@ overlay_property = "dismiss=" route | "backdrop=" name ("/" u8)?
                  | "p=" expr
                  | ("align-x=" | "align-y=") ("start" | "center" | "end")
 rich_text      = "rich-text" id? rich_text_property* styles? ("->" route)?
-                 INDENT rich_span*
+                 INDENT rich_text_child*
+rich_text_child = rich_span | rich_text_for
+rich_text_for  = "for" name "in" expr INDENT rich_span*
 rich_text_property = ("w=" | "h=") length | "size=" expr
                    | ("line-h=" | "line-h-px=") expr
                    | "font=" font_ref | "align-x=" text_alignment
@@ -3396,7 +3398,7 @@ The implemented native nodes are:
 | `box` | exactly one child with ID, all length bounds, max bounds, per-axis alignment, clipping, per-side padding, every concrete surface style field including linear backgrounds, and typed native runtime style callbacks |
 | `overlay` | named `content` and `layer` trees with checked visibility, alignment, padding, backdrop and optional dismissal |
 | `text` | one `str`, `i64`, or `f64` expression with an optional ID, bounds, size/line-height, font, alignment, shaping, wrapping, checked color/weight styles, and an AccessKit `Label` role containing the visible value |
-| `rich-text` | optional ID, zero or more structured spans with rich defaults, complete span highlights and optional string link events |
+| `rich-text` | optional ID, zero or more structured spans with rich defaults, complete span highlights and optional string link events; `for` children expand a span template per list item into the same single paragraph, composing with literal spans |
 | `panes` | named pane trees backed by recursive persistent split state, structured title/full/compact controls, complete concrete state and surface styles with linear backgrounds, closed panes, list-keyed runtime templates, typed dynamic references, click, resize and drag/drop behavior |
 | `input` | required `str` or declared `secret` binding; checked accessible label/description, `TextInput` or value-suppressing `PasswordInput` role, ID, hint, disabled/secure, submit/paste, every concrete builder setter, complete icon, all concrete status style fields, and typed native runtime style callbacks |
 | `button` | string label or one child; checked accessible label/description and optional toggled state with an explicit label required for child content, compact-label typography utilities, `Button` role and keyboard activation, optional ID/disabled, typed size/padding/clip, eight presets, complete status styles, typed native runtime style callbacks and required route |
@@ -3580,6 +3582,20 @@ at least one span has a string `link=`:
 rich-text w=fill wrap=word size=14.0 @text-muted -> open_link _
   span "Read the "
   span "Ice guide" link="https://example.com" underline @font-bold text-primary
+  span "."
+```
+
+A `for` child expands a span template per list item at render time, composing
+with literal `span` siblings so a dynamically built line — a chat message body
+— still lowers to one native paragraph widget. The loop binding scopes to the
+`for`'s own `span` children, and a `link=` inside the loop requires the same
+route as a literal one:
+
+```ice
+rich-text wrap=word -> open_link _
+  span "Sources: "
+  for source in sources
+    span source.title link=source.url underline
   span "."
 ```
 

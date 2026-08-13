@@ -151,6 +151,8 @@ pub(crate) enum CheckedLocalOwner {
 pub(crate) enum CheckedViewLocalRole {
     DaemonWindow,
     ForItem,
+    /// The item of the nth `for` child inside one `rich-text`.
+    RichForItem(u32),
     MatchPayload(u32),
     KeyedItem,
     LazyDependency,
@@ -980,7 +982,24 @@ pub(crate) struct CheckedLayout {
 pub(crate) struct CheckedText {
     pub(crate) id: ViewId,
     pub(crate) style: Option<ExternFnId>,
-    pub(crate) span_origins: Vec<OriginId>,
+    /// Rich children in document order; empty for plain `text`.
+    pub(crate) rich_children: Vec<CheckedRichChild>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CheckedRichChild {
+    Span {
+        origin: OriginId,
+    },
+    For {
+        items: CheckedExprUseId,
+        item: CheckedLocalId,
+        origin: OriginId,
+        spans: Vec<OriginId>,
+        /// The interaction expression indices checked under the loop-scoped
+        /// environment — the only expressions allowed to read the item local.
+        scoped_expressions: std::ops::Range<u32>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -4294,7 +4313,6 @@ impl<'a> FactsBuilder<'a> {
         expressions: Vec<&Expr>,
         routes: Vec<&Route>,
         options: &TextOptions,
-        span_origins: &[Span],
         env: &dyn FactEnvironment,
         span: &Span,
     ) -> Result<(), Error> {
@@ -4310,6 +4328,156 @@ impl<'a> FactsBuilder<'a> {
             env,
             span,
         )?;
+        self.insert_text_facts(text, options, Vec::new(), span)
+    }
+
+    /// Pushes the rich-text option expressions with the widget environment,
+    /// then each child's expressions in document order — a `for` child pushes
+    /// its `items` first, binds the item local, and pushes its span
+    /// expressions under the loop-scoped environment.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_rich_text_facts(
+        &mut self,
+        text: ViewId,
+        options: &TextOptions,
+        color: &Option<String>,
+        children: &[RichTextChild],
+        route: &Option<Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let semantic_key = crate::ast::rich_text_semantic_key(options, color, children, route);
+        let parent = self.declarations.view(text).origin;
+        let mut expression_count = 0u32;
+        let mut option_expressions = Vec::new();
+        for expression in crate::ast::text_option_expression_roots(options) {
+            option_expressions.push(self.push_interaction_expression(
+                text,
+                &mut expression_count,
+                expression,
+                None,
+                env,
+                span,
+                parent,
+            )?);
+        }
+        let mut rich_children = Vec::with_capacity(children.len());
+        for (index, child) in children.iter().enumerate() {
+            match child {
+                RichTextChild::Span(item) => {
+                    let origin = self.origins.push(&item.span, Some(parent));
+                    self.push_rich_span_expressions(
+                        text,
+                        &mut expression_count,
+                        &mut option_expressions,
+                        item,
+                        env,
+                        origin,
+                    )?;
+                    rich_children.push(CheckedRichChild::Span { origin });
+                }
+                RichTextChild::For(iteration) => {
+                    let origin = self.origins.push(&iteration.span, Some(parent));
+                    let items = self.push_interaction_expression(
+                        text,
+                        &mut expression_count,
+                        &iteration.items,
+                        None,
+                        env,
+                        &iteration.span,
+                        origin,
+                    )?;
+                    option_expressions.push(items);
+                    let Type::List(item_ty) = self.facts.expression_use(items).source.clone()
+                    else {
+                        return Err(self.invariant(
+                            &iteration.span,
+                            "checked rich-text for items are not a list",
+                        ));
+                    };
+                    let local = self.push_view_local_with_parent(
+                        &iteration.item,
+                        *item_ty.clone(),
+                        text,
+                        CheckedViewLocalRole::RichForItem(index as u32),
+                        &iteration.span,
+                        origin,
+                    );
+                    let scoped = LayeredFactEnv {
+                        base: env,
+                        name: iteration.item.clone(),
+                        value: (CheckedPathRoot::Local(local), *item_ty),
+                    };
+                    record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
+                    let scoped_start = expression_count;
+                    let mut spans = Vec::with_capacity(iteration.spans.len());
+                    for item in &iteration.spans {
+                        let span_origin = self.origins.push(&item.span, Some(origin));
+                        self.push_rich_span_expressions(
+                            text,
+                            &mut expression_count,
+                            &mut option_expressions,
+                            item,
+                            &scoped,
+                            span_origin,
+                        )?;
+                        spans.push(span_origin);
+                    }
+                    rich_children.push(CheckedRichChild::For {
+                        items,
+                        item: local,
+                        origin,
+                        spans,
+                        scoped_expressions: scoped_start..expression_count,
+                    });
+                }
+            }
+        }
+        self.finish_interaction_facts(
+            text,
+            CheckedInteractionKind::RichText,
+            semantic_key,
+            expression_count,
+            option_expressions,
+            route.iter().collect(),
+            env,
+            span,
+        )?;
+        self.insert_text_facts(text, options, rich_children, span)
+    }
+
+    fn push_rich_span_expressions(
+        &mut self,
+        text: ViewId,
+        expression_count: &mut u32,
+        option_expressions: &mut Vec<CheckedExprUseId>,
+        item: &RichSpan,
+        env: &dyn FactEnvironment,
+        origin: OriginId,
+    ) -> Result<(), Error> {
+        let mut roots = Vec::new();
+        crate::ast::push_rich_span_expression_roots(&mut roots, item);
+        for expression in roots {
+            option_expressions.push(self.push_interaction_expression(
+                text,
+                expression_count,
+                expression,
+                None,
+                env,
+                &item.span,
+                origin,
+            )?);
+        }
+        Ok(())
+    }
+
+    fn insert_text_facts(
+        &mut self,
+        text: ViewId,
+        options: &TextOptions,
+        rich_children: Vec<CheckedRichChild>,
+        span: &Span,
+    ) -> Result<(), Error> {
         let style = options
             .custom_style
             .as_ref()
@@ -4321,11 +4489,6 @@ impl<'a> FactsBuilder<'a> {
                     .ok_or_else(|| self.invariant(span, "text style extern disappeared"))
             })
             .transpose()?;
-        let parent = self.declarations.view(text).origin;
-        let span_origins = span_origins
-            .iter()
-            .map(|span| self.origins.push(span, Some(parent)))
-            .collect();
         if self
             .facts
             .texts
@@ -4334,7 +4497,7 @@ impl<'a> FactsBuilder<'a> {
                 CheckedText {
                     id: text,
                     style,
-                    span_origins,
+                    rich_children,
                 },
             )
             .is_some()
@@ -6221,6 +6384,35 @@ impl<'a> FactsBuilder<'a> {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        self.finish_interaction_facts(
+            widget,
+            kind,
+            semantic_key,
+            expression_count,
+            option_expressions,
+            routes,
+            env,
+            span,
+        )
+    }
+
+    /// Lowers the routes and records the interaction after its option
+    /// expressions have been pushed — the shared tail for widgets that push
+    /// their expressions with one environment and for `rich-text`, whose
+    /// `for` children push theirs under loop-scoped environments.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_interaction_facts(
+        &mut self,
+        widget: ViewId,
+        kind: CheckedInteractionKind,
+        semantic_key: String,
+        mut expression_count: u32,
+        option_expressions: Vec<CheckedExprUseId>,
+        routes: Vec<&Route>,
+        env: &dyn FactEnvironment,
+        span: &Span,
+    ) -> Result<(), Error> {
+        let parent = self.declarations.view(widget).origin;
         let mut checked_routes = Vec::with_capacity(routes.len());
         for (index, route) in routes.into_iter().enumerate() {
             checked_routes.push(self.lower_interaction_route(
@@ -10452,7 +10644,6 @@ impl<'a> FactsBuilder<'a> {
                     crate::ast::text_expression_roots(value, options),
                     Vec::new(),
                     options,
-                    &[],
                     env,
                     span,
                 )?;
@@ -10461,26 +10652,12 @@ impl<'a> FactsBuilder<'a> {
             ViewNode::RichText {
                 options,
                 color,
-                spans,
+                children,
                 route,
                 span,
                 ..
             } => {
-                let span_origins = spans
-                    .iter()
-                    .map(|span| span.span.clone())
-                    .collect::<Vec<_>>();
-                self.lower_text_facts(
-                    view,
-                    CheckedInteractionKind::RichText,
-                    crate::ast::rich_text_semantic_key(options, color, spans, route),
-                    crate::ast::rich_text_expression_roots(options, spans),
-                    route.iter().collect(),
-                    options,
-                    &span_origins,
-                    env,
-                    span,
-                )?;
+                self.lower_rich_text_facts(view, options, color, children, route, env, span)?;
                 CheckedViewFlow::None
             }
             ViewNode::Input {

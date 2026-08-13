@@ -1019,6 +1019,58 @@ view
 }
 
 #[test]
+fn checks_for_children_inside_rich_text() {
+    let source = r#"app Typography
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  tokens = ["alpha", "beta"]
+  count = 2
+on link(url)
+view
+  rich-text wrap=word -> link _
+    span "Report: "
+    for token in tokens
+      span token underline link=token
+    span " end"
+"#;
+    analyze(source).unwrap();
+
+    let not_a_list = source.replace("for token in tokens", "for token in count");
+    let error = analyze(&not_a_list).unwrap_err();
+    assert_eq!(error.code, "E186");
+    assert!(
+        error
+            .message
+            .contains("rich-text `for` expects a list expression")
+    );
+
+    let unknown_item = source.replace("span token underline", "span missing underline");
+    let error = analyze(&unknown_item).unwrap_err();
+    assert!(error.message.contains("missing"));
+
+    // The loop binding scopes to the `for` children: a literal sibling span
+    // cannot read it.
+    let escaped_binding = source.replace("span \" end\"", "span token");
+    analyze(&escaped_binding).unwrap_err();
+
+    // A link inside the `for` counts: dropping the route must fail the same
+    // way it does for literal spans.
+    let missing_route = source.replace(" -> link _", "");
+    let error = analyze(&missing_route).unwrap_err();
+    assert_eq!(error.code, "E186");
+    assert!(error.message.contains("require `-> handler _`"));
+}
+
+#[test]
 fn checks_complete_font_descriptors_and_references() {
     let source = r#"app Typography
 font thin family="Inter" weight=thin stretch=ultra-condensed style=normal default=true

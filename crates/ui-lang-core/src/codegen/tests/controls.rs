@@ -1363,3 +1363,39 @@ view
     assert_eq!(generated.matches("/image").count(), 2);
     assert!(!generated.contains("/@media:"));
 }
+
+#[test]
+fn lowers_rich_text_for_children_into_one_paragraph() {
+    let source = r#"app Typography
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  tokens = ["alpha", "beta"]
+on open(url)
+view
+  rich-text wrap=word -> open _
+    span "Report: "
+    for token in tokens
+      span token underline link=token
+    span " end"
+"#;
+    let generated = compile(source, "rich-for.ice").unwrap();
+    // The whole child list, `for` included, feeds ONE paragraph widget.
+    assert_eq!(generated.matches("::iced::widget::rich_text(").count(), 1);
+    assert!(generated.contains(
+        "for token in self.tokens.iter().cloned() { __rich_spans.push(::iced::widget::span(token.to_owned()).link(token.to_owned()).underline(true)); }"
+    ));
+    assert!(
+        generated.contains("__rich_spans.push(::iced::widget::span(\"Report: \".to_owned()));")
+    );
+    assert!(generated.contains("__rich_spans.push(::iced::widget::span(\" end\".to_owned()));"));
+    assert!(generated.contains(".on_link_click(move |__link| __TypographyMessage::Open(__link))"));
+}

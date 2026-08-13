@@ -954,3 +954,78 @@ fn requires_a_tray_menu_row() {
     assert_eq!(error.code, "E015");
     assert!(error.message.contains("menu requires at least one row"));
 }
+
+#[test]
+fn parses_for_children_inside_rich_text_alongside_literal_spans() {
+    let document = parse(
+        r#"app RichFor
+state
+  tokens = ["alpha", "beta"]
+view
+  rich-text wrap=word
+    span "Report: "
+    for token in tokens
+      span token underline
+      span " "
+    span "end"
+"#,
+    )
+    .unwrap();
+    let ViewNode::RichText { children, .. } = &document.view else {
+        panic!("expected rich-text");
+    };
+    let [
+        RichTextChild::Span(head),
+        RichTextChild::For(iteration),
+        RichTextChild::Span(tail),
+    ] = children.as_slice()
+    else {
+        panic!("expected span, for, span children");
+    };
+    assert!(matches!(&head.value, Expr::Str(value) if value == "Report: "));
+    assert_eq!(iteration.item, "token");
+    assert!(matches!(&iteration.items, Expr::Path(path) if path == &["tokens".to_owned()]));
+    assert_eq!(iteration.spans.len(), 2);
+    assert!(matches!(&iteration.spans[0].value, Expr::Path(path) if path == &["token".to_owned()]));
+    assert!(iteration.spans[0].options.underline.is_some());
+    assert!(matches!(&tail.value, Expr::Str(value) if value == "end"));
+}
+
+#[test]
+fn rejects_rich_text_children_that_are_neither_span_nor_for() {
+    let source = r#"app RichFor
+state
+  tokens = ["alpha"]
+view
+  rich-text
+    span "ok"
+    text "not a span"
+"#;
+    let error = parse(source).unwrap_err();
+    assert_eq!(error.code, "E186");
+    assert!(
+        error
+            .message
+            .contains("rich-text children must be `span` lines")
+    );
+
+    let inside_for = source.replace(
+        "    text \"not a span\"",
+        "    for token in tokens\n      text \"not a span\"",
+    );
+    let error = parse(&inside_for).unwrap_err();
+    assert_eq!(error.code, "E186");
+    assert!(
+        error
+            .message
+            .contains("rich-text children must be `span` lines")
+    );
+
+    let bad_header = source.replace(
+        "    text \"not a span\"",
+        "    for token tokens\n      span token",
+    );
+    let error = parse(&bad_header).unwrap_err();
+    assert_eq!(error.code, "E186");
+    assert!(error.message.contains("loops use `for item in items`"));
+}

@@ -87,6 +87,22 @@ pub(crate) struct ResolvedRichSpan {
     pub(crate) origin: OriginId,
 }
 
+/// One resolved `rich-text` child: a literal span, or a `for` whose span
+/// templates expand against the iterated items at render time — still inside
+/// the same single paragraph widget.
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedRichChild {
+    Span(Box<ResolvedRichSpan>),
+    For(ResolvedRichFor),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedRichFor {
+    pub(crate) items: CheckedExprUseId,
+    pub(crate) item: ResolvedIterationBinding,
+    pub(crate) spans: Vec<ResolvedRichSpan>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum ResolvedTextContent {
     Plain {
@@ -94,7 +110,7 @@ pub(crate) enum ResolvedTextContent {
     },
     Rich {
         color: Option<ResolvedThemeColor>,
-        spans: Vec<ResolvedRichSpan>,
+        children: Vec<ResolvedRichChild>,
         route: Option<ResolvedInteractionRoute>,
     },
 }
@@ -195,13 +211,13 @@ impl Lowerer {
             ViewNode::RichText {
                 options,
                 color,
-                spans,
+                children,
                 route,
                 ..
             } => (
                 CheckedInteractionKind::RichText,
-                crate::ast::rich_text_semantic_key(options, color, spans, route),
-                crate::ast::rich_text_expression_roots(options, spans),
+                crate::ast::rich_text_semantic_key(options, color, children, route),
+                crate::ast::rich_text_expression_roots(options, children),
                 options,
                 route,
             ),
@@ -214,7 +230,23 @@ impl Lowerer {
             .text(id)
             .cloned()
             .ok_or_else(|| self.invariant(span, "text has no checked HIR facts"))?;
-        self.validate_interaction_expression_graphs(id, scope, checked.expression_count, span)?;
+        let has_scoped_locals = checked_text
+            .rich_children
+            .iter()
+            .any(|child| matches!(child, CheckedRichChild::For { .. }));
+        if has_scoped_locals {
+            let contracts =
+                self.rich_text_local_contracts(&checked_text, checked.expression_count, span)?;
+            self.validate_interaction_expression_graphs_with_local_contracts(
+                id,
+                scope,
+                checked.expression_count,
+                &contracts,
+                span,
+            )?;
+        } else {
+            self.validate_interaction_expression_graphs(id, scope, checked.expression_count, span)?;
+        }
         if checked.option_expressions.len() != roots.len() {
             return Err(self.invariant(span, "text expression cardinality diverged"));
         }
@@ -243,31 +275,32 @@ impl Lowerer {
             ViewNode::Text { .. } => ResolvedTextContent::Plain {
                 value: plain_value.expect("plain text value"),
             },
-            ViewNode::RichText { color, spans, .. } => {
-                if checked_text.span_origins.len() != spans.len() {
-                    return Err(self.invariant(span, "rich-text span origin count diverged"));
+            ViewNode::RichText {
+                color, children, ..
+            } => {
+                if checked_text.rich_children.len() != children.len() {
+                    return Err(self.invariant(span, "rich-text child count diverged"));
                 }
-                let spans = spans
-                    .iter()
-                    .zip(&checked_text.span_origins)
-                    .map(|(span, span_origin)| {
-                        let retained = self.origins.try_get(*span_origin).ok_or_else(|| {
-                            self.invariant(&span.span, "rich-text span origin is outside its arena")
-                        })?;
-                        if retained.parent != Some(origin) {
-                            return Err(
-                                self.invariant(&span.span, "rich-text span origin parent diverged")
-                            );
-                        }
-                        self.resolve_rich_span(&mut values, span, *span_origin)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let mut resolved_children = Vec::with_capacity(children.len());
+                for (index, (child, checked_child)) in
+                    children.iter().zip(&checked_text.rich_children).enumerate()
+                {
+                    resolved_children.push(self.resolve_rich_child(
+                        &mut values,
+                        child,
+                        checked_child,
+                        index,
+                        id,
+                        origin,
+                        span,
+                    )?);
+                }
                 ResolvedTextContent::Rich {
                     color: color
                         .as_deref()
                         .map(|color| self.resolve_theme_color(color, span))
                         .transpose()?,
-                    spans,
+                    children: resolved_children,
                     route: None,
                 }
             }
@@ -289,9 +322,11 @@ impl Lowerer {
             return Err(self.invariant(span, "text left checked routes unconsumed"));
         }
         let content = match content {
-            ResolvedTextContent::Rich { color, spans, .. } => ResolvedTextContent::Rich {
+            ResolvedTextContent::Rich {
+                color, children, ..
+            } => ResolvedTextContent::Rich {
                 color,
-                spans,
+                children,
                 route: resolved_route,
             },
             content => {
@@ -393,6 +428,147 @@ impl Lowerer {
             underline,
             strikethrough,
         })
+    }
+
+    /// Every rich-text expression may read no own-view local, except the
+    /// expressions a `for` child checked under its loop scope, which may read
+    /// exactly that child's item local.
+    fn rich_text_local_contracts(
+        &self,
+        checked_text: &CheckedText,
+        expression_count: u32,
+        span: &Span,
+    ) -> Result<HashMap<CheckedExprUseId, HashSet<CheckedLocalId>>, Error> {
+        let text = checked_text.id;
+        let expression_use = |index: u32| {
+            let owner = CheckedExprOwner::Interaction(InteractionExpressionId {
+                widget: text,
+                index,
+            });
+            self.facts.expression_use_by_owner(owner).ok_or_else(|| {
+                self.invariant(span, "rich-text expression has no checked owner mapping")
+            })
+        };
+        let mut contracts = HashMap::new();
+        for index in 0..expression_count {
+            contracts.insert(expression_use(index)?, HashSet::new());
+        }
+        for child in &checked_text.rich_children {
+            let CheckedRichChild::For {
+                item,
+                scoped_expressions,
+                ..
+            } = child
+            else {
+                continue;
+            };
+            for index in scoped_expressions.clone() {
+                contracts
+                    .get_mut(&expression_use(index)?)
+                    .ok_or_else(|| {
+                        self.invariant(span, "rich-text scoped expression is outside its widget")
+                    })?
+                    .insert(*item);
+            }
+        }
+        Ok(contracts)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_rich_child(
+        &self,
+        values: &mut TextOperands<'_>,
+        child: &RichTextChild,
+        checked_child: &CheckedRichChild,
+        index: usize,
+        text: ViewId,
+        text_origin: OriginId,
+        span: &Span,
+    ) -> Result<ResolvedRichChild, Error> {
+        let require_parent = |origin: OriginId, parent: OriginId, span: &Span| {
+            let retained = self
+                .origins
+                .try_get(origin)
+                .ok_or_else(|| self.invariant(span, "rich-text origin is outside its arena"))?;
+            if retained.parent != Some(parent) {
+                return Err(self.invariant(span, "rich-text origin parent diverged"));
+            }
+            Ok(())
+        };
+        match (child, checked_child) {
+            (RichTextChild::Span(item), CheckedRichChild::Span { origin }) => {
+                require_parent(*origin, text_origin, &item.span)?;
+                Ok(ResolvedRichChild::Span(Box::new(
+                    self.resolve_rich_span(values, item, *origin)?,
+                )))
+            }
+            (
+                RichTextChild::For(iteration),
+                CheckedRichChild::For {
+                    items,
+                    item,
+                    origin,
+                    spans,
+                    ..
+                },
+            ) => {
+                require_parent(*origin, text_origin, &iteration.span)?;
+                let (items_use, source) =
+                    values.take_where("for items", |ty| matches!(ty, Type::List(_)))?;
+                if items_use != *items {
+                    return Err(
+                        self.invariant(&iteration.span, "rich-text for items contract diverged")
+                    );
+                }
+                let checked_item = self
+                    .facts
+                    .try_local(*item)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            &iteration.span,
+                            "rich-text for item local ID is outside its arena",
+                        )
+                    })?
+                    .clone();
+                let expected_owner = CheckedLocalOwner::View {
+                    view: text,
+                    role: CheckedViewLocalRole::RichForItem(index as u32),
+                };
+                let Type::List(inner) = &source else {
+                    return Err(self.invariant(span, "rich-text for items type is not a list"));
+                };
+                if checked_item.owner != expected_owner || **inner != checked_item.ty {
+                    return Err(
+                        self.invariant(&iteration.span, "rich-text for item binding diverged")
+                    );
+                }
+                if spans.len() != iteration.spans.len() {
+                    return Err(
+                        self.invariant(&iteration.span, "rich-text for span count diverged")
+                    );
+                }
+                let spans = iteration
+                    .spans
+                    .iter()
+                    .zip(spans)
+                    .map(|(span_item, span_origin)| {
+                        require_parent(*span_origin, *origin, &span_item.span)?;
+                        self.resolve_rich_span(values, span_item, *span_origin)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(ResolvedRichChild::For(ResolvedRichFor {
+                    items: items_use,
+                    item: ResolvedIterationBinding {
+                        local: *item,
+                        name: checked_item.name,
+                        #[cfg(test)]
+                        ty: checked_item.ty,
+                    },
+                    spans,
+                }))
+            }
+            _ => Err(self.invariant(span, "rich-text child shape diverged")),
+        }
     }
 
     fn resolve_rich_span(

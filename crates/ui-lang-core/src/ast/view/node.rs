@@ -43,7 +43,7 @@ pub enum ViewNode {
         id: Option<Id>,
         options: TextOptions,
         color: Option<String>,
-        spans: Vec<RichSpan>,
+        children: Vec<RichTextChild>,
         styles: Vec<String>,
         route: Option<Route>,
         span: Span,

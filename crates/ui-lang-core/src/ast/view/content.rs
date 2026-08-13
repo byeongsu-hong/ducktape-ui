@@ -754,6 +754,23 @@ pub struct RichSpan {
     pub span: Span,
 }
 
+/// One `rich-text` child line: a literal `span`, or a `for` that expands to
+/// spans at runtime while the whole block still lowers to one paragraph
+/// widget.
+#[derive(Clone, Debug)]
+pub enum RichTextChild {
+    Span(Box<RichSpan>),
+    For(RichTextFor),
+}
+
+#[derive(Clone, Debug)]
+pub struct RichTextFor {
+    pub item: String,
+    pub items: Expr,
+    pub spans: Vec<RichSpan>,
+    pub span: Span,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct RichSpanOptions {
     pub size: Option<Expr>,
@@ -824,39 +841,60 @@ pub(crate) fn text_expression_roots<'a>(
     roots
 }
 
+/// The checked-expression operand order of one span. The fact builder and the
+/// lowerer both walk this order, so it is the positional contract between
+/// them.
+pub(crate) fn push_rich_span_expression_roots<'a>(roots: &mut Vec<&'a Expr>, span: &'a RichSpan) {
+    roots.push(&span.value);
+    roots.extend(span.options.size.as_ref());
+    push_text_line_height_root(roots, &span.options.line_height);
+    roots.extend(span.options.link.as_ref());
+    push_text_background_roots(roots, &span.options.background);
+    roots.extend(
+        [
+            &span.options.border_width,
+            &span.options.radius,
+            &span.options.radius_top_left,
+            &span.options.radius_top_right,
+            &span.options.radius_bottom_right,
+            &span.options.radius_bottom_left,
+            &span.options.padding.all,
+            &span.options.padding.x,
+            &span.options.padding.y,
+            &span.options.padding.top,
+            &span.options.padding.right,
+            &span.options.padding.bottom,
+            &span.options.padding.left,
+            &span.options.underline,
+            &span.options.strikethrough,
+        ]
+        .into_iter()
+        .flatten(),
+    );
+}
+
+pub(crate) fn text_option_expression_roots(options: &TextOptions) -> Vec<&Expr> {
+    let mut roots = Vec::new();
+    push_text_option_roots(&mut roots, options);
+    roots
+}
+
 pub(crate) fn rich_text_expression_roots<'a>(
     options: &'a TextOptions,
-    spans: &'a [RichSpan],
+    children: &'a [RichTextChild],
 ) -> Vec<&'a Expr> {
     let mut roots = Vec::new();
     push_text_option_roots(&mut roots, options);
-    for span in spans {
-        roots.push(&span.value);
-        roots.extend(span.options.size.as_ref());
-        push_text_line_height_root(&mut roots, &span.options.line_height);
-        roots.extend(span.options.link.as_ref());
-        push_text_background_roots(&mut roots, &span.options.background);
-        roots.extend(
-            [
-                &span.options.border_width,
-                &span.options.radius,
-                &span.options.radius_top_left,
-                &span.options.radius_top_right,
-                &span.options.radius_bottom_right,
-                &span.options.radius_bottom_left,
-                &span.options.padding.all,
-                &span.options.padding.x,
-                &span.options.padding.y,
-                &span.options.padding.top,
-                &span.options.padding.right,
-                &span.options.padding.bottom,
-                &span.options.padding.left,
-                &span.options.underline,
-                &span.options.strikethrough,
-            ]
-            .into_iter()
-            .flatten(),
-        );
+    for child in children {
+        match child {
+            RichTextChild::Span(span) => push_rich_span_expression_roots(&mut roots, span),
+            RichTextChild::For(iteration) => {
+                roots.push(&iteration.items);
+                for span in &iteration.spans {
+                    push_rich_span_expression_roots(&mut roots, span);
+                }
+            }
+        }
     }
     roots
 }
@@ -914,12 +952,7 @@ pub(crate) fn text_semantic_key(options: &TextOptions) -> String {
     format!("text|{}", text_options_semantic_key(options))
 }
 
-pub(crate) fn rich_text_semantic_key(
-    options: &TextOptions,
-    color: &Option<String>,
-    spans: &[RichSpan],
-    route: &Option<Route>,
-) -> String {
+fn rich_span_semantic_key(span: &RichSpan) -> String {
     fn background(background: &Option<BackgroundValue>) -> String {
         match background {
             None => "none".into(),
@@ -935,36 +968,54 @@ pub(crate) fn rich_text_semantic_key(
         }
     }
 
-    let spans = spans
+    format!(
+        "size={}|line={}|font={}|color={:?}|link={}|bg={}|border={:?}|metrics={:?}",
+        span.options.size.is_some(),
+        text_line_height_semantic_key(&span.options.line_height),
+        text_font_semantic_key(&span.options.font),
+        span.options.color,
+        span.options.link.is_some(),
+        background(&span.options.background),
+        span.options.border,
+        [
+            span.options.border_width.is_some(),
+            span.options.radius.is_some(),
+            span.options.radius_top_left.is_some(),
+            span.options.radius_top_right.is_some(),
+            span.options.radius_bottom_right.is_some(),
+            span.options.radius_bottom_left.is_some(),
+            span.options.padding.all.is_some(),
+            span.options.padding.x.is_some(),
+            span.options.padding.y.is_some(),
+            span.options.padding.top.is_some(),
+            span.options.padding.right.is_some(),
+            span.options.padding.bottom.is_some(),
+            span.options.padding.left.is_some(),
+            span.options.underline.is_some(),
+            span.options.strikethrough.is_some(),
+        ],
+    )
+}
+
+pub(crate) fn rich_text_semantic_key(
+    options: &TextOptions,
+    color: &Option<String>,
+    children: &[RichTextChild],
+    route: &Option<Route>,
+) -> String {
+    let spans = children
         .iter()
-        .map(|span| {
-            format!(
-                "size={}|line={}|font={}|color={:?}|link={}|bg={}|border={:?}|metrics={:?}",
-                span.options.size.is_some(),
-                text_line_height_semantic_key(&span.options.line_height),
-                text_font_semantic_key(&span.options.font),
-                span.options.color,
-                span.options.link.is_some(),
-                background(&span.options.background),
-                span.options.border,
-                [
-                    span.options.border_width.is_some(),
-                    span.options.radius.is_some(),
-                    span.options.radius_top_left.is_some(),
-                    span.options.radius_top_right.is_some(),
-                    span.options.radius_bottom_right.is_some(),
-                    span.options.radius_bottom_left.is_some(),
-                    span.options.padding.all.is_some(),
-                    span.options.padding.x.is_some(),
-                    span.options.padding.y.is_some(),
-                    span.options.padding.top.is_some(),
-                    span.options.padding.right.is_some(),
-                    span.options.padding.bottom.is_some(),
-                    span.options.padding.left.is_some(),
-                    span.options.underline.is_some(),
-                    span.options.strikethrough.is_some(),
-                ],
-            )
+        .map(|child| match child {
+            RichTextChild::Span(span) => rich_span_semantic_key(span),
+            RichTextChild::For(iteration) => format!(
+                "for[{}]",
+                iteration
+                    .spans
+                    .iter()
+                    .map(rich_span_semantic_key)
+                    .collect::<Vec<_>>()
+                    .join(";")
+            ),
         })
         .collect::<Vec<_>>()
         .join(";");

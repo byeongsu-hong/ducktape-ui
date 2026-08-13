@@ -1263,11 +1263,15 @@ impl Lowerer {
             }
             ViewNode::RichText {
                 styles,
-                spans,
+                children,
                 span,
                 ..
             } => {
                 self.lower_style_use(styles, ResolvedStyleTargetKind::Text, span)?;
+                let spans = children.iter().flat_map(|child| match child {
+                    RichTextChild::Span(item) => std::slice::from_ref(item.as_ref()).iter(),
+                    RichTextChild::For(iteration) => iteration.spans.iter(),
+                });
                 for item in spans {
                     self.lower_style_use(&item.styles, ResolvedStyleTargetKind::Text, &item.span)?;
                 }
