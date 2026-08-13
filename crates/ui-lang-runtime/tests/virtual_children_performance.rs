@@ -74,7 +74,7 @@ fn repeated_exact_key_diff_allocates_nothing() {
     );
 
     let unchanged = virtual_keyed_children(rows(), 20.0);
-    unchanged.diff(&mut tree);
+    unchanged.diff(std::hint::black_box(&mut tree));
 
     let region = Region::new(GLOBAL);
     for _ in 0..FRAMES {
