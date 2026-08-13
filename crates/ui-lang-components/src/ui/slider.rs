@@ -347,7 +347,11 @@ pub fn normalize_values(values: impl Into<Vec<f32>>, spec: SliderSpec) -> Vec<f3
 }
 
 pub fn set_thumb(values: &[f32], index: usize, value: f32, spec: SliderSpec) -> Vec<f32> {
-    let mut values = normalize_values(values.to_vec(), spec);
+    set_owned_thumb(values.to_vec(), index, value, spec)
+}
+
+fn set_owned_thumb(values: Vec<f32>, index: usize, value: f32, spec: SliderSpec) -> Vec<f32> {
+    let mut values = normalize_values(values, spec);
     let index = index.min(values.len() - 1);
     let lower = index
         .checked_sub(1)
@@ -374,7 +378,7 @@ pub fn reduce_thumb(
         SliderCommand::Minimum => spec.min,
         SliderCommand::Maximum => spec.max,
     };
-    set_thumb(&values, index, target, spec)
+    set_owned_thumb(values, index, target, spec)
 }
 
 fn snap(value: f32, spec: SliderSpec) -> f32 {
@@ -1091,6 +1095,19 @@ mod tests {
         assert_eq!(
             reduce_thumb(&[20.0, 80.0], 1, SliderCommand::Minimum, spec),
             vec![20.0, 20.0]
+        );
+    }
+
+    #[test]
+    fn keyboard_math_preserves_the_second_normalization_pass() {
+        let spec = SliderSpec::new(-2_706_305_500.0..=1.502_558_9e25, 7.087_723e-7);
+        let once = normalize_values(vec![0.014_646_606_5], spec);
+        let twice = normalize_values(once.clone(), spec);
+
+        assert_ne!(once, twice);
+        assert_eq!(
+            reduce_thumb(&[0.014_646_606_5, 1.0], 1, SliderCommand::Minimum, spec),
+            vec![twice[0], twice[0]]
         );
     }
 
