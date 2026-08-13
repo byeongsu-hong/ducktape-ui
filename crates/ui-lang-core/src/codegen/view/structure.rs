@@ -208,8 +208,6 @@ pub(in crate::codegen) fn render_structure(
             let program = document;
             let lazy = program.resolved_lazy(node)?;
             let binding_name = &lazy.binding.name;
-            let dependency =
-                resolved_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?;
             let mut child_env = HashMap::new();
             child_env.insert(
                 binding_name.clone(),
@@ -253,6 +251,26 @@ pub(in crate::codegen) fn render_structure(
                     .map(|key| resolved_expr_use_code(program, *key, env, ValueMode::Owned))
                     .collect::<Result<Vec<_>, _>>()?
                     .join(", ");
+                // Unlike the plain form's, this value expression lands INSIDE
+                // the `move` builder — a component-state read must not name
+                // the call-site scope binding there, or the closure captures
+                // the String by move and any later read of the component's
+                // state in the same render is a use-after-move. Emit the read
+                // against the closure-owned context local the hoist declares
+                // instead; its value IS the component scope, so the state
+                // lookup key is unchanged.
+                let component_context_hoisted = !hoisted.is_empty();
+                let dependency = if component_context_hoisted {
+                    resolved_expr_use_code_with_state_scope(
+                        program,
+                        lazy.dependency,
+                        env,
+                        ValueMode::Owned,
+                        &lazy_context_local(node),
+                    )?
+                } else {
+                    resolved_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?
+                };
                 let scope_index = lazy.keys.len();
                 let lazy_body = format!(
                     "let __lazy_scope = __dependency.{scope_index}.clone(); let {binding_name}: {dependency_rust} = {dependency}; let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
@@ -274,6 +292,11 @@ pub(in crate::codegen) fn render_structure(
                     scope,
                 )?));
             }
+            // The plain form's dependency is evaluated eagerly into the memo
+            // tuple, outside the builder, where borrowing the call-site scope
+            // binding is fine.
+            let dependency =
+                resolved_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?;
             let lazy_body = format!(
                 "let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
             );
@@ -316,6 +339,14 @@ pub(in crate::codegen) fn render_structure(
     )?))
 }
 
+/// The owned clone of the enclosing component's scope that
+/// [`hoist_lazy_component_context`] declares ahead of a lazy closure. The
+/// keyed dependency emission names it too, so both must agree on the
+/// spelling.
+fn lazy_context_local(node: ViewId) -> String {
+    format!("__ice_lazy_context_{}", node.0)
+}
+
 /// A lazy closure rebuilds its subtree from owned data only, but routes and
 /// forwards inside it still address the enclosing component. Hoist the
 /// component's routing bindings — the reconciliation scope, the output
@@ -338,7 +369,7 @@ fn hoist_lazy_component_context(
     let component = component.to_owned();
     let mut hoisted = String::new();
     let mut params: Option<Vec<(String, String)>> = Some(Vec::new());
-    let context_local = format!("__ice_lazy_context_{}", node.0);
+    let context_local = lazy_context_local(node);
     write!(
         hoisted,
         "let {context_local} = ({}).to_owned(); ",
