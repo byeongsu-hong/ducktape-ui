@@ -128,10 +128,11 @@ fn source_mapped_expression_origin(
 }
 
 pub(crate) fn encode_source_path(path: &str) -> String {
-    path.as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    let mut encoded = String::with_capacity(path.len() * 2);
+    for byte in path.bytes() {
+        write!(encoded, "{byte:02x}").unwrap();
+    }
+    encoded
 }
 
 fn decode_source_path(encoded: &str) -> Option<String> {
