@@ -101,26 +101,30 @@ fn verify_lock_contents(lock: &str) -> Result<(), String> {
         ("accesskit_unix", ACCESSKIT_UNIX_VERSION, false),
         ("accesskit_windows", ACCESSKIT_WINDOWS_VERSION, false),
     ] {
-        let actual = locked_versions(lock, name);
-        match actual.as_slice() {
-            [] => return Err(format!("Cargo.lock does not resolve `{name}`")),
-            [actual] if *actual == expected => {}
-            [actual] if unique => {
-                return Err(format!(
-                    "Cargo.lock resolves `{name}` {actual}; schema requires {expected}"
-                ));
-            }
-            actual if unique => {
+        let mut actual = locked_versions(lock, name);
+        let Some(first) = actual.next() else {
+            return Err(format!("Cargo.lock does not resolve `{name}`"));
+        };
+        if unique {
+            if let Some(second) = actual.next() {
+                let actual = std::iter::once(first)
+                    .chain(std::iter::once(second))
+                    .chain(actual)
+                    .collect::<Vec<_>>();
                 return Err(format!(
                     "Cargo.lock resolves `{name}` more than once ({actual:?}); schema requires exactly {expected}"
                 ));
             }
-            actual if actual.contains(&expected) => {}
-            actual => {
+            if first != expected {
                 return Err(format!(
-                    "Cargo.lock resolves `{name}` as {actual:?}; runtime requires {expected}"
+                    "Cargo.lock resolves `{name}` {first}; schema requires {expected}"
                 ));
             }
+        } else if first != expected && !actual.clone().any(|version| version == expected) {
+            let actual = std::iter::once(first).chain(actual).collect::<Vec<_>>();
+            return Err(format!(
+                "Cargo.lock resolves `{name}` as {actual:?}; runtime requires {expected}"
+            ));
         }
     }
     Ok(())
@@ -252,31 +256,29 @@ fn dependency_section_item<'a>(
     }
 }
 
-fn locked_versions<'a>(lock: &'a str, package: &str) -> Vec<&'a str> {
-    lock.split("[[package]]")
-        .filter_map(|block| {
-            let mut name = None;
-            let mut version = None;
-            for line in block.lines() {
-                let Some((key, value)) = line.split_once('=') else {
-                    continue;
-                };
-                let Some(value) = value
-                    .trim()
-                    .strip_prefix('"')
-                    .and_then(|value| value.strip_suffix('"'))
-                else {
-                    continue;
-                };
-                match key.trim() {
-                    "name" => name = Some(value),
-                    "version" => version = Some(value),
-                    _ => {}
-                }
+fn locked_versions<'a>(lock: &'a str, package: &'a str) -> impl Iterator<Item = &'a str> + Clone {
+    lock.split("[[package]]").filter_map(move |block| {
+        let mut name = None;
+        let mut version = None;
+        for line in block.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let Some(value) = value
+                .trim()
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+            else {
+                continue;
+            };
+            match key.trim() {
+                "name" => name = Some(value),
+                "version" => version = Some(value),
+                _ => {}
             }
-            (name == Some(package)).then_some(version).flatten()
-        })
-        .collect()
+        }
+        (name == Some(package)).then_some(version).flatten()
+    })
 }
 
 #[cfg(test)]
@@ -329,10 +331,19 @@ name = "accesskit_windows"
 version = "0.32.0"
 "#;
 
-        assert_eq!(locked_versions(lock, "iced"), ["0.14.0"]);
-        assert_eq!(locked_versions(lock, "iced_widget"), ["0.14.2"]);
-        assert_eq!(locked_versions(lock, "accesskit_windows"), ["0.32.0"]);
-        assert!(locked_versions(lock, "missing").is_empty());
+        assert_eq!(
+            locked_versions(lock, "iced").collect::<Vec<_>>(),
+            ["0.14.0"]
+        );
+        assert_eq!(
+            locked_versions(lock, "iced_widget").collect::<Vec<_>>(),
+            ["0.14.2"]
+        );
+        assert_eq!(
+            locked_versions(lock, "accesskit_windows").collect::<Vec<_>>(),
+            ["0.32.0"]
+        );
+        assert!(locked_versions(lock, "missing").next().is_none());
         assert_eq!(verify_lock_contents(lock), Ok(()));
 
         let error = verify_lock_contents(&lock.replace(
@@ -342,6 +353,27 @@ version = "0.32.0"
         .unwrap_err();
         assert!(error.contains("`accesskit_windows`"), "{error}");
         assert!(error.contains("0.32.0"), "{error}");
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_lock_verification_does_not_allocate_on_success() {
+        const SCANS: u64 = 100;
+        let lock = include_str!("../../../Cargo.lock");
+        assert_eq!(verify_lock_contents(lock), Ok(()));
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..SCANS {
+            std::hint::black_box(verify_lock_contents(std::hint::black_box(lock))).unwrap();
+        }
+        let stats = dhat::HeapStats::get();
+
+        assert_eq!(stats.total_blocks, 0, "{stats:?}");
+        assert_eq!(stats.total_bytes, 0, "{stats:?}");
+        eprintln!(
+            "{SCANS} successful compatibility lock scans: {} heap blocks / {} bytes",
+            stats.total_blocks, stats.total_bytes
+        );
     }
 
     #[test]
