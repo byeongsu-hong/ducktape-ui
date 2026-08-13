@@ -218,7 +218,11 @@ pub struct A11y {
 impl A11y {
     /// This node's own accessibility path.
     pub fn key(&self, parent: &str) -> String {
-        format!("{parent}/{}", self.segment)
+        let mut key = String::with_capacity(parent.len() + 1 + self.segment.len());
+        key.push_str(parent);
+        key.push('/');
+        key.push_str(&self.segment);
+        key
     }
 
     /// The path descendants hang off.
