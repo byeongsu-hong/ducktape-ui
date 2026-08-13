@@ -132,15 +132,43 @@ where
         // the CONTENT layers resolved — a full-height bar beside a paragraph
         // fills the paragraph, never the void.
         let max = limits.max();
-        let deferred: Vec<bool> = self
-            .children
-            .iter()
-            .map(|child| {
-                let hint = child.as_widget().size();
-                (max.width.is_infinite() && hint.width.is_fill())
-                    || (max.height.is_infinite() && hint.height.is_fill())
-            })
-            .collect();
+        let is_deferred = |child: &Element<'a, Message, Theme, Renderer>| {
+            let hint = child.as_widget().size();
+            (max.width.is_infinite() && hint.width.is_fill())
+                || (max.height.is_infinite() && hint.height.is_fill())
+        };
+        let resolved_size = |intrinsic| {
+            // The same unbounded-axis guard for the stack's OWN length: a fill
+            // layer makes the constructor report Fill, and resolving Fill against
+            // an infinite max is the degenerate node this method just avoided.
+            let width = if max.width.is_infinite() && self.width.is_fill() {
+                Length::Shrink
+            } else {
+                self.width
+            };
+            let height = if max.height.is_infinite() && self.height.is_fill() {
+                Length::Shrink
+            } else {
+                self.height
+            };
+            limits.resolve(width, height, intrinsic)
+        };
+
+        if !self.children.iter().any(is_deferred) {
+            let nodes = self
+                .children
+                .iter_mut()
+                .zip(tree.children.iter_mut())
+                .map(|(child, state)| child.as_widget_mut().layout(state, renderer, &limits))
+                .collect::<Vec<_>>();
+            let intrinsic = nodes.iter().fold(Size::ZERO, |acc, node| {
+                let size = node.size();
+                Size::new(acc.width.max(size.width), acc.height.max(size.height))
+            });
+            return layout::Node::with_children(resolved_size(intrinsic), nodes);
+        }
+
+        let deferred: Vec<bool> = self.children.iter().map(is_deferred).collect();
 
         let mut nodes: Vec<Option<layout::Node>> = self
             .children
@@ -161,20 +189,7 @@ where
             Size::new(acc.width.max(size.width), acc.height.max(size.height))
         });
 
-        // The same unbounded-axis guard for the stack's OWN length: a fill
-        // layer makes the constructor report Fill, and resolving Fill against
-        // an infinite max is the degenerate node this method just avoided.
-        let resolve_width = if max.width.is_infinite() && self.width.is_fill() {
-            Length::Shrink
-        } else {
-            self.width
-        };
-        let resolve_height = if max.height.is_infinite() && self.height.is_fill() {
-            Length::Shrink
-        } else {
-            self.height
-        };
-        let size = limits.resolve(resolve_width, resolve_height, intrinsic);
+        let size = resolved_size(intrinsic);
 
         let bounded = layout::Limits::new(Size::ZERO, size);
         for ((child, state), node) in self
