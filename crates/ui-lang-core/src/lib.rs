@@ -68,18 +68,20 @@ impl SymbolKind {
     pub fn accepts(self, name: &str) -> bool {
         match self {
             Self::Component => {
-                let parts = name.split("::").collect::<Vec<_>>();
-                let Some((component, modules)) = parts.split_last() else {
-                    return false;
-                };
-                modules.iter().all(|module| valid_identifier(module))
-                    && component.split('.').all(|part| {
-                        valid_identifier(part)
-                            && part
-                                .chars()
-                                .next()
-                                .is_some_and(|ch| ch.is_ascii_uppercase())
-                    })
+                let mut component = name;
+                while let Some((module, rest)) = component.split_once("::") {
+                    if !valid_identifier(module) {
+                        return false;
+                    }
+                    component = rest;
+                }
+                component.split('.').all(|part| {
+                    valid_identifier(part)
+                        && part
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| ch.is_ascii_uppercase())
+                })
             }
             Self::Handler => name != "mount" && valid_identifier(name),
             Self::Recipe | Self::TestTarget => valid_identifier(name),
