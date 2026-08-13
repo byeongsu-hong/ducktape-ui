@@ -17,13 +17,12 @@ pub(super) fn validate_capture_manifest(
     path: &Path,
     document: &Value,
 ) -> Result<ValidatedCaptureManifest, String> {
-    let manifest =
-        serde_json::from_value::<CaptureManifestV2>(document.clone()).map_err(|error| {
-            format!(
-                "{} is not a capture manifest v{CAPTURE_SCHEMA_VERSION}: {error}",
-                path.display()
-            )
-        })?;
+    let manifest = CaptureManifestV2::deserialize(document).map_err(|error| {
+        format!(
+            "{} is not a capture manifest v{CAPTURE_SCHEMA_VERSION}: {error}",
+            path.display()
+        )
+    })?;
     manifest.validate(path)
 }
 
@@ -794,6 +793,28 @@ mod tests {
             },
             "targets": [],
         })
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn allocation_contract_capture_manifest_deserialization_borrows_json() {
+        let manifest = valid_manifest();
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        let result = validate_capture_manifest(Path::new("other.json"), &manifest);
+        let stats = dhat::HeapStats::get();
+
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.contains("does not match its filename"))
+        );
+        assert_eq!(stats.total_blocks, 6, "{stats:?}");
+        assert_eq!(stats.total_bytes, 123, "{stats:?}");
+        eprintln!(
+            "capture manifest validation: {} heap blocks / {} bytes",
+            stats.total_blocks, stats.total_bytes
+        );
     }
 
     #[test]
