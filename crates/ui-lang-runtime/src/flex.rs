@@ -961,38 +961,35 @@ fn resolve_flex_line(items: &mut [ItemLayout], target: f32, gap: f32) {
     } else if free < 0.0 {
         let shrink = items.iter().map(|item| f64::from(item.shrink)).sum::<f64>();
         let mut remaining = -free * shrink.min(1.0);
-        let mut active = (0..items.len()).collect::<Vec<_>>();
-        while remaining > f64::EPSILON && !active.is_empty() {
-            let weight = active
+        while remaining > f64::EPSILON {
+            let weight = items
                 .iter()
-                .map(|index| f64::from(items[*index].shrink) * f64::from(items[*index].base_main))
+                .filter(|item| item.target_main > 0.0)
+                .map(|item| f64::from(item.shrink) * f64::from(item.base_main))
                 .sum::<f64>();
             if weight <= f64::EPSILON {
                 break;
             }
-            let mut clamped = Vec::new();
-            for index in &active {
-                let item = &items[*index];
+            let round_remaining = remaining;
+            let mut clamped = false;
+            for item in items.iter_mut().filter(|item| item.target_main > 0.0) {
                 let reduction =
-                    remaining * f64::from(item.shrink) * f64::from(item.base_main) / weight;
+                    round_remaining * f64::from(item.shrink) * f64::from(item.base_main) / weight;
                 if reduction >= f64::from(item.target_main) {
-                    clamped.push(*index);
+                    remaining -= f64::from(item.target_main);
+                    item.target_main = 0.0;
+                    clamped = true;
                 }
             }
-            if clamped.is_empty() {
-                for index in active {
-                    let item = &mut items[index];
+            if !clamped {
+                for item in items.iter_mut().filter(|item| item.target_main > 0.0) {
                     let reduction =
-                        remaining * f64::from(item.shrink) * f64::from(item.base_main) / weight;
+                        round_remaining * f64::from(item.shrink) * f64::from(item.base_main)
+                            / weight;
                     item.target_main = (f64::from(item.target_main) - reduction).max(0.0) as f32;
                 }
                 break;
             }
-            for index in &clamped {
-                remaining -= f64::from(items[*index].target_main);
-                items[*index].target_main = 0.0;
-            }
-            active.retain(|index| !clamped.contains(index));
         }
     }
 }
@@ -1178,6 +1175,11 @@ mod tests {
         resolve_flex_line(&mut shrinking, 300.0, 0.0);
         close(shrinking[0].target_main, 150.0);
         close(shrinking[1].target_main, 150.0);
+
+        let mut clamped = [item(1.0, 0.0, 100.0), item(10.0, 0.0, 1.0)];
+        resolve_flex_line(&mut clamped, 5.0, 0.0);
+        close(clamped[0].target_main, 0.0);
+        close(clamped[1].target_main, 5.0);
 
         let mut huge_growing = [item(50.0, f32::MAX, 1.0), item(50.0, f32::MAX, 1.0)];
         resolve_flex_line(&mut huge_growing, 300.0, 0.0);
