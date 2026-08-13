@@ -922,6 +922,44 @@ fn warns_for_immediate_handler_routing_cycles() {
 }
 
 #[test]
+#[ignore = "allocation contract; run alone with --test-threads=1"]
+fn performance_contract_cycle_closure_borrows_via_rows() {
+    use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
+    use std::fmt::Write as _;
+
+    const CALLS: usize = 8;
+    const HANDLERS: usize = 64;
+    let mut body = String::new();
+    for index in 0..HANDLERS {
+        writeln!(
+            body,
+            "on handler_{index}\n  flow\n    from done {index}\n    done -> handler_{}",
+            (index + 1) % HANDLERS
+        )
+        .unwrap();
+    }
+    body.push_str("view\n  button \"Start\" -> handler_0\n");
+    let source = warning_app(&body);
+
+    drop(analyze(&source).unwrap());
+    let region = Region::new(&INSTRUMENTED_SYSTEM);
+    for _ in 0..CALLS {
+        drop(std::hint::black_box(
+            analyze(std::hint::black_box(&source)).unwrap(),
+        ));
+    }
+    let stats = region.change();
+
+    eprintln!(
+        "{CALLS} analyses of {HANDLERS} routed handlers: {} allocations / {} reallocations / {} bytes",
+        stats.allocations, stats.reallocations, stats.bytes_allocated
+    );
+    assert_eq!(stats.allocations, 34_312, "{stats:?}");
+    assert_eq!(stats.reallocations, 2_760, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 5_094_120, "{stats:?}");
+}
+
+#[test]
 fn distinguishes_guarded_immediate_cycles_from_task_completion_cycles() {
     let document = analyze(
         "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  stopped = false\non guarded\n  return if stopped\n  flow\n    from done 1\n    done -> guarded\non poll\n  flow\n    from task system theme\n    done -> polled _\non polled(theme)\n  flow\n    from done theme\n    done -> poll\nview\n  col\n    button \"Guarded\" -> guarded\n    button \"Poll\" -> poll\n",

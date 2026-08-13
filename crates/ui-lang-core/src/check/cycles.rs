@@ -277,12 +277,13 @@ pub(in crate::check) fn raw_event_feedback_warnings(document: &Document) -> Vec<
 
 fn transitive_closure(connected: &mut [Vec<bool>]) {
     for via in 0..connected.len() {
-        let via_targets = connected[via].clone();
-        for targets in connected.iter_mut() {
+        let (before, remaining) = connected.split_at_mut(via);
+        let (via_targets, after) = remaining.split_first_mut().unwrap();
+        for targets in before.iter_mut().chain(after.iter_mut()) {
             if !targets[via] {
                 continue;
             }
-            for (reachable, via_reachable) in targets.iter_mut().zip(&via_targets) {
+            for (reachable, via_reachable) in targets.iter_mut().zip(via_targets.iter()) {
                 *reachable |= via_reachable;
             }
         }
