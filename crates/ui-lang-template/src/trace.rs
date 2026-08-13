@@ -221,9 +221,9 @@ impl Artifact {
                     "trace action {index} must have matching index and non-empty kind"
                 ));
             }
-            validate_source(&action.source, &format!("action {index} source"))?;
+            validate_source(&action.source, format_args!("action {index} source"))?;
             if let Some(source) = &action.target_source {
-                validate_source(source, &format!("action {index} target source"))?;
+                validate_source(source, format_args!("action {index} target source"))?;
             }
         }
         for sample in &self.samples {
@@ -276,9 +276,15 @@ impl Artifact {
                         action.index
                     ));
                 }
-                validate_source(&action.source, &format!("minimized action {index} source"))?;
+                validate_source(
+                    &action.source,
+                    format_args!("minimized action {index} source"),
+                )?;
                 if let Some(source) = &action.target_source {
-                    validate_source(source, &format!("minimized action {index} target source"))?;
+                    validate_source(
+                        source,
+                        format_args!("minimized action {index} target source"),
+                    )?;
                 }
             }
             if reduction.attempts.iter().any(|attempt| {
@@ -291,7 +297,7 @@ impl Artifact {
     }
 }
 
-fn validate_source(source: &SourceLocation, label: &str) -> Result<(), String> {
+fn validate_source(source: &SourceLocation, label: std::fmt::Arguments<'_>) -> Result<(), String> {
     if source.path.is_empty()
         || source.line == 0
         || source.column == 0
@@ -308,6 +314,11 @@ fn validate_source(source: &SourceLocation, label: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+    use std::alloc::System;
+
+    #[global_allocator]
+    static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
     fn artifact() -> Artifact {
         Artifact {
@@ -406,5 +417,39 @@ mod tests {
                 .unwrap_err()
                 .contains("strictly smaller")
         );
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn valid_action_sources_do_not_allocate_during_validation() {
+        const ACTIONS: usize = 4_000;
+        let mut artifact = artifact();
+        artifact.actions = (0..ACTIONS)
+            .map(|index| Action {
+                index,
+                kind: "redraw".into(),
+                target: None,
+                parameters: Value::Null,
+                source: SourceLocation {
+                    path: "src/ui/app.ice".into(),
+                    line: index + 1,
+                    column: 1,
+                    statement: "redraw".into(),
+                },
+                target_source: None,
+            })
+            .collect();
+
+        let region = Region::new(GLOBAL);
+        std::hint::black_box(&artifact).validate().unwrap();
+        let stats = region.change();
+
+        eprintln!(
+            "{ACTIONS} valid trace actions: {} allocations / {} reallocations / {} bytes",
+            stats.allocations, stats.reallocations, stats.bytes_allocated
+        );
+        assert_eq!(stats.allocations, 0, "{stats:?}");
+        assert_eq!(stats.reallocations, 0, "{stats:?}");
+        assert_eq!(stats.bytes_allocated, 0, "{stats:?}");
     }
 }
