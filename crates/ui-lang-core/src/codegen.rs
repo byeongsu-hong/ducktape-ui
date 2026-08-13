@@ -180,6 +180,11 @@ fn resolve_asset_path_markers(line: &str, source_path: &str) -> String {
     output
 }
 
+#[cfg(test)]
+thread_local! {
+    static SOURCE_MARKER_SLOW_PATH_LINES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn resolve_source_markers(
     generated: String,
     document: &LoweredProgram,
@@ -187,6 +192,16 @@ fn resolve_source_markers(
 ) -> String {
     let mut output = String::with_capacity(generated.len());
     for line in generated.lines() {
+        if !line.starts_with(SOURCE_MARKER)
+            && !line.contains(RENDER_SOURCE_MARKER)
+            && !line.contains(ASSET_PATH_MARKER)
+        {
+            output.push_str(line);
+            output.push('\n');
+            continue;
+        }
+        #[cfg(test)]
+        SOURCE_MARKER_SLOW_PATH_LINES.set(SOURCE_MARKER_SLOW_PATH_LINES.get() + 1);
         let resolved_marker = line
             .strip_prefix(SOURCE_MARKER)
             .and_then(|location| location.split_once(' '))
