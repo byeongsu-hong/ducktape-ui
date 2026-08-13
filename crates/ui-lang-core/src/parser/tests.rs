@@ -41,6 +41,32 @@ fn qualification_scans_the_namespace_prefix_in_place() {
 }
 
 #[test]
+#[ignore = "allocation contract; run alone with --test-threads=1"]
+fn expression_parser_consumes_owned_token_payloads() {
+    use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
+
+    const CALLS: usize = 4_000;
+    const SOURCE: &str =
+        r#"alpha + beta * gamma + service::lookup(item.field, "value", bytes(00 ff), 42)"#;
+    let line = namespaced_line();
+    drop(parse_expr(SOURCE, &line).unwrap());
+    let region = Region::new(&INSTRUMENTED_SYSTEM);
+
+    for _ in 0..CALLS {
+        drop(std::hint::black_box(parse_expr(std::hint::black_box(SOURCE), &line)).unwrap());
+    }
+    let stats = region.change();
+
+    eprintln!(
+        "{CALLS} parsed expressions: {} allocations / {} reallocations / {} bytes",
+        stats.allocations, stats.reallocations, stats.bytes_allocated
+    );
+    assert_eq!(stats.allocations, 108_000, "{stats:?}");
+    assert_eq!(stats.reallocations, 36_000, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 8_636_000, "{stats:?}");
+}
+
+#[test]
 fn syntax_boundaries_ignore_escaped_quotes() {
     let quoted = r#""a\" b,=->)""#;
 
