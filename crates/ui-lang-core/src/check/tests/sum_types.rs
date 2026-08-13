@@ -191,6 +191,51 @@ view
 }
 
 #[test]
+fn handler_match_arms_may_reuse_one_delivery_lane_contract() {
+    let source = format!(
+        r#"{PREFIX}extern crate::backend
+  fetch(value:i64) -> i64
+enum LiveKind
+  chat
+  ready
+state
+  kind:LiveKind = LiveKind.chat
+  count = 0
+on update
+  match kind
+    LiveKind.chat
+      run replace lane=reload fetch(1) -> loaded _
+    LiveKind.ready
+      run replace lane=reload fetch(2) -> loaded _
+on loaded(value)
+  count = value
+view
+  button "Update" -> update
+"#
+    );
+    let document = analyze(&source).unwrap();
+    let lane = document
+        .declarations
+        .try_run_lane(crate::hir::RunLaneId(0))
+        .unwrap();
+    assert_eq!(document.declarations.run_lane_count(), 1);
+    assert_eq!(lane.statements.len(), 2);
+
+    let mismatched = source.replacen(
+        "LiveKind.ready\n      run replace",
+        "LiveKind.ready\n      run latest",
+        1,
+    );
+    let error = analyze(&mismatched).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(
+        error
+            .message
+            .contains("uses both `run replace` and `run latest`")
+    );
+}
+
+#[test]
 fn keeps_pattern_payloads_block_local() {
     let source = format!(
         r#"{PREFIX}state

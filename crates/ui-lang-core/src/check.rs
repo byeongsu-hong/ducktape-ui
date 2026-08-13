@@ -1220,7 +1220,8 @@ fn check_handler_run_lanes<'a>(
                 }
                 Statement::Match { arms, .. } => {
                     for arm in arms {
-                        visit(&arm.statements, owner, contracts, seen)?;
+                        let mut branch_seen = seen.clone();
+                        visit(&arm.statements, owner, contracts, &mut branch_seen)?;
                     }
                 }
                 Statement::Abortable { task, .. } => {
