@@ -1114,6 +1114,14 @@ where
             .is_some_and(|index| state.columns[*index].column.sortable)
     });
     let has_mounted_cells = !mounted.is_empty() && !state.columns.is_empty();
+    let active_descendant = active_cell.as_ref().and_then(|cell| {
+        state
+            .rows
+            .index_of(&cell.row)
+            .filter(|index| mounted.contains(index))?;
+        let local = state.rows.semantic_local_id(&cell.row)?;
+        state.column_semantic_id(&cell.column, local)
+    });
     let widget = DataGridWidget {
         content,
         id: state.rows.id().widget_id("focus"),
@@ -1126,7 +1134,7 @@ where
         offset_x: state.horizontal.offset,
         offset_y: state.rows.scroll_offset(),
         scroll_revision: state.scroll_revision,
-        active_cell: active_cell.clone(),
+        active_cell,
         editing_cell: state.editing.clone(),
         active_editable,
         active_sortable,
@@ -1134,14 +1142,6 @@ where
         pointer_focus_claim,
         on_event,
     };
-    let active_descendant = active_cell.and_then(|cell| {
-        state
-            .rows
-            .index_of(&cell.row)
-            .filter(|index| mounted.contains(index))?;
-        let local = state.rows.semantic_local_id(&cell.row)?;
-        state.column_semantic_id(&cell.column, local)
-    });
     accessible(
         Element::new(widget),
         state.rows.id().semantic_id(1),
