@@ -1,6 +1,9 @@
 use iced::advanced::clipboard;
 use iced::advanced::renderer::Headless;
 use iced::advanced::{Layout, Shell, Widget, input_method, layout, mouse, text, widget};
+use iced::keyboard;
+use iced::keyboard::key::{Code, Named, Physical};
+use iced::keyboard::{Key, Location, Modifiers};
 use iced::widget::text_editor::{self, Content, Cursor, Edit, Position};
 use iced::{Color, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme};
 use std::fs::OpenOptions;
@@ -15,6 +18,95 @@ use ui_lang_runtime::{ContentVersion, EditorChange, RichTextEditor, rich_text_ed
 static ALLOCATOR: dhat::Alloc = dhat::Alloc;
 
 const LINE_COUNT: usize = 100_000;
+
+#[test]
+#[ignore = "rich-motion allocation contract run explicitly by the performance-contract filter"]
+fn performance_contract_rich_motion_allocations() {
+    let content = Content::with_text("one two three four five six\nseven eight nine");
+    let renderer = headless_renderer();
+    let limits = layout::Limits::new(Size::ZERO, Size::new(70.0, 120.0));
+    let viewport = Rectangle::with_size(Size::new(70.0, 120.0));
+    let version = ContentVersion::new(92, 0);
+    let mut editor = RichTextEditor::<_, Action>::new(&content, version)
+        .width(Length::Fixed(70.0))
+        .height(Length::Fixed(120.0))
+        .wrapping(text::Wrapping::Word)
+        .on_action(|action| action)
+        .highlight_with::<WholeLine>((), 0, |_| Format::default());
+    let mut tree = widget::Tree::new(&editor as &dyn Widget<_, Theme, iced::Renderer>);
+    let node = editor.layout(&mut tree, &renderer, &limits);
+    let mut clipboard = clipboard::Null;
+    let mut messages = Vec::with_capacity(6);
+
+    let mut shell = Shell::new(&mut messages);
+    editor.update(
+        &mut tree,
+        &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+        Layout::new(&node),
+        mouse::Cursor::Available(Point::new(5.0, 5.0)),
+        &renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport,
+    );
+    messages.clear();
+
+    let commands = [
+        (Named::ArrowUp, Code::ArrowUp),
+        (Named::ArrowDown, Code::ArrowDown),
+        (Named::Home, Code::Home),
+        (Named::End, Code::End),
+        (Named::PageUp, Code::PageUp),
+        (Named::PageDown, Code::PageDown),
+    ];
+    let profiler = dhat::Profiler::builder().testing().build();
+    let before = dhat::HeapStats::get();
+    for (named, code) in commands {
+        let key = Key::Named(named);
+        let event = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: Physical::Code(code),
+            location: Location::Standard,
+            modifiers: Modifiers::empty(),
+            text: None,
+            repeat: false,
+        });
+        let mut shell = Shell::new(&mut messages);
+        editor.update(
+            &mut tree,
+            &event,
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+    }
+    let after = dhat::HeapStats::get();
+    drop(profiler);
+
+    assert_eq!(messages.len(), commands.len());
+    assert!(
+        messages
+            .iter()
+            .all(|message| matches!(message, Action::MoveTo(_)))
+    );
+    let allocated = (
+        after.total_blocks - before.total_blocks,
+        after.total_bytes - before.total_bytes,
+    );
+    eprintln!(
+        "six rich-motion commands: {} allocations, {} bytes",
+        allocated.0, allocated.1
+    );
+    assert_eq!(
+        allocated,
+        (0, 0),
+        "six rich-motion commands must not allocate"
+    );
+}
 
 #[derive(Default)]
 struct WholeLine {
