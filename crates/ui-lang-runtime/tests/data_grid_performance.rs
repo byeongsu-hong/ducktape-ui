@@ -182,8 +182,8 @@ fn performance_contract_100k_by_16_reconcile() {
     const SAMPLES: usize = 30;
     const P50_BUDGET_US: u128 = 12_000;
     const P95_BUDGET_US: u128 = 20_000;
-    const ALLOCATION_BUDGET: usize = 16;
-    const ALLOCATED_BYTES_BUDGET: usize = 8 * 1024 * 1024;
+    const ALLOCATION_BUDGET: usize = 3;
+    const ALLOCATED_BYTES_BUDGET: usize = 4 * 1024 * 1024;
 
     let mut state = prepared();
     for _ in 0..3 {

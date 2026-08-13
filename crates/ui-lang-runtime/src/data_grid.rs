@@ -568,6 +568,11 @@ where
                     DataGridReconcileError::DuplicateRowKey(key)
                 }
             })?;
+        let row_keys = if row_keys.as_slice() == self.row_keys.as_ref() {
+            Arc::clone(&self.row_keys)
+        } else {
+            row_keys.into()
+        };
 
         let (records, column_indexes, column_namespaces, width) = if columns_unchanged {
             (
@@ -618,7 +623,7 @@ where
         });
 
         self.rows = staged_rows;
-        self.row_keys = row_keys.into();
+        self.row_keys = row_keys;
         self.columns = records;
         self.column_indexes = column_indexes;
         self.column_namespaces = column_namespaces;
