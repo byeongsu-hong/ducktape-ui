@@ -131,6 +131,69 @@ view
 }
 
 #[test]
+fn moves_a_list_through_a_sync_self_assignment() {
+    let source = r#"app Feed
+extern crate::backend
+  sync append(items:[str], item:str) -> [str]
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  items:[str] = []
+on received
+  items = append(items, "new")
+view
+  text "ready"
+"#;
+    let generated = compile(source, "feed.ice").unwrap();
+
+    assert!(
+        generated
+            .contains("backend::append(::std::mem::take(&mut self.items), \"new\".to_owned())")
+    );
+    assert!(!generated.contains("backend::append(self.items.clone(),"));
+}
+
+#[test]
+fn keyed_lazy_exposes_bare_key_snapshots_to_its_body() {
+    let source = r#"app Feed
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  items:[str] = []
+  revision:i64 = 0
+  selected:i64 = 0
+view
+  lazy items by revision, selected as cached
+    col
+      if revision == selected
+        text "same"
+      for item in cached
+        text item
+"#;
+    let generated = compile(source, "feed.ice").unwrap();
+
+    assert!(generated.contains("let revision: i64 = __dependency.0.clone();"));
+    assert!(generated.contains("let selected: i64 = __dependency.1.clone();"));
+    assert!(generated.contains("revision == selected"), "{generated}");
+}
+
+#[test]
 fn lowers_resize_handle_to_a_grabbing_widget() {
     // A `resize-handle` wraps a divider child and reports `(dx, dy)` drag deltas
     // plus press/release, so a component can drive a bound width — something

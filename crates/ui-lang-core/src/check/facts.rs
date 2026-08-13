@@ -154,6 +154,7 @@ pub(crate) enum CheckedViewLocalRole {
     MatchPayload(u32),
     KeyedItem,
     LazyDependency,
+    LazyKey(u32),
     TableRow,
     PaneMaximized(u32),
     PaneTemplateItem(u32),
@@ -873,7 +874,7 @@ pub(crate) struct CheckedStatement {
     pub(crate) semantic_key: String,
     pub(crate) operation: Option<crate::hir::HandlerOperationContract>,
     pub(crate) writable_targets: Vec<CheckedValueRef>,
-    pub(crate) editor_self_move: Option<bool>,
+    pub(crate) self_move: Option<bool>,
     pub(crate) pane_grid_dynamic: Option<bool>,
     pub(crate) operand_count: u32,
     pub(crate) origin: OriginId,
@@ -2584,7 +2585,7 @@ impl CheckedFacts {
         Ok(())
     }
 
-    pub(crate) fn editor_self_move_contract(
+    pub(crate) fn self_move_contract(
         &self,
         expression: CheckedExprUseId,
         target: CheckedValueRef,
@@ -2592,11 +2593,11 @@ impl CheckedFacts {
     ) -> Result<bool, (OriginId, &'static str)> {
         let expression_use = self.try_expression_use(expression).ok_or((
             OriginId(u32::MAX),
-            "editor expression-use ID is outside its arena",
+            "self-move expression-use ID is outside its arena",
         ))?;
         let root = self.try_expression(expression_use.root).ok_or((
             expression_use.origin,
-            "editor expression root ID is outside its arena",
+            "self-move expression root ID is outside its arena",
         ))?;
         let CheckedExprKind::Call {
             target: CheckedCallTarget::Extern(reference),
@@ -2607,7 +2608,7 @@ impl CheckedFacts {
         };
         let function = declarations.try_extern_decl(reference.id).ok_or((
             root.origin,
-            "editor expression extern ID is outside its arena",
+            "self-move expression extern ID is outside its arena",
         ))?;
         if function.name != reference.name
             || !matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
@@ -2620,7 +2621,7 @@ impl CheckedFacts {
         while let Some(id) = stack.pop() {
             let expression = self.try_expression(id).ok_or((
                 expression_use.origin,
-                "editor expression descendant ID is outside its arena",
+                "self-move expression descendant ID is outside its arena",
             ))?;
             match &expression.kind {
                 CheckedExprKind::Path { root, .. } => {
@@ -8311,7 +8312,7 @@ impl<'a> FactsBuilder<'a> {
                 "statement left a checked route declaration unconsumed",
             ));
         }
-        let editor_self_move = match statement {
+        let self_move = match statement {
             Statement::Assign { span, .. } => {
                 let target = writable_targets.first().copied().ok_or_else(|| {
                     self.invariant(span, "assignment has no checked writable target")
@@ -8332,9 +8333,9 @@ impl<'a> FactsBuilder<'a> {
                     .ok_or_else(|| {
                         self.invariant(span, "assignment value has no checked expression")
                     })?;
-                Some(if *target_ty == Type::Editor {
+                Some(if matches!(target_ty, Type::Editor | Type::List(_)) {
                     self.facts
-                        .editor_self_move_contract(value, target, self.declarations)
+                        .self_move_contract(value, target, self.declarations)
                         .map_err(|(_, message)| self.invariant(span, message))?
                 } else {
                     false
@@ -8364,7 +8365,7 @@ impl<'a> FactsBuilder<'a> {
             semantic_key: crate::hir::statement_semantic_key(statement),
             operation: crate::hir::handler_operation_contract(statement),
             writable_targets,
-            editor_self_move,
+            self_move,
             pane_grid_dynamic,
             operand_count: operand,
             origin: declaration.declaration.origin,
@@ -10088,8 +10089,9 @@ impl<'a> FactsBuilder<'a> {
                     origin,
                 )?;
                 let mut key_uses = Vec::with_capacity(keys.len());
+                let mut key_locals = Vec::with_capacity(keys.len());
                 for (index, key) in keys.iter().enumerate() {
-                    key_uses.push(self.push_view_expression(
+                    let use_id = self.push_view_expression(
                         CheckedExprOwner::View {
                             view,
                             role: CheckedViewExprRole::LazyKey(index as u32),
@@ -10099,7 +10101,28 @@ impl<'a> FactsBuilder<'a> {
                         env,
                         span,
                         origin,
-                    )?);
+                    )?;
+                    key_uses.push(use_id);
+                    let Expr::Path(segments) = key else {
+                        continue;
+                    };
+                    let [name] = segments.as_slice() else {
+                        continue;
+                    };
+                    if name == binding {
+                        continue;
+                    }
+                    let ty = self.facts.expression_use(use_id).source.clone();
+                    key_locals.push((
+                        name.clone(),
+                        self.push_view_local(
+                            name,
+                            ty,
+                            view,
+                            CheckedViewLocalRole::LazyKey(index as u32),
+                            span,
+                        ),
+                    ));
                 }
                 if !key_uses.is_empty()
                     && let Some(param) =
@@ -10116,11 +10139,12 @@ impl<'a> FactsBuilder<'a> {
                     span,
                 );
                 let empty = FactEnv::default();
-                let scoped = LayeredFactEnv {
-                    base: &empty,
-                    name: binding.clone(),
-                    value: (CheckedPathRoot::Local(local), ty),
-                };
+                let mut scoped = ScopedFactEnv::new(&empty);
+                scoped.insert(binding.clone(), CheckedPathRoot::Local(local), ty);
+                for (name, local) in key_locals {
+                    let ty = self.facts.local(local).ty.clone();
+                    scoped.insert(name, CheckedPathRoot::Local(local), ty);
+                }
                 record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
                 self.lower_view_expression_tree(child, &scoped)?;
                 CheckedViewFlow::Lazy {

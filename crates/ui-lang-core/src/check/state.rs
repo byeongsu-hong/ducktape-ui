@@ -161,9 +161,21 @@ fn controlled_bindings(
                 child_env.remove(item);
                 collect(child, document, editors, &child_env, components, output)?;
             }
-            ViewNode::Lazy { binding, child, .. } => {
+            ViewNode::Lazy {
+                keys,
+                binding,
+                child,
+                ..
+            } => {
                 let mut child_env = env.clone();
                 child_env.remove(binding);
+                for key in keys {
+                    if let Expr::Path(segments) = key
+                        && let [name] = segments.as_slice()
+                    {
+                        child_env.remove(name);
+                    }
+                }
                 collect(child, document, editors, &child_env, components, output)?;
             }
             ViewNode::Tooltip { content, tip, .. } => {
