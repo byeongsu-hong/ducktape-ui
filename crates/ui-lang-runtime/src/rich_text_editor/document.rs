@@ -359,8 +359,11 @@ impl DocumentLayout {
                     newly_owned_styled_text_bytes += text.len();
                     text.to_owned()
                 };
-                self.lines[index] =
-                    DocumentLine::new(meta.styled(owned, scratch.segments.clone()), style);
+                let segments = std::mem::replace(
+                    &mut scratch.segments,
+                    std::mem::take(&mut self.lines[index].signature.segments),
+                );
+                self.lines[index] = DocumentLine::new(meta.styled(owned, segments), style);
             }
 
             let mut top = 0.0;
