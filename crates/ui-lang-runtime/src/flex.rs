@@ -430,11 +430,15 @@ where
         let definite_main = definite_length(main_length, max_main);
         let basis_available = definite_main.unwrap_or(f32::INFINITY);
 
-        let mut order = (0..self.items.len()).collect::<Vec<_>>();
-        order.sort_by_key(|index| self.items[*index].order);
-        let mut measured = Vec::with_capacity(order.len());
+        let order = self.items.iter().any(|item| item.order != 0).then(|| {
+            let mut order = (0..self.items.len()).collect::<Vec<_>>();
+            order.sort_by_key(|index| self.items[*index].order);
+            order
+        });
+        let mut measured = Vec::with_capacity(self.items.len());
 
-        for source in order {
+        for position in 0..self.items.len() {
+            let source = order.as_ref().map_or(position, |order| order[position]);
             let item = &mut self.items[source];
             let hint = item.content.as_widget().size();
             let (main_hint, _) = axis.lengths(hint);
