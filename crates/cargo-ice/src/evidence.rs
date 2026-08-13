@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 
 pub(super) const CAPTURE_SCHEMA_VERSION: u64 = 2;
-pub(super) const REVIEW_SCHEMA_VERSION: u64 = 1;
+pub(super) const REVIEW_SCHEMA_VERSION: u64 = 2;
 pub(super) const REVIEW_ARTIFACT_KIND: &str = "ice_review_bundle";
 pub(super) const CAPTURE_DIFF_ARTIFACT_KIND: &str = "ice_capture_diff";
 

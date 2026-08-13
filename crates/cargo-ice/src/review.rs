@@ -11,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use ui_lang_template::trace::Artifact as TraceArtifact;
 
 const REVIEW_STACK_SIZE: usize = 8 * 1024 * 1024;
 
@@ -22,6 +23,7 @@ struct ReviewOptions {
     baseline: Option<PathBuf>,
     tests: Vec<String>,
     thresholds: DiffThresholds,
+    trace: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -41,7 +43,7 @@ struct RequiredNullable<T>(Option<T>);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ReviewReportV1 {
+struct ReviewReportV2 {
     #[serde(rename = "artifact_kind")]
     _artifact_kind: ReviewArtifactKind,
     schema_version: u64,
@@ -56,7 +58,9 @@ struct ReviewReportV1 {
     _tests: BTreeMap<String, Value>,
     #[serde(rename = "diagnostics")]
     _diagnostics: BTreeMap<String, Value>,
-    captures: Vec<ReviewCaptureV1>,
+    captures: Vec<ReviewCaptureV2>,
+    #[serde(rename = "traces")]
+    _traces: Vec<Value>,
     #[serde(rename = "source_mapped_changes")]
     _source_mapped_changes: Vec<Value>,
     #[serde(rename = "accessibility")]
@@ -73,7 +77,7 @@ struct ReviewReportV1 {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ReviewCaptureV1 {
+struct ReviewCaptureV2 {
     key: String,
     manifest: String,
     #[serde(rename = "name")]
@@ -180,27 +184,44 @@ fn review_opened(
         .map(Ok)
         .unwrap_or_else(|| containing_package(root, source, &cargo))?;
     let artifact_dir = output.join("artifacts").join(run_id);
+    let trace_dir = output.join("traces").join(run_id);
     let log_dir = output.join("logs").join(run_id);
     let diff_dir = output.join("diffs").join(run_id);
     fs::create_dir_all(&artifact_dir).map_err(|error| error.to_string())?;
+    if options.trace {
+        fs::create_dir_all(&trace_dir).map_err(|error| error.to_string())?;
+    }
     fs::create_dir_all(&log_dir).map_err(|error| error.to_string())?;
 
     let mut test_results = Vec::new();
+    let mut traces = Vec::new();
     for test in &selected {
         let started = Instant::now();
-        let output_result = Command::new(&cargo)
-            .current_dir(root)
-            .args([
-                "test",
-                "--package",
-                &package,
-                &format!("__ice_tests::{test}"),
-                "--",
-                "--exact",
-                "--nocapture",
-            ])
+        let trace_path = trace_dir.join(format!("{}.json", safe_component(test)));
+        let mut command = Command::new(&cargo);
+        command.current_dir(root).arg("test");
+        if options.trace {
+            command.arg("--release");
+        }
+        command.args([
+            "--package",
+            &package,
+            &format!("__ice_tests::{test}"),
+            "--",
+            "--exact",
+            "--nocapture",
+        ]);
+        command
             .env("ICE_TEST_ARTIFACT_DIR", &artifact_dir)
-            .env("ICE_AGENT_INSPECT_ROOT", root)
+            .env("ICE_AGENT_INSPECT_ROOT", root);
+        if options.trace {
+            command
+                .env("ICE_TRACE_MODE", "authored")
+                .env("ICE_TRACE_RESULT", &trace_path)
+                .env("ICE_TRACE_APP_ROOT", source)
+                .env("ICE_TRACE_PACKAGE", &package);
+        }
+        let output_result = command
             .output()
             .map_err(|error| format!("cannot run Ice test `{test}`: {error}"))?;
         let elapsed_ms = started.elapsed().as_millis();
@@ -234,6 +255,25 @@ fn review_opened(
             "stdout": relative_path(output, &stdout_path),
             "stderr": relative_path(output, &stderr_path),
         }));
+        if options.trace {
+            match read_trace(&trace_path) {
+                Ok(trace) => traces.push(json!({
+                    "test": test,
+                    "trace": relative_path(output, &trace_path),
+                    "actions": trace.actions.len(),
+                    "raw_samples": trace.samples.len(),
+                    "worst": trace.summaries.iter().max_by_key(|summary| summary.max_ns),
+                    "finding": trace.finding,
+                    "reduction": trace.reduction,
+                    "worst_states": trace.worst_states,
+                })),
+                Err(error) => traces.push(json!({
+                    "test": test,
+                    "trace": relative_path(output, &trace_path),
+                    "error": error,
+                })),
+            }
+        }
     }
 
     let diagnostics = analysis
@@ -406,13 +446,14 @@ fn review_opened(
 
     let accessibility = accessibility_summary(valid_manifests.iter());
     let tests_passed = test_results.iter().all(|test| test["passed"] == true);
+    let traces_passed = !options.trace || traces.iter().all(|trace| trace["error"].is_null());
     let comparisons_passed = captures.iter().all(|capture| {
         matches!(
             capture["comparison"]["status"].as_str(),
             Some("not_requested" | "match")
         )
     });
-    let success = tests_passed && comparisons_passed && baseline_error.is_none();
+    let success = tests_passed && traces_passed && comparisons_passed && baseline_error.is_none();
     let report_path = output.join("report.json");
     let html_path = output.join("report.html");
     let report = json!({
@@ -435,6 +476,7 @@ fn review_opened(
             "items": diagnostics,
         },
         "captures": captures,
+        "traces": traces,
         "source_mapped_changes": source_changes,
         "accessibility": accessibility,
         "baseline": options.baseline,
@@ -515,6 +557,7 @@ fn analysis_failure(
             "items": [diagnostic],
         },
         "captures": [],
+        "traces": [],
         "source_mapped_changes": [],
         "accessibility": {
             "target_count": 0,
@@ -525,6 +568,9 @@ fn analysis_failure(
             "actionable_without_name": [],
             "roles": {},
         },
+        "baseline": null,
+        "baseline_error": null,
+        "thresholds": {},
     });
     write_json(&report_path, &report)?;
     fs::write(&html_path, render_html(&report)).map_err(|error| error.to_string())?;
@@ -595,6 +641,7 @@ fn ensure_current_failure_bundle(
             "items": [diagnostic],
         },
         "captures": [],
+        "traces": [],
         "source_mapped_changes": [],
         "accessibility": empty_accessibility_summary(),
         "baseline": null,
@@ -603,6 +650,7 @@ fn ensure_current_failure_bundle(
             "kind": "tooling",
             "message": error,
         },
+        "thresholds": {},
     });
     write_json(&report_path, &report)?;
     fs::write(&html_path, render_html(&report)).map_err(|write_error| {
@@ -642,6 +690,14 @@ fn parse_review(args: &[String]) -> Result<ReviewOptions, String> {
     let mut seen_value = false;
     while index < args.len() {
         let flag = args[index].as_str();
+        if flag == "--trace" {
+            if options.trace {
+                return Err("duplicate `--trace`".into());
+            }
+            options.trace = true;
+            index += 1;
+            continue;
+        }
         let value = args
             .get(index + 1)
             .ok_or_else(|| format!("{flag} requires a value"))?
@@ -680,7 +736,7 @@ fn parse_review(args: &[String]) -> Result<ReviewOptions, String> {
     Ok(options)
 }
 
-fn selected_tests(
+pub(super) fn selected_tests(
     tests: &[ui_lang_core::TestDecl],
     requested: &[String],
 ) -> Result<Vec<String>, String> {
@@ -764,7 +820,7 @@ fn baseline_index(path: &Path, scope: &BaselineScope) -> Result<BTreeMap<String,
     };
     if report_path.is_file() {
         let value = read_json(&report_path)?;
-        let report = serde_json::from_value::<ReviewReportV1>(value).map_err(|error| {
+        let report = serde_json::from_value::<ReviewReportV2>(value).map_err(|error| {
             format!(
                 "{} is not a strict review report v{REVIEW_SCHEMA_VERSION}: {error}",
                 report_path.display()
@@ -1041,6 +1097,24 @@ fn render_html(report: &Value) -> String {
             html_escape(test["error"].as_str().unwrap_or_default()),
         );
     }
+    html.push_str("</table><h2>Interaction traces</h2><table><tr><th>Test</th><th>Actions</th><th>Worst</th><th>Finding</th><th>Artifact</th></tr>");
+    for trace in report["traces"].as_array().into_iter().flatten() {
+        let _ = write!(
+            html,
+            "<tr><td><code>{}</code></td><td>{}</td><td><code>{}</code></td><td><code>{}</code></td><td><a href=\"{}\">trace.json</a>{}</td></tr>",
+            html_escape(trace["test"].as_str().unwrap_or_default()),
+            trace["actions"],
+            html_escape(&serde_json::to_string(&trace["worst"]).unwrap_or_default()),
+            html_escape(&serde_json::to_string(&trace["finding"]).unwrap_or_default()),
+            html_escape(trace["trace"].as_str().unwrap_or_default()),
+            trace["error"]
+                .as_str()
+                .map_or(String::new(), |error| format!(
+                    "<pre class=\"bad\">{}</pre>",
+                    html_escape(error)
+                )),
+        );
+    }
     html.push_str("</table><h2>Captures</h2><div class=\"captures\">");
     if let Some(error) = report["baseline_error"].as_str() {
         let _ = write!(html, "<pre class=\"bad\">{}</pre>", html_escape(error));
@@ -1117,6 +1191,17 @@ fn read_json(path: &Path) -> Result<Value, String> {
     let bytes =
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|error| format!("invalid {}: {error}", path.display()))
+}
+
+fn read_trace(path: &Path) -> Result<TraceArtifact, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("cannot read trace artifact {}: {error}", path.display()))?;
+    let artifact: TraceArtifact = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("{} is not a strict trace artifact: {error}", path.display()))?;
+    artifact
+        .validate()
+        .map_err(|error| format!("invalid trace artifact {}: {error}", path.display()))?;
+    Ok(artifact)
 }
 
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
@@ -1241,6 +1326,7 @@ mod tests {
             "tests": {},
             "diagnostics": {},
             "captures": captures,
+            "traces": [],
             "source_mapped_changes": [],
             "accessibility": {},
             "baseline": null,
@@ -1295,10 +1381,13 @@ mod tests {
             "baseline".into(),
             "--max-changed-ratio".into(),
             "0.01".into(),
+            "--trace".into(),
         ])
         .unwrap();
         assert_eq!(options.tests, ["wide"]);
         assert_eq!(options.thresholds.max_changed_ratio, 0.01);
+        assert!(options.trace);
+        assert!(parse_review(&["app.ice".into(), "--trace".into(), "--trace".into()]).is_err());
         assert!(
             parse_review(&[
                 "app.ice".into(),

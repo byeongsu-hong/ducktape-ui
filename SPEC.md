@@ -5487,6 +5487,22 @@ locale, platform, reduced motion, name, output directory, and an explicit Cargo
 package for external includes. A fragment without a top-level app/daemon or a
 root not included by the selected package is rejected.
 
+`cargo ice inspect` also has an opt-in release-only interaction trace path.
+`--test NAME --trace` measures an authored first-class Ice test with explicit
+warmup/repeat counts. `--fuzz interactions --seed N --steps N` deterministically
+generates bounded semantic actions from the live target/capability inventory,
+refreshing it after each action; `--replay TRACE.json` pins the artifact's
+environment and exact sequence on a fresh boot. No trace syntax extends the Ice
+test language. Stable action phases are view, UI build/layout, event dispatch,
+program update, widget operation, task settle, and total action time. Draw and
+PNG/manifest evidence capture stay outside timed intervals. A strict sibling
+`ice_interaction_trace` schema-1 artifact retains raw samples,
+p50/p95/p99/max, 60/120 Hz misses, source/target provenance, unavailable
+phases, confirmation count, stable finding fingerprint, reducer attempts, and
+worst-state evidence. Confirmed generated panic, timeout, assertion, or local
+latency-policy findings are replayed on fresh boots and delta-reduced to a
+strictly smaller sequence when possible.
+
 `cargo ice diff BASE.json CURRENT.json` recursively compares structured
 manifest values and 8-bit RGBA pixels under explicit numeric, channel, and
 changed-ratio tolerances. It writes machine-readable `report.json` and a
@@ -5514,7 +5530,7 @@ a review failure under the explicit pixel, ratio, and value tolerances. An
 explicit `--test` selection filters report keys before resolving, reading, or
 checking manifest paths; evidence from unselected tests is outside that run's
 baseline scope, while full scope validates every entry. Capture manifests have
-schema version 2 and review/diff reports have schema version 1 with distinct
+schema version 2 and review reports have schema version 2 with distinct
 artifact discriminators. Direct diff and review use the same structural
 validator for all published required top-level fields and core nested source,
 geometry, accessibility, and paint shapes. Test failure also fails the review.
@@ -6110,11 +6126,11 @@ candidate children, and removes staged executables on replacement or shutdown.
 | `cargo ice expand FILE` | prints generated Rust for debugging |
 | `cargo ice dev -p PACKAGE [<cargo-build-args>] [-- <app-args>]` | discovers the package's unique Ice root, watches complete source/build inputs, reloads compatible views in place, and replaces the running app only after a rebuilt shadow candidate reports ready |
 | `cargo ice bundle -p PACKAGE [--target TRIPLE]...` | analyzes the package's Ice root, builds it in release, and writes the host platform's installable artifact: a signed, notarized macOS `.app` and `.dmg`, a Debian `.deb` with a desktop entry and icon theme, or a per-user Windows `.msi`; the app name and `id` become the product name and identifier, every icon size is rendered from one SVG, repeated macOS targets are joined with `lipo`, and signing credentials come from the environment |
-| `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts for a fixed input tuple |
+| `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts, or release-mode authored/generated/replay interaction evidence in a strict sibling `trace.json` |
 | `cargo ice diff BASE.json CURRENT.json [options]` | compares structured manifests and RGBA pixels, writes JSON/PNG diff artifacts, and fails outside explicit tolerances |
 | `cargo ice api FILE` | checks an app or declaration-only interface graph and prints its deterministic, versioned public API fingerprint |
 | `cargo ice api diff BASE.json CURRENT.json [--format human\|json]` | verifies both fingerprints, classifies public changes, and exits nonzero when any breaking change is present |
-| `cargo ice review FILE [options]` | runs selected first-class Ice tests and writes one JSON/HTML bundle containing logs, diagnostics, captures, accessibility summary, baseline diffs, and source-mapped changes |
+| `cargo ice review FILE [options]` | runs selected first-class Ice tests and writes one JSON/HTML bundle containing logs, diagnostics, captures, optional interaction traces, accessibility summary, baseline diffs, and source-mapped changes |
 | `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |
 | `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, context-aware completion, component/recipe hover, component signature help, workspace-edit and `Run Ice lint` source actions, definition, and rename |
 

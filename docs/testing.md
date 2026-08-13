@@ -195,6 +195,17 @@ first-class Ice tests and packages their captures, diagnostics, accessibility
 inventory, baseline diffs, and source-mapped changes into one JSON/HTML
 evidence bundle — see [tooling.md](tooling.md) for their flags and policies.
 
+Opt-in interaction traces instrument `Driver::perform_action` at stable
+semantic boundaries: view construction, UI build/layout, event dispatch,
+program update, widget operations, task settling, and total action time.
+Tracing is disabled by default and keeps no action counter or recorder state in
+ordinary tests. Trace campaigns use release builds; raw samples remain in the
+artifact and summaries report p50/p95/p99/max plus 60/120 Hz misses. Evidence
+capture and drawing are outside the measured interval, and `draw` is explicitly
+listed as unavailable instead of being inferred from capture cost. The ignored
+`performance_contract_interaction_trace_overhead` contract compares the same
+actions in the same process and caps enabled tracing at 1.5x disabled time.
+
 ## Performance contracts
 
 Performance tests are `#[ignore]`d so an ordinary `cargo test` stays fast, which
