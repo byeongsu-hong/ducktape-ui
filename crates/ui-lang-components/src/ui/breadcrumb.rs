@@ -42,11 +42,13 @@ pub fn breadcrumb<'a, Message>(
 where
     Message: 'a,
 {
-    let mut content = Row::new()
+    let items = items.into_iter();
+    let capacity = items.size_hint().0.saturating_mul(2).saturating_sub(1);
+    let mut content = Row::with_capacity(capacity)
         .spacing(theme.spacing.sm)
         .align_y(Alignment::Center);
 
-    for (index, item) in items.into_iter().enumerate() {
+    for (index, item) in items.enumerate() {
         if index > 0 {
             content = content.push(styled(separator(), theme.palette.muted_foreground));
         }
