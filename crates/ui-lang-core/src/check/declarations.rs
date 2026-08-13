@@ -298,7 +298,7 @@ pub(in crate::check) fn check_declared_type(
 pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
     let mut names = HashSet::new();
     for item in &document.structs {
-        if !names.insert(("struct", item.name.as_str())) {
+        if !names.insert(("type", item.name.as_str())) {
             return Err(Error::new(
                 "E100",
                 &item.span,
@@ -317,13 +317,7 @@ pub(in crate::check) fn check_unique(document: &Document) -> Result<(), Error> {
         }
     }
     for item in &document.enums {
-        if !names.insert(("type", item.name.as_str()))
-            || item.name == document.app
-            || document
-                .structs
-                .iter()
-                .any(|external| external.name == item.name)
-        {
+        if !names.insert(("type", item.name.as_str())) || item.name == document.app {
             return Err(Error::new(
                 "E100",
                 &item.span,
@@ -713,4 +707,21 @@ pub(in crate::check) fn slots(node: &ViewNode) -> Vec<(&str, bool, &Span)> {
     let mut output = Vec::new();
     collect(node, &mut output);
     output
+}
+
+#[cfg(test)]
+mod unique_tests {
+    use super::*;
+
+    #[test]
+    fn extern_structs_and_enums_share_a_type_namespace() {
+        let document = crate::parse(
+            "app UniqueTypes\nextern crate::backend\n  Status()\nenum Status\n  ready\nview\n  text \"ok\"\n",
+        )
+        .unwrap();
+
+        let error = check_unique(&document).unwrap_err();
+        assert_eq!(error.code, "E100");
+        assert_eq!(error.message, "duplicate type `Status`");
+    }
 }
