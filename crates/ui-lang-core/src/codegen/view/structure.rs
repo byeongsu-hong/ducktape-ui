@@ -245,11 +245,12 @@ pub(in crate::codegen) fn render_structure(
             drop(_lazy_guard);
             let dependency_rust = rust_type_code(program, &lazy.binding.ty);
             // memo_lazy is iced's Lazy plus LAYOUT memoization (a cached row
-            // also skips the per-pass layout walk) plus unmount parking: the
-            // trailing site id — this lazy expression's view-node id — keys
-            // the parked subtree so a torn-down mount (a `match` arm switch)
-            // rehydrates on re-entry instead of re-shaping every row.
+            // also skips the per-pass layout walk) plus unmount parking. The
+            // view-node id identifies the expression and the reconciliation
+            // scope identifies this concrete row/mount, so stale dependency
+            // revisions replace one another without collapsing sibling rows.
             let site = node.0;
+            let parking_scope = borrowed_scope(reconciliation_scope(&child_scope, env));
             if !lazy.keys.is_empty() {
                 // `lazy value by key, key as name`: the keys stand in for the
                 // value in the dependency tuple, and the value never crosses
@@ -298,7 +299,7 @@ pub(in crate::codegen) fn render_structure(
                 );
                 let builder = format!("move |__dependency| {{ {lazy_body} }}");
                 let lazy_code = format!(
-                    "::ui_lang_runtime::memo_lazy(({keys}, ({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64).into()"
+                    "::ui_lang_runtime::memo_lazy(({keys}, ({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()"
                 );
                 return Ok(Some(identify_rendered(
                     if hoisted.is_empty() {
@@ -345,7 +346,7 @@ pub(in crate::codegen) fn render_structure(
                 format!("move |__dependency| {{ {lazy_body} }}")
             };
             let lazy_code = format!(
-                "::ui_lang_runtime::memo_lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64).into()"
+                "::ui_lang_runtime::memo_lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()"
             );
             Ok(if hoisted.is_empty() {
                 lazy_code

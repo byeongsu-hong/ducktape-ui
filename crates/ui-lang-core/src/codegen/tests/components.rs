@@ -815,6 +815,33 @@ view
 }
 
 #[test]
+fn lazy_parking_uses_the_private_for_reconciliation_scope() {
+    let source = r#"app LazyRows
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  rows = ["one", "two"]
+  revision:i64 = 0
+view
+  col
+    for row in rows
+      lazy row by revision as cached
+        text cached
+"#;
+    let generated = compile(source, "lazy_rows.ice").unwrap();
+
+    assert!(generated.contains(", &(__for_scope)).into()"));
+}
+
+#[test]
 fn lowers_parsed_markdown_with_complete_sizes_and_link_route() {
     let source = r##"app Docs
 font ui family=sans

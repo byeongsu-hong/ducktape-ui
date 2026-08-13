@@ -54,7 +54,7 @@ fn rows() -> Vec<Row> {
 /// the dependency tuple carries `(rev, seq, scope, palette)`, and the row is
 /// cloned into the owned binding only inside the builder.
 fn view(messages: &[Row]) -> Element<'_, (), Theme, iced_test::renderer::Renderer> {
-    column(messages.iter().map(|message| {
+    column(messages.iter().enumerate().map(|(index, message)| {
         memo_lazy(
             (message.rev, message.seq, ("CheapKeys").to_owned(), "light"),
             move |__dependency: &(i64, i64, String, &'static str)| -> Element<
@@ -72,6 +72,7 @@ fn view(messages: &[Row]) -> Element<'_, (), Theme, iced_test::renderer::Rendere
                 .into()
             },
             21u64,
+            index,
         )
         .into()
     }))

@@ -79,6 +79,7 @@ impl Screen {
                     column![text(row.author).width(120.0), text(row.body).size(14)].into()
                 },
                 9u64,
+                message.seq,
             )
             .into()
         }))

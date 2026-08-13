@@ -96,6 +96,7 @@ fn view(model: &Model) -> Element<'static, Message, Theme, iced_test::renderer::
                 .into()
             },
             index as u64,
+            index,
         )
         .into()
     }))
