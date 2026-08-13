@@ -2,6 +2,9 @@ app TerminalWorkspace
   title "Terminal"
   palette AppTheme.terminal
   id "dev.ducktape.ice.terminal"
+  font "../../../../assets/fonts/JetBrainsMono-Regular.ttf"
+  font "../../../../assets/fonts/JetBrainsMono-Bold.ttf"
+  font "../../../../assets/fonts/JetBrainsMono-Italic.ttf"
   text-size 14
   antialiasing true
   window
@@ -15,7 +18,7 @@ use "tests/app.ice"
 
 font body family=sans default=true
 font strong family=sans weight=semibold
-font code family=mono
+font code family="JetBrains Mono"
 
 state
   environment:Environment = detect_environment()
