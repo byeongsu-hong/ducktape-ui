@@ -291,6 +291,7 @@ fn expr_uses_test_paint_inner(expr: &Expr, test: &TestDecl, visited: &mut HashSe
                             | "image_y"
                             | "image_width"
                             | "image_height"
+                            | "image_color"
                     )
                 }) || alias_uses_test_paint(name, test, visited))
         }
