@@ -218,6 +218,17 @@ pub(in crate::codegen) fn render_structure(
                     false,
                 ),
             );
+            for binding in &lazy.key_bindings {
+                child_env.insert(
+                    binding.binding.name.clone(),
+                    resolved_local_binding(
+                        LocalBindingTypeSource::Resolved(program),
+                        binding.binding.local,
+                        binding.binding.name.clone(),
+                        false,
+                    ),
+                );
+            }
             let (hoisted, hoist_params) =
                 hoist_lazy_component_context(node, program, env, &mut child_env, message);
             // The lazy closure is `'static`, so component uses inside it must
@@ -272,8 +283,18 @@ pub(in crate::codegen) fn render_structure(
                     resolved_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?
                 };
                 let scope_index = lazy.keys.len();
+                let key_bindings = lazy
+                    .key_bindings
+                    .iter()
+                    .map(|binding| {
+                        let name = &binding.binding.name;
+                        let ty = rust_type_code(program, &binding.binding.ty);
+                        let index = binding.index;
+                        format!("let {name}: {ty} = __dependency.{index}.clone(); ")
+                    })
+                    .collect::<String>();
                 let lazy_body = format!(
-                    "let __lazy_scope = __dependency.{scope_index}.clone(); let {binding_name}: {dependency_rust} = {dependency}; let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
+                    "{key_bindings}let __lazy_scope = __dependency.{scope_index}.clone(); let {binding_name}: {dependency_rust} = {dependency}; let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
                 );
                 let builder = format!("move |__dependency| {{ {lazy_body} }}");
                 let lazy_code = format!(

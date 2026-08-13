@@ -8,12 +8,23 @@ pub(crate) struct ResolvedLazyBinding {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct ResolvedLazyKeyBinding {
+    pub(crate) index: usize,
+    pub(crate) binding: ResolvedLazyBinding,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct ResolvedLazy {
     pub(crate) id: ViewId,
     pub(crate) dependency: CheckedExprUseId,
     /// `lazy value by key, key as name`: the cheap projections that stand in
     /// for the value in the memo dependency tuple. Empty for the plain form.
     pub(crate) keys: Vec<CheckedExprUseId>,
+    /// Bare-identifier keys are immutable snapshots inside the lazy body.
+    /// They already live in the memo dependency tuple, so exposing them costs
+    /// no capture and lets the cached subtree render from the exact revision
+    /// inputs that selected it.
+    pub(crate) key_bindings: Vec<ResolvedLazyKeyBinding>,
     pub(crate) binding: ResolvedLazyBinding,
     pub(crate) origin: OriginId,
 }
@@ -140,10 +151,34 @@ impl Lowerer {
             }
         }
 
+        let mut key_bindings = Vec::new();
+        for (index, key) in keys.iter().enumerate() {
+            let Some(local) = self.facts.local_by_owner(CheckedLocalOwner::View {
+                view: id,
+                role: CheckedViewLocalRole::LazyKey(index as u32),
+            }) else {
+                continue;
+            };
+            let checked = self.facts.local(local);
+            let expression = self.facts.expression_use(*key);
+            if checked.ty != expression.source {
+                return Err(self.invariant(span, "lazy key binding type diverged"));
+            }
+            key_bindings.push(ResolvedLazyKeyBinding {
+                index,
+                binding: ResolvedLazyBinding {
+                    local,
+                    name: checked.name.clone(),
+                    ty: checked.ty.clone(),
+                },
+            });
+        }
+
         let resolved = ResolvedLazy {
             id,
             dependency,
             keys,
+            key_bindings,
             binding: ResolvedLazyBinding {
                 local,
                 name: checked_local.name.clone(),

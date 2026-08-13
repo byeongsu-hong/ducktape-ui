@@ -12,7 +12,7 @@ fn route_result_code(route: &ResolvedRoute, binding: &str, expression: String) -
     }
 }
 
-fn editor_self_assignment_code(
+fn self_assignment_code(
     target: &ResolvedWritableState,
     value: ResolvedExpressionId,
     env: &dyn BindingEnvironment,
@@ -529,7 +529,7 @@ pub(in crate::codegen) fn generate_statements(
                 move_self,
             } => {
                 let code = if *move_self {
-                    editor_self_assignment_code(target, *value, env, program, state)?
+                    self_assignment_code(target, *value, env, program, state)?
                 } else {
                     resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
                 };

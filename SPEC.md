@@ -2252,6 +2252,12 @@ expression, a loop row, a component-state read) is rejected at the call site,
 where the fix belongs. Every
 other rule of the plain form — the alias-only subtree scope, unmount parking,
 preserved component routing — applies unchanged.
+Bare-identifier keys are also immutable snapshot locals inside the keyed lazy
+subtree. `lazy rows by revision, selected as cached` may therefore render from
+`revision` and `selected`; those names are the exact values already stored in
+the memo dependency tuple, not fresh reads of mutable state. Computed keys and
+field projections remain key-only. If a key name equals the `as` alias, the
+alias wins.
 
 Markdown content is parsed into owned iced state instead of being reparsed by
 the view. A literal initializes it directly, `markdown(source)` replaces it,
@@ -2613,6 +2619,12 @@ expression, then pass that value into `pure` computations. Neither synchronous
 kind may declare `! Error`; both return their values directly. The compiler
 probes types but does not inspect Rust bodies, so a dishonest `pure` declaration
 is a backend contract violation.
+
+An immediate self-assignment through one `pure` or `sync` extern call moves an
+`editor` or list state field into that call when the right-hand side references
+the field exactly once. For example, `rows = append(rows, next)` transfers the
+owned list instead of cloning it, then assigns the returned list. Expressions
+that read the target more than once keep ordinary clone semantics.
 
 Thirty-two typed iced adapters expose framework capabilities without embedding Rust
 expressions in Ice:

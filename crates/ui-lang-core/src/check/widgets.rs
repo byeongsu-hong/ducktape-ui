@@ -317,7 +317,7 @@ fn collect_widget_ids(
             }
             ViewNode::Lazy {
                 dependency,
-                keys: _,
+                keys,
                 binding,
                 id,
                 child,
@@ -328,6 +328,14 @@ fn collect_widget_ids(
                 }
                 let mut child_env = ScopedTypeEnv::new(env);
                 child_env.insert(binding.clone(), expr_type(dependency, env, document, span)?);
+                for key in keys {
+                    if let Expr::Path(segments) = key
+                        && let [name] = segments.as_slice()
+                        && name != binding
+                    {
+                        child_env.insert(name.clone(), expr_type(key, env, document, span)?);
+                    }
+                }
                 let child_scope = scoped(scope, id, env, document, span)?;
                 collect(
                     child,

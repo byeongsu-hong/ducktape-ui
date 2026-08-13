@@ -198,6 +198,7 @@ pub(in crate::check) fn infer_documents_group(
                 )
                 .hint("use bool, i64, f64, str, an extern type with Clone, or a list/optional of those"));
             }
+            let mut key_bindings = Vec::new();
             for (index, key) in keys.iter().enumerate() {
                 let key_type = retained_view_expr_type(
                     key,
@@ -217,9 +218,16 @@ pub(in crate::check) fn infer_documents_group(
                     )
                     .hint("use bool, i64, or str"));
                 }
+                if let Expr::Path(segments) = key
+                    && let [name] = segments.as_slice()
+                    && name != binding
+                {
+                    key_bindings.push((name.clone(), key_type));
+                }
             }
             check_lazy_subtree(child, document, &mut HashSet::new(), false)?;
             let mut child_env = HashMap::from([(binding.clone(), dependency_type)]);
+            child_env.extend(key_bindings);
             if let Some(component) = component_context(env).map(str::to_owned) {
                 child_env.insert(component_context_key(&component), Type::Unit);
                 if let Some(output) = env.get_type(&component_output_key(&component)) {

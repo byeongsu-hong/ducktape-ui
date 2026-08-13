@@ -2990,11 +2990,11 @@ impl LoweredProgram {
                     }
                 }
                 ResolvedStatementKind::Assign { move_self, .. }
-                    if checked.editor_self_move != Some(*move_self) =>
+                    if checked.self_move != Some(*move_self) =>
                 {
                     return Err(program.invariant_at_origin(
                         statement.origin,
-                        "editor self-move mode diverged from checked HIR",
+                        "self-move mode diverged from checked HIR",
                     ));
                 }
                 ResolvedStatementKind::PaneOperation { dynamic, .. }
@@ -7967,8 +7967,8 @@ impl Lowerer {
             } => {
                 let target = self.writable_state(checked_statement, &mut writable, span)?;
                 let value = self.checked_statement_expression(id, &mut operand, span)?;
-                let move_self = checked_statement.editor_self_move.ok_or_else(|| {
-                    self.invariant(span, "assignment has no checked editor move contract")
+                let move_self = checked_statement.self_move.ok_or_else(|| {
+                    self.invariant(span, "assignment has no checked self-move contract")
                 })?;
                 ResolvedStatementKind::Assign {
                     target,
