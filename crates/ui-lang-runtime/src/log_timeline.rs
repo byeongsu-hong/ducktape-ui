@@ -266,15 +266,14 @@ where
         event: LogTimelineEvent<Key>,
         config: VirtualListConfig,
     ) -> LogTimelineOutcome<Key> {
-        let previous_selected = self.list.selected().cloned();
         let previous_range = self.list.visible_range(self.keys.len(), config);
         let previous_offset = self.list.scroll_offset();
         let previous_follow = self.following_tail;
 
-        match event {
+        let mut list = match event {
             LogTimelineEvent::List(event) => {
                 let viewport_changed = matches!(event, VirtualListEvent::ViewportChanged { .. });
-                self.list.apply(event, &self.keys, Clone::clone, config);
+                let list = self.list.apply(event, &self.keys, Clone::clone, config);
                 if self.following_tail {
                     if viewport_changed {
                         self.list.scroll_to_end(self.keys.len(), config);
@@ -282,22 +281,26 @@ where
                         self.following_tail = false;
                     }
                 }
+                list
             }
             LogTimelineEvent::ResumeTail => {
                 self.following_tail = true;
                 self.unread_count = 0;
                 self.list.scroll_to_end(self.keys.len(), config);
+                VirtualListOutcome {
+                    selected: self.list.selected().cloned(),
+                    selection_changed: false,
+                    visible_range_changed: false,
+                    scroll_changed: false,
+                }
             }
-        }
+        };
+        list.visible_range_changed =
+            self.list.visible_range(self.keys.len(), config) != previous_range;
+        list.scroll_changed = self.list.scroll_offset() != previous_offset;
 
         LogTimelineOutcome {
-            list: VirtualListOutcome {
-                selected: self.list.selected().cloned(),
-                selection_changed: self.list.selected() != previous_selected.as_ref(),
-                visible_range_changed: self.list.visible_range(self.keys.len(), config)
-                    != previous_range,
-                scroll_changed: self.list.scroll_offset() != previous_offset,
-            },
+            list,
             following_tail: self.following_tail,
             tail_follow_changed: self.following_tail != previous_follow,
             unread_count: self.unread_count,
@@ -403,6 +406,19 @@ mod tests {
         state
     }
 
+    fn outcome_flags(
+        outcome: &LogTimelineOutcome<u64>,
+    ) -> (Option<u64>, bool, bool, bool, bool, bool) {
+        (
+            outcome.list.selected,
+            outcome.list.selection_changed,
+            outcome.list.visible_range_changed,
+            outcome.list.scroll_changed,
+            outcome.following_tail,
+            outcome.tail_follow_changed,
+        )
+    }
+
     #[test]
     fn follows_tail_by_default_and_counts_only_paused_appends() {
         let mut rows: Vec<u64> = (0..20).collect();
@@ -410,9 +426,13 @@ mod tests {
         assert!(state.is_following_tail());
         assert_eq!(state.scroll_offset(), 300.0);
 
-        state.apply(
+        let scrolled = state.apply(
             LogTimelineEvent::List(VirtualListEvent::Scrolled { offset_y: 200.0 }),
             config(),
+        );
+        assert_eq!(
+            outcome_flags(&scrolled),
+            (None, false, true, true, false, true),
         );
         assert!(!state.is_following_tail());
 
@@ -421,9 +441,12 @@ mod tests {
         assert_eq!(state.unread_count(), 3);
         assert_eq!(state.scroll_offset(), 200.0);
 
-        let outcome = state.apply(LogTimelineEvent::ResumeTail, config());
-        assert!(outcome.following_tail);
-        assert_eq!(outcome.unread_count, 0);
+        let resumed = state.apply(LogTimelineEvent::ResumeTail, config());
+        assert_eq!(
+            outcome_flags(&resumed),
+            (None, false, true, true, true, true),
+        );
+        assert_eq!(resumed.unread_count, 0);
         assert_eq!(state.scroll_offset(), 360.0);
 
         rows.push(23);
@@ -452,9 +475,13 @@ mod tests {
     fn viewport_resize_preserves_tail_follow_at_the_exact_live_edge() {
         let rows: Vec<u64> = (0..20).collect();
         let mut state = measured_state(&rows);
-        state.apply(
+        let resized = state.apply(
             LogTimelineEvent::List(VirtualListEvent::ViewportChanged { height: 60.0 }),
             config(),
+        );
+        assert_eq!(
+            outcome_flags(&resized),
+            (None, false, true, true, true, false),
         );
         assert!(state.is_following_tail());
         assert_eq!(state.scroll_offset(), 340.0);
@@ -481,9 +508,13 @@ mod tests {
     fn selection_and_keyboard_navigation_are_delegated_to_virtual_list() {
         let rows: Vec<u64> = (0..20).collect();
         let mut state = measured_state(&rows);
-        state.apply(
+        let selected = state.apply(
             LogTimelineEvent::List(VirtualListEvent::Select { index: 19, key: 19 }),
             config(),
+        );
+        assert_eq!(
+            outcome_flags(&selected),
+            (Some(19), true, false, false, true, false),
         );
         let outcome = state.apply(
             LogTimelineEvent::List(VirtualListEvent::Navigate(VirtualListNavigation::Up)),

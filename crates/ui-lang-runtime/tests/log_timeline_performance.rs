@@ -6,7 +6,9 @@ use common::{assert_wall_clock_budgets, percentile};
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use std::alloc::System;
-use ui_lang_runtime::{LogTimelineState, VirtualListConfig, VirtualListId};
+use ui_lang_runtime::{
+    LogTimelineEvent, LogTimelineState, VirtualListConfig, VirtualListEvent, VirtualListId,
+};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -89,4 +91,50 @@ fn performance_contract_100k_log_append_reconcile() {
     eprintln!(
         "100k log append reconcile: p50={p50}us p95={p95}us allocations(p95)={p95_allocations} bytes(p95)={p95_bytes}"
     );
+}
+
+#[test]
+#[ignore = "owned-key interaction allocation contract run explicitly in CI"]
+fn performance_contract_owned_key_list_interactions() {
+    const SAMPLES: usize = 256;
+
+    let config = VirtualListConfig::new(20.0).unwrap().overscan(2);
+    let rows: Vec<String> = (0..100)
+        .map(|index| format!("log-row-{index:04}-{}", "x".repeat(64)))
+        .collect();
+    let selected_bytes = rows[50].len();
+    let mut state = LogTimelineState::new(VirtualListId::new("log-owned-key-contract"));
+    state.reconcile(&rows, Clone::clone, config).unwrap();
+    state.apply(
+        LogTimelineEvent::List(VirtualListEvent::ViewportChanged { height: 100.0 }),
+        config,
+    );
+    state.apply(
+        LogTimelineEvent::List(VirtualListEvent::Select {
+            index: 50,
+            key: rows[50].clone(),
+        }),
+        config,
+    );
+
+    let run = |state: &mut LogTimelineState<String>, offset_y| {
+        std::hint::black_box(state.apply(
+            LogTimelineEvent::List(VirtualListEvent::Scrolled { offset_y }),
+            config,
+        ));
+    };
+    run(&mut state, 1_000.0);
+
+    let region = Region::new(GLOBAL);
+    for sample in 0..SAMPLES {
+        run(&mut state, 1_000.0 + (sample % 2) as f32 * 20.0);
+    }
+    let stats = region.change();
+
+    eprintln!(
+        "256 owned-key list interactions: allocations={} bytes={}",
+        stats.allocations, stats.bytes_allocated
+    );
+    assert_eq!(stats.allocations, SAMPLES * 2);
+    assert_eq!(stats.bytes_allocated, SAMPLES * 2 * selected_bytes);
 }
