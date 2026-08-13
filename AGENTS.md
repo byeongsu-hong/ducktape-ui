@@ -59,14 +59,30 @@ timeout, target-resolution, and setup failures do not count as Red evidence.
 `capture` alone is not an assertion, and `dispatch` alone does not prove a
 widget route or interaction works.
 
-## Commit & Pull Request Guidelines
+## Commit, Branch & Pull Request Policy
 
-Recent history favors concise imperative subjects, often Conventional Commit
-style such as `feat(editor): ...` or `fix(codegen): ...`. Keep each commit
-focused. Pull requests should describe user-visible behavior, list commands
-run, link relevant issues, and include screenshots for visual example changes.
-Update `SPEC.md`, `README.md`, and `COVERAGE.md` when public syntax, tooling, or
-support claims change.
+Every task commit must follow Conventional Commits using
+`<type>(<scope>)!: <imperative summary>`, omitting the optional scope and `!`
+when they do not apply. Allowed types are `feat`, `fix`, `docs`, `refactor`,
+`perf`, `test`, `build`, `ci`, `chore`, and `revert`. Use the scope for the
+affected crate or feature, mark breaking changes with `!` and/or a
+`BREAKING CHANGE:` footer, keep the summary concise, and limit each commit to
+one logical change. Pull request titles must use the same format so squash
+merges preserve it.
+
+Create one focused branch per pull request from the latest `origin/main` unless
+another base is explicitly requested. Name regular branches
+`<type>/<short-kebab-case-description>` using the same type list. Use
+`agent/<short-kebab-case-description>` for agent-owned task branches and
+`qa/<short-kebab-case-description>` for manual QA branches. Service-managed
+branches such as `dependabot/...` are exempt from this naming rule. Never commit
+directly to `main` or `master`, mix unrelated changes on one branch, or reuse a
+merged or closed branch. Target `main` by default when opening a pull request.
+
+Pull requests should describe user-visible behavior, list commands run, link
+relevant issues, and include screenshots for visual example changes. Update
+`SPEC.md`, `README.md`, and `COVERAGE.md` when public syntax, tooling, or support
+claims change.
 
 ## Required Agent Delivery Workflow
 
