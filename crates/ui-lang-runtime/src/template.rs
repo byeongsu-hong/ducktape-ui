@@ -297,19 +297,19 @@ where
             // so the count the fill and spacing are bounded by is only known
             // after expansion — exactly as the inline path counts `__children`
             // after its `if`s have run.
-            let expanded = children
-                .iter()
-                .flat_map(|child| match child {
+            let mut expanded = Vec::with_capacity(children.len());
+            for child in children {
+                match child {
                     Node::Group {
                         slot: GroupSlot(slot),
-                    } => slots
-                        .groups
-                        .get(*slot)
-                        .map(|cell| std::mem::take(&mut *cell.borrow_mut()))
-                        .unwrap_or_default(),
-                    child => vec![render_node(child, slots, palette, scope, paths)],
-                })
-                .collect::<Vec<_>>();
+                    } => {
+                        if let Some(cell) = slots.groups.get(*slot) {
+                            expanded.extend(std::mem::take(&mut *cell.borrow_mut()));
+                        }
+                    }
+                    child => expanded.push(render_node(child, slots, palette, scope, paths)),
+                }
+            }
             let count = expanded.len();
             let rendered = expanded
                 .into_iter()
@@ -981,6 +981,96 @@ mod tests {
         // An out-of-range slot renders empty rather than panicking: a stale
         // template must not take the window down mid-reload.
         assert_eq!(resolve_value(&Value::Slot(TextSlot(7)), &slots), "");
+    }
+
+    #[test]
+    fn linear_groups_keep_source_order_and_are_consumed_once() {
+        let text = |segment: &str, value: &str| Node::Text {
+            a11y: A11y {
+                segment: segment.into(),
+                named: true,
+                source: None,
+            },
+            value: Value::Literal(value.into()),
+            size: None,
+            color: None,
+        };
+        let group_text = |value: &'static str| -> IceElement<'static, String> {
+            crate::accessible(
+                crate::selectable_text(widget::text(value)),
+                StableId::new(value),
+                Role::Label,
+            )
+            .logical_id(value)
+            .value(value)
+            .into()
+        };
+        let template = Template {
+            root: Node::Linear {
+                a11y: A11y {
+                    segment: "content".into(),
+                    named: true,
+                    source: None,
+                },
+                axis: Axis::Column,
+                spacing: None,
+                padding: None,
+                width: None,
+                height: None,
+                align_x: None,
+                align_y: None,
+                children: vec![
+                    text("before", "before"),
+                    Node::Group { slot: GroupSlot(0) },
+                    text("middle", "middle"),
+                    Node::Group { slot: GroupSlot(0) },
+                    Node::Group { slot: GroupSlot(1) },
+                    text("after", "after"),
+                ],
+            },
+            slots: SlotCounts {
+                groups: 2,
+                ..SlotCounts::default()
+            },
+        };
+        let slots = Slots::<String> {
+            groups: vec![
+                std::cell::RefCell::new(vec![group_text("group-a"), group_text("group-b")]),
+                std::cell::RefCell::new(vec![group_text("group-c")]),
+            ],
+            ..Slots::default()
+        };
+
+        let element = render(&template, &slots, &[], "app", &[]);
+        for group in &slots.groups {
+            let consumed = group.borrow();
+            assert!(consumed.is_empty(), "each group slot is consumed once");
+            assert_eq!(consumed.capacity(), 0, "taking releases the group buffer");
+        }
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            element,
+            iced::Size::new(640.0, 480.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut operation = crate::SnapshotOperation::<String>::named("test");
+        ui.operate(&renderer, &mut operation::black_box(&mut operation));
+        let Outcome::Some(snapshot) = operation.finish() else {
+            panic!("accessibility snapshot completed without a result");
+        };
+        let values = snapshot
+            .update
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.value().map(str::to_owned))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            values,
+            ["before", "group-a", "group-b", "middle", "group-c", "after"],
+            "mixed ordinary and group children retain source order, and a repeated group is empty"
+        );
     }
 
     #[test]
