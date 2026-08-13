@@ -174,7 +174,7 @@ pub fn compile_dir(path: impl AsRef<Path>) -> Result<(), Error> {
     compiler_thread(move || {
         let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
         let out_dir = cargo_path("OUT_DIR")?;
-        compile_dir_at(&manifest, &out_dir, &path)
+        compile_dir_at(&manifest, &out_dir, &path).map(|_| ())
     })
 }
 
@@ -256,12 +256,16 @@ fn compile_many_at(manifest: &Path, out_dir: &Path, paths: &[PathBuf]) -> Result
     let mut analysis_db = ui_lang_core::AnalysisDb::default();
     let mut transaction = GenerationTransaction::begin(out_dir)?;
     for path in paths {
-        compile_one(&mut analysis_db, manifest, path, &mut transaction)?;
+        compile_one(&mut analysis_db, manifest, path, None, &mut transaction)?;
     }
     transaction.commit()
 }
 
-fn compile_dir_at(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<(), Error> {
+fn compile_dir_at(
+    manifest: &Path,
+    out_dir: &Path,
+    relative: &Path,
+) -> Result<ui_lang_core::AnalysisMetrics, Error> {
     let relative = normalized_relative(relative)?;
     let directory = manifest.join(Path::new(&relative));
     println!("cargo::rerun-if-changed={}", directory.display());
@@ -285,7 +289,7 @@ fn compile_dir_at(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<()
                     manifest.display()
                 ))
             })?;
-            roots.push(relative.to_owned());
+            roots.push((relative.to_owned(), contents.into_bytes()));
         }
     }
     if roots.is_empty() {
@@ -297,16 +301,19 @@ fn compile_dir_at(manifest: &Path, out_dir: &Path, relative: &Path) -> Result<()
     let mut analysis_db = ui_lang_core::AnalysisDb::default();
     let mut transaction = GenerationTransaction::begin(out_dir)?;
     let mut generated = HashSet::new();
-    for root in &roots {
+    for (root, source) in roots {
         generated.extend(compile_one(
             &mut analysis_db,
             manifest,
-            root,
+            &root,
+            Some(source),
             &mut transaction,
         )?);
     }
     prune_generated(&relative, &generated, &mut transaction.manifest);
-    transaction.commit()
+    let metrics = analysis_db.metrics();
+    transaction.commit()?;
+    Ok(metrics)
 }
 
 fn collect_ice_sources(directory: &Path, sources: &mut Vec<PathBuf>) -> Result<(), Error> {
@@ -342,13 +349,18 @@ fn compile_one(
     analysis_db: &mut ui_lang_core::AnalysisDb,
     manifest: &Path,
     relative: &Path,
+    validated_source: Option<Vec<u8>>,
     transaction: &mut GenerationTransaction,
 ) -> Result<BTreeSet<String>, Error> {
     let relative = normalized_relative(relative)?;
     let source = manifest.join(Path::new(&relative));
-    let compilation = analysis_db
-        .compile_root(&source)
-        .map_err(|error| Error(error.render(&source.display().to_string())))?;
+    let compilation = match validated_source {
+        Some(validated_source) => {
+            analysis_db.compile_root_with_validated_source(&source, validated_source)
+        }
+        None => analysis_db.compile_root(&source),
+    }
+    .map_err(|error| Error(error.render(&source.display().to_string())))?;
     for directive in rerun_directives(&compilation.dependencies, &compilation.asset_dependencies) {
         println!("{directive}");
     }
@@ -1152,6 +1164,37 @@ mod tests {
     }
 
     #[test]
+    fn directory_compile_reuses_the_discovered_root_and_reads_external_imports() {
+        let fixture = fixture("reuse-root");
+        let manifest = fixture.join("manifest");
+        let source_dir = manifest.join("src/ui");
+        let out_dir = fixture.join("target/out");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(manifest.join("src/shared.ice"), "// external fragment\n").unwrap();
+        fs::write(
+            source_dir.join("app.ice"),
+            app_source("Example", "ready").replacen(
+                "app Example\n",
+                "app Example\nuse \"../shared.ice\"\n",
+                1,
+            ),
+        )
+        .unwrap();
+
+        let metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+
+        assert_eq!(metrics.files_loaded, 2, "{metrics:?}");
+        assert_eq!(metrics.files_scanned, 2, "{metrics:?}");
+        let generated =
+            fs::read_to_string(generated_path(&out_dir, "src/ui/app.ice").unwrap()).unwrap();
+        assert!(
+            generated.contains(&manifest.join("src/shared.ice").display().to_string()),
+            "{generated}"
+        );
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
     fn failed_batch_publishes_nothing() {
         let fixture = fixture("failed-batch");
         let manifest = fixture.join("manifest");
@@ -1425,9 +1468,10 @@ mod tests {
 
         reset_generated_writes();
         let started = Instant::now();
-        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        let cold_metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
         let cold = started.elapsed();
         assert_eq!(generated_writes(), ROOTS * FILES_PER_ROOT + 1);
+        assert_eq!(cold_metrics.files_loaded, ROOTS, "{cold_metrics:?}");
         assert!(
             cold <= COLD_BUDGET,
             "cold AOT codegen for {ROOTS} roots took {cold:?}; budget is {COLD_BUDGET:?}"
@@ -1436,7 +1480,7 @@ mod tests {
         reset_generated_writes();
         reset_content_comparison_reads();
         let started = Instant::now();
-        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        let incremental_metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
         let incremental = started.elapsed();
         assert_eq!(
             generated_writes(),
@@ -1447,6 +1491,10 @@ mod tests {
             content_comparison_reads(),
             1,
             "unchanged outputs were reread after manifest validation"
+        );
+        assert_eq!(
+            incremental_metrics.files_loaded, ROOTS,
+            "{incremental_metrics:?}"
         );
         assert!(
             incremental <= INCREMENTAL_BUDGET,
