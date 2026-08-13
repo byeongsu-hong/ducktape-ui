@@ -200,6 +200,11 @@ pub(in crate::check) fn collect_statement_routes<'a>(
             Statement::TaskGroup { statements, .. } => {
                 collect_statement_routes(statements, output);
             }
+            Statement::Match { arms, .. } => {
+                for arm in arms {
+                    collect_statement_routes(&arm.statements, output);
+                }
+            }
             Statement::Abortable { task, .. } => {
                 collect_statement_routes(std::slice::from_ref(task), output);
             }

@@ -878,3 +878,22 @@ mod daemon {
         assert_eq!(app.__update(__BackgroundAgentMessage::Quit).units(), 1);
     }
 }
+
+#[cfg(test)]
+mod handler_match {
+    ui_lang::include_app!("tests/cases/ui/handler_match.ice");
+
+    #[test]
+    fn evaluates_only_the_selected_handler_match_arm() {
+        crate::backend::reset_handler_match_evaluations();
+        let (mut app, _) = HandlerMatch::__boot();
+
+        let _ = app.__update(__HandlerMatchMessage::Updated(LiveKind::Tip));
+        assert_eq!(app.count, 7);
+        assert_eq!(crate::backend::handler_match_evaluations(), 0);
+
+        let _ = app.__update(__HandlerMatchMessage::Updated(LiveKind::Chat));
+        assert_eq!(app.count, 2);
+        assert_eq!(crate::backend::handler_match_evaluations(), 1);
+    }
+}

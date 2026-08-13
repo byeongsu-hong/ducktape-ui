@@ -3,6 +3,48 @@ use super::*;
 const HANDLER_PERF_THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
 #[test]
+fn lowers_exhaustive_handler_enum_matches_to_lazy_rust_matches() {
+    let source = format!(
+        r#"app Dispatch
+extern crate::backend
+  sync expensive(value:[str]) -> i64
+{HANDLER_PERF_THEME}enum LiveKind
+  chat
+  tip
+state
+  messages:[str] = []
+  count = 0
+on updated(kind)
+  match kind
+    LiveKind.chat
+      count = expensive(messages)
+    LiveKind.tip
+      count = 1
+view
+  col
+    text count
+    button "Chat" -> updated(LiveKind.chat)
+    button "Tip" -> updated(LiveKind.tip)
+"#
+    );
+
+    let generated = compile(&source, "handler_match.ice").unwrap();
+    let handler = generated
+        .split_once("__DispatchMessage::Updated(kind) =>")
+        .unwrap()
+        .1
+        .split_once("},")
+        .unwrap()
+        .0;
+
+    assert!(handler.contains("match kind"));
+    let chat = handler.find("LiveKind::Chat =>").unwrap();
+    let call = handler.find("crate::backend::expensive").unwrap();
+    let tip = handler.find("LiveKind::Tip =>").unwrap();
+    assert!(chat < call && call < tip);
+}
+
+#[test]
 fn lowers_derived_values_to_getters_and_handler_locals_to_rust_lets() {
     let source = r#"app Derived
 extern crate::backend

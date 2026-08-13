@@ -647,6 +647,19 @@ fn infer_run_statements<'a>(
             local_env.insert(name.clone(), ty);
             continue;
         }
+        if let Statement::Match { arms, .. } = statement {
+            for arm in arms {
+                infer_run_statements(
+                    &arm.statements,
+                    ::std::iter::empty(),
+                    document,
+                    signatures,
+                    &local_env,
+                    &unknown_env,
+                )?;
+            }
+            continue;
+        }
         let nested: Option<&[Statement]> = match statement {
             Statement::TaskGroup { statements, .. } => Some(statements),
             Statement::Abortable { task, .. } => Some(::std::slice::from_ref(task.as_ref())),

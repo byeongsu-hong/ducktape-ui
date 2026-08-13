@@ -80,6 +80,21 @@ view
         button "Add" disabled=!can_submit p=12.0 @bg-primary text-white -> submit
 ```
 
+Handlers can end in an exhaustive match over a fieldless UI enum. Every variant
+must appear exactly once, there is no wildcard, and only the selected arm is
+evaluated:
+
+```ice
+on live_updated(next)
+  match next.kind
+    LiveKind.chat
+      messages = fold_live_chat(messages, next)
+    LiveKind.tip
+      tip = next.tip
+    LiveKind.ready
+      ready = true
+```
+
 `derived` names a read-only computation over state. It may use deterministic
 Ice built-ins or a declared `pure` extern. It is not a signal, persistent cache,
 runtime dependency graph, or state mirror that handlers must synchronize.

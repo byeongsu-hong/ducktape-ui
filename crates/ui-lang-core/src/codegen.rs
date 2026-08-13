@@ -451,6 +451,11 @@ fn collect_run_lanes(
             ResolvedStatementKind::TaskGroup { statements, .. } => {
                 collect_run_lanes(statements, lanes);
             }
+            ResolvedStatementKind::Match { arms, .. } => {
+                for arm in arms {
+                    collect_run_lanes(&arm.statements, lanes);
+                }
+            }
             ResolvedStatementKind::Abortable { task, .. } => {
                 collect_run_lanes(::std::slice::from_ref(task), lanes);
             }

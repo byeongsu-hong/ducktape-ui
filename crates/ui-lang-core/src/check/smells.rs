@@ -89,6 +89,11 @@ fn statement_smells(statements: &[Statement], warnings: &mut Vec<Warning>) {
                 span,
             } => unconditional_return = Some(span.line),
             Statement::TaskGroup { statements, .. } => statement_smells(statements, warnings),
+            Statement::Match { arms, .. } => {
+                for arm in arms {
+                    statement_smells(&arm.statements, warnings);
+                }
+            }
             Statement::Abortable { task, .. } => {
                 statement_smells(std::slice::from_ref(task), warnings);
             }

@@ -225,6 +225,12 @@ pub(in crate::codegen) fn document_pane_grids(
                 ..
             } => statements_reference_grid(statements, name),
             ResolvedStatement {
+                kind: ResolvedStatementKind::Match { arms, .. },
+                ..
+            } => arms
+                .iter()
+                .any(|arm| statements_reference_grid(&arm.statements, name)),
+            ResolvedStatement {
                 kind: ResolvedStatementKind::Abortable { task, .. },
                 ..
             } => statements_reference_grid(::std::slice::from_ref(task), name),

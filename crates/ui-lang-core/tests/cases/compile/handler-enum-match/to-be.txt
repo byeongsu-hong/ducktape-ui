@@ -1,0 +1,7 @@
+return match self.kind.clone()
+LiveKind::Chat =>
+self.count = 1
+LiveKind::Tip =>
+self.count = 2
+LiveKind::Ready =>
+self.count = 3

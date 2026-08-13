@@ -577,6 +577,30 @@ pub(in crate::codegen) fn generate_statements(
                 let code = resolved_expr_use_code(program, *condition, env, ValueMode::Owned)?;
                 writeln!(out, "if {code} {{ return ::iced::Task::none(); }}").unwrap();
             }
+            ResolvedStatementKind::Match { value, arms } => {
+                let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
+                if return_task {
+                    write!(out, "return ").unwrap();
+                }
+                writeln!(out, "match {value} {{").unwrap();
+                for arm in arms {
+                    writeln!(out, "{}::{} => (|| {{", arm.owner, pascal(&arm.variant)).unwrap();
+                    let arm_has_task = generate_statements(
+                        out,
+                        &arm.statements,
+                        program,
+                        message,
+                        env,
+                        state,
+                        true,
+                    )?;
+                    if !arm_has_task {
+                        writeln!(out, "::iced::Task::none()").unwrap();
+                    }
+                    writeln!(out, "}})(),").unwrap();
+                }
+                writeln!(out, "}}{task_suffix}").unwrap();
+            }
             ResolvedStatementKind::Exit => {
                 writeln!(
                     out,

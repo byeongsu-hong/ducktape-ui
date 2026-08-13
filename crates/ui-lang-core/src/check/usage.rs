@@ -493,6 +493,11 @@ fn collect_handler_bindings(
                 Statement::TaskGroup { statements, .. } => {
                     collect_lets(component, handler, owner, statements, output);
                 }
+                Statement::Match { arms, .. } => {
+                    for arm in arms {
+                        collect_lets(component, handler, owner, &arm.statements, output);
+                    }
+                }
                 Statement::Abortable { task, .. } => collect_lets(
                     component,
                     handler,

@@ -1,6 +1,46 @@
 use super::*;
 
 pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error> {
+    if let Some(source) = line.text.strip_prefix("match ") {
+        if line.children.is_empty() {
+            return Err(error(
+                "E050",
+                line,
+                "handler match requires at least one arm",
+            ));
+        }
+        let arms = line
+            .children
+            .iter()
+            .map(|arm| {
+                if arm.children.is_empty() {
+                    return Err(error(
+                        "E050",
+                        arm,
+                        "handler match arms require at least one statement",
+                    ));
+                }
+                let Some((enum_name, variant)) = arm.text.rsplit_once('.') else {
+                    return Err(error("E050", arm, "handler match arms use `Enum.variant`"));
+                };
+                Ok(HandlerMatchArm {
+                    enum_name: arm.qualify(&qualified_identifier(enum_name, arm)?),
+                    variant: identifier(variant, arm)?,
+                    statements: arm
+                        .children
+                        .iter()
+                        .map(parse_statement)
+                        .collect::<Result<_, _>>()?,
+                    span: Span::line(arm.number),
+                })
+            })
+            .collect::<Result<_, Error>>()?;
+        return Ok(Statement::Match {
+            value: parse_expr(source, line)?,
+            arms,
+            span: Span::line(line.number),
+        });
+    }
     let group = match line.text.as_str() {
         "parallel" => Some(TaskGroupKind::Parallel),
         "sequential" => Some(TaskGroupKind::Sequential),

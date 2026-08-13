@@ -176,6 +176,87 @@ fn check_handler_statements(
                     span,
                 )?;
             }
+            Statement::Match { value, arms, span } => {
+                let Type::Named(enum_name) = expr_type(value, &env, document, span)? else {
+                    return Err(Error::new(
+                        "E195",
+                        span,
+                        "handler match requires a fieldless UI enum",
+                    ));
+                };
+                let declared = document
+                    .enums
+                    .iter()
+                    .find(|item| item.name == enum_name)
+                    .ok_or_else(|| {
+                        Error::new("E195", span, "handler match requires a fieldless UI enum")
+                    })?;
+                if declared
+                    .variants
+                    .iter()
+                    .any(|variant| variant.payload.is_some())
+                {
+                    return Err(Error::new(
+                        "E195",
+                        span,
+                        format!("handler match enum `{enum_name}` must be fieldless"),
+                    ));
+                }
+                let mut covered = HashSet::new();
+                for arm in arms {
+                    if arm.enum_name != enum_name {
+                        return Err(Error::new(
+                            "E195",
+                            &arm.span,
+                            format!(
+                                "expected `{enum_name}` pattern, got `{}.{}`",
+                                arm.enum_name, arm.variant
+                            ),
+                        ));
+                    }
+                    if !declared
+                        .variants
+                        .iter()
+                        .any(|variant| variant.name == arm.variant)
+                    {
+                        return Err(Error::new(
+                            "E195",
+                            &arm.span,
+                            format!("unknown `{enum_name}` variant `{}`", arm.variant),
+                        ));
+                    }
+                    if !covered.insert(arm.variant.as_str()) {
+                        return Err(Error::new(
+                            "E195",
+                            &arm.span,
+                            format!("duplicate `{enum_name}.{}` match arm", arm.variant),
+                        ));
+                    }
+                    let mut child_env = ScopedTypeEnv::new(&*env);
+                    check_handler_statements(
+                        &arm.statements,
+                        states,
+                        document,
+                        operation_ids,
+                        pane_grids,
+                        &mut child_env,
+                        app_scoped,
+                    )?;
+                }
+                let missing = declared
+                    .variants
+                    .iter()
+                    .filter(|variant| !covered.contains(variant.name.as_str()))
+                    .map(|variant| format!("{enum_name}.{}", variant.name))
+                    .collect::<Vec<_>>();
+                if !missing.is_empty() {
+                    return Err(Error::new(
+                        "E195",
+                        span,
+                        format!("non-exhaustive match; missing {}", missing.join(", ")),
+                    ));
+                }
+            }
             Statement::Exit { .. } | Statement::InvalidateLane { .. } => {}
             Statement::Run {
                 kind,
@@ -628,6 +709,7 @@ fn check_task_finality(statement: &Statement, is_final: bool) -> Result<(), Erro
         return Ok(());
     };
     let (code, name) = match task {
+        ImmediateTask::Match => ("E141", "handler match"),
         ImmediateTask::Exit => ("E141", "exit"),
         ImmediateTask::Run(EffectKind::Future) => ("E141", "run"),
         ImmediateTask::Run(EffectKind::Task) => ("E141", "task"),
@@ -651,7 +733,11 @@ fn check_task_finality(statement: &Statement, is_final: bool) -> Result<(), Erro
 }
 
 pub(in crate::check) fn check_structured_tasks(handler: &Handler) -> Result<(), Error> {
-    for (index, statement) in handler.statements.iter().enumerate() {
+    check_structured_statement_list(&handler.statements)
+}
+
+fn check_structured_statement_list(body: &[Statement]) -> Result<(), Error> {
+    for (index, statement) in body.iter().enumerate() {
         if let Some(span) = stream_inside_abortable(statement, false) {
             return Err(Error::new(
                 "E143",
@@ -663,9 +749,12 @@ pub(in crate::check) fn check_structured_tasks(handler: &Handler) -> Result<(), 
             ));
         }
         match statement {
-            Statement::TaskGroup { statements, .. } => {
-                check_task_finality(statement, index + 1 == handler.statements.len())?;
-                if let Some(span) = statements.iter().find_map(invalid_task_producer) {
+            Statement::TaskGroup {
+                statements: children,
+                ..
+            } => {
+                check_task_finality(statement, index + 1 == body.len())?;
+                if let Some(span) = children.iter().find_map(invalid_task_producer) {
                     return Err(Error::new(
                         "E143",
                         span,
@@ -674,13 +763,19 @@ pub(in crate::check) fn check_structured_tasks(handler: &Handler) -> Result<(), 
                 }
             }
             Statement::Abortable { task, .. } => {
-                check_task_finality(statement, index + 1 == handler.statements.len())?;
+                check_task_finality(statement, index + 1 == body.len())?;
                 if let Some(span) = invalid_task_producer(task) {
                     return Err(Error::new(
                         "E143",
                         span,
                         "abortable requires a task-producing statement",
                     ));
+                }
+            }
+            Statement::Match { arms, .. } => {
+                check_task_finality(statement, index + 1 == body.len())?;
+                for arm in arms {
+                    check_structured_statement_list(&arm.statements)?;
                 }
             }
             _ => {}
@@ -698,6 +793,10 @@ fn stream_inside_abortable(statement: &Statement, inside_abortable: bool) -> Opt
         } if inside_abortable => Some(span),
         Statement::TaskGroup { statements, .. } => statements
             .iter()
+            .find_map(|statement| stream_inside_abortable(statement, inside_abortable)),
+        Statement::Match { arms, .. } => arms
+            .iter()
+            .flat_map(|arm| &arm.statements)
             .find_map(|statement| stream_inside_abortable(statement, inside_abortable)),
         Statement::Abortable { task, .. } => stream_inside_abortable(task, true),
         _ => None,

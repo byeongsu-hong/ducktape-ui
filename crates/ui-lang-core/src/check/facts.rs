@@ -8293,6 +8293,34 @@ impl<'a> FactsBuilder<'a> {
                     span,
                 )?;
             }
+            Statement::Match { value, arms, span } => {
+                let value =
+                    self.statement_operand(statement_id, &mut operand, value, None, env, span)?;
+                if !matches!(self.facts.expression_use(value).source, Type::Named(_)) {
+                    return Err(self.invariant(span, "handler match value is not a UI enum"));
+                }
+                self.record_checked_task(
+                    declaration.task,
+                    Some(Type::Unit),
+                    None,
+                    declaration.is_final,
+                    span,
+                )?;
+                let expected = arms.iter().map(|arm| arm.statements.len()).sum::<usize>();
+                if expected != declaration.children.len() {
+                    return Err(self.invariant(span, "handler match child arena diverged"));
+                }
+                let mut children = declaration.children.iter().copied();
+                for arm in arms {
+                    let mut child_env = HandlerFactEnv::new(&*env);
+                    for child in &arm.statements {
+                        let child_id = children.next().ok_or_else(|| {
+                            self.invariant(span, "handler match child ID is missing")
+                        })?;
+                        self.lower_handler_statement(child, child_id, &mut child_env)?;
+                    }
+                }
+            }
             Statement::Exit { .. } => {
                 self.record_checked_task(
                     declaration.task,
@@ -9011,6 +9039,7 @@ impl<'a> FactsBuilder<'a> {
             | Statement::MarkdownAppend { .. }
             | Statement::ComboPush { .. }
             | Statement::ReturnIf { .. }
+            | Statement::Match { .. }
             | Statement::Exit { .. }
             | Statement::InvalidateLane { .. }
             | Statement::Run { .. }
