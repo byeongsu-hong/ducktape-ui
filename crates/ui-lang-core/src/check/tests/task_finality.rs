@@ -135,6 +135,20 @@ fn classifies_every_statement_variant_by_immediate_task_semantics() {
     }
 
     let terminal = vec![
+        (
+            Statement::Match {
+                value: Expr::Path(vec!["kind".into()]),
+                arms: vec![HandlerMatchArm {
+                    enum_name: "LiveKind".into(),
+                    variant: "chat".into(),
+                    statements: vec![assignment(line)],
+                    span: span(line),
+                }],
+                span: span(line),
+            },
+            "E141",
+            "handler match",
+        ),
         (Statement::Exit { span: span(line) }, "E141", "exit"),
         (
             Statement::Run {

@@ -803,20 +803,33 @@ fn index_statement_declaration(
         pending_run_lane_references.push((id, owner, lane.clone()));
     }
 
-    let children: Vec<&Statement> = match statement {
-        Statement::TaskGroup { statements, .. } => statements.iter().collect(),
-        Statement::Abortable { task, .. } => vec![task.as_ref()],
+    let children: Vec<(&Statement, bool)> = match statement {
+        Statement::TaskGroup { statements, .. } => statements
+            .iter()
+            .map(|statement| (statement, true))
+            .collect(),
+        Statement::Match { arms, .. } => arms
+            .iter()
+            .flat_map(|arm| {
+                let len = arm.statements.len();
+                arm.statements
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, statement)| (statement, index + 1 == len))
+            })
+            .collect(),
+        Statement::Abortable { task, .. } => vec![(task.as_ref(), true)],
         _ => Vec::new(),
     };
     let child_ids = children
         .into_iter()
-        .map(|child| {
+        .map(|(child, child_is_final)| {
             index_statement_declaration(
                 child,
                 handler,
                 owner,
                 Some(id),
-                true,
+                child_is_final,
                 origin,
                 origins,
                 statements,
@@ -1114,6 +1127,13 @@ pub(crate) fn statement_semantic_key(statement: &Statement) -> String {
         Statement::MarkdownAppend { target, .. } => format!("markdown-append:{target}"),
         Statement::ComboPush { target, .. } => format!("combo-push:{target}"),
         Statement::ReturnIf { .. } => "return-if".into(),
+        Statement::Match { arms, .. } => format!(
+            "match:{}",
+            arms.iter()
+                .map(|arm| format!("{}.{}", arm.enum_name, arm.variant))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
         Statement::Exit { .. } => "exit".into(),
         Statement::InvalidateLane { lane, .. } => format!("invalidate-lane:{lane}"),
         Statement::Run {

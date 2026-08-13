@@ -385,3 +385,23 @@ pub fn toggled(mut tasks: Vec<Task>, id: i64) -> Vec<Task> {
     }
     tasks
 }
+
+#[cfg(test)]
+static HANDLER_MATCH_EVALUATIONS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub fn handler_match_expensive(values: Vec<String>) -> i64 {
+    HANDLER_MATCH_EVALUATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    values.len() as i64
+}
+
+#[cfg(test)]
+pub fn reset_handler_match_evaluations() {
+    HANDLER_MATCH_EVALUATIONS.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub fn handler_match_evaluations() -> usize {
+    HANDLER_MATCH_EVALUATIONS.load(std::sync::atomic::Ordering::Relaxed)
+}

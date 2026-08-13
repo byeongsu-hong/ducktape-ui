@@ -757,6 +757,14 @@ pub(crate) struct ResolvedFontAsset {
     pub(crate) origin: OriginId,
 }
 #[derive(Clone, Debug)]
+pub(crate) struct ResolvedHandlerMatchArm {
+    #[cfg(test)]
+    pub(crate) enum_name: String,
+    pub(crate) owner: String,
+    pub(crate) variant: String,
+    pub(crate) statements: Vec<ResolvedStatement>,
+}
+#[derive(Clone, Debug)]
 pub(crate) enum ResolvedStatementKind {
     Let {
         local: crate::check::CheckedLocalId,
@@ -780,6 +788,10 @@ pub(crate) enum ResolvedStatementKind {
     },
     ReturnIf {
         condition: CheckedExprUseId,
+    },
+    Match {
+        value: CheckedExprUseId,
+        arms: Vec<ResolvedHandlerMatchArm>,
     },
     Exit,
     InvalidateLane {
@@ -1752,6 +1764,13 @@ fn resolved_statement_semantic_key(
             format!("combo-push:{}", target.name)
         }
         ResolvedStatementKind::ReturnIf { .. } => "return-if".into(),
+        ResolvedStatementKind::Match { arms, .. } => format!(
+            "match:{}",
+            arms.iter()
+                .map(|arm| format!("{}.{}", arm.enum_name, arm.variant))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
         ResolvedStatementKind::Exit => "exit".into(),
         ResolvedStatementKind::InvalidateLane { lane } => {
             let lane = program.declarations.try_run_lane(*lane).ok_or_else(|| {
@@ -2437,6 +2456,7 @@ impl LoweredProgram {
                     operands.extend(at);
                 }
                 ResolvedStatementKind::ReturnIf { condition } => operands.push(*condition),
+                ResolvedStatementKind::Match { value, .. } => operands.push(*value),
                 ResolvedStatementKind::DebugStart { name, .. } => operands.push(*name),
                 ResolvedStatementKind::WidgetOperation { operation, .. } => match operation {
                     ResolvedWidgetOperation::FocusPrevious | ResolvedWidgetOperation::FocusNext => {
@@ -2790,6 +2810,11 @@ impl LoweredProgram {
                 ResolvedStatementKind::TaskGroup { statements, .. } => {
                     statements.iter().map(|child| child.id).collect::<Vec<_>>()
                 }
+                ResolvedStatementKind::Match { arms, .. } => arms
+                    .iter()
+                    .flat_map(|arm| &arm.statements)
+                    .map(|child| child.id)
+                    .collect(),
                 ResolvedStatementKind::Abortable { task, .. } => vec![task.id],
                 _ => Vec::new(),
             };
@@ -2948,6 +2973,61 @@ impl LoweredProgram {
                 ResolvedStatementKind::TaskGroup { statements, .. } => {
                     for child in statements {
                         visit(program, handler, child, Some(statement.id))?;
+                    }
+                }
+                ResolvedStatementKind::Match { value, arms } => {
+                    let expression = program.facts.try_expression_use(*value).ok_or_else(|| {
+                        program.invariant_at_origin(
+                            statement.origin,
+                            "handler match value expression is outside its arena",
+                        )
+                    })?;
+                    let Type::Named(enum_name) = &expression.source else {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "handler match value is not a UI enum",
+                        ));
+                    };
+                    let enum_declaration = program
+                        .declarations
+                        .enum_decl_by_name(enum_name)
+                        .ok_or_else(|| {
+                            program.invariant_at_origin(
+                                statement.origin,
+                                "handler match enum declaration is missing",
+                            )
+                        })?;
+                    let mut variants = HashSet::new();
+                    for arm in arms {
+                        let variant = enum_declaration
+                            .variants
+                            .iter()
+                            .find(|variant| variant.name == arm.variant)
+                            .ok_or_else(|| {
+                                program.invariant_at_origin(
+                                    statement.origin,
+                                    "handler match variant declaration is missing",
+                                )
+                            })?;
+                        if arm.enum_name != enum_declaration.name
+                            || arm.owner != enum_declaration.rust_name
+                            || variant.payload.is_some()
+                            || !variants.insert(arm.variant.as_str())
+                        {
+                            return Err(program.invariant_at_origin(
+                                statement.origin,
+                                "handler match arm contract diverged from its enum declaration",
+                            ));
+                        }
+                        for child in &arm.statements {
+                            visit(program, handler, child, Some(statement.id))?;
+                        }
+                    }
+                    if variants.len() != enum_declaration.variants.len() {
+                        return Err(program.invariant_at_origin(
+                            statement.origin,
+                            "handler match coverage diverged from its enum declaration",
+                        ));
                     }
                 }
                 ResolvedStatementKind::Abortable { task, .. } => {
@@ -7380,6 +7460,11 @@ impl Lowerer {
                 } => children
                     .iter()
                     .all(|child| visit(child, statements, tasks, routes, run_lanes)),
+                ResolvedStatementKind::Match { arms, .. } => arms.iter().all(|arm| {
+                    arm.statements
+                        .iter()
+                        .all(|child| visit(child, statements, tasks, routes, run_lanes))
+                }),
                 ResolvedStatementKind::Abortable { task, .. } => {
                     visit(task, statements, tasks, routes, run_lanes)
                 }
@@ -7995,6 +8080,65 @@ impl Lowerer {
             Statement::ReturnIf { span, .. } => ResolvedStatementKind::ReturnIf {
                 condition: self.checked_statement_expression(id, &mut operand, span)?,
             },
+            Statement::Match { arms, span, .. } => {
+                let value = self.checked_statement_expression(id, &mut operand, span)?;
+                let expression = self.facts.try_expression_use(value).ok_or_else(|| {
+                    self.invariant(span, "handler match value expression is missing")
+                })?;
+                let Type::Named(enum_name) = &expression.source else {
+                    return Err(self.invariant(span, "handler match value is not a UI enum"));
+                };
+                let enum_declaration = self
+                    .declarations
+                    .enum_decl_by_name(enum_name)
+                    .ok_or_else(|| self.invariant(span, "handler match enum is missing"))?
+                    .clone();
+                let expected = arms.iter().map(|arm| arm.statements.len()).sum::<usize>();
+                if expected != declaration.children.len() {
+                    return Err(self.invariant(span, "handler match HIR child count diverged"));
+                }
+                let mut children = declaration.children.iter().copied();
+                let mut resolved_arms = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    if arm.enum_name != enum_declaration.name {
+                        return Err(self.invariant(&arm.span, "handler match enum arm diverged"));
+                    }
+                    let variant = self
+                        .declarations
+                        .enum_variant(enum_declaration.declaration.id, &arm.variant)
+                        .ok_or_else(|| {
+                            self.invariant(&arm.span, "handler match variant is missing")
+                        })?
+                        .clone();
+                    if variant.payload.is_some() {
+                        return Err(self.invariant(
+                            &arm.span,
+                            "handler match variant unexpectedly carries a payload",
+                        ));
+                    }
+                    let statements = arm
+                        .statements
+                        .iter()
+                        .map(|child| {
+                            let child_id = children.next().ok_or_else(|| {
+                                self.invariant(span, "handler match child ID is missing")
+                            })?;
+                            self.lower_handler_statement(child, child_id, handler, owner, Some(id))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    resolved_arms.push(ResolvedHandlerMatchArm {
+                        #[cfg(test)]
+                        enum_name: enum_declaration.name.clone(),
+                        owner: enum_declaration.rust_name.clone(),
+                        variant: variant.name,
+                        statements,
+                    });
+                }
+                ResolvedStatementKind::Match {
+                    value,
+                    arms: resolved_arms,
+                }
+            }
             Statement::Exit { .. } => ResolvedStatementKind::Exit,
             Statement::InvalidateLane { lane: name, span } => {
                 let lane = declaration.run_lane.ok_or_else(|| {
@@ -10481,6 +10625,21 @@ mod tests {
             ResolvedStatementKind::ReturnIf { condition } => {
                 format!("return-if {condition:?}")
             }
+            ResolvedStatementKind::Match { value, arms } => {
+                writeln!(
+                    output,
+                    "{padding}s{} task={:?} final={} match {value:?} @{}:{}",
+                    statement.id.0, statement.task, statement.is_final, origin.line, origin.column
+                )
+                .unwrap();
+                for arm in arms {
+                    writeln!(output, "{padding}  arm {}.{}", arm.enum_name, arm.variant).unwrap();
+                    for child in &arm.statements {
+                        statement_snapshot(program, child, indent + 4, output);
+                    }
+                }
+                return;
+            }
             ResolvedStatementKind::Exit => "exit".into(),
             ResolvedStatementKind::InvalidateLane { lane } => {
                 format!("invalidate-lane {lane:?}")
@@ -10895,6 +11054,48 @@ view
         let error = lower(missing_statement).unwrap_err();
         assert_eq!(error.code, "E196");
         assert!(error.message.contains("statement HIR declaration count"));
+    }
+
+    #[test]
+    fn handler_match_arms_are_authoritative_checked_facts() {
+        let source = format!(
+            r#"app MatchFacts
+{THEME}enum LiveKind
+  chat
+  tip
+state
+  kind:LiveKind = LiveKind.chat
+  count = 0
+on update
+  match kind
+    LiveKind.chat
+      count = 1
+    LiveKind.tip
+      count = 2
+view
+  button "Update" -> update
+"#
+        );
+
+        let mut poisoned = analyze(&source).unwrap();
+        let Statement::Match { arms, .. } = &mut poisoned.document.handlers[0].statements[0] else {
+            panic!("fixture must contain a handler match");
+        };
+        arms[1].variant = "chat".into();
+        let error = lower(poisoned).unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("semantic contract"));
+
+        let mut invalid_hir = lower(analyze(&source).unwrap()).unwrap();
+        let ResolvedStatementKind::Match { arms, .. } =
+            &mut invalid_hir.handlers[0].statements[0].kind
+        else {
+            panic!("fixture must lower to a handler match");
+        };
+        arms[1].variant = "chat".into();
+        let error = crate::codegen::generate(&invalid_hir, "invalid.ice").unwrap_err();
+        assert_eq!(error.code, "E196");
+        assert!(error.message.contains("arm contract"));
     }
 
     #[test]

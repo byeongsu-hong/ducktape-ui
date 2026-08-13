@@ -378,6 +378,14 @@ fn automatic_routes(statement: &Statement) -> Vec<AutomaticRoute<'_>> {
                     .filter(|effect| effect.kind != AutomaticKind::Immediate),
             );
         }
+        Statement::Match { arms, .. } => {
+            routes.extend(
+                arms.iter()
+                    .flat_map(|arm| &arm.statements)
+                    .flat_map(automatic_routes)
+                    .filter(|effect| effect.kind != AutomaticKind::Immediate),
+            );
+        }
         Statement::Abortable { task, .. } => routes.extend(
             automatic_routes(task)
                 .into_iter()
@@ -451,6 +459,20 @@ fn non_immediate_flow_kind(
 }
 
 fn immediate_routes(statement: &Statement) -> ImmediateRoutes<'_> {
+    fn sequence(statements: &[Statement]) -> ImmediateRoutes<'_> {
+        let mut routes = Vec::new();
+        let mut completes = true;
+        for statement in statements {
+            let outcome = immediate_routes(statement);
+            routes.extend(outcome.routes);
+            if !outcome.completes {
+                completes = false;
+                break;
+            }
+        }
+        ImmediateRoutes { routes, completes }
+    }
+
     match statement {
         Statement::TaskFlow {
             source,
@@ -484,20 +506,21 @@ fn immediate_routes(statement: &Statement) -> ImmediateRoutes<'_> {
                     completes: outcomes.iter().all(|outcome| outcome.completes),
                 }
             }
-            TaskGroupKind::Sequential => {
-                let mut routes = Vec::new();
-                let mut completes = true;
-                for statement in statements {
-                    let outcome = immediate_routes(statement);
-                    routes.extend(outcome.routes);
-                    if !outcome.completes {
-                        completes = false;
-                        break;
-                    }
-                }
-                ImmediateRoutes { routes, completes }
-            }
+            TaskGroupKind::Sequential => sequence(statements),
         },
+        Statement::Match { arms, .. } => {
+            let outcomes = arms
+                .iter()
+                .map(|arm| sequence(&arm.statements))
+                .collect::<Vec<_>>();
+            ImmediateRoutes {
+                routes: outcomes
+                    .iter()
+                    .flat_map(|outcome| outcome.routes.iter().copied())
+                    .collect(),
+                completes: outcomes.iter().all(|outcome| outcome.completes),
+            }
+        }
         Statement::Abortable { task, .. } => immediate_routes(task),
         Statement::PaneOperation {
             operation: PaneOperation::Maximized | PaneOperation::Adjacent { .. },

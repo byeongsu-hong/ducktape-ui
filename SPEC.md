@@ -552,6 +552,7 @@ component_statement = "let" name "=" expr | name "=" expr | "return if" expr
                     | invalidate_statement | run_statement
                     | component_stream_statement
                     | component_task_group | component_widget_task
+                    | handler_match
 component_task_group = ("parallel" | "sequential") INDENT component_task_member+
 component_task_member = component_task_group | run_statement
                       | component_stream_statement | component_widget_task
@@ -601,6 +602,9 @@ statement      = "let" name "=" expr
                | "pane" "#" name pane_operation ("->" route)?
                | window_task
                | tray_task
+               | handler_match
+handler_match  = "match" expr INDENT handler_match_arm+
+handler_match_arm = qualified_name "." name INDENT statement+
 task_group     = ("parallel" | "sequential") INDENT task_member+
 abortable_task = "abortable" name ("abort-on-drop")? INDENT task_member
 sip_task       = "sip" call INDENT sip_route+
@@ -3046,6 +3050,20 @@ on submit
   run every create_task(title) -> created _ | failed _
 ```
 
+A handler may make one exhaustive, typed decision without evaluating work in
+the other branches:
+
+```ice
+on live_updated(next)
+  match next.kind
+    LiveKind.chat
+      messages = fold_live_chat(messages, next)
+    LiveKind.tip
+      tip = next.tip
+    LiveKind.ready
+      ready = true
+```
+
 Rules:
 
 - assignment targets must be declared state;
@@ -3058,6 +3076,9 @@ Rules:
   `instant` instead;
 - `combo state push value` requires a `combo[T]` state and a `T` value;
 - `return if` requires `bool`;
+- handler `match` accepts a fieldless UI enum, requires every declared variant
+  exactly once, and has no wildcard arm. Each arm is a nested handler statement
+  list with its own local scope. Only the selected arm is evaluated;
 - `sync` externs are allowed in immediately evaluated app, component, and preset
   handler expressions, including `let` initializers, assignment right-hand
   sides, and arguments in nested task statements; explicit `run every`,
@@ -3071,7 +3092,7 @@ Rules:
   and native query route timing is unchanged;
 - every statement that immediately returns an iced `Task` must be final:
   `exit`, any Future `run` mode, `task`, `stream`, `sip`, `flow`, task groups,
-  abortable tasks,
+  abortable tasks, handler `match`,
   clipboard writes, widget operations, window tasks, and pane queries;
 - `return if` is a conditional guard, pane mutations are synchronous state
   changes, and `invalidate lane=<name>` only advances existing delivery-lane

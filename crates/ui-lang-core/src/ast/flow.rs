@@ -87,6 +87,14 @@ pub struct HandlerParam {
 }
 
 #[derive(Clone, Debug)]
+pub struct HandlerMatchArm {
+    pub enum_name: String,
+    pub variant: String,
+    pub statements: Vec<Statement>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug)]
 pub enum Statement {
     Let {
         name: String,
@@ -111,6 +119,11 @@ pub enum Statement {
     },
     ReturnIf {
         condition: Expr,
+        span: Span,
+    },
+    Match {
+        value: Expr,
+        arms: Vec<HandlerMatchArm>,
         span: Span,
     },
     Exit {
@@ -202,6 +215,7 @@ impl Statement {
             | Self::MarkdownAppend { span, .. }
             | Self::ComboPush { span, .. }
             | Self::ReturnIf { span, .. }
+            | Self::Match { span, .. }
             | Self::Exit { span }
             | Self::InvalidateLane { span, .. }
             | Self::Run { span, .. }
@@ -230,6 +244,7 @@ impl Statement {
             | Self::Abort { .. }
             | Self::DebugStart { .. }
             | Self::DebugFinish { .. } => None,
+            Self::Match { .. } => Some(ImmediateTask::Match),
             Self::Exit { .. } => Some(ImmediateTask::Exit),
             Self::Run { kind, .. } => Some(ImmediateTask::Run(*kind)),
             Self::Sip { .. } => Some(ImmediateTask::Sip),
@@ -250,6 +265,7 @@ impl Statement {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImmediateTask {
+    Match,
     Exit,
     Run(EffectKind),
     Sip,

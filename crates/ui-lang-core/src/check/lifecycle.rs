@@ -239,6 +239,10 @@ fn statement_has_delivery_lane(statement: &Statement) -> bool {
         Statement::TaskGroup { statements, .. } => {
             statements.iter().any(statement_has_delivery_lane)
         }
+        Statement::Match { arms, .. } => arms
+            .iter()
+            .flat_map(|arm| &arm.statements)
+            .any(statement_has_delivery_lane),
         Statement::Abortable { task, .. } => statement_has_delivery_lane(task),
         _ => false,
     }

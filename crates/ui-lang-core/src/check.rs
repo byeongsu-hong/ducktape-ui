@@ -1086,6 +1086,10 @@ fn component_handler_statement_supported(statement: &Statement) -> bool {
         Statement::TaskGroup { statements, .. } => {
             statements.iter().all(component_handler_statement_supported)
         }
+        Statement::Match { arms, .. } => arms
+            .iter()
+            .flat_map(|arm| &arm.statements)
+            .all(component_handler_statement_supported),
         _ => false,
     }
 }
@@ -1101,6 +1105,10 @@ fn component_stream_every(statement: &Statement) -> Option<&Span> {
         Statement::TaskGroup { statements, .. } => {
             statements.iter().find_map(component_stream_every)
         }
+        Statement::Match { arms, .. } => arms
+            .iter()
+            .flat_map(|arm| &arm.statements)
+            .find_map(component_stream_every),
         Statement::Abortable { task, .. } => component_stream_every(task),
         _ => None,
     }
@@ -1210,6 +1218,11 @@ fn check_handler_run_lanes<'a>(
                 Statement::TaskGroup { statements, .. } => {
                     visit(statements, owner, contracts, seen)?;
                 }
+                Statement::Match { arms, .. } => {
+                    for arm in arms {
+                        visit(&arm.statements, owner, contracts, seen)?;
+                    }
+                }
                 Statement::Abortable { task, .. } => {
                     visit(
                         ::std::slice::from_ref(task.as_ref()),
@@ -1233,6 +1246,12 @@ fn check_handler_lane_invalidations<'a>(
     contracts: &HashMap<(Option<&'a str>, &'a str), (EffectKind, DeliveryMode, &'a Span)>,
 ) -> Result<(), Error> {
     for statement in statements {
+        if let Statement::Match { arms, .. } = statement {
+            for arm in arms {
+                check_handler_lane_invalidations(&arm.statements, owner, contracts)?;
+            }
+            continue;
+        }
         if let Statement::InvalidateLane { lane, span } = statement
             && !contracts.contains_key(&(owner, lane.as_str()))
         {

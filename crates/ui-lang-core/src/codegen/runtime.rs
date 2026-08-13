@@ -51,6 +51,9 @@ fn statements_contain(
                 ResolvedStatementKind::TaskGroup { statements, .. } => {
                     statements_contain(statements, predicate)
                 }
+                ResolvedStatementKind::Match { arms, .. } => arms
+                    .iter()
+                    .any(|arm| statements_contain(&arm.statements, predicate)),
                 ResolvedStatementKind::Abortable { task, .. } => {
                     statements_contain(std::slice::from_ref(task), predicate)
                 }

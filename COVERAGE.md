@@ -135,6 +135,14 @@ and compiled fixtures guard those invariants. An ignored full-pipeline
 scope full clones, and codegen full environment clones while enforcing linear
 output and wall-time growth.
 
+Handler bodies also support one final exhaustive `match` over a fieldless UI
+enum. The parser admits only named `Enum.variant` arms; checking rejects missing,
+duplicate, foreign-enum, payload, and wildcard patterns; normalized statement,
+expression, task, route, reachability, lifecycle, and source-fact arenas retain
+each branch. Rust emission uses an exhaustive native `match` with no fallback.
+The `handler-enum-match` compile fixture pins that shape, and the showcase
+runtime fixture proves an expression in an unselected arm is never evaluated.
+
 The runtime `RichTextEditor` uses caller-owned `ContentVersion` identity to
 skip full native-buffer materialization for caret and selection layouts.
 `EditorChange` optionally supplies an exact `from`/`to` content-version pair and

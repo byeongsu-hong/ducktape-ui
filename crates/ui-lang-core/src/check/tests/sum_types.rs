@@ -84,6 +84,113 @@ fn requires_exhaustive_typed_patterns() {
 }
 
 #[test]
+fn checks_exhaustive_handler_enum_dispatch() {
+    let valid = format!(
+        r#"{PREFIX}enum LiveKind
+  chat
+  tip
+state
+  kind:LiveKind = LiveKind.chat
+  count = 0
+on update
+  match kind
+    LiveKind.chat
+      count = 1
+    LiveKind.tip
+      count = 2
+view
+  button "Update" -> update
+"#
+    );
+    analyze(&valid).unwrap();
+
+    let missing = valid.replace("    LiveKind.tip\n      count = 2\n", "");
+    let error = analyze(&missing).unwrap_err();
+    assert_eq!(error.code, "E195");
+    assert!(error.message.contains("missing LiveKind.tip"));
+
+    let duplicate = valid.replace("    LiveKind.tip", "    LiveKind.chat");
+    let error = analyze(&duplicate).unwrap_err();
+    assert_eq!(error.code, "E195");
+    assert!(error.message.contains("duplicate `LiveKind.chat`"));
+
+    let wildcard = valid.replace("    LiveKind.tip", "    _");
+    let error = analyze(&wildcard).unwrap_err();
+    assert_eq!(error.code, "E050");
+    assert!(error.message.contains("`Enum.variant`"));
+
+    let foreign = valid.replace("    LiveKind.tip", "    Other.tip");
+    let error = analyze(&foreign).unwrap_err();
+    assert_eq!(error.code, "E195");
+    assert!(error.message.contains("expected `LiveKind` pattern"));
+
+    let ill_typed = valid.replace("count = 2", "count = \"two\"");
+    let error = analyze(&ill_typed).unwrap_err();
+    assert!(
+        error.message.contains("expected `i64`"),
+        "{}",
+        error.message
+    );
+
+    let non_final = valid.replace("view\n", "  count = 3\nview\n");
+    let error = analyze(&non_final).unwrap_err();
+    assert_eq!(error.code, "E141");
+    assert!(error.message.starts_with("handler match"));
+
+    let payload = format!(
+        r#"{PREFIX}enum Request
+  ready(str)
+state
+  request:Request = Request.ready("done")
+on update
+  match request
+    Request.ready
+      return if true
+view
+  button "Update" -> update
+"#
+    );
+    let error = analyze(&payload).unwrap_err();
+    assert_eq!(error.code, "E195");
+    assert!(error.message.contains("must be fieldless"));
+}
+
+#[test]
+fn handler_match_routes_participate_in_reachability() {
+    let source = format!(
+        r#"{PREFIX}extern crate::backend
+  fetch(value:i64) -> i64
+enum LiveKind
+  chat
+  tip
+state
+  kind:LiveKind = LiveKind.chat
+  count = 0
+on update
+  match kind
+    LiveKind.chat
+      run every fetch(1) -> chat_done _
+    LiveKind.tip
+      run every fetch(2) -> tip_done _
+on chat_done(value)
+  count = value
+on tip_done(value)
+  count = value
+view
+  button "Update" -> update
+"#
+    );
+    let document = analyze(&source).unwrap();
+    let unreachable = document
+        .warnings()
+        .iter()
+        .filter(|warning| warning.code == "W005")
+        .map(|warning| warning.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(unreachable.is_empty(), "{unreachable:?}");
+}
+
+#[test]
 fn keeps_pattern_payloads_block_local() {
     let source = format!(
         r#"{PREFIX}state
