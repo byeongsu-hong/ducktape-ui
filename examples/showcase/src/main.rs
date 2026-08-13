@@ -51,6 +51,8 @@ mod redraw_request;
 #[cfg(test)]
 mod resizable_panes;
 #[cfg(test)]
+mod rich_text_for;
+#[cfg(test)]
 mod rotation;
 #[cfg(test)]
 mod scroll_delta;

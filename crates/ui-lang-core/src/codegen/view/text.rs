@@ -41,13 +41,13 @@ pub(in crate::codegen) fn render_text(
         }
         ResolvedTextContent::Rich {
             color,
-            spans,
+            children,
             route,
         } => render_resolved_rich_text(
             text,
             identity,
             color.as_ref(),
-            spans,
+            children,
             route.as_ref(),
             document,
             message,
@@ -209,7 +209,7 @@ fn render_resolved_rich_text(
     text: &ResolvedText,
     identity: Option<&ResolvedViewIdentity>,
     color: Option<&ResolvedThemeColor>,
-    spans: &[ResolvedRichSpan],
+    children: &[ResolvedRichChild],
     route: Option<&ResolvedInteractionRoute>,
     document: &LoweredProgram,
     message: &str,
@@ -217,11 +217,50 @@ fn render_resolved_rich_text(
     scope: &str,
 ) -> Result<String, Error> {
     let program = document;
-    let spans = spans
-        .iter()
-        .map(|rich_span| render_resolved_rich_span(rich_span, program, env))
-        .collect::<Result<Vec<_>, _>>()?
-        .join(", ");
+    // Every child appends to the same span vector, so literal spans and
+    // `for`-generated spans land in one paragraph widget.
+    let mut spans = String::new();
+    for child in children {
+        match child {
+            ResolvedRichChild::Span(rich_span) => {
+                write!(
+                    spans,
+                    " __rich_spans.push({});",
+                    render_resolved_rich_span(rich_span, program, env)?
+                )
+                .unwrap();
+            }
+            ResolvedRichChild::For(iteration) => {
+                let item_name = &iteration.item.name;
+                let items = resolved_expr_use_code(
+                    program,
+                    iteration.items,
+                    env,
+                    ValueMode::TransientBorrowed,
+                )?;
+                let mut child_env = ScopedBindingEnv::new(env);
+                child_env.insert(
+                    item_name.clone(),
+                    resolved_local_binding(
+                        LocalBindingTypeSource::Resolved(program),
+                        iteration.item.local,
+                        item_name.clone(),
+                        false,
+                    ),
+                );
+                write!(spans, " for {item_name} in {items}.iter().cloned() {{").unwrap();
+                for rich_span in &iteration.spans {
+                    write!(
+                        spans,
+                        " __rich_spans.push({});",
+                        render_resolved_rich_span(rich_span, program, &child_env)?
+                    )
+                    .unwrap();
+                }
+                spans.push_str(" }");
+            }
+        }
+    }
     let mut code = String::from("::iced::widget::rich_text(__rich_spans)");
     append_resolved_text_options(&mut code, &text.options, &text.utility_style, env, program)?;
     if let Some(color) = color {
@@ -241,7 +280,7 @@ fn render_resolved_rich_text(
         write!(code, ".on_link_click({callback})").unwrap();
     }
     let rendered = format!(
-        "{{ let __rich_spans: ::std::vec::Vec<::iced::widget::text::Span<'_, ::std::string::String>> = ::std::vec![{spans}]; {code}.into() }}"
+        "{{ let mut __rich_spans: ::std::vec::Vec<::iced::widget::text::Span<'_, ::std::string::String>> = ::std::vec::Vec::new();{spans} {code}.into() }}"
     );
     let Some(identity) = identity else {
         return Ok(rendered);

@@ -10,9 +10,10 @@ use crate::check::{
     CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
     CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
     CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
-    CheckedProjectionKind, CheckedTableLength, CheckedText, CheckedTooltip, CheckedUnaryOperator,
-    CheckedValueRef, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
-    ContextualBuiltin, canonical_builtin_type, field_type, lazy_hashable, unify_type_evidence,
+    CheckedProjectionKind, CheckedRichChild, CheckedTableLength, CheckedText, CheckedTooltip,
+    CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole, CheckedViewFlow,
+    CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin, canonical_builtin_type, field_type,
+    lazy_hashable, unify_type_evidence,
 };
 pub(crate) use crate::check::{
     CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
@@ -12889,7 +12890,7 @@ view
         assert_eq!(rich.options.align_x, Some(ResolvedTextAlignment::Justified));
         let ResolvedTextContent::Rich {
             color,
-            spans,
+            children,
             route,
         } = &rich.content
         else {
@@ -12897,7 +12898,14 @@ view
         };
         assert!(color.is_some());
         assert!(route.is_some());
-        assert_eq!(spans.len(), 2);
+        assert_eq!(children.len(), 2);
+        let spans = children
+            .iter()
+            .map(|child| match child {
+                ResolvedRichChild::Span(span) => span,
+                ResolvedRichChild::For(_) => panic!("fixture spans are literal"),
+            })
+            .collect::<Vec<_>>();
         assert!(matches!(
             spans[0].background,
             Some(ResolvedContainerBackground::Linear { ref stops, .. }) if stops.len() == 2
@@ -12999,7 +13007,7 @@ view
         let ViewNode::RichText {
             options,
             color,
-            spans,
+            children,
             styles,
             route,
             ..
@@ -13009,7 +13017,7 @@ view
         };
         *options = TextOptions::default();
         *color = Some("danger".into());
-        spans.clear();
+        children.clear();
         styles.clear();
         *route = None;
 
@@ -13060,10 +13068,16 @@ view
         let root_origin = program.origin(text.origin);
         assert_eq!(root_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(root_origin.line, 3);
-        let ResolvedTextContent::Rich { spans, route, .. } = &text.content else {
+        let ResolvedTextContent::Rich {
+            children, route, ..
+        } = &text.content
+        else {
             panic!("imported content must be rich-text");
         };
-        let span_origin = program.origin(spans[0].origin);
+        let ResolvedRichChild::Span(first_span) = &children[0] else {
+            panic!("imported span must be literal");
+        };
+        let span_origin = program.origin(first_span.origin);
         assert_eq!(span_origin.path.as_deref(), Some(imported.as_path()));
         assert_eq!(span_origin.line, 4);
         assert_eq!(span_origin.parent, Some(text.origin));

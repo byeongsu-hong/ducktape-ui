@@ -145,22 +145,44 @@ pub(in crate::parser) fn parse_rich_text(
             ));
         }
     }
-    let spans = line
+    let children = line
         .children
         .iter()
-        .map(parse_rich_span)
+        .map(parse_rich_child)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ViewNode::RichText {
         id,
         options,
         color,
-        spans,
+        children,
         styles,
         route: route_source
             .map(|route| parse_route(route, line))
             .transpose()?,
         span: Span::line(line.number),
     })
+}
+
+/// A `rich-text` child is a literal `span` line or a `for` line whose
+/// children are all `span` lines; anything else keeps the E186 rejection.
+pub(in crate::parser) fn parse_rich_child(line: &Line) -> Result<RichTextChild, Error> {
+    let Some(loop_source) = line.text.trim().strip_prefix("for ") else {
+        return parse_rich_span(line).map(|span| RichTextChild::Span(Box::new(span)));
+    };
+    let Some((item, items)) = loop_source.split_once(" in ") else {
+        return Err(error("E186", line, "loops use `for item in items`"));
+    };
+    let spans = line
+        .children
+        .iter()
+        .map(parse_rich_span)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RichTextChild::For(RichTextFor {
+        item: identifier(item.trim(), line)?,
+        items: parse_expr(items.trim(), line)?,
+        spans,
+        span: Span::line(line.number),
+    }))
 }
 
 pub(in crate::parser) fn parse_rich_span(line: &Line) -> Result<RichSpan, Error> {
