@@ -785,11 +785,9 @@ where
     Theme: container::Catalog + scrollable::Catalog + 'a,
     Renderer: text::Renderer + iced::advanced::Renderer + 'a,
 {
-    let label: Rc<dyn Fn(&T) -> String + 'a> = Rc::new(label);
-    let event: Rc<dyn Fn(TreeViewEvent<Key>) -> Message + 'a> = Rc::new(on_event);
-    let event_from_list = Rc::clone(&event);
-    let event_from_key = Rc::clone(&event);
-    let row_label = Rc::clone(&label);
+    let row_callbacks = Rc::new((label, on_event));
+    let list_callbacks = Rc::clone(&row_callbacks);
+    let key_callbacks = Rc::clone(&row_callbacks);
     virtual_collection(
         &state.list,
         &state.rows,
@@ -798,7 +796,7 @@ where
         Role::Tree,
         state.selector(),
         |row| row.key.clone(),
-        move |row| row_label(&items[row.source_index]),
+        move |row| (row_callbacks.0)(&items[row.source_index]),
         move |_, row, selected| view(row, &items[row.source_index], selected),
         |_, row, local| {
             let mut selector = state
@@ -816,7 +814,7 @@ where
             }
         },
         move |event| {
-            event_from_list(match event {
+            (list_callbacks.1)(match event {
                 VirtualListEvent::ViewportChanged { height } => {
                     TreeViewEvent::ViewportChanged { height }
                 }
@@ -847,7 +845,7 @@ where
                 }
                 _ => None,
             };
-            event.map(|event| event_from_key(event))
+            event.map(|event| (key_callbacks.1)(event))
         },
         "tree-view",
     )
