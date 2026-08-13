@@ -97,6 +97,7 @@ fn renderer() -> iced_test::renderer::Renderer {
 fn repeated_diff_and_layout_skip_temporary_buffers() {
     const DIFF_FRAMES: usize = 32;
     const LAYOUT_FRAMES: usize = 16;
+    const REORDER_FRAMES: usize = 32;
 
     let renderer = renderer();
     let mut initial = virtual_keyed_children(rows(), 20.0);
@@ -136,5 +137,32 @@ fn repeated_diff_and_layout_skip_temporary_buffers() {
         laid_out, expected,
         "{LAYOUT_FRAMES} layout frames allocated {} times ({} bytes)",
         laid_out.0, laid_out.1
+    );
+
+    let mut reordered_rows = rows();
+    reordered_rows.rotate_left(1);
+    let reordered = virtual_keyed_children(reordered_rows, 20.0);
+    reordered.diff(std::hint::black_box(&mut tree));
+    unchanged.diff(std::hint::black_box(&mut tree));
+
+    let region = Region::new(GLOBAL);
+    for _ in 0..REORDER_FRAMES {
+        reordered.diff(std::hint::black_box(&mut tree));
+        unchanged.diff(std::hint::black_box(&mut tree));
+    }
+    let stats = region.change();
+
+    assert_eq!(
+        stats.allocations,
+        REORDER_FRAMES * 22,
+        "{REORDER_FRAMES} reordered-key frame pairs allocated {} times ({} bytes)",
+        stats.allocations,
+        stats.bytes_allocated
+    );
+    assert_eq!(
+        stats.bytes_allocated,
+        REORDER_FRAMES * 155_448,
+        "{REORDER_FRAMES} reordered-key frame pairs allocated {} bytes",
+        stats.bytes_allocated
     );
 }
