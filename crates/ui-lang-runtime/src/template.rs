@@ -293,11 +293,23 @@ where
             let key = a11y.key(parent_key);
             let scope = a11y.scope(parent_key, &key);
             let is_row = matches!(axis, Axis::Row);
-            // A group contributes however many children it built this frame,
-            // so the count the fill and spacing are bounded by is only known
-            // after expansion — exactly as the inline path counts `__children`
-            // after its `if`s have run.
-            let mut expanded = Vec::with_capacity(children.len());
+            // A group contributes however many children it built this frame.
+            // Read those live lengths before expansion so both its storage and
+            // the fill/spacing count are exact.
+            let expanded_capacity = children
+                .iter()
+                .map(|child| match child {
+                    Node::Group {
+                        slot: GroupSlot(slot),
+                    } => slots
+                        .groups
+                        .get(*slot)
+                        .map(|cell| cell.borrow().len())
+                        .unwrap_or(0),
+                    _ => 1,
+                })
+                .sum();
+            let mut expanded = Vec::with_capacity(expanded_capacity);
             for child in children {
                 match child {
                     Node::Group {
