@@ -323,6 +323,7 @@ struct LoadedGraph {
 enum SourceLoad {
     Disk,
     Retained,
+    RetainedRoot,
 }
 
 struct GraphLoader {
@@ -923,6 +924,39 @@ impl AnalysisDb {
             )
         })?;
         let analysis = self.analyze_root(&path)?;
+        self.compile_analysis(path, analysis)
+    }
+
+    /// Compile a root from a source snapshot already stabilized by the caller.
+    ///
+    /// Imports are still loaded from disk, including files retained while
+    /// compiling another root.
+    pub fn compile_root_with_validated_source(
+        &mut self,
+        path: impl AsRef<Path>,
+        contents: impl Into<Vec<u8>>,
+    ) -> Result<FileCompilation, Error> {
+        let path = normalize_path(path.as_ref()).map_err(|error| {
+            file_error(
+                "E181",
+                path.as_ref(),
+                1,
+                format!("cannot resolve source path: {error}"),
+            )
+        })?;
+        self.install_validated_source(ValidatedSource::new(&path, contents))?;
+        let analysis = self
+            .analyze_root_shared(&path, SourceLoad::RetainedRoot)?
+            .as_ref()
+            .clone();
+        self.compile_analysis(path, analysis)
+    }
+
+    fn compile_analysis(
+        &mut self,
+        path: PathBuf,
+        analysis: FileAnalysis,
+    ) -> Result<FileCompilation, Error> {
         let started = Instant::now();
         let source_origins = analysis.document.source_origins().to_vec();
         let program = lower::lower(analysis.document)
@@ -1188,7 +1222,11 @@ impl AnalysisDb {
     }
 
     fn load_graph(&mut self, root: &Path, source_load: SourceLoad) -> Result<LoadedGraph, Error> {
-        let (_, parsed) = self.parsed_file(root, source_load)?;
+        let root_source_load = match source_load {
+            SourceLoad::RetainedRoot => SourceLoad::Retained,
+            source_load => source_load,
+        };
+        let (_, parsed) = self.parsed_file(root, root_source_load)?;
         if !source_is_app(&parsed.source) {
             return Err(file_error(
                 "E183",
@@ -1238,11 +1276,16 @@ impl AnalysisDb {
         if !loader.included.insert((path.to_owned(), namespace.clone())) {
             return Ok(());
         }
+        let source_load = match loader.source_load {
+            SourceLoad::RetainedRoot if loader.stack.is_empty() => SourceLoad::Retained,
+            SourceLoad::RetainedRoot => SourceLoad::Disk,
+            source_load => source_load,
+        };
         loader.stack.push(path.to_owned());
         if loader.graph.dependency_paths.insert(path.to_owned()) {
             loader.graph.loaded.dependencies.push(path.to_owned());
         }
-        let (key, parsed) = self.parsed_file(path, loader.source_load)?;
+        let (key, parsed) = self.parsed_file(path, source_load)?;
         loader.graph.fingerprint.0.push((key, namespace.clone()));
         let mut direct = BTreeSet::new();
         let mut resolved_imports = Vec::new();
@@ -2329,6 +2372,40 @@ mod tests {
         assert_eq!(metrics.files_scanned, 1);
         assert_eq!(metrics.roots_checked, 1);
         assert_eq!(metrics.roots_reused, 1);
+    }
+
+    #[test]
+    fn validated_compile_root_reloads_a_shared_import_between_roots() {
+        let fixture = Fixture::new();
+        let a_source = app("A", "shared.ice", "Shared");
+        let b_source = app("B", "shared.ice", "Shared");
+        let a = fixture.path("a.ice");
+        let b = fixture.path("b.ice");
+        fixture.write("a.ice", &a_source);
+        fixture.write("b.ice", &b_source);
+        fixture.write("shared.ice", &component("Shared", "one"));
+        let mut db = AnalysisDb::default();
+        db.compile_root_with_validated_source(&a, a_source.as_bytes())
+            .unwrap();
+        db.take_metrics();
+        let changed = component("Renamed", "two");
+        fixture.write("shared.ice", &changed);
+
+        let error = db
+            .compile_root_with_validated_source(&b, b_source.as_bytes())
+            .unwrap_err();
+        let metrics = db.take_metrics();
+
+        assert!(
+            error.message.contains("unknown component `Shared`"),
+            "{error:?}"
+        );
+        assert_eq!(metrics.files_loaded, 2, "{metrics:?}");
+        assert_eq!(
+            metrics.bytes_loaded,
+            b_source.len() + changed.len(),
+            "{metrics:?}"
+        );
     }
 
     #[test]
