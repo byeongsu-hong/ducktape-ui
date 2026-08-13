@@ -1,5 +1,10 @@
 use crate::compile;
 use crate::test_support::example;
+use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use std::alloc::System;
+
+#[global_allocator]
+static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[test]
 fn keeps_generated_rust_names_distinct() {
@@ -58,6 +63,31 @@ fn marker_free_lines_skip_marker_resolution() {
 
     assert_eq!(resolved, expected);
     assert_eq!(super::SOURCE_MARKER_SLOW_PATH_LINES.get(), 0);
+}
+
+#[test]
+#[ignore = "allocation contract; run alone with --test-threads=1"]
+fn source_path_hex_encoding_uses_one_exact_allocation() {
+    const BYTES: usize = 4_096;
+    let source = "x".repeat(BYTES);
+    let expected = "78".repeat(BYTES);
+    let region = Region::new(GLOBAL);
+
+    let encoded = std::hint::black_box(super::encode_source_path(std::hint::black_box(
+        source.as_str(),
+    )));
+    let stats = region.change();
+
+    eprintln!(
+        "{BYTES} source-path bytes: {} allocations / {} reallocations / {} allocated bytes",
+        stats.allocations, stats.reallocations, stats.bytes_allocated
+    );
+    assert_eq!(source.len(), BYTES);
+    assert_eq!(encoded.len(), BYTES * 2);
+    assert_eq!(encoded, expected);
+    assert_eq!(stats.allocations, 1, "{stats:?}");
+    assert_eq!(stats.reallocations, 0, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, BYTES * 2, "{stats:?}");
 }
 
 #[test]
