@@ -65,6 +65,47 @@ test trading_a_long_fills_list_lays_out_only_the_rows_it_can_show
   expect exists oldest
   expect missing newest
 
+// A physical wheel does not arrive one settled offset at a time. iced groups
+// consecutive wheel events into one scroll transaction and, after the first,
+// stops forwarding them to descendants. A virtual list still has to follow
+// the scrollable through that transaction: moving farther than its overscan
+// must mount the new rows, and reversing immediately must bring the old rows
+// back without an empty frame between them.
+test trading_a_virtual_list_follows_a_rapid_wheel_reversal
+  preset busy
+  viewport 1660 820
+  target app = #app
+  target terminal = app/terminal-fit/trade
+  target list = terminal/lower/fills/fill-list
+  target first = list/key(4000000)/fill(4000000)/root
+  target reached = list/key(4000040)/fill(4000040)/root
+  window redraw
+  expect exists first
+  expect missing reached
+
+  enter list
+  wheel 0.0 -100.0
+  wheel 0.0 -100.0
+  wheel 0.0 -100.0
+  wheel 0.0 -100.0
+  wheel 0.0 -100.0
+  wheel 0.0 -100.0
+  wheel 0.0 -100.0
+  wheel 0.0 -100.0
+  expect missing first
+  expect exists reached
+
+  wheel 0.0 100.0
+  wheel 0.0 100.0
+  wheel 0.0 100.0
+  wheel 0.0 100.0
+  wheel 0.0 100.0
+  wheel 0.0 100.0
+  wheel 0.0 100.0
+  wheel 0.0 100.0
+  expect exists first
+  expect missing reached
+
 // The other half, and the one that would be quietly ruined by a fix that only
 // looked at content height: a reader who has not scrolled is resting on the
 // newest row, and that is the one place following the content is what they

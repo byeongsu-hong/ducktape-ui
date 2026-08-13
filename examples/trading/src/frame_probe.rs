@@ -14,13 +14,16 @@
 //!     cargo test --release -p trading-example -- --ignored --nocapture frame_
 //!     cargo test --release -p trading-example -- --ignored --nocapture direct_call_
 //!     cargo test --release -p trading-example -- --ignored --nocapture beat_
+//!     cargo test --release -p trading-example -- --ignored --nocapture frame_probe::chart_
 #![cfg(not(debug_assertions))]
 
 use std::time::Instant;
 
 use ui_lang_runtime::testing::{Config, Driver, Location};
 
-use crate::hyperliquid::{self, Account, Alert, Book, Fill, Level, Order, Position, SymbolRow};
+use crate::hyperliquid::{
+    self, Account, Alert, Book, Candle, Fill, Level, Order, Position, SymbolRow,
+};
 use crate::{__TradingMessage, Trading};
 
 /// Rounds of every variant, round-robin. This machine is shared, so a variant
@@ -411,6 +414,58 @@ fn frame_cost() {
          at all. Compare `what the fill rows cost`, which is a difference taken\n\
          inside one binary."
     );
+}
+
+/// End-to-end wheel zoom cost in the trading screen, including the chart's
+/// geometry rebuild and the UI test driver's settle/redraw path.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints chart wheel zoom costs"]
+fn chart_zoom_cost() {
+    let mut driver = Driver::new(
+        Trading::__program(),
+        Config::new("chart_zoom_cost").viewport(VIEWPORT.0, VIEWPORT.1),
+    );
+    let mut state = app(DENSE);
+    // Keep the probe offline. The canvas may signal at the oldest candle, but
+    // the app must not turn that signal into a venue request here.
+    state.history_exhausted = true;
+    *driver.state_mut() = state;
+    driver.redraw(here());
+    driver.enter("trading-chart", here());
+
+    let mut samples = Vec::with_capacity(ROUNDS);
+    for round in 0..ROUNDS {
+        let lines = if round % 12 < 6 { 1.0 } else { -1.0 };
+        let started = Instant::now();
+        driver.wheel_lines(0.0, lines, here());
+        samples.push(started.elapsed().as_micros());
+    }
+    eprintln!("\ntrading chart, six zoom-ins then six zoom-outs");
+    report("wheel zoom, END TO END", samples);
+}
+
+/// The blocking part of a chart history page: folding older candles into the
+/// shared tape while the chart is waiting on the same mutex.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints history prepend cost"]
+fn chart_history_merge_cost() {
+    let candle = |ts| Candle {
+        ts,
+        open: 100.0,
+        high: 102.0,
+        low: 99.0,
+        close: 101.0,
+        volume: 1_000.0,
+    };
+    let mut tape: Vec<Candle> = (0..200_000).map(candle).collect();
+    let older: Vec<Candle> = (-1_000..0).map(candle).collect();
+
+    let started = Instant::now();
+    hyperliquid::merge(&mut tape, older);
+    let elapsed = started.elapsed();
+    eprintln!("\nprepend 1,000 candles before a 200,000-candle tape: {elapsed:?}");
+    assert_eq!(tape.len(), 201_000);
+    assert!(tape.windows(2).all(|pair| pair[0].ts < pair[1].ts));
 }
 
 /// What each panel's rows cost, of the view build and of the whole frame.

@@ -1191,3 +1191,30 @@ view
     .unwrap();
     assert!(default_scroll.contains("scrollable::default(__theme, __status)"));
 }
+
+#[test]
+fn wraps_a_scroll_that_owns_virtual_rows_for_wheel_viewport_sync() {
+    let generated = compile(
+        r#"
+app VirtualScroll
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  scroll h=100.0
+    col virtual-row=20.0
+      for item in [1, 2, 3]
+        text item
+"#,
+        "virtual_scroll.ice",
+    )
+    .unwrap();
+    assert!(generated.contains("::ui_lang_runtime::virtual_scroll("));
+}

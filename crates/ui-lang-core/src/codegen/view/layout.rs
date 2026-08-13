@@ -563,6 +563,7 @@ fn render_resolved_scroll(
     let accessibility_key =
         resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
     let child_scope = rendered_child_scope(identity, scope, env, document)?;
+    let has_virtual_rows = contains_virtual_rows(child, document)?;
     let child = render_node(child, document, message, env, &child_scope, slot)?;
     let mut code = String::from("::iced::widget::scrollable(__scroll_content)");
     let bar = resolved_scroll_bar_code(scroll, program, env)?;
@@ -676,6 +677,9 @@ fn render_resolved_scroll(
     code.push_str(&resolved_scroll_style_code(scroll, program, env)?);
     append_size(&mut code, &layout.utility_style);
     append_resolved_layout_dimensions(&mut code, [&scroll.width, &scroll.height], program, env)?;
+    if has_virtual_rows {
+        code = format!("::ui_lang_runtime::virtual_scroll({code})");
+    }
     // `anchor-y=keep` wraps the scrollable — and only the scrollable, so the
     // wrapper's operation walk reaches it first and a nested list keeps its
     // own offset. The accessibility wrapper stays outside, where the id is.
@@ -685,6 +689,109 @@ fn render_resolved_scroll(
     Ok(format!(
         "{{ let __a11y_key = {accessibility_key}; let __scroll_content: __IceElement<'_, {message}> = {child}; let __layout = {code}; ::ui_lang_runtime::accessible(__layout, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
     ))
+}
+
+/// Whether this scroll's own content contains a virtual row. Nested scrolls
+/// stop the walk because they own their wheel transaction and get their own
+/// wrapper when rendered.
+fn contains_virtual_rows(node: ViewId, document: &LoweredProgram) -> Result<bool, Error> {
+    fn any(
+        children: impl IntoIterator<Item = ViewId>,
+        document: &LoweredProgram,
+    ) -> Result<bool, Error> {
+        for child in children {
+            if contains_virtual_rows(child, document)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    let view = document.resolved_view(node)?;
+    match &view.kind {
+        ResolvedViewKind::Layout { children } => match &document.resolved_layout(node)?.mode {
+            ResolvedLayoutMode::Scroll(_) => Ok(false),
+            ResolvedLayoutMode::Linear(linear) if linear.virtual_row.is_some() => Ok(true),
+            _ => any(children.iter().copied(), document),
+        },
+        ResolvedViewKind::KeyedColumn { child } => {
+            if document.resolved_keyed_column(node)?.virtual_row.is_some() {
+                Ok(true)
+            } else {
+                contains_virtual_rows(*child, document)
+            }
+        }
+        ResolvedViewKind::Container { content }
+        | ResolvedViewKind::MouseArea { content }
+        | ResolvedViewKind::ResizeHandle { content }
+        | ResolvedViewKind::Theme { content }
+        | ResolvedViewKind::Float { content }
+        | ResolvedViewKind::Pin { content }
+        | ResolvedViewKind::Sensor { content }
+        | ResolvedViewKind::ResponsiveSize { content }
+        | ResolvedViewKind::Lazy { child: content } => contains_virtual_rows(*content, document),
+        ResolvedViewKind::Button {
+            content: Some(content),
+        } => contains_virtual_rows(*content, document),
+        ResolvedViewKind::Overlay { content, layer }
+        | ResolvedViewKind::Tooltip {
+            content,
+            tip: layer,
+        } => any([*content, *layer], document),
+        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => any([*narrow, *wide], document),
+        ResolvedViewKind::If { children } | ResolvedViewKind::For { children } => {
+            any(children.iter().copied(), document)
+        }
+        ResolvedViewKind::Match { arms } => any(arms.iter().flatten().copied(), document),
+        ResolvedViewKind::Table { columns } => any(
+            columns
+                .iter()
+                .flat_map(|column| [column.header, column.cell]),
+            document,
+        ),
+        ResolvedViewKind::PaneGrid { panes, templates } => {
+            let mut children = Vec::new();
+            for pane in panes.iter().chain(templates) {
+                children.push(pane.content);
+                if let Some(title) = &pane.title {
+                    children.push(title.content);
+                    children.extend(title.controls);
+                    children.extend(title.compact_controls);
+                }
+            }
+            any(children, document)
+        }
+        ResolvedViewKind::Component { call } => {
+            let call = document.component_call_by_id(*call)?;
+            let component = document.component(call.component);
+            if contains_virtual_rows(component.root, document)? {
+                return Ok(true);
+            }
+            any(call.slots.iter().filter_map(|slot| slot.content), document)
+        }
+        ResolvedViewKind::Text
+        | ResolvedViewKind::RichText
+        | ResolvedViewKind::Input
+        | ResolvedViewKind::Button { content: None }
+        | ResolvedViewKind::Checkbox
+        | ResolvedViewKind::Toggler
+        | ResolvedViewKind::Slider
+        | ResolvedViewKind::Progress
+        | ResolvedViewKind::Radio
+        | ResolvedViewKind::PickList
+        | ResolvedViewKind::ComboBox
+        | ResolvedViewKind::Rule
+        | ResolvedViewKind::QrCode
+        | ResolvedViewKind::Space
+        | ResolvedViewKind::Markdown
+        | ResolvedViewKind::TextEditor
+        | ResolvedViewKind::Slot { .. }
+        | ResolvedViewKind::ExternComponent
+        | ResolvedViewKind::Themer
+        | ResolvedViewKind::Shader
+        | ResolvedViewKind::Media
+        | ResolvedViewKind::Canvas => Ok(false),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -685,7 +685,10 @@ view
                                   hovered
                                     y-rail bg=panel
                                     y-scroller bg=faint r=3.0
-                                  col w=fill
+                                  // PositionRow is a fixed 44px. A busy account
+                                  // can hold more rows than this pane reaches,
+                                  // so only mount the rows inside its viewport.
+                                  col w=fill virtual-row=44.0
                                     if empty(positions) && watching && account_read(account)
                                       box
                                         with
@@ -898,7 +901,9 @@ view
                               hovered
                                 y-rail bg=panel
                                 y-scroller bg=faint r=3.0
-                              col w=fill
+                              // BookRow is 18px. The 30px spread is measured
+                              // when it enters and corrects this estimate.
+                              col w=fill virtual-row=18.0
                                 match book
                                   some(depth)
                                     for level in depth.asks
@@ -1013,7 +1018,8 @@ view
                               hovered
                                 y-rail bg=panel
                                 y-scroller bg=faint r=3.0
-                              col w=fill
+                              // AlertRow is a fixed 22px; the panel shows four.
+                              col w=fill virtual-row=22.0
                                 if empty(alerts)
                                   box
                                     with
@@ -1063,7 +1069,8 @@ view
                               hovered
                                 y-rail bg=panel
                                 y-scroller bg=faint r=3.0
-                              col w=fill
+                              // OrderRow is a fixed 26px; the panel shows four.
+                              col w=fill virtual-row=26.0
                                 if empty(orders)
                                   box
                                     with
