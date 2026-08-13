@@ -28,7 +28,7 @@ fn repeated_flex_diff_does_not_allocate_a_child_reference_vector() {
     let initial = flex(items(ITEMS));
     let mut tree = Tree::new(&initial as &dyn Widget<(), Theme, Renderer>);
     let unchanged = flex(items(ITEMS));
-    unchanged.diff(&mut tree);
+    unchanged.diff(std::hint::black_box(&mut tree));
 
     let region = Region::new(GLOBAL);
     for _ in 0..FRAMES {
