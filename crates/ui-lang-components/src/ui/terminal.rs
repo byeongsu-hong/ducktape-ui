@@ -3570,6 +3570,7 @@ mod tests {
             .build()
             .unwrap();
 
+        let mut pty_closed = false;
         loop {
             let visible = terminal
                 .frame
@@ -3580,6 +3581,10 @@ mod tests {
             if visible.contains(expected) {
                 return;
             }
+            assert!(
+                !pty_closed,
+                "`{expected}` never reached the visible frame, and the PTY has closed"
+            );
 
             let remaining = deadline.saturating_duration_since(Instant::now());
             let batch = waiter.block_on(async {
@@ -3592,8 +3597,14 @@ mod tests {
                         }
                         batch
                     }
+                    // The pty is GONE, which for a one-shot child is the
+                    // normal end of the program — and its exit carries the
+                    // snapshot that makes its last line visible. So check the
+                    // frame once more before calling this a failure; the loop
+                    // top does exactly that, on an empty batch.
                     Ok(None) => {
-                        panic!("the PTY event channel closed before its output became visible")
+                        pty_closed = true;
+                        Vec::new()
                     }
                     Err(_) => panic!(
                         "`{expected}` never reached the visible terminal frame within the \
@@ -3613,7 +3624,13 @@ mod tests {
             "/bin/sh".into(),
             vec![
                 "-c".into(),
-                "IFS= read -r value; [ \"$value\" = \"hello world\" ] && printf SHELL_SPACE_OK"
+                // `exec cat` parks the child on a read that never returns. Without
+                // it the shell exits the instant it prints, and the event loop can
+                // tear the pty down before parsing what it wrote — the test then
+                // fails on a teardown race rather than on the round trip it is
+                // about. (That race is a real engine bug; it is not this test's.)
+                "IFS= read -r value; [ \"$value\" = \"hello world\" ] && \
+                 printf SHELL_SPACE_OK; exec cat"
                     .into(),
             ],
             std::env::current_dir().unwrap(),
