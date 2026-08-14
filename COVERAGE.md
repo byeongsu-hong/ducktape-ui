@@ -471,9 +471,11 @@ native X11 and wasm, and the extracted runtime package repeats the direct native
 `virtual-list,x11` contract. Bare `virtual-list` intentionally leaves native
 platform selection to the caller. The
 Windows native WGPU job requires a renderer primitive from a measured mounted
-row subtree before accepting the first frame. V1 explicitly excludes
-variable-height measurement, scrolling-ancestor touch transforms, and new Ice
-syntax.
+row subtree before accepting the first frame. Runtime coverage also exercises
+`VirtualListConfig::measured` plus `VirtualListEvent::RowsMeasured`, including
+shrink queries that ignore retained corrections beyond the current item count.
+The Ice v1 boundary explicitly excludes variable-height measurement,
+scrolling-ancestor touch transforms, and new Ice syntax.
 
 Fixed-height `LogTimeline` composes that exact `VirtualListState` boundary
 under the existing runtime `virtual-list` feature. Focused tests cover default
