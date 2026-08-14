@@ -1243,15 +1243,12 @@ where
             );
         }
 
-        let parts = if self.direction == Direction::RightToLeft {
-            parts.into_iter().rev().collect()
-        } else {
-            parts
-        };
+        if self.direction == Direction::RightToLeft {
+            parts.reverse();
+        }
         container(
-            parts
-                .into_iter()
-                .fold(Row::new().spacing(4), Row::push)
+            Row::with_children(parts)
+                .spacing(4)
                 .align_y(Alignment::Center),
         )
         .width(Length::Fill)
@@ -1597,6 +1594,44 @@ mod tests {
         assert_eq!(calendar.labels.months[6], "칠월");
         assert!(calendar.previous_content.is_some());
         assert!(calendar.next_content.is_some());
+    }
+
+    #[test]
+    fn caption_direction_preserves_child_order_and_size() {
+        let state = CalendarState::new(month(2026, 8), CalendarSelection::Single(None));
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let child_sizes = |direction| {
+            let mut caption = controlled_calendar("caption", &state, |_| (), &LIGHT)
+                .month_dropdown(true)
+                .year_dropdown(true)
+                .direction(direction)
+                .caption();
+            let mut tree = widget::Tree::new(caption.as_widget());
+            assert_eq!(tree.children.len(), 2);
+            let node = caption.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(CALENDAR_WIDTH, DAY_CELL_SIZE)),
+            );
+
+            Layout::new(&node)
+                .children()
+                .next()
+                .expect("caption row")
+                .children()
+                .map(|child| child.bounds().size())
+                .collect::<Vec<_>>()
+        };
+
+        let month = Size::new(104.0, DAY_CELL_SIZE);
+        let year = Size::new(80.0, DAY_CELL_SIZE);
+        assert_eq!(child_sizes(Direction::LeftToRight), [month, year]);
+        assert_eq!(child_sizes(Direction::RightToLeft), [year, month]);
     }
 
     #[test]
