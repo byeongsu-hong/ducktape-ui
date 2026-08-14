@@ -2310,6 +2310,7 @@ fn component_handler_event_action(
         .is_some_and(|ancestor| {
             ancestor.trim() != "state"
                 && ancestor.trim() != "emits"
+                && ancestor.trim() != "boot"
                 && !ancestor.trim_start().starts_with("on ")
         });
     if !in_root {

@@ -1,5 +1,7 @@
 //! Runtime support for generated Ice applications.
 
+mod boot;
+pub use boot::boot_dispatch;
 mod dashed_border;
 #[cfg(feature = "data-grid")]
 mod data_grid;
@@ -106,6 +108,11 @@ pub struct MountedComponentState<T> {
     /// The root whose finished render is still waiting to be pruned.
     pending: RefCell<Option<String>>,
     next_generation: Cell<u64>,
+    /// Scopes whose `boot` already fired; pruned with their values, so an
+    /// instance that leaves and comes back boots again.
+    booted: RefCell<HashSet<String>>,
+    /// First-sighted scopes waiting for their `boot` message to publish.
+    pending_boots: RefCell<Vec<String>>,
 }
 
 impl<T> Default for MountedComponentState<T> {
@@ -115,6 +122,8 @@ impl<T> Default for MountedComponentState<T> {
             active: RefCell::new(HashSet::new()),
             pending: RefCell::new(None),
             next_generation: Cell::new(0),
+            booted: RefCell::new(HashSet::new()),
+            pending_boots: RefCell::new(Vec::new()),
         }
     }
 }
@@ -133,6 +142,21 @@ impl<T> MountedComponentState<T> {
         self.active.borrow_mut().insert(scope);
     }
 
+    /// Marks a component scope as present, queueing its `boot` the first
+    /// time this instance is sighted. The mark is pruned with the instance,
+    /// so a scope that leaves the tree and comes back boots again.
+    pub fn mount_boot(&self, scope: String) {
+        if self.booted.borrow_mut().insert(scope.clone()) {
+            self.pending_boots.borrow_mut().push(scope.clone());
+        }
+        self.active.borrow_mut().insert(scope);
+    }
+
+    /// Takes the scopes whose `boot` has not been published yet.
+    pub fn drain_boots(&self) -> Vec<String> {
+        std::mem::take(&mut *self.pending_boots.borrow_mut())
+    }
+
     /// Records that `root` finished rendering. Scopes under it that never
     /// mounted are dropped at the next [`Self::begin_render`].
     pub fn finish_render(&self, root: &str) {
@@ -141,11 +165,13 @@ impl<T> MountedComponentState<T> {
 
     fn prune(&self, root: &str) {
         let active = self.active.borrow();
-        self.values.borrow_mut().retain(|scope, _| {
+        let survives = |scope: &str| {
             let suffix = scope.strip_prefix(root);
             !suffix.is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
                 || active.contains(scope)
-        });
+        };
+        self.values.borrow_mut().retain(|scope, _| survives(scope));
+        self.booted.borrow_mut().retain(|scope| survives(scope));
     }
 
     /// Borrows all mounted scope values.
@@ -2249,6 +2275,33 @@ mod tests {
         Last,
         Next,
         Previous,
+    }
+
+    #[test]
+    fn mount_boot_queues_once_per_instance_and_reboots_after_prune() {
+        let state: MountedComponentState<i32> = MountedComponentState::default();
+
+        state.begin_render();
+        state.mount_boot("App/Id(1)/pane".to_owned());
+        state.mount_boot("App/Id(1)/pane".to_owned());
+        state.finish_render("App/Id(1)");
+        assert_eq!(state.drain_boots(), vec!["App/Id(1)/pane".to_owned()]);
+        assert!(state.drain_boots().is_empty(), "a drain empties the queue");
+
+        // Present again next pass: already booted, nothing queued.
+        state.begin_render();
+        state.mount_boot("App/Id(1)/pane".to_owned());
+        state.finish_render("App/Id(1)");
+        assert!(state.drain_boots().is_empty());
+
+        // Absent for a pass: the prune drops the booted mark with the
+        // instance, so coming back boots again.
+        state.begin_render();
+        state.finish_render("App/Id(1)");
+        state.begin_render();
+        state.mount_boot("App/Id(1)/pane".to_owned());
+        state.finish_render("App/Id(1)");
+        assert_eq!(state.drain_boots(), vec!["App/Id(1)/pane".to_owned()]);
     }
 
     #[test]

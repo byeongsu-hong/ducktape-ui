@@ -2022,3 +2022,72 @@ view
     assert_eq!(error.code, "E092");
     assert!(error.message.contains("either `at=` or `size=`"));
 }
+
+#[test]
+fn a_component_boot_is_a_mounted_local_handler() {
+    let source = r#"app Boots
+extern crate::backend
+  fetch(query:str) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+component Pane()
+  lifetime mounted
+  state
+    body = ""
+  boot
+    run replace lane=load fetch("seed") -> loaded _
+  on loaded(next)
+    body = next
+  col
+    text body
+view
+  col
+    input "Draft" #field <-> draft
+    Pane #pane
+"#;
+    analyze(source).unwrap();
+
+    // Boot needs mounted storage: retained never announces an instance, so
+    // nothing would ever fire it.
+    let error = analyze(&source.replace("lifetime mounted", "lifetime retained")).unwrap_err();
+    assert_eq!(error.code, "E103");
+    assert!(
+        error
+            .message
+            .contains("component `boot` needs `lifetime mounted`"),
+        "{}",
+        error.message
+    );
+
+    // `boot` is the section's name, not an event a handler can claim.
+    let error = analyze(&source.replace(
+        "  on loaded(next)\n    body = next",
+        "  on loaded(next)\n    body = next\n  on boot\n    body = \"\"",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E040");
+    assert!(
+        error.message.contains("`boot` is a section, not an event"),
+        "{}",
+        error.message
+    );
+
+    // Boot bodies are ordinary local-handler bodies: the statement
+    // allow-list still binds.
+    let error = analyze(&source.replace(
+        "    run replace lane=load fetch(\"seed\") -> loaded _",
+        "    task system theme -> loaded _",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E140", "{}", error.message);
+}

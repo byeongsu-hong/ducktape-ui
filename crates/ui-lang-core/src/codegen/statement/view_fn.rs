@@ -232,12 +232,42 @@ pub(in crate::codegen) fn generate_view(
                 "::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into()"
             )
         };
+        let (boot_drain, boot_wrap) = boot_dispatch_code(program, message);
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {snapshot} {palette} let __ice_root_scope = {root_scope_init}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} let __ice_root: __IceElement<'_, {message}> = {result}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {snapshot} {palette} let __ice_root_scope = {root_scope_init}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {boot_drain} let __ice_root: __IceElement<'_, {message}> = {result}; {boot_wrap} ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     }
     out.push_str(&slot_methods);
     Ok(())
+}
+
+/// Drain-and-wrap code for component `boot` delivery: the render collected
+/// first-sighted scopes, and the root wrapper publishes their messages on
+/// the next widget-update pass.
+pub(in crate::codegen) fn boot_dispatch_code(
+    program: &LoweredProgram,
+    message: &str,
+) -> (String, String) {
+    let boots = crate::codegen::boot_component_dispatches(program);
+    if boots.is_empty() {
+        return (String::new(), String::new());
+    }
+    let drains = boots
+        .iter()
+        .map(|(field, variant)| {
+            format!(
+                "__ice_boots.extend(self.{field}.drain_boots().into_iter().map({message}::{variant}));"
+            )
+        })
+        .collect::<String>();
+    (
+        format!(
+            "let mut __ice_boots: ::std::vec::Vec<{message}> = ::std::vec::Vec::new(); {drains}"
+        ),
+        format!(
+            "let __ice_root: __IceElement<'_, {message}> = ::ui_lang_runtime::boot_dispatch(__ice_root, __ice_boots);"
+        ),
+    )
 }

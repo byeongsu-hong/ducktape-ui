@@ -1406,7 +1406,7 @@ pub(in crate::codegen) fn generate_statements(
 }
 
 mod task;
-mod view_fn;
+pub(in crate::codegen) mod view_fn;
 
 pub(super) use task::*;
 pub(super) use view_fn::*;
