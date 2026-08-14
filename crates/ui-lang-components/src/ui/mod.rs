@@ -130,6 +130,8 @@ pub mod switch;
 pub mod table;
 #[cfg(feature = "tabs")]
 pub mod tabs;
+#[cfg(feature = "terminal")]
+pub mod terminal;
 #[cfg(feature = "textarea")]
 pub mod textarea;
 #[cfg(feature = "theme")]
