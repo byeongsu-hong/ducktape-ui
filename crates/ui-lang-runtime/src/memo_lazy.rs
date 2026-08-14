@@ -61,9 +61,16 @@ use std::rc::Rc;
 /// same-content remount to reclaim it.
 struct Parked<Message: 'static, Theme: 'static, Renderer: 'static> {
     element: Element<'static, Message, Theme, Renderer>,
-    layout: Option<(layout::Limits, layout::Node)>,
+    layout: MemoLayout,
     tree: Tree,
 }
+
+/// The memoized layout as its own non-generic type, so an [`Operation`] can
+/// reach it through `custom` and drop it: a virtual window below this memo
+/// re-aims from the scrollable's real translation, and the relayout that
+/// follows must recompute THROUGH the memo — a `(dependency, limits)` key
+/// cannot see that the translation moved.
+pub(crate) struct MemoLayout(pub(crate) Option<(layout::Limits, layout::Node)>);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct MemoSite {
@@ -226,7 +233,7 @@ struct Internal<Message: 'static, Theme: 'static, Renderer: 'static> {
     site: MemoSite,
     /// The memoized layout for the current `hash`: the `Limits` the node was
     /// computed under and the node itself. `None` after a rebuild.
-    layout: Option<(layout::Limits, layout::Node)>,
+    layout: MemoLayout,
     /// The child's widget state. Owned here — not in `Tree::children` — so an
     /// unmount can park it wholesale and a remount can bring it back.
     tree: Tree,
@@ -271,7 +278,7 @@ impl<Message, Theme, Renderer> Drop for Internal<Message, Theme, Renderer> {
             self.hash,
             Box::new(Parked {
                 element,
-                layout: self.layout.take(),
+                layout: MemoLayout(self.layout.0.take()),
                 tree: std::mem::replace(&mut self.tree, Tree::empty()),
             }),
         );
@@ -332,7 +339,7 @@ where
             element,
             hash,
             site: self.site,
-            layout: None,
+            layout: MemoLayout(None),
             tree,
         })
     }
@@ -355,7 +362,7 @@ where
 
         if current.hash != new_hash {
             current.hash = new_hash;
-            current.layout = None;
+            current.layout = MemoLayout(None);
 
             let element: Element<'static, Message, Theme, Renderer> =
                 (self.view)(&self.dependency).into();
@@ -387,7 +394,7 @@ where
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
 
-        if let Some((cached_limits, node)) = &state.layout
+        if let Some((cached_limits, node)) = &state.layout.0
             && cached_limits == limits
         {
             return shallow(node);
@@ -399,7 +406,7 @@ where
                 .layout(&mut state.tree, renderer, limits)
         });
         let handed_up = shallow(&node);
-        state.layout = Some((*limits, node));
+        state.layout = MemoLayout(Some((*limits, node)));
         handed_up
     }
 
@@ -417,7 +424,19 @@ where
         } = tree
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
-        let layout = child_layout(memo, layout);
+        // The memoized layout is state an operation may need to drop: a
+        // virtual window below this memo re-aims from the scrollable's real
+        // translation, and the relayout that follows must recompute through
+        // here — the `(dependency, limits)` key cannot see a moved
+        // translation. Unknown operations ignore the downcast.
+        operation.custom(None, layout.bounds(), memo);
+        // An operation that just dropped the memoized layout left nothing
+        // coherent to walk below; the next layout pass rebuilds it, and any
+        // nested memo keeps its own still-valid cache for that pass to reuse.
+        if memo.0.is_none() {
+            return;
+        }
+        let layout = child_layout(&memo.0, layout);
         self.with_element_mut(|element| {
             element
                 .as_widget_mut()
@@ -443,7 +462,7 @@ where
         } = tree
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
-        let layout = child_layout(memo, layout);
+        let layout = child_layout(&memo.0, layout);
         self.with_element_mut(|element| {
             element.as_widget_mut().update(
                 child, event, layout, cursor, renderer, clipboard, shell, viewport,
@@ -466,7 +485,7 @@ where
         } = tree
             .state
             .downcast_ref::<Internal<Message, Theme, Renderer>>();
-        let layout = child_layout(memo, layout);
+        let layout = child_layout(&memo.0, layout);
         self.with_element(|element| {
             element
                 .as_widget()
@@ -491,7 +510,7 @@ where
         } = tree
             .state
             .downcast_ref::<Internal<Message, Theme, Renderer>>();
-        let layout = child_layout(memo, layout);
+        let layout = child_layout(&memo.0, layout);
         self.with_element(|element| {
             element
                 .as_widget()
@@ -514,7 +533,7 @@ where
         } = tree
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
-        let layout = child_layout(memo, layout);
+        let layout = child_layout(&memo.0, layout);
         let overlay = InnerBuilder {
             cell: self.element.borrow().as_ref().unwrap().clone(),
             element: self
@@ -710,21 +729,21 @@ mod tests {
     fn diff_keeps_the_layout_memo_only_while_the_dependency_holds() {
         let same = widget(7, 0);
         let mut tree = Tree::new(&same as &dyn Widget<(), iced::Theme, iced::Renderer>);
-        assert!(internal(&mut tree).layout.is_none());
+        assert!(internal(&mut tree).layout.0.is_none());
 
         let memoized = layout::Node::new(Size::new(10.0, 10.0));
-        internal(&mut tree).layout = Some((layout::Limits::NONE, memoized.clone()));
+        internal(&mut tree).layout = MemoLayout(Some((layout::Limits::NONE, memoized.clone())));
 
         same.diff(&mut tree);
         assert!(
-            internal(&mut tree).layout.is_some(),
+            internal(&mut tree).layout.0.is_some(),
             "an unchanged dependency must keep the memoized layout"
         );
 
         let changed = widget(8, 0);
         changed.diff(&mut tree);
         assert!(
-            internal(&mut tree).layout.is_none(),
+            internal(&mut tree).layout.0.is_none(),
             "a changed dependency rebuilds the element — a kept node would be stale"
         );
     }
@@ -739,10 +758,10 @@ mod tests {
         let first = counting_widget(7, 800, builds.clone());
         let mut tree = Tree::new(&first as &dyn Widget<(), iced::Theme, iced::Renderer>);
         assert_eq!(builds.get(), 1);
-        internal(&mut tree).layout = Some((
+        internal(&mut tree).layout = MemoLayout(Some((
             layout::Limits::NONE,
             layout::Node::new(Size::new(10.0, 10.0)),
-        ));
+        )));
         drop(tree);
 
         let second = counting_widget(7, 800, builds.clone());
@@ -753,7 +772,7 @@ mod tests {
             "a same-content remount must reclaim the parked element, not rebuild it"
         );
         assert!(
-            internal(&mut tree).layout.is_some(),
+            internal(&mut tree).layout.0.is_some(),
             "the memoized layout must survive the unmount"
         );
     }
@@ -766,10 +785,10 @@ mod tests {
 
         let first = counting_widget_in(7, 810, 0, builds.clone());
         let mut tree = Tree::new(&first as &dyn Widget<(), iced::Theme, iced::Renderer>);
-        internal(&mut tree).layout = Some((
+        internal(&mut tree).layout = MemoLayout(Some((
             layout::Limits::NONE,
             layout::Node::new(Size::new(10.0, 10.0)),
-        ));
+        )));
         drop(tree);
 
         let second = counting_widget_in(8, 810, 0, builds.clone());
@@ -779,7 +798,7 @@ mod tests {
             2,
             "changed content must miss the lot and rebuild"
         );
-        assert!(internal(&mut tree).layout.is_none());
+        assert!(internal(&mut tree).layout.0.is_none());
     }
 
     /// Evicting a parked subtree drops nested lazy state, which parks itself
