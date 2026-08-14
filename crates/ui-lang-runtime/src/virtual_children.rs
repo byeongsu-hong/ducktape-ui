@@ -101,7 +101,8 @@ pub fn virtual_keyed_children<'a, Message, Theme, Renderer>(
     children: Vec<(u64, Element<'a, Message, Theme, Renderer>)>,
     estimated_height: f32,
 ) -> VirtualChildren<'a, Message, Theme, Renderer> {
-    let (keys, children) = children.into_iter().unzip();
+    let (keys, children): (Vec<u64>, Vec<Element<'a, Message, Theme, Renderer>>) =
+        children.into_iter().unzip();
     VirtualChildren {
         children,
         keys,
@@ -247,9 +248,11 @@ impl State {
     /// scrollable clips the extra rows and only changes their draw translation.
     fn sync_viewport(&mut self, viewport: Rectangle, bounds: Rectangle) -> bool {
         let visible = viewport - Vector::new(bounds.x, bounds.y);
-        if self.viewport == visible {
-            return false;
-        }
+        // No unchanged-viewport shortcut: the mounted window can be stale
+        // UNDER an already-correct remembered viewport — a memoized layout
+        // above this column can serve a window seeded before the viewport was
+        // known — so the answer is always the window-vs-mounted comparison,
+        // never the viewport comparison alone.
         self.viewport = visible;
 
         let (first, last) = self.window(
@@ -260,6 +263,23 @@ impl State {
             visible.height,
         );
         first < self.live.mounted.start || last > self.live.mounted.end
+    }
+}
+
+/// Drops every memoized layout in the subtree it runs over, so the next
+/// layout pass recomputes through each memo instead of serving the node it
+/// cached before a virtual window below it moved.
+pub(crate) struct BustMemoLayouts;
+
+impl Operation for BustMemoLayouts {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        operate(self);
+    }
+
+    fn custom(&mut self, _id: Option<&Id>, _bounds: Rectangle, state: &mut dyn std::any::Any) {
+        if let Some(memo) = state.downcast_mut::<crate::memo_lazy::MemoLayout>() {
+            memo.0 = None;
+        }
     }
 }
 
@@ -1224,6 +1244,69 @@ mod tests {
             draws.get() > 0,
             "an end-anchored fresh mount drew no rows — the window seeded at \
              the strip top while the anchor shows the tail"
+        );
+    }
+
+    /// The exact sandwich the app generates around a chat stream: a layout
+    /// memo, the a11y wrapper, the wheel-sync wrapper, an end-anchored
+    /// scrollable, a plain column, and KEYED virtual rows. Every layer must
+    /// hand the first frame's layout through to the sync, or the room paints
+    /// The exact sandwich the app generates around a chat stream: the
+    /// wheel-sync wrapper, an end-anchored scrollable, and INSIDE the
+    /// scrollable a layout memo over the keyed virtual rows. The memo is the
+    /// load-bearing layer: its `(dependency, limits)` key cannot see the
+    /// scrollable's translation, so without the bust-and-relayout pass the
+    /// first frame serves the memoized top-seeded window and the room paints
+    /// blank until an unrelated dependency bump rebuilds it.
+    #[test]
+    fn the_memoized_end_anchored_stream_draws_its_first_frame() {
+        const COUNT: usize = 200;
+        const ROW: f32 = 20.0;
+        let draws = Rc::new(Cell::new(0));
+        let probe = Rc::clone(&draws);
+        let memoized = crate::memo_lazy(
+            7u64,
+            move |_| {
+                let children: Vec<(
+                    u64,
+                    Element<'static, (), iced::Theme, iced_test::renderer::Renderer>,
+                )> = (0..COUNT)
+                    .map(|index| {
+                        (
+                            index as u64,
+                            Element::new(Visible {
+                                draws: Rc::clone(&probe),
+                                height: ROW,
+                            }),
+                        )
+                    })
+                    .collect();
+                Element::from(iced::widget::column![virtual_keyed_children(children, ROW)])
+            },
+            11u64,
+            "probe/message-stream",
+        );
+        let stream = crate::virtual_scroll(
+            iced::widget::scrollable(memoized)
+                .anchor_bottom()
+                .auto_scroll(true),
+        );
+        let mut renderer = headless_renderer();
+        let mut ui = UserInterface::build(
+            stream,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        ui.draw(
+            &mut renderer,
+            &iced::Theme::Light,
+            &renderer::Style::default(),
+            mouse::Cursor::Unavailable,
+        );
+        assert!(
+            draws.get() > 0,
+            "the memoized end-anchored stream drew no rows on its first frame"
         );
     }
 

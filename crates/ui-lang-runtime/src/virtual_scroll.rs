@@ -92,6 +92,15 @@ where
         if !escaped {
             return node;
         }
+        // An escaped window re-aims below memoized layouts whose keys cannot
+        // see the move; drop them so the second pass really recomputes.
+        let mut bust = crate::virtual_children::BustMemoLayouts;
+        self.content.as_widget_mut().operate(
+            &mut tree.children[0],
+            Layout::new(&node),
+            renderer,
+            &mut bust,
+        );
         self.content
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
