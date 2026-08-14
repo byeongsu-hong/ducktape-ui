@@ -1603,7 +1603,7 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         root.set_children(self.root_children.clone());
         let mut nodes = Vec::with_capacity(self.nodes.len() + 1);
         nodes.push((ROOT_ID, root));
-        nodes.extend(self.nodes.clone());
+        nodes.extend(self.nodes.iter().cloned());
         Outcome::Some(Snapshot {
             update: TreeUpdate {
                 nodes,
@@ -2223,6 +2223,11 @@ pub fn crop_screenshot(
 }
 
 #[cfg(test)]
+#[global_allocator]
+static TEST_GLOBAL: &stats_alloc::StatsAlloc<std::alloc::System> =
+    &stats_alloc::INSTRUMENTED_SYSTEM;
+
+#[cfg(test)]
 #[allow(clippy::let_unit_value)]
 mod tests {
     use super::*;
@@ -2508,6 +2513,32 @@ mod tests {
             Outcome::Some(snapshot) => snapshot,
             _ => panic!("snapshot operation did not finish"),
         }
+    }
+
+    #[test]
+    #[ignore = "accessibility snapshot allocation contract run explicitly in CI"]
+    fn performance_contract_snapshot_finalization_allocations() {
+        const SAMPLES: usize = 256;
+        const ALLOCATIONS_PER_SNAPSHOT: usize = 16;
+
+        let (mut ui, renderer) = interface();
+        let mut operation = SnapshotOperation::<Message>::named("Test application");
+        ui.operate(&renderer, &mut operation::black_box(&mut operation));
+        assert_eq!(operation.nodes.len(), 3);
+
+        let finish = || std::hint::black_box(operation.finish());
+        std::mem::drop(finish());
+        let region = stats_alloc::Region::new(TEST_GLOBAL);
+        for _ in 0..SAMPLES {
+            std::mem::drop(finish());
+        }
+        let stats = region.change();
+
+        eprintln!(
+            "256 accessibility snapshot finalizations: allocations={} bytes={}",
+            stats.allocations, stats.bytes_allocated
+        );
+        assert_eq!(stats.allocations, SAMPLES * ALLOCATIONS_PER_SNAPSHOT);
     }
 
     fn semantic_nodes(snapshot: &Snapshot<Message>) -> Vec<(NodeId, &Node)> {
