@@ -5728,12 +5728,12 @@ dependencies = [
 name = "terminal-example"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal",
  "iced",
  "shell-words",
  "tokio",
  "ui-lang",
  "ui-lang-build",
+ "ui-lang-components",
  "ui-lang-runtime",
  "which",
 ]
@@ -6116,8 +6116,10 @@ dependencies = [
 name = "ui-lang-components"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
  "iced",
  "stats_alloc",
+ "tokio",
  "ui-lang-runtime",
 ]
 
