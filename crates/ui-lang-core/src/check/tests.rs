@@ -954,9 +954,9 @@ fn performance_contract_cycle_closure_borrows_via_rows() {
         "{CALLS} analyses of {HANDLERS} routed handlers: {} allocations / {} reallocations / {} bytes",
         stats.allocations, stats.reallocations, stats.bytes_allocated
     );
-    assert_eq!(stats.allocations, 34_312, "{stats:?}");
+    assert!(stats.allocations <= 33_280, "{stats:?}");
     assert_eq!(stats.reallocations, 2_760, "{stats:?}");
-    assert_eq!(stats.bytes_allocated, 5_094_120, "{stats:?}");
+    assert!(stats.bytes_allocated <= 5_061_096, "{stats:?}");
 }
 
 #[test]

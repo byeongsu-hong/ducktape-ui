@@ -100,21 +100,28 @@ impl Line {
             })
         };
         let fallback = relative.and_then(|relative| {
-            let candidates = line
+            let mut candidate = None;
+            let mut candidate_count = 0;
+            let mut assigned = None;
+            let mut assigned_count = 0;
+            for offset in line
                 .text
                 .match_indices(source)
                 .map(|(offset, _)| offset + relative)
                 .filter(|offset| {
                     !used(*offset) && !line.text[*offset + source_name.len()..].starts_with('=')
                 })
-                .collect::<Vec<_>>();
-            let assigned = candidates
-                .iter()
-                .copied()
-                .filter(|offset| line.text[..*offset].trim_end().ends_with('='))
-                .collect::<Vec<_>>();
-            match (assigned.as_slice(), candidates.as_slice()) {
-                ([offset], _) | ([], [offset]) => Some(*offset),
+            {
+                candidate = Some(offset);
+                candidate_count += 1;
+                if line.text[..offset].trim_end().ends_with('=') {
+                    assigned = Some(offset);
+                    assigned_count += 1;
+                }
+            }
+            match (assigned_count, candidate_count) {
+                (1, _) => assigned,
+                (0, 1) => candidate,
                 _ => None,
             }
         });
