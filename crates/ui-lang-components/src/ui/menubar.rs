@@ -283,7 +283,7 @@ where
             .focused
             .filter(|index| enabled.get(*index) == Some(&true))
             .or_else(|| enabled.iter().position(|enabled| *enabled));
-        let triggers = self
+        let mut triggers = self
             .menus
             .iter()
             .enumerate()
@@ -331,13 +331,13 @@ where
                 )
             })
             .collect::<Vec<_>>();
+        if self.direction == Direction::RightToLeft {
+            triggers.reverse();
+        }
         let row: Element<'a, Message> = container(
-            Row::with_children(match self.direction {
-                Direction::LeftToRight => triggers,
-                Direction::RightToLeft => triggers.into_iter().rev().collect(),
-            })
-            .spacing(2)
-            .align_y(IcedAlignment::Center),
+            Row::with_children(triggers)
+                .spacing(2)
+                .align_y(IcedAlignment::Center),
         )
         .padding(2)
         .height(MENUBAR_HEIGHT)
@@ -938,6 +938,82 @@ mod tests {
             menubar("app", menus, &state, &menu_state, |_| (), &LIGHT).into();
         assert_eq!(element.as_widget().children().len(), 2);
         assert_eq!(focusable_count(element), 1);
+    }
+
+    #[test]
+    fn rendered_trigger_order_matches_direction() {
+        let renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let activate_in_visual_order = |direction| {
+            let menus = ["File", "Edit", "View"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, label)| MenubarMenu::new(index.to_string(), label, vec![]))
+                .collect::<Vec<_>>();
+            let state = MenubarState::initial(&menus);
+            let mut element: Element<'_, MenubarEvent> = menubar(
+                "app",
+                menus,
+                &state,
+                &MenuState::default(),
+                |event| event,
+                &LIGHT,
+            )
+            .direction(direction)
+            .into();
+            let viewport = Rectangle::with_size(Size::new(640.0, 480.0));
+            let mut tree = widget::Tree::new(element.as_widget());
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
+            let trigger_centers = Layout::new(&node)
+                .children()
+                .next()
+                .expect("menubar row")
+                .children()
+                .map(|trigger| trigger.bounds().center())
+                .collect::<Vec<_>>();
+            let mut messages = Vec::new();
+            for center in trigger_centers {
+                for event in [
+                    Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                ] {
+                    let mut clipboard = clipboard::Null;
+                    let mut shell = Shell::new(&mut messages);
+                    element.as_widget_mut().update(
+                        &mut tree,
+                        &event,
+                        Layout::new(&node),
+                        mouse::Cursor::Available(center),
+                        &renderer,
+                        &mut clipboard,
+                        &mut shell,
+                        &viewport,
+                    );
+                }
+            }
+            messages
+        };
+
+        for (direction, indices) in [
+            (Direction::LeftToRight, [0, 1, 2]),
+            (Direction::RightToLeft, [2, 1, 0]),
+        ] {
+            assert_eq!(
+                activate_in_visual_order(direction),
+                indices.map(|index| MenubarEvent::StateChanged(MenubarState {
+                    focused: Some(index),
+                    open: Some(index),
+                }))
+            );
+        }
     }
 
     #[test]
