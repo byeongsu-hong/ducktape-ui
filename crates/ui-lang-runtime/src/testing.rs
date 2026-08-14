@@ -6732,7 +6732,8 @@ mod tests {
     #[test]
     #[ignore = "trace overhead contract run explicitly by the performance CI name filter"]
     fn performance_contract_interaction_trace_overhead() {
-        const ACTIONS: usize = 30;
+        // A longer sample amortizes scheduler jitter while retaining the 1.5x ceiling.
+        const ACTIONS: usize = 300;
         let program =
             || iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view);
         let action = || Action::Redraw;

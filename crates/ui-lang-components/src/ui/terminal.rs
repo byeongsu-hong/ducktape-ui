@@ -3559,10 +3559,10 @@ mod tests {
 
     #[cfg(unix)]
     fn wait_for_visible(terminal: &mut super::Terminal, expected: &str) {
-        // Wedged-detector backstop, not a tuned budget: every event below is
-        // waited on, never polled for, so this only fires when the PTY is
-        // stuck outright. The old 2s wall-clock deadline lost the race to a
-        // loaded CI runner's shell spawn.
+        // Wedged-detector backstop, not a tuned budget. Wait for an event or
+        // one frame interval, then refresh so a lost or coalesced Wakeup cannot
+        // leave a valid grid waiting forever. The old 2s deadline lost the race
+        // to a loaded CI runner's shell spawn.
         let backstop = Duration::from_secs(60);
         let deadline = Instant::now() + backstop;
         let waiter = tokio::runtime::Builder::new_current_thread()
@@ -3587,9 +3587,17 @@ mod tests {
             );
 
             let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                panic!(
+                    "`{expected}` never reached the visible terminal frame within the \
+                     {backstop:?} wedged-detector backstop"
+                );
+            }
             let batch = waiter.block_on(async {
                 let mut receiver = terminal.events.lock().await;
-                match tokio::time::timeout(remaining, receiver.recv()).await {
+                match tokio::time::timeout(remaining.min(super::FRAME_INTERVAL), receiver.recv())
+                    .await
+                {
                     Ok(Some(first)) => {
                         let mut batch = vec![first];
                         while let Ok(event) = receiver.try_recv() {
@@ -3606,13 +3614,11 @@ mod tests {
                         pty_closed = true;
                         Vec::new()
                     }
-                    Err(_) => panic!(
-                        "`{expected}` never reached the visible terminal frame within the \
-                         {backstop:?} wedged-detector backstop"
-                    ),
+                    Err(_) => Vec::new(),
                 }
             });
             terminal.handle_events(batch);
+            terminal.snapshot();
         }
     }
 
