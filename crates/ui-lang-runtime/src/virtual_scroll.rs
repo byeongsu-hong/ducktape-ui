@@ -1,17 +1,28 @@
-//! Keeps `virtual-row` content mounted through rapid wheel transactions.
+//! Keeps `virtual-row` content mounted over the viewport its scrollable
+//! actually shows.
 //!
-//! Iced deliberately stops forwarding consecutive wheel events to a
-//! scrollable's descendants. A virtual column normally learns its translated
-//! viewport through those descendant updates, so a fast burst can move past
-//! its four overscan rows and draw an empty frame. This wrapper synchronizes
-//! the viewport after the scrollable consumes each wheel event and requests
-//! layout only when the already-mounted overscan no longer covers it.
+//! A virtual column seeds its window from the viewport it REMEMBERS, and two
+//! moments leave that memory wrong with nothing else re-opening layout:
+//!
+//! - **The first frame, and every children replacement.** Before any event
+//!   lands the column fills a screen's worth from the strip's top — but an
+//!   end-anchored scrollable (a chat timeline, a transcript) shows the
+//!   strip's BOTTOM, so the mounted window and the visible strip never
+//!   intersect and the frame draws no rows. This wrapper re-reads the
+//!   scrollable's real translation inside `layout` and lays out once more
+//!   when the window escaped it; the second pass costs one screenful of rows
+//!   and only runs on mismatch frames.
+//! - **A rapid wheel transaction.** Iced deliberately stops forwarding
+//!   consecutive wheel events to the scrollable's descendants, so a fast
+//!   trackpad burst can translate every mounted row out of the viewport.
+//!   The wrapper synchronizes after the scrollable consumes each wheel event
+//!   and requests layout only when the mounted overscan no longer covers it.
 
 use iced::advanced::widget::{Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
 
-use crate::virtual_children::sync_after_wheel;
+use crate::virtual_children::sync_virtual_columns;
 
 pub struct VirtualScroll<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
@@ -63,6 +74,24 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
+        let node = self
+            .content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits);
+        // The columns below seeded their windows from remembered viewports;
+        // the scrollable's translation in THIS layout is where they really
+        // are. One more pass on the frames where a window escaped it — the
+        // first frame and children replacements — keeps every drawn frame
+        // aligned without waiting on an invalidation nothing else raises.
+        let escaped = sync_virtual_columns(
+            &mut self.content,
+            &mut tree.children[0],
+            Layout::new(&node),
+            renderer,
+        );
+        if !escaped {
+            return node;
+        }
         self.content
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
@@ -103,7 +132,7 @@ where
         );
         if matches!(event, Event::Mouse(mouse::Event::WheelScrolled { .. }))
             && shell.is_event_captured()
-            && sync_after_wheel(&mut self.content, &mut tree.children[0], layout, renderer)
+            && sync_virtual_columns(&mut self.content, &mut tree.children[0], layout, renderer)
         {
             shell.invalidate_layout();
         }
