@@ -263,11 +263,16 @@ impl State {
     }
 }
 
-/// Synchronizes virtual descendants with the first scrollable in `content`
-/// after that scrollable consumes a wheel event. Iced suppresses descendant
-/// wheel updates for the rest of a scroll transaction; this operation crosses
-/// that deliberate event boundary without synthesizing pointer events.
-pub(crate) fn sync_after_wheel<Message, Theme, Renderer>(
+/// Synchronizes virtual descendants with the first scrollable in `content`,
+/// reading its current translation and re-aiming each virtual window at it.
+/// Returns whether any window escaped its mounted rows and needs a fresh
+/// layout. Two callers cross two different gaps with it: `virtual_scroll`'s
+/// `layout` (the first frame and children replacements, where the remembered
+/// viewport is wrong and no event will land to correct it) and its `update`
+/// after a consumed wheel event (iced suppresses descendant wheel updates for
+/// the rest of a scroll transaction; this crosses that deliberate boundary
+/// without synthesizing pointer events).
+pub(crate) fn sync_virtual_columns<Message, Theme, Renderer>(
     content: &mut Element<'_, Message, Theme, Renderer>,
     tree: &mut Tree,
     layout: Layout<'_>,
@@ -1178,6 +1183,47 @@ mod tests {
         assert!(
             laid_out <= 32,
             "a 100px viewport over 20px rows should reach a handful of children, not {laid_out} of {COUNT}"
+        );
+    }
+
+    /// A room switch mounts a fresh end-anchored scrollable over content
+    /// taller than the viewport, and the first drawn frame is the whole
+    /// product: nothing else re-opens layout until some event lands. The
+    /// column's pre-viewport seed fills a screen's worth from the strip's
+    /// TOP, but an end anchor shows the strip's BOTTOM — without the
+    /// wrapper's layout-time sync the first frame draws no rows at all, and
+    /// stays blank until an unrelated state change re-opens layout.
+    #[test]
+    fn an_end_anchored_first_frame_draws_the_tail_rows() {
+        const COUNT: usize = 100;
+        const ROW: f32 = 20.0;
+        let draws = Rc::new(Cell::new(0));
+        let children: Vec<Element<'_, (), iced::Theme, iced_test::renderer::Renderer>> = (0..COUNT)
+            .map(|_| {
+                Element::new(Visible {
+                    draws: Rc::clone(&draws),
+                    height: ROW,
+                })
+            })
+            .collect();
+        let content = virtual_children(children, ROW);
+        let mut renderer = headless_renderer();
+        let mut ui = UserInterface::build(
+            crate::virtual_scroll(iced::widget::scrollable(content).anchor_bottom()),
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        ui.draw(
+            &mut renderer,
+            &iced::Theme::Light,
+            &renderer::Style::default(),
+            mouse::Cursor::Unavailable,
+        );
+        assert!(
+            draws.get() > 0,
+            "an end-anchored fresh mount drew no rows — the window seeded at \
+             the strip top while the anchor shows the tail"
         );
     }
 
