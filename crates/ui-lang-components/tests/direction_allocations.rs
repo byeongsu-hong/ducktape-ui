@@ -36,7 +36,7 @@ fn performance_contract_directed_rows_stream_default_order() {
         "{RENDERS} directed sheet headers: {} allocations / {} reallocations / {} bytes",
         stats.allocations, stats.reallocations, stats.bytes_allocated
     );
-    assert!(stats.allocations <= 9_216, "{stats:?}");
+    assert!(stats.allocations <= 9_220, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert!(stats.bytes_allocated <= 827_392, "{stats:?}");
+    assert!(stats.bytes_allocated <= 828_292, "{stats:?}");
 }

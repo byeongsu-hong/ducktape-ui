@@ -3780,7 +3780,7 @@ mod tests {
             u64::MAX - 1,
             "/bin/sh".into(),
             vec![
-                "-lc".into(),
+                "-c".into(),
                 "IFS= read -r value; [ \"$value\" = \"hello world\" ] && printf SHELL_SPACE_OK"
                     .into(),
             ],
