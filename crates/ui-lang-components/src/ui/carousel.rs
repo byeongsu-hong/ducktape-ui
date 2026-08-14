@@ -1009,11 +1009,11 @@ where
     });
 
     match orientation {
-        CarouselOrientation::Horizontal => controls
-            .fold(Row::new().spacing(theme.spacing.xs), Row::push)
+        CarouselOrientation::Horizontal => Row::with_children(controls)
+            .spacing(theme.spacing.xs)
             .into(),
-        CarouselOrientation::Vertical => controls
-            .fold(Column::new().spacing(theme.spacing.xs), Column::push)
+        CarouselOrientation::Vertical => Column::with_children(controls)
+            .spacing(theme.spacing.xs)
             .align_x(direction.start())
             .into(),
     }
@@ -1046,6 +1046,8 @@ fn indicator_style(theme: &Theme, selected: bool, status: Status) -> focus_contr
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::super::theme::LIGHT;
     use super::*;
 
@@ -1198,6 +1200,36 @@ mod tests {
 
         assert_eq!(state, ViewportState::default());
         assert!(!state.unfocus());
+    }
+
+    #[test]
+    fn indicator_order_is_horizontal_directional_and_vertical_stable() {
+        use CarouselOrientation::{Horizontal, Vertical};
+        use Direction::{LeftToRight, RightToLeft};
+
+        for (orientation, direction, expected) in [
+            (Horizontal, LeftToRight, [0, 1, 2]),
+            (Horizontal, RightToLeft, [2, 1, 0]),
+            (Vertical, LeftToRight, [0, 1, 2]),
+            (Vertical, RightToLeft, [0, 1, 2]),
+        ] {
+            let visited = RefCell::new(Vec::new());
+            let indicators: Element<'_, usize> = carousel_indicators_with_content(
+                CarouselState::new(1, 3, CarouselBoundary::Bounded),
+                |_| widget::Id::unique(),
+                |index| index,
+                orientation,
+                direction,
+                |index, _selected| {
+                    visited.borrow_mut().push(index);
+                    text(index.to_string()).into()
+                },
+                &LIGHT,
+            );
+
+            assert_eq!(indicators.as_widget().children().len(), expected.len());
+            assert_eq!(visited.into_inner(), expected);
+        }
     }
 
     #[test]
