@@ -931,6 +931,19 @@ pub(in crate::check) fn check_widget_target(
         }
         actual.push((segment.name.clone(), key));
     }
+    if let Some(window) = &target.window {
+        let ty = expr_type(window, env, document, span)?;
+        if !matches!(ty, Type::WindowId) {
+            return Err(Error::new(
+                "E172",
+                span,
+                format!(
+                    "a `window=` qualifier takes a window-id, found {}",
+                    ty.display()
+                ),
+            ));
+        }
+    }
     if operation_ids.iter().any(|expected| {
         expected.len() == actual.len()
             && expected

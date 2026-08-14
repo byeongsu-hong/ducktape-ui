@@ -1077,6 +1077,7 @@ fn lower_typed_payload_argument(
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedWidgetTarget {
     pub(crate) segments: Vec<ResolvedWidgetTargetSegment>,
+    pub(crate) window: Option<CheckedExprUseId>,
 }
 
 #[derive(Clone, Debug)]
@@ -2412,6 +2413,7 @@ impl LoweredProgram {
             operands: &mut Vec<CheckedExprUseId>,
         ) {
             operands.extend(target.segments.iter().filter_map(|segment| segment.key));
+            operands.extend(target.window);
         }
 
         fn pane_reference_operands(
@@ -8569,6 +8571,11 @@ impl Lowerer {
                     })
                 })
                 .collect::<Result<Vec<_>, Error>>()?,
+            window: target
+                .window
+                .as_ref()
+                .map(|_| self.checked_statement_expression(statement, operand, span))
+                .transpose()?,
         })
     }
 
@@ -11090,6 +11097,7 @@ view
                         name: name.into(),
                         key: Some(Expr::I64(1)),
                     }],
+                    window: None,
                 }),
                 all,
             },

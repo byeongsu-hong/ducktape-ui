@@ -35,9 +35,22 @@ fn resolved_widget_target_code(
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
+    // The check layer admits `window=` only for app-scoped handlers in a
+    // daemon keeping mounted state, where every rendered id is qualified by
+    // its window — rebuild the same root `root_scope_code` renders with.
+    let window_root = match (env.component_context(), target.window) {
+        (None, Some(window)) => Some(format!(
+            "format!(\"{{}}/{{:?}}\", {}, {})",
+            rust_string(program.app_name()),
+            resolved_expr_use_code(program, window, env, ValueMode::Borrowed)?
+        )),
+        _ => None,
+    };
+    let window_qualified = window_root.is_some();
     let mut scope = env
         .component_context()
         .map(|(_, binding)| binding.code.clone())
+        .or(window_root)
         .unwrap_or_else(|| rust_string(program.app_name()));
     for segment in &target.segments {
         let borrowed = borrowed_scope(&scope);
@@ -52,6 +65,7 @@ fn resolved_widget_target_code(
         };
     }
     let constructor = if env.component_context().is_none()
+        && !window_qualified
         && target.segments.iter().all(|segment| segment.key.is_none())
     {
         "new"

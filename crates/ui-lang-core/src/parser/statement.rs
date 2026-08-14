@@ -778,12 +778,20 @@ pub(in crate::parser) fn parse_widget_operation(
 ) -> Result<Statement, Error> {
     let (source, route) = split_top_marker(source, "->")
         .map_or((source, None), |(source, route)| (source, Some(route)));
+    let (source, window) = split_top_marker(source, " window=")
+        .map_or((source, None), |(source, window)| (source, Some(window)));
+    let window = window
+        .map(|window| parse_expr(strip_wrapping_parens(window.trim()), line))
+        .transpose()?;
     let parts = split_words(source);
     let target = |index: usize| {
         let value = parts
             .get(index)
             .ok_or_else(|| error("E052", line, "widget operation is missing `#id`"))?;
-        parse_widget_target(value, line)
+        parse_widget_target(value, line).map(|mut target| {
+            target.window = window.clone();
+            target
+        })
     };
     let expr = |index: usize| {
         parse_expr(
@@ -797,18 +805,36 @@ pub(in crate::parser) fn parse_widget_operation(
     };
     let operation = if let Some(selector) = source.strip_prefix("find-all ") {
         WidgetOperation::Find {
-            selector: parse_widget_selector(selector.trim(), line)?,
+            selector: parse_widget_selector(selector.trim(), line, window.clone())?,
             all: true,
         }
     } else if let Some(selector) = source.strip_prefix("find ") {
         WidgetOperation::Find {
-            selector: parse_widget_selector(selector.trim(), line)?,
+            selector: parse_widget_selector(selector.trim(), line, window.clone())?,
             all: false,
         }
     } else {
         match parts.first().map(String::as_str) {
-            Some("focus-prev") if parts.len() == 1 => WidgetOperation::FocusPrevious,
-            Some("focus-next") if parts.len() == 1 => WidgetOperation::FocusNext,
+            Some("focus-prev") if parts.len() == 1 => {
+                if window.is_some() {
+                    return Err(error(
+                        "E052",
+                        line,
+                        "a `window=` qualifier needs an `#id` target",
+                    ));
+                }
+                WidgetOperation::FocusPrevious
+            }
+            Some("focus-next") if parts.len() == 1 => {
+                if window.is_some() {
+                    return Err(error(
+                        "E052",
+                        line,
+                        "a `window=` qualifier needs an `#id` target",
+                    ));
+                }
+                WidgetOperation::FocusNext
+            }
             Some("focus") if parts.len() == 2 => WidgetOperation::Focus { target: target(1)? },
             Some("focused") if parts.len() == 2 => WidgetOperation::Focused { target: target(1)? },
             Some("cursor-front") if parts.len() == 2 => {
@@ -866,13 +892,21 @@ pub(in crate::parser) fn parse_widget_operation(
 pub(in crate::parser) fn parse_widget_selector(
     source: &str,
     line: &Line,
+    window: Option<Expr>,
 ) -> Result<WidgetSelector, Error> {
     if let Some(target) = source.strip_prefix("id ") {
-        Ok(WidgetSelector::Id(parse_widget_target(
-            target.trim(),
+        let mut target = parse_widget_target(target.trim(), line)?;
+        target.window = window;
+        return Ok(WidgetSelector::Id(target));
+    }
+    if window.is_some() {
+        return Err(error(
+            "E052",
             line,
-        )?))
-    } else if let Some(value) = source.strip_prefix("text ") {
+            "a `window=` qualifier needs an `id #...` selector",
+        ));
+    }
+    if let Some(value) = source.strip_prefix("text ") {
         Ok(WidgetSelector::Text(parse_expr(value.trim(), line)?))
     } else if let Some(values) = source.strip_prefix("point ") {
         let values = split_words(values);
@@ -934,7 +968,10 @@ pub(in crate::parser) fn parse_widget_target(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(WidgetTarget { segments })
+    Ok(WidgetTarget {
+        segments,
+        window: None,
+    })
 }
 
 pub(in crate::parser) fn parse_window_operation(

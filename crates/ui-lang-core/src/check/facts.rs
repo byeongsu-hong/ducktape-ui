@@ -8816,6 +8816,9 @@ impl<'a> FactsBuilder<'a> {
                 self.statement_operand(statement, operand, key, None, env, span)?;
             }
         }
+        if let Some(window) = &target.window {
+            self.statement_operand(statement, operand, window, Some(&Type::WindowId), env, span)?;
+        }
         Ok(())
     }
 

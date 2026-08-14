@@ -633,15 +633,16 @@ native_task    = "task time now" "->" route
                | "pane" "#" name pane_operation ("->" route)?
                | window_task
                | tray_task
-widget_operation = "focus-prev" | "focus-next"
+widget_operation = ("focus-prev" | "focus-next"
                  | ("focus" | "focused" | "cursor-front" | "cursor-end"
                    | "select-all" | "snap-end") widget_target
                  | "cursor" widget_target expr
                  | "select" widget_target expr expr
                  | ("snap" | "scroll-to" | "scroll-by") widget_target expr expr
-                 | ("find" | "find-all") widget_selector
+                 | ("find" | "find-all") widget_selector) widget_window?
 widget_selector = "id" widget_target | "text" expr | "point" expr expr
                 | "focused" | call
+widget_window  = "window=" expr
 widget_target  = "#" widget_target_segment
                  ("/" "#"? widget_target_segment)*
 widget_target_segment = kebab_name | component_name | name "(" expr ")"
@@ -4925,10 +4926,32 @@ offsets are unrestricted `f64`.
 In a daemon whose graph keeps `lifetime mounted` component state, every
 rendered id is qualified by the window that drew it, so one window's render
 never prunes another's storage. An app or preset handler builds target paths
-from the bare app name and would silently address nothing there, so
-id-targeted operations in those handlers are rejected (`E172`) until a handler
-can name a window. Component handlers are unaffected: their paths start at the
-component instance, whose scope already carries its window.
+from the bare app name and would silently address nothing there, so an
+id-targeted operation in those handlers must name the window whose render
+qualified the id, as a trailing `window=` marker carrying an ordinary
+`window-id` expression — the same typed value `task window open` routes
+deliver and app state already retains:
+
+```ice
+on opened(id)
+  console = some(id)
+
+on jump
+  match console
+    some(id)
+      task widget focus #workspace/palette-input window=id
+    none
+      return
+```
+
+An unqualified id-targeted operation in an app or preset handler of such a
+daemon stays rejected (`E172`), as is a `window=` qualifier anywhere it is
+meaningless: in a component handler (its path starts at the component
+instance, whose scope already carries its window), in an app or daemon whose
+rendered ids are unqualified, on an operation with no `#id` target, or
+carrying anything other than a `window-id`. A window-qualified path always
+lowers to `widget::Id::from(String)` — the window is a runtime value, so the
+path is never a compile-time constant.
 
 Feature-gated native widget selectors use the same checked paths and ordinary
 Ice expressions:
