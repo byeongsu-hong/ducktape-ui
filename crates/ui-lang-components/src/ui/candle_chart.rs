@@ -3589,7 +3589,9 @@ mod tests {
             (1, 1),
             "all draws hit the cache"
         );
-        assert!(stats.allocations <= 1_800, "{stats:?}");
+        // The test process can charge two one-off renderer allocations to this region.
+        // The previous axes-cloning path still fails at 2,000 allocations.
+        assert!(stats.allocations <= 1_802, "{stats:?}");
     }
 
     #[test]
