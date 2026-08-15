@@ -291,6 +291,30 @@ fn mounted_component_fields(program: &LoweredProgram) -> Vec<String> {
         .collect()
 }
 
+/// The readable identity a component's test-seam items carry: PascalCase
+/// snake-cased (`ForgeCodeBrowser` -> `forge_code_browser`), hex-escaped
+/// only when the name is not plain ASCII alphanumerics. Injective over
+/// legal component names, which cannot contain underscores.
+fn component_test_suffix(name: &str) -> String {
+    let plain = name.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        && name.starts_with(|first: char| first.is_ascii_uppercase());
+    if !plain {
+        return format!("0{}", rust_identifier_hex(name));
+    }
+    let mut out = String::new();
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Whether this component's first sighting queues a `boot` message.
 pub(in crate::codegen) fn component_has_boot(
     program: &LoweredProgram,
@@ -775,7 +799,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         .filter(|component| component.storage != ComponentStorage::Stateless)
     {
         let field = component_state_field(&component.name);
-        let suffix = field.trim_start_matches("__ice_component_").to_owned();
+        let suffix = component_test_suffix(&component.name);
         let ty = component_state_type(&component.name);
         let view_ty = format!("__IceTestState_{suffix}");
         let viewed = component

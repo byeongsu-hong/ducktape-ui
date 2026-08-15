@@ -5710,7 +5710,8 @@ building the exact message the runtime would deliver for each local handler,
 `boot` included. Reads are clones and writes are ordinary update-loop
 messages, so the runtime privacy contract holds: the seam lifts only the
 harness's blindness, never a production path. `<name>` is the component name
-lowercased (hex-escaped when not canonical).
+snake-cased (`ForgeCodeBrowser` -> `forge_code_browser`; hex-escaped only
+for names outside plain ASCII alphanumerics).
 
 `expect tray` reads the runtime's record of what the program last decided the
 status item should show, not the screen, so it runs on every platform and

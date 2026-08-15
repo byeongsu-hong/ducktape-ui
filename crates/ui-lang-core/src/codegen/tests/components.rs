@@ -1768,7 +1768,7 @@ palette app for AppTheme
   danger #ff0000
 state
   draft = ""
-component Pane()
+component SearchPane()
   lifetime mounted
   state
     body = ""
@@ -1781,40 +1781,41 @@ component Pane()
 view
   col
     input "Draft" #field <-> draft
-    Pane #pane
+    SearchPane #pane
 "#;
     let generated = compile(source, "component-test-seam.ice").unwrap();
     // A clone view over the declared state only — no lane bookkeeping.
     assert!(
-        generated.contains("pub(crate) struct __IceTestState_pane {"),
+        generated.contains("pub(crate) struct __IceTestState_search_pane {"),
         "{generated}"
     );
     assert!(
         generated.contains(
-            "fn __ice_test_state_pane(&self, scope: &str) -> ::std::option::Option<__IceTestState_pane>"
+            "fn __ice_test_state_search_pane(&self, scope: &str) -> ::std::option::Option<__IceTestState_search_pane>"
         ),
         "{generated}"
     );
     assert!(
-        generated
-            .contains("fn __ice_test_scopes_pane(&self) -> ::std::vec::Vec<::std::string::String>"),
+        generated.contains(
+            "fn __ice_test_scopes_search_pane(&self) -> ::std::vec::Vec<::std::string::String>"
+        ),
         "{generated}"
     );
     // Seeding goes through the one update loop: the constructor returns the
     // same message the runtime would deliver, boot included.
     assert!(
-        generated.contains("fn __ice_test_message_pane_loaded(scope: ::std::string::String, __p0: ::std::string::String) -> __BootsMessage"),
+        generated.contains("fn __ice_test_message_search_pane_loaded(scope: ::std::string::String, __p0: ::std::string::String) -> __BootsMessage"),
         "{generated}"
     );
     assert!(
         generated.contains(
-            "fn __ice_test_message_pane_boot(scope: ::std::string::String) -> __BootsMessage"
+            "fn __ice_test_message_search_pane_boot(scope: ::std::string::String) -> __BootsMessage"
         ),
         "{generated}"
     );
     // Everything is test-only surface.
     let seam = generated
-        .split_once("struct __IceTestState_pane")
+        .split_once("struct __IceTestState_search_pane")
         .expect("seam present")
         .0;
     assert!(
