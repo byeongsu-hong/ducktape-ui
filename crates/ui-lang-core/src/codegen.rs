@@ -771,6 +771,89 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         writeln!(out, "}} }}\n}}").unwrap();
     }
 
+    // The component test seam (ducktape-ui#696, layer 1): stable-named,
+    // test-only access to component-instance state, and constructors for
+    // the messages that move it — a downstream harness reads a CLONE of
+    // the declared state and seeds through the one update loop, instead
+    // of poking mangled internals that shift under it.
+    for component in program
+        .components()
+        .iter()
+        .filter(|component| component.storage != ComponentStorage::Stateless)
+    {
+        let field = component_state_field(&component.name);
+        let suffix = field.trim_start_matches("__ice_component_").to_owned();
+        let ty = component_state_type(&component.name);
+        let view_ty = format!("__IceTestState_{suffix}");
+        let viewed = component
+            .states
+            .iter()
+            .filter(|state| !matches!(state.ty, Type::Animation(_)))
+            .collect::<Vec<_>>();
+        writeln!(
+            out,
+            "#[cfg(test)]\n#[allow(non_camel_case_types, dead_code)]\n#[derive(Clone)]\npub(crate) struct {view_ty} {{"
+        )
+        .unwrap();
+        for state in &viewed {
+            writeln!(
+                out,
+                "pub(crate) {}: {},",
+                state.name,
+                rust_type_code(program, &state.ty)
+            )
+            .unwrap();
+        }
+        writeln!(out, "}}").unwrap();
+        let clone_fields = viewed
+            .iter()
+            .map(|state| format!("{name}: __state.{name}.clone(),", name = state.name))
+            .collect::<String>();
+        let map = format!("map(|__state: &{ty}| {view_ty} {{ {clone_fields} }})");
+        let body = match component.storage {
+            ComponentStorage::Retained => format!("self.{field}.get(scope).{map}"),
+            // `values()` is a RefCell borrow: bind it before indexing so the
+            // guard outlives the map that clones out of it.
+            ComponentStorage::Mounted => {
+                format!("let __ice_values = self.{field}.values(); __ice_values.get(scope).{map}")
+            }
+            ComponentStorage::Stateless => unreachable!(),
+        };
+        let keys = match component.storage {
+            ComponentStorage::Retained => format!("self.{field}.keys().cloned().collect()"),
+            ComponentStorage::Mounted => {
+                format!("self.{field}.values().keys().cloned().collect()")
+            }
+            ComponentStorage::Stateless => unreachable!(),
+        };
+        writeln!(
+            out,
+            "#[cfg(test)]\n#[allow(dead_code)]\nimpl {app_name} {{\npub(crate) fn __ice_test_state_{suffix}(&self, scope: &str) -> ::std::option::Option<{view_ty}> {{ {body} }}\npub(crate) fn __ice_test_scopes_{suffix}(&self) -> ::std::vec::Vec<::std::string::String> {{ {keys} }}"
+        )
+        .unwrap();
+        for handler in component.handlers.iter().map(|id| program.handler(*id)) {
+            let variant = component_handler_variant(&component.name, &handler.name);
+            let params = handler
+                .params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    format!(", __p{index}: {}", rust_type_code(program, &param.ty))
+                })
+                .collect::<String>();
+            let args = (0..handler.params.len())
+                .map(|index| format!(", __p{index}"))
+                .collect::<String>();
+            writeln!(
+                out,
+                "pub(crate) fn __ice_test_message_{suffix}_{handler_name}(scope: ::std::string::String{params}) -> {message} {{ {message}::{variant}(scope{args}) }}",
+                handler_name = handler.name,
+            )
+            .unwrap();
+        }
+        writeln!(out, "}}").unwrap();
+    }
+
     writeln!(out, "#[allow(dead_code)]\npub struct {app_name} {{").unwrap();
     writeln!(
         out,

@@ -1741,3 +1741,75 @@ view
         "no dispatch arm for `{variant}`: {generated}"
     );
 }
+
+#[test]
+fn the_component_test_seam_reads_clones_and_builds_loop_messages() {
+    let source = r#"app Boots
+extern crate::backend
+  fetch(query:str) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+component Pane()
+  lifetime mounted
+  state
+    body = ""
+  boot
+    run replace lane=load fetch("seed") -> loaded _
+  on loaded(next)
+    body = next
+  col
+    text body
+view
+  col
+    input "Draft" #field <-> draft
+    Pane #pane
+"#;
+    let generated = compile(source, "component-test-seam.ice").unwrap();
+    // A clone view over the declared state only — no lane bookkeeping.
+    assert!(
+        generated.contains("pub(crate) struct __IceTestState_pane {"),
+        "{generated}"
+    );
+    assert!(
+        generated.contains(
+            "fn __ice_test_state_pane(&self, scope: &str) -> ::std::option::Option<__IceTestState_pane>"
+        ),
+        "{generated}"
+    );
+    assert!(
+        generated
+            .contains("fn __ice_test_scopes_pane(&self) -> ::std::vec::Vec<::std::string::String>"),
+        "{generated}"
+    );
+    // Seeding goes through the one update loop: the constructor returns the
+    // same message the runtime would deliver, boot included.
+    assert!(
+        generated.contains("fn __ice_test_message_pane_loaded(scope: ::std::string::String, __p0: ::std::string::String) -> __BootsMessage"),
+        "{generated}"
+    );
+    assert!(
+        generated.contains(
+            "fn __ice_test_message_pane_boot(scope: ::std::string::String) -> __BootsMessage"
+        ),
+        "{generated}"
+    );
+    // Everything is test-only surface.
+    let seam = generated
+        .split_once("struct __IceTestState_pane")
+        .expect("seam present")
+        .0;
+    assert!(
+        seam.ends_with("#[allow(non_camel_case_types, dead_code)]\n#[derive(Clone)]\npub(crate) "),
+        "{seam}"
+    );
+}
