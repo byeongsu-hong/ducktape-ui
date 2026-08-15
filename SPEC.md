@@ -5688,11 +5688,26 @@ expect a11y target action focus false
 ```
 
 A boolean expectation uses normal checked app-state expressions, equality, and
-`pure` extern calls. Component-local state remains private. `~=` converts both
+`pure` extern calls. Component-local state stays out of Ice test expressions;
+a generated Rust harness reaches it through the test-only component seam
+below. `~=` converts both
 numeric operands to `f64` and uses absolute tolerance `0.001`; non-finite values
 fail. Text matching is exact over visible rendered text. `within` restricts the
 search to the selected target bounds. `exists` and `missing` are useful for IDs
 whose nodes are conditional at runtime.
+
+For a Rust-level harness in the generated crate (`__boot`/`__update`-style
+suites and pixel probes), every stateful component also generates a
+test-only seam, `#[cfg(test)]` and stable-named: `__IceTestState_<name>` (a
+`Clone` view over the DECLARED state fields only — lane bookkeeping and
+animations excluded), `__ice_test_state_<name>(&self, scope)` returning a
+clone for one instance, `__ice_test_scopes_<name>(&self)` listing live
+instance scopes, and `__ice_test_message_<name>_<handler>(scope, args…)`
+building the exact message the runtime would deliver for each local handler,
+`boot` included. Reads are clones and writes are ordinary update-loop
+messages, so the runtime privacy contract holds: the seam lifts only the
+harness's blindness, never a production path. `<name>` is the component name
+lowercased (hex-escaped when not canonical).
 
 `expect tray` reads the runtime's record of what the program last decided the
 status item should show, not the screen, so it runs on every platform and
