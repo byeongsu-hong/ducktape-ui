@@ -1,2 +1,2 @@
 E172
-an app handler in a daemon keeping mounted state cannot target a widget id: every rendered id carries its window, and the handler names none
+an app handler in a daemon keeping mounted state cannot target a widget id: every rendered id carries its window, and the handler names none — qualify the target with `window=<window-id>`

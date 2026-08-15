@@ -1629,3 +1629,59 @@ view
         "both call sites must call the shared method"
     );
 }
+
+#[test]
+fn window_qualified_targets_rebuild_the_daemon_root_scope() {
+    let source = r#"daemon QualifiedFocus
+  window console
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+component Row()
+  lifetime mounted
+  state
+    count = 0
+  on bump
+    count = count + 1
+  col
+    button "Bump" -> bump
+    text count
+on mount
+  task window open console -> opened _
+on opened(id)
+  task widget focus #field window=id
+view
+  col
+    input "Draft" #field <-> draft
+    Row #row
+"#;
+    let generated = compile(source, "window-qualified.ice").unwrap();
+    // The app handler's target starts from the SAME window-qualified root the
+    // daemon's view renders ids under — not the bare app name, and never the
+    // compile-time `Id::new` constant.
+    assert!(
+        generated.contains(r#"format!("{}/{:?}", "QualifiedFocus", "#),
+        "{generated}"
+    );
+    let qualified_focus = generated
+        .lines()
+        .find(|line| line.contains("::iced::widget::Id::from") && line.contains("field"))
+        .unwrap_or_default();
+    assert!(
+        qualified_focus.contains(r#"format!("{}/{:?}", "QualifiedFocus", "#),
+        "{qualified_focus}"
+    );
+    assert!(
+        !generated.contains(r#"::iced::widget::Id::new("QualifiedFocus/field")"#),
+        "a window-qualified target must not collapse to the bare constant"
+    );
+}

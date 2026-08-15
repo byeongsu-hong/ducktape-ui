@@ -1066,3 +1066,125 @@ view
             .contains("duplicate tray icon `assets/tray.rgba`")
     );
 }
+
+#[test]
+fn a_window_qualifier_carries_a_daemon_mounted_widget_target() {
+    let source = r#"daemon QualifiedFocus
+  window console
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+  rows:[i64] = []
+component Row(label:i64)
+  lifetime mounted
+  state
+    count = 0
+  on bump
+    count = count + 1
+  col
+    button "Bump" -> bump
+    text label
+on mount
+  task window open console -> opened _
+on opened(id)
+  task widget focus #field window=id
+view
+  col
+    input "Draft" #field <-> draft
+    for row in rows
+      Row label=row #row(row)
+"#;
+    analyze(source).unwrap();
+
+    // Dropping the qualifier is the counterexample: a bare app-name id
+    // addresses nothing in a daemon whose rendered ids carry their window.
+    let error = analyze(&source.replace(" window=id", "")).unwrap_err();
+    assert_eq!(error.code, "E172");
+    assert!(
+        error
+            .message
+            .contains("qualify the target with `window=<window-id>`"),
+        "{}",
+        error.message
+    );
+
+    // A component handler's instance scope already carries its window.
+    let error = analyze(&source.replace(
+        "    count = count + 1",
+        "    task widget focus #field window=count",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E172");
+    assert!(
+        error.message.contains("already carries its window"),
+        "{}",
+        error.message
+    );
+
+    // The qualifier is typed: anything but a window-id is refused.
+    let error = analyze(&source.replace(" window=id", " window=draft")).unwrap_err();
+    assert_eq!(error.code, "E172");
+    assert!(
+        error.message.contains("takes a window-id, found str"),
+        "{}",
+        error.message
+    );
+
+    // And it needs a target to qualify: focus-prev names no id at all.
+    let error = analyze(&source.replace(
+        "  task widget focus #field window=id",
+        "  task widget focus-prev window=id",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E052");
+    assert!(
+        error.message.contains("needs an `#id` target"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn a_window_qualifier_needs_the_daemon_it_describes() {
+    let source = r#"app PlainFocus
+  window child
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+on hunt
+  task window open child -> opened _
+on opened(id)
+  task widget focus #field window=id
+view
+  col
+    input "Draft" #field <-> draft
+    button "Hunt" -> hunt
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E172");
+    assert!(
+        error
+            .message
+            .contains("needs a daemon keeping mounted component state"),
+        "{}",
+        error.message
+    );
+}

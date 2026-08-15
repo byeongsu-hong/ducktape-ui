@@ -367,18 +367,49 @@ fn check_handler_statements(
                     | WidgetOperation::ScrollTo { target, .. }
                     | WidgetOperation::ScrollBy { target, .. } => Some(target),
                 };
+                // A component handler carries its instance scope — window
+                // included — with the route that dispatched it; an app or
+                // preset handler builds ids from the bare app name, so in a
+                // daemon keeping mounted state it must name the window whose
+                // render qualified the id (`window=<window-id>`), and the
+                // qualifier is meaningless anywhere else.
+                let qualified_target = target.or(match operation {
+                    WidgetOperation::Find {
+                        selector: WidgetSelector::Id(target),
+                        ..
+                    } => Some(target),
+                    _ => None,
+                });
+                if let Some(target) = qualified_target {
+                    let mounted_daemon =
+                        document.daemon && retains_mounted_component_state(document);
+                    match (&target.window, app_scoped, mounted_daemon) {
+                        (None, true, true) => {
+                            return Err(Error::new(
+                                "E172",
+                                span,
+                                "an app handler in a daemon keeping mounted state cannot target a widget id: every rendered id carries its window, and the handler names none — qualify the target with `window=<window-id>`",
+                            ));
+                        }
+                        (Some(_), false, _) => {
+                            return Err(Error::new(
+                                "E172",
+                                span,
+                                "a component handler's target already carries its window — drop the `window=` qualifier",
+                            ));
+                        }
+                        (Some(_), true, false) => {
+                            return Err(Error::new(
+                                "E172",
+                                span,
+                                "a `window=` qualifier needs a daemon keeping mounted component state — ids are unqualified here",
+                            ));
+                        }
+                        (None, true, false) | (None, false, _) | (Some(_), true, true) => {}
+                    }
+                }
                 if let Some(target) = target {
                     check_widget_target(target, &env, document, operation_ids, span)?;
-                    // A component handler carries its instance scope — window
-                    // included — with the route that dispatched it; an app or
-                    // preset handler builds ids from the bare app name.
-                    if app_scoped && document.daemon && retains_mounted_component_state(document) {
-                        return Err(Error::new(
-                            "E172",
-                            span,
-                            "an app handler in a daemon keeping mounted state cannot target a widget id: every rendered id carries its window, and the handler names none",
-                        ));
-                    }
                 }
                 if let WidgetOperation::Find { selector, .. } = operation {
                     check_widget_selector(selector, &env, document, operation_ids, span)?;

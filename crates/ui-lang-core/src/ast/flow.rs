@@ -426,6 +426,11 @@ pub enum WidgetOperation {
 #[derive(Clone, Debug)]
 pub struct WidgetTarget {
     pub segments: Vec<Id>,
+    /// The daemon window whose render qualifies the id — the statement's
+    /// `window=<window-id>` marker. An app handler in a daemon keeping
+    /// mounted component state must name one; everywhere else the qualifier
+    /// is rejected.
+    pub window: Option<Expr>,
 }
 
 #[derive(Clone, Debug)]

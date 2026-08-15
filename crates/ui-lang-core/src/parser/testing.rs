@@ -297,7 +297,10 @@ fn parse_test_target_decl(
     record_test_target_alias_references(descendant_source, line, scope, targets)?;
     let mut segments = target.target.segments.clone();
     segments.extend(descendant.segments);
-    Ok(WidgetTarget { segments })
+    Ok(WidgetTarget {
+        segments,
+        window: None,
+    })
 }
 
 fn parse_test_step(
