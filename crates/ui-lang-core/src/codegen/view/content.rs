@@ -387,6 +387,42 @@ pub(in crate::codegen) fn render_content(
                 &render_scope,
                 component_slots.as_ref(),
             )?;
+            // A boot component's first sighting builds its boot message HERE,
+            // the one place the instance's prop values exist as code, and
+            // queues it for the root wrapper to publish next update pass.
+            let boot_push = if call.storage == ComponentStorage::Mounted
+                && crate::codegen::component_has_boot(document, component)
+            {
+                let handler = component
+                    .handlers
+                    .iter()
+                    .map(|id| document.handler(*id))
+                    .find(|handler| handler.name == "boot")
+                    .expect("component_has_boot saw a boot handler");
+                let field = component_state_field(name);
+                let variant = component_handler_variant(name, "boot");
+                let args = handler
+                    .params
+                    .iter()
+                    .map(|param| {
+                        let binding = component_env.get(&param.name).ok_or_else(|| {
+                            document.invariant_at_origin(
+                                view.origin,
+                                format!(
+                                    "boot param `{}` is absent from the call environment",
+                                    param.name
+                                ),
+                            )
+                        })?;
+                        Ok(format!(", ({}).clone()", binding.code))
+                    })
+                    .collect::<Result<String, Error>>()?;
+                format!(
+                    "if self.{field}.mount_boot({scope_binding}.clone()) {{ self.__ice_boot_queue.borrow_mut().push({message}::{variant}({scope_binding}.clone(){args})); }} "
+                )
+            } else {
+                String::new()
+            };
             let mount = (call.storage == ComponentStorage::Mounted).then(|| {
                 let field = component_state_field(name);
                 // An animation's identity is the instant it started, so an
@@ -403,12 +439,11 @@ pub(in crate::codegen) fn render_content(
                 } else {
                     String::new()
                 };
-                let mount_fn = if crate::codegen::component_has_boot(document, component) {
-                    "mount_boot"
+                if boot_push.is_empty() {
+                    format!("self.{field}.mount({scope_binding}.clone()); {materialize}")
                 } else {
-                    "mount"
-                };
-                format!("self.{field}.{mount_fn}({scope_binding}.clone()); {materialize}")
+                    format!("{boot_push}{materialize}")
+                }
             });
             let body = format!(
                 "{}let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content",

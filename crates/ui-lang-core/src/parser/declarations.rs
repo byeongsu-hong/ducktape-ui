@@ -783,10 +783,24 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
             // The section IS a local handler named `boot`: the runtime fires
             // it once per materialized instance scope, and every local
             // restriction (statement allow-list, lanes, no stream every)
-            // applies through the ordinary component-handler path.
+            // applies through the ordinary component-handler path. Its
+            // params are the component's ordinary cloneable props — the
+            // sighting render captures their values into the boot message,
+            // which is the only way a fire-on-materialize body can reach
+            // the endpoint and identity its instance was mounted with.
             handlers.push(Handler {
                 name: "boot".into(),
-                params: Vec::new(),
+                params: params
+                    .iter()
+                    .filter(|param| {
+                        !param.bind
+                            && crate::check::declarations::component_value_is_cloneable(&param.ty)
+                    })
+                    .map(|param| HandlerParam {
+                        name: param.name.clone(),
+                        ty: param.ty.clone(),
+                    })
+                    .collect(),
                 statements,
                 span: Span::line(child.number),
             });

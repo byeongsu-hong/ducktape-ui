@@ -302,21 +302,14 @@ pub(in crate::codegen) fn component_has_boot(
         .any(|id| program.handler(*id).name == "boot")
 }
 
-/// The mounted components whose `boot` publishes on first sighting, as
-/// (state field, boot message variant) pairs.
-fn boot_component_dispatches(program: &LoweredProgram) -> Vec<(String, String)> {
+/// Whether any component's first sighting queues a `boot` message — the
+/// programs that carry the render-side boot queue and root wrapper.
+pub(in crate::codegen) fn program_has_boot(program: &LoweredProgram) -> bool {
     program
         .components()
         .iter()
         .filter(|component| component.storage == ComponentStorage::Mounted)
-        .filter(|component| component_has_boot(program, component))
-        .map(|component| {
-            (
-                component_state_field(&component.name),
-                component_handler_variant(&component.name, "boot"),
-            )
-        })
-        .collect()
+        .any(|component| component_has_boot(program, component))
 }
 
 /// Whether the app keeps component state that outlives a single render pass.
@@ -860,6 +853,16 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         "pub(crate) __ice_accessibility: ::ui_lang_runtime::Bridge<{message}>,"
     )
     .unwrap();
+    if program_has_boot(program) {
+        // First-sighted component instances queue their boot message here
+        // during `view`; the root wrapper publishes the drain on the next
+        // widget-update pass.
+        writeln!(
+            out,
+            "pub(crate) __ice_boot_queue: ::std::cell::RefCell<::std::vec::Vec<{message}>>,"
+        )
+        .unwrap();
+    }
     if program.settings().kind == ProgramKind::Application {
         writeln!(
             out,

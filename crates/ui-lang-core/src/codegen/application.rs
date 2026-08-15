@@ -336,6 +336,13 @@ pub(in crate::codegen) fn generate_boot(
         )
         .unwrap();
     }
+    if crate::codegen::program_has_boot(program) {
+        writeln!(
+            out,
+            "__ice_boot_queue: ::std::cell::RefCell::new(::std::vec::Vec::new()),"
+        )
+        .unwrap();
+    }
     for component in program
         .components()
         .iter()

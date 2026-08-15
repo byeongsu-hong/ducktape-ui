@@ -4000,11 +4000,14 @@ lifetime.
 Daemon roots include their window ID, so rendering one window never prunes
 another window's scopes.
 
-A `mounted` component may declare one `boot` section: a parameterless local
-handler the runtime fires once per materialized instance scope, the first
-time a render sights the instance. Its body accepts exactly the component
-statement forms, so a pane loads itself through its own delivery lane and an
-instance keyed by identity reloads when the identity changes. The booted mark
+A `mounted` component may declare one `boot` section: a local handler the
+runtime fires once per materialized instance scope, the first time a render
+sights the instance. Its body accepts exactly the component statement forms,
+and it may read the component's ordinary cloneable params — the sighting
+render captures their values into the queued boot message, so a pane loads
+itself against the endpoint and identity its instance was mounted with, and
+an instance keyed by identity reloads with fresh values when the identity
+changes. `bind` params and non-cloneable values are not captured. The booted mark
 is pruned with the instance, so a scope that leaves the tree and comes back
 boots again; `retained` components reject `boot` (`E103`) because a retained
 scope is never announced. Delivery rides the render: the view drains this
