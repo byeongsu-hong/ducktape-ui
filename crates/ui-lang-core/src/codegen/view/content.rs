@@ -403,7 +403,12 @@ pub(in crate::codegen) fn render_content(
                 } else {
                     String::new()
                 };
-                format!("self.{field}.mount({scope_binding}.clone()); {materialize}")
+                let mount_fn = if crate::codegen::component_has_boot(document, component) {
+                    "mount_boot"
+                } else {
+                    "mount"
+                };
+                format!("self.{field}.{mount_fn}({scope_binding}.clone()); {materialize}")
             });
             let body = format!(
                 "{}let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content",

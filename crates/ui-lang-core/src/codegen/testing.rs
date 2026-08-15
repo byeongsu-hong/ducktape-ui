@@ -81,16 +81,25 @@ pub(in crate::codegen) fn generate_test_mounts(
         let palette = format!(
             "let __ice_palette = self.__palette({callback_value}); let __ice_app_theme = Self::__app_theme(__ice_palette);"
         );
+        let (boot_drain, _) =
+            crate::codegen::statement::view_fn::boot_dispatch_code(program, message);
+        let boot_wrap = if boot_drain.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "let __ice_content: __IceElement<'_, {message}> = ::ui_lang_runtime::boot_dispatch(__ice_content, __ice_boots);"
+            )
+        };
         if daemon {
             writeln!(
                 out,
-                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {scope_prelude} let __ice_content: __IceElement<'_, {message}> = {root}; {scope_epilogue} __ice_content }}"
+                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {scope_prelude} let __ice_content: __IceElement<'_, {message}> = {root}; {scope_epilogue} {boot_drain} {boot_wrap} __ice_content }}"
             )
             .unwrap();
         } else {
             writeln!(
                 out,
-                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {scope_prelude} let __ice_content: __IceElement<'_, {message}> = {root}; {scope_epilogue} ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into() }}"
+                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {scope_prelude} let __ice_content: __IceElement<'_, {message}> = {root}; {scope_epilogue} {boot_drain} {boot_wrap} ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into() }}"
             )
             .unwrap();
         }

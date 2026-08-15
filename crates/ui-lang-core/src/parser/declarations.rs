@@ -692,6 +692,7 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
     let mut roots = Vec::new();
     let mut state_block = false;
     let mut emits_block = false;
+    let mut boot_block = false;
     let mut lifetime = None;
     for child in &line.children {
         if child.text == "state" {
@@ -765,7 +766,39 @@ pub(in crate::parser) fn parse_component(header: &str, line: &Line) -> Result<Co
                 child,
                 "component lifetime must be `retained` or `mounted`",
             ));
+        } else if child.text == "boot" {
+            if boot_block {
+                return Err(error("E040", child, "component has duplicate boot blocks"));
+            }
+            if child.children.is_empty() {
+                return Err(error("E040", child, "component boot cannot be empty"));
+            }
+            boot_block = true;
+            child.record_symbol(SymbolKind::Handler, "boot", true, "boot");
+            let statements = child
+                .children
+                .iter()
+                .map(parse_statement)
+                .collect::<Result<Vec<_>, _>>()?;
+            // The section IS a local handler named `boot`: the runtime fires
+            // it once per materialized instance scope, and every local
+            // restriction (statement allow-list, lanes, no stream every)
+            // applies through the ordinary component-handler path.
+            handlers.push(Handler {
+                name: "boot".into(),
+                params: Vec::new(),
+                statements,
+                span: Span::line(child.number),
+            });
         } else if let Some(header) = child.text.strip_prefix("on ") {
+            let named_boot = header.trim() == "boot" || header.trim().starts_with("boot(");
+            if named_boot {
+                return Err(error(
+                    "E040",
+                    child,
+                    "`boot` is a section, not an event — declare `boot` with its statements",
+                ));
+            }
             handlers.push(parse_handler(header, child)?);
         } else {
             roots.push(child);

@@ -1685,3 +1685,59 @@ view
         "a window-qualified target must not collapse to the bare constant"
     );
 }
+
+#[test]
+fn component_boot_publishes_on_first_sighting() {
+    let source = r#"app Boots
+extern crate::backend
+  fetch(query:str) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  draft = ""
+component Pane()
+  lifetime mounted
+  state
+    body = ""
+  boot
+    run replace lane=load fetch("seed") -> loaded _
+  on loaded(next)
+    body = next
+  col
+    text body
+view
+  col
+    input "Draft" #field <-> draft
+    Pane #pane
+"#;
+    let generated = compile(source, "component-boot.ice").unwrap();
+    // The render queues the first sighting...
+    assert!(generated.contains(".mount_boot("), "{generated}");
+    // ...the view drains it into the component's boot message...
+    let variant = generated
+        .split_once("drain_boots().into_iter().map(__BootsMessage::")
+        .expect("the view drains the boot queue")
+        .1
+        .split_once(')')
+        .expect("the drain maps one variant")
+        .0
+        .to_owned();
+    // ...and the root wrapper publishes it on the next update pass.
+    assert!(
+        generated.contains("::ui_lang_runtime::boot_dispatch(__ice_root, __ice_boots)"),
+        "{generated}"
+    );
+    // The boot arm dispatches like any local handler, on the instance scope.
+    assert!(
+        generated.contains(&format!("{variant}(__scope")),
+        "no dispatch arm for `{variant}`: {generated}"
+    );
+}

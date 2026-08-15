@@ -96,6 +96,8 @@ pub(in crate::check) fn reachable_handlers(
         let mut routes = Vec::new();
         collect_view_routes(&component.root, &mut routes);
         let mut queue: VecDeque<&str> = routes.iter().map(|route| route.handler.as_str()).collect();
+        // The runtime dispatches `boot` on first sighting; no view routes it.
+        queue.push_back("boot");
         while let Some(name) = queue.pop_front() {
             if !names.contains(name) || !reachable.insert(name.to_owned()) {
                 continue;

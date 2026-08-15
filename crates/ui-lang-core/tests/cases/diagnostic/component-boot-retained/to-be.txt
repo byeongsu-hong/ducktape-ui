@@ -1,0 +1,2 @@
+E103
+component `boot` needs `lifetime mounted`, so it fires when the instance appears and can fire again after the instance leaves

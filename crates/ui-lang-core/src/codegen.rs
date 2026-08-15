@@ -291,6 +291,34 @@ fn mounted_component_fields(program: &LoweredProgram) -> Vec<String> {
         .collect()
 }
 
+/// Whether this component's first sighting queues a `boot` message.
+pub(in crate::codegen) fn component_has_boot(
+    program: &LoweredProgram,
+    component: &ComponentContract,
+) -> bool {
+    component
+        .handlers
+        .iter()
+        .any(|id| program.handler(*id).name == "boot")
+}
+
+/// The mounted components whose `boot` publishes on first sighting, as
+/// (state field, boot message variant) pairs.
+fn boot_component_dispatches(program: &LoweredProgram) -> Vec<(String, String)> {
+    program
+        .components()
+        .iter()
+        .filter(|component| component.storage == ComponentStorage::Mounted)
+        .filter(|component| component_has_boot(program, component))
+        .map(|component| {
+            (
+                component_state_field(&component.name),
+                component_handler_variant(&component.name, "boot"),
+            )
+        })
+        .collect()
+}
+
 /// Whether the app keeps component state that outlives a single render pass.
 /// Such a view has to name its root scope at runtime, because the storage is
 /// keyed by instance scope and every entry hangs off that root.

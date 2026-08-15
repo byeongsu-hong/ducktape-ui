@@ -541,11 +541,12 @@ component_decl = "component" component_name "(" component_param_list? ")"
 component_param_list = component_param ("," component_param)*
 component_param = ("bind")? name ":" type ("=" expr)?
 component_member = component_lifetime | component_state | component_events
-                 | component_handler | node
+                 | component_boot | component_handler | node
 component_lifetime = "lifetime" ("retained" | "mounted")
 component_state = "state" INDENT state_entry+
 component_events = "emits" INDENT component_event+
 component_event = name ("(" type_list? ")")?
+component_boot = "boot" INDENT component_statement+
 component_handler = "on" name ("(" name_list? ")")?
                     INDENT component_statement*
 component_statement = "let" name "=" expr | name "=" expr | "return if" expr
@@ -3997,10 +3998,24 @@ prune boundary, not when `view` first omits the component. A retained component
 instead keeps its stream lane alive while absent, as required by retained
 lifetime.
 Daemon roots include their window ID, so rendering one window never prunes
-another window's scopes. There is no `on unmount` hook or other arbitrary
-lifecycle effect; handlers remain the only place that starts work. Components
-without local state or handlers remain compile-time view expansion rather than
-runtime component objects.
+another window's scopes.
+
+A `mounted` component may declare one `boot` section: a parameterless local
+handler the runtime fires once per materialized instance scope, the first
+time a render sights the instance. Its body accepts exactly the component
+statement forms, so a pane loads itself through its own delivery lane and an
+instance keyed by identity reloads when the identity changes. The booted mark
+is pruned with the instance, so a scope that leaves the tree and comes back
+boots again; `retained` components reject `boot` (`E103`) because a retained
+scope is never announced. Delivery rides the render: the view drains this
+pass's first-sighted scopes and the root publishes their boot messages on the
+next widget-update pass, through the same channel measured viewports already
+report on — so a boot fires after its instance's first frame, never during
+it. `boot` is a section, not an event: `on boot` is rejected, and no view
+route can target it. Beyond `boot` there is no `on unmount` hook or other
+arbitrary lifecycle effect; handlers remain the only place that starts work.
+Components without local state, handlers, or `boot` remain compile-time view
+expansion rather than runtime component objects.
 
 A component may declare required or optional slots. Bare `slot` is the conventional
 `children` slot and receives one structured child tree at its call site:
@@ -6056,8 +6071,9 @@ state is analyzed only when the component is reachable. `cargo ice` combines
 all discovered app roots before reporting `W001`, so a shared component
 definition used by any root is not reported as unreachable merely because
 another root imports but does not mount it. `W005` starts at the app view,
-subscriptions, preset boot statements, the implicit `mount` handler, test
-mounts, and test dispatches, then follows every routed effect. Component-local
+subscriptions, preset boot statements, component boot sections, the implicit
+`mount` handler, test mounts, and test dispatches, then follows every routed
+effect. Component-local
 handlers use their reachable component view as the root. State reads and writes
 inside unreachable handlers do not suppress `W002` or `W003`. An init-only
 `image` state read without ever being written does not report `W003`: storing

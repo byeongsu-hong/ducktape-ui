@@ -803,7 +803,7 @@ fn construct_schema(item: &Completion) -> Value {
             child_shape(
                 1,
                 None,
-                "component-lifetime|component-state|component-events|component-handler|view-root",
+                "component-lifetime|component-state|component-events|component-boot|component-handler|view-root",
             ),
             no_binding(),
             json!({ "requiredWhen": "a default output type is declared", "payload": "default component output" }),

@@ -108,6 +108,22 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
                 check(payload, &event.span)?;
             }
         }
+        if let Some(boot) = component
+            .handlers
+            .iter()
+            .find(|handler| handler.name == "boot")
+        {
+            // Boot fires once per materialized instance, and only `mounted`
+            // storage announces an instance the first time it renders and
+            // drops it — with its booted mark — when it leaves.
+            if component.lifetime != ComponentLifetime::Mounted {
+                return Err(Error::new(
+                    "E103",
+                    &boot.span,
+                    "component `boot` needs `lifetime mounted`, so it fires when the instance appears and can fire again after the instance leaves",
+                ));
+            }
+        }
         for state in &component.states {
             if matches!(state.ty, Type::Animation(_)) {
                 // An animation is per-instance motion, so its storage has to be
