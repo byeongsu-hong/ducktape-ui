@@ -291,6 +291,30 @@ fn mounted_component_fields(program: &LoweredProgram) -> Vec<String> {
         .collect()
 }
 
+/// The readable identity a component's test-seam items carry: PascalCase
+/// snake-cased (`ForgeCodeBrowser` -> `forge_code_browser`), hex-escaped
+/// only when the name is not plain ASCII alphanumerics. Injective over
+/// legal component names, which cannot contain underscores.
+fn component_test_suffix(name: &str) -> String {
+    let plain = name.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        && name.starts_with(|first: char| first.is_ascii_uppercase());
+    if !plain {
+        return format!("0{}", rust_identifier_hex(name));
+    }
+    let mut out = String::new();
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Whether this component's first sighting queues a `boot` message.
 pub(in crate::codegen) fn component_has_boot(
     program: &LoweredProgram,
@@ -302,21 +326,14 @@ pub(in crate::codegen) fn component_has_boot(
         .any(|id| program.handler(*id).name == "boot")
 }
 
-/// The mounted components whose `boot` publishes on first sighting, as
-/// (state field, boot message variant) pairs.
-fn boot_component_dispatches(program: &LoweredProgram) -> Vec<(String, String)> {
+/// Whether any component's first sighting queues a `boot` message — the
+/// programs that carry the render-side boot queue and root wrapper.
+pub(in crate::codegen) fn program_has_boot(program: &LoweredProgram) -> bool {
     program
         .components()
         .iter()
         .filter(|component| component.storage == ComponentStorage::Mounted)
-        .filter(|component| component_has_boot(program, component))
-        .map(|component| {
-            (
-                component_state_field(&component.name),
-                component_handler_variant(&component.name, "boot"),
-            )
-        })
-        .collect()
+        .any(|component| component_has_boot(program, component))
 }
 
 /// Whether the app keeps component state that outlives a single render pass.
@@ -782,7 +799,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         .filter(|component| component.storage != ComponentStorage::Stateless)
     {
         let field = component_state_field(&component.name);
-        let suffix = field.trim_start_matches("__ice_component_").to_owned();
+        let suffix = component_test_suffix(&component.name);
         let ty = component_state_type(&component.name);
         let view_ty = format!("__IceTestState_{suffix}");
         let viewed = component
@@ -821,9 +838,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         };
         let keys = match component.storage {
             ComponentStorage::Retained => format!("self.{field}.keys().cloned().collect()"),
-            ComponentStorage::Mounted => {
-                format!("self.{field}.values().keys().cloned().collect()")
-            }
+            ComponentStorage::Mounted => format!("self.{field}.scopes()"),
             ComponentStorage::Stateless => unreachable!(),
         };
         writeln!(
@@ -860,6 +875,16 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         "pub(crate) __ice_accessibility: ::ui_lang_runtime::Bridge<{message}>,"
     )
     .unwrap();
+    if program_has_boot(program) {
+        // First-sighted component instances queue their boot message here
+        // during `view`; the root wrapper publishes the drain on the next
+        // widget-update pass.
+        writeln!(
+            out,
+            "pub(crate) __ice_boot_queue: ::std::cell::RefCell<::std::vec::Vec<{message}>>,"
+        )
+        .unwrap();
+    }
     if program.settings().kind == ProgramKind::Application {
         writeln!(
             out,

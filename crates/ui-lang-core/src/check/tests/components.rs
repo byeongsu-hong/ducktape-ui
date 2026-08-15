@@ -2040,12 +2040,12 @@ palette app for AppTheme
   danger #ff0000
 state
   draft = ""
-component Pane()
+component Pane(seed:str)
   lifetime mounted
   state
     body = ""
   boot
-    run replace lane=load fetch("seed") -> loaded _
+    run replace lane=load fetch(seed) -> loaded _
   on loaded(next)
     body = next
   col
@@ -2053,7 +2053,7 @@ component Pane()
 view
   col
     input "Draft" #field <-> draft
-    Pane #pane
+    Pane seed=draft #pane
 "#;
     analyze(source).unwrap();
 
@@ -2085,7 +2085,7 @@ view
     // Boot bodies are ordinary local-handler bodies: the statement
     // allow-list still binds.
     let error = analyze(&source.replace(
-        "    run replace lane=load fetch(\"seed\") -> loaded _",
+        "    run replace lane=load fetch(seed) -> loaded _",
         "    task system theme -> loaded _",
     ))
     .unwrap_err();

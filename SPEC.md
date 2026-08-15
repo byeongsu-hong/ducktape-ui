@@ -4000,11 +4000,14 @@ lifetime.
 Daemon roots include their window ID, so rendering one window never prunes
 another window's scopes.
 
-A `mounted` component may declare one `boot` section: a parameterless local
-handler the runtime fires once per materialized instance scope, the first
-time a render sights the instance. Its body accepts exactly the component
-statement forms, so a pane loads itself through its own delivery lane and an
-instance keyed by identity reloads when the identity changes. The booted mark
+A `mounted` component may declare one `boot` section: a local handler the
+runtime fires once per materialized instance scope, the first time a render
+sights the instance. Its body accepts exactly the component statement forms,
+and it may read the component's ordinary cloneable params — the sighting
+render captures their values into the queued boot message, so a pane loads
+itself against the endpoint and identity its instance was mounted with, and
+an instance keyed by identity reloads with fresh values when the identity
+changes. `bind` params and non-cloneable values are not captured. The booted mark
 is pruned with the instance, so a scope that leaves the tree and comes back
 boots again; `retained` components reject `boot` (`E103`) because a retained
 scope is never announced. Delivery rides the render: the view drains this
@@ -5707,7 +5710,8 @@ building the exact message the runtime would deliver for each local handler,
 `boot` included. Reads are clones and writes are ordinary update-loop
 messages, so the runtime privacy contract holds: the seam lifts only the
 harness's blindness, never a production path. `<name>` is the component name
-lowercased (hex-escaped when not canonical).
+snake-cased (`ForgeCodeBrowser` -> `forge_code_browser`; hex-escaped only
+for names outside plain ASCII alphanumerics).
 
 `expect tray` reads the runtime's record of what the program last decided the
 status item should show, not the screen, so it runs on every platform and

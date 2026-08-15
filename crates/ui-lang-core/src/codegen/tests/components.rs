@@ -1703,12 +1703,12 @@ palette app for AppTheme
   danger #ff0000
 state
   draft = ""
-component Pane()
+component Pane(seed:str)
   lifetime mounted
   state
     body = ""
   boot
-    run replace lane=load fetch("seed") -> loaded _
+    run replace lane=load fetch(seed) -> loaded _
   on loaded(next)
     body = next
   col
@@ -1716,26 +1716,35 @@ component Pane()
 view
   col
     input "Draft" #field <-> draft
-    Pane #pane
+    Pane seed=draft #pane
 "#;
     let generated = compile(source, "component-boot.ice").unwrap();
-    // The render queues the first sighting...
-    assert!(generated.contains(".mount_boot("), "{generated}");
-    // ...the view drains it into the component's boot message...
-    let variant = generated
-        .split_once("drain_boots().into_iter().map(__BootsMessage::")
-        .expect("the view drains the boot queue")
+    // The first sighting queues the boot message, capturing the prop value
+    // the instance was mounted with...
+    let queued = generated
+        .split_once(".mount_boot(")
+        .expect("the render announces the sighting")
+        .1;
+    let variant = queued
+        .split_once("self.__ice_boot_queue.borrow_mut().push(__BootsMessage::")
+        .expect("the first sighting queues the boot message")
         .1
-        .split_once(')')
-        .expect("the drain maps one variant")
+        .split_once('(')
+        .expect("the queued variant carries the scope and the prop")
         .0
         .to_owned();
-    // ...and the root wrapper publishes it on the next update pass.
+    // ...the view drains the queue and the root wrapper publishes it on the
+    // next update pass.
+    assert!(
+        generated.contains("self.__ice_boot_queue.borrow_mut().drain(..).collect()"),
+        "{generated}"
+    );
     assert!(
         generated.contains("::ui_lang_runtime::boot_dispatch(__ice_root, __ice_boots)"),
         "{generated}"
     );
-    // The boot arm dispatches like any local handler, on the instance scope.
+    // The boot arm dispatches like any local handler, on the instance scope
+    // with the captured prop as its parameter.
     assert!(
         generated.contains(&format!("{variant}(__scope")),
         "no dispatch arm for `{variant}`: {generated}"
@@ -1759,7 +1768,7 @@ palette app for AppTheme
   danger #ff0000
 state
   draft = ""
-component Pane()
+component SearchPane()
   lifetime mounted
   state
     body = ""
@@ -1772,40 +1781,41 @@ component Pane()
 view
   col
     input "Draft" #field <-> draft
-    Pane #pane
+    SearchPane #pane
 "#;
     let generated = compile(source, "component-test-seam.ice").unwrap();
     // A clone view over the declared state only — no lane bookkeeping.
     assert!(
-        generated.contains("pub(crate) struct __IceTestState_pane {"),
+        generated.contains("pub(crate) struct __IceTestState_search_pane {"),
         "{generated}"
     );
     assert!(
         generated.contains(
-            "fn __ice_test_state_pane(&self, scope: &str) -> ::std::option::Option<__IceTestState_pane>"
+            "fn __ice_test_state_search_pane(&self, scope: &str) -> ::std::option::Option<__IceTestState_search_pane>"
         ),
         "{generated}"
     );
     assert!(
-        generated
-            .contains("fn __ice_test_scopes_pane(&self) -> ::std::vec::Vec<::std::string::String>"),
+        generated.contains(
+            "fn __ice_test_scopes_search_pane(&self) -> ::std::vec::Vec<::std::string::String>"
+        ),
         "{generated}"
     );
     // Seeding goes through the one update loop: the constructor returns the
     // same message the runtime would deliver, boot included.
     assert!(
-        generated.contains("fn __ice_test_message_pane_loaded(scope: ::std::string::String, __p0: ::std::string::String) -> __BootsMessage"),
+        generated.contains("fn __ice_test_message_search_pane_loaded(scope: ::std::string::String, __p0: ::std::string::String) -> __BootsMessage"),
         "{generated}"
     );
     assert!(
         generated.contains(
-            "fn __ice_test_message_pane_boot(scope: ::std::string::String) -> __BootsMessage"
+            "fn __ice_test_message_search_pane_boot(scope: ::std::string::String) -> __BootsMessage"
         ),
         "{generated}"
     );
     // Everything is test-only surface.
     let seam = generated
-        .split_once("struct __IceTestState_pane")
+        .split_once("struct __IceTestState_search_pane")
         .expect("seam present")
         .0;
     assert!(

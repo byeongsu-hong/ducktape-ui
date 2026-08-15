@@ -543,6 +543,12 @@ fn check(
             let key = component_handler_key(&component.name, &handler.name);
             let inferred = signatures.get(&key).expect("component handler signature");
             for (param, inferred) in handler.params.iter_mut().zip(inferred) {
+                // A synthesized `boot` param carries its prop's concrete
+                // type; no route targets boot, so there is nothing to infer
+                // from — a pre-typed param is authoritative.
+                if param.ty != Type::Unknown {
+                    continue;
+                }
                 param.ty = inferred.clone().ok_or_else(|| {
                     Error::new(
                         "E102",
@@ -1284,7 +1290,7 @@ fn delivery_statement_name(kind: EffectKind, mode: DeliveryMode) -> &'static str
 mod application;
 mod canvas;
 mod cycles;
-mod declarations;
+pub(crate) mod declarations;
 mod expr;
 mod facts;
 mod handler;

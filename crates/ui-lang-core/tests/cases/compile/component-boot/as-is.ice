@@ -18,12 +18,12 @@ palette app for AppTheme
 state
   draft = ""
 
-component Pane()
+component Pane(seed:str)
   lifetime mounted
   state
     body = ""
   boot
-    run replace lane=load fetch("seed") -> loaded _
+    run replace lane=load fetch(seed) -> loaded _
   on loaded(next)
     body = next
   col
@@ -32,4 +32,4 @@ component Pane()
 view
   col
     input "Draft" #field <-> draft
-    Pane #pane
+    Pane seed=draft #pane

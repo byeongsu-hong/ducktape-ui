@@ -111,8 +111,6 @@ pub struct MountedComponentState<T> {
     /// Scopes whose `boot` already fired; pruned with their values, so an
     /// instance that leaves and comes back boots again.
     booted: RefCell<HashSet<String>>,
-    /// First-sighted scopes waiting for their `boot` message to publish.
-    pending_boots: RefCell<Vec<String>>,
 }
 
 impl<T> Default for MountedComponentState<T> {
@@ -123,7 +121,6 @@ impl<T> Default for MountedComponentState<T> {
             pending: RefCell::new(None),
             next_generation: Cell::new(0),
             booted: RefCell::new(HashSet::new()),
-            pending_boots: RefCell::new(Vec::new()),
         }
     }
 }
@@ -142,19 +139,15 @@ impl<T> MountedComponentState<T> {
         self.active.borrow_mut().insert(scope);
     }
 
-    /// Marks a component scope as present, queueing its `boot` the first
-    /// time this instance is sighted. The mark is pruned with the instance,
-    /// so a scope that leaves the tree and comes back boots again.
-    pub fn mount_boot(&self, scope: String) {
-        if self.booted.borrow_mut().insert(scope.clone()) {
-            self.pending_boots.borrow_mut().push(scope.clone());
-        }
+    /// Marks a component scope as present, answering whether this is the
+    /// instance's FIRST sighting — the caller queues the boot message it
+    /// builds from the render site's prop values. The mark is pruned with
+    /// the instance, so a scope that leaves the tree and comes back boots
+    /// again.
+    pub fn mount_boot(&self, scope: String) -> bool {
+        let first = self.booted.borrow_mut().insert(scope.clone());
         self.active.borrow_mut().insert(scope);
-    }
-
-    /// Takes the scopes whose `boot` has not been published yet.
-    pub fn drain_boots(&self) -> Vec<String> {
-        std::mem::take(&mut *self.pending_boots.borrow_mut())
+        first
     }
 
     /// Records that `root` finished rendering. Scopes under it that never
@@ -172,6 +165,22 @@ impl<T> MountedComponentState<T> {
         };
         self.values.borrow_mut().retain(|scope, _| survives(scope));
         self.booted.borrow_mut().retain(|scope| survives(scope));
+    }
+
+    /// Every live instance scope: the ones sighted by the current render
+    /// pass plus the ones holding materialized state. A freshly mounted
+    /// instance has no `values` entry until its first delivered event, so
+    /// a harness that just rendered must see it HERE.
+    pub fn scopes(&self) -> Vec<String> {
+        let values = self.values.borrow();
+        let active = self.active.borrow();
+        let mut scopes: Vec<String> = values.keys().cloned().collect();
+        for scope in active.iter() {
+            if !values.contains_key(scope) {
+                scopes.push(scope.clone());
+            }
+        }
+        scopes
     }
 
     /// Borrows all mounted scope values.
@@ -2278,30 +2287,29 @@ mod tests {
     }
 
     #[test]
-    fn mount_boot_queues_once_per_instance_and_reboots_after_prune() {
+    fn mount_boot_answers_first_sighting_and_reboots_after_prune() {
         let state: MountedComponentState<i32> = MountedComponentState::default();
 
         state.begin_render();
-        state.mount_boot("App/Id(1)/pane".to_owned());
-        state.mount_boot("App/Id(1)/pane".to_owned());
+        assert!(state.mount_boot("App/Id(1)/pane".to_owned()));
+        assert!(
+            !state.mount_boot("App/Id(1)/pane".to_owned()),
+            "one sighting per materialized instance"
+        );
         state.finish_render("App/Id(1)");
-        assert_eq!(state.drain_boots(), vec!["App/Id(1)/pane".to_owned()]);
-        assert!(state.drain_boots().is_empty(), "a drain empties the queue");
 
-        // Present again next pass: already booted, nothing queued.
+        // Present again next pass: already booted.
         state.begin_render();
-        state.mount_boot("App/Id(1)/pane".to_owned());
+        assert!(!state.mount_boot("App/Id(1)/pane".to_owned()));
         state.finish_render("App/Id(1)");
-        assert!(state.drain_boots().is_empty());
 
         // Absent for a pass: the prune drops the booted mark with the
         // instance, so coming back boots again.
         state.begin_render();
         state.finish_render("App/Id(1)");
         state.begin_render();
-        state.mount_boot("App/Id(1)/pane".to_owned());
+        assert!(state.mount_boot("App/Id(1)/pane".to_owned()));
         state.finish_render("App/Id(1)");
-        assert_eq!(state.drain_boots(), vec!["App/Id(1)/pane".to_owned()]);
     }
 
     #[test]

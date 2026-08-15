@@ -152,7 +152,7 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
     Ok(())
 }
 
-pub(in crate::check) fn component_value_is_cloneable(ty: &Type) -> bool {
+pub(crate) fn component_value_is_cloneable(ty: &Type) -> bool {
     match ty {
         Type::Animation(_)
         | Type::Combo(_)

@@ -250,21 +250,12 @@ pub(in crate::codegen) fn boot_dispatch_code(
     program: &LoweredProgram,
     message: &str,
 ) -> (String, String) {
-    let boots = crate::codegen::boot_component_dispatches(program);
-    if boots.is_empty() {
+    if !crate::codegen::program_has_boot(program) {
         return (String::new(), String::new());
     }
-    let drains = boots
-        .iter()
-        .map(|(field, variant)| {
-            format!(
-                "__ice_boots.extend(self.{field}.drain_boots().into_iter().map({message}::{variant}));"
-            )
-        })
-        .collect::<String>();
     (
         format!(
-            "let mut __ice_boots: ::std::vec::Vec<{message}> = ::std::vec::Vec::new(); {drains}"
+            "let __ice_boots: ::std::vec::Vec<{message}> = self.__ice_boot_queue.borrow_mut().drain(..).collect();"
         ),
         format!(
             "let __ice_root: __IceElement<'_, {message}> = ::ui_lang_runtime::boot_dispatch(__ice_root, __ice_boots);"
