@@ -838,9 +838,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         };
         let keys = match component.storage {
             ComponentStorage::Retained => format!("self.{field}.keys().cloned().collect()"),
-            ComponentStorage::Mounted => {
-                format!("self.{field}.values().keys().cloned().collect()")
-            }
+            ComponentStorage::Mounted => format!("self.{field}.scopes()"),
             ComponentStorage::Stateless => unreachable!(),
         };
         writeln!(

@@ -167,6 +167,22 @@ impl<T> MountedComponentState<T> {
         self.booted.borrow_mut().retain(|scope| survives(scope));
     }
 
+    /// Every live instance scope: the ones sighted by the current render
+    /// pass plus the ones holding materialized state. A freshly mounted
+    /// instance has no `values` entry until its first delivered event, so
+    /// a harness that just rendered must see it HERE.
+    pub fn scopes(&self) -> Vec<String> {
+        let values = self.values.borrow();
+        let active = self.active.borrow();
+        let mut scopes: Vec<String> = values.keys().cloned().collect();
+        for scope in active.iter() {
+            if !values.contains_key(scope) {
+                scopes.push(scope.clone());
+            }
+        }
+        scopes
+    }
+
     /// Borrows all mounted scope values.
     pub fn values(&self) -> Ref<'_, HashMap<String, T>> {
         self.values.borrow()
