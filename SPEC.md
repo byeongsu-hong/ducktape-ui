@@ -2467,10 +2467,11 @@ syntax; it does not extend the small-data `Table` or `DataTableState` helpers.
 
 `editor-style` receives Theme and editor Status implicitly and returns native
 `text_editor::Style`, covering the advanced catalog class. An editor or input
-inside a component may bind only a prop declared with `bind`. Every call passes
-it explicitly with `content<->state`; the state must be a direct app state,
-component-local state, or another `bind` prop. Ordinary `name:type` props are
-read-only, and computed temporary bindings are rejected.
+inside a component binds either a prop declared with `bind` — every call passes
+it explicitly with `content<->state`, and the state must be a direct app state,
+component-local state, or another `bind` prop — or, for an editor, the
+component's own `editor` state. Ordinary `name:type` props are read-only, and
+computed temporary bindings are rejected.
 `key-binding=` and the editor's outer `->` route must appear together; an
 editor without a custom binding has neither.
 
@@ -3973,7 +3974,23 @@ recomputation-unsafe set is the same one rejected by derived expressions,
 including the unqualified `encoded` and `rgba` image constructors.
 Mutable component-only values such as `editor`,
 `markdown`, `combo`, `animation`, task handles, and debug spans cannot have
-defaults, and only `animation` may be declared as component state at all. A supplied argument always overrides the default.
+defaults, and of them only `animation` and `editor` may be declared as
+component state at all. A supplied argument always overrides the default.
+
+An `editor` declared as component state requires `lifetime retained`: the
+instance's content must survive the instance leaving the tree (a draft is
+only useful if it is still there when its instance returns), and only the
+retained map can hand the view a plain borrow of the content. Its initializer
+follows the app-state form — a `str` becomes the initial content. Each
+instance owns its content: the editor widget binds it with `<->` exactly like
+app editor state, actions arrive tagged with the instance scope, and local
+handlers read it (`editor_text`, cursor queries) and replace it
+(`body = editor("")`) like any other local state. View expressions over a
+local editor read through a reference — `disabled=empty(trim(editor_text(body)))`
+gates a send button without cloning content. An editor state cannot appear in
+preset overrides, and the component test seam exposes it as its text. Widgets
+binding the same editor state must agree on one `action=` adapter, as at app
+level.
 
 Local state is keyed by the component's hierarchical instance scope, so two
 explicit component IDs own independent values. The declared initializer is
@@ -5703,7 +5720,8 @@ For a Rust-level harness in the generated crate (`__boot`/`__update`-style
 suites and pixel probes), every stateful component also generates a
 test-only seam, `#[cfg(test)]` and stable-named: `__IceTestState_<name>` (a
 `Clone` view over the DECLARED state fields only — lane bookkeeping and
-animations excluded), `__ice_test_state_<name>(&self, scope)` returning a
+animations excluded, and an `editor` state carried as its text, since content
+is what a harness asserts on), `__ice_test_state_<name>(&self, scope)` returning a
 clone for one instance, `__ice_test_scopes_<name>(&self)` listing live
 instance scopes, and `__ice_test_message_<name>_<handler>(scope, args…)`
 building the exact message the runtime would deliver for each local handler,

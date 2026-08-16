@@ -331,15 +331,15 @@ pub(in crate::codegen) fn render_content(
                 };
                 for state in &component.states {
                     let initial = resolved_initializer_code(&state.initializer, document)?;
+                    let code = if state.ty == Type::Editor {
+                        component_editor_read_code(name, &states, &scope_binding, &state.name)
+                    } else {
+                        component_state_read_code(&states, &scope_binding, &initial, &state.name)
+                    };
                     component_env.insert(
                         state.name.clone(),
                         Binding {
-                            code: component_state_read_code(
-                                &states,
-                                &scope_binding,
-                                &initial,
-                                &state.name,
-                            ),
+                            code,
                             ty: state.ty.clone(),
                             local: true,
                             state: Some(StateBinding::Component {

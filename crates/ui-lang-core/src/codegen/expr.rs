@@ -2390,6 +2390,14 @@ fn scoped_component_state_read_code(
             ));
         }
     };
+    if declaration.ty == Type::Editor {
+        return Ok(component_editor_read_code(
+            &component.name,
+            &states,
+            scope,
+            &declaration.name,
+        ));
+    }
     let initial = resolved_initializer_code(&declaration.initializer, program)?;
     Ok(component_state_read_code(
         &states,

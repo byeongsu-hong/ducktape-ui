@@ -10,17 +10,48 @@ pub(in crate::codegen) fn render_text_editor(
 ) -> Result<String, Error> {
     let program = document;
     let state = resolved_editor_state(editor, env, program)?;
-    let Some(StateBinding::App(name)) = &state.state else {
-        return Err(program.invariant_at_origin(
-            editor.origin,
-            "normalized editor binding does not resolve to App editor state",
-        ));
+    let (action_constructor, controlled_action, content_ref) = match &state.state {
+        Some(StateBinding::App(name)) => {
+            let controlled = program.controlled_editor_binding(name)?;
+            let variant = editor_variant(name);
+            (
+                format!(
+                    "{message}::{variant} as fn(::iced::widget::text_editor::Action) -> {message}"
+                ),
+                controlled.action,
+                format!("&{}", state.code),
+            )
+        }
+        Some(StateBinding::Component {
+            component,
+            name,
+            scope,
+        }) => {
+            let controlled = program.component_controlled_editor_binding(component, name)?;
+            let variant = component_editor_variant(component, name);
+            let field = component_state_field(component);
+            let initial = component_editor_initial_field(component, name);
+            let scope_code = borrowed_scope(scope);
+            (
+                format!(
+                    "{{ let __ice_scope = ({scope_code}).clone(); move |__ice_action| {message}::{variant}(__ice_scope.clone(), __ice_action) }}"
+                ),
+                controlled.action,
+                // The retained map hands the view a plain borrow; an
+                // instance with no materialized entry renders the shared
+                // initial content, which only an update pass can replace.
+                format!(
+                    "self.{field}.get(&{scope_code}).map_or(&self.{initial}, |__ice_local| &__ice_local.{name})"
+                ),
+            )
+        }
+        None => {
+            return Err(program.invariant_at_origin(
+                editor.origin,
+                "normalized editor binding does not resolve to editor state",
+            ));
+        }
     };
-    let controlled = program.controlled_editor_binding(name)?;
-    let variant = editor_variant(name);
-    let action_constructor =
-        format!("{message}::{variant} as fn(::iced::widget::text_editor::Action) -> {message}");
-    let controlled_action = controlled.action;
     if controlled_action != editor.action.as_ref().map(|action| action.function) {
         return Err(program.invariant_at_origin(
             editor.origin,
@@ -38,7 +69,7 @@ pub(in crate::codegen) fn render_text_editor(
         .disabled
         .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?;
-    let mut code = format!("::iced::widget::text_editor(&{})", state.code);
+    let mut code = "::iced::widget::text_editor(__ice_editor_content)".to_owned();
     if let Some(identity) = identity {
         write!(
             code,
@@ -171,14 +202,12 @@ pub(in crate::codegen) fn render_text_editor(
             "if __disabled {{ {disabled_editor}.into() }} else {{ {enabled_editor}.into() }}"
         );
         Ok(format!(
-            "{{ let __a11y_key = {accessibility_key}; let __disabled = {disabled}; let __editor_value = (&{}).text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key.clone()).label({accessibility_label}).value(__editor_value).disabled(__disabled).into() }}",
-            state.code
+            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __disabled = {disabled}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key.clone()).label({accessibility_label}).value(__editor_value).disabled(__disabled).into() }}"
         ))
     } else {
         let editor_code = format!("{}.into()", finish(enabled)?);
         Ok(format!(
-            "{{ let __a11y_key = {accessibility_key}; let __editor_value = (&{}).text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key.clone()).label({accessibility_label}).value(__editor_value).into() }}",
-            state.code
+            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key.clone()).label({accessibility_label}).value(__editor_value).into() }}"
         ))
     }
 }
@@ -205,7 +234,14 @@ fn resolved_editor_state<'a>(
     match (&editor.binding, &state.state) {
         (WritableStateRef::App { name, .. }, Some(StateBinding::App(actual))) if name == actual => {
         }
-        (WritableStateRef::ComponentParam { .. }, Some(StateBinding::App(_))) => {}
+        (
+            WritableStateRef::ComponentParam { .. },
+            Some(StateBinding::App(_) | StateBinding::Component { .. }),
+        ) => {}
+        (
+            WritableStateRef::ComponentState { name, .. },
+            Some(StateBinding::Component { name: actual, .. }),
+        ) if name == actual => {}
         _ => {
             return Err(program.invariant_at_origin(
                 editor.origin,

@@ -379,6 +379,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
           active bg=surface border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
           hovered border=primary
           focused border=primary border-w=2.0
+        ScratchPad label="Component-owned draft"
         row gap=8.0 align=center
           text "Keyboard help" size=13.0 @text-fg
           Tooltip label="Open the command palette"
@@ -708,3 +709,28 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
         extern navigation_menu(navigation_menu) #navigation-trigger -> emit(navigation_menu_changed, _)
         DemoStage height=424.0 padding=10.0
           extern sidebar(sidebar) -> emit(sidebar_changed, _)
+
+// ducktape-ui#697 dogfood: an editor living in retained component state.
+// The instance owns its draft — reads in the view go through a reference,
+// clearing it is a local handler write, and no app state is involved.
+component ScratchPad(label:str)
+  lifetime retained
+  state
+    body:editor = ""
+  on clear
+    body = editor("")
+  col w=fill gap=6.0
+    text label size=13.0 @text-fg
+    editor <-> body
+      with
+        hint="Component-owned draft"
+        h=80.0
+        min-h=60.0
+        max-h=140.0
+        size=13.0
+        p=10.0
+        wrap=word
+      active bg=surface border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
+      hovered border=primary
+      focused border=primary border-w=2.0
+    button "Clear draft" disabled=empty(trim(editor_text(body))) @ghost_action -> clear

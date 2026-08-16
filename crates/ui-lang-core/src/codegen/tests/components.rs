@@ -1033,7 +1033,8 @@ view
     assert!(generated.contains("body: ::iced::widget::text_editor::Content::with_text"));
     assert!(generated.contains("__EditBody(::iced::widget::text_editor::Action)"));
     assert!(generated.contains("self.body.perform(action)"));
-    assert!(generated.contains("::iced::widget::text_editor(&self.body)"));
+    assert!(generated.contains("let __ice_editor_content = &self.body;"));
+    assert!(generated.contains("::iced::widget::text_editor(__ice_editor_content)"));
     assert!(generated.contains(".width(((640.0) as f32).max(0.0).min(f32::MAX))"));
     assert!(generated.contains(".height(::iced::Fill)"));
     assert!(generated.contains(".min_height(((80.0) as f32).max(0.0).min(f32::MAX))"));
@@ -1095,7 +1096,8 @@ view
     assert!(generated.contains("__BindTitle(::std::string::String)"));
     assert!(generated.contains("__EditBody(::iced::widget::text_editor::Action)"));
     assert!(generated.contains("text_input(\"\", &self.title)"));
-    assert!(generated.contains("text_editor(&self.body)"));
+    assert!(generated.contains("let __ice_editor_content = &self.body;"));
+    assert!(generated.contains("text_editor(__ice_editor_content)"));
     assert!(generated.contains("crate::backend::editor_keys(__key_press, self.locked)"));
     assert!(generated.contains("__ice_map_editor_binding"));
     assert!(!generated.contains("Binding::Indent"));

@@ -813,18 +813,25 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
         for state in &viewed {
-            writeln!(
-                out,
-                "pub(crate) {}: {},",
-                state.name,
+            // An editor's content is not cloneable; the harness reads the
+            // draft it holds, so the seam view carries its text.
+            let ty = if state.ty == Type::Editor {
+                "::std::string::String".to_owned()
+            } else {
                 rust_type_code(program, &state.ty)
-            )
-            .unwrap();
+            };
+            writeln!(out, "pub(crate) {}: {ty},", state.name).unwrap();
         }
         writeln!(out, "}}").unwrap();
         let clone_fields = viewed
             .iter()
-            .map(|state| format!("{name}: __state.{name}.clone(),", name = state.name))
+            .map(|state| {
+                if state.ty == Type::Editor {
+                    format!("{name}: __state.{name}.text(),", name = state.name)
+                } else {
+                    format!("{name}: __state.{name}.clone(),", name = state.name)
+                }
+            })
             .collect::<String>();
         let map = format!("map(|__state: &{ty}| {view_ty} {{ {clone_fields} }})");
         let body = match component.storage {
@@ -969,6 +976,18 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap(),
             ComponentStorage::Stateless => unreachable!(),
         }
+        for state in component
+            .states
+            .iter()
+            .filter(|state| state.ty == Type::Editor)
+        {
+            writeln!(
+                out,
+                "pub(crate) {}: ::iced::widget::text_editor::Content,",
+                component_editor_initial_field(&component.name, &state.name)
+            )
+            .unwrap();
+        }
     }
     if !program.secrets().is_empty() {
         writeln!(
@@ -1058,6 +1077,18 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
                 out,
                 "{}(::std::string::String, ::std::string::String),",
                 component_binding_variant(&component.name, &state.name)
+            )
+            .unwrap();
+        }
+        for state in component
+            .states
+            .iter()
+            .filter(|state| state.ty == Type::Editor)
+        {
+            writeln!(
+                out,
+                "{}(::std::string::String, ::iced::widget::text_editor::Action),",
+                component_editor_variant(&component.name, &state.name)
             )
             .unwrap();
         }
