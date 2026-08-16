@@ -220,6 +220,9 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
     if let Some(source) = line.text.strip_prefix("task window ") {
         return parse_window_operation(source, line);
     }
+    if line.text == "emit" || line.text.starts_with("emit ") || line.text.starts_with("emit(") {
+        return parse_emit(line);
+    }
     for (prefix, primary) in [
         ("task clipboard write-primary ", true),
         ("task clipboard write ", false),
@@ -1150,6 +1153,47 @@ pub(in crate::parser) fn parse_window_operation(
         route: route
             .map(|route| parse_route(route.trim(), line))
             .transpose()?,
+        span: Span::line(line.number),
+    })
+}
+
+/// `emit(event, args…)` — the route form, as a component-handler statement.
+fn parse_emit(line: &Line) -> Result<Statement, Error> {
+    let source = line.text.trim();
+    let Some(open) = source.find('(') else {
+        return Err(error(
+            "E050",
+            line,
+            "emit uses function syntax such as `emit(event, value)`",
+        ));
+    };
+    let close = matching_paren(source, line)?;
+    if source[..open].trim() != "emit" || !source[close + 1..].trim().is_empty() {
+        return Err(error("E050", line, "unexpected text after emit"));
+    }
+    let mut parts = split_top(&source[open + 1..close], ',').into_iter();
+    let event = identifier(
+        parts
+            .next()
+            .ok_or_else(|| error("E050", line, "emit requires an event"))?
+            .trim(),
+        line,
+    )?;
+    let args = parts
+        .map(|part| {
+            if part.trim() == "_" {
+                return Err(error(
+                    "E050",
+                    line,
+                    "an emit statement passes values, not payload placeholders",
+                ));
+            }
+            parse_expr(part.trim(), line)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    Ok(Statement::Emit {
+        event,
+        args,
         span: Span::line(line.number),
     })
 }

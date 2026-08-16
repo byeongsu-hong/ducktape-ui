@@ -838,6 +838,24 @@ pub(in crate::codegen) fn generate_statements(
                 )
                 .unwrap();
             }
+            ResolvedStatementKind::Emit { target, args, .. } => {
+                // An emitted event is delivered as the NEXT update-loop
+                // message: the handler finishes its writes first, and the
+                // app handler sees them.
+                let args = args
+                    .iter()
+                    .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
+                    .collect::<Result<Vec<_>, Error>>()?
+                    .join(", ");
+                writeln!(
+                    out,
+                    "{}::iced::Task::done({message}::{}({args})){}",
+                    task_prefix,
+                    handler_variant(target),
+                    task_suffix
+                )
+                .unwrap();
+            }
             ResolvedStatementKind::WidgetOperation {
                 operation, route, ..
             } => {

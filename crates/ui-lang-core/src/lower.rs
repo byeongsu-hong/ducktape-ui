@@ -830,6 +830,14 @@ pub(crate) enum ResolvedStatementKind {
         primary: bool,
         value: CheckedExprUseId,
     },
+    Emit {
+        /// The declared event name — the statement's semantic identity for
+        /// the test-only key/snapshot surfaces; codegen delivers to `target`.
+        #[cfg(test)]
+        event: String,
+        target: String,
+        args: Vec<CheckedExprUseId>,
+    },
     WidgetOperation {
         operation: ResolvedWidgetOperation,
         route: Option<ResolvedRoute>,
@@ -1861,6 +1869,7 @@ fn resolved_statement_semantic_key(
         ResolvedStatementKind::ClipboardWrite { primary, .. } => {
             format!("clipboard:{primary}")
         }
+        ResolvedStatementKind::Emit { event, args, .. } => format!("emit:{event}:{}", args.len()),
         ResolvedStatementKind::WidgetOperation {
             operation, route, ..
         } => format!(
@@ -2462,6 +2471,7 @@ impl LoweredProgram {
                 | ResolvedStatementKind::MarkdownAppend { value, .. }
                 | ResolvedStatementKind::ComboPush { value, .. }
                 | ResolvedStatementKind::ClipboardWrite { value, .. } => operands.push(*value),
+                ResolvedStatementKind::Emit { args, .. } => operands.extend(args.iter().copied()),
                 ResolvedStatementKind::Assign { value, at, .. } => {
                     operands.push(*value);
                     operands.extend(at);
@@ -7584,7 +7594,8 @@ impl Lowerer {
                 | ResolvedStatementKind::Abort { .. }
                 | ResolvedStatementKind::DebugStart { .. }
                 | ResolvedStatementKind::DebugFinish { .. }
-                | ResolvedStatementKind::ClipboardWrite { .. } => true,
+                | ResolvedStatementKind::ClipboardWrite { .. }
+                | ResolvedStatementKind::Emit { .. } => true,
             }
         }
 
@@ -8498,6 +8509,38 @@ impl Lowerer {
                 primary: *primary,
                 value: self.checked_statement_expression(id, &mut operand, span)?,
             },
+            Statement::Emit { event, args, span } => {
+                let values = args
+                    .iter()
+                    .map(|_| self.checked_statement_expression(id, &mut operand, span))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let HandlerOwner::Component(component_id) = owner else {
+                    return Err(
+                        self.invariant(span, "emit statement lowered outside a component handler")
+                    );
+                };
+                let component_name = self
+                    .component_ids
+                    .iter()
+                    .find(|(_, candidate)| **candidate == component_id)
+                    .map(|(name, _)| name.clone())
+                    .ok_or_else(|| {
+                        self.invariant(span, "emit statement owner is outside the component arena")
+                    })?;
+                // Rare statement; the resolver re-walks the source document,
+                // which the checker already validated.
+                let target = crate::check::handler_emit_targets(&self.document)?
+                    .remove(&(component_name, event.clone()))
+                    .ok_or_else(|| {
+                        self.invariant(span, "handler emit lost its checked delivery target")
+                    })?;
+                ResolvedStatementKind::Emit {
+                    #[cfg(test)]
+                    event: event.clone(),
+                    target,
+                    args: values,
+                }
+            }
             Statement::WidgetOperation {
                 operation,
                 route,
@@ -10820,6 +10863,9 @@ mod tests {
             ResolvedStatementKind::DebugStart { .. } => "debug-start".into(),
             ResolvedStatementKind::DebugFinish { .. } => "debug-finish".into(),
             ResolvedStatementKind::ClipboardWrite { .. } => "clipboard-write".into(),
+            ResolvedStatementKind::Emit { event, target, .. } => {
+                format!("emit {event} -> {target}")
+            }
             ResolvedStatementKind::WidgetOperation { route, .. } => format!(
                 "widget-op {}",
                 route

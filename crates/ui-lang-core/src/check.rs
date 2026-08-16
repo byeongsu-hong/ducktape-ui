@@ -271,6 +271,7 @@ fn check(
         }
     }
     check_app_settings(document, &app_values, &mut initializer_analyses)?;
+    handler_emit_targets(document)?;
     for handler in document.handlers.iter().chain(&preset_handlers) {
         check_structured_tasks(handler)?;
     }
@@ -580,6 +581,7 @@ fn check(
                     document,
                     &operation_ids,
                     &pane_grids,
+                    None,
                     true,
                 )
             })
@@ -595,6 +597,7 @@ fn check(
                 document,
                 &operation_ids,
                 &pane_grids,
+                None,
                 true,
             )
         })?;
@@ -639,6 +642,7 @@ fn check(
                             document,
                             &operation_ids,
                             &HashMap::new(),
+                            Some(&component.events),
                             false,
                         )
                     })?;
@@ -1097,11 +1101,289 @@ fn preset_handler(preset: &Preset) -> Handler {
     }
 }
 
+/// Resolves every handler-emitted component event to the ONE app handler it
+/// delivers to. A component handler firing `emit(event, ...)` cannot see any
+/// call site's environment, so the delivery must be recoverable statically:
+/// every call site routes the event either straight to one app handler with
+/// only `_` payloads, or chains it upward with `emit(outer, _...)` from
+/// inside another component, where the same rule applies to the outer event.
+pub(crate) fn handler_emit_targets(
+    document: &Document,
+) -> Result<HashMap<(String, String), String>, Error> {
+    fn collect_emits(statements: &[Statement], output: &mut Vec<(String, Span)>) {
+        for statement in statements {
+            match statement {
+                Statement::Emit { event, span, .. } => output.push((event.clone(), span.clone())),
+                Statement::Match { arms, .. } => {
+                    for arm in arms {
+                        collect_emits(&arm.statements, output);
+                    }
+                }
+                Statement::TaskGroup { statements, .. } => collect_emits(statements, output),
+                Statement::Abortable { task, .. } => {
+                    collect_emits(std::slice::from_ref(task.as_ref()), output);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn walk_calls<'a>(
+        node: &'a ViewNode,
+        scope: Option<&'a str>,
+        output: &mut Vec<(Option<&'a str>, &'a ViewNode)>,
+    ) {
+        match node {
+            ViewNode::Component { slots, .. } => {
+                output.push((scope, node));
+                // Slot content is authored at the call site, so nested calls
+                // inside it belong to the CURRENT scope, not the callee's.
+                for slot in slots {
+                    walk_calls(&slot.content, scope, output);
+                }
+            }
+            ViewNode::Layout { children, .. }
+            | ViewNode::If { children, .. }
+            | ViewNode::For { children, .. } => {
+                for child in children {
+                    walk_calls(child, scope, output);
+                }
+            }
+            ViewNode::Match { arms, .. } => {
+                for arm in arms {
+                    for child in &arm.children {
+                        walk_calls(child, scope, output);
+                    }
+                }
+            }
+            ViewNode::Button {
+                content: Some(content),
+                ..
+            }
+            | ViewNode::MouseArea { content, .. }
+            | ViewNode::ResizeHandle { content, .. }
+            | ViewNode::Container { content, .. }
+            | ViewNode::Theme { content, .. }
+            | ViewNode::Float { content, .. }
+            | ViewNode::Pin { content, .. }
+            | ViewNode::Sensor { content, .. }
+            | ViewNode::KeyedColumn { child: content, .. }
+            | ViewNode::Lazy { child: content, .. } => walk_calls(content, scope, output),
+            ViewNode::Tooltip { content, tip, .. } => {
+                walk_calls(content, scope, output);
+                walk_calls(tip, scope, output);
+            }
+            ViewNode::Overlay { content, layer, .. } => {
+                walk_calls(content, scope, output);
+                walk_calls(layer, scope, output);
+            }
+            ViewNode::PaneGrid {
+                panes, templates, ..
+            } => {
+                for child in panes
+                    .iter()
+                    .flat_map(PaneView::nodes)
+                    .chain(templates.iter().flat_map(|template| template.pane.nodes()))
+                {
+                    walk_calls(child, scope, output);
+                }
+            }
+            ViewNode::Table { columns, .. } => {
+                for column in columns {
+                    walk_calls(&column.header, scope, output);
+                    walk_calls(&column.cell, scope, output);
+                }
+            }
+            ViewNode::Responsive { content, .. } => match content {
+                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
+                    walk_calls(narrow, scope, output);
+                    walk_calls(wide, scope, output);
+                }
+                ResponsiveContent::Size { content, .. } => walk_calls(content, scope, output),
+            },
+            _ => {}
+        }
+    }
+
+    fn resolve(
+        document: &Document,
+        sites: &[(Option<&str>, &ViewNode)],
+        component: &str,
+        event: &str,
+        span: &Span,
+        path: &mut Vec<(String, String)>,
+    ) -> Result<String, Error> {
+        let key = (component.to_owned(), event.to_owned());
+        if path.contains(&key) {
+            return Err(Error::new(
+                "E140",
+                span,
+                format!("handler-emitted event `{component}.{event}` chains into a cycle"),
+            ));
+        }
+        path.push(key);
+        let payloads = document
+            .components
+            .iter()
+            .find(|entry| entry.name == component)
+            .and_then(|entry| {
+                entry
+                    .events
+                    .iter()
+                    .find(|declared| declared.name == event)
+                    .map(|declared| declared.payloads.len())
+            })
+            .ok_or_else(|| {
+                Error::new(
+                    "E140",
+                    span,
+                    format!("component `{component}` does not declare event `{event}`"),
+                )
+            })?;
+        let mut target: Option<String> = None;
+        for (scope, node) in sites {
+            let ViewNode::Component { name, events, .. } = node else {
+                continue;
+            };
+            if name != component {
+                continue;
+            }
+            let Some(route) = events
+                .iter()
+                .find(|entry| entry.name == event)
+                .and_then(|entry| entry.route.as_ref())
+            else {
+                continue;
+            };
+            let resolved = if route.handler == "emit" {
+                let Some(outer_scope) = scope else {
+                    return Err(Error::new(
+                        "E140",
+                        &route.span,
+                        format!(
+                            "handler-emitted event `{component}.{event}` chains with `emit(...)` outside any component"
+                        ),
+                    ));
+                };
+                let mut args = route.args.iter();
+                let Some(RouteArg::Expr(Expr::Path(segments))) = args.next() else {
+                    return Err(Error::new(
+                        "E140",
+                        &route.span,
+                        format!(
+                            "handler-emitted event `{component}.{event}` chains to an unnamed event"
+                        ),
+                    ));
+                };
+                let [outer] = segments.as_slice() else {
+                    return Err(Error::new(
+                        "E140",
+                        &route.span,
+                        format!(
+                            "handler-emitted event `{component}.{event}` chains to an unnamed event"
+                        ),
+                    ));
+                };
+                if args.len() != payloads || args.any(|arg| !matches!(arg, RouteArg::Payload)) {
+                    return Err(Error::new(
+                        "E140",
+                        &route.span,
+                        format!(
+                            "handler-emitted event `{component}.{event}` must chain every payload with `_` — the emitting handler cannot see this call site's values"
+                        ),
+                    ));
+                }
+                resolve(document, sites, outer_scope, outer, span, path)?
+            } else {
+                if scope.is_some() {
+                    return Err(Error::new(
+                        "E140",
+                        &route.span,
+                        format!(
+                            "handler-emitted event `{component}.{event}` routes to a caller-local handler; chain it upward with `emit(outer_event, _)` instead — the emitting handler cannot name the caller's instance"
+                        ),
+                    ));
+                }
+                if route.args.len() != payloads
+                    || route
+                        .args
+                        .iter()
+                        .any(|arg| !matches!(arg, RouteArg::Payload))
+                {
+                    return Err(Error::new(
+                        "E140",
+                        &route.span,
+                        format!(
+                            "handler-emitted event `{component}.{event}` must route every payload with `_` — the emitting handler cannot see this call site's values"
+                        ),
+                    ));
+                }
+                route.handler.clone()
+            };
+            match &target {
+                Some(existing) if *existing != resolved => {
+                    return Err(Error::new(
+                        "E140",
+                        &route.span,
+                        format!(
+                            "handler-emitted event `{component}.{event}` must deliver to one app handler at every call site (`{existing}` vs `{resolved}`)"
+                        ),
+                    ));
+                }
+                _ => target = Some(resolved),
+            }
+        }
+        path.pop();
+        target.ok_or_else(|| {
+            Error::new(
+                "E140",
+                span,
+                format!(
+                    "handler-emitted event `{component}.{event}` has no routed call site to deliver through"
+                ),
+            )
+        })
+    }
+
+    let mut sites = Vec::new();
+    walk_calls(&document.view, None, &mut sites);
+    for mount in document.tests.iter().filter_map(|test| test.mount.as_ref()) {
+        walk_calls(mount, None, &mut sites);
+    }
+    for component in &document.components {
+        walk_calls(&component.root, Some(&component.name), &mut sites);
+    }
+    let mut targets = HashMap::new();
+    for component in &document.components {
+        let mut emits = Vec::new();
+        for handler in &component.handlers {
+            collect_emits(&handler.statements, &mut emits);
+        }
+        for (event, span) in emits {
+            let key = (component.name.clone(), event.clone());
+            if targets.contains_key(&key) {
+                continue;
+            }
+            let target = resolve(
+                document,
+                &sites,
+                &component.name,
+                &event,
+                &span,
+                &mut Vec::new(),
+            )?;
+            targets.insert(key, target);
+        }
+    }
+    Ok(targets)
+}
+
 fn component_handler_statement_supported(statement: &Statement) -> bool {
     match statement {
         Statement::Let { .. }
         | Statement::Assign { .. }
         | Statement::ReturnIf { .. }
+        | Statement::Emit { .. }
         | Statement::WidgetOperation {
             operation:
                 WidgetOperation::Focus { .. }

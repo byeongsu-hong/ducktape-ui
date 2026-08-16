@@ -1,6 +1,7 @@
 use super::expr::ExprTypeEnv;
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::check) fn check_handler(
     handler: &Handler,
     states: &HashMap<String, Type>,
@@ -8,6 +9,7 @@ pub(in crate::check) fn check_handler(
     document: &Document,
     operation_ids: &[WidgetIdPath],
     pane_grids: &HashMap<String, PaneGridNames>,
+    events: Option<&[ComponentEvent]>,
     app_scoped: bool,
 ) -> Result<(), Error> {
     let sync_env = SyncTypeEnv::new(readables);
@@ -22,6 +24,7 @@ pub(in crate::check) fn check_handler(
         operation_ids,
         pane_grids,
         &mut env,
+        events,
         app_scoped,
     )
 }
@@ -37,6 +40,7 @@ fn retains_mounted_component_state(document: &Document) -> bool {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_handler_statements(
     statements: &[Statement],
     states: &HashMap<String, Type>,
@@ -44,6 +48,7 @@ fn check_handler_statements(
     operation_ids: &[WidgetIdPath],
     pane_grids: &HashMap<String, PaneGridNames>,
     env: &mut ScopedTypeEnv<'_>,
+    events: Option<&[ComponentEvent]>,
     app_scoped: bool,
 ) -> Result<(), Error> {
     for (index, statement) in statements.iter().enumerate() {
@@ -240,6 +245,7 @@ fn check_handler_statements(
                         operation_ids,
                         pane_grids,
                         &mut child_env,
+                        events,
                         app_scoped,
                     )?;
                 }
@@ -308,6 +314,7 @@ fn check_handler_statements(
                         operation_ids,
                         pane_grids,
                         &mut child_env,
+                        events,
                         app_scoped,
                     )?;
                 }
@@ -325,6 +332,7 @@ fn check_handler_statements(
                     operation_ids,
                     pane_grids,
                     &mut child_env,
+                    events,
                     app_scoped,
                 )?;
             }
@@ -345,6 +353,39 @@ fn check_handler_statements(
             }
             Statement::ClipboardWrite { value, span, .. } => {
                 require_type(&expr_type(value, &env, document, span)?, &Type::Str, span)?;
+            }
+            Statement::Emit { event, args, span } => {
+                let Some(events) = events else {
+                    return Err(Error::new(
+                        "E140",
+                        span,
+                        "emit is a component-handler statement — an app handler has no declared events to fire",
+                    ));
+                };
+                let declaration = events
+                    .iter()
+                    .find(|entry| entry.name == *event)
+                    .ok_or_else(|| {
+                        Error::new(
+                            "E140",
+                            span,
+                            format!("component does not declare event `{event}` in `emits`"),
+                        )
+                    })?;
+                if declaration.payloads.len() != args.len() {
+                    return Err(Error::new(
+                        "E140",
+                        span,
+                        format!(
+                            "event `{event}` carries {} payload(s), emit passes {}",
+                            declaration.payloads.len(),
+                            args.len()
+                        ),
+                    ));
+                }
+                for (arg, expected) in args.iter().zip(&declaration.payloads) {
+                    require_type(&expr_type(arg, &env, document, span)?, expected, span)?;
+                }
             }
             Statement::WidgetOperation {
                 operation,
@@ -750,6 +791,7 @@ fn check_task_finality(statement: &Statement, is_final: bool) -> Result<(), Erro
         ImmediateTask::Group => ("E141", "task group"),
         ImmediateTask::Abortable => ("E141", "abortable task"),
         ImmediateTask::Clipboard => ("E141", "clipboard write"),
+        ImmediateTask::Emit => ("E141", "emit"),
         ImmediateTask::Widget => ("E172", "widget operation"),
         ImmediateTask::Window => ("E173", "window task"),
         ImmediateTask::PaneQuery => ("E188", "pane query"),

@@ -172,6 +172,7 @@ view
               col #page @page
                 Catalog #catalog-grid email<->email project_slug<->project_slug textarea_notes<->textarea_notes catalog_query<->catalog_query
                   with
+                    scratch_note=scratch_note
                     clicks=clicks
                     accepted=accepted
                     notifications=notifications
@@ -217,6 +218,7 @@ view
                     density_changed -> density_changed _
                     framework_changed -> framework_changed _
                     searched_framework_changed -> searched_framework_changed _
+                    scratch_submitted -> scratch_submitted _
                     otp_changed -> otp_changed _
                     calendar_changed -> calendar_changed _
                     date_picker_changed -> date_picker_changed _

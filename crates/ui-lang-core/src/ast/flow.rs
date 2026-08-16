@@ -188,6 +188,13 @@ pub enum Statement {
         value: Expr,
         span: Span,
     },
+    /// A component handler firing one of its declared events, delivered as
+    /// the next update-loop message through the call sites' agreed route.
+    Emit {
+        event: String,
+        args: Vec<Expr>,
+        span: Span,
+    },
     WidgetOperation {
         operation: WidgetOperation,
         route: Option<Route>,
@@ -227,6 +234,7 @@ impl Statement {
             | Self::DebugStart { span, .. }
             | Self::DebugFinish { span, .. }
             | Self::ClipboardWrite { span, .. }
+            | Self::Emit { span, .. }
             | Self::WidgetOperation { span, .. }
             | Self::WindowOperation { span, .. }
             | Self::PaneOperation { span, .. } => span,
@@ -252,6 +260,7 @@ impl Statement {
             Self::TaskGroup { .. } => Some(ImmediateTask::Group),
             Self::Abortable { .. } => Some(ImmediateTask::Abortable),
             Self::ClipboardWrite { .. } => Some(ImmediateTask::Clipboard),
+            Self::Emit { .. } => Some(ImmediateTask::Emit),
             Self::WidgetOperation { .. } => Some(ImmediateTask::Widget),
             Self::WindowOperation { .. } => Some(ImmediateTask::Window),
             Self::PaneOperation {
@@ -273,6 +282,7 @@ pub(crate) enum ImmediateTask {
     Group,
     Abortable,
     Clipboard,
+    Emit,
     Widget,
     Window,
     PaneQuery,

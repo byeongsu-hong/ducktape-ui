@@ -9,6 +9,7 @@ state
   native_select_framework:str? = none
   combobox_frameworks:combo[str] = ["Ice", "iced", "Rust", "wgpu"]
   searched_framework:str? = none
+  scratch_note = ""
   textarea_notes:editor = "Default multiline editor"
   catalog_query = ""
   catalog_sort = "none"

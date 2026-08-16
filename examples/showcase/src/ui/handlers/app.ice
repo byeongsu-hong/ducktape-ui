@@ -19,6 +19,9 @@ on density_applied(next)
 on framework_changed(next)
   native_select_framework = some(next)
 
+on scratch_submitted(text)
+  scratch_note = text
+
 on searched_framework_changed(next)
   searched_framework = some(next)
 
