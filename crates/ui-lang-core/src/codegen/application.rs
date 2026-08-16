@@ -359,6 +359,19 @@ pub(in crate::codegen) fn generate_boot(
             component_state_field(&component.name),
         )
         .unwrap();
+        for state in component
+            .states
+            .iter()
+            .filter(|state| state.ty == Type::Editor)
+        {
+            writeln!(
+                out,
+                "{}: {},",
+                component_editor_initial_field(&component.name, &state.name),
+                resolved_initializer_code(&state.initializer, program)?
+            )
+            .unwrap();
+        }
     }
     for (pane, test_only) in document_pane_grids(program) {
         if test_only {
@@ -840,6 +853,28 @@ pub(in crate::codegen) fn generate_update(
                 out,
                 "{message}::{variant}(__scope, value) => {{ {entry} __local.{} = value; ::iced::Task::none() }},",
                 state.name
+            )
+            .unwrap();
+        }
+        for state in component
+            .states
+            .iter()
+            .filter(|state| state.ty == Type::Editor)
+        {
+            let variant = component_editor_variant(&component.name, &state.name);
+            let entry = entry("__scope");
+            let perform =
+                match program.component_controlled_editor_action(&component.name, &state.name) {
+                    Some(action) => format!(
+                        "{}(&mut __local.{}, __action);",
+                        program.extern_function(action).rust_path,
+                        state.name
+                    ),
+                    None => format!("__local.{}.perform(__action);", state.name),
+                };
+            writeln!(
+                out,
+                "{message}::{variant}(__scope, __action) => {{ {entry} {perform} ::iced::Task::none() }},"
             )
             .unwrap();
         }

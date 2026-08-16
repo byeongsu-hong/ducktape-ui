@@ -291,6 +291,53 @@ pub(in crate::codegen) fn component_binding_variant(component: &str, state: &str
     }
 }
 
+/// A view-time read of component editor state: a plain borrow of the
+/// instance's content, falling back to the shared initial content for an
+/// instance no update pass has materialized yet. Every other component state
+/// read clones; an editor's content cannot, and its builtins only ever read
+/// through a reference.
+pub(in crate::codegen) fn component_editor_read_code(
+    component: &str,
+    states: &str,
+    scope: &str,
+    state: &str,
+) -> String {
+    format!(
+        "{states}.get(&{scope}).map_or(&self.{initial}, |__ice_local| &__ice_local.{state})",
+        initial = component_editor_initial_field(component, state)
+    )
+}
+
+pub(in crate::codegen) fn component_editor_variant(component: &str, state: &str) -> String {
+    if canonical_component_variant(component) && canonical_snake(state) {
+        format!("__{component}Edit{}", pascal(state))
+    } else {
+        format!(
+            "__0C{}E{}",
+            rust_identifier_hex(component),
+            rust_identifier_hex(state)
+        )
+    }
+}
+
+/// The app-struct field holding one component editor state's initial content.
+/// The view renders it for instances with no materialized entry yet — a plain
+/// borrow needs a stable address, which the retained map cannot provide for a
+/// scope it has never seen.
+pub(in crate::codegen) fn component_editor_initial_field(component: &str, state: &str) -> String {
+    if canonical_component(component) {
+        format!(
+            "__ice_editor_initial_{}_{state}",
+            component.to_ascii_lowercase()
+        )
+    } else {
+        format!(
+            "__ice_editor_initial_0{}_{state}",
+            rust_identifier_hex(component)
+        )
+    }
+}
+
 pub(in crate::codegen) fn run_lane_generation_field(lane: usize) -> String {
     format!("__ice_run_lane_{lane}_generation")
 }

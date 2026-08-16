@@ -32,7 +32,7 @@ pub(crate) use crate::hir::{
 #[cfg(test)]
 use crate::hir::{AppSettingsId, CanvasRouteId};
 use crate::semantic::*;
-use crate::{CheckedControlledEditor, CheckedDocument, Error};
+use crate::{CheckedComponentControlledEditor, CheckedControlledEditor, CheckedDocument, Error};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -479,6 +479,12 @@ struct ResolvedControlledInputBinding {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedControlledEditorBinding {
     pub(crate) state: AppStateId,
+    pub(crate) name: String,
+    pub(crate) action: Option<ExternFnId>,
+}
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedComponentControlledEditorBinding {
+    pub(crate) component: String,
     pub(crate) name: String,
     pub(crate) action: Option<ExternFnId>,
 }
@@ -1594,6 +1600,8 @@ pub(crate) struct LoweredProgram {
     controlled_inputs: Vec<ResolvedControlledInputBinding>,
     controlled_editors: Vec<ResolvedControlledEditorBinding>,
     controlled_editors_by_name: HashMap<String, usize>,
+    component_controlled_editors: Vec<ResolvedComponentControlledEditorBinding>,
+    component_controlled_editors_by_key: HashMap<(String, String), usize>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -3628,6 +3636,37 @@ impl LoweredProgram {
         Ok(binding)
     }
 
+    /// The one action adapter contracted for a component editor state, or
+    /// `None` when no editor widget binds it — an unbound editor state still
+    /// gets a message variant with the plain `perform` arm.
+    pub(crate) fn component_controlled_editor_action(
+        &self,
+        component: &str,
+        name: &str,
+    ) -> Option<ExternFnId> {
+        self.component_controlled_editors_by_key
+            .get(&(component.to_owned(), name.to_owned()))
+            .and_then(|index| self.component_controlled_editors.get(*index))
+            .and_then(|binding| binding.action)
+    }
+
+    pub(crate) fn component_controlled_editor_binding(
+        &self,
+        component: &str,
+        name: &str,
+    ) -> Result<&ResolvedComponentControlledEditorBinding, Error> {
+        self.component_controlled_editors_by_key
+            .get(&(component.to_owned(), name.to_owned()))
+            .and_then(|index| self.component_controlled_editors.get(*index))
+            .filter(|binding| binding.component == component && binding.name == name)
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    self.settings.origin,
+                    "normalized component editor is absent from the controlled binding index",
+                )
+            })
+    }
+
     fn validate_controlled_editor_binding(
         &self,
         binding: &ResolvedControlledEditorBinding,
@@ -3939,6 +3978,7 @@ pub(crate) struct Lowerer {
     spaces: HashMap<ViewId, ResolvedSpace>,
     controlled_inputs: Vec<AppStateId>,
     controlled_editors: Vec<CheckedControlledEditor>,
+    component_controlled_editors: Vec<CheckedComponentControlledEditor>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -4678,6 +4718,7 @@ impl Lowerer {
             origins,
             controlled_inputs,
             controlled_editors,
+            component_controlled_editors,
             ..
         } = checked;
         let component_ids = declarations.component_ids();
@@ -4716,6 +4757,7 @@ impl Lowerer {
             spaces: HashMap::new(),
             controlled_inputs,
             controlled_editors,
+            component_controlled_editors,
             media: HashMap::new(),
             overlays: HashMap::new(),
             tooltips: HashMap::new(),
@@ -4847,6 +4889,61 @@ impl Lowerer {
                 ));
             }
         }
+        let component_controlled_editors = self
+            .component_controlled_editors
+            .iter()
+            .map(|binding| {
+                let component = self
+                    .components
+                    .iter()
+                    .find(|component| component.id == binding.state.component)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            self.document.view.span(),
+                            "controlled editor binding is outside the component arena",
+                        )
+                    })?;
+                let state = component
+                    .states
+                    .iter()
+                    .find(|state| state.id == binding.state && state.ty == Type::Editor)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            self.document.view.span(),
+                            "controlled component editor binding does not name editor state",
+                        )
+                    })?;
+                if let Some(action) = binding.action {
+                    self.declarations
+                        .try_extern_decl(action)
+                        .filter(|function| function.kind == ExternKind::EditorAction)
+                        .ok_or_else(|| {
+                            self.invariant(
+                                self.document.view.span(),
+                                "controlled component editor action extern is invalid",
+                            )
+                        })?;
+                }
+                Ok(ResolvedComponentControlledEditorBinding {
+                    component: component.name.clone(),
+                    name: state.name.clone(),
+                    action: binding.action,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let mut component_controlled_editors_by_key =
+            HashMap::with_capacity(component_controlled_editors.len());
+        for (index, binding) in component_controlled_editors.iter().enumerate() {
+            if component_controlled_editors_by_key
+                .insert((binding.component.clone(), binding.name.clone()), index)
+                .is_some()
+            {
+                return Err(self.invariant(
+                    self.document.view.span(),
+                    "controlled component editor binding is duplicated in normalized HIR",
+                ));
+            }
+        }
         let styles = self.styles.finish().ok_or_else(|| {
             Error::new(
                 "E196",
@@ -4908,6 +5005,8 @@ impl Lowerer {
             controlled_inputs,
             controlled_editors,
             controlled_editors_by_name,
+            component_controlled_editors,
+            component_controlled_editors_by_key,
             media: self.media,
             overlays: self.overlays,
             tooltips: self.tooltips,
@@ -15953,9 +16052,37 @@ view
     }
 
     #[test]
-    fn text_editor_rejects_non_cloneable_component_local_state() {
+    fn text_editor_accepts_retained_component_local_state() {
+        // ducktape-ui#697: an editor may live in component state — retained
+        // storage keeps the draft across unmounts and hands the view a plain
+        // borrow of the content.
         let source = format!(
-            "app ComponentEditorState\n{THEME}component EditorPanel()\n  state\n    body:editor = \"\"\n  editor <-> body\nview\n  EditorPanel #panel\n"
+            "app ComponentEditorState\n{THEME}component EditorPanel()\n  lifetime retained\n  state\n    body:editor = \"\"\n  editor <-> body\nview\n  EditorPanel #panel\n"
+        );
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        crate::codegen::generate(&program, "component-editor.ice").unwrap();
+    }
+
+    #[test]
+    fn text_editor_rejects_mounted_component_local_state() {
+        // Mounted storage prunes the instance's state when it leaves the
+        // tree — a draft would vanish with it, and the RefCell-backed values
+        // map cannot hand the view the long-lived borrow an editor needs.
+        let source = format!(
+            "app ComponentEditorState\n{THEME}component EditorPanel()\n  lifetime mounted\n  state\n    body:editor = \"\"\n  editor <-> body\nview\n  EditorPanel #panel\n"
+        );
+
+        let error = analyze(&source).unwrap_err();
+        assert_eq!(error.code, "E103");
+        assert!(error.message.contains("needs `lifetime retained`"));
+    }
+
+    #[test]
+    fn text_editor_rejects_optional_component_editor_state() {
+        // Only a bare `editor` descends; wrapped widget-backed values stay
+        // refused as non-cloneable.
+        let source = format!(
+            "app ComponentEditorState\n{THEME}component EditorPanel()\n  lifetime retained\n  state\n    body:editor? = none\n  text \"panel\"\nview\n  EditorPanel #panel\n"
         );
 
         let error = analyze(&source).unwrap_err();
@@ -15965,6 +16092,19 @@ view
                 .message
                 .contains("component state supports ordinary cloneable values only")
         );
+    }
+
+    #[test]
+    fn component_editor_action_adapters_must_agree() {
+        let source = format!(
+            "app ComponentEditorState\nextern crate::backend\n  editor-action track()\n{THEME}component EditorPanel()\n  lifetime retained\n  state\n    body:editor = \"\"\n  col\n    editor <-> body action=track()\n    editor <-> body\nview\n  EditorPanel #panel\n"
+        );
+
+        let error = analyze(&source).unwrap_err();
+        assert_eq!(error.code, "E139");
+        assert!(error.message.contains(
+            "editor state `EditorPanel.body` must use the same action adapter everywhere"
+        ));
     }
 
     #[test]
@@ -16005,10 +16145,17 @@ view
         let generated = crate::codegen::generate(&program, "editor-scale.ice").unwrap();
         let elapsed = started.elapsed();
         assert_eq!(program.text_editors.len(), EDITORS);
-        // A disabled editor emits its enabled and disabled widget branches.
+        // A disabled editor binds its content once and emits its enabled and
+        // disabled widget branches over that one borrow.
         assert_eq!(
             generated
-                .matches("::iced::widget::text_editor(&self.body)")
+                .matches("let __ice_editor_content = &self.body;")
+                .count(),
+            EDITORS
+        );
+        assert_eq!(
+            generated
+                .matches("::iced::widget::text_editor(__ice_editor_content)")
                 .count(),
             EDITORS * 2
         );
@@ -16041,7 +16188,7 @@ view
         assert_eq!(program.controlled_editors_by_name.len(), EDITORS);
         assert_eq!(
             generated
-                .matches("::iced::widget::text_editor(&self.body_")
+                .matches("let __ice_editor_content = &self.body_")
                 .count(),
             EDITORS
         );

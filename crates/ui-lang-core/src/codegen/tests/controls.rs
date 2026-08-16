@@ -46,6 +46,101 @@ view
 }
 
 #[test]
+fn component_editor_state_owns_its_content_per_instance() {
+    // ducktape-ui#697: an editor declared as retained component state gets a
+    // scope-carrying action variant, a per-instance perform arm, a view read
+    // that borrows the instance's content (falling back to the shared initial
+    // content before the first delivered action), and a test-seam view that
+    // exposes the draft as its text.
+    let source = r#"app ComposerHost
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  active = "general"
+component Composer(room:str)
+  lifetime retained
+  state
+    body:editor = "draft"
+  on clear
+    body = editor("")
+  col
+    editor <-> body
+    button "Send" -> clear
+      with
+        disabled=empty(trim(editor_text(body)))
+view
+  col
+    Composer #composer(active) room=active
+"#;
+    let generated = compile(source, "composer-host.ice").unwrap();
+    // The action variant carries the instance scope alongside the action.
+    assert!(generated.contains(
+        "__ComposerEditBody(::std::string::String, ::iced::widget::text_editor::Action)"
+    ));
+    // The update arm materializes the instance entry and performs on it.
+    assert!(generated.contains("__local.body.perform(__action)"));
+    // The instance's content renders by reference, with the shared initial
+    // content standing in until the first delivered action materializes it.
+    assert!(generated.contains(
+        ".map_or(&self.__ice_editor_initial_composer_body, |__ice_local| &__ice_local.body)"
+    ));
+    assert!(
+        generated
+            .contains("__ice_editor_initial_composer_body: ::iced::widget::text_editor::Content")
+    );
+    assert!(generated.contains("::iced::widget::text_editor::Content::with_text(\"draft\")"));
+    // The widget's action route carries the rendering instance's scope.
+    assert!(generated.contains("move |__ice_action|"));
+    // A local handler replaces the instance's content like any state write.
+    assert!(generated.contains(".body = ::iced::widget::text_editor::Content::with_text"));
+    // The component test seam exposes the draft as its text.
+    assert!(generated.contains("body: __state.body.text(),"));
+    // A view expression over the local editor reads through the same
+    // reference, never a clone.
+    assert!(!generated.contains("__state.body.clone()"));
+}
+
+#[test]
+fn component_editor_action_adapter_reaches_the_instance_arm() {
+    let source = r#"app ComposerHost
+extern crate::backend
+  editor-action track_edits()
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  active = "general"
+component Composer(room:str)
+  lifetime retained
+  state
+    body:editor = ""
+  editor <-> body action=track_edits()
+view
+  col
+    Composer #composer(active) room=active
+"#;
+    let generated = compile(source, "composer-action.ice").unwrap();
+    // The contracted adapter replaces the plain perform on the instance arm.
+    assert!(generated.contains("crate::backend::track_edits(&mut __local.body, __action)"));
+    assert!(!generated.contains("__local.body.perform(__action)"));
+}
+
+#[test]
 fn exposes_editor_cursor_state_and_native_action_adapters() {
     let source = r#"app Composer
 extern crate::backend

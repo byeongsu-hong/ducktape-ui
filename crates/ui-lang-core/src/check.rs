@@ -24,6 +24,7 @@ struct CheckOutput {
     analyses: facts::CheckedAnalyses,
     controlled_inputs: Vec<crate::hir::AppStateId>,
     controlled_editors: Vec<crate::CheckedControlledEditor>,
+    component_controlled_editors: Vec<crate::CheckedComponentControlledEditor>,
 }
 
 pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
@@ -72,6 +73,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
         reachable_handlers.app,
         checked.controlled_inputs,
         checked.controlled_editors,
+        checked.component_controlled_editors,
     ))
 }
 
@@ -254,8 +256,11 @@ fn check(
             if let Type::Animation(expected) = &state.ty {
                 require_type(&actual, expected, &state.span)?;
                 check_animation_state(state, expected, document)?;
-            } else if actual != Type::Unknown && !compatible(&state.ty, &actual) {
-                return Err(type_error(&state.span, &state.ty, &actual));
+            } else {
+                let text_initial = state.ty == Type::Editor && actual == Type::Str;
+                if actual != Type::Unknown && !text_initial && !compatible(&state.ty, &actual) {
+                    return Err(type_error(&state.span, &state.ty, &actual));
+                }
             }
             initializer_analyses.insert(
                 facts::CheckedValueRef::ComponentState(
@@ -380,7 +385,7 @@ fn check(
         }
     }
     let controlled_editor_contracts = controlled_editor_bindings(document)?;
-    for binding in &controlled_editor_contracts {
+    for binding in &controlled_editor_contracts.app {
         if let Some(state) = document
             .states
             .iter()
@@ -683,7 +688,25 @@ fn check(
             Ok(declarations.app_state(index).id)
         })
         .collect::<Result<Vec<_>, Error>>()?;
+    let editor_action = |action: Option<String>| {
+        action
+            .map(|name| {
+                declarations
+                    .extern_decl_by_name(&name)
+                    .filter(|function| function.kind == ExternKind::EditorAction)
+                    .map(|function| function.declaration.id)
+                    .ok_or_else(|| {
+                        Error::new(
+                            "E196",
+                            document.view.span(),
+                            "checked editor action extern disappeared",
+                        )
+                    })
+            })
+            .transpose()
+    };
     let controlled_editors = controlled_editor_contracts
+        .app
         .into_iter()
         .map(|binding| {
             let index = document
@@ -697,25 +720,43 @@ fn check(
                         "checked editor binding is not an app state",
                     )
                 })?;
-            let action = binding
-                .action
-                .map(|name| {
-                    declarations
-                        .extern_decl_by_name(&name)
-                        .filter(|function| function.kind == ExternKind::EditorAction)
-                        .map(|function| function.declaration.id)
-                        .ok_or_else(|| {
-                            Error::new(
-                                "E196",
-                                document.view.span(),
-                                "checked editor action extern disappeared",
-                            )
-                        })
-                })
-                .transpose()?;
             Ok(crate::CheckedControlledEditor {
                 state: declarations.app_state(index).id,
-                action,
+                action: editor_action(binding.action)?,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let component_controlled_editors = controlled_editor_contracts
+        .component
+        .into_iter()
+        .map(|binding| {
+            let (component_index, component) = document
+                .components
+                .iter()
+                .enumerate()
+                .find(|(_, component)| component.name == binding.component)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        document.view.span(),
+                        "checked editor binding is not a component",
+                    )
+                })?;
+            let state_index = component
+                .states
+                .iter()
+                .position(|state| state.name == binding.state)
+                .ok_or_else(|| {
+                    Error::new(
+                        "E196",
+                        document.view.span(),
+                        "checked editor binding is not a component state",
+                    )
+                })?;
+            let component_id = declarations.component(component_index).id;
+            Ok(crate::CheckedComponentControlledEditor {
+                state: declarations.component_state(component_id, state_index).id,
+                action: editor_action(binding.action)?,
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -723,6 +764,7 @@ fn check(
         analyses: initializer_analyses,
         controlled_inputs,
         controlled_editors,
+        component_controlled_editors,
     })
 }
 

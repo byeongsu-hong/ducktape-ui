@@ -139,6 +139,22 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
                         ),
                     ));
                 }
+            } else if state.ty == Type::Editor {
+                // An editor's content is widget-backed and must outlive the
+                // instance leaving the tree — a draft is only useful if it is
+                // still there when its instance comes back. Only `retained`
+                // storage keeps state across unmounts, and only a retained
+                // map hands the view a plain borrow of the content.
+                if component.lifetime != ComponentLifetime::Retained {
+                    return Err(Error::new(
+                        "E103",
+                        &state.span,
+                        format!(
+                            "editor state `{}` needs `lifetime retained`, so its content survives the instance leaving the tree",
+                            state.name
+                        ),
+                    ));
+                }
             } else if !component_value_is_cloneable(&state.ty) {
                 return Err(Error::new(
                     "E103",

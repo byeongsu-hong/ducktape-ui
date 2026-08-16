@@ -310,6 +310,12 @@ impl Lowerer {
                     name: value.name.clone(),
                 })
             }
+            CheckedValueRef::ComponentState(id) if outer_component == Some(id.component) => {
+                Ok(WritableStateRef::ComponentState {
+                    id,
+                    name: value.name.clone(),
+                })
+            }
             _ => Err(self.invariant(span, "editor binding is not writable in this scope")),
         }
     }

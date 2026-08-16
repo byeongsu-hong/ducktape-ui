@@ -3,6 +3,13 @@ use super::*;
 #[derive(Clone)]
 enum ControlledBinding {
     App(String),
+    /// A component's own state entry, named by its owning component — an
+    /// editor bound to one (directly, or through a chain of bind props)
+    /// contracts with THAT component, not the app.
+    Component {
+        component: String,
+        state: String,
+    },
     Writable,
     ReadOnly(Type),
 }
@@ -13,10 +20,25 @@ pub(crate) struct ControlledEditorBinding {
     pub action: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ComponentControlledEditorBinding {
+    pub component: String,
+    pub state: String,
+    pub action: Option<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct ControlledEditors {
+    pub(crate) app: Vec<ControlledEditorBinding>,
+    pub(crate) component: Vec<ComponentControlledEditorBinding>,
+}
+
 #[derive(Default)]
 struct ControlledOutput {
     bindings: Vec<ControlledEditorBinding>,
     by_name: HashMap<String, usize>,
+    component_bindings: Vec<ComponentControlledEditorBinding>,
+    component_by_key: HashMap<(String, String), usize>,
 }
 
 pub(crate) fn controlled_state_bindings(
@@ -24,21 +46,21 @@ pub(crate) fn controlled_state_bindings(
     editors: bool,
 ) -> Result<Vec<String>, Error> {
     Ok(controlled_bindings(document, editors)?
+        .bindings
         .into_iter()
         .map(|binding| binding.name)
         .collect())
 }
 
-pub(crate) fn controlled_editor_bindings(
-    document: &Document,
-) -> Result<Vec<ControlledEditorBinding>, Error> {
-    controlled_bindings(document, true)
+pub(crate) fn controlled_editor_bindings(document: &Document) -> Result<ControlledEditors, Error> {
+    let output = controlled_bindings(document, true)?;
+    Ok(ControlledEditors {
+        app: output.bindings,
+        component: output.component_bindings,
+    })
 }
 
-fn controlled_bindings(
-    document: &Document,
-    editors: bool,
-) -> Result<Vec<ControlledEditorBinding>, Error> {
+fn controlled_bindings(document: &Document, editors: bool) -> Result<ControlledOutput, Error> {
     fn collect(
         node: &ViewNode,
         document: &Document,
@@ -97,6 +119,40 @@ fn controlled_bindings(
                             name: state.clone(),
                             action,
                         });
+                    }
+                }
+                Some(ControlledBinding::Component { component, state }) => {
+                    // Inputs over component `str` state route through the
+                    // per-state binding variant and need no contract here;
+                    // editors contract with their owning component so codegen
+                    // knows the one action adapter to apply.
+                    if editors {
+                        let key = (component.clone(), state.clone());
+                        if let Some(existing) = output
+                            .component_by_key
+                            .get(&key)
+                            .and_then(|index| output.component_bindings.get(*index))
+                        {
+                            if existing.action != action {
+                                return Err(Error::new(
+                                    "E139",
+                                    span,
+                                    format!(
+                                        "editor state `{component}.{state}` must use the same action adapter everywhere"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            let index = output.component_bindings.len();
+                            output.component_by_key.insert(key, index);
+                            output
+                                .component_bindings
+                                .push(ComponentControlledEditorBinding {
+                                    component: component.clone(),
+                                    state: state.clone(),
+                                    action,
+                                });
+                        }
                     }
                 }
                 Some(ControlledBinding::Writable) => {}
@@ -304,12 +360,15 @@ fn controlled_bindings(
                     }
                     component_env.insert(param.name.clone(), source.clone());
                 }
-                component_env.extend(
-                    component
-                        .states
-                        .iter()
-                        .map(|state| (state.name.clone(), ControlledBinding::Writable)),
-                );
+                component_env.extend(component.states.iter().map(|state| {
+                    (
+                        state.name.clone(),
+                        ControlledBinding::Component {
+                            component: name.clone(),
+                            state: state.name.clone(),
+                        },
+                    )
+                }));
                 collect(
                     &component.root,
                     document,
@@ -384,12 +443,15 @@ fn controlled_bindings(
                     },
                 )
             })
-            .chain(
-                component
-                    .states
-                    .iter()
-                    .map(|state| (state.name.clone(), ControlledBinding::Writable)),
-            )
+            .chain(component.states.iter().map(|state| {
+                (
+                    state.name.clone(),
+                    ControlledBinding::Component {
+                        component: component.name.clone(),
+                        state: state.name.clone(),
+                    },
+                )
+            }))
             .collect();
         collect(
             &component.root,
@@ -400,7 +462,7 @@ fn controlled_bindings(
             &mut output,
         )?;
     }
-    Ok(output.bindings)
+    Ok(output)
 }
 
 pub(in crate::check) fn pane_grid_span(node: &ViewNode) -> Option<&Span> {
