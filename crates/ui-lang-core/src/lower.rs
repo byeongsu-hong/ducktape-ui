@@ -16145,10 +16145,17 @@ view
         let generated = crate::codegen::generate(&program, "editor-scale.ice").unwrap();
         let elapsed = started.elapsed();
         assert_eq!(program.text_editors.len(), EDITORS);
-        // A disabled editor emits its enabled and disabled widget branches.
+        // A disabled editor binds its content once and emits its enabled and
+        // disabled widget branches over that one borrow.
         assert_eq!(
             generated
-                .matches("::iced::widget::text_editor(&self.body)")
+                .matches("let __ice_editor_content = &self.body;")
+                .count(),
+            EDITORS
+        );
+        assert_eq!(
+            generated
+                .matches("::iced::widget::text_editor(__ice_editor_content)")
                 .count(),
             EDITORS * 2
         );
@@ -16181,7 +16188,7 @@ view
         assert_eq!(program.controlled_editors_by_name.len(), EDITORS);
         assert_eq!(
             generated
-                .matches("::iced::widget::text_editor(&self.body_")
+                .matches("let __ice_editor_content = &self.body_")
                 .count(),
             EDITORS
         );
